@@ -1,3 +1,4 @@
+mod catalog_support;
 mod gate_reports;
 mod git;
 mod hosted_evidence;
@@ -188,6 +189,13 @@ pub fn load_release_config(root: &Path) -> Result<ReleaseConfig, ReleaseError> {
         .unwrap_or_default();
     validate_sync_files(manifest_release)?;
     let sync_files = resolve_sync_files(root, manifest_release, &version_source)?;
+    let catalog_pack_support_policy = catalog_support::resolve_policy_path(
+        root,
+        manifest_release.and_then(|config| config.sync_catalog_pack_support_policy.as_deref()),
+        &version_source,
+        &changelog_path,
+        &sync_files,
+    )?;
     let tag_format = manifest_release
         .and_then(|config| config.tag_format.as_deref())
         .map(str::trim)
@@ -210,6 +218,7 @@ pub fn load_release_config(root: &Path) -> Result<ReleaseConfig, ReleaseError> {
             .and_then(|config| config.initial_tag_current_version)
             .unwrap_or(false),
         sync_files,
+        catalog_pack_support_policy,
         gates,
         tag_format,
         hosted_evidence: hosted_evidence_spec_from_manifest(
@@ -1010,6 +1019,15 @@ pub fn build_release_prepare_plan(
             &context.config.sync_files,
             &next_version,
         )?);
+        if let Some(path) = &context.config.catalog_pack_support_policy {
+            if let Some(mutation) = catalog_support::build_policy_mutation(
+                path,
+                &context.current_version,
+                &next_version,
+            )? {
+                mutations.push(mutation);
+            }
+        }
     }
 
     blockers.extend(gate_blockers_if_checked(check_gates, &gate_report.results));

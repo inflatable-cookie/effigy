@@ -2,6 +2,8 @@
 version-file = "Cargo.toml"
 changelog = "CHANGELOG.md"
 sync-files = ["Cargo.lock"]
+# Keep Effigy's catalog update support floor aligned with the prepared version.
+sync-catalog-pack-support-policy = "support/catalog-pack-update.toml"
 tag-format = "v{version}"
 
 [release.gates]

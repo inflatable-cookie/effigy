@@ -12,7 +12,7 @@ pub(super) fn validate_release_section(context: &mut SchemaContext<'_, '_>, rele
         context,
         "release",
         release,
-        "expected table with optional keys: version_file, version_path, changelog, pre-1-0, initial-tag-current-version, sync_files, gates, tag_format, hosted-evidence",
+        "expected table with optional keys: version_file, version_path, changelog, pre-1-0, initial-tag-current-version, sync_files, sync-catalog-pack-support-policy, gates, tag_format, hosted-evidence",
     ) else {
         return;
     };
@@ -32,6 +32,8 @@ pub(super) fn validate_release_section(context: &mut SchemaContext<'_, '_>, rele
             "initial-tag-current-version",
             "sync_files",
             "sync-files",
+            "sync_catalog_pack_support_policy",
+            "sync-catalog-pack-support-policy",
             "gates",
             "tag_format",
             "tag-format",
@@ -74,6 +76,13 @@ pub(super) fn validate_release_section(context: &mut SchemaContext<'_, '_>, rele
             .or_else(|| release_table.get("sync-files")),
         "release.sync_files",
         "expected array of strings",
+    );
+    validate_optional_non_empty_string_field(
+        context,
+        release_table
+            .get("sync_catalog_pack_support_policy")
+            .or_else(|| release_table.get("sync-catalog-pack-support-policy")),
+        "release.sync_catalog_pack_support_policy",
     );
     validate_optional_non_empty_string_field(
         context,

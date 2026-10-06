@@ -15,6 +15,7 @@ pub struct ReleaseConfig {
     pub pre_1_0: bool,
     pub initial_tag_current_version: bool,
     pub sync_files: Vec<ResolvedSyncFile>,
+    pub catalog_pack_support_policy: Option<PathBuf>,
     pub gates: Vec<ResolvedGate>,
     pub tag_format: String,
     pub hosted_evidence: Option<HostedEvidenceSpec>,

@@ -48,7 +48,12 @@ fn committed_file_matches_this_crate_release_with_oldest_field() {
 
     assert_eq!(policy.schema_version, 1);
     assert_eq!(policy.as_of_release, current);
-    assert_eq!(policy.required_versions, vec![version("0.13.0"), current]);
+    let expected_required_versions = match current.to_string().as_str() {
+        "0.13.1" => vec![version("0.13.0"), version("0.13.1")],
+        "0.14.0" => vec![version("0.13.0"), version("0.13.1"), version("0.14.0")],
+        other => panic!("update the committed support expectation for Effigy {other}"),
+    };
+    assert_eq!(policy.required_versions, expected_required_versions);
     assert_eq!(
         policy.oldest_update_capable_release,
         Some(version("0.13.0"))
@@ -57,6 +62,37 @@ fn committed_file_matches_this_crate_release_with_oldest_field() {
     assert!(
         repo_root().join(CATALOG_PACK_UPDATE_POLICY_FILE).is_file(),
         "support floor lives in the Effigy repository, not in pack content"
+    );
+}
+
+#[test]
+fn prepared_release_policy_preserves_catalog_update_capability_and_support_floor() {
+    let prepared_release = version("0.14.0");
+    let policy = parse(
+        r#"
+schema_version = 1
+as_of_release = "0.14.0"
+required_versions = ["0.13.0", "0.13.1", "0.14.0"]
+oldest_update_capable_release = "0.13.0"
+"#,
+        "0.14.0",
+        PackUpdateCapability::Present,
+    )
+    .expect("prepared support floor keeps existing releases supported");
+
+    assert_eq!(policy.as_of_release, prepared_release);
+    assert_eq!(
+        policy.required_versions,
+        vec![version("0.13.0"), version("0.13.1"), prepared_release]
+    );
+    assert_eq!(
+        policy.oldest_update_capable_release,
+        Some(version("0.13.0"))
+    );
+    assert_eq!(policy.minimum_required_version(), &version("0.13.0"));
+    assert_eq!(
+        PackUpdateCapability::for_this_build(),
+        PackUpdateCapability::Present
     );
 }
 

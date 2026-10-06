@@ -165,6 +165,19 @@
   "cargo clippy -p effigy-host-run -p effigy-gateway -p effigy-rhai --all-targets -- -D warnings",
   "cargo clippy -p effigy-containers --all-targets -- -D warnings",
 ]
+# Release preparation atomically synchronizes the opt-in catalog support policy
+# before prepared-tree gates and restores all mutations when a gate fails.
+"test:release:catalog-preparation" = [
+  { id = "prepare-policy", run = "CARGO_NET_OFFLINE=true cargo test -p effigy-release --lib catalog_pack_support_preparation -- --nocapture", timeout_ms = 600000 },
+  { id = "catalog-current-policy", run = "CARGO_NET_OFFLINE=true cargo test -p effigy-catalog --lib committed_file_matches_this_crate_release_with_oldest_field -- --nocapture", timeout_ms = 600000 },
+  { id = "catalog-prepared-policy", run = "CARGO_NET_OFFLINE=true cargo test -p effigy-catalog --lib prepared_release_policy_preserves_catalog_update_capability_and_support_floor -- --nocapture", timeout_ms = 600000 },
+  { id = "release-manifest-schema", run = "CARGO_NET_OFFLINE=true cargo test -p effigy-doctor --lib validate_manifest_schema_accepts_docs_policy_bootstrap_container_distribution_and_release_sections -- --nocapture", timeout_ms = 600000 },
+]
+"check:release:catalog-preparation" = [
+  "cargo build --bin effigy",
+  "cargo check -p effigy -p effigy-release -p effigy-manifest -p effigy-doctor -p effigy-catalog --all-targets --profile test",
+  "cargo clippy -p effigy -p effigy-release -p effigy-manifest -p effigy-doctor -p effigy-catalog --all-targets -- -D warnings",
+]
 # Remaining post-fork pre_exec conversions and the named containers
 # changed-test lint sites (task 100). Private errno/allocation/process
 # proofs live in effigy-process; containers all-target lint covers the

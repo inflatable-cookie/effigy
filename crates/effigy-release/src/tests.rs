@@ -15,9 +15,12 @@ use super::{
     ResolvedVersionSource, VersionFileKind,
 };
 use std::collections::BTreeMap;
+use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+
+use effigy_catalog::{CatalogPackUpdatePolicy, PackUpdateCapability};
 
 fn temp_repo(name: &str) -> PathBuf {
     let root = std::env::temp_dir().join(format!(
@@ -59,6 +62,465 @@ fn write_initial_release_repo(name: &str, opt_in: bool) -> PathBuf {
         .expect("git init");
     assert!(status.success());
     root
+}
+
+const CATALOG_POLICY_V0131: &str = r#"# support policy fixture
+schema_version = 1
+as_of_release = "0.13.1"
+required_versions = ["0.13.0", "0.13.1"]
+oldest_update_capable_release = "0.13.0"
+"#;
+
+fn write_catalog_prepare_fixture(
+    policy: &str,
+    gate_commands: &[(&str, &str)],
+) -> tempfile::TempDir {
+    let fixture = tempfile::tempdir().expect("private fixture directory");
+    let root = fixture.path();
+    fs::create_dir_all(root.join("support")).expect("support dir");
+    fs::write(
+        root.join("effigy.toml"),
+        format!(
+            "[release]\nversion-file = \"Cargo.toml\"\nchangelog = \"CHANGELOG.md\"\nsync-files = [\"Cargo.lock\"]\nsync-catalog-pack-support-policy = \"support/catalog-pack-update.toml\"\n{}",
+            gate_commands
+                .iter()
+                .map(|(name, command)| format!(
+                    "\n[release.gates.{name}]\ncommand = {}\n",
+                    toml::Value::String((*command).to_owned())
+                ))
+                .collect::<String>()
+        ),
+    )
+    .expect("release manifest");
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"catalog-prepare-fixture\"\nversion = \"0.13.1\"\nedition = \"2021\"\n\n[dependencies]\nserde = { version = \"=1.0.229\", default-features = false }\n",
+    )
+    .expect("cargo manifest");
+    fs::create_dir(root.join("src")).expect("source dir");
+    fs::write(root.join("src/lib.rs"), "").expect("source file");
+    let lockfile = Command::new("cargo")
+        .args(["generate-lockfile", "--quiet", "--offline"])
+        .current_dir(root)
+        .output()
+        .expect("generate private fixture lockfile");
+    assert!(
+        lockfile.status.success(),
+        "fixture lockfile generation failed: {}",
+        String::from_utf8_lossy(&lockfile.stderr)
+    );
+    fs::write(
+        root.join("CHANGELOG.md"),
+        "# Changelog\n\n## [Unreleased]\n\n### Breaking\n- Prepare catalog compatibility metadata with the release.\n",
+    )
+    .expect("changelog fixture");
+    fs::write(root.join("support/catalog-pack-update.toml"), policy)
+        .expect("catalog support policy fixture");
+    fixture
+}
+
+fn catalog_policy_gate_command(root: &Path) -> String {
+    let binary = env::current_exe().expect("current test executable");
+    format!(
+        "EFFIGY_CATALOG_GATE_ROOT={} {} --ignored --exact tests::prepared_catalog_policy_gate_oracle --nocapture",
+        shell_single_quote(&root.display().to_string()),
+        shell_single_quote(&binary.display().to_string()),
+    )
+}
+
+fn shell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+#[test]
+#[ignore = "invoked as a prepared-tree release gate by catalog support preparation tests"]
+fn prepared_catalog_policy_gate_oracle() {
+    let root =
+        PathBuf::from(env::var_os("EFFIGY_CATALOG_GATE_ROOT").expect("prepared policy gate root"));
+    let prepared = semver::Version::new(0, 14, 0);
+    let policy = CatalogPackUpdatePolicy::load_from_repo_root(
+        &root,
+        &prepared,
+        PackUpdateCapability::Present,
+    )
+    .expect("prepared support policy validates through the catalog parser");
+    assert_eq!(
+        policy.required_versions,
+        vec![
+            semver::Version::new(0, 13, 0),
+            semver::Version::new(0, 13, 1),
+            prepared.clone(),
+        ]
+    );
+    assert_eq!(
+        policy.oldest_update_capable_release,
+        Some(semver::Version::new(0, 13, 0))
+    );
+}
+
+#[test]
+fn catalog_pack_support_preparation_plan_previews_without_writing() {
+    let fixture = write_catalog_prepare_fixture(CATALOG_POLICY_V0131, &[]);
+    let root = fixture.path();
+    let original_cargo = fs::read(root.join("Cargo.toml")).expect("cargo before");
+    let original_changelog = fs::read(root.join("CHANGELOG.md")).expect("changelog before");
+    let original_policy =
+        fs::read(root.join("support/catalog-pack-update.toml")).expect("policy before");
+    let original_lock = fs::read(root.join("Cargo.lock")).expect("lock before");
+
+    let context = load_release_context(root).expect("release context");
+    let plan = build_release_prepare_plan(&context, false, GateExecutionReport::empty(), None)
+        .expect("prepare plan");
+    assert!(plan.ready, "{:?}", plan.blockers);
+    assert_eq!(plan.planned_version, Some(semver::Version::new(0, 14, 0)));
+    assert_eq!(
+        plan.mutations
+            .iter()
+            .map(|mutation| mutation.kind)
+            .collect::<Vec<_>>(),
+        vec![
+            "version-file",
+            "changelog",
+            "sync-file",
+            "catalog-pack-support-policy"
+        ]
+    );
+    let version_mutation = plan
+        .mutations
+        .iter()
+        .find(|mutation| mutation.kind == "version-file")
+        .expect("version mutation");
+    let FileMutationApply::Write { after_contents } = &version_mutation.apply else {
+        panic!("version source uses a complete write mutation");
+    };
+    assert_eq!(
+        toml::from_str::<toml::Value>(after_contents).expect("prepared manifest")["package"]
+            ["version"]
+            .as_str(),
+        Some("0.14.0")
+    );
+    let changelog_mutation = plan
+        .mutations
+        .iter()
+        .find(|mutation| mutation.kind == "changelog")
+        .expect("changelog mutation");
+    let FileMutationApply::Write { after_contents } = &changelog_mutation.apply else {
+        panic!("changelog uses a complete write mutation");
+    };
+    assert!(after_contents.contains("## [0.14.0] - "));
+    let lock_mutation = plan
+        .mutations
+        .iter()
+        .find(|mutation| mutation.kind == "sync-file")
+        .expect("lockfile mutation");
+    assert!(matches!(
+        &lock_mutation.apply,
+        FileMutationApply::SyncCargoLock { workspace_version } if workspace_version == "0.14.0"
+    ));
+    let policy_mutation = plan
+        .mutations
+        .iter()
+        .find(|mutation| mutation.kind == "catalog-pack-support-policy")
+        .expect("catalog support policy mutation");
+    let FileMutationApply::Write { after_contents } = &policy_mutation.apply else {
+        panic!("catalog support policy uses a complete write mutation");
+    };
+    assert!(after_contents.contains("# support policy fixture"));
+    let policy = CatalogPackUpdatePolicy::parse(
+        after_contents,
+        &semver::Version::new(0, 14, 0),
+        PackUpdateCapability::Present,
+    )
+    .expect("prepared policy parses for the selected release");
+    assert_eq!(
+        policy.required_versions,
+        vec![
+            semver::Version::new(0, 13, 0),
+            semver::Version::new(0, 13, 1),
+            semver::Version::new(0, 14, 0),
+        ]
+    );
+    assert_eq!(
+        policy.oldest_update_capable_release,
+        Some(semver::Version::new(0, 13, 0))
+    );
+    assert_eq!(
+        fs::read(root.join("Cargo.toml")).expect("cargo after plan"),
+        original_cargo
+    );
+    assert_eq!(
+        fs::read(root.join("CHANGELOG.md")).expect("changelog after plan"),
+        original_changelog
+    );
+    assert_eq!(
+        fs::read(root.join("support/catalog-pack-update.toml")).expect("policy after plan"),
+        original_policy
+    );
+    assert_eq!(
+        fs::read(root.join("Cargo.lock")).expect("lock after plan"),
+        original_lock
+    );
+    assert!(!root.join(".release-prepared.json").exists());
+}
+
+#[test]
+fn catalog_pack_support_preparation_runs_policy_gate_and_preserves_dependencies() {
+    let fixture = write_catalog_prepare_fixture(CATALOG_POLICY_V0131, &[]);
+    let root = fixture.path();
+    let gate = catalog_policy_gate_command(root);
+    fs::write(
+        root.join("effigy.toml"),
+        format!(
+            "[release]\nversion-file = \"Cargo.toml\"\nchangelog = \"CHANGELOG.md\"\nsync-files = [\"Cargo.lock\"]\nsync-catalog-pack-support-policy = \"support/catalog-pack-update.toml\"\n\n[release.gates.catalog-policy]\ncommand = {}\n",
+            toml::Value::String(gate)
+        ),
+    )
+    .expect("release gate manifest");
+    let prepared = execute_release_prepare(
+        root.to_path_buf(),
+        ".release-prepared.json",
+        true,
+        None,
+        |_| {},
+    )
+    .expect("prepare");
+    assert!(prepared.prepared, "{:?}", prepared.blockers);
+    assert!(prepared.state_file_written);
+    assert_eq!(prepared.gate_results.len(), 1);
+    assert!(
+        prepared.gate_results[0].passed,
+        "{:?}",
+        prepared.gate_results[0]
+    );
+    assert!(root.join(".release-prepared.json").is_file());
+
+    let prepared_version = semver::Version::new(0, 14, 0);
+    let policy = CatalogPackUpdatePolicy::load_from_repo_root(
+        root,
+        &prepared_version,
+        PackUpdateCapability::Present,
+    )
+    .expect("prepared policy accepted by catalog parser");
+    assert_eq!(
+        policy.required_versions,
+        vec![
+            semver::Version::new(0, 13, 0),
+            semver::Version::new(0, 13, 1),
+            prepared_version,
+        ]
+    );
+    assert_eq!(
+        policy.oldest_update_capable_release,
+        Some(semver::Version::new(0, 13, 0))
+    );
+    let cargo_manifest = toml::from_str::<toml::Value>(
+        &fs::read_to_string(root.join("Cargo.toml")).expect("prepared cargo manifest"),
+    )
+    .expect("prepared cargo toml");
+    assert_eq!(
+        cargo_manifest["dependencies"]["serde"]["version"].as_str(),
+        Some("=1.0.229")
+    );
+    let lock: toml::Value =
+        toml::from_str(&fs::read_to_string(root.join("Cargo.lock")).expect("prepared lockfile"))
+            .expect("prepared lock toml");
+    let packages = lock["package"].as_array().expect("lock packages");
+    assert!(packages.iter().any(|package| {
+        package["name"].as_str() == Some("serde") && package["version"].as_str() == Some("1.0.229")
+    }));
+    assert!(packages.iter().any(|package| {
+        package["name"].as_str() == Some("catalog-prepare-fixture")
+            && package["version"].as_str() == Some("0.14.0")
+    }));
+}
+
+#[test]
+fn catalog_pack_support_preparation_gate_rejects_the_old_stale_companion() {
+    let fixture = write_catalog_prepare_fixture(CATALOG_POLICY_V0131, &[]);
+    let root = fixture.path();
+    let report = run_release_gates(
+        root,
+        &[shell_gate(
+            "catalog-policy",
+            &catalog_policy_gate_command(root),
+        )],
+        true,
+    );
+    assert_eq!(report.results.len(), 1);
+    assert!(!report.results[0].passed);
+    assert_ne!(report.results[0].exit_code, Some(0));
+    assert!(report.results[0].stderr.contains("current Effigy release"));
+}
+
+#[test]
+fn catalog_pack_support_preparation_rolls_back_every_mutation_when_a_gate_fails() {
+    let fixture = write_catalog_prepare_fixture(CATALOG_POLICY_V0131, &[]);
+    let root = fixture.path();
+    let policy_gate = catalog_policy_gate_command(root);
+    fs::write(
+        root.join("effigy.toml"),
+        format!(
+            "[release]\nversion-file = \"Cargo.toml\"\nchangelog = \"CHANGELOG.md\"\nsync-files = [\"Cargo.lock\"]\nsync-catalog-pack-support-policy = \"support/catalog-pack-update.toml\"\n\n[release.gates.catalog-policy]\ncommand = {}\n\n[release.gates.forced-failure]\ncommand = \"exit 7\"\n",
+            toml::Value::String(policy_gate)
+        ),
+    )
+    .expect("prepared tree gate path");
+    let paths = [
+        root.join("Cargo.toml"),
+        root.join("CHANGELOG.md"),
+        root.join("support/catalog-pack-update.toml"),
+        root.join("Cargo.lock"),
+    ];
+    let before = paths
+        .iter()
+        .map(|path| fs::read(path).expect("file before prepare"))
+        .collect::<Vec<_>>();
+
+    let prepared = execute_release_prepare(
+        root.to_path_buf(),
+        ".release-prepared.json",
+        true,
+        None,
+        |_| {},
+    )
+    .expect("prepare returns failed gate result");
+    assert!(!prepared.prepared);
+    assert!(!prepared.state_file_written);
+    assert!(!root.join(".release-prepared.json").exists());
+    assert_eq!(prepared.gate_results.len(), 2);
+    assert!(
+        prepared.gate_results[0].passed,
+        "{:?}",
+        prepared.gate_results[0]
+    );
+    assert!(
+        !prepared.gate_results[1].passed,
+        "{:?}",
+        prepared.gate_results[1]
+    );
+    for (path, original) in paths.iter().zip(before) {
+        assert_eq!(
+            fs::read(path).expect("file after rollback"),
+            original,
+            "{}",
+            path.display()
+        );
+    }
+}
+
+#[test]
+fn catalog_pack_support_preparation_rejects_malformed_duplicate_policy() {
+    let duplicate_policy = r#"
+schema_version = 1
+as_of_release = "0.13.1"
+required_versions = ["0.13.0", "0.13.0", "0.13.1"]
+oldest_update_capable_release = "0.13.0"
+"#;
+    let fixture = write_catalog_prepare_fixture(duplicate_policy, &[]);
+    let root = fixture.path();
+    let context = load_release_context(root).expect("release context");
+    let error = build_release_prepare_plan(&context, false, GateExecutionReport::empty(), None)
+        .expect_err("duplicate policy versions are rejected");
+    assert!(error
+        .to_string()
+        .contains("duplicate required version 0.13.0"));
+    assert_eq!(
+        fs::read_to_string(root.join("Cargo.toml")).expect("cargo unchanged"),
+        "[package]\nname = \"catalog-prepare-fixture\"\nversion = \"0.13.1\"\nedition = \"2021\"\n\n[dependencies]\nserde = { version = \"=1.0.229\", default-features = false }\n"
+    );
+    assert!(!root.join(".release-prepared.json").exists());
+}
+
+#[test]
+fn catalog_pack_support_preparation_keeps_an_existing_target_once() {
+    let already_supported = r#"
+schema_version = 1
+as_of_release = "0.13.1"
+required_versions = ["0.13.0", "0.13.1", "0.14.0"]
+oldest_update_capable_release = "0.13.0"
+"#;
+    let fixture = write_catalog_prepare_fixture(already_supported, &[]);
+    let context = load_release_context(fixture.path()).expect("release context");
+    let plan = build_release_prepare_plan(&context, false, GateExecutionReport::empty(), None)
+        .expect("prepare plan");
+    let mutation = plan
+        .mutations
+        .iter()
+        .find(|mutation| mutation.kind == "catalog-pack-support-policy")
+        .expect("policy mutation");
+    let FileMutationApply::Write { after_contents } = &mutation.apply else {
+        panic!("policy mutation is a write");
+    };
+    let policy = CatalogPackUpdatePolicy::parse(
+        after_contents,
+        &semver::Version::new(0, 14, 0),
+        PackUpdateCapability::Present,
+    )
+    .expect("target already supported stays valid");
+    assert_eq!(policy.required_versions.len(), 3);
+    assert_eq!(
+        policy
+            .required_versions
+            .iter()
+            .filter(|version| **version == semver::Version::new(0, 14, 0))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn catalog_pack_support_preparation_rejects_unsafe_and_duplicate_paths() {
+    for (configured, expected) in [
+        (
+            "../support/catalog-pack-update.toml",
+            "repository-relative path",
+        ),
+        ("CHANGELOG.md", "duplicates another release mutation path"),
+    ] {
+        let fixture = write_catalog_prepare_fixture(CATALOG_POLICY_V0131, &[]);
+        let root = fixture.path();
+        let manifest = fs::read_to_string(root.join("effigy.toml")).expect("manifest");
+        fs::write(
+            root.join("effigy.toml"),
+            manifest.replace("support/catalog-pack-update.toml", configured),
+        )
+        .expect("unsafe companion declaration");
+        let error = load_release_config(root).expect_err("unsafe policy path rejected");
+        assert!(error.to_string().contains(expected), "{error}");
+        assert!(!root.join(".release-prepared.json").exists());
+    }
+}
+
+#[test]
+fn catalog_pack_support_preparation_without_companion_keeps_existing_behavior() {
+    let fixture = tempfile::tempdir().expect("private no-companion repository");
+    let root = fixture.path();
+    fs::write(
+        root.join("effigy.toml"),
+        "[release]\nversion-file = \"VERSION\"\nchangelog = \"CHANGELOG.md\"\n",
+    )
+    .expect("manifest");
+    fs::write(root.join("VERSION"), "0.1.0\n").expect("version");
+    fs::write(
+        root.join("CHANGELOG.md"),
+        "# Changelog\n\n## [Unreleased]\n\n### Added\n- Initial release\n",
+    )
+    .expect("changelog");
+    let prepared = execute_release_prepare(
+        root.to_path_buf(),
+        ".release-prepared.json",
+        true,
+        None,
+        |_| {},
+    )
+    .expect("prepare without companion");
+    assert!(prepared.prepared, "{:?}", prepared.blockers);
+    assert_eq!(
+        fs::read_to_string(root.join("VERSION")).expect("version prepared"),
+        "0.1.1\n"
+    );
+    assert!(!root.join("support/catalog-pack-update.toml").exists());
+    assert!(root.join(".release-prepared.json").is_file());
 }
 
 #[test]

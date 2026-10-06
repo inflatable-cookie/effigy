@@ -18,5 +18,9 @@ serde_json = "1"
 toml = "1"
 toml_edit = "0.25.11"
 
+[dev-dependencies]
+effigy-catalog = { path = "../effigy-catalog" }
+tempfile = "3"
+
 [lints]
 workspace = true

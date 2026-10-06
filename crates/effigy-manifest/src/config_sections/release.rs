@@ -17,6 +17,8 @@ pub struct ManifestReleaseConfig {
     #[serde(default)]
     pub sync_files: Vec<String>,
     #[serde(default)]
+    pub sync_catalog_pack_support_policy: Option<String>,
+    #[serde(default)]
     pub gates: IndexMap<String, ManifestReleaseGateConfig>,
     #[serde(default)]
     pub tag_format: Option<String>,

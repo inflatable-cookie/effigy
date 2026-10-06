@@ -272,6 +272,9 @@ During v0.x, MINOR bumps may include breaking changes.
 - The default `effigy docs` log index path and distribution closeout output move from `docs/logs/` to `docs/notes/`. Pass explicit paths for repositories retaining the former layout.
 
 ### Changed
+- Release preparation can opt in to syncing a catalog pack support policy with
+  the selected release before gates run. The policy joins the existing
+  mutation preview and rollback protections.
 - Plain primary-service `effigy exec` now requires a running service and
   reports explicit `container up` guidance when it is stopped, without
   starting the VM, service, or gateway. Workspace preparation batches

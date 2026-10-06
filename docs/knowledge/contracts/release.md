@@ -63,13 +63,17 @@ still require Tom's explicit release authorization.
 
 Use the [v0.14.0 consumer migration checklist](../../guides/083-v0.14.0-consumer-migration.md)
 for upgrade actions; the linked contracts remain the owners of each behavior.
-The current catalog-pack policy is still checked against Effigy v0.13.1 and
-the embedded official pack is v1.1.1. At the authorized release prepare, set
-`as_of_release` to the actual target and recompute `required_versions` from the
-target plus every still-supported release that exposes `service pack update`;
-`oldest_update_capable_release` must equal the minimum of that set. The
-capability is already present in released Effigy, with v0.13.0 recorded as its
-oldest supported version today. The assessment alone does not update version or catalog-pack files.
+The current catalog-pack policy is checked against Effigy v0.13.1 and the
+embedded official pack is v1.1.1. Effigy's release configuration opts in with
+`sync-catalog-pack-support-policy = "support/catalog-pack-update.toml"`.
+Prepare validates the policy against the current version, then plans its
+`as_of_release` and `required_versions` update beside the release version,
+changelog, and lockfile mutations. The selected release is added at most once;
+existing supported versions, the update-capability marker, and the minimum
+support floor are retained. The policy file uses the normal prepare snapshots,
+so a failed gate restores it with the other mutations. The capability is
+already present in released Effigy, with v0.13.0 recorded as its oldest
+supported version today.
 
 ### Preparation authorization — 2026-10-06
 
@@ -82,12 +86,11 @@ existing preparation gates. Tagging, publication, binary-workflow dispatch,
 workflow edits, installation and live operations remain outside this ruling.
 
 The version and catalog-pack support policy must be consistent before gates
-run against the prepared tree. Today the CLI plans only the version file,
-changelog and Cargo lock synchronization, while the committed catalog policy
-requires its `as_of_release` to equal the workspace version. Preparation must
-resolve that companion-file transition within the existing reviewed mutation
-and rollback protections; manually skipping a gate or weakening that
-consistency check is not an acceptable release procedure.
+run against the prepared tree. The opt-in policy mutation is planned with the
+version file, changelog, and Cargo lock synchronization, then all gates inspect
+the prepared tree. Invalid or stale policy data blocks planning; gate failure
+restores every planned file and writes no prepared state. The catalog parser's
+version-consistency check remains unchanged.
 
 ### Admission for authorized preparation
 
