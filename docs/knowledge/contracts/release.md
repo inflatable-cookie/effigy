@@ -65,7 +65,7 @@ still require Tom's explicit release authorization.
 
 Use the [v0.14.0 consumer migration checklist](../../guides/083-v0.14.0-consumer-migration.md)
 for upgrade actions; the linked contracts remain the owners of each behavior.
-The current catalog-pack policy is checked against Effigy v0.13.1 and the
+The current catalog-pack policy is checked against Effigy v0.14.0 and the
 embedded official pack is v1.1.1. Effigy's release configuration opts in with
 `sync-catalog-pack-support-policy = "support/catalog-pack-update.toml"`.
 Prepare validates the policy against the current version, then plans its
@@ -179,6 +179,11 @@ or live operation. Its private acceptance fixture checks fixed argv, refusal
 before child start, and inherited host-run behavior without performing an
 install or contacting release hosts.
 
+For a public repository whose SSH origin requires authentication, pass the
+supported `--repo-url https://github.com/owner/repository.git` option to the
+selector. This changes only the verifier fetch URL; it does not require
+restoring ambient SSH credentials or changing the installed local binary.
+
 ### Unsafe-invariant and public-diagnostics reconciliation
 
 The strict post-v0.13.1 audit's reported unsafe-documentation and public
@@ -248,6 +253,7 @@ remaining limitations are owned by
 The prior PID-only counterexample is historical, not current main behavior.
 The last identity comparison and signal syscall still have a TOCTOU gap, and
 a live cross-UID read of an elevated daemon was not exercised. Q-001 and Q-002
-are answered; Q-001's publication block remains until exact-candidate release
-assurance completes. This note does not accept a residual or certify the
-release candidate.
+are answered. The sidecar and fail-closed policy satisfy Q-001's required
+correction; publication still requires the release assurance and explicit
+operator authorization above. Passing release checks does not remove the
+disclosed live-test and signal-race limitations.
