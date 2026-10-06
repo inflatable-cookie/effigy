@@ -746,7 +746,7 @@ checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
 
 [[package]]
 name = "effigy"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "anstyle",
  "base64 0.22.1",
@@ -812,7 +812,7 @@ dependencies = [
 
 [[package]]
 name = "effigy-artifacts"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -820,7 +820,7 @@ dependencies = [
 
 [[package]]
 name = "effigy-bootstrap"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "effigy-manifest",
  "serde_json",
@@ -828,7 +828,7 @@ dependencies = [
 
 [[package]]
 name = "effigy-builtin"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "anstyle",
  "effigy-catalog",
@@ -855,7 +855,7 @@ dependencies = [
 
 [[package]]
 name = "effigy-catalog"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "fs2",
  "indexmap",
@@ -873,14 +873,14 @@ dependencies = [
 
 [[package]]
 name = "effigy-changelog"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "semver",
 ]
 
 [[package]]
 name = "effigy-cli"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "crossterm",
  "effigy-core",
@@ -889,7 +889,7 @@ dependencies = [
 
 [[package]]
 name = "effigy-codegraph"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "aho-corasick",
  "effigy-manifest",
@@ -916,7 +916,7 @@ dependencies = [
 
 [[package]]
 name = "effigy-containers"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "effigy-catalog",
  "effigy-core",
@@ -932,14 +932,14 @@ dependencies = [
 
 [[package]]
 name = "effigy-context"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "effigy-core",
 ]
 
 [[package]]
 name = "effigy-contracts"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "effigy-cli",
  "serde_json",
@@ -948,7 +948,7 @@ dependencies = [
 
 [[package]]
 name = "effigy-core"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "hex",
  "serde",
@@ -960,11 +960,11 @@ dependencies = [
 
 [[package]]
 name = "effigy-data"
-version = "0.13.1"
+version = "0.14.0"
 
 [[package]]
 name = "effigy-demo"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "crossterm",
  "effigy-core",
@@ -976,7 +976,7 @@ dependencies = [
 
 [[package]]
 name = "effigy-deps"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "fs2",
  "globset",
@@ -991,7 +991,7 @@ dependencies = [
 
 [[package]]
 name = "effigy-distribution"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "anstyle",
  "chrono",
@@ -1004,7 +1004,7 @@ dependencies = [
 
 [[package]]
 name = "effigy-docs-policy"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "effigy-manifest",
  "regex",
@@ -1014,7 +1014,7 @@ dependencies = [
 
 [[package]]
 name = "effigy-doctor"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "anstream",
  "effigy-cli",
@@ -1036,7 +1036,7 @@ dependencies = [
 
 [[package]]
 name = "effigy-env"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "regex",
  "tempfile",
@@ -1045,7 +1045,7 @@ dependencies = [
 
 [[package]]
 name = "effigy-exec"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "serde",
  "tempfile",
@@ -1054,7 +1054,7 @@ dependencies = [
 
 [[package]]
 name = "effigy-execution"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "effigy-context",
  "effigy-tasks",
@@ -1063,7 +1063,7 @@ dependencies = [
 
 [[package]]
 name = "effigy-gateway"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "chrono",
  "effigy-core",
@@ -1093,7 +1093,7 @@ dependencies = [
 
 [[package]]
 name = "effigy-host-run"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -1108,7 +1108,7 @@ dependencies = [
 
 [[package]]
 name = "effigy-managed"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "effigy-core",
  "effigy-env",
@@ -1124,7 +1124,7 @@ dependencies = [
 
 [[package]]
 name = "effigy-manifest"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "chrono",
  "effigy-artifacts",
@@ -1141,14 +1141,14 @@ dependencies = [
 
 [[package]]
 name = "effigy-process"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "nix 0.31.3",
 ]
 
 [[package]]
 name = "effigy-release"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "chrono",
  "effigy-catalog",
@@ -1166,7 +1166,7 @@ dependencies = [
 
 [[package]]
 name = "effigy-rhai"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "anstyle",
  "base64 0.23.1",
@@ -1196,7 +1196,7 @@ dependencies = [
 
 [[package]]
 name = "effigy-routing"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "effigy-core",
  "effigy-manifest",
@@ -1207,7 +1207,7 @@ dependencies = [
 
 [[package]]
 name = "effigy-runtime"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "anstyle",
  "chrono",
@@ -1230,11 +1230,11 @@ dependencies = [
 
 [[package]]
 name = "effigy-runtime-plan"
-version = "0.13.1"
+version = "0.14.0"
 
 [[package]]
 name = "effigy-scan"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "anstyle",
  "effigy-manifest",
@@ -1250,7 +1250,7 @@ dependencies = [
 
 [[package]]
 name = "effigy-secrets"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "argon2",
  "chacha20poly1305",
@@ -1264,7 +1264,7 @@ dependencies = [
 
 [[package]]
 name = "effigy-state"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "effigy-artifacts",
  "effigy-manifest",
@@ -1275,7 +1275,7 @@ dependencies = [
 
 [[package]]
 name = "effigy-tasks"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "anstyle",
  "effigy-core",
@@ -1290,7 +1290,7 @@ dependencies = [
 
 [[package]]
 name = "effigy-tui"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "anstream",
  "anstyle",
@@ -1311,7 +1311,7 @@ dependencies = [
 
 [[package]]
 name = "effigy-ui"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "anstream",
  "anstyle",

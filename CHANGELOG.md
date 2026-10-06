@@ -6,6 +6,35 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-10-06
+
+### Breaking
+- Retired Effigy's heavy-admission lease store, store-writing backend, and
+  `effigy admission status|run|runs` commands and JSON schemas after Queue
+  removed its legacy joins. `EFFIGY_ADMISSION_DIR` is no longer read;
+  `EFFIGY_HOST_SCHEDULER=0` now returns an unsupported-retired diagnostic
+  before effects. Existing default or custom state files are untouched and
+  treated as opaque historical data; no reader or migration is added. The
+  prior `48183cf` binary is local rollout evidence, not a published consumer
+  rollback target.
+- Removed the Rhai object-storage host surface (`storage::provider`, `status`,
+  `ls`, `head`, `get`, `put`, `delete`), the `effigy-rhai` `s3` dependency, and
+  the vendored `vendor/s3` library, per the independent-retirement ruling in
+  contract 043. Scripts calling any removed helper now fail with an
+  unknown-function error and no compatibility shim exists. Live objects,
+  buckets, secrets, and assets are untouched; generic MinIO catalog services
+  and independent consumer S3 adapters are unrelated and unchanged. Residual
+  consumer callers (for example `bovine-accelerator` Rhai tasks) break by
+  design and are retired in their own repository.
+- Lean Northstar repositories no longer carry a Queue manifest. `effigy init
+  northstar` omits it; Queue closeout is the default, and repository overrides
+  use Queue's `repository.set` / `repository.get` settings API. Project
+  membership remains on `project.get` / `project.upsert`.
+- Removed the `effigy papercuts` command and JSON schemas, `effigy-papercuts`
+  crate, Northstar starter papercut file, contract 036, and guide 078. Queue's
+  papercuts table owns capture and inventory after the portfolio import.
+- The default `effigy docs` log index path and distribution closeout output move from `docs/logs/` to `docs/notes/`. Pass explicit paths for repositories retaining the former layout.
+
 ### Added
 - `effigy release:prepare` is a maintained, `admission = "heavy"` selector for
   authorized in-place release preparation. It admits the whole operation before
@@ -247,38 +276,6 @@ During v0.x, MINOR bumps may include breaking changes.
   `LiveRouteTable` neither locks nor traverses the live table, so formatter
   output cannot block on the route lock or expose live route contents.
   `TokenKeys` and other secret-bearing types remain without `Debug`.
-
-### Security
-- Managed host task secrets now reach child processes through their
-  environment, stay out of command arguments, and are redacted from managed
-  stream and headless logs.
-
-### Breaking
-- Retired Effigy's heavy-admission lease store, store-writing backend, and
-  `effigy admission status|run|runs` commands and JSON schemas after Queue
-  removed its legacy joins. `EFFIGY_ADMISSION_DIR` is no longer read;
-  `EFFIGY_HOST_SCHEDULER=0` now returns an unsupported-retired diagnostic
-  before effects. Existing default or custom state files are untouched and
-  treated as opaque historical data; no reader or migration is added. The
-  prior `48183cf` binary is local rollout evidence, not a published consumer
-  rollback target.
-- Removed the Rhai object-storage host surface (`storage::provider`, `status`,
-  `ls`, `head`, `get`, `put`, `delete`), the `effigy-rhai` `s3` dependency, and
-  the vendored `vendor/s3` library, per the independent-retirement ruling in
-  contract 043. Scripts calling any removed helper now fail with an
-  unknown-function error and no compatibility shim exists. Live objects,
-  buckets, secrets, and assets are untouched; generic MinIO catalog services
-  and independent consumer S3 adapters are unrelated and unchanged. Residual
-  consumer callers (for example `bovine-accelerator` Rhai tasks) break by
-  design and are retired in their own repository.
-- Lean Northstar repositories no longer carry a Queue manifest. `effigy init
-  northstar` omits it; Queue closeout is the default, and repository overrides
-  use Queue's `repository.set` / `repository.get` settings API. Project
-  membership remains on `project.get` / `project.upsert`.
-- Removed the `effigy papercuts` command and JSON schemas, `effigy-papercuts`
-  crate, Northstar starter papercut file, contract 036, and guide 078. Queue's
-  papercuts table owns capture and inventory after the portfolio import.
-- The default `effigy docs` log index path and distribution closeout output move from `docs/logs/` to `docs/notes/`. Pass explicit paths for repositories retaining the former layout.
 
 ### Changed
 - Release preparation can opt in to syncing a catalog pack support policy with
@@ -641,6 +638,11 @@ During v0.x, MINOR bumps may include breaking changes.
   a failed gate check. The status payload adds `gates_passed` and
   `gate_check_passed`; `simulate`, `prepare`, and `execute` still require a
   derivable next version.
+
+### Security
+- Managed host task secrets now reach child processes through their
+  environment, stay out of command arguments, and are redacted from managed
+  stream and headless logs.
 
 ## [0.13.1] - 2026-09-25
 
