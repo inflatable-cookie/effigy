@@ -103,6 +103,14 @@ impl GatewayRecordSnapshot {
         self.record.as_ref()
     }
 
+    /// True when the PID record has no identity sidecar at all.
+    ///
+    /// This distinguishes a legacy PID-only record from a present but invalid
+    /// sidecar, which remains an unknown record.
+    pub(crate) fn is_legacy_pid_only(&self) -> bool {
+        self.identity_bytes.is_none()
+    }
+
     /// Digest of the exact numeric PID and sidecar bytes.
     pub fn digest(&self) -> Option<String> {
         Some(GatewayIdentityRecord::digest_bytes(

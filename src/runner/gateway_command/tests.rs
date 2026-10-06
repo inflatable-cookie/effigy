@@ -449,3 +449,68 @@ fn probe_state_up_refuses_unknown_without_starting_a_replacement() {
     );
     assert!(matches!(stopped, Ok(None)));
 }
+
+#[cfg(unix)]
+#[test]
+fn gateway_identity_legacy_active_record_refused_by_status_up_down_and_managed_start() {
+    struct OwnedChild(std::process::Child);
+
+    impl Drop for OwnedChild {
+        fn drop(&mut self) {
+            if self.0.try_wait().ok().flatten().is_none() {
+                let _ = self.0.kill();
+            }
+            let _ = self.0.wait();
+        }
+    }
+
+    let root = tempfile::tempdir().expect("private fixture directory");
+    let home = root.path().join("home");
+    let gateway_home = home.join(GATEWAY_DIR_NAME);
+    std::fs::create_dir_all(&gateway_home).expect("create private gateway directory");
+    let _home_guard = set_test_gateway_home(&home);
+
+    let mut child = OwnedChild(
+        std::process::Command::new("sleep")
+            .arg("60")
+            .spawn()
+            .expect("start private process fixture"),
+    );
+    let pid_path = gateway_home.join("gateway.pid");
+    let version_path = gateway_home.join("gateway.version");
+    let identity_path = gateway_home.join("gateway.identity");
+    std::fs::write(&pid_path, child.0.id().to_string()).expect("write legacy PID record");
+    std::fs::write(&version_path, "v0.13.1+local.6774846\n").expect("write legacy version record");
+    let before_pid = std::fs::read(&pid_path).expect("read PID fixture");
+    let before_version = std::fs::read(&version_path).expect("read version fixture");
+
+    let status = run_gateway_status(false)
+        .expect_err("status must refuse the unauthenticated process")
+        .to_string();
+    let up = run_gateway_up(false)
+        .expect_err("up must refuse to replace the unauthenticated process")
+        .to_string();
+    let down = run_gateway_down(false)
+        .expect_err("down must refuse to signal the unauthenticated process")
+        .to_string();
+    let marker = root.path().join("managed-start-ran");
+    let command = format!("touch '{}'", marker.display());
+    let managed = gateway_up_for_managed_task(&command)
+        .expect_err("managed start must refuse the unauthenticated process")
+        .to_string();
+
+    for message in [&status, &up, &down, &managed] {
+        assert!(message.contains("legacy gateway identity migration required"));
+        assert!(message.contains("gateway.identity` is missing"));
+        assert!(message.contains("previous executable may already have been replaced"));
+        assert!(!message.contains("cannot determine gateway state"));
+    }
+    assert!(!marker.exists(), "managed startup command must not run");
+    assert_eq!(std::fs::read(&pid_path).expect("PID remains"), before_pid);
+    assert_eq!(
+        std::fs::read(&version_path).expect("version remains"),
+        before_version
+    );
+    assert!(!identity_path.exists(), "no identity may be synthesized");
+    assert!(child.0.try_wait().expect("probe private child").is_none());
+}

@@ -244,6 +244,51 @@ fn server_probe_state_status_unknown_preserves_pid_and_version_records() {
 }
 
 #[test]
+fn gateway_identity_legacy_record_requires_migration_and_unknown_probe_stays_distinct() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = GatewayConfig::standard(dir.path().to_path_buf());
+    std::fs::write(&config.pid_file_path, "4242\n").unwrap();
+    let version_path = config.pid_file_path.with_extension("version");
+    std::fs::write(&version_path, "v0.13.1\n").unwrap();
+    let before_pid = std::fs::read(&config.pid_file_path).unwrap();
+    let before_version = std::fs::read(&version_path).unwrap();
+
+    let active = get_verified_gateway_status_with_probes(
+        &config,
+        |_| GatewayProcessProbe::Running,
+        |_, _| panic!("legacy record must not probe or adopt an identity"),
+    );
+    assert!(matches!(
+        active,
+        Err(GatewayError::LegacyIdentityRequired { pid: 4242 })
+    ));
+
+    let start = check_existing_gateway_pid_with(
+        &config,
+        |_| GatewayProcessProbe::Running,
+        |_| panic!("legacy record must not probe or adopt an identity"),
+    );
+    assert!(matches!(
+        start,
+        Err(GatewayError::LegacyIdentityRequired { pid: 4242 })
+    ));
+
+    let unknown = get_verified_gateway_status_with_probes(
+        &config,
+        |_| GatewayProcessProbe::Unknown,
+        |_, _| panic!("legacy record must not probe or adopt an identity"),
+    );
+    assert!(matches!(
+        unknown,
+        Err(GatewayError::ProcessStateUnknown { pid: 4242 })
+    ));
+
+    assert_eq!(std::fs::read(&config.pid_file_path).unwrap(), before_pid);
+    assert_eq!(std::fs::read(&version_path).unwrap(), before_version);
+    assert!(!config.pid_file_path.with_extension("identity").exists());
+}
+
+#[test]
 fn server_probe_state_status_confirmed_absent_clears_records() {
     let dir = tempfile::tempdir().unwrap();
     let config = GatewayConfig::standard(dir.path().to_path_buf());

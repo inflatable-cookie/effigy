@@ -537,9 +537,14 @@ unchanged public `GatewayStatus` output paired with the exact trusted record
 snapshot. `get_status` and `check_existing_gateway_pid` require the recorded
 PID, boot id and precise start identity to match. A readable different live
 generation is not Running and its stale record is removed only by byte-for-byte
-compare-and-remove. Missing, legacy numeric-only, malformed, unreadable or
-unknown identity preserves the record and refuses signal or replacement.
-Confirmed process absence can clear an authenticated record idempotently.
+compare-and-remove. A readable PID-only record with no `gateway.identity`
+sidecar receives a specific legacy identity migration error after a read-only
+process probe. An unknown process probe keeps the distinct `ProcessStateUnknown`
+error; a running or confirmed-absent numeric-only record still preserves its
+files and refuses signal, cleanup, or replacement. A present but malformed,
+PID-mismatched, unreadable or otherwise untrusted identity also remains unknown
+and is preserved. Confirmed process absence can clear an authenticated record
+idempotently.
 Before TERM and again before KILL, stop rechecks the same record and live
 identity; `process_signal_accessible` performs the same check before its
 signal-zero permission probe. The `gateway up` check and record publication
@@ -570,13 +575,16 @@ version-mismatch `up` pass the retained snapshot to `stop_gateway_process`;
 before selecting the elevated down path. Daemon shutdown removes only the
 snapshot it published. No production caller uses a numeric-only signal path.
 
-Legacy records remain untouched and block `status`, `up`, and `down` while the
-process is live or its state is unknown. Once the old daemon is confirmed
-stopped/gone, the operator may manually remove its PID/version files and run
-`up` to publish a new pair. A v0.13.1 rollback ignores `gateway.identity` and
-restores the PID-only risk; downgrade is not claimed safe. Host-run contract
-010 and its whole-second wire identity are unchanged. Non-Unix `down` remains
-unimplemented.
+Legacy records remain untouched and block `status`, `up`, `down`, and managed
+start. A missing sidecar is reported as a migration requirement rather than a
+process-probe failure; if the process probe itself is unknown, that unknown
+remains distinct. The diagnostic does not assume the previous executable is
+still installed and does not authorize PID-only signaling. The operator must
+independently identify and stop the old daemon, then confirm it is gone before
+removing its PID/version files and running `up` to publish a new pair. A
+v0.13.1 rollback ignores `gateway.identity` and restores the PID-only risk;
+downgrade is not claimed safe. Host-run contract 010 and its whole-second wire
+identity are unchanged. Non-Unix `down` remains unimplemented.
 
 Private controls cover exact-byte preservation for legacy/malformed and
 interrupted pairs, unsafe/symlink records, owner-only publication, target/path
