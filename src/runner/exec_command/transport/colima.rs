@@ -466,9 +466,10 @@ mod tests {
     /// first `ps --format` invocation answers instantly through the same
     /// production capture path (readiness: PATH resolution, phase dispatch,
     /// output capture and row selection), while the second and later
-    /// invocations hang with recorded PIDs. Every probe invocation is counted
-    /// and traced so a failure can tell no-spawn, early exit and wrong phase
-    /// apart from a genuine hung child.
+    /// invocations hang with recorded PIDs. Every invocation logs its argv
+    /// first, and every probe invocation is counted and traced, so a failure
+    /// can tell no-spawn, early exit, wrong phase and unexpected argv apart
+    /// from a genuine hung child.
     #[cfg(unix)]
     fn discovery_phased_script(
         pgfile: &Path,
@@ -477,7 +478,7 @@ mod tests {
         root: &Path,
     ) -> String {
         format!(
-            "#!/bin/sh\ncase \"$1\" in\n  nerdctl)\n    case \"$*\" in\n      *\"ps --format\"*)\n        printf 'spawned %s\\n' \"$$\" >> '{trace}'\n        n=$(cat '{counter}' 2>/dev/null || echo 0)\n        n=$((n + 1))\n        printf '%s\\n' \"$n\" > '{counter}'\n        if [ \"$n\" -ge 2 ]; then\n          printf 'hanging invocation %s\\n' \"$n\" >> '{trace}'\n          printf '%s\\n' \"$$\" > '{pg}'\n          sleep 300 &\n          printf '%s\\n' \"$!\" >> '{pg}'\n          wait\n        else\n          printf 'warming invocation %s\\n' \"$n\" >> '{trace}'\n          printf 'demo-stack-workspace-1\\tUp 2 minutes\\t\\tdemo-stack\\t{root}\\tworkspace\\t0\\n'\n          exit 0\n        fi\n        ;;\n      *)\n        printf 'demo-stack-workspace-1\\n'\n        exit 0\n        ;;\n    esac\n    ;;\n  *)\n    exit 0\n    ;;\nesac\n",
+            "#!/bin/sh\nprintf 'argv: %s\\n' \"$*\" >> '{trace}'\ncase \"$1\" in\n  nerdctl)\n    case \"$*\" in\n      *\"ps --format\"*)\n        printf 'spawned %s\\n' \"$$\" >> '{trace}'\n        n=$(cat '{counter}' 2>/dev/null || echo 0)\n        n=$((n + 1))\n        printf '%s\\n' \"$n\" > '{counter}'\n        if [ \"$n\" -ge 2 ]; then\n          printf 'hanging invocation %s\\n' \"$n\" >> '{trace}'\n          printf '%s\\n' \"$$\" > '{pg}'\n          sleep 300 &\n          printf '%s\\n' \"$!\" >> '{pg}'\n          wait\n        else\n          printf 'warming invocation %s\\n' \"$n\" >> '{trace}'\n          printf 'demo-stack-workspace-1\\tUp 2 minutes\\t\\tdemo-stack\\t{root}\\tworkspace\\t0\\n'\n          exit 0\n        fi\n        ;;\n      *)\n        printf 'demo-stack-workspace-1\\n'\n        exit 0\n        ;;\n    esac\n    ;;\n  *)\n    exit 0\n    ;;\nesac\n",
             pg = pgfile.display(),
             counter = counterfile.display(),
             trace = tracefile.display(),
@@ -495,19 +496,29 @@ mod tests {
             .unwrap_or_else(|_| "(no fixture trace recorded)".to_owned())
     }
 
-    /// Wait for the fixture to record its hang-phase PIDs. This is a generous
-    /// readiness wait, not a bound proof: it tells a slow spawn apart from a
-    /// phase that never ran before the reap oracle judges anything.
+    /// Wait until the fixture has recorded both hang-phase PIDs — the probe
+    /// leader and its sleep descendant. This is a generous readiness wait,
+    /// not a bound proof: it tells a slow spawn or a partial (single-line)
+    /// record apart from the proven leader-plus-descendant phase before the
+    /// reap oracle judges anything.
     #[cfg(unix)]
     fn await_fixture_phase(pgfile: &Path, tracefile: &Path) {
         let deadline = Instant::now() + Duration::from_secs(30);
         loop {
-            if pgfile.exists() {
+            let pids = std::fs::read_to_string(pgfile)
+                .ok()
+                .map(|text| {
+                    text.lines()
+                        .filter_map(|line| line.trim().parse::<i32>().ok())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            if pids.len() == 2 {
                 return;
             }
             assert!(
                 Instant::now() < deadline,
-                "fixture never reached its hang phase (no-spawn, early exit or wrong phase?); fixture trace:\n{}",
+                "fixture never recorded both hang-phase PIDs (leader and descendant; no-spawn, early exit, partial record or wrong phase?); got {pids:?}; fixture trace:\n{}",
                 fixture_trace_snippet(tracefile)
             );
             std::thread::sleep(Duration::from_millis(20));
@@ -730,7 +741,11 @@ mod tests {
         );
         clear_service_container_name_cache();
 
-        let deadline = Instant::now() + Duration::from_secs(3);
+        // The proof clock starts before the caller deadline is derived from
+        // it, so the lower bound below is exact: the hang must consume the
+        // full caller budget.
+        let started = Instant::now();
+        let deadline = started + Duration::from_secs(3);
         let capture = move |root_dir: &Path, program: &std::ffi::OsStr, args: &[OsString]| {
             crate::runner::exec_command::transport::run_command_capture_until(
                 root_dir,
@@ -741,7 +756,6 @@ mod tests {
             )
         };
 
-        let started = Instant::now();
         let error = match resolve_compose_service_container_id(
             &root,
             &policy,
@@ -762,9 +776,20 @@ mod tests {
             "got {error}; fixture trace:\n{}",
             fixture_trace_snippet(&tracefile)
         );
+        // Two-sided deadline oracle: the hang must consume the full caller
+        // budget (an instant failure would prove nothing) and must return
+        // within supervision grace of it. A rebased budget — e.g. a fresh
+        // 10s grant after the fallback observes the expired deadline — would
+        // land near 13s and fail the 8s upper bound, far below sleep 300.
+        let elapsed = started.elapsed();
         assert!(
-            started.elapsed() < Duration::from_secs(30),
-            "uncached discovery must be bounded by the caller deadline, not wait out sleep 300; fixture trace:\n{}",
+            elapsed >= Duration::from_secs(3),
+            "the hung probe must consume the full caller deadline instead of failing instantly; elapsed {elapsed:?}; fixture trace:\n{}",
+            fixture_trace_snippet(&tracefile)
+        );
+        assert!(
+            elapsed < Duration::from_secs(8),
+            "uncached discovery must be bounded by the caller deadline, not wait out sleep 300; elapsed {elapsed:?}; fixture trace:\n{}",
             fixture_trace_snippet(&tracefile)
         );
         // The expired follow-up resolve must not spawn: exactly the warmup
@@ -918,7 +943,7 @@ mod tests {
         let counterfile = root.join("discovery-invocations");
         let tracefile = root.join("discovery-trace");
         let script = format!(
-            "#!/bin/sh\ncase \"$1\" in\n  nerdctl)\n    case \"$*\" in\n      *\"ps --format\"*)\n        printf 'spawned %s\\n' \"$$\" >> '{trace}'\n        n=$(cat '{counter}' 2>/dev/null || echo 0)\n        n=$((n + 1))\n        printf '%s\\n' \"$n\" > '{counter}'\n        printf 'demo-stack-workspace-1\\tUp 2 minutes\\t\\tdemo-stack\\t{root}\\tworkspace\\t0\\n'\n        exit 0\n        ;;\n      *)\n        exit 0\n        ;;\n    esac\n    ;;\n  *)\n    exit 0\n    ;;\nesac\n",
+            "#!/bin/sh\nprintf 'argv: %s\\n' \"$*\" >> '{trace}'\ncase \"$1\" in\n  nerdctl)\n    case \"$*\" in\n      *\"ps --format\"*)\n        printf 'spawned %s\\n' \"$$\" >> '{trace}'\n        n=$(cat '{counter}' 2>/dev/null || echo 0)\n        n=$((n + 1))\n        printf '%s\\n' \"$n\" > '{counter}'\n        printf 'demo-stack-workspace-1\\tUp 2 minutes\\t\\tdemo-stack\\t{root}\\tworkspace\\t0\\n'\n        exit 0\n        ;;\n      *)\n        exit 0\n        ;;\n    esac\n    ;;\n  *)\n    exit 0\n    ;;\nesac\n",
             root = root.display(),
             trace = tracefile.display(),
             counter = counterfile.display()
