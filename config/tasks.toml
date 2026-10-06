@@ -29,6 +29,24 @@
 "dist:preflight:smoke" = "cargo test --test cli_output_tests cli_distribution_artifact_pipeline_smoke_fixture_passes -- --nocapture"
 "test:release:macos-checksums" = "bash tests/scripts/release-macos-checksums.sh"
 
+# Authorized in-place release preparation. Heavy admission wraps the WHOLE
+# operation (current-source build, prepared-tree gates, prepared state) before
+# any compile or file mutation. The entry point is argv-safe: it fixes the
+# subcommand to `release prepare`, rejects `--repo`, enforces `--check-gates`
+# for a mutating run, and never forwards execute, resume, tag or publish. It
+# mutates this checkout by design, unlike Queue milestone `project.qa.run`,
+# which uses a disposable checkout. Ordinary milestone QA stays on Queue.
+"release:prepare".admission = "heavy"
+"release:prepare".run = "bash scripts/release-prepare.sh {args}"
+# Private fixture proof of heavy admission and argv safety. No build, no live
+# scheduler: a recording `cargo` stub in a disposable git fixture.
+"test:release:preparation-admission" = "bash tests/scripts/release-preparation-admission.sh"
+# No compiled target is touched by the selector; validate the entry points.
+"check:release:preparation-admission" = [
+  "bash -n scripts/release-prepare.sh",
+  "bash -n tests/scripts/release-preparation-admission.sh",
+]
+
 # Container/runtime profiling
 "perf:container-shell-matrix" = { rhai = "scripts/profile-container-shell-matrix.rhai" }
 "perf:graph-agent-benchmark" = { rhai = "scripts/benchmark-graph-agent-usage.rhai" }

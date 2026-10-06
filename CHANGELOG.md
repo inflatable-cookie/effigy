@@ -7,6 +7,15 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- `effigy release:prepare` is a maintained, `admission = "heavy"` selector for
+  authorized in-place release preparation. It admits the whole operation before
+  any compilation or file mutation, fixes the subcommand to `release prepare`,
+  rejects `--repo`, enforces `--check-gates` for a mutating run, and forwards an
+  explicit target version to the Effigy built from the invocation checkout. It
+  never selects `execute`, `resume`, tag or publish, and it deliberately keeps
+  prepared state in the invocation `main` checkout; ordinary milestone QA stays
+  on Queue `project.qa.run`. `effigy release:prepare --plan` is the outer,
+  no-write task plan, while `-- --plan` runs the inner prepare plan.
 - Gateway lifecycle now persists `gateway.identity` beside the compatible
   decimal PID file and verifies boot plus precise process start identity before
   reporting or signalling a gateway. Legacy PID-only or unknown records are
