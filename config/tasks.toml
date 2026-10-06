@@ -38,6 +38,10 @@
 # which uses a disposable checkout. Ordinary milestone QA stays on Queue.
 "release:prepare".admission = "heavy"
 "release:prepare".run = "bash scripts/release-prepare.sh {args}"
+# The self-hosting install verifier runs from a compatible source build; keep
+# its subcommand fixed and admit the complete tagged-source install proof.
+"release:verify-install".admission = "heavy"
+"release:verify-install".run = "./target/debug/effigy release verify-install {args}"
 # Private fixture proof of heavy admission and argv safety. No build, no live
 # scheduler: a recording `cargo` stub in a disposable git fixture.
 "test:release:preparation-admission" = "bash tests/scripts/release-preparation-admission.sh"
@@ -453,6 +457,12 @@
   "cargo test -p effigy --lib container_removal_state -- --nocapture",
   "EFFIGY_REQUIRE_HOST_RUN_PRIVATE_SERVER=1 cargo test --test host_scheduler_integration -- --include-ignored --nocapture --test-threads=1",
 ]
+# One private-server proof for the fixed release install selector and nested
+# host-run inheritance; it never runs an install or contacts a release host.
+"test:release:verification-admission" = [
+  { id = "release-verification-admission", run = "EFFIGY_REQUIRE_HOST_RUN_PRIVATE_SERVER=1 cargo test --test host_scheduler_integration release_verify_install_selector_preserves_fixed_command_and_host_run -- --include-ignored --exact --nocapture --test-threads=1", timeout_ms = 240000 },
+]
+"check:release:verification-admission" = "cargo check -p effigy --test host_scheduler_integration --profile test"
 # Exact Queue152 follower restart and cancellation acceptance. The caller must
 # provide EFFIGY_HOST_RUN_PRIVATE_SERVER pointing at the clean reviewed f53a9d0
 # checkout; required-fixture mode prevents either ignored case from skipping.

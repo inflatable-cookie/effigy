@@ -40,7 +40,9 @@ Release prepare may reuse a hosted CI result for a gate explicitly configured wi
 
 ## Verify and recover
 
-- After artifacts publish, run `effigy release verify-install --tag vX.Y.Z`. Check the GitHub release and Homebrew tap.
+- After artifacts publish, run
+  `./target/debug/effigy release:verify-install --tag vX.Y.Z` in Effigy's own
+  source checkout. Check the GitHub release and Homebrew tap.
 - If publication fails after tagging, keep the tag. Fix the cause and release the next PATCH; never re-tag a failed release.
 - For a broken published binary, pause new publishes, tell consumers the affected version, point install guidance at the last good version, and prepare a PATCH fix.
 
@@ -147,6 +149,35 @@ current-source Effigy but performs no mutation. The mutating planner command is
 checkout. The whole operation runs inside one admitted host-run; nested gate
 work reuses that run instead of resubmitting, and a failed gate or cancelled
 run keeps the built-in's rollback and honest non-zero exit.
+
+### Admission for isolated release install verification
+
+Effigy's published binary also needs an isolated install proof after its
+release assets are available. The built-in
+`effigy release verify-install --tag vX.Y.Z` installs the tagged source into a
+temporary root and exercises its installed command against a fixture. Run that
+proof through the maintained `effigy release:verify-install` selector so
+Queue/Nucleus admits the complete install and fixture run before the child
+starts. This source selector is a follow-up after v0.14.0; the published
+v0.14.0 binary does not provide it.
+
+The selector is declared `admission = "heavy"` in
+[`config/tasks.toml`](../../../config/tasks.toml) and fixes its command to
+`./target/debug/effigy release verify-install {args}`. Normal task arguments
+are shell-quoted by the task runner, so options such as `--tag` reach only the
+fixed verifier subcommand; forwarded values cannot select `execute`,
+`prepare`, or another shell command. Use a compatible source-built Effigy at
+`target/debug/effigy`. The selector does not change the installed local Effigy
+or define another install channel; the built-in keeps its temporary root.
+
+Invoke the selector through that compatible source-built binary as
+`./target/debug/effigy release:verify-install --tag vX.Y.Z`; this avoids
+replacing or refreshing the installed local Effigy. The selector is for the
+planner's authorized post-publication install proof, not worker validation or
+release preparation. It does not authorize a tag, publish, workflow change,
+or live operation. Its private acceptance fixture checks fixed argv, refusal
+before child start, and inherited host-run behavior without performing an
+install or contacting release hosts.
 
 ### Unsafe-invariant and public-diagnostics reconciliation
 
