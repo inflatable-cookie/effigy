@@ -2,7 +2,7 @@
 
 Owner: Platform
 Created: 2026-05-05
-Last Updated: 2026-09-27
+Last Updated: 2026-10-06
 
 ## Purpose
 
@@ -265,6 +265,8 @@ Minimum proof:
 - explicit skill source identity survives nested task and Rhai dispatch while
   ordinary task routing remains unchanged
 - env overrides merge through one path
+- QA-group member requests set `environment.cwd` to the group's resolved root
+  so `ExecutionDispatchPlan.effective_cwd` is that repository, not process cwd
 - drift checks reject embedded task dispatch that bypasses
   `TaskExecutionRequestBuilder`
 - drift checks and Rhai tests reject first-party container-sensitive scripts

@@ -40,9 +40,11 @@ The coordinator owns one group run ID, sequential member order, shared heavy
 admission, aggregate state, wall-time measurement, and a durable member ledger.
 For each member it builds the existing typed `TaskExecutionRequest` from
 contract [013](../contracts/013-task-execution-request-contract.md) and hands
-it to the canonical pipeline. Routing, environment, secrets, isolation,
-containers, locks, arguments, exit behavior, and cleanup remain pipeline
-responsibilities.
+it to the canonical pipeline. Member requests set `environment.cwd` to the
+group's resolved root so discovery does not follow the process cwd; heavy
+submit still threads the captured invocation cwd. Routing, environment,
+secrets, isolation, containers, locks, arguments, exit behavior, and cleanup
+remain pipeline responsibilities.
 
 No group member contains a raw command body. No group invokes a separate task
 runner, calls another QA group, or changes the meaning of an existing

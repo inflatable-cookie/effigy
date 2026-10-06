@@ -222,8 +222,12 @@ Effigy cannot detect an omitted scope token and never infers one from Git,
 status, a graph, or a changed-file list.
 
 Members run sequentially in declaration order through the ordinary execution
-pipeline. A failed member ends the group; remaining members are reported as
-`not_started` with that reason. The group never drops a member to fit its
+pipeline. Each member request sets `environment.cwd` to the group's resolved
+root so catalog discovery and task lookup use that repository, including when
+the process cwd is a different checkout and `--repo` selected the group.
+Scheduler submit still reuses the captured invocation cwd. A failed member
+ends the group; remaining members are reported as `not_started` with that
+reason. The group never drops a member to fit its
 expected cost. A selector may compose ordinary tasks using existing task
 semantics, but a group cannot invoke another QA group or invent an embedded
 command runner.

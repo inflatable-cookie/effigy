@@ -379,6 +379,15 @@ During v0.x, MINOR bumps may include breaking changes.
 - Migrated repository planning and current technical knowledge to lean Northstar. Queue now owns task briefs, status, and outcomes; user guides retain their existing paths.
 
 ### Fixed
+- QA-group heavy submission reuses the captured invocation cwd instead of
+  rediscovering process cwd, so nested or already-dispatched group runs keep
+  the original caller directory. Member execution discovers catalogs from the
+  group's resolved root (`environment.cwd` plus a capture at that root unless
+  a nested task source is present), so `tasks qa-group run` with `--repo`
+  still resolves members such as `root/ok` when the process cwd is another
+  checkout.
+- Inline-workspace scheduler start and remove facts share the manager
+  compose-plan backend id. A Colima policy reports `colima-nerdctl` for both.
 - Managed TUI sessions now render startup feedback before sequential child
   startup delays finish. Waiting, starting, running, and failed tabs remain
   visible while child output and cancellation are handled; the configured

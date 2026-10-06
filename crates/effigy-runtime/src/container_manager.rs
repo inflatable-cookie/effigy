@@ -246,6 +246,44 @@ mod tests {
     }
 
     #[test]
+    fn lifecycle_operation_report_does_not_apply_policy_backend_detection() {
+        let _lock = env_lock();
+        let temp = tempfile::tempdir().expect("tempdir");
+        let previous_backend = std::env::var_os("EFFIGY_COMPOSE_BACKEND");
+        unsafe {
+            std::env::remove_var("EFFIGY_COMPOSE_BACKEND");
+        }
+        let repo_root = temp.path();
+        let policy = test_policy();
+        let report = super::lifecycle_operation_report(
+            repo_root,
+            &policy,
+            ContainerAction::Status,
+            ContainerRuntimeState::Unknown,
+            None,
+        )
+        .expect("report");
+        let plan = super::compose_invocation_plan(
+            repo_root,
+            &policy,
+            ["down", "--remove-orphans"],
+            ContainerAction::Shutdown,
+            "docker compose down",
+        )
+        .expect("plan");
+        match previous_backend {
+            Some(value) => unsafe {
+                std::env::set_var("EFFIGY_COMPOSE_BACKEND", value);
+            },
+            None => unsafe {
+                std::env::remove_var("EFFIGY_COMPOSE_BACKEND");
+            },
+        }
+        assert_eq!(report.backend_id, BackendId::docker_compose());
+        assert_eq!(plan.backend_id, BackendId::colima_nerdctl());
+    }
+
+    #[test]
     fn compose_invocation_plan_honors_env_backend_override_over_policy() {
         let _lock = env_lock();
         let temp = tempfile::tempdir().expect("tempdir");

@@ -89,7 +89,7 @@ failure_count += check_no_unlisted_matches(
     ["src/runner", "crates/effigy-runtime/src"],
     `Command::new\("(docker|colima|nerdctl)"`,
     #{ glob: "*.rs" },
-    `^(src/runner/doctor_ports\.rs|src/runner/bootstrap_command/mod\.rs)$`,
+    `^(src/runner/doctor_ports\.rs|src/runner/bootstrap_command/mod\.rs|src/runner/system_command/workspace_permissions_gnu_accept\.rs)$`,
 );
 
 failure_count += check_no_unlisted_matches(
@@ -97,7 +97,7 @@ failure_count += check_no_unlisted_matches(
     ["src/runner", "crates/effigy-runtime/src"],
     `compose_args\(`,
     #{ glob: "*.rs" },
-    `^(crates/effigy-runtime/src/container_manager\.rs|src/runner/managed_shell\.rs|src/runner/demo_command/execute/task/selection\.rs|src/runner/exec_command/transport\.rs|src/runner/exec_command/transport/colima\.rs|src/runner/container_runtime_prep/prep\.rs|src/runner/container_runtime_prep/mod\.rs|src/runner/container_command/support\.rs|src/runner/deferral/run\.rs|src/runner/execute/pipeline/standard\.rs|src/runner/execute/pipeline/managed\.rs|src/runner/system_command/workspace_provisioning\.rs)$`,
+    `^(crates/effigy-runtime/src/container_manager\.rs|src/runner/managed_shell\.rs|src/runner/demo_command/execute/task/selection\.rs|src/runner/exec_command/transport\.rs|src/runner/exec_command/transport/colima\.rs|src/runner/container_runtime_prep/prep\.rs|src/runner/container_runtime_prep/mod\.rs|src/runner/container_command/support\.rs|src/runner/deferral/run\.rs|src/runner/execute/pipeline/managed\.rs|src/runner/system_command/workspace_provisioning\.rs)$`,
 );
 
 failure_count += check_no_unlisted_matches(
@@ -127,6 +127,8 @@ failure_count += check_no_unlisted_matches(
 if failure_count > 0 {
     throw "Runtime/container drift guard failed.\n"
         + "Either route the call through the current request/plan/manager surface, or add\n"
-        + "a deliberate temporary allowance in scripts/check-runtime-container-drift.rhai and\n"
-        + "document it in docs/knowledge/contracts/052-drift-guards-and-architecture-proof-matrix-strict-lane.md.";
+        + "a deliberate temporary path-scoped allowance in scripts/check-runtime-container-drift.rhai\n"
+        + "and document the boundary in docs/knowledge/architecture/022-runtime-architecture-sanity-audit.md\n"
+        + "plus contracts 011, 012, 013, 015, and 052-owned-run-supervision-contract.md.\n"
+        + "Do not waive a whole directory or a production file because it also holds fixtures.";
 }

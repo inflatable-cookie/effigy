@@ -88,7 +88,23 @@ The current drift guard is `effigy qa:architecture:runtime-container-drift`.
 It catches new direct cwd discovery, raw backend commands, Compose helper
 calls, legacy capture paths, and Rhai bypasses outside path-scoped allowances.
 A new allowance needs a concrete adapter or debt owner; widening a directory
-pattern to make the check pass loses the boundary.
+pattern to make the check pass loses the boundary. Production callers in the
+same file as a legitimate fixture still fail: the GNU-findutils Colima
+acceptance lives in
+`src/runner/system_command/workspace_permissions_gnu_accept.rs`, not in
+permission-prep production. QA-group scheduler submit consumes the
+already-captured invocation cwd. Member execution requests set
+`environment.cwd` to the group's resolved root (and capture there unless a
+nested task source is present) so catalog discovery follows the `--repo`
+target, not the process cwd. Inline-workspace start and remove facts share
+the manager compose-plan backend id (`detect_backend` with policy/env
+detection). `lifecycle_operation_report` / `selected_backend` is the wrong
+surface: with no request override it returns the first registered backend.
+Doctor bun-cache probes and
+permission-prep exec go through `compose_invocation_plan` plus the deadline
+exec adapter. Guard failure text names this review and contracts 011, 012,
+013, 015, and 052. Private proof:
+`effigy test:architecture:runtime-container-drift-controls`.
 
 Raw `Command::new` also has legitimate host-process uses: gateway elevation,
 artifact transport, release probes, and generic shell execution. Review a new

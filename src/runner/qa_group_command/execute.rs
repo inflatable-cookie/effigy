@@ -17,9 +17,10 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use chrono::Utc;
 use effigy_execution::{
-    QaGroupBackend, QaGroupBudgetState, QaGroupGapSnapshot, QaGroupMemberRecord,
-    QaGroupMemberState, QaGroupOutcome, QaGroupRunCapabilities, QaGroupRunGroupSnapshot,
-    QaGroupRunHead, QaGroupRunRecord, QaGroupRunState, QaGroupRunTiming, QA_GROUP_RUN_SCHEMA,
+    ExecutionEnvironmentPlan, QaGroupBackend, QaGroupBudgetState, QaGroupGapSnapshot,
+    QaGroupMemberRecord, QaGroupMemberState, QaGroupOutcome, QaGroupRunCapabilities,
+    QaGroupRunGroupSnapshot, QaGroupRunHead, QaGroupRunRecord, QaGroupRunState, QaGroupRunTiming,
+    QA_GROUP_RUN_SCHEMA,
 };
 use effigy_tasks::{budget_state, QaGroupPlan, QaGroupPlanMember};
 
@@ -42,6 +43,7 @@ type MemberAttempt = Result<(String, String), (Box<RunnerError>, String, String)
 
 pub(super) fn execute_group_run(
     root: &Path,
+    invocation_cwd: &Path,
     plan: &QaGroupPlan,
     selector_env_names: std::collections::BTreeSet<String>,
     output_json: bool,
@@ -52,16 +54,14 @@ pub(super) fn execute_group_run(
     // Routing decisions that can refuse (invalid setting, forged token, down
     // scheduler) happen here, before any ledger entry or member effect.
     let route = if heavy {
-        Some(host_scheduler::route_heavy(
-            &selector,
-            &invocation_cwd(root),
-        )?)
+        Some(host_scheduler::route_heavy(&selector, invocation_cwd)?)
     } else {
         None
     };
     if route == Some(Route::Submit) {
         return submit_group_run(
             root,
+            invocation_cwd,
             plan,
             selector_env_names,
             output_json,
@@ -116,10 +116,6 @@ enum RunMode {
     Owned,
 }
 
-fn invocation_cwd(root: &Path) -> std::path::PathBuf {
-    std::env::current_dir().unwrap_or_else(|_| root.to_path_buf())
-}
-
 /// Backend correlation for a scheduler-covered heavy run.
 fn backend_for(route: &Route, heavy: bool) -> Option<QaGroupBackend> {
     if !heavy {
@@ -150,18 +146,18 @@ fn backend_for(route: &Route, heavy: bool) -> Option<QaGroupBackend> {
 /// scheduler settled without launching leaves a record, written by this process.
 fn submit_group_run(
     root: &Path,
+    invocation_cwd: &Path,
     plan: &QaGroupPlan,
     selector_env_names: std::collections::BTreeSet<String>,
     output_json: bool,
     run_id: &str,
     selector: &str,
 ) -> Result<String, RunnerError> {
-    let cwd = invocation_cwd(root);
     let settled = host_scheduler::submit_and_settle(SubmitContext {
         selector,
         class_source: effigy_host_run::ClassSource::Manifest,
         repository: root,
-        cwd: &cwd,
+        cwd: invocation_cwd,
         selector_env_names,
     })?;
     let host_scheduler::Settled::NotLaunched {
@@ -411,6 +407,7 @@ fn build_member_request(
         } else {
             effigy_execution::ExecutionSurface::QaGroup
         })
+        .environment(ExecutionEnvironmentPlan::default().cwd(root.to_path_buf()))
         .build()
         .map_err(|error| RunnerError::task_invocation(error.to_string()))
 }
@@ -742,4 +739,61 @@ fn render_record_text(record: &QaGroupRunRecord) -> String {
         out.push_str(&format!("warning: {warning}\n"));
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_member_request;
+    use crate::runner::command_context::with_runtime_context;
+    use effigy_context::EffigyRuntimeContext;
+    use effigy_execution::ExecutionDispatchPlan;
+    use effigy_tasks::QaGroupPlanMember;
+    use std::path::PathBuf;
+
+    fn published_member() -> QaGroupPlanMember {
+        QaGroupPlanMember {
+            id: "t1".to_owned(),
+            kind: "proof".to_owned(),
+            surface: "published".to_owned(),
+            catalog: "root".to_owned(),
+            resolved_selector: "root/ok".to_owned(),
+            task: "ok".to_owned(),
+            args: Vec::new(),
+            targets: vec!["workspace:root".to_owned()],
+            covers: Vec::new(),
+            companions: Vec::new(),
+            limits: vec!["nothing".to_owned()],
+            admission: "ordinary".to_owned(),
+            heavy_reasons: Vec::new(),
+            declared_run_in: "host".to_owned(),
+        }
+    }
+
+    #[test]
+    fn member_request_discovers_from_resolved_root_not_process_cwd() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().to_path_buf();
+        let process_cwd = PathBuf::from("/effigy-qa-group-process-cwd");
+        assert_ne!(
+            root, process_cwd,
+            "fixture root must differ from the process cwd"
+        );
+        let cli_context = EffigyRuntimeContext::capture_lossy(Some(process_cwd.clone()), None)
+            .expect("cli context");
+        assert!(cli_context.task_source().is_none());
+        assert_eq!(cli_context.invocation_cwd(), process_cwd.as_path());
+
+        let request = with_runtime_context(&cli_context, || {
+            build_member_request(&root, &published_member())
+        })
+        .expect("member request");
+
+        assert_eq!(request.environment.cwd.as_deref(), Some(root.as_path()));
+        assert!(request.runtime_context.task_source().is_none());
+        assert_eq!(request.runtime_context.invocation_cwd(), root.as_path());
+        let plan = ExecutionDispatchPlan::from_request(request).expect("dispatch plan");
+        assert_eq!(plan.effective_cwd, root);
+        assert_ne!(plan.effective_cwd, process_cwd);
+        assert_eq!(plan.selector, "root/ok");
+    }
 }
