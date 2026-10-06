@@ -564,7 +564,7 @@ pid still races that syscall; it does not reintroduce whole-second truncation.
 Non-Unix `down` stays unimplemented. A readable sidecar does not let an
 ordinary operator uid read live `PROC_PIDTBSDINFO` of a root-owned daemon;
 that live-identity access boundary is [Q-002](../questions.md#q-002--macos-gateway-cross-user-identity-access)
-and is not authorized here.
+and is governed by Tom's narrow-reader ruling below.
 
 ### Gateway process identity ruling
 
@@ -582,8 +582,9 @@ stopped/gone before removing its records.
 
 The legitimate unelevated reader must be able to read the trusted sidecar
 published by an elevated daemon. Private proofs must establish that read policy
-and live identity access; no new helper, elevation route or host-run contract
-change is authorized. A last identity check still races the signal syscall;
+and live identity access. Tom's 2026-10-06 Q-002 ruling authorizes only the
+bounded read-only command through existing administrator elevation described
+below; no new helper or host-run contract change is authorized. A last identity check still races the signal syscall;
 implementation and release documentation must disclose that limit rather than
 claim atomic ownership. No live gateway migration or release publication is
 part of this authorization.
@@ -595,10 +596,18 @@ therefore unverifiable through this API by an ordinary operator client.
 A readable sidecar alone does not solve live identity access. See
 [Apple's process security policy](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/proc_info.c).
 Do not weaken the identity match or use deprecated `kern.proc` SPI to hide
-this support limit. A new elevated-reader route or changed daemon privilege
-model needs an explicit ruling in [Q-002](../questions.md#q-002--macos-gateway-cross-user-identity-access).
-The implementation is not approved to cross that boundary; Q-001 still blocks
-publication until the correction is implemented and verified.
+this support limit.
+
+Tom ruled NARROW on 2026-10-06 in [Q-002](../questions.md#q-002--macos-gateway-cross-user-identity-access):
+implement a bounded read-only identity command through Effigy's existing
+administrator elevation. It may prompt for authentication. A declined or
+non-interactive prompt yields unknown; lifecycle commands then refuse to signal.
+The command reads only the trusted recorded gateway target, returns bounded
+identity/status data, and does not signal, change records or start anything.
+No new helper, install, standing privilege, live-operations authority or change
+to contract 010 is approved. The larger privilege model is not approved.
+This authorizes the bounded implementation, not a live gateway migration.
+Q-001 still blocks publication until the correction is implemented and verified.
 
 On macOS, gateway setup manages `/etc/resolver/` files for local domains.
 HTTPS uses mkcert-backed certificates after `effigy gateway setup-tls`.
