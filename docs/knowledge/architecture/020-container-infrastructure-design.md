@@ -489,9 +489,11 @@ uid/`ps` row matching would not close this. The live foreign process can share
 uid with the operator, and an exact PID row is what the probe already
 requires.
 
-#### Platform identity primitives (inventory)
+#### Platform identity primitives (pre-correction inventory)
 
-Already in the product, not used by gateway lifecycle:
+Historical baseline before the start-identity correction: these primitives were
+already in the product but were not used to establish gateway ownership.
+The implemented policy is described in the following subsection.
 
 | Primitive | Where | Precision | Gateway use |
 | --- | --- | --- | --- |
@@ -501,8 +503,8 @@ Already in the product, not used by gateway lifecycle:
 | macOS `libc::proc_bsdinfo` | `proc_pidinfo(PROC_PIDTBSDINFO)` → `pbi_start_tvsec` and `pbi_start_tvusec` (`u64` each). Locked `libc` 0.2.189 and XNU's public `sys/proc_info.h` both expose the usec field. XNU copies both fields from the kernel process start timestamp. Host-run ignores usec. XNU `proc_info.c` applies `CHECK_SAME_USER`; a cross-uid read needs `PRIV_GLOBAL_PROC_INFO` | Strongest macOS start-time primitive in this tree: pid + boot + sec + usec. Whole-second collision is avoidable truncation. A root-owned gateway is unverifiable through this API from the ordinary operator uid ([Q-002](../questions.md#q-002--macos-gateway-cross-user-identity-access)) | Unused by gateway |
 | Linux pidfd | not used | Would make open-then-signal atomic on Linux 5.3+ | Not portable to macOS; out of the smallest fix |
 
-Unknown identities already fail closed in host-run and in
-`process_start_identity_matches`. Gateway has no equivalent match step.
+At that baseline, unknown identities already failed closed in host-run and in
+`process_start_identity_matches`; gateway had no equivalent match step.
 
 #### Implemented correction in task 104
 
