@@ -31,6 +31,10 @@ notify = "8"
 
 # System
 libc = "0.2"
+nix = { version = "0.31", default-features = false, features = ["fs", "user"] }
+hex = "0.4"
+sha2 = "0.11"
+effigy-process = { path = "../effigy-process" }
 
 # Utilities
 thiserror = "2"

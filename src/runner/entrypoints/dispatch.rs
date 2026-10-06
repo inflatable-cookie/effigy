@@ -20,6 +20,7 @@ use super::super::run_gateway;
 use super::super::run_graph;
 use super::super::run_internal_container_lease_reaper;
 use super::super::run_internal_gateway;
+use super::super::run_internal_gateway_identity;
 use super::super::run_internal_host_process_stop;
 use super::super::run_internal_host_process_supervise;
 use super::super::run_internal_script_run;
@@ -125,6 +126,7 @@ pub(super) fn run_command_with_cwd(cmd: Command, cwd: &Path) -> Result<String, R
             crate::runner::execute::api::run_manifest_task_request(request)
         }
         Command::InternalGateway(args) => run_internal_gateway(args),
+        Command::InternalGatewayIdentity(args) => run_internal_gateway_identity(args),
         Command::InternalScriptRun(args) => run_internal_script_run(args),
         Command::InternalContainerLeaseReaper(args) => run_internal_container_lease_reaper(args),
         Command::InternalHostProcessSupervise(args) => run_internal_host_process_supervise(args),

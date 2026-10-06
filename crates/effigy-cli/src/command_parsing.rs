@@ -32,9 +32,10 @@ use crate::{
     BundleArgs, BundleSubcommand, Command, ContractsArgs, ContractsCheckMode,
     ContractsSelectionPrintMode, ContractsSubcommand, DeferArgs, DepsArgs, DepsManager,
     DepsSubcommand, DoctorArgs, DraftArgs, DraftsArgs, HelpGroup, HelpTopic,
-    InternalContainerLeaseReaperArgs, InternalGatewayArgs, InternalHostProcessStopArgs,
-    InternalHostProcessSuperviseArgs, InternalScriptRunArgs, RhaiArgs, RhaiSubcommand, SkillArgs,
-    SkillStdioMode, SkillSubcommand, TaskInvocation, TasksArgs, TasksQaCommand, UninstallArgs,
+    InternalContainerLeaseReaperArgs, InternalGatewayArgs, InternalGatewayIdentityArgs,
+    InternalHostProcessStopArgs, InternalHostProcessSuperviseArgs, InternalScriptRunArgs, RhaiArgs,
+    RhaiSubcommand, SkillArgs, SkillStdioMode, SkillSubcommand, TaskInvocation, TasksArgs,
+    TasksQaCommand, UninstallArgs,
 };
 use artifact::parse_artifact_command;
 use bootstrap::parse_bootstrap_command;
@@ -100,12 +101,76 @@ where
         "draft" => parse_draft(args),
         "script" => parse_internal_script_command(args),
         "__gateway-run" => Ok(Command::InternalGateway(InternalGatewayArgs)),
+        "__gateway-identity" => parse_internal_gateway_identity_command(args),
         "__container-lease-reaper" => parse_internal_container_lease_reaper_command(args),
         "__host-process-supervise" => parse_internal_host_process_supervise_command(args),
         "__host-process-stop" => parse_internal_host_process_stop_command(args),
         _ if cmd.starts_with('-') => Err(unknown_argument(cmd)),
         _ => parse_task_command(cmd, args),
     }
+}
+
+fn parse_internal_gateway_identity_command<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut digest = None;
+    let mut target_digest = None;
+    let mut owner_uid = None;
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--digest" if digest.is_none() => {
+                let value = next_required_value(
+                    &mut args,
+                    CliParseError::InvalidArguments("missing value for --digest".to_owned()),
+                )?;
+                if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                    return Err(CliParseError::InvalidArguments(
+                        "gateway identity digest must be 64 hexadecimal characters".to_owned(),
+                    ));
+                }
+                digest = Some(value.to_ascii_lowercase());
+            }
+            "--owner-uid" if owner_uid.is_none() => {
+                let value = next_required_value(
+                    &mut args,
+                    CliParseError::InvalidArguments("missing value for --owner-uid".to_owned()),
+                )?;
+                owner_uid = Some(value.parse::<u32>().map_err(|_| {
+                    CliParseError::InvalidArguments(
+                        "gateway identity owner UID must be an unsigned integer".to_owned(),
+                    )
+                })?);
+            }
+            "--target-digest" if target_digest.is_none() => {
+                let value = next_required_value(
+                    &mut args,
+                    CliParseError::InvalidArguments("missing value for --target-digest".to_owned()),
+                )?;
+                if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                    return Err(CliParseError::InvalidArguments(
+                        "gateway target digest must be 64 hexadecimal characters".to_owned(),
+                    ));
+                }
+                target_digest = Some(value.to_ascii_lowercase());
+            }
+            _ => return Err(unknown_argument(&arg)),
+        }
+    }
+    let (Some(digest), Some(target_digest), Some(owner_uid)) = (digest, target_digest, owner_uid)
+    else {
+        return Err(CliParseError::InvalidArguments(
+            "__gateway-identity requires --digest, --target-digest, and --owner-uid".to_owned(),
+        ));
+    };
+    Ok(Command::InternalGatewayIdentity(
+        InternalGatewayIdentityArgs {
+            digest,
+            target_digest,
+            owner_uid,
+        },
+    ))
 }
 
 fn parse_skill_command<I>(args: I) -> Result<Command, CliParseError>

@@ -55,6 +55,8 @@ pub enum Command {
     #[doc(hidden)]
     InternalGateway(InternalGatewayArgs),
     #[doc(hidden)]
+    InternalGatewayIdentity(InternalGatewayIdentityArgs),
+    #[doc(hidden)]
     InternalContainerLeaseReaper(InternalContainerLeaseReaperArgs),
     #[doc(hidden)]
     InternalHostProcessSupervise(InternalHostProcessSuperviseArgs),
@@ -896,6 +898,14 @@ pub enum GatewaySubcommand {
 pub struct InternalGatewayArgs;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[doc(hidden)]
+pub struct InternalGatewayIdentityArgs {
+    pub digest: String,
+    pub target_digest: String,
+    pub owner_uid: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ContainerSubcommand {
     Up {
         name: Option<String>,
@@ -1432,4 +1442,63 @@ where
 
 fn unknown_argument(arg: impl Into<String>) -> CliParseError {
     CliParseError::UnknownArgument(arg.into())
+}
+
+#[cfg(test)]
+mod gateway_identity_command_tests {
+    use super::{parse_command, Command, InternalGatewayIdentityArgs};
+
+    #[test]
+    fn gateway_identity_internal_reader_requires_bounded_bindings() {
+        let digest = "a".repeat(64);
+        let target_digest = "b".repeat(64);
+        let parsed = parse_command([
+            "__gateway-identity".to_owned(),
+            "--digest".to_owned(),
+            digest.clone(),
+            "--target-digest".to_owned(),
+            target_digest.clone(),
+            "--owner-uid".to_owned(),
+            "501".to_owned(),
+        ])
+        .expect("parse bounded identity-reader arguments");
+        assert_eq!(
+            parsed,
+            Command::InternalGatewayIdentity(InternalGatewayIdentityArgs {
+                digest,
+                target_digest,
+                owner_uid: 501,
+            })
+        );
+    }
+
+    #[test]
+    fn gateway_identity_internal_reader_rejects_arbitrary_pid_and_malformed_hashes() {
+        let digest = "a".repeat(64);
+        let target_digest = "b".repeat(64);
+        for args in [
+            vec![
+                "__gateway-identity".to_owned(),
+                "--pid".to_owned(),
+                "42".to_owned(),
+                "--digest".to_owned(),
+                digest.clone(),
+                "--target-digest".to_owned(),
+                target_digest.clone(),
+                "--owner-uid".to_owned(),
+                "501".to_owned(),
+            ],
+            vec![
+                "__gateway-identity".to_owned(),
+                "--digest".to_owned(),
+                "short".to_owned(),
+                "--target-digest".to_owned(),
+                target_digest.clone(),
+                "--owner-uid".to_owned(),
+                "501".to_owned(),
+            ],
+        ] {
+            assert!(parse_command(args).is_err());
+        }
+    }
 }

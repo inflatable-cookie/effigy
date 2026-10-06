@@ -90,12 +90,21 @@ pub(super) fn wait_for_pid_file(config: &GatewayConfig) -> Result<(), RunnerErro
     )))
 }
 
-pub(super) fn stop_gateway_process(pid: u32) -> Result<(), RunnerError> {
+pub(super) fn stop_gateway_process(
+    snapshot: &effigy_gateway::identity::GatewayRecordSnapshot,
+) -> Result<(), RunnerError> {
+    let Some(record) = snapshot.record() else {
+        return Err(RunnerError::task_invocation(
+            "gateway identity is missing; refusing to signal",
+        ));
+    };
+    let pid = snapshot.pid();
     #[cfg(unix)]
     {
-        stop_gateway_process_with(
+        stop_gateway_process_with_identity(
             pid,
             server::probe_gateway_process,
+            || super::gateway_identity_probe(record, snapshot),
             |pid_t, signal| {
                 nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid_t), signal)
                     .map_err(|error| error.to_string())
@@ -142,49 +151,98 @@ fn send_gateway_signal_with(
 }
 
 #[cfg(unix)]
+#[cfg(test)]
 fn stop_gateway_process_with(
     pid: u32,
+    process_state: impl FnMut(u32) -> server::GatewayProcessProbe,
+    dispatch: impl FnMut(i32, nix::sys::signal::Signal) -> Result<(), String>,
+    wait: impl FnMut(Duration),
+) -> Result<(), RunnerError> {
+    stop_gateway_process_with_identity(
+        pid,
+        process_state,
+        || effigy_gateway::identity::GatewayIdentityProbe::Matched,
+        dispatch,
+        wait,
+    )
+}
+
+#[cfg(unix)]
+fn stop_gateway_process_with_identity(
+    pid: u32,
     mut process_state: impl FnMut(u32) -> server::GatewayProcessProbe,
+    mut generation_state: impl FnMut() -> effigy_gateway::identity::GatewayIdentityProbe,
     mut dispatch: impl FnMut(i32, nix::sys::signal::Signal) -> Result<(), String>,
     mut wait: impl FnMut(Duration),
 ) -> Result<(), RunnerError> {
     // Validate before even the first liveness probe; callers may bypass the
     // PID-file reader and this function owns the signal boundary.
     checked_gateway_signal_pid(pid)?;
-    match process_state(pid) {
-        server::GatewayProcessProbe::ConfirmedAbsent => return Ok(()),
-        server::GatewayProcessProbe::Unknown => return Err(gateway_process_state_unknown(pid)),
-        server::GatewayProcessProbe::Running => {}
+    if !check_process_generation(pid, &mut process_state, &mut generation_state)? {
+        return Ok(());
     }
 
+    // Recheck the persisted generation immediately before the TERM dispatch.
+    match generation_state() {
+        effigy_gateway::identity::GatewayIdentityProbe::Matched => {}
+        effigy_gateway::identity::GatewayIdentityProbe::Mismatch => return Ok(()),
+        effigy_gateway::identity::GatewayIdentityProbe::PermissionDenied
+        | effigy_gateway::identity::GatewayIdentityProbe::Unknown => {
+            return Err(gateway_process_state_unknown(pid));
+        }
+    }
     send_gateway_signal_with(pid, nix::sys::signal::Signal::SIGTERM, |pid_t, signal| {
         dispatch(pid_t, signal)
     })?;
     for _ in 0..40 {
-        match process_state(pid) {
-            server::GatewayProcessProbe::ConfirmedAbsent => return Ok(()),
-            server::GatewayProcessProbe::Unknown => {
-                // Do not escalate to SIGKILL or report success on ambiguity.
-                return Err(gateway_process_state_unknown(pid));
-            }
-            server::GatewayProcessProbe::Running => wait(Duration::from_millis(50)),
+        match check_process_generation(pid, &mut process_state, &mut generation_state)? {
+            false => return Ok(()),
+            true => wait(Duration::from_millis(50)),
         }
     }
 
+    // Recheck the recorded identity again immediately before escalation.
+    match generation_state() {
+        effigy_gateway::identity::GatewayIdentityProbe::Matched => {}
+        effigy_gateway::identity::GatewayIdentityProbe::Mismatch => return Ok(()),
+        effigy_gateway::identity::GatewayIdentityProbe::PermissionDenied
+        | effigy_gateway::identity::GatewayIdentityProbe::Unknown => {
+            return Err(gateway_process_state_unknown(pid));
+        }
+    }
     send_gateway_signal_with(pid, nix::sys::signal::Signal::SIGKILL, |pid_t, signal| {
         dispatch(pid_t, signal)
     })?;
     for _ in 0..20 {
-        match process_state(pid) {
-            server::GatewayProcessProbe::ConfirmedAbsent => return Ok(()),
-            server::GatewayProcessProbe::Unknown => return Err(gateway_process_state_unknown(pid)),
-            server::GatewayProcessProbe::Running => wait(Duration::from_millis(50)),
+        match check_process_generation(pid, &mut process_state, &mut generation_state)? {
+            false => return Ok(()),
+            true => wait(Duration::from_millis(50)),
         }
     }
 
     Err(RunnerError::task_invocation(format!(
         "gateway process {pid} did not stop after SIGTERM/SIGKILL"
     )))
+}
+
+#[cfg(unix)]
+fn check_process_generation(
+    pid: u32,
+    process_state: &mut impl FnMut(u32) -> server::GatewayProcessProbe,
+    generation_state: &mut impl FnMut() -> effigy_gateway::identity::GatewayIdentityProbe,
+) -> Result<bool, RunnerError> {
+    match process_state(pid) {
+        server::GatewayProcessProbe::ConfirmedAbsent => Ok(false),
+        server::GatewayProcessProbe::Unknown => Err(gateway_process_state_unknown(pid)),
+        server::GatewayProcessProbe::Running => match generation_state() {
+            effigy_gateway::identity::GatewayIdentityProbe::Matched => Ok(true),
+            effigy_gateway::identity::GatewayIdentityProbe::Mismatch => Ok(false),
+            effigy_gateway::identity::GatewayIdentityProbe::PermissionDenied
+            | effigy_gateway::identity::GatewayIdentityProbe::Unknown => {
+                Err(gateway_process_state_unknown(pid))
+            }
+        },
+    }
 }
 
 #[cfg(unix)]
@@ -266,6 +324,85 @@ mod pid_domain_tests {
         }
         assert_eq!(probes.get(), 0);
         assert_eq!(signals.get(), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn gateway_identity_mismatch_or_unknown_dispatches_no_signal() {
+        use std::cell::Cell;
+
+        for generation in [
+            effigy_gateway::identity::GatewayIdentityProbe::Mismatch,
+            effigy_gateway::identity::GatewayIdentityProbe::Unknown,
+        ] {
+            let signals = Cell::new(0);
+            let result = stop_gateway_process_with_identity(
+                4242,
+                |_| server::GatewayProcessProbe::Running,
+                || generation,
+                |_, _| {
+                    signals.set(signals.get() + 1);
+                    Ok(())
+                },
+                |_| {},
+            );
+            assert_eq!(signals.get(), 0);
+            if generation == effigy_gateway::identity::GatewayIdentityProbe::Mismatch {
+                assert!(result.is_ok(), "a readable different generation is gone");
+            } else {
+                assert!(result.is_err(), "unknown identity refuses signals");
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn gateway_identity_stops_matched_term_resistant_owned_child() {
+        use nix::sys::signal::{kill, Signal};
+        use nix::unistd::Pid;
+        use std::process::{Child, Command};
+        use std::time::Instant;
+
+        struct OwnedChild(Child);
+
+        impl Drop for OwnedChild {
+            fn drop(&mut self) {
+                if self.0.try_wait().ok().flatten().is_none() {
+                    let _ = self.0.kill();
+                    let _ = self.0.wait();
+                }
+            }
+        }
+
+        let child = Command::new("sh")
+            .args(["-c", "trap '' TERM; exec sleep 30"])
+            .spawn()
+            .expect("start private TERM-resistant child");
+        let mut child = OwnedChild(child);
+        let pid = child.0.id();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while server::probe_gateway_process(pid) != server::GatewayProcessProbe::Running {
+            assert!(Instant::now() < deadline, "child readiness timeout");
+            thread::sleep(Duration::from_millis(10));
+        }
+        let mut signals = Vec::new();
+        let result = stop_gateway_process_with_identity(
+            pid,
+            server::probe_gateway_process,
+            || effigy_gateway::identity::GatewayIdentityProbe::Matched,
+            |pid_t, signal| {
+                signals.push(signal);
+                kill(Pid::from_raw(pid_t), signal).map_err(|error| error.to_string())
+            },
+            thread::sleep,
+        );
+        result.expect("stop only this matched, owned child");
+        assert_eq!(signals, [Signal::SIGTERM, Signal::SIGKILL]);
+        assert!(child.0.try_wait().expect("reap child").is_some());
+        assert_eq!(
+            server::probe_gateway_process(pid),
+            server::GatewayProcessProbe::ConfirmedAbsent
+        );
     }
 
     #[cfg(unix)]

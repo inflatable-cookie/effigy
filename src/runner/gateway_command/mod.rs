@@ -2,10 +2,15 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::process::Command as ProcessCommand;
 
-use effigy_cli::{GatewayArgs, GatewaySubcommand, InternalGatewayArgs};
+use effigy_cli::{
+    GatewayArgs, GatewaySubcommand, InternalGatewayArgs, InternalGatewayIdentityArgs,
+};
 use effigy_containers::exec::list_running_compose_containers;
+use effigy_gateway::identity::{self, GatewayIdentityProbe, GatewayRecordSnapshot};
 use effigy_gateway::routes::RouteTable;
-use effigy_gateway::server::{self, GatewayConfig, GatewayProcessProbe, GatewayStatus};
+use effigy_gateway::server::{
+    self, GatewayConfig, GatewayProcessProbe, GatewayStatus, VerifiedGatewayStatus,
+};
 use effigy_gateway::tls::TlsConfig;
 use effigy_ui::style_text;
 use effigy_ui::theme::is_ci_environment;
@@ -84,7 +89,7 @@ pub(super) fn run_gateway(args: GatewayArgs) -> Result<String, RunnerError> {
 pub(in crate::runner) fn gateway_up_for_managed_task(command: &str) -> Result<(), RunnerError> {
     if effigy_core::executable_override::current().is_none() {
         let config = gateway_config()?;
-        if let Some(status) = resolve_gateway_status(server::get_status(&config))? {
+        if let Some(status) = resolve_gateway_status(verified_gateway_status(&config))? {
             if gateway_status_matches_current_binary(&status) {
                 return Ok(());
             }
@@ -127,6 +132,109 @@ pub(super) fn run_internal_gateway(_args: InternalGatewayArgs) -> Result<String,
     Ok(String::new())
 }
 
+pub(super) fn run_internal_gateway_identity(
+    args: InternalGatewayIdentityArgs,
+) -> Result<String, RunnerError> {
+    let operator_uid = std::env::var("EFFIGY_GATEWAY_OPERATOR_UID")
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok());
+    if !gateway_invocation_is_escalated()
+        || !nix::unistd::Uid::effective().is_root()
+        || operator_uid != Some(args.owner_uid)
+    {
+        return Ok(render_identity_reader_response(
+            &args.digest,
+            &args.target_digest,
+            GatewayIdentityProbe::Unknown,
+        ));
+    }
+    let config = gateway_config()?;
+    if identity::gateway_target_digest(&config.pid_file_path).as_deref()
+        != Some(args.target_digest.as_str())
+    {
+        return Ok(render_identity_reader_response(
+            &args.digest,
+            &args.target_digest,
+            GatewayIdentityProbe::Unknown,
+        ));
+    }
+    let result = identity::read_only_elevated_check(
+        &config.pid_file_path,
+        &args.digest,
+        &args.target_digest,
+        args.owner_uid,
+    );
+    Ok(render_identity_reader_response(
+        &args.digest,
+        &args.target_digest,
+        result,
+    ))
+}
+
+fn render_identity_reader_response(
+    digest: &str,
+    target_digest: &str,
+    result: GatewayIdentityProbe,
+) -> String {
+    let result = match result {
+        GatewayIdentityProbe::Matched => "matched",
+        GatewayIdentityProbe::Mismatch => "mismatch",
+        GatewayIdentityProbe::PermissionDenied | GatewayIdentityProbe::Unknown => "unknown",
+    };
+    json!({
+        "schema": "effigy.gateway.identity-reader.v1",
+        "digest": digest,
+        "target_digest": target_digest,
+        "result": result,
+    })
+    .to_string()
+}
+
+fn gateway_identity_probe(
+    record: &identity::GatewayIdentityRecord,
+    snapshot: &GatewayRecordSnapshot,
+) -> GatewayIdentityProbe {
+    gateway_identity_probe_with(
+        record,
+        snapshot,
+        identity::probe_live_identity,
+        |digest, target_digest, owner_uid| {
+            elevation::read_gateway_identity_elevated(digest, target_digest, owner_uid)
+        },
+    )
+}
+
+fn gateway_identity_probe_with(
+    record: &identity::GatewayIdentityRecord,
+    snapshot: &GatewayRecordSnapshot,
+    local_probe: impl FnOnce(&identity::GatewayIdentityRecord) -> GatewayIdentityProbe,
+    elevated_reader: impl FnOnce(&str, &str, u32) -> Option<GatewayIdentityProbe>,
+) -> GatewayIdentityProbe {
+    if snapshot.record() != Some(record) {
+        return GatewayIdentityProbe::Unknown;
+    }
+    match local_probe(record) {
+        GatewayIdentityProbe::PermissionDenied => {
+            let Some(digest) = snapshot.digest() else {
+                return GatewayIdentityProbe::Unknown;
+            };
+            let Some(target_digest) = snapshot.target_digest() else {
+                return GatewayIdentityProbe::Unknown;
+            };
+            elevated_reader(&digest, &target_digest, snapshot.owner_uid())
+                .filter(|result| *result != GatewayIdentityProbe::PermissionDenied)
+                .unwrap_or(GatewayIdentityProbe::Unknown)
+        }
+        result => result,
+    }
+}
+
+fn verified_gateway_status(
+    config: &GatewayConfig,
+) -> Result<VerifiedGatewayStatus, effigy_gateway::GatewayError> {
+    server::get_verified_gateway_status_with(config, gateway_identity_probe)
+}
+
 /// Resolve a `get_status` result for a lifecycle command.
 ///
 /// Returns `Ok(Some(status))` for a confirmed running gateway, `Ok(None)` when
@@ -134,8 +242,8 @@ pub(super) fn run_internal_gateway(_args: InternalGatewayArgs) -> Result<String,
 /// probe was unavailable or ambiguous. Callers must never treat that error as
 /// "stopped": the PID records stay in place for reconciliation.
 fn resolve_gateway_status(
-    status: Result<GatewayStatus, effigy_gateway::GatewayError>,
-) -> Result<Option<GatewayStatus>, RunnerError> {
+    status: Result<VerifiedGatewayStatus, effigy_gateway::GatewayError>,
+) -> Result<Option<VerifiedGatewayStatus>, RunnerError> {
     match status {
         Ok(status) => Ok(Some(status)),
         Err(effigy_gateway::GatewayError::NotRunning) => Ok(None),
@@ -153,7 +261,7 @@ fn resolve_gateway_status(
 /// `spawn_gateway_daemon`, so it returns before the start path.
 fn handle_existing_gateway_for_up(
     config: &GatewayConfig,
-    status: Result<GatewayStatus, effigy_gateway::GatewayError>,
+    status: Result<VerifiedGatewayStatus, effigy_gateway::GatewayError>,
     output_json: bool,
 ) -> Result<Option<String>, RunnerError> {
     let Some(status) = resolve_gateway_status(status)? else {
@@ -165,27 +273,33 @@ fn handle_existing_gateway_for_up(
         let tls = gateway_tls_summary(config, &route_table);
         return render_gateway_up_result(
             config,
-            GatewayUpState::AlreadyRunning(status),
+            GatewayUpState::AlreadyRunning(status.status),
             &tls,
             &[],
             output_json,
         )
         .map(Some);
     }
-    if !gateway_invocation_is_escalated() && gateway_down_requires_elevation(config, Some(&status))
+    if !gateway_invocation_is_escalated() && gateway_down_requires_elevation(config, Some(&status))?
     {
         prepare_gateway_state_for_elevated_run(config)?;
         return run_gateway_elevated(GatewaySubcommand::Up, output_json).map(Some);
     }
-    stop_gateway_process(status.pid)?;
-    server::remove_pid_file(&config.pid_file_path);
+    stop_gateway_process(&status.snapshot)?;
+    if !identity::remove_if_unchanged(&status.snapshot)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?
+    {
+        return Err(RunnerError::task_invocation(
+            "gateway record changed during stop; refusing replacement",
+        ));
+    }
     Ok(None)
 }
 
 fn run_gateway_up(output_json: bool) -> Result<String, RunnerError> {
     let config = gateway_config()?;
     if let Some(rendered) =
-        handle_existing_gateway_for_up(&config, server::get_status(&config), output_json)?
+        handle_existing_gateway_for_up(&config, verified_gateway_status(&config), output_json)?
     {
         return Ok(rendered);
     }
@@ -199,14 +313,14 @@ fn run_gateway_up(output_json: bool) -> Result<String, RunnerError> {
     wait_for_pid_file(&config)?;
     let mut warnings = install_resolver_if_needed(&config);
     warnings.extend(provision_loopback_aliases_if_needed(&config));
-    let status = server::get_status(&config)
+    let status = verified_gateway_status(&config)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let route_table = RouteTable::load(&config.route_table_path)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let tls = gateway_tls_summary(&config, &route_table);
     render_gateway_up_result(
         &config,
-        GatewayUpState::Started(status),
+        GatewayUpState::Started(status.status),
         &tls,
         &warnings,
         output_json,
@@ -215,9 +329,9 @@ fn run_gateway_up(output_json: bool) -> Result<String, RunnerError> {
 
 fn run_gateway_down(output_json: bool) -> Result<String, RunnerError> {
     let config = gateway_config()?;
-    let status = resolve_gateway_status(server::get_status(&config))?;
+    let status = resolve_gateway_status(verified_gateway_status(&config))?;
     if !gateway_invocation_is_escalated()
-        && gateway_down_requires_elevation(&config, status.as_ref())
+        && gateway_down_requires_elevation(&config, status.as_ref())?
     {
         return run_gateway_elevated(GatewaySubcommand::Down, output_json);
     }
@@ -228,7 +342,7 @@ fn run_gateway_down(output_json: bool) -> Result<String, RunnerError> {
     };
 
     if let Some(ref running) = status {
-        stop_gateway_process(running.pid)?;
+        stop_gateway_process(&running.snapshot)?;
     }
     if let Some(ref running) = status {
         match server::probe_gateway_process(running.pid) {
@@ -247,7 +361,15 @@ fn run_gateway_down(output_json: bool) -> Result<String, RunnerError> {
             }
         }
     }
-    server::remove_pid_file(&config.pid_file_path);
+    if let Some(running) = status.as_ref() {
+        if !identity::remove_if_unchanged(&running.snapshot)
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?
+        {
+            return Err(RunnerError::task_invocation(
+                "gateway record changed during stop; refusing to report it stopped",
+            ));
+        }
+    }
 
     if output_json {
         return Ok(json!({
@@ -303,7 +425,7 @@ fn run_gateway_status(output_json: bool) -> Result<String, RunnerError> {
     let tls = gateway_tls_summary(&config, &route_table);
     let routes = gateway_route_dashboard(&config, &route_table, &tls);
     let repair = gateway_repair_plan(&route_table, detect_active_gateway_projects());
-    let status = resolve_gateway_status(server::get_status(&config))?;
+    let status = resolve_gateway_status(verified_gateway_status(&config))?;
     let (trust_state, trust_reason) = route_table_trust_fields(
         &effigy_gateway::trust::inspect_route_table_trust(&config.route_table_path),
     );

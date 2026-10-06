@@ -7,6 +7,15 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- Gateway lifecycle now persists `gateway.identity` beside the compatible
+  decimal PID file and verifies boot plus precise process start identity before
+  reporting or signalling a gateway. Legacy PID-only or unknown records are
+  preserved and refuse lifecycle actions; root publication keeps records
+  readable by the gateway-directory owner. When the kernel denies a live
+  identity read, the existing administrator prompt can run a bounded,
+  read-only check of the trusted gateway target. Authentication failure stays
+  unknown. Old binaries ignore the sidecar on rollback, and the final
+  identity-check-to-signal interval remains a documented TOCTOU.
 - GitHub Releases will include verified, unsigned SHA-256 sidecars for both
   macOS binaries starting with the next normally authorized release. The raw
   binaries keep their existing names.

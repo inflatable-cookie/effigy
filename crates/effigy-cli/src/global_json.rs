@@ -199,6 +199,7 @@ pub fn apply_global_cli_options(
             | Command::Uninstall(_)
             | Command::Gateway(_)
             | Command::InternalGateway(_)
+            | Command::InternalGatewayIdentity(_)
             | Command::InternalScriptRun(_)
             | Command::InternalContainerLeaseReaper(_)
             | Command::InternalHostProcessSupervise(_)
@@ -297,6 +298,7 @@ pub(super) fn apply_global_json_flag(mut cmd: Command, json_mode: bool) -> Comma
         }
         Command::Doctor(args) => args.output_json = true,
         Command::InternalGateway(_) => {}
+        Command::InternalGatewayIdentity(_) => {}
         Command::InternalScriptRun(_) => {}
         Command::InternalContainerLeaseReaper(_) => {}
         Command::InternalHostProcessSupervise(_) => {}
@@ -341,6 +343,7 @@ pub(super) fn command_requests_json(cmd: &Command, global_json_mode: bool) -> bo
         Command::Doctor(args) => args.output_json,
         Command::Task(task) => runtime_flag_present_before_passthrough(&task.args, "--json"),
         Command::InternalGateway(_) => false,
+        Command::InternalGatewayIdentity(_) => false,
         Command::InternalScriptRun(_) => false,
         Command::InternalContainerLeaseReaper(_) => false,
         Command::InternalHostProcessSupervise(_) => false,
