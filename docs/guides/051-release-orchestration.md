@@ -181,6 +181,17 @@ Supported `[release]` fields:
         preserving file layout
       - may be used when another file, such as `Cargo.toml`, is the primary
         version source
+- `sync-catalog-pack-support-policy`
+  - optional repository-relative path to a catalog pack support-policy TOML
+    file
+  - validates the current `as_of_release`, required releases, duplicates, and
+    update-capability floor before planning a version change
+  - updates `as_of_release` and adds the selected release once to
+    `required_versions`, preserving existing supported releases, the oldest
+    update-capable release, comments, and unrelated file data
+  - rejects paths outside the repository or paths that overlap another release
+    mutation; the file joins the normal prepare snapshots and gate-failure
+    rollback
 - `tag-format`
   - optional tag template
   - supports `{version}` placeholder

@@ -221,6 +221,7 @@ fn validate_prepare_version_override_rejects_non_incrementing_versions() {
             pre_1_0: false,
             initial_tag_current_version: false,
             sync_files: Vec::new(),
+            catalog_pack_support_policy: None,
             gates: Vec::new(),
             tag_format: "v{version}".to_owned(),
             hosted_evidence: None,

@@ -1151,6 +1151,7 @@ name = "effigy-release"
 version = "0.13.1"
 dependencies = [
  "chrono",
+ "effigy-catalog",
  "effigy-changelog",
  "effigy-core",
  "effigy-manifest",
@@ -1158,6 +1159,7 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
+ "tempfile",
  "toml",
  "toml_edit",
 ]
