@@ -78,6 +78,10 @@ impl From<UiError> for MultiProcessTuiError {
     }
 }
 
+#[cfg(all(test, unix))]
+#[path = "startup_visibility.rs"]
+mod startup_visibility;
+
 pub fn run_multiprocess_tui(
     repo_root: PathBuf,
     processes: Vec<ProcessSpec>,
@@ -90,6 +94,7 @@ pub fn run_multiprocess_tui(
 
     let mut runtime = setup::prepare_runtime_session(repo_root, processes, tab_order)?;
     let result = runtime_loop::run_event_loop(&mut runtime, options);
+    let startup_error = runtime.supervisor.take_startup_error();
 
     let non_zero_exits = shutdown_and_render_summary(
         &mut runtime.terminal,
@@ -101,5 +106,8 @@ pub fn run_multiprocess_tui(
     )?;
 
     result?;
+    if let Some(error) = startup_error {
+        return Err(MultiProcessTuiError::Process(error));
+    }
     Ok(MultiProcessTuiOutcome { non_zero_exits })
 }

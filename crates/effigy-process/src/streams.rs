@@ -21,7 +21,7 @@ pub(super) fn spawn_stream_thread(
                     let chunk = buf[..read].to_vec();
                     let _ = tx.send(ProcessEvent {
                         process: process.clone(),
-                        kind: chunk_kind.clone(),
+                        kind: chunk_kind,
                         payload: String::from_utf8_lossy(&chunk).into_owned(),
                         chunk: Some(chunk.clone()),
                     });
@@ -54,7 +54,7 @@ fn emit_complete_lines(
         let text = decode_line(&line);
         let _ = tx.send(ProcessEvent {
             process: process.to_owned(),
-            kind: line_kind.clone(),
+            kind: *line_kind,
             payload: text,
             chunk: None,
         });

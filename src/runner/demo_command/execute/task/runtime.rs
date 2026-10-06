@@ -170,6 +170,9 @@ fn run_concurrent_runner_demo_runtime(
                         supervisor.terminate_all();
                     }
                 }
+                ProcessEventKind::Starting
+                | ProcessEventKind::Started
+                | ProcessEventKind::StartupFailed => {}
             }
         } else {
             state.record_idle_tick(expected);

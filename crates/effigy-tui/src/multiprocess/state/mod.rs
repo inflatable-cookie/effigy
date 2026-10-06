@@ -12,6 +12,14 @@ mod init;
 mod tests;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ProcessStartupState {
+    Waiting,
+    Starting,
+    Running,
+    Failed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OptionsAction {
     ToggleFollow,
     ExportTranscript,
@@ -41,6 +49,9 @@ pub struct SessionState {
     pub footer_message: Option<String>,
     pub observed_non_zero: HashMap<String, String>,
     pub exit_states: HashMap<String, ProcessExitState>,
+    pub startup_states: HashMap<String, ProcessStartupState>,
+    pub startup_failed: bool,
+    pub pending_startup: usize,
     pub shutdown_on_exit_processes: HashSet<String>,
     pub shutdown_requested: bool,
     pub spinner_tick: usize,

@@ -6,7 +6,7 @@ use vt100::Parser as VtParser;
 
 use crate::core::{InputMode, LogEntry};
 
-use super::SessionState;
+use super::{ProcessStartupState, SessionState};
 
 impl SessionState {
     pub fn new(
@@ -23,6 +23,7 @@ impl SessionState {
         let restart_pending = map_for_processes(&process_names, || false);
         let process_started_at = map_for_processes(&process_names, Instant::now);
         let process_restart_count = map_for_processes(&process_names, || 0usize);
+        let startup_states = map_for_processes(&process_names, || ProcessStartupState::Waiting);
         let vt_parsers = map_for_processes(&process_names, || {
             VtParser::new(vt_rows, vt_cols, vt_scrollback)
         });
@@ -48,6 +49,9 @@ impl SessionState {
             footer_message: None,
             observed_non_zero: HashMap::new(),
             exit_states: HashMap::new(),
+            startup_states,
+            startup_failed: false,
+            pending_startup: 0,
             shutdown_on_exit_processes: HashSet::new(),
             shutdown_requested: false,
             spinner_tick: 0,

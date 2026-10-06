@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use super::config::{EVENT_DRAIN_WAIT, MAX_EVENT_DRAIN_TIME};
 use super::diagnostics::RuntimeDiagnostics;
-use super::state::SessionState;
+use super::state::{ProcessStartupState, SessionState};
 use super::{MultiProcessTuiError, MultiProcessTuiOptions};
 
 mod input;
@@ -47,10 +47,49 @@ pub(super) fn drain_process_events(
             break;
         };
         drained_events += 1;
+        let render_startup_state = match event_item.kind {
+            ProcessEventKind::Starting => {
+                state
+                    .startup_states
+                    .insert(event_item.process.clone(), ProcessStartupState::Starting);
+                true
+            }
+            ProcessEventKind::Started => {
+                state
+                    .startup_states
+                    .insert(event_item.process.clone(), ProcessStartupState::Running);
+                state
+                    .process_started_at
+                    .insert(event_item.process.clone(), Instant::now());
+                state.pending_startup = state.pending_startup.saturating_sub(1);
+                true
+            }
+            ProcessEventKind::StartupFailed => {
+                state
+                    .startup_states
+                    .insert(event_item.process.clone(), ProcessStartupState::Failed);
+                state.exit_states.insert(
+                    event_item.process.clone(),
+                    crate::core::ProcessExitState::Failure,
+                );
+                state.set_footer_message(format!("{} failed to start", event_item.process));
+                state.startup_failed = true;
+                state.shutdown_requested = true;
+                state.pending_startup = state.pending_startup.saturating_sub(1);
+                true
+            }
+            _ => false,
+        };
+        if render_startup_state {
+            break;
+        }
         if !state.logs.contains_key(&event_item.process) {
             continue;
         }
         match event_item.kind {
+            ProcessEventKind::Starting
+            | ProcessEventKind::Started
+            | ProcessEventKind::StartupFailed => {}
             ProcessEventKind::StdoutChunk | ProcessEventKind::StderrChunk => {
                 handle_chunk_event(&event_item, state, diagnostics, vt_emulator_enabled)
             }

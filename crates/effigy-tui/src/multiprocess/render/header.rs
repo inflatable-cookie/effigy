@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use super::super::state::ProcessStartupState;
 use crate::core::{effigy_panel_block, ProcessExitState, EFFIGY_ACCENT, EFFIGY_MUTED};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -13,19 +14,30 @@ pub(super) fn render_tabs(
     active_index: usize,
     shell_capture_mode: bool,
     exit_states: &HashMap<String, ProcessExitState>,
+    startup_states: &HashMap<String, ProcessStartupState>,
 ) {
     let titles = process_names
         .iter()
         .enumerate()
         .map(|(idx, name)| {
+            let state_label = match startup_states.get(name) {
+                Some(ProcessStartupState::Waiting) => format!("{name} [waiting]"),
+                Some(ProcessStartupState::Starting) => format!("{name} [starting]"),
+                Some(ProcessStartupState::Failed) => format!("{name} [failed]"),
+                Some(ProcessStartupState::Running) if !exit_states.contains_key(name) => {
+                    format!("{name} [running]")
+                }
+                Some(ProcessStartupState::Running) => name.clone(),
+                None => name.clone(),
+            };
             let label = if name == "shell" {
                 if shell_capture_mode {
-                    "shell [live]".to_owned()
+                    format!("{state_label} [live]")
                 } else {
-                    "shell".to_owned()
+                    state_label
                 }
             } else {
-                name.clone()
+                state_label
             };
             let style = match exit_states.get(name) {
                 Some(ProcessExitState::Success) => Style::default().fg(Color::Green),

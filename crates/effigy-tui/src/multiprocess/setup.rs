@@ -16,8 +16,14 @@ pub(super) fn prepare_runtime_session(
     mut processes: Vec<ProcessSpec>,
     tab_order: Vec<String>,
 ) -> Result<SessionRuntime, MultiProcessTuiError> {
-    let terminal = init_terminal()?;
-    let size = terminal.size()?;
+    let mut terminal = init_terminal()?;
+    let size = match terminal.size() {
+        Ok(size) => size,
+        Err(error) => {
+            let _ = super::lifecycle::restore_terminal(&mut terminal);
+            return Err(error.into());
+        }
+    };
     let cols = size.width.max(1).to_string();
     let rows = size.height.max(1).to_string();
     for process in &mut processes {
@@ -48,7 +54,8 @@ pub(super) fn prepare_runtime_session(
         .map(|process| process.name.clone())
         .collect();
 
-    let supervisor = ProcessSupervisor::spawn(repo_root.clone(), processes)?;
+    let pending_startup = processes.len();
+    let supervisor = ProcessSupervisor::spawn_progressively(repo_root.clone(), processes);
     let mut state = SessionState::new(
         repo_root,
         process_names,
@@ -56,6 +63,7 @@ pub(super) fn prepare_runtime_session(
         VT_PARSER_COLS,
         VT_PARSER_SCROLLBACK,
     );
+    state.pending_startup = pending_startup;
     state.shutdown_on_exit_processes = shutdown_on_exit_processes;
     state.vt_enabled_processes = vt_enabled_processes;
     let diagnostics = RuntimeDiagnostics::from_env();

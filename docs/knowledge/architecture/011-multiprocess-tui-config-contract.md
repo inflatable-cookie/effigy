@@ -20,6 +20,13 @@ Define the internal tuning contract for the multiprocess TUI runtime so performa
 - `INPUT_POLL_WAIT`: key input poll interval for UI responsiveness.
 - `SHUTDOWN_GRACE_TIMEOUT`: graceful shutdown timeout before force stop.
 
+Managed child startup runs in configured sequence while the TUI event loop
+renders and accepts input. Waiting tabs identify configured start delays;
+starting, running, and failed states follow supervisor lifecycle events.
+Cancelling a session interrupts a pending delay before cleanup signals the
+children already recorded by that supervisor. This preserves each
+`start_after_ms` delay and spawn order without postponing the first frame.
+
 ## Invariants
 
 - `MAX_EVENTS_PER_TICK` should stay finite to prevent event-starvation of UI input.

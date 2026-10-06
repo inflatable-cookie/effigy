@@ -5,6 +5,7 @@ use crate::core::{InputMode, LogEntry, ProcessExitState};
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::Frame;
 
+use super::state::ProcessStartupState;
 use super::OptionsAction;
 
 mod footer;
@@ -31,11 +32,13 @@ pub(super) struct RenderUiState<'a> {
     pub(super) scrollbar_total: usize,
     pub(super) follow: bool,
     pub(super) active_process: &'a str,
+    pub(super) active_startup_state: ProcessStartupState,
     pub(super) active_vt: bool,
     pub(super) input_line: &'a str,
     pub(super) input_mode: InputMode,
     pub(super) shell_capture_mode: bool,
     pub(super) exit_states: &'a HashMap<String, ProcessExitState>,
+    pub(super) startup_states: &'a HashMap<String, ProcessStartupState>,
     pub(super) show_help: bool,
     pub(super) show_options: bool,
     pub(super) options_index: usize,
@@ -58,11 +61,13 @@ pub(super) fn render_ui(frame: &mut Frame<'_>, state: RenderUiState<'_>) {
         scrollbar_total,
         follow,
         active_process,
+        active_startup_state,
         active_vt,
         input_line,
         input_mode,
         shell_capture_mode,
         exit_states,
+        startup_states,
         show_help,
         show_options,
         options_index,
@@ -98,6 +103,7 @@ pub(super) fn render_ui(frame: &mut Frame<'_>, state: RenderUiState<'_>) {
         active_index,
         shell_capture_mode,
         exit_states,
+        startup_states,
     );
 
     if show_help {
@@ -113,6 +119,7 @@ pub(super) fn render_ui(frame: &mut Frame<'_>, state: RenderUiState<'_>) {
                 render_scroll_offset,
                 scrollbar_total,
                 active_process,
+                active_startup_state,
                 active_vt,
                 process_name: &process_names[active_index],
                 shell_capture_mode,
