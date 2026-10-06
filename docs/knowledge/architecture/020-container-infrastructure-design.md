@@ -508,17 +508,24 @@ At that baseline, unknown identities already failed closed in host-run and in
 
 #### Implemented correction in task 104
 
-Known v0.14.0 upgrade/start defect: `trusted_directory_owner` currently
-accepts only a directory owned by root or the effective caller UID. During
+Published v0.14.0 upgrade/start defect (present in the `v0.14.0` tag, corrected
+on main by task 113, `4201e0b3`): that binary's `trusted_directory_owner`
+accepted only a directory owned by root or the effective caller UID. During
 existing administrator elevation the effective UID is root, so a genuine
-ordinary-operator-owned gateway directory is rejected before startup with
+ordinary-operator-owned gateway directory was rejected before startup with
 `gateway directory is unsafe`, even though the operator UID was forwarded.
-The root/operator trust boundary must be corrected and proved through the
-complete elevated caller chain; changing directory ownership or relaxing
-trust for every owner is not a supported workaround. A legacy gateway also
-needs the explicit transition below. A previously installed binary may have
-been overwritten, and using an older CLI for development may fail to parse
-newer linked manifests; a general CLI downgrade is not a recovery strategy.
+The root/operator trust boundary is corrected on main: the elevated root caller
+accepts the forwarded non-root operator UID only when it matches ambient
+`SUDO_UID` (when present) and owns the forwarded `HOME` per passwd, and
+unauthenticated root still accepts only root ownership. Changing directory
+ownership or relaxing trust for every owner is not a supported workaround. A
+legacy gateway also needs the explicit transition below. A previously installed
+binary may have been overwritten, and using an older CLI for development may
+fail to parse newer linked manifests; a general CLI downgrade is not a recovery
+strategy. The proposed supported upgrade/recovery design is
+[034](034-gateway-legacy-upgrade-recovery.md); it is proposed and
+unimplemented, not current behavior. Published v0.14.0 cannot complete a legacy
+upgrade; main `4201e0b3` can start but has no recovery entrypoint.
 
 The decimal `gateway.pid` remains compatible. `gateway.identity` is a
 version-1 JSON sidecar containing `format_version`, the same `pid`,
@@ -627,7 +634,12 @@ volumes are preserved. This is explicit authority for that host transition,
 not a general exception allowing numeric-only records to authorize signals.
 The consumer upgrade path must identify this legacy transition and provide
 a supported recovery flow even when installation replaced the old executable.
-Identity checks and fail-closed behavior remain required.
+Identity checks and fail-closed behavior remain required. The proposed design
+covering the consumer transition, including the public channel posture and a
+fix-forward patch runway, is
+[034](034-gateway-legacy-upgrade-recovery.md) (proposed and unimplemented). It
+keeps a numeric-only signal unauthorized and states the smallest material
+ruling needed; it does not extend this ruling to consumer delegation.
 
 Tom ruled on 2026-10-05: block v0.14.0 publication until a persisted
 start-identity sidecar and fail-closed legacy policy are implemented. He does
@@ -669,7 +681,7 @@ start anything.
 No new helper, install, standing privilege, live-operations authority or change
 to contract 010 is approved. The larger privilege model is not approved.
 This authorizes the bounded implementation, not a live gateway migration.
-Task 104 is merged and implements the sidecar plus fail-closed legacy policy.
+Task 104 is in main and implements the sidecar plus fail-closed legacy policy.
 Q-001's publication block remains until exact-candidate release assurance is
 complete. The final identity-check-to-signal TOCTOU and the unrun live
 cross-UID daemon proof remain documented limitations; this is not acceptance

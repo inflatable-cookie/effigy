@@ -21,5 +21,6 @@ Current technical authority for Effigy.
 | Bounded QA groups runtime (proposed) | [031-bounded-qa-groups-runtime.md](031-bounded-qa-groups-runtime.md) |
 | Owned run supervision runtime (proposed) | [032-owned-run-supervision-runtime.md](032-owned-run-supervision-runtime.md) |
 | Trusted host-run protocol client and default scheduler routing | [033-host-run-protocol-client.md](033-host-run-protocol-client.md) |
+| Gateway legacy upgrade and recovery (proposed) | [034-gateway-legacy-upgrade-recovery.md](034-gateway-legacy-upgrade-recovery.md) |
 | Effigy Product Guardrails | [product-guardrails.md](product-guardrails.md) |
 | Codebase sweep procedure | [codebase-sweep.md](codebase-sweep.md) |
