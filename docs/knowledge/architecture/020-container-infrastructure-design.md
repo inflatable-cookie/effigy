@@ -519,6 +519,9 @@ trust for every owner is not a supported workaround. A legacy gateway also
 needs the explicit transition below. A previously installed binary may have
 been overwritten, and using an older CLI for development may fail to parse
 newer linked manifests; a general CLI downgrade is not a recovery strategy.
+The proposed supported upgrade/recovery design is
+[034](034-gateway-legacy-upgrade-recovery.md); it is proposed and
+unimplemented, not current behavior.
 
 The decimal `gateway.pid` remains compatible. `gateway.identity` is a
 version-1 JSON sidecar containing `format_version`, the same `pid`,
@@ -608,7 +611,10 @@ volumes are preserved. This is explicit authority for that host transition,
 not a general exception allowing numeric-only records to authorize signals.
 The consumer upgrade path must identify this legacy transition and provide
 a supported recovery flow even when installation replaced the old executable.
-Identity checks and fail-closed behavior remain required.
+Identity checks and fail-closed behavior remain required. The proposed design
+that generalizes this transition to consumers, including the public channel
+posture and a fix-forward patch runway, is
+[034](034-gateway-legacy-upgrade-recovery.md) (proposed and unimplemented).
 
 Tom ruled on 2026-10-05: block v0.14.0 publication until a persisted
 start-identity sidecar and fail-closed legacy policy are implemented. He does
