@@ -69,8 +69,25 @@ the embedded official pack is v1.1.1. At the authorized release prepare, set
 target plus every still-supported release that exposes `service pack update`;
 `oldest_update_capable_release` must equal the minimum of that set. The
 capability is already present in released Effigy, with v0.13.0 recorded as its
-oldest supported version today. This assessment does not update version or
-catalog-pack files.
+oldest supported version today. The assessment alone does not update version or catalog-pack files.
+
+### Preparation authorization — 2026-10-06
+
+Tom answered "Go for it" to the proposal to prepare v0.14.0 as a reviewed
+release change, complete the remaining gates, and present release notes and
+migrations before separate approval to tag and publish. This authorizes
+bounded preparation work, including version and catalog-pack compatibility
+files, install examples, release notes, and repairs needed to preserve the
+existing preparation gates. Tagging, publication, binary-workflow dispatch,
+workflow edits, installation and live operations remain outside this ruling.
+
+The version and catalog-pack support policy must be consistent before gates
+run against the prepared tree. Today the CLI plans only the version file,
+changelog and Cargo lock synchronization, while the committed catalog policy
+requires its `as_of_release` to equal the workspace version. Preparation must
+resolve that companion-file transition within the existing reviewed mutation
+and rollback protections; manually skipping a gate or weakening that
+consistency check is not an acceptable release procedure.
 
 ### Unsafe-invariant and public-diagnostics reconciliation
 
