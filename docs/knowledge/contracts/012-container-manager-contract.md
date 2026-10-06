@@ -94,8 +94,10 @@ Remaining compatibility boundary:
   backend-local implementation details for Colima repair, runtime probing, and
   direct exec helpers
 - those wrappers must not leak back into runner command code
-- runner command code takes backend correlation from manager reports or
-  compose invocation plans rather than matching `ComposeBackend` locally
+- runner command code takes backend correlation from compose invocation plans
+  (`detect_backend` with policy/env detection). `operation_report` /
+  `selected_backend` name the first registered backend when the request has
+  no override; they are not the compose-backend surface
 - drift allowances for named adapter boundaries and private fixtures stay
   path-scoped in `scripts/check-runtime-container-drift.rhai` and are owned by
   [architecture 022](../architecture/022-runtime-architecture-sanity-audit.md)

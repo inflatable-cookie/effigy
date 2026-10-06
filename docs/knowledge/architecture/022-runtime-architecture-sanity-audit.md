@@ -93,8 +93,11 @@ same file as a legitimate fixture still fail: the GNU-findutils Colima
 acceptance lives in
 `src/runner/system_command/workspace_permissions_gnu_accept.rs`, not in
 permission-prep production. QA-group submit and member requests consume the
-already-captured invocation cwd. Inline-workspace teardown reports backend
-identity from the manager report/plan. Doctor bun-cache probes and
+already-captured invocation cwd. Inline-workspace start and remove facts share
+the manager compose-plan backend id (`detect_backend` with policy/env
+detection). `lifecycle_operation_report` / `selected_backend` is the wrong
+surface: with no request override it returns the first registered backend.
+Doctor bun-cache probes and
 permission-prep exec go through `compose_invocation_plan` plus the deadline
 exec adapter. Guard failure text names this review and contracts 011, 012,
 013, 015, and 052. Private proof:

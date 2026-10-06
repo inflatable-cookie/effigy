@@ -382,6 +382,8 @@ During v0.x, MINOR bumps may include breaking changes.
 - QA-group heavy submission and member execution now reuse the captured
   invocation cwd instead of rediscovering process cwd, so nested or
   already-dispatched group runs keep the original caller directory.
+- Inline-workspace scheduler start and remove facts share the manager
+  compose-plan backend id. A Colima policy reports `colima-nerdctl` for both.
 - Managed TUI sessions now render startup feedback before sequential child
   startup delays finish. Waiting, starting, running, and failed tabs remain
   visible while child output and cancellation are handled; the configured

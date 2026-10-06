@@ -39,7 +39,7 @@ use crate::runner::runtime_session_context::{
     current_runtime_session_context, LeaseRefreshPolicy, RuntimeSessionContext,
 };
 use effigy_cli::{SecretsArgs, SecretsSubcommand};
-use effigy_containers::{load_container_policy, ContainerAction, ContainerRuntimeState};
+use effigy_containers::{load_container_policy, ContainerAction, ContainerComposeInvocationPlan};
 use effigy_env::resolver::ResolvedEnv;
 use effigy_env::schema_support::{
     resolve_catalog_env_schema as shared_resolve_env_schema, SchemaSupportConfig,
@@ -779,7 +779,8 @@ fn run_inline_workspace_standard_task(
         .exec_working_dir(repo_root)?
         .ok_or_else(|| RunnerError::task_invocation("missing inline workspace exec working dir"))?;
     let _ = activate_inline_workspace_container_runtime(repo_root, &policy)?;
-    let runtime = owned_container_runtime(repo_root, &policy);
+    let teardown_plan = inline_workspace_teardown_plan(repo_root, &policy);
+    let runtime = owned_container_runtime(teardown_plan.as_ref());
     crate::runner::host_scheduler::report_container_started(&runtime, policy.name.as_str());
 
     let exec_result = if preflight.output_json {
@@ -797,7 +798,7 @@ fn run_inline_workspace_standard_task(
             &policy,
             &working_dir,
         );
-        teardown_inline_workspace_container(repo_root, &policy);
+        teardown_inline_workspace_container(&policy, teardown_plan.as_ref());
         let output = output?;
         let stdout =
             redact_task_secret_values(&String::from_utf8_lossy(&output.stdout), secret_ref);
@@ -832,7 +833,7 @@ fn run_inline_workspace_standard_task(
             &policy,
             &working_dir,
         );
-        teardown_inline_workspace_container(repo_root, &policy);
+        teardown_inline_workspace_container(&policy, teardown_plan.as_ref());
         result.map(|_| {
             if preflight.runtime_args_raw.verbose_root {
                 context.render_resolution_trace()
@@ -845,47 +846,42 @@ fn run_inline_workspace_standard_task(
     exec_result
 }
 
-fn owned_container_runtime(
+fn inline_workspace_teardown_plan(
     repo_root: &Path,
     policy: &effigy_containers::EffectiveContainerPolicy,
-) -> String {
-    match effigy_runtime::container_manager::lifecycle_operation_report(
-        repo_root,
-        policy,
-        ContainerAction::Status,
-        ContainerRuntimeState::Unknown,
-        None,
-    ) {
-        Ok(report) => report.backend_id.to_string(),
-        Err(_) => "unknown".to_owned(),
-    }
-}
-
-/// Tear down the container this task activated and report the result to the
-/// scheduler run it ran under. Removal is `true` only when the teardown command
-/// succeeded; a failed command is `false` and an unrunnable one is unknown.
-fn teardown_inline_workspace_container(
-    repo_root: &Path,
-    policy: &effigy_containers::EffectiveContainerPolicy,
-) {
-    let plan = match effigy_runtime::container_manager::compose_invocation_plan(
+) -> Option<ContainerComposeInvocationPlan> {
+    effigy_runtime::container_manager::compose_invocation_plan(
         repo_root,
         policy,
         ["down", "--remove-orphans"],
         ContainerAction::Shutdown,
         "docker compose down",
-    ) {
-        Ok(plan) => plan,
-        Err(_) => {
-            crate::runner::host_scheduler::report_container_removed(
-                "unknown",
-                policy.name.as_str(),
-                None,
-            );
-            return;
-        }
+    )
+    .ok()
+}
+
+fn owned_container_runtime(plan: Option<&ContainerComposeInvocationPlan>) -> String {
+    plan.map(|plan| plan.backend_id.to_string())
+        .unwrap_or_else(|| "unknown".to_owned())
+}
+
+/// Tear down the container this task activated and report the result to the
+/// scheduler run it ran under. Removal is `true` only when the teardown command
+/// succeeded; a failed command is `false` and an unrunnable one is unknown.
+/// Started and removed facts share this plan's backend id.
+fn teardown_inline_workspace_container(
+    policy: &effigy_containers::EffectiveContainerPolicy,
+    plan: Option<&ContainerComposeInvocationPlan>,
+) {
+    let Some(plan) = plan else {
+        crate::runner::host_scheduler::report_container_removed(
+            "unknown",
+            policy.name.as_str(),
+            None,
+        );
+        return;
     };
-    let result = effigy_runtime::signals::run_compose_plan_capture(policy, &plan);
+    let result = effigy_runtime::signals::run_compose_plan_capture(policy, plan);
     crate::runner::host_scheduler::report_container_removed(
         plan.backend_id.as_str(),
         policy.name.as_str(),
@@ -994,14 +990,16 @@ fn map_schema_support_error(error: SchemaSupportError) -> RunnerError {
 #[cfg(test)]
 mod tests {
     use super::{
-        activate_inline_workspace_container_runtime_with, should_stay_in_workspace_shell_in,
-        ContainerExecutionBinding,
+        activate_inline_workspace_container_runtime_with, inline_workspace_teardown_plan,
+        owned_container_runtime, should_stay_in_workspace_shell_in, ContainerExecutionBinding,
     };
     use crate::runner::container_runtime_prep::activate_routed_container_runtime_with;
     use crate::runner::container_runtime_prep::ContainerTaskActivation;
     use crate::runner::execute::workspace_seeded::render_workspace_seeded_task_command;
     use crate::runner::runtime_session_context::LeaseRefreshPolicy;
-    use effigy_containers::{EffectiveComposeSource, EffectiveContainerPolicy};
+    use effigy_containers::{
+        ContainerAction, ContainerRuntimeState, EffectiveComposeSource, EffectiveContainerPolicy,
+    };
     use effigy_manifest::{ManifestManagedRun, ManifestTask, ManifestTaskRunIn};
     use effigy_runtime_plan::RuntimeLeasePolicy;
     use std::path::{Path, PathBuf};
@@ -1025,6 +1023,72 @@ mod tests {
             rendered.ends_with("effigy 'seed' '--' '--force'"),
             "got: {rendered}"
         );
+    }
+
+    #[test]
+    fn inline_workspace_started_and_removed_facts_share_compose_plan_backend() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let previous_backend = std::env::var_os("EFFIGY_COMPOSE_BACKEND");
+        unsafe {
+            std::env::remove_var("EFFIGY_COMPOSE_BACKEND");
+        }
+        let policy = EffectiveContainerPolicy {
+            repo_root: temp.path().to_path_buf(),
+            name: "web".to_owned(),
+            driver: effigy_manifest::ManifestContainerDriver::Colima,
+            startup: effigy_manifest::ManifestContainerStartup::Detached,
+            profile: "effigy".to_owned(),
+            compose_source: EffectiveComposeSource::Direct,
+            compose_files: vec![temp.path().join("docker-compose.yml")],
+            compose_file_display: "docker-compose.yml".to_owned(),
+            managed_volumes: vec![],
+            shared_services: vec![],
+            project_name: "demo".to_owned(),
+            primary_service: "app".to_owned(),
+            dns_domain: None,
+            dns_tls: false,
+            dns_port: None,
+            dns_routes: vec![],
+            service_aliases: vec![],
+            declared_ports: vec![],
+            ports_declared_explicitly: false,
+            declared_mounts: vec![],
+            declared_media_mounts: vec![],
+            pull_production_hook: None,
+            health_check: None,
+            health_timeout_secs: 60,
+            secret_delivery: effigy_manifest::ManifestContainerSecretDelivery::ComposeEnv,
+            secret_runtime_dir: None,
+            source_secret_runtime_for_deferrals: false,
+            workspace_user: None,
+            workspace_home: None,
+            on_task_exit: effigy_manifest::ManifestContainerOnTaskExit::Stop,
+            shutdown: effigy_manifest::ManifestContainerShutdownMode::Graceful,
+            detach_timeout_secs: 10,
+            host_processes: Vec::new(),
+        };
+        let plan = inline_workspace_teardown_plan(temp.path(), &policy).expect("plan");
+        let started = owned_container_runtime(Some(&plan));
+        let report = effigy_runtime::container_manager::lifecycle_operation_report(
+            temp.path(),
+            &policy,
+            ContainerAction::Status,
+            ContainerRuntimeState::Unknown,
+            None,
+        )
+        .expect("report");
+        match previous_backend {
+            Some(value) => unsafe {
+                std::env::set_var("EFFIGY_COMPOSE_BACKEND", value);
+            },
+            None => unsafe {
+                std::env::remove_var("EFFIGY_COMPOSE_BACKEND");
+            },
+        }
+        assert_eq!(plan.backend_id.as_str(), "colima-nerdctl");
+        assert_eq!(started, "colima-nerdctl");
+        assert_eq!(started, plan.backend_id.to_string());
+        assert_eq!(report.backend_id.as_str(), "docker-compose");
     }
 
     #[test]

@@ -508,8 +508,12 @@
 # bypasses, including production tokens in the same file as a legitimate
 # fixture. Disposable trees only; no live runtime.
 "test:architecture:runtime-container-drift-controls" = { rhai = "scripts/check-runtime-container-drift-controls.rhai" }
+"test:architecture:compose-backend-identity" = [
+  "cargo test -p effigy-runtime --lib container_manager::tests::lifecycle_operation_report_does_not_apply_policy_backend_detection -- --exact --nocapture",
+  "cargo test -p effigy --lib runner::execute::pipeline::standard::tests::inline_workspace_started_and_removed_facts_share_compose_plan_backend -- --exact --nocapture",
+]
 "check:architecture:runtime-container-drift" = [
-  "cargo check -p effigy --lib --tests --profile test",
+  "cargo check -p effigy-runtime -p effigy --lib --tests --profile test",
   "cargo clippy -p effigy --all-targets -- -D warnings",
 ]
 "qa:architecture:container-exec-readiness" = [
