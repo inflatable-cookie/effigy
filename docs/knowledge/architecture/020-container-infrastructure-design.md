@@ -530,7 +530,18 @@ An identity-only interrupted pair, mismatched pair, malformed sidecar, unsafe
 mode, or symlink is unknown and preserved. A root writer validates the gateway
 directory owner before `fchown` on the open published file; both record files
 are assigned to that directory owner so the ordinary operator can read them.
-The decimal file stays owner-only as well.
+The decimal file stays owner-only as well. Task 113 extends that owner check
+across elevation: an elevated root caller behind the existing
+`EFFIGY_GATEWAY_ESCALATED` marker additionally accepts a gateway directory
+owned by the authenticated operator UID from `EFFIGY_GATEWAY_OPERATOR_UID`.
+That UID is authenticated, not merely read: it must be non-root, match an
+ambient `SUDO_UID` when one is present, and name the UID whose passwd home is
+byte-identical to the forwarded `HOME`. An unauthenticated root still accepts
+only root ownership, so the v0.14.0 `gateway directory is unsafe` rejection of
+the genuine operator-owned directory no longer recurs for the authenticated
+context, while a forged, substituted, or unrelated owner still refuses. The
+spawned daemon inherits the same forwarded `HOME`, escalation marker, and
+operator UID, so its publication carries the identical context.
 
 All production lifecycle paths carry `VerifiedGatewayStatus`, which keeps the
 unchanged public `GatewayStatus` output paired with the exact trusted record
