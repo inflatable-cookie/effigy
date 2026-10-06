@@ -390,15 +390,23 @@ fn get_verified_gateway_status_with_probes(
     };
     let pid = snapshot.pid();
 
-    let Some(record) = snapshot.record() else {
-        return Err(GatewayError::ProcessStateUnknown { pid });
-    };
-
     // The command reading this PID file is not the detached daemon it owns.
     // Treat a self-reference as unverifiable without probing or removing it.
     if pid == std::process::id() {
         return Err(GatewayError::ProcessStateUnknown { pid });
     }
+
+    let Some(record) = snapshot.record() else {
+        if !snapshot.is_legacy_pid_only() {
+            return Err(GatewayError::ProcessStateUnknown { pid });
+        }
+        return match process_probe(pid) {
+            GatewayProcessProbe::Running | GatewayProcessProbe::ConfirmedAbsent => {
+                Err(GatewayError::LegacyIdentityRequired { pid })
+            }
+            GatewayProcessProbe::Unknown => Err(GatewayError::ProcessStateUnknown { pid }),
+        };
+    };
 
     match process_probe(pid) {
         GatewayProcessProbe::Running => {}
@@ -485,7 +493,15 @@ fn check_existing_gateway_pid_with(
     if let Some(snapshot) = identity::read_snapshot(&config.pid_file_path)? {
         let pid = snapshot.pid();
         let Some(record) = snapshot.record() else {
-            return Err(GatewayError::ProcessStateUnknown { pid });
+            if !snapshot.is_legacy_pid_only() || pid == std::process::id() {
+                return Err(GatewayError::ProcessStateUnknown { pid });
+            }
+            return match probe(pid) {
+                GatewayProcessProbe::Running | GatewayProcessProbe::ConfirmedAbsent => {
+                    Err(GatewayError::LegacyIdentityRequired { pid })
+                }
+                GatewayProcessProbe::Unknown => Err(GatewayError::ProcessStateUnknown { pid }),
+            };
         };
         match probe(pid) {
             GatewayProcessProbe::Running => match identity_probe(record) {

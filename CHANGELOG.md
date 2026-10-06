@@ -7,6 +7,11 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- Gateway lifecycle commands now identify a numeric-only pre-identity record
+  as requiring operator migration, distinct from an unavailable process
+  probe. They preserve its files and refuse to signal, clear, or replace it;
+  the recovery guidance accounts for the previous executable already being
+  replaced and requires independently confirming the daemon is stopped.
 - `effigy release:verify-install` is a maintained heavy-admission selector for
   Effigy's post-publication tagged-source install proof. Invoke it through
   `./target/debug/effigy`; it runs the fixed child command

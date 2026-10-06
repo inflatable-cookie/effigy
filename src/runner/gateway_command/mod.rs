@@ -247,6 +247,9 @@ fn resolve_gateway_status(
     match status {
         Ok(status) => Ok(Some(status)),
         Err(effigy_gateway::GatewayError::NotRunning) => Ok(None),
+        Err(error @ effigy_gateway::GatewayError::LegacyIdentityRequired { .. }) => {
+            Err(RunnerError::task_invocation(error.to_string()))
+        }
         Err(error) => Err(RunnerError::task_invocation(format!(
             "cannot determine gateway state ({error}); refusing to guess. The gateway PID record is left in place for reconciliation"
         ))),
@@ -420,12 +423,12 @@ fn route_table_trust_fields(
 
 fn run_gateway_status(output_json: bool) -> Result<String, RunnerError> {
     let config = gateway_config()?;
+    let status = resolve_gateway_status(verified_gateway_status(&config))?;
     let route_table = RouteTable::load(&config.route_table_path)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let tls = gateway_tls_summary(&config, &route_table);
     let routes = gateway_route_dashboard(&config, &route_table, &tls);
     let repair = gateway_repair_plan(&route_table, detect_active_gateway_projects());
-    let status = resolve_gateway_status(verified_gateway_status(&config))?;
     let (trust_state, trust_reason) = route_table_trust_fields(
         &effigy_gateway::trust::inspect_route_table_trust(&config.route_table_path),
     );
