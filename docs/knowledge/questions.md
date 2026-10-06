@@ -10,11 +10,11 @@ Asked: 2026-10-05
 Answered: 2026-10-05 by Tom
 Owner: [Gateway process identity ruling](architecture/020-container-infrastructure-design.md#gateway-process-identity-ruling)
 
-Tom's v0.14.0 publication block remains in force until the start-identity
-sidecar and fail-closed legacy policy are merged and final release assurance
+Tom's v0.14.0 publication block remains in force until final release assurance
 completes. He does not accept the PID-only risk and authorized dispatch of the
-bounded correction now implemented in task 104. The owning architecture
-records the implementation, residual TOCTOU, and remaining assurance boundary.
+bounded correction now implemented in task 104 and merged in PR 220. The owning
+architecture records the implementation, residual TOCTOU, and remaining
+assurance boundary; this does not claim publication readiness.
 
 ## Q-002 — macOS gateway cross-user identity access
 
@@ -31,5 +31,7 @@ refuse to signal. The reader does not signal, change records, or start anything.
 
 No new helper, install, standing privilege, live-operations authority or change
 to host-run contract 010 is approved. The larger privilege model is not approved.
-Q-001 still blocks v0.14.0 publication until the sidecar and fail-closed legacy
-policy are implemented and verified. Decision: `634c5bd1-b3c9-4f18-88cc-4fd16d117b82`.
+Q-001's publication block remains until exact-candidate release assurance
+completes; task 104's sidecar and fail-closed legacy policy are merged, with the
+documented TOCTOU and cross-UID proof limitation still visible. Decision:
+`634c5bd1-b3c9-4f18-88cc-4fd16d117b82`.

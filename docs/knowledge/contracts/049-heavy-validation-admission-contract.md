@@ -37,8 +37,10 @@ The old writer encoded JSON state with schema `effigy.admission.state.v1`,
 `effigy.admission.status.v1`, `effigy.admission.run.v1`, and
 `effigy.admission.runs.v1`. These are historical format facts, not schemas the
 current binary reads, writes, validates, or migrates. Treat existing files as
-opaque historical data. The prior `48183cf` local-channel binary remains the
-rollback artifact and supports the former explicit-zero setting. No new
+opaque historical data. The prior `48183cf` local-channel binary was retained
+in the planner's machine-local rollout receipt as rollback evidence for that
+host refresh and supports the former explicit-zero setting. It is not a
+published release asset or a general consumer rollback guarantee. No new
 history reader or migration product is introduced.
 
 Host-container lease reapers and other independent leases are not heavy-run
@@ -186,9 +188,10 @@ evidence.
 
 Installation remains planner-owned after independent exact-head review, CI,
 the newer-source Queue milestone, preservation of historical files and
-channel backups, and bounded smoke evidence. Rollback restores the backed-up
-`48183cf` binary; no data cleanup or migration is part of rollback or
-retirement.
+channel backups, and bounded smoke evidence. The retained `48183cf` executable
+is local rollout evidence, not a published consumer rollback target or general
+release guarantee. Host-local rollback follows its planner-owned receipt; no
+data cleanup or migration is part of rollback or retirement.
 
 Run stop/logs commands, group `hard_timeout_ms`, workflow changes, releases,
 automatic VM starts, forced restarts, and live cleanup remain outside this

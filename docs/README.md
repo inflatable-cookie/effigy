@@ -11,7 +11,7 @@ Effigy runs manifest tasks and built-in workflows across monorepos. Linked workt
 - [User and consumer guides](guides/README.md), including [managed task sessions](guides/012-dev-process-manager-tui.md)
 - [Bounded QA groups workflow](guides/081-bounded-qa-groups-workflow.md) (implemented through `tasks qa-group`; `stop`/`hard_timeout_ms` wait on owned-run supervision, contract 052)
 - [Owned run supervision workflow](guides/082-owned-run-supervision-workflow.md) (proposed; QA-group `stop` and `hard_timeout_ms` remain unavailable under contract 052. Queue/Nucleus scheduling is implemented under contract 049; the former Effigy admission store and query commands are retired, as documented in [guide 080](guides/080-host-wide-validation-admission.md).)
-- [v0.14.0 consumer migration](guides/083-v0.14.0-consumer-migration.md) (pre-release checklist for breaking changes and compatibility updates)
+- [v0.14.0 consumer migration](guides/083-v0.14.0-consumer-migration.md) (pre-release migration checklist and incremental first-parent change coverage)
 
 ## What's next
 

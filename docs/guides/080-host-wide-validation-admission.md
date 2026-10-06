@@ -76,9 +76,9 @@ could be rooted elsewhere with `EFFIGY_ADMISSION_DIR`. Existing directories,
 The current binary does not read, write, delete, or migrate them. The old
 writer used `effigy.admission.state.v1` JSON with schema version 1; treat saved
 files as opaque historical records, not a current query or migration format.
-The backed-up prior `48183cf` local-channel binary is the supported rollback
-artifact and retains the explicit-zero route. No installation or cleanup is
-performed by this change.
+The prior `48183cf` local-channel binary was retained in a planner-owned local
+rollout receipt; it is not a published consumer rollback target or general
+release guarantee. No installation or cleanup is performed by this change.
 
 Maintainers prove scheduler behavior with the targeted host-run protocol and
 integration selectors against the private Queue server at `e9e4d12` or a
