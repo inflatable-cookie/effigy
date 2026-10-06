@@ -441,21 +441,20 @@ fn git_output(root: &Path, git_args: &[&str]) -> Option<String> {
         .then(|| String::from_utf8_lossy(&output.stdout).to_string())
 }
 
-/// Runtime context for member execution requests: the active captured
-/// context when present (CLI dispatch or nested/embedded replay), otherwise
-/// a capture that keeps the already-resolved invocation cwd and repo root.
-pub(super) fn member_runtime_context(
-    root: &Path,
-    invocation_cwd: &Path,
-) -> Result<EffigyRuntimeContext, RunnerError> {
-    if let Some(context) = super::command_context::active_runtime_context() {
-        return Ok(context);
-    }
-    EffigyRuntimeContext::capture_lossy(
-        Some(invocation_cwd.to_path_buf()),
-        Some(root.to_path_buf()),
-    )
-    .map_err(|error| RunnerError::task_invocation(error.to_string()))
+/// Runtime context for member execution requests.
+///
+/// Nested skill/source replay keeps the active context when it carries an
+/// explicit task source. Ordinary CLI and `--repo` dispatch capture at the
+/// group's already-resolved root so catalog discovery does not follow the
+/// process cwd. Scheduler submit still uses the captured invocation cwd.
+pub(super) fn member_runtime_context(root: &Path) -> Result<EffigyRuntimeContext, RunnerError> {
+    super::command_context::active_runtime_context()
+        .filter(|context| context.task_source().is_some())
+        .map(Ok)
+        .unwrap_or_else(|| {
+            EffigyRuntimeContext::capture_lossy(Some(root.to_path_buf()), None)
+                .map_err(|error| RunnerError::task_invocation(error.to_string()))
+        })
 }
 
 /// Unused today but kept typed for the status inventory surface planned in

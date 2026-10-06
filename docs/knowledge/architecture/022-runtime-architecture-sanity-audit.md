@@ -92,8 +92,11 @@ pattern to make the check pass loses the boundary. Production callers in the
 same file as a legitimate fixture still fail: the GNU-findutils Colima
 acceptance lives in
 `src/runner/system_command/workspace_permissions_gnu_accept.rs`, not in
-permission-prep production. QA-group submit and member requests consume the
-already-captured invocation cwd. Inline-workspace start and remove facts share
+permission-prep production. QA-group scheduler submit consumes the
+already-captured invocation cwd. Member execution requests set
+`environment.cwd` to the group's resolved root (and capture there unless a
+nested task source is present) so catalog discovery follows the `--repo`
+target, not the process cwd. Inline-workspace start and remove facts share
 the manager compose-plan backend id (`detect_backend` with policy/env
 detection). `lifecycle_operation_report` / `selected_backend` is the wrong
 surface: with no request override it returns the first registered backend.

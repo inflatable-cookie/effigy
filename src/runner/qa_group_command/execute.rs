@@ -17,9 +17,10 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use chrono::Utc;
 use effigy_execution::{
-    QaGroupBackend, QaGroupBudgetState, QaGroupGapSnapshot, QaGroupMemberRecord,
-    QaGroupMemberState, QaGroupOutcome, QaGroupRunCapabilities, QaGroupRunGroupSnapshot,
-    QaGroupRunHead, QaGroupRunRecord, QaGroupRunState, QaGroupRunTiming, QA_GROUP_RUN_SCHEMA,
+    ExecutionEnvironmentPlan, QaGroupBackend, QaGroupBudgetState, QaGroupGapSnapshot,
+    QaGroupMemberRecord, QaGroupMemberState, QaGroupOutcome, QaGroupRunCapabilities,
+    QaGroupRunGroupSnapshot, QaGroupRunHead, QaGroupRunRecord, QaGroupRunState, QaGroupRunTiming,
+    QA_GROUP_RUN_SCHEMA,
 };
 use effigy_tasks::{budget_state, QaGroupPlan, QaGroupPlanMember};
 
@@ -83,7 +84,7 @@ pub(super) fn execute_group_run(
     begin_qa_group_run_record(root, &record)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
 
-    let outcome = run_members(root, invocation_cwd, plan, &mut record, run_mode);
+    let outcome = run_members(root, plan, &mut record, run_mode);
     let rendered = if output_json {
         render_record_json(&record)?
     } else {
@@ -213,7 +214,6 @@ fn submit_group_run(
 /// Run members serially and finalize aggregate states.
 fn run_members(
     root: &Path,
-    invocation_cwd: &Path,
     plan: &QaGroupPlan,
     record: &mut QaGroupRunRecord,
     run_mode: RunMode,
@@ -236,7 +236,7 @@ fn run_members(
     let _ = update_qa_group_run_record(root, record);
 
     let started = Instant::now();
-    let result = execute_member_loop(root, invocation_cwd, plan, record);
+    let result = execute_member_loop(root, plan, record);
     record.timing.execution_wall_ms = Some(elapsed_ms(started));
     record.timing.ended_at = Some(Utc::now().to_rfc3339());
     record.budget_state = match budget_state(
@@ -260,7 +260,6 @@ fn run_members(
 
 fn execute_member_loop(
     root: &Path,
-    invocation_cwd: &Path,
     plan: &QaGroupPlan,
     record: &mut QaGroupRunRecord,
 ) -> Result<(), RunnerError> {
@@ -275,7 +274,7 @@ fn execute_member_loop(
         let _ = update_qa_group_run_record(root, record);
 
         let member_started = Instant::now();
-        let attempt: MemberAttempt = run_single_member(root, invocation_cwd, member);
+        let attempt: MemberAttempt = run_single_member(root, member);
         let wall = elapsed_ms(member_started);
         let ended_at = Utc::now().to_rfc3339();
         let log_ref = member_log_ref(&record.run_id, &member.id);
@@ -351,12 +350,8 @@ fn execute_member_loop(
 /// The member's fixed argv is the declared args; `--json` is appended purely
 /// as the capture vehicle (the pipeline strips it before the task command)
 /// so run-scoped logs hold the pipeline's redacted captures.
-fn run_single_member(
-    root: &Path,
-    invocation_cwd: &Path,
-    member: &QaGroupPlanMember,
-) -> MemberAttempt {
-    let request = match build_member_request(root, invocation_cwd, member) {
+fn run_single_member(root: &Path, member: &QaGroupPlanMember) -> MemberAttempt {
+    let request = match build_member_request(root, member) {
         Ok(request) => request,
         Err(error) => return Err((Box::new(error), String::new(), String::new())),
     };
@@ -400,19 +395,19 @@ fn member_command_label(member: &QaGroupPlanMember) -> String {
 
 fn build_member_request(
     root: &Path,
-    invocation_cwd: &Path,
     member: &QaGroupPlanMember,
 ) -> Result<effigy_execution::TaskExecutionRequest, RunnerError> {
     let mut args = member.args.clone();
     args.push("--json".to_owned());
     effigy_execution::TaskExecutionRequestBuilder::new()
-        .runtime_context(member_runtime_context(root, invocation_cwd)?)
+        .runtime_context(member_runtime_context(root)?)
         .task(format!("{}/{}", member.catalog, member.task), args)
         .surface(if member.surface == "draft" {
             effigy_execution::ExecutionSurface::Draft
         } else {
             effigy_execution::ExecutionSurface::QaGroup
         })
+        .environment(ExecutionEnvironmentPlan::default().cwd(root.to_path_buf()))
         .build()
         .map_err(|error| RunnerError::task_invocation(error.to_string()))
 }
@@ -744,4 +739,61 @@ fn render_record_text(record: &QaGroupRunRecord) -> String {
         out.push_str(&format!("warning: {warning}\n"));
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_member_request;
+    use crate::runner::command_context::with_runtime_context;
+    use effigy_context::EffigyRuntimeContext;
+    use effigy_execution::ExecutionDispatchPlan;
+    use effigy_tasks::QaGroupPlanMember;
+    use std::path::PathBuf;
+
+    fn published_member() -> QaGroupPlanMember {
+        QaGroupPlanMember {
+            id: "t1".to_owned(),
+            kind: "proof".to_owned(),
+            surface: "published".to_owned(),
+            catalog: "root".to_owned(),
+            resolved_selector: "root/ok".to_owned(),
+            task: "ok".to_owned(),
+            args: Vec::new(),
+            targets: vec!["workspace:root".to_owned()],
+            covers: Vec::new(),
+            companions: Vec::new(),
+            limits: vec!["nothing".to_owned()],
+            admission: "ordinary".to_owned(),
+            heavy_reasons: Vec::new(),
+            declared_run_in: "host".to_owned(),
+        }
+    }
+
+    #[test]
+    fn member_request_discovers_from_resolved_root_not_process_cwd() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().to_path_buf();
+        let process_cwd = PathBuf::from("/effigy-qa-group-process-cwd");
+        assert_ne!(
+            root, process_cwd,
+            "fixture root must differ from the process cwd"
+        );
+        let cli_context = EffigyRuntimeContext::capture_lossy(Some(process_cwd.clone()), None)
+            .expect("cli context");
+        assert!(cli_context.task_source().is_none());
+        assert_eq!(cli_context.invocation_cwd(), process_cwd.as_path());
+
+        let request = with_runtime_context(&cli_context, || {
+            build_member_request(&root, &published_member())
+        })
+        .expect("member request");
+
+        assert_eq!(request.environment.cwd.as_deref(), Some(root.as_path()));
+        assert!(request.runtime_context.task_source().is_none());
+        assert_eq!(request.runtime_context.invocation_cwd(), root.as_path());
+        let plan = ExecutionDispatchPlan::from_request(request).expect("dispatch plan");
+        assert_eq!(plan.effective_cwd, root);
+        assert_ne!(plan.effective_cwd, process_cwd);
+        assert_eq!(plan.selector, "root/ok");
+    }
 }
