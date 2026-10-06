@@ -89,6 +89,27 @@ resolve that companion-file transition within the existing reviewed mutation
 and rollback protections; manually skipping a gate or weakening that
 consistency check is not an acceptable release procedure.
 
+### Admission for authorized preparation
+
+Ordinary milestone full QA remains planner-owned through Queue
+`project.qa.run`, with its result read through `project.qa.get`. Authorized
+release preparation has a different persistence requirement: its mutations
+and prepared source fingerprints must stay in the actual clean, pushed main
+checkout. Queue milestone QA uses a disposable checkout and cannot supply
+that in-place preparation or transferable fingerprints.
+
+Run the complete preparation command through a maintained Effigy task marked
+`admission = "heavy"`, so Queue/Nucleus admits the entire operation before
+compilation, prepared-file writes and configured gates. The release built-in
+alone does not provide heavy admission. This route is for explicitly
+authorized preparation, not worker per-task QA, a milestone bypass, or release
+execution. It must preserve the configured gates and same-run nested
+admission; no direct raw gate bundle, scheduler override, copied prepared
+fingerprints or temporary Queue validation setting is a substitute. The
+selector itself must be independently reviewed before use. Preparation
+approval still does not permit tagging, publishing, installing or live
+operations.
+
 ### Unsafe-invariant and public-diagnostics reconciliation
 
 The strict post-v0.13.1 audit's reported unsafe-documentation and public
