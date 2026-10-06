@@ -113,6 +113,28 @@ selector itself must be independently reviewed before use. Preparation
 approval still does not permit tagging, publishing, installing or live
 operations.
 
+The maintained selector is `effigy release:prepare`, declared
+`admission = "heavy"` in [`config/tasks.toml`](../../../config/tasks.toml) and
+wired to [`scripts/release-prepare.sh`](../../../scripts/release-prepare.sh).
+The entry point fixes the subcommand to `release prepare`, rejects `--repo`,
+refuses before any effect unless a mutating run names an explicit
+`--version <SEMVER>` or an inner `--plan`/`--dry-run` is requested, always
+enforces `--check-gates` for the mutating run, and never forwards `execute`,
+`resume`, tag or publish. It requires branch `main`, no tracked working-tree
+changes, and `HEAD == origin/main`, then builds and runs the Effigy from the
+invocation checkout (`cargo run --bin effigy`), never an installed or PATH
+binary that may predate the preparation repairs.
+
+`effigy release:prepare --plan` is the runner's no-write task plan: it resolves
+and prints the task command without running the entry point. The inner prepare
+plan is `effigy release:prepare -- --plan`; that path still builds the
+current-source Effigy but performs no mutation. The mutating planner command is
+`effigy release:prepare --yes --version 0.14.0`, which becomes
+`effigy release prepare --yes --check-gates --version 0.14.0` in this
+checkout. The whole operation runs inside one admitted host-run; nested gate
+work reuses that run instead of resubmitting, and a failed gate or cancelled
+run keeps the built-in's rollback and honest non-zero exit.
+
 ### Unsafe-invariant and public-diagnostics reconciliation
 
 The strict post-v0.13.1 audit's reported unsafe-documentation and public

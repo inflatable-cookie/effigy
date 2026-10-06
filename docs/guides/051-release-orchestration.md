@@ -415,6 +415,34 @@ What each step is for:
      release workflow publishes its artifacts
    - library and service repos use their own consumer smoke instead
 
+### Effigy's own admitted preparation selector
+
+Effigy's own repository wraps authorized in-place preparation in a maintained
+`admission = "heavy"` task, `effigy release:prepare`. It is the sanctioned
+route for the approved preparation that must keep prepared state in the actual
+clean, pushed `main` checkout; Queue milestone `project.qa.run` uses a
+disposable checkout and cannot transfer prepared fingerprints.
+
+```sh
+effigy release:prepare --plan                  # outer, no-write task plan
+effigy release:prepare -- --plan               # inner `release prepare --plan`
+effigy release:prepare --yes --version 0.14.0  # mutating preparation
+```
+
+The outer `--plan` is the runner's task plan: it resolves and prints the task
+command without running the entry point. Only the `-- --plan` form reaches the
+inner `release prepare --plan`.
+
+The entry point fixes the subcommand to `release prepare`, rejects `--repo`,
+requires branch `main` with no tracked changes and `HEAD == origin/main`,
+always enforces `--check-gates` for a mutating run, and never forwards
+`execute`, `resume`, tag or publish. It builds the Effigy from the invocation
+checkout, so an installed or PATH binary cannot supply stale preparation logic.
+The whole operation is admitted once; nested gate work reuses that run. This
+selector is for approved Effigy preparation only, not worker per-task QA, and
+it does not authorize tagging, publishing, installing or live operations. See
+[the release contract](../knowledge/contracts/release.md).
+
 ## 6) Gate Configuration
 
 Gate commands are normal shell commands. They do not need to be Rust-specific.
