@@ -388,10 +388,9 @@ do not prove that the live process is the gateway that wrote the file. See
 
 ### Gateway process identity
 
-This subsection is the owner for current behavior, the bounded correction
-proposal, and source evidence. Tom's ruling lives in
+This subsection is the owner for current behavior, source evidence, and the
+bounded correction history. Tom's ruling lives in
 [Gateway process identity ruling](#gateway-process-identity-ruling).
-The proposal is authorized and not implemented.
 
 #### Behavior before task 104 (main `127291bac`, verified at dispatch)
 
@@ -626,8 +625,11 @@ start anything.
 No new helper, install, standing privilege, live-operations authority or change
 to contract 010 is approved. The larger privilege model is not approved.
 This authorizes the bounded implementation, not a live gateway migration.
-Q-001 still blocks publication until task 104 is merged and exact-head release
-assurance is complete.
+Task 104 is merged and implements the sidecar plus fail-closed legacy policy.
+Q-001's publication block remains until exact-candidate release assurance is
+complete. The final identity-check-to-signal TOCTOU and the unrun live
+cross-UID daemon proof remain documented limitations; this is not acceptance
+of those risks or a release-readiness claim.
 
 On macOS, gateway setup manages `/etc/resolver/` files for local domains.
 HTTPS uses mkcert-backed certificates after `effigy gateway setup-tls`.

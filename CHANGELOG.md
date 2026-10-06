@@ -20,7 +20,8 @@ During v0.x, MINOR bumps may include breaking changes.
   macOS binaries starting with the next normally authorized release. The raw
   binaries keep their existing names.
 - Added a [v0.14.0 consumer migration checklist](docs/guides/083-v0.14.0-consumer-migration.md)
-  covering the breaking changes and compatibility updates from v0.13.1.
+  covering breaking changes and compatibility from v0.13.1, with an
+  incremental first-parent supplement for the later reviewed repair wave.
 - Unset or `EFFIGY_HOST_SCHEDULER=1` routes heavy tasks (`qa`, `ci`, `ci:fresh`,
   `admission = "heavy"`) and heavy QA groups through the host-run scheduler
   (Queue/Nucleus owns capacity and scheduling). `EFFIGY_HOST_SCHEDULER=0` is
@@ -249,9 +250,9 @@ During v0.x, MINOR bumps may include breaking changes.
   removed its legacy joins. `EFFIGY_ADMISSION_DIR` is no longer read;
   `EFFIGY_HOST_SCHEDULER=0` now returns an unsupported-retired diagnostic
   before effects. Existing default or custom state files are untouched and
-  treated as opaque historical data; no reader or migration is added. Rollback
-  uses the backed-up prior `48183cf` local-channel binary, which retains the
-  explicit-zero path.
+  treated as opaque historical data; no reader or migration is added. The
+  prior `48183cf` binary is local rollout evidence, not a published consumer
+  rollback target.
 - Removed the Rhai object-storage host surface (`storage::provider`, `status`,
   `ls`, `head`, `get`, `put`, `delete`), the `effigy-rhai` `s3` dependency, and
   the vendored `vendor/s3` library, per the independent-retirement ruling in
@@ -262,8 +263,9 @@ During v0.x, MINOR bumps may include breaking changes.
   consumer callers (for example `bovine-accelerator` Rhai tasks) break by
   design and are retired in their own repository.
 - Lean Northstar repositories no longer carry a Queue manifest. `effigy init
-  northstar` omits it; Queue closeout is the default, and overrides live in
-  Queue project settings (`project.set`).
+  northstar` omits it; Queue closeout is the default, and repository overrides
+  use Queue's `repository.set` / `repository.get` settings API. Project
+  membership remains on `project.get` / `project.upsert`.
 - Removed the `effigy papercuts` command and JSON schemas, `effigy-papercuts`
   crate, Northstar starter papercut file, contract 036, and guide 078. Queue's
   papercuts table owns capture and inventory after the portfolio import.
@@ -388,18 +390,18 @@ During v0.x, MINOR bumps may include breaking changes.
   version records byte-identical for reconciliation, and never start a
   replacement. Confirmed absence still clears those records and stop stays
   idempotent. The probe result is now explicit (`GatewayProcessProbe`), so it is
-  no longer collapsed to a `bool`. The PID file is still decimal-only: an exact
-  live `ps` row is not proof the process is the gateway, so a leftover PID after
-  crash or reboot, and PID reuse between a probe and a later signal, remain
-  current behavior. Tom blocked v0.14.0 publication until a start-identity
-  sidecar and fail-closed legacy policy land
-  ([Q-001](docs/knowledge/questions.md#q-001--gateway-pid-identity), answered);
-  he did not accept that residual. Prove with `test:gateway:probe-state`.
-- Gateway PID-file reads and direct probe/signal paths now reject PID 0, PID 1,
-  and values outside the positive signed PID domain before dispatch. Unix status
-  requires one exact PID row from `ps`; the PID file remains numeric and does
-  not establish process start identity. Numeric-domain repair does not close
-  stale/foreign PID or probe-to-signal reuse. Prove with `test:gateway:pid-domain`.
+  no longer collapsed to a `bool`. The task 104 identity sidecar and fail-closed
+  legacy policy described above now prevent a PID-only record from authorizing
+  lifecycle actions. The final identity-check-to-signal TOCTOU remains. Tom's
+  Q-001 publication block remains pending exact-candidate release assurance;
+  the earlier PID-only risk was not accepted
+  ([Q-001](docs/knowledge/questions.md#q-001--gateway-pid-identity), answered).
+  Prove the probe behavior with `test:gateway:probe-state`.
+- Gateway PID-file reads and direct probe/signal paths reject PID 0, PID 1, and
+  values outside the positive signed PID domain before dispatch. Unix status
+  requires one exact PID row from `ps`. The numeric-domain repair does not by
+  itself establish start identity or remove the final signal TOCTOU; task 104's
+  sidecar policy is described above. Prove with `test:gateway:pid-domain`.
 - In-process run-array shell timeouts and managed lifecycle cleanup now stop
   the owned Unix process group on expiry and reap the direct child, so
   descendants cannot leak after a sequence `124` or a cleanup timeout,

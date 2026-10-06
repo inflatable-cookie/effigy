@@ -226,9 +226,10 @@ concurrent = [
 - `ready_message` is shown only after that ready state is reached.
 - `gateway = true` starts the gateway before the managed runtime when
   the task-owned container environment declares local DNS ownership.
-- The interactive TUI renders its first frame before starting managed child
-  processes. Tabs show waiting, starting, running, and failed startup states;
-  child output and key input continue to be handled while a configured
+- The interactive TUI renders its first frame without waiting for configured
+  startup delays to finish; zero-delay children may start concurrently with
+  that first paint. Tabs show waiting, starting, running, and failed startup
+  states; child output and key input continue to be handled while a configured
   `start_after_ms` delay is pending.
 - Child startup still follows the configured order, and each
   `start_after_ms` remains a delay before that entry is spawned. `Ctrl+C`

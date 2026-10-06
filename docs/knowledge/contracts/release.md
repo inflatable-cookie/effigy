@@ -134,13 +134,13 @@ delete PID/version records or start a replacement. Post-fork callback
 conversion and named containers test-lint sites are closed by task 100
 (`test:rust:postfork-safety`), not by this unsafe-invariant wave.
 
-Gateway process ownership is a separate v0.14.0 disposition, not accepted by
-those repairs. The PID file is still decimal-only; an exact live `ps` row is
-not the gateway that wrote it. Stale/foreign PID and probe-to-signal reuse
-remain current behavior. Tom blocked publication until the sidecar is
-implemented
-([Q-001](../questions.md#q-001--gateway-pid-identity), answered).
-Current truth, the authorized unimplemented proposal, and the ruling live in
-[architecture 020](../architecture/020-container-infrastructure-design.md#gateway-process-identity)
-and the [ruling subsection](../architecture/020-container-infrastructure-design.md#gateway-process-identity-ruling).
-This release procedure does not accept that residual.
+The gateway identity correction is implemented and merged in task 104 (PR
+220). Current sidecar behavior, legacy refusal, the bounded macOS reader, and
+remaining limitations are owned by
+[architecture 020](../architecture/020-container-infrastructure-design.md#gateway-process-identity).
+The prior PID-only counterexample is historical, not current main behavior.
+The last identity comparison and signal syscall still have a TOCTOU gap, and
+a live cross-UID read of an elevated daemon was not exercised. Q-001 and Q-002
+are answered; Q-001's publication block remains until exact-candidate release
+assurance completes. This note does not accept a residual or certify the
+release candidate.

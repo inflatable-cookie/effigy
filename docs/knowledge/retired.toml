@@ -1,7 +1,7 @@
 [[retired]]
 id = "effigy-heavy-admission-store-and-cli"
 retired = "2026-10-02"
-replacement = "Queue and Nucleus own heavy scheduling. Effigy routes heavy invocations through the host-run client and exposes no local heavy-admission store or status/run/runs commands. Historical files under the former default or EFFIGY_ADMISSION_DIR root remain untouched and opaque; the prior 48183cf binary is the supported explicit-zero rollback artifact."
+replacement = "Queue and Nucleus own heavy scheduling. Effigy routes heavy invocations through the host-run client and exposes no local heavy-admission store or status/run/runs commands. Historical files under the former default or EFFIGY_ADMISSION_DIR root remain untouched and opaque; 48183cf is local rollout evidence, not a published consumer rollback target."
 owner = "docs/knowledge/contracts/049-heavy-validation-admission-contract.md"
 terms = [
   "effigy admission",
@@ -88,7 +88,7 @@ allow = ["CHANGELOG.md"]
 [[retired]]
 id = "effigy-queue-manifest"
 retired = "2026-09-26"
-replacement = "Queue closeout is the no-manifest default; project.set owns repository-specific overrides."
+replacement = "Queue closeout is the no-manifest default; repository.set/repository.get own per-repository overrides, while project.get/project.upsert own project membership."
 owner = "docs/guides/056-northstar-effigy-consumer-repo-contract.md"
 terms = ["paseo.queue.control.v5"]
 paths = [".paseo/queue.json", "crates/effigy-catalog/starters/northstar/.paseo/"]
