@@ -275,20 +275,23 @@ malformed output or digest mismatch is Unknown.
 **Role predicate.** The candidate must own a listening socket on each expected
 gateway endpoint:
 
-- DNS UDP and TCP on the DNS bind address (canonical default
-  `127.0.0.1:15353`);
+- DNS UDP on the DNS bind address (canonical default `127.0.0.1:15353`). The
+  DNS server binds UDP only (`crates/effigy-gateway/src/dns.rs`
+  `UdpSocket::bind`); DNS TCP is not a role signal;
 - HTTP TCP on the proxy bind address (canonical default `127.0.0.1:80`);
-- HTTPS TCP on the TLS bind address when TLS routes exist (canonical default
-  `127.0.0.1:443`).
+- HTTPS TCP on the TLS bind address only when TLS is configured (canonical
+  default `127.0.0.1:443`).
 
 A foreign Effigy task or worker running the same installed executable does not
 own those listening sockets and fails the role predicate. The predicate proves
 the live process currently plays the gateway role; it does not prove who spawned
 it and does not reconstruct historical ownership. Endpoints come from the
 canonical defaults, never ambient `EFFIGY_GATEWAY_*` values the recovering CLI
-could have substituted. A gateway configured on custom endpoints cannot be
-auto-proven: the reader returns Unknown and `recover` refuses unless the operator
-explicitly confirms the custom endpoints, which is a disclosed limit.
+could have substituted. If the effective endpoint or config evidence is
+unavailable or ambiguous — custom endpoints, unreadable socket tables, or a
+partial role set — the reader returns Unknown and `recover` refuses. A gateway
+configured on custom endpoints cannot be auto-proven; it refuses unless the
+operator explicitly confirms the custom endpoints, which is a disclosed limit.
 
 **Supported platform API proof.**
 
@@ -558,10 +561,12 @@ no-defects claim:
 2. **Reader binding**: a recording fake reader proves it accepts only
    target/record digests + operator/directory UIDs, rejects arbitrary PID/path,
    caps output, and returns Unknown on decline/timeout/malformed/mismatch.
-3. **Role predicate**: a real owned child that binds the expected gateway
-   endpoints passes; a **real foreign same-executable Effigy worker** that does
-   not own them fails. A wrong-UID candidate fails. A valid root-daemon case
-   with an operator-owned directory (UID 501 dir, UID 0 candidate) passes.
+3. **Role predicate**: a real owned child that binds the production endpoint set
+   (UDP DNS on 15353, TCP proxy on 80, TCP TLS on 443 when configured) passes; a
+   **real foreign same-executable Effigy worker** that does not own them fails;
+   a TCP DNS socket is not a substitute for the UDP signal. A wrong-UID
+   candidate fails. A valid root-daemon case with an operator-owned directory
+   (UID 501 dir, UID 0 candidate) passes.
 4. **Live path/role ambiguity**: unreadable or overlong executable path, and a
    candidate whose role set is partial or ambiguous, refuse.
 5. **Substitution**: changed record bytes, changed candidate generation, or a
