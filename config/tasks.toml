@@ -280,7 +280,7 @@
   # Full-size GNU findutils + native chown + numeric-user proof in a private
   # disposable container (already-running effigy Colima profile, already-local
   # image, no host mounts or network). Fails, never skips, if unavailable.
-  "cargo test -p effigy --lib runner::system_command::workspace_permissions::tests::bulk_gnu_container_full_acceptance -- --ignored --nocapture",
+  "cargo test -p effigy --lib runner::system_command::workspace_permissions::gnu_accept::bulk_gnu_container_full_acceptance -- --ignored --nocapture",
 ]
 "check:workspace:rust-ownership:bulk" = [
   "cargo check -p effigy --lib --tests --profile test",
@@ -504,6 +504,14 @@
 
 # Architecture drift guards
 "qa:architecture:runtime-container-drift" = { rhai = "scripts/check-runtime-container-drift.rhai" }
+# Private fixture proof of path-scoped allowances and rejected production
+# bypasses, including production tokens in the same file as a legitimate
+# fixture. Disposable trees only; no live runtime.
+"test:architecture:runtime-container-drift-controls" = { rhai = "scripts/check-runtime-container-drift-controls.rhai" }
+"check:architecture:runtime-container-drift" = [
+  "cargo check -p effigy --lib --tests --profile test",
+  "cargo clippy -p effigy --all-targets -- -D warnings",
+]
 "qa:architecture:container-exec-readiness" = [
   "cargo test -p effigy-containers status_report_includes_primary_service_exec_ready_state -- --nocapture",
   "cargo test -p effigy-runtime read::tests::primary_service_exec_readiness_ -- --nocapture",

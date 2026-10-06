@@ -39,8 +39,8 @@ pub(in crate::runner) use transport::clear_service_container_name_cache;
 
 pub(in crate::runner) use transport::{
     append_color_exec_env, copy_file_into_service, probe_container_capabilities,
-    run_command_capture_until, run_compose_exec, run_compose_exec_plan_with_options,
-    run_compose_exec_with_deadline,
+    run_command_capture_until, run_compose_exec, run_compose_exec_plan_with_deadline,
+    run_compose_exec_plan_with_options,
 };
 
 pub(super) fn run_exec(args: ExecArgs) -> Result<String, RunnerError> {

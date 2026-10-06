@@ -29,6 +29,7 @@ use effigy_containers::{
     compose::{resolve_compose_backend_for_repo, ComposeBackend},
     exec::{inspect_colima_ssh_agent_socket_for_profile_with_deadline, SshAgentSocketHealth},
     load_all_container_policies, user_global_backend_preference, user_global_colima_profile,
+    ContainerAction,
 };
 use effigy_doctor::{
     check_id, DoctorError, DoctorFinding, DoctorRuntimeDiagnostics, DoctorRuntimePorts,
@@ -40,7 +41,7 @@ use effigy_tasks::TaskSelector;
 
 use crate::runner::deferral;
 use crate::runner::error::RunnerError;
-use crate::runner::exec_command::{run_command_capture_until, run_compose_exec_with_deadline};
+use crate::runner::exec_command::{run_command_capture_until, run_compose_exec_plan_with_deadline};
 use crate::runner::execute::api;
 use crate::runner::system_command::is_primary_service_running_with_deadline;
 use crate::runner::system_command::workspace_permissions::{
@@ -385,7 +386,8 @@ fn bun_install_scan_target(
     policy: &effigy_containers::EffectiveContainerPolicy,
     deadline: Option<Instant>,
 ) -> Result<Vec<String>, String> {
-    let args = effigy_containers::compose::compose_args(
+    let plan = match effigy_runtime::container_manager::compose_invocation_plan(
+        repo_root,
         policy,
         [
             "exec",
@@ -397,15 +399,13 @@ fn bun_install_scan_target(
             "-c",
             r#"if [ -n "$BUN_INSTALL" ]; then printf '%s/install\n' "$BUN_INSTALL"; fi"#,
         ],
-    );
-    match run_compose_exec_with_deadline(
-        repo_root,
-        policy,
-        &args,
-        true,
+        ContainerAction::Exec,
         "workspace bun cache path probe",
-        deadline,
     ) {
+        Ok(plan) => plan,
+        Err(error) => return Err(error.to_string()),
+    };
+    match run_compose_exec_plan_with_deadline(policy, &plan, true, None, deadline) {
         Ok(output) if output.status.success() => Ok(String::from_utf8_lossy(&output.stdout)
             .lines()
             .map(str::trim)

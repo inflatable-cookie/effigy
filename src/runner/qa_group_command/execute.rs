@@ -42,6 +42,7 @@ type MemberAttempt = Result<(String, String), (Box<RunnerError>, String, String)
 
 pub(super) fn execute_group_run(
     root: &Path,
+    invocation_cwd: &Path,
     plan: &QaGroupPlan,
     selector_env_names: std::collections::BTreeSet<String>,
     output_json: bool,
@@ -52,16 +53,14 @@ pub(super) fn execute_group_run(
     // Routing decisions that can refuse (invalid setting, forged token, down
     // scheduler) happen here, before any ledger entry or member effect.
     let route = if heavy {
-        Some(host_scheduler::route_heavy(
-            &selector,
-            &invocation_cwd(root),
-        )?)
+        Some(host_scheduler::route_heavy(&selector, invocation_cwd)?)
     } else {
         None
     };
     if route == Some(Route::Submit) {
         return submit_group_run(
             root,
+            invocation_cwd,
             plan,
             selector_env_names,
             output_json,
@@ -84,7 +83,7 @@ pub(super) fn execute_group_run(
     begin_qa_group_run_record(root, &record)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
 
-    let outcome = run_members(root, plan, &mut record, run_mode);
+    let outcome = run_members(root, invocation_cwd, plan, &mut record, run_mode);
     let rendered = if output_json {
         render_record_json(&record)?
     } else {
@@ -114,10 +113,6 @@ enum RunMode {
     Light,
     /// Already covered: a validated scheduler run, or a recorded override.
     Owned,
-}
-
-fn invocation_cwd(root: &Path) -> std::path::PathBuf {
-    std::env::current_dir().unwrap_or_else(|_| root.to_path_buf())
 }
 
 /// Backend correlation for a scheduler-covered heavy run.
@@ -150,18 +145,18 @@ fn backend_for(route: &Route, heavy: bool) -> Option<QaGroupBackend> {
 /// scheduler settled without launching leaves a record, written by this process.
 fn submit_group_run(
     root: &Path,
+    invocation_cwd: &Path,
     plan: &QaGroupPlan,
     selector_env_names: std::collections::BTreeSet<String>,
     output_json: bool,
     run_id: &str,
     selector: &str,
 ) -> Result<String, RunnerError> {
-    let cwd = invocation_cwd(root);
     let settled = host_scheduler::submit_and_settle(SubmitContext {
         selector,
         class_source: effigy_host_run::ClassSource::Manifest,
         repository: root,
-        cwd: &cwd,
+        cwd: invocation_cwd,
         selector_env_names,
     })?;
     let host_scheduler::Settled::NotLaunched {
@@ -218,6 +213,7 @@ fn submit_group_run(
 /// Run members serially and finalize aggregate states.
 fn run_members(
     root: &Path,
+    invocation_cwd: &Path,
     plan: &QaGroupPlan,
     record: &mut QaGroupRunRecord,
     run_mode: RunMode,
@@ -240,7 +236,7 @@ fn run_members(
     let _ = update_qa_group_run_record(root, record);
 
     let started = Instant::now();
-    let result = execute_member_loop(root, plan, record);
+    let result = execute_member_loop(root, invocation_cwd, plan, record);
     record.timing.execution_wall_ms = Some(elapsed_ms(started));
     record.timing.ended_at = Some(Utc::now().to_rfc3339());
     record.budget_state = match budget_state(
@@ -264,6 +260,7 @@ fn run_members(
 
 fn execute_member_loop(
     root: &Path,
+    invocation_cwd: &Path,
     plan: &QaGroupPlan,
     record: &mut QaGroupRunRecord,
 ) -> Result<(), RunnerError> {
@@ -278,7 +275,7 @@ fn execute_member_loop(
         let _ = update_qa_group_run_record(root, record);
 
         let member_started = Instant::now();
-        let attempt: MemberAttempt = run_single_member(root, member);
+        let attempt: MemberAttempt = run_single_member(root, invocation_cwd, member);
         let wall = elapsed_ms(member_started);
         let ended_at = Utc::now().to_rfc3339();
         let log_ref = member_log_ref(&record.run_id, &member.id);
@@ -354,8 +351,12 @@ fn execute_member_loop(
 /// The member's fixed argv is the declared args; `--json` is appended purely
 /// as the capture vehicle (the pipeline strips it before the task command)
 /// so run-scoped logs hold the pipeline's redacted captures.
-fn run_single_member(root: &Path, member: &QaGroupPlanMember) -> MemberAttempt {
-    let request = match build_member_request(root, member) {
+fn run_single_member(
+    root: &Path,
+    invocation_cwd: &Path,
+    member: &QaGroupPlanMember,
+) -> MemberAttempt {
+    let request = match build_member_request(root, invocation_cwd, member) {
         Ok(request) => request,
         Err(error) => return Err((Box::new(error), String::new(), String::new())),
     };
@@ -399,12 +400,13 @@ fn member_command_label(member: &QaGroupPlanMember) -> String {
 
 fn build_member_request(
     root: &Path,
+    invocation_cwd: &Path,
     member: &QaGroupPlanMember,
 ) -> Result<effigy_execution::TaskExecutionRequest, RunnerError> {
     let mut args = member.args.clone();
     args.push("--json".to_owned());
     effigy_execution::TaskExecutionRequestBuilder::new()
-        .runtime_context(member_runtime_context(root)?)
+        .runtime_context(member_runtime_context(root, invocation_cwd)?)
         .task(format!("{}/{}", member.catalog, member.task), args)
         .surface(if member.surface == "draft" {
             effigy_execution::ExecutionSurface::Draft

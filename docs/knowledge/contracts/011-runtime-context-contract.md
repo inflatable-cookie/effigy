@@ -2,7 +2,7 @@
 
 Owner: Platform
 Created: 2026-05-05
-Last Updated: 2026-08-31
+Last Updated: 2026-10-06
 
 ## Purpose
 
@@ -118,3 +118,5 @@ Minimum proof:
 - external skill tasks and nested Rhai preserve distinct source and target
   identities while ordinary contexts keep task source absent
 - runner code has a drift guard against new direct cwd discovery
+- QA-group scheduler submit and member execution requests reuse the captured
+  invocation cwd instead of rediscovering process cwd

@@ -118,6 +118,7 @@ fn resolve_run_plan(
 ) -> Result<
     (
         std::path::PathBuf,
+        std::path::PathBuf,
         effigy_tasks::QaGroupPlan,
         std::collections::BTreeSet<String>,
     ),
@@ -125,6 +126,7 @@ fn resolve_run_plan(
 > {
     let context = resolve_active_command_context(args.repo_override.clone())?;
     let root = context.resolved.resolved_root.clone();
+    let invocation_cwd = context.invocation_cwd.clone();
     let catalogs = load_effective_catalogs_allow_missing(&root)?;
     // A relative `--file` resolves inside the selected repository.
     let file = file.map(|path| resolve_file_inside_root(&root, path));
@@ -176,7 +178,7 @@ fn resolve_run_plan(
         &context.invocation_cwd,
     )
     .map_err(RunnerError::task_invocation)?;
-    Ok((root, plan, selector_env_names))
+    Ok((root, invocation_cwd, plan, selector_env_names))
 }
 
 fn run_qa_group(
@@ -187,7 +189,8 @@ fn run_qa_group(
     plan_only: bool,
     output_json: bool,
 ) -> Result<String, RunnerError> {
-    let (root, plan, selector_env_names) = resolve_run_plan(args, selector, file, scopes)?;
+    let (root, invocation_cwd, plan, selector_env_names) =
+        resolve_run_plan(args, selector, file, scopes)?;
     let render_json = |plan: &effigy_tasks::QaGroupPlan| {
         render_qa_group_plan_json(plan, true).map_err(map_tasks_error)
     };
@@ -211,7 +214,13 @@ fn run_qa_group(
             render_text(&plan)
         };
     }
-    execute::execute_group_run(&root, &plan, selector_env_names, output_json)
+    execute::execute_group_run(
+        &root,
+        &invocation_cwd,
+        &plan,
+        selector_env_names,
+        output_json,
+    )
 }
 
 fn run_qa_group_status(
@@ -433,16 +442,20 @@ fn git_output(root: &Path, git_args: &[&str]) -> Option<String> {
 }
 
 /// Runtime context for member execution requests: the active captured
-/// context when present (embedded dispatch), otherwise a capture rooted at
-/// the resolved repository.
-pub(super) fn member_runtime_context(root: &Path) -> Result<EffigyRuntimeContext, RunnerError> {
-    super::command_context::active_runtime_context()
-        .filter(|context| context.task_source().is_some())
-        .map(Ok)
-        .unwrap_or_else(|| {
-            EffigyRuntimeContext::capture_lossy(Some(root.to_path_buf()), None)
-                .map_err(|error| RunnerError::task_invocation(error.to_string()))
-        })
+/// context when present (CLI dispatch or nested/embedded replay), otherwise
+/// a capture that keeps the already-resolved invocation cwd and repo root.
+pub(super) fn member_runtime_context(
+    root: &Path,
+    invocation_cwd: &Path,
+) -> Result<EffigyRuntimeContext, RunnerError> {
+    if let Some(context) = super::command_context::active_runtime_context() {
+        return Ok(context);
+    }
+    EffigyRuntimeContext::capture_lossy(
+        Some(invocation_cwd.to_path_buf()),
+        Some(root.to_path_buf()),
+    )
+    .map_err(|error| RunnerError::task_invocation(error.to_string()))
 }
 
 /// Unused today but kept typed for the status inventory surface planned in

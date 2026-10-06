@@ -2,7 +2,7 @@
 
 Owner: Platform
 Created: 2026-05-05
-Last Updated: 2026-05-07
+Last Updated: 2026-10-06
 
 ## Purpose
 
@@ -94,8 +94,12 @@ Remaining compatibility boundary:
   backend-local implementation details for Colima repair, runtime probing, and
   direct exec helpers
 - those wrappers must not leak back into runner command code
-- drift allowances for legacy runner/runtime callers must stay documented in
-  `scripts/check-runtime-container-drift.rhai` and the active closeout lane
+- runner command code takes backend correlation from manager reports or
+  compose invocation plans rather than matching `ComposeBackend` locally
+- drift allowances for named adapter boundaries and private fixtures stay
+  path-scoped in `scripts/check-runtime-container-drift.rhai` and are owned by
+  [architecture 022](../architecture/022-runtime-architecture-sanity-audit.md)
+  and [contract 015](015-runtime-operation-pipeline-contract.md)
 
 ## Operation Reports
 

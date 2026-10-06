@@ -150,7 +150,7 @@ pub(in crate::runner) fn run_compose_exec_plan_with_options(
     run_compose_exec_plan_with_deadline(policy, plan, capture, stdin_file, None)
 }
 
-fn run_compose_exec_plan_with_deadline(
+pub(in crate::runner) fn run_compose_exec_plan_with_deadline(
     policy: &EffectiveContainerPolicy,
     plan: &ContainerComposeInvocationPlan,
     capture: bool,

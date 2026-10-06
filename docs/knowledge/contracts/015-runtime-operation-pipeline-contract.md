@@ -2,6 +2,7 @@
 
 Owner: Platform
 Created: 2026-05-07
+Last Updated: 2026-10-06
 
 ## Purpose
 
@@ -151,8 +152,11 @@ It checks for new direct uses of cwd discovery, backend branching, raw
 Docker/Colima/nerdctl commands, compose helper calls, legacy capture helpers,
 and Rhai container-sensitive bypasses outside allowlisted debt.
 
-Allowances must stay path-scoped and documented in the active strict lane or
-the follow-up contract/roadmap that owns their removal.
+Allowances must stay path-scoped and documented here and in
+[architecture 022](../architecture/022-runtime-architecture-sanity-audit.md).
+A private fixture file may be allowed; a production file that also holds
+fixtures may not. Positive and negative controls:
+`effigy test:architecture:runtime-container-drift-controls`.
 
 The guard is part of normal validation through `qa:gates`, `qa:ci`, and
 `prepush:ci`. Day-to-day `qa` remains focused on tests, docs, and JSON unless
