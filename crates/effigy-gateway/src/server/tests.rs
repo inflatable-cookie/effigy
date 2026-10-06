@@ -115,7 +115,10 @@ fn server_pid_domain_caller_pid_is_not_reported_as_gateway() {
     let config = GatewayConfig::standard(dir.path().to_path_buf());
     write_pid_file(&config.pid_file_path).unwrap();
 
-    assert!(matches!(get_status(&config), Err(GatewayError::NotRunning)));
+    assert!(matches!(
+        get_status(&config),
+        Err(GatewayError::ProcessStateUnknown { .. })
+    ));
     assert!(config.pid_file_path.exists());
 }
 
@@ -224,7 +227,7 @@ fn server_probe_state_classifies_running_absent_zombie_and_unknown() {
 fn server_probe_state_status_unknown_preserves_pid_and_version_records() {
     let dir = tempfile::tempdir().unwrap();
     let config = GatewayConfig::standard(dir.path().to_path_buf());
-    std::fs::write(&config.pid_file_path, "4242").unwrap();
+    crate::identity::write_test_record(&config.pid_file_path, 4242);
     let version_path = config.pid_file_path.with_extension("version");
     std::fs::write(&version_path, "v0.13.1\n").unwrap();
     let before_pid = std::fs::read(&config.pid_file_path).unwrap();
@@ -244,7 +247,7 @@ fn server_probe_state_status_unknown_preserves_pid_and_version_records() {
 fn server_probe_state_status_confirmed_absent_clears_records() {
     let dir = tempfile::tempdir().unwrap();
     let config = GatewayConfig::standard(dir.path().to_path_buf());
-    std::fs::write(&config.pid_file_path, "4242").unwrap();
+    crate::identity::write_test_record(&config.pid_file_path, 4242);
     let version_path = config.pid_file_path.with_extension("version");
     std::fs::write(&version_path, "v0.13.1").unwrap();
 
@@ -259,7 +262,7 @@ fn server_probe_state_status_confirmed_absent_clears_records() {
 fn server_probe_state_start_refuses_unknown_and_preserves_records() {
     let dir = tempfile::tempdir().unwrap();
     let config = GatewayConfig::standard(dir.path().to_path_buf());
-    std::fs::write(&config.pid_file_path, "4242").unwrap();
+    crate::identity::write_test_record(&config.pid_file_path, 4242);
     let version_path = config.pid_file_path.with_extension("version");
     std::fs::write(&version_path, "v0.13.1").unwrap();
 
@@ -271,7 +274,11 @@ fn server_probe_state_start_refuses_unknown_and_preserves_records() {
     assert!(config.pid_file_path.exists());
     assert!(version_path.exists());
 
-    let running = check_existing_gateway_pid(&config, |_| GatewayProcessProbe::Running);
+    let running = check_existing_gateway_pid_with(
+        &config,
+        |_| GatewayProcessProbe::Running,
+        |_| GatewayIdentityProbe::Matched,
+    );
     assert!(matches!(
         running,
         Err(GatewayError::AlreadyRunning { pid: 4242 })
@@ -333,13 +340,11 @@ fn server_probe_state_real_ps_confirms_private_child_then_absence() {
     }
 }
 
-/// Recording-only: a live non-gateway PID in the PID file is treated as the
-/// gateway. The probe checks an exact `ps` row, not command, uid, boot id, or
-/// start identity. The production path under test does not signal. Drop of
-/// this owned fixture may `Child::kill` that child only.
+/// A private child with a matching recorded start identity is accepted as the
+/// owned generation. Drop of this fixture may kill only that child.
 #[cfg(unix)]
 #[test]
-fn server_probe_state_live_non_gateway_pid_is_reported_running() {
+fn gateway_identity_matching_private_child_is_reported_running() {
     use std::process::{Child, Command};
     use std::time::{Duration, Instant};
 
@@ -372,18 +377,68 @@ fn server_probe_state_live_non_gateway_pid_is_reported_running() {
 
     let dir = tempfile::tempdir().unwrap();
     let config = GatewayConfig::standard(dir.path().to_path_buf());
-    std::fs::write(&config.pid_file_path, pid.to_string()).unwrap();
+    crate::identity::write_test_record(&config.pid_file_path, pid);
 
-    let status = get_status(&config).expect("live non-gateway PID is reported running");
+    let status = get_status(&config).expect("matched owned child is reported running");
     assert_eq!(status.pid, pid);
     assert!(
         check_existing_gateway_pid(&config, probe_gateway_process)
-            .expect_err("live non-gateway PID must refuse a replacement start")
+            .expect_err("matched live PID must refuse a replacement start")
             .to_string()
             .contains(&format!("already running (PID {pid})")),
-        "replacement start must treat the foreign PID as the gateway"
+        "a matched live generation must refuse a replacement start"
     );
     assert_eq!(owned.0.id(), pid);
+}
+
+#[cfg(unix)]
+#[test]
+fn gateway_identity_reused_live_pid_is_not_running_and_is_not_signalled() {
+    use std::process::{Child, Command};
+    use std::time::{Duration, Instant};
+
+    struct OwnedChild(Child);
+
+    impl Drop for OwnedChild {
+        fn drop(&mut self) {
+            if self.0.try_wait().ok().flatten().is_none() {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+    }
+
+    let child = Command::new("sleep")
+        .arg("30")
+        .spawn()
+        .expect("start private child");
+    let mut owned = OwnedChild(child);
+    let pid = owned.0.id();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while probe_gateway_process(pid) != GatewayProcessProbe::Running {
+        assert!(Instant::now() < deadline, "private child readiness timeout");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let config = GatewayConfig::standard(dir.path().to_path_buf());
+    crate::identity::write_test_record(&config.pid_file_path, pid);
+    let identity_path = config.pid_file_path.with_extension("identity");
+    let mut record: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&identity_path).unwrap()).unwrap();
+    record["boot_identity"] = serde_json::Value::String("different-boot".to_owned());
+    std::fs::write(&identity_path, serde_json::to_vec(&record).unwrap()).unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&identity_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+
+    assert!(matches!(get_status(&config), Err(GatewayError::NotRunning)));
+    assert!(
+        owned.0.try_wait().unwrap().is_none(),
+        "foreign child stays alive"
+    );
+    assert!(!config.pid_file_path.exists());
+    assert!(!identity_path.exists());
 }
 
 #[tokio::test]

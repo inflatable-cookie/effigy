@@ -113,6 +113,13 @@
   "cargo check -p effigy-gateway -p effigy --all-targets",
   "cargo clippy -p effigy-gateway -p effigy --all-targets -- -D warnings",
 ]
+"test:gateway:identity" = [
+  { id = "gateway-identity", run = "cargo test -p effigy-gateway -p effigy-cli -p effigy --lib gateway_identity -- --nocapture", timeout_ms = 240000 },
+]
+"check:gateway:identity" = [
+  "cargo check -p effigy-gateway -p effigy-cli -p effigy --all-targets",
+  "cargo clippy -p effigy-gateway -p effigy-cli -p effigy --all-targets -- -D warnings",
+]
 "test:container:fake-runtime-lease-isolation" = [
   "cargo test --test cli_output_tests cli_container_data_seed_json_reports_seed_contract -- --nocapture",
   "cargo test --test cli_output_tests cli_container_data_seed_reaper_detector_catches_enabled_control_and_cleans_owned_child -- --nocapture",
@@ -443,6 +450,10 @@
 # The changelog is documentation: validate its release headings with the same
 # parser `release status` uses, so an em-dash separator fails both surfaces.
 "qa:docs:changelog" = "cargo run --bin effigy -- changelog validate CHANGELOG.md"
+"qa:docs:gateway-identity" = [
+  "cargo run --bin effigy -- docs check links CHANGELOG.md docs/knowledge/architecture/020-container-infrastructure-design.md docs/knowledge/questions.md docs/guides/083-v0.14.0-consumer-migration.md",
+  "cargo run --bin effigy -- changelog validate CHANGELOG.md",
+]
 "qa:docs" = [
   { task = "qa:docs:links" },
   { task = "qa:docs:examples" },

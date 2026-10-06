@@ -307,15 +307,50 @@ fn gateway_repair_plan_ignores_duplicate_bind_when_upstream_matches() {
     assert!(plan.repairable_domains.is_empty());
 }
 
-fn gateway_status_fixture(pid: u32) -> GatewayStatus {
-    GatewayStatus {
-        pid,
-        dns_addr: "127.0.0.1:15353".parse().expect("dns"),
-        proxy_addr: "127.0.0.1:80".parse().expect("proxy"),
-        route_count: 0,
-        routes: Vec::new(),
-        binary_version: Some("v0.3.2+local.test".to_owned()),
+fn gateway_status_fixture(pid: u32) -> (tempfile::TempDir, VerifiedGatewayStatus) {
+    let dir = tempfile::tempdir().expect("fixture directory");
+    let pid_path = dir.path().join("gateway.pid");
+    let start_identity = if cfg!(target_os = "macos") {
+        serde_json::json!({"platform":"macos","start_seconds":1,"start_microseconds":0})
+    } else {
+        serde_json::json!({"platform":"linux","start_ticks":1})
+    };
+    std::fs::write(&pid_path, pid.to_string()).expect("write fixture PID");
+    let identity_path = pid_path.with_extension("identity");
+    std::fs::write(
+        &identity_path,
+        serde_json::to_vec(&serde_json::json!({
+            "format_version": 1,
+            "pid": pid,
+            "boot_identity": "test-boot",
+            "start_identity": start_identity,
+        }))
+        .expect("serialize fixture identity"),
+    )
+    .expect("write fixture identity");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&identity_path, std::fs::Permissions::from_mode(0o600))
+            .expect("protect fixture identity");
     }
+    let snapshot = identity::read_snapshot(&pid_path)
+        .expect("read fixture snapshot")
+        .expect("snapshot exists");
+    (
+        dir,
+        VerifiedGatewayStatus {
+            status: GatewayStatus {
+                pid,
+                dns_addr: "127.0.0.1:15353".parse().expect("dns"),
+                proxy_addr: "127.0.0.1:80".parse().expect("proxy"),
+                route_count: 0,
+                routes: Vec::new(),
+                binary_version: Some("v0.3.2+local.test".to_owned()),
+            },
+            snapshot,
+        },
+    )
 }
 
 #[test]
@@ -337,9 +372,59 @@ fn probe_state_resolver_maps_confirmed_absence_to_stopped() {
 
 #[test]
 fn probe_state_resolver_keeps_a_confirmed_running_gateway() {
-    let resolved =
-        resolve_gateway_status(Ok(gateway_status_fixture(4242))).expect("running status resolves");
+    let (_dir, status) = gateway_status_fixture(4242);
+    let resolved = resolve_gateway_status(Ok(status)).expect("running status resolves");
     assert_eq!(resolved.map(|status| status.pid), Some(4242));
+}
+
+#[test]
+fn gateway_identity_elevated_reader_is_bound_to_validated_snapshot() {
+    use std::cell::Cell;
+    let (_dir, verified) = gateway_status_fixture(4242);
+    let record = verified.snapshot.record().unwrap();
+    let reader_calls = Cell::new(0);
+    let result = gateway_identity_probe_with(
+        record,
+        &verified.snapshot,
+        |_| GatewayIdentityProbe::PermissionDenied,
+        |digest, target_digest, owner_uid| {
+            reader_calls.set(reader_calls.get() + 1);
+            assert_eq!(Some(digest), verified.snapshot.digest().as_deref());
+            assert_eq!(
+                Some(target_digest),
+                verified.snapshot.target_digest().as_deref()
+            );
+            assert_eq!(owner_uid, verified.snapshot.owner_uid());
+            Some(GatewayIdentityProbe::Matched)
+        },
+    );
+    assert_eq!(result, GatewayIdentityProbe::Matched);
+    assert_eq!(reader_calls.get(), 1);
+
+    let (_other_dir, other) = gateway_status_fixture(9999);
+    let substituted_record = other.snapshot.record().unwrap();
+    let result = gateway_identity_probe_with(
+        substituted_record,
+        &verified.snapshot,
+        |_| GatewayIdentityProbe::PermissionDenied,
+        |_, _, _| panic!("substituted records must not invoke elevation"),
+    );
+    assert_eq!(result, GatewayIdentityProbe::Unknown);
+}
+
+#[test]
+fn gateway_identity_elevated_reader_decline_or_unavailable_is_unknown() {
+    let (_dir, verified) = gateway_status_fixture(4242);
+    let record = verified.snapshot.record().unwrap();
+    for unavailable in [None, Some(GatewayIdentityProbe::PermissionDenied)] {
+        let result = gateway_identity_probe_with(
+            record,
+            &verified.snapshot,
+            |_| GatewayIdentityProbe::PermissionDenied,
+            |_, _, _| unavailable,
+        );
+        assert_eq!(result, GatewayIdentityProbe::Unknown);
+    }
 }
 
 #[test]

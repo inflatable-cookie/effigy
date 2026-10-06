@@ -78,7 +78,9 @@ pub use entrypoints::{
 };
 pub use error::RunnerError;
 pub(in crate::runner) use exec_command::run_exec;
-pub(in crate::runner) use gateway_command::{run_gateway, run_internal_gateway};
+pub(in crate::runner) use gateway_command::{
+    run_gateway, run_internal_gateway, run_internal_gateway_identity,
+};
 pub(in crate::runner) use graph_command::run_graph;
 pub(in crate::runner) use host_container_lease::run_internal_container_lease_reaper;
 pub(in crate::runner) use host_process::{

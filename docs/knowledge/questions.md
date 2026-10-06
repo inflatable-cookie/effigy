@@ -10,10 +10,11 @@ Asked: 2026-10-05
 Answered: 2026-10-05 by Tom
 Owner: [Gateway process identity ruling](architecture/020-container-infrastructure-design.md#gateway-process-identity-ruling)
 
-Tom blocks v0.14.0 publication until the start-identity sidecar and fail-closed
-legacy policy are implemented. He does not accept the current PID-only risk
-and authorized dispatch of the bounded correction. The owning architecture
-records its scope and remaining proof requirements.
+Tom's v0.14.0 publication block remains in force until the start-identity
+sidecar and fail-closed legacy policy are merged and final release assurance
+completes. He does not accept the PID-only risk and authorized dispatch of the
+bounded correction now implemented in task 104. The owning architecture
+records the implementation, residual TOCTOU, and remaining assurance boundary.
 
 ## Q-002 — macOS gateway cross-user identity access
 

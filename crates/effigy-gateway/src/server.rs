@@ -22,6 +22,7 @@ use tracing::{debug, error, info};
 
 use crate::dns::{run_dns_server, DnsCache, DnsConfig};
 use crate::error::GatewayError;
+use crate::identity::{self, GatewayIdentityProbe, GatewayRecordSnapshot};
 use crate::proxy::{run_proxy_server, run_tls_proxy_server, ProxyConfig};
 #[cfg(target_os = "macos")]
 use crate::resolver_setup;
@@ -126,8 +127,28 @@ pub struct GatewayStatus {
     pub binary_version: Option<String>,
 }
 
+/// Gateway status paired with the exact trusted record generation that
+/// authenticated it. Lifecycle code must retain this token through signalling
+/// and conditional removal.
+#[derive(Debug, Clone)]
+pub struct VerifiedGatewayStatus {
+    /// Stable public gateway status.
+    pub status: GatewayStatus,
+    /// Exact trusted record pair used for the live identity comparison.
+    pub snapshot: GatewayRecordSnapshot,
+}
+
+impl std::ops::Deref for VerifiedGatewayStatus {
+    type Target = GatewayStatus;
+
+    fn deref(&self) -> &Self::Target {
+        &self.status
+    }
+}
+
 /// Write a PID file for lifecycle management.
-pub fn write_pid_file(path: &Path) -> Result<(), GatewayError> {
+#[cfg(test)]
+fn write_pid_file(path: &Path) -> Result<(), GatewayError> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -179,7 +200,8 @@ pub fn checked_gateway_pid(pid: u32) -> Option<i32> {
 }
 
 /// Remove the PID file.
-pub fn remove_pid_file(path: &Path) {
+#[cfg(test)]
+fn remove_pid_file(path: &Path) {
     let _ = std::fs::remove_file(path);
     let _ = std::fs::remove_file(gateway_version_file_for(path));
 }
@@ -338,26 +360,52 @@ pub fn probe_gateway_process(pid: u32) -> GatewayProcessProbe {
 
 /// Get the status of the gateway, if running.
 pub fn get_status(config: &GatewayConfig) -> Result<GatewayStatus, GatewayError> {
-    get_status_with_probe(config, probe_gateway_process)
+    get_verified_gateway_status(config).map(|verified| verified.status)
 }
 
-fn get_status_with_probe(
+/// Read status only when the persisted gateway generation matches the live
+/// process. The callback may perform the bounded elevated read-only identity
+/// query; it receives the already validated record snapshot and cannot select
+/// a different target.
+pub fn get_verified_gateway_status_with(
     config: &GatewayConfig,
-    probe: impl Fn(u32) -> GatewayProcessProbe,
-) -> Result<GatewayStatus, GatewayError> {
-    let pid = read_pid_file(&config.pid_file_path)?;
+    identity_probe: impl Fn(
+        &identity::GatewayIdentityRecord,
+        &GatewayRecordSnapshot,
+    ) -> GatewayIdentityProbe,
+) -> Result<VerifiedGatewayStatus, GatewayError> {
+    get_verified_gateway_status_with_probes(config, probe_gateway_process, identity_probe)
+}
+
+fn get_verified_gateway_status_with_probes(
+    config: &GatewayConfig,
+    process_probe: impl Fn(u32) -> GatewayProcessProbe,
+    identity_probe: impl Fn(
+        &identity::GatewayIdentityRecord,
+        &GatewayRecordSnapshot,
+    ) -> GatewayIdentityProbe,
+) -> Result<VerifiedGatewayStatus, GatewayError> {
+    let Some(snapshot) = identity::read_snapshot(&config.pid_file_path)? else {
+        return Err(GatewayError::NotRunning);
+    };
+    let pid = snapshot.pid();
+
+    let Some(record) = snapshot.record() else {
+        return Err(GatewayError::ProcessStateUnknown { pid });
+    };
 
     // The command reading this PID file is not the detached daemon it owns.
     // Treat a self-reference as unverifiable without probing or removing it.
     if pid == std::process::id() {
-        return Err(GatewayError::NotRunning);
+        return Err(GatewayError::ProcessStateUnknown { pid });
     }
 
-    match probe(pid) {
+    match process_probe(pid) {
         GatewayProcessProbe::Running => {}
         GatewayProcessProbe::ConfirmedAbsent => {
-            // The PID is confirmed gone; clear the stale records.
-            remove_pid_file(&config.pid_file_path);
+            if !identity::remove_if_unchanged(&snapshot)? {
+                return Err(GatewayError::ProcessStateUnknown { pid });
+            }
             return Err(GatewayError::NotRunning);
         }
         GatewayProcessProbe::Unknown => {
@@ -367,33 +415,97 @@ fn get_status_with_probe(
         }
     }
 
+    match identity_probe(record, &snapshot) {
+        GatewayIdentityProbe::Matched => {}
+        GatewayIdentityProbe::Mismatch => {
+            if !identity::remove_if_unchanged(&snapshot)? {
+                return Err(GatewayError::ProcessStateUnknown { pid });
+            }
+            return Err(GatewayError::NotRunning);
+        }
+        GatewayIdentityProbe::PermissionDenied | GatewayIdentityProbe::Unknown => {
+            return Err(GatewayError::ProcessStateUnknown { pid });
+        }
+    }
+
     let table = RouteTable::load(&config.route_table_path)?;
 
-    Ok(GatewayStatus {
-        pid,
-        dns_addr: config.dns.bind_addr,
-        proxy_addr: config.proxy.bind_addr,
-        route_count: table.len(),
-        routes: table.all_routes().into_iter().cloned().collect(),
-        binary_version: read_gateway_version_file(&gateway_version_file_for(
-            &config.pid_file_path,
-        ))?,
+    Ok(VerifiedGatewayStatus {
+        status: GatewayStatus {
+            pid,
+            dns_addr: config.dns.bind_addr,
+            proxy_addr: config.proxy.bind_addr,
+            route_count: table.len(),
+            routes: table.all_routes().into_iter().cloned().collect(),
+            binary_version: read_gateway_version_file(&gateway_version_file_for(
+                &config.pid_file_path,
+            ))?,
+        },
+        snapshot,
     })
+}
+
+/// Read status using this process's kernel identity access. Ordinary
+/// unelevated callers may use the bounded runner-side reader when the kernel
+/// denies access to a privileged gateway process.
+pub fn get_verified_gateway_status(
+    config: &GatewayConfig,
+) -> Result<VerifiedGatewayStatus, GatewayError> {
+    get_verified_gateway_status_with(config, |record, _| identity::probe_live_identity(record))
+}
+
+#[cfg(test)]
+fn get_status_with_probe(
+    config: &GatewayConfig,
+    process_probe: impl Fn(u32) -> GatewayProcessProbe,
+) -> Result<GatewayStatus, GatewayError> {
+    get_verified_gateway_status_with_probes(config, process_probe, |_, _| {
+        GatewayIdentityProbe::Matched
+    })
+    .map(|verified| verified.status)
 }
 
 /// Refuse to start when an existing gateway PID is live or cannot be probed.
 ///
-/// A stale record is cleared only when the probe confirms absence. An
-/// unavailable probe must not replace a possibly-live daemon, so it returns
-/// [`GatewayError::ProcessStateUnknown`] and leaves the records in place.
+/// A stale record is cleared only when the probe confirms absence or a
+/// readable live identity proves the recorded generation has been replaced.
+/// An unavailable identity/probe preserves records and refuses replacement.
 fn check_existing_gateway_pid(
     config: &GatewayConfig,
     probe: impl Fn(u32) -> GatewayProcessProbe,
 ) -> Result<(), GatewayError> {
-    if let Ok(pid) = read_pid_file(&config.pid_file_path) {
+    check_existing_gateway_pid_with(config, probe, identity::probe_live_identity)
+}
+
+fn check_existing_gateway_pid_with(
+    config: &GatewayConfig,
+    probe: impl Fn(u32) -> GatewayProcessProbe,
+    identity_probe: impl Fn(&identity::GatewayIdentityRecord) -> GatewayIdentityProbe,
+) -> Result<(), GatewayError> {
+    if let Some(snapshot) = identity::read_snapshot(&config.pid_file_path)? {
+        let pid = snapshot.pid();
+        let Some(record) = snapshot.record() else {
+            return Err(GatewayError::ProcessStateUnknown { pid });
+        };
         match probe(pid) {
-            GatewayProcessProbe::Running => return Err(GatewayError::AlreadyRunning { pid }),
-            GatewayProcessProbe::ConfirmedAbsent => remove_pid_file(&config.pid_file_path),
+            GatewayProcessProbe::Running => match identity_probe(record) {
+                GatewayIdentityProbe::Matched => {
+                    return Err(GatewayError::AlreadyRunning { pid });
+                }
+                GatewayIdentityProbe::Mismatch => {
+                    if !identity::remove_if_unchanged(&snapshot)? {
+                        return Err(GatewayError::ProcessStateUnknown { pid });
+                    }
+                }
+                GatewayIdentityProbe::PermissionDenied | GatewayIdentityProbe::Unknown => {
+                    return Err(GatewayError::ProcessStateUnknown { pid });
+                }
+            },
+            GatewayProcessProbe::ConfirmedAbsent => {
+                if !identity::remove_if_unchanged(&snapshot)? {
+                    return Err(GatewayError::ProcessStateUnknown { pid });
+                }
+            }
             GatewayProcessProbe::Unknown => {
                 return Err(GatewayError::ProcessStateUnknown { pid });
             }
@@ -411,8 +523,20 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<(), GatewayError> {
     // Check if already running.
     check_existing_gateway_pid(&config, probe_gateway_process)?;
 
-    // Write PID file.
-    write_pid_file(&config.pid_file_path)?;
+    // Publish the sidecar and decimal compatibility PID as one generation.
+    // The record belongs to the operator even when this daemon runs as root.
+    let operator_uid = match std::env::var("EFFIGY_GATEWAY_OPERATOR_UID") {
+        Ok(value) => value.parse::<u32>().map_err(|_| {
+            GatewayError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "gateway operator UID is malformed",
+            ))
+        })?,
+        Err(std::env::VarError::NotPresent) => nix::unistd::Uid::effective().as_raw(),
+        Err(error) => return Err(GatewayError::Io(std::io::Error::other(error))),
+    };
+    let published_snapshot =
+        identity::publish_current_gateway(&config.pid_file_path, operator_uid)?;
     write_gateway_version_file(&gateway_version_file_for(&config.pid_file_path))?;
 
     // Load the route table.
@@ -539,7 +663,7 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<(), GatewayError> {
     }
 
     // Clean up PID file.
-    remove_pid_file(&config.pid_file_path);
+    identity::remove_if_unchanged(&published_snapshot)?;
 
     info!("gateway stopped");
     Ok(())

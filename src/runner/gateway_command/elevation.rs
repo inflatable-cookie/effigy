@@ -1,19 +1,20 @@
-use std::ffi::OsString;
-#[cfg(target_os = "macos")]
-use std::net::Ipv4Addr;
-use std::process::Command as ProcessCommand;
-#[cfg(all(unix, not(target_os = "macos")))]
-use std::process::Stdio;
-
 use effigy_cli::GatewaySubcommand;
+use effigy_gateway::identity::GatewayIdentityProbe;
 use effigy_gateway::loopback::LoopbackRegistry;
 #[cfg(target_os = "macos")]
 use effigy_gateway::loopback::{DEFAULT_LOOPBACK_END, DEFAULT_LOOPBACK_START};
 #[cfg(target_os = "macos")]
 use effigy_gateway::resolver_setup::{self, ResolverSpec};
 use effigy_gateway::routes::RouteTable;
-use effigy_gateway::server::{GatewayConfig, GatewayStatus};
+use effigy_gateway::server::GatewayConfig;
 use effigy_gateway::tls::{resolved_mkcert_program, MKCERT_BIN_ENV};
+use std::ffi::OsString;
+use std::io::{IsTerminal, Read};
+#[cfg(target_os = "macos")]
+use std::net::Ipv4Addr;
+use std::process::{Command as ProcessCommand, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use crate::runner::error::RunnerError;
 
@@ -55,20 +56,20 @@ pub(super) fn gateway_up_requires_elevation(config: &GatewayConfig) -> bool {
 
 pub(super) fn gateway_down_requires_elevation(
     config: &GatewayConfig,
-    status: Option<&GatewayStatus>,
-) -> bool {
+    status: Option<&super::VerifiedGatewayStatus>,
+) -> Result<bool, RunnerError> {
     #[cfg(unix)]
     {
         if is_running_as_root() {
-            return false;
+            return Ok(false);
         }
         if let Some(running) = status {
-            if !process_signal_accessible(running.pid) {
-                return true;
+            if !process_signal_accessible(running.pid, &running.snapshot)? {
+                return Ok(true);
             }
         }
         #[cfg(target_os = "macos")]
-        {
+        let resolver_cleanup_requires_elevation = {
             // Elevation needed if the bootstrap TLD file exists OR any
             // route-driven managed resolver file the daemon may have
             // dropped is still around (the daemon writes those without
@@ -76,18 +77,18 @@ pub(super) fn gateway_down_requires_elevation(
             // and so still needs sudo to remove them).
             resolver_spec(config).path.exists()
                 || !resolver_setup::enumerate_managed_resolver_files().is_empty()
-        }
+        };
         #[cfg(not(target_os = "macos"))]
-        {
-            let _ = config;
-            false
-        }
+        let resolver_cleanup_requires_elevation = false;
+        #[cfg(not(target_os = "macos"))]
+        let _ = config;
+        Ok(resolver_cleanup_requires_elevation)
     }
 
     #[cfg(not(unix))]
     {
         let _ = (config, status);
-        false
+        Ok(false)
     }
 }
 
@@ -287,7 +288,24 @@ fn gateway_requires_privileged_bind(config: &GatewayConfig) -> bool {
 }
 
 #[cfg(unix)]
-fn process_signal_accessible(pid: u32) -> bool {
+fn process_signal_accessible(
+    pid: u32,
+    snapshot: &effigy_gateway::identity::GatewayRecordSnapshot,
+) -> Result<bool, RunnerError> {
+    let Some(record) = snapshot.record() else {
+        return Err(RunnerError::task_invocation(
+            "gateway identity is missing; refusing signal access probe",
+        ));
+    };
+    match super::gateway_identity_probe(record, snapshot) {
+        GatewayIdentityProbe::Matched => {}
+        GatewayIdentityProbe::Mismatch => return Ok(true),
+        GatewayIdentityProbe::PermissionDenied | GatewayIdentityProbe::Unknown => {
+            return Err(RunnerError::task_invocation(
+                "gateway identity is unknown; refusing signal access probe",
+            ));
+        }
+    }
     // SAFETY: `kill` takes only integer arguments, so this call has no
     // memory-safety preconditions, and signal `0` delivers no signal; it is
     // only the POSIX existence/permission probe. `pid_t` is the checked
@@ -295,14 +313,161 @@ fn process_signal_accessible(pid: u32) -> bool {
     // which rejects 0, 1 and any `u32` above `i32::MAX`, so the probe cannot
     // target a process group or the `kill(-1, ...)` broadcast.
     //
-    // The numeric domain is fully checked; gateway identity is not. A reused
-    // PID can still match, and that residual identity limitation is unchanged
-    // by this wave. This signal-zero check answers only "is the PID signalable
-    // as this user": a `false` result asks for elevation, which is
-    // fail-closed. The unavailable-`ps`-probe lifecycle gap (an unverifiable
-    // probe collapsing to `false`) was closed by task 101 in
-    // `effigy_gateway::server::probe_gateway_process`.
-    process_signal_accessible_with(pid, |pid_t| unsafe { nix::libc::kill(pid_t, 0) == 0 })
+    // The persisted process generation has just been matched immediately
+    // before this signal-zero accessibility probe. A later TERM/KILL repeats
+    // that match at its own dispatch boundary; the final check-to-syscall gap
+    // remains a TOCTOU. This probe answers only whether this user can signal
+    // the already identity-matched target; a `false` result asks for elevation,
+    // where the same record and live identity are checked again.
+    Ok(process_signal_accessible_with(pid, |pid_t| unsafe {
+        nix::libc::kill(pid_t, 0) == 0
+    }))
+}
+
+/// Ask the existing gateway administrator elevation path to inspect only the
+/// already validated fixed gateway target. No PID is accepted from the caller.
+pub(super) fn read_gateway_identity_elevated(
+    digest: &str,
+    target_digest: &str,
+    owner_uid: u32,
+) -> Option<GatewayIdentityProbe> {
+    if !identity_reader_invocation_allowed(std::io::stdin().is_terminal(), digest, target_digest) {
+        return None;
+    }
+    let executable = std::env::current_exe().ok()?;
+    let mut command =
+        build_gateway_identity_reader_command(&executable, digest, target_digest, owner_uid)?;
+    let output =
+        bounded_identity_reader_output_with_timeout(&mut command, Duration::from_secs(15))?;
+    parse_gateway_identity_reader_response(&output, digest, target_digest)
+}
+
+fn identity_reader_invocation_allowed(
+    interactive: bool,
+    digest: &str,
+    target_digest: &str,
+) -> bool {
+    interactive
+        && [digest, target_digest]
+            .into_iter()
+            .all(|value| value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
+}
+
+fn build_gateway_identity_reader_command(
+    executable: &std::path::Path,
+    digest: &str,
+    target_digest: &str,
+    owner_uid: u32,
+) -> Option<ProcessCommand> {
+    #[cfg(target_os = "macos")]
+    {
+        let home = std::env::var_os("HOME")?;
+        let home = shell_quote(home.to_str()?);
+        let body = format!(
+            "HOME={home} EFFIGY_GATEWAY_ESCALATED=1 EFFIGY_GATEWAY_OPERATOR_UID={owner_uid} EFFIGY_INTERNAL_SUPPRESS_HEADER=1 {} __gateway-identity --digest {digest} --target-digest {target_digest} --owner-uid {owner_uid}",
+            shell_quote(executable.to_str()?)
+        );
+        let script = format!(
+            "do shell script \"{}\" with administrator privileges",
+            apple_script_escape(&body)
+        );
+        let mut command = ProcessCommand::new("/usr/bin/osascript");
+        command.arg("-e").arg(script);
+        Some(command)
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let mut command = ProcessCommand::new("/usr/bin/sudo");
+        command.args([
+            "--",
+            "env",
+            "EFFIGY_GATEWAY_ESCALATED=1",
+            &format!("EFFIGY_GATEWAY_OPERATOR_UID={owner_uid}"),
+            "EFFIGY_INTERNAL_SUPPRESS_HEADER=1",
+        ]);
+        if let Some(home) = std::env::var_os("HOME") {
+            let mut value = std::ffi::OsString::from("HOME=");
+            value.push(home);
+            command.arg(value);
+        }
+        command
+            .arg(executable)
+            .args([
+                "__gateway-identity",
+                "--digest",
+                digest,
+                "--target-digest",
+                target_digest,
+                "--owner-uid",
+            ])
+            .arg(owner_uid.to_string());
+        Some(command)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (executable, digest, target_digest, owner_uid);
+        None
+    }
+}
+
+fn bounded_identity_reader_output_with_timeout(
+    command: &mut ProcessCommand,
+    timeout: Duration,
+) -> Option<Vec<u8>> {
+    command
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    let mut child = command.spawn().ok()?;
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => break,
+            Ok(Some(_)) | Err(_) => return None,
+            Ok(None) if Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+            Ok(None) => thread::sleep(Duration::from_millis(25)),
+        }
+    }
+    let mut output = Vec::new();
+    child
+        .stdout
+        .take()?
+        .take(1025)
+        .read_to_end(&mut output)
+        .ok()?;
+    (output.len() <= 1024).then_some(output)
+}
+
+fn parse_gateway_identity_reader_response(
+    output: &[u8],
+    expected_digest: &str,
+    expected_target_digest: &str,
+) -> Option<GatewayIdentityProbe> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Response {
+        schema: String,
+        digest: String,
+        target_digest: String,
+        result: String,
+    }
+    let response: Response = serde_json::from_slice(output).ok()?;
+    if response.schema != "effigy.gateway.identity-reader.v1"
+        || response.digest != expected_digest
+        || response.target_digest != expected_target_digest
+    {
+        return None;
+    }
+    match response.result.as_str() {
+        "matched" => Some(GatewayIdentityProbe::Matched),
+        "mismatch" => Some(GatewayIdentityProbe::Mismatch),
+        "unknown" => Some(GatewayIdentityProbe::Unknown),
+        _ => None,
+    }
 }
 
 #[cfg(unix)]
@@ -390,7 +555,12 @@ fn build_gateway_elevated_shell_command_with_keep_resolver(
     let effigy_bin = std::env::current_exe().map_err(RunnerError::Cwd)?;
     let mut parts = vec!["env".to_owned()];
     for (key, value) in gateway_elevated_env_vars() {
-        parts.push(format!("{key}={}", shell_quote(&value.to_string_lossy())));
+        let value = value.into_string().map_err(|_| {
+            RunnerError::task_invocation(
+                "gateway elevation cannot safely forward a non-Unicode environment value",
+            )
+        })?;
+        parts.push(format!("{key}={}", shell_quote(&value)));
     }
     parts.push(format!("{GATEWAY_KEEP_RESOLVER_ENV}=1"));
     parts.push(shell_quote(&effigy_bin.display().to_string()));
@@ -423,7 +593,10 @@ fn build_gateway_elevated_command_with_keep_resolver(
         .env_remove("HOST_RUN_ID");
     command.arg("env");
     for (key, value) in gateway_elevated_env_vars() {
-        command.arg(format!("{key}={}", value.to_string_lossy()));
+        let mut entry = OsString::from(key);
+        entry.push("=");
+        entry.push(value);
+        command.arg(entry);
     }
     command.arg(format!("{GATEWAY_KEEP_RESOLVER_ENV}=1"));
     command.arg(effigy_bin);
@@ -440,6 +613,12 @@ fn gateway_elevated_env_vars() -> Vec<(&'static str, OsString)> {
         (GATEWAY_ESCALATED_ENV, OsString::from("1")),
         ("EFFIGY_INTERNAL_SUPPRESS_HEADER", OsString::from("1")),
     ];
+    if !is_running_as_root() {
+        vars.push((
+            "EFFIGY_GATEWAY_OPERATOR_UID",
+            OsString::from(nix::unistd::Uid::effective().as_raw().to_string()),
+        ));
+    }
     if let Some(mkcert) = resolved_mkcert_program() {
         vars.push((MKCERT_BIN_ENV, mkcert.into_os_string()));
     }
@@ -631,6 +810,88 @@ mod env_tests {
             !vars.iter().any(|(key, _)| *key == "PATH"),
             "elevated gateway env should not forward caller PATH"
         );
+    }
+}
+
+#[cfg(test)]
+mod gateway_identity_reader_tests {
+    use super::*;
+
+    #[test]
+    fn gateway_identity_reader_response_rejects_wrong_target_and_malformed_output() {
+        let digest = "a".repeat(64);
+        let target = "b".repeat(64);
+        let valid = serde_json::json!({
+            "schema": "effigy.gateway.identity-reader.v1",
+            "digest": digest,
+            "target_digest": target,
+            "result": "matched",
+        })
+        .to_string();
+        assert_eq!(
+            parse_gateway_identity_reader_response(valid.as_bytes(), &digest, &target),
+            Some(GatewayIdentityProbe::Matched)
+        );
+        assert_eq!(
+            parse_gateway_identity_reader_response(valid.as_bytes(), &digest, &"c".repeat(64)),
+            None
+        );
+        assert_eq!(
+            parse_gateway_identity_reader_response(b"not-json", &digest, &target),
+            None
+        );
+    }
+
+    #[test]
+    fn gateway_identity_reader_noninteractive_or_invalid_binding_does_not_launch() {
+        assert!(!identity_reader_invocation_allowed(
+            false,
+            &"a".repeat(64),
+            &"b".repeat(64)
+        ));
+        assert!(!identity_reader_invocation_allowed(
+            true,
+            "short",
+            &"b".repeat(64)
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn gateway_identity_reader_timeout_kills_only_its_owned_child() {
+        let mut command = ProcessCommand::new("sh");
+        command.args(["-c", "exec sleep 10"]);
+        let started = Instant::now();
+        assert!(bounded_identity_reader_output_with_timeout(
+            &mut command,
+            Duration::from_millis(25)
+        )
+        .is_none());
+        assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    #[test]
+    fn gateway_identity_reader_command_has_no_arbitrary_pid_argument() {
+        use std::ffi::OsStr;
+
+        let digest = "a".repeat(64);
+        let target_digest = "b".repeat(64);
+        let command = build_gateway_identity_reader_command(
+            std::path::Path::new("/usr/bin/effigy"),
+            &digest,
+            &target_digest,
+            501,
+        )
+        .expect("reader command");
+        let args = command.get_args().collect::<Vec<_>>();
+        assert_eq!(command.get_program(), OsStr::new("/usr/bin/sudo"));
+        assert!(args
+            .iter()
+            .any(|arg| *arg == OsStr::new("__gateway-identity")));
+        assert!(args.iter().any(|arg| *arg == OsStr::new(&digest)));
+        assert!(args.iter().any(|arg| *arg == OsStr::new(&target_digest)));
+        assert!(!args.iter().any(|arg| *arg == OsStr::new("--pid")));
     }
 }
 

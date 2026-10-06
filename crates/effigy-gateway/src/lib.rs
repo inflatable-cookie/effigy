@@ -28,6 +28,7 @@ mod locks;
 
 pub mod dns;
 pub mod error;
+pub mod identity;
 pub mod loopback;
 pub mod ports;
 pub mod proxy;
