@@ -6,7 +6,22 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Fixed
+- Elevated gateway lifecycle now accepts the authenticated operator-owned
+  gateway directory instead of rejecting it as unsafe. An elevated root caller
+  behind the existing administrator-elevation marker trusts a directory owned
+  by the forwarded operator UID only when that UID is non-root, matches an
+  ambient `SUDO_UID` when present, and owns the forwarded `HOME` per the
+  system passwd database. Unauthenticated root ownership checks, parent
+  safety, no-follow file checks, owner-only `0600` records, fail-closed
+  legacy/unknown handling, and fixed HOME/path target binding are unchanged.
+
 ### Added
+- Gateway lifecycle commands now identify a numeric-only pre-identity record
+  as requiring operator migration, distinct from an unavailable process
+  probe. They preserve its files and refuse to signal, clear, or replace it;
+  the recovery guidance accounts for the previous executable already being
+  replaced and requires independently confirming the daemon is stopped.
 - `effigy release:verify-install` is a maintained heavy-admission selector for
   Effigy's post-publication tagged-source install proof. Invoke it through
   `./target/debug/effigy`; it runs the fixed child command

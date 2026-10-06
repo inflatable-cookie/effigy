@@ -129,6 +129,12 @@ pub enum GatewayError {
     )]
     ProcessStateUnknown { pid: u32 },
 
+    /// A numeric-only gateway record cannot authenticate its process.
+    #[error(
+        "legacy gateway identity migration required for PID {pid}: `gateway.identity` is missing. Effigy cannot verify or signal this process, remove its records, or start a replacement. Stop the old daemon only through an operator-controlled procedure that independently confirms its executable and owner; the previous executable may already have been replaced and is not guaranteed to be available. After confirming the daemon is stopped, remove the legacy `gateway.pid` and `gateway.version` records, then run `effigy gateway up`. If you cannot verify and stop it safely, leave the records untouched and ask the host administrator."
+    )]
+    LegacyIdentityRequired { pid: u32 },
+
     /// Resolver suffix is invalid.
     #[error("resolver suffix `{suffix}` is invalid: {reason}")]
     InvalidResolverSuffix { suffix: String, reason: String },

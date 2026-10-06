@@ -3,15 +3,18 @@
 Status: proposed and unavailable until implementation. No `effigy gateway
 recover` entrypoint, installer previous-binary preservation, or previous-binary
 resolver exists today. Ships nothing. Current v0.14.0 behavior is fail-closed
-and blocks a live numeric-only record: see
-[020](020-container-infrastructure-design.md#gateway-process-identity) and
-[guide 083](../../guides/083-v0.14.0-consumer-migration.md). Do not present this
-flow as current behavior.
+and reports a legacy identity migration requirement for a live numeric-only
+record: see [020](020-container-infrastructure-design.md#gateway-process-identity)
+and [guide 083](../../guides/083-v0.14.0-consumer-migration.md). Task 113 (elevated
+owner trust) and task 112 (the legacy migration diagnostic) are merged on main
+(4201e0b3, PR228/PR229). The consumer transition below is still unimplemented.
+Do not present this flow as current behavior.
 
 Owner: gateway lifecycle maintainers
 Architecture: [020](020-container-infrastructure-design.md#gateway-process-identity)
 Guidance: [083](../../guides/083-v0.14.0-consumer-migration.md)
-Related: task 112 (legacy diagnostics), task 113 (elevated owner trust),
+Related: task 112 (legacy diagnostics, merged), task 113 (elevated owner
+trust, merged),
 [Q-001](../questions.md#q-001--gateway-pid-identity),
 [Q-002](../questions.md#q-002--macos-gateway-cross-user-identity-access)
 Authority: no new standing helper, install, workflow, release or live-operation
@@ -44,8 +47,8 @@ Hard boundaries:
 | Legacy numeric-only record | `get_verified_gateway_status*` returns `ProcessStateUnknown` before any probe; `up`, `down`, `status` refuse; records preserved | Same fail-closed refusal; adds a classified `legacy_record` diagnostic and one explicit recovery entrypoint |
 | Stopping the old daemon | No current-CLI signal path; manual "previous binary" note only | `effigy gateway recover` resolves an authenticated previous binary, runs its `gateway down`, then independently confirms absence |
 | Previous binary | Local install overwrites `.local-install/bin/effigy`; nothing preserved | Installer stages the replaced binary as an owner-only backup plus version file before activation |
-| New daemon start | Blocked by the elevated-owner trust defect (task 113) | `recover` ends in a normal `up`; the complete path requires task 113 |
-| Diagnostics | Generic `cannot determine gateway state (...) ; refusing to guess` | Task 112 owns a precise `legacy_record` payload and recovery pointer |
+| New daemon start | Elevated-owner trust corrected (task 113, main `4201e0b3`, PR228): the authenticated operator context starts and publishes normally | `recover` ends in a normal `up`; the prerequisite is satisfied on main |
+| Diagnostics | Task 112 (main `4201e0b3`) returns a distinct `LegacyIdentityRequired { pid }` error and preserves records; an unknown probe stays `ProcessStateUnknown` | Adds a structured recovery payload and the `recover` entrypoint on top of that diagnostic |
 | Public channels | `releases/latest` = v0.13.1; Homebrew formula restored to v0.13.1; v0.14.0 body warns | Keep the done mitigation; add a fix-forward 0.14.1 patch runway |
 
 ## Failure
@@ -60,25 +63,41 @@ Effigy build that predates the identity sidecar:
 2. The user upgrades to 0.14.0. The local installer `mv`s the new binary over
    `.local-install/bin/effigy`; the previous binary and its version are gone.
    Homebrew and GitHub-releases installs replace the binary in place.
-3. `effigy gateway status`, `up` and `down` call `read_snapshot`, get
-   `record() == None`, and return `ProcessStateUnknown { pid }` before probing.
-   The user sees "cannot determine gateway state ... ; refusing to guess". The
-   old daemon keeps running. `up` cannot bind and cannot replace it.
-4. The documented manual path ("stop the old daemon with the previous binary")
-   is not reachable: the binary is overwritten, and running an older CLI for
-   ordinary work fails on newer manifests. Receipt: a v0.13.1 CLI run against
-   this repo's linked Longhorn `proof:artifacts` manifest fails to parse, so
-   `effigy dev --plan` fails before execution. A global CLI downgrade is not a
-   consumer launch solution.
-5. Even after records clear, elevated `up` hits the distinct task-113 defect:
-   `trusted_directory_owner` accepts only a root- or effigy-caller-owned
-   directory, so a genuine ordinary-operator-owned `~/.effigy/gateway` is
-   rejected as `gateway directory is unsafe` during elevation. The complete
-   path needs task 113.
+3. `effigy gateway status`, `up` and `down` return the task-112 diagnostic
+   `LegacyIdentityRequired { pid }` (a missing-sidecar record gets a read-only
+   process probe; a running or confirmed-absent numeric-only record both report
+   the migration requirement, while an unknown probe stays
+   `ProcessStateUnknown`). Records are preserved. The old daemon keeps running.
+   `up` cannot bind and cannot replace it.
+4. The interim manual guidance changes the stop to an "operator-controlled
+   procedure that independently confirms the daemon's executable and owner",
+   which a general user cannot do: the installer overwrites the previous
+   binary, and running an older CLI for ordinary work fails on newer manifests.
+   Receipt: a v0.13.1 CLI run against this repo's linked Longhorn
+   `proof:artifacts` manifest fails to parse, so `effigy dev --plan` fails
+   before execution. A global CLI downgrade is not a consumer launch solution.
+5. The start-side blocker is fixed on main. Task 113 (PR228, main `4201e0b3`)
+   accepts the authenticated operator-owned gateway directory across elevation;
+   `trusted_directory_owner` now takes the forwarded non-root operator UID only
+   when it matches ambient `SUDO_UID` (when present) and owns the forwarded
+   `HOME` per passwd. Unauthenticated root still accepts only root ownership.
 
-Two independent blockers: the legacy transition (this document) and the
-elevated owner trust boundary (task 113, separate owner). This document covers
-both only as an end-to-end sequence and names the dependency.
+Host transition evidence (2026-10-06, planner, explicit authority, no new
+live operations here): maintained `bootstrap:local` exit 0; the exact legacy
+PID 72111 stopped through a verified private v0.13.1 binary, exit 0 and
+confirmed absent; corrected `gateway up` exit 0, PID 11887, root, stable
+installed binary; ordinary TTY `gateway status` exit 0, trusted; the cross-UID
+reader worked; PID + sidecar owned by UID 501, mode `0600`; `routes.json` and
+`loopback-ips.json` byte-unchanged. This proves the local root-owner correction
+and the stop/confirm/start sequence on one host. It does not prove the
+consumer transition: the stop used a verified previous binary and explicit
+authority, and the previous-binary-overwritten and old-CLI/new-manifest
+problems remain.
+
+The remaining blocker is the consumer transition itself: no supported
+entrypoint resolves an authenticated previous binary, obtains consent, gates
+record cleanup on confirmed absence, and survives an overwritten binary or an
+unparseable newer manifest.
 
 ## Public channel assessment
 
@@ -158,8 +177,8 @@ Classification (unchanged identity reads):
    idempotent and touches only the captured generation. Preserve unrelated
    files. Never remove records on Running/Unknown/refusal.
 9. Start via the normal `up` path, publishing `gateway.pid` + `gateway.identity`
-   + `gateway.version`. The elevated-owner trust correction (task 113) is a
-   hard prerequisite here.
+   + `gateway.version`. The elevated-owner trust correction (task 113) is
+   merged, so this step runs on current main.
 
 Existing routes, TLS certs, loopback assignments, containers and volumes are
 untouched. `routes.json` is never cleared or rewritten by recovery.
@@ -170,7 +189,7 @@ Maintained surfaces after implementation:
 
 | Surface | Behavior |
 | --- | --- |
-| `effigy gateway status [--json]` | Adds a classified `legacy_record`/`recovery` block (task 112). Still exit non-zero/refuse normally |
+| `effigy gateway status [--json]` | Returns the task-112 `LegacyIdentityRequired` migration error; the proposal adds a structured `recovery` payload. Still refuses normally |
 | `effigy gateway up`, `down` | Unchanged fail-closed refusal for legacy records; message points at `recover` |
 | `effigy gateway recover [--json]` | The only new entrypoint. Interactive consent; `--yes` for non-interactive with the risk acknowledgement |
 | `gateway_up_for_managed_task` and managed `dev` auto-start | Detect a legacy record, surface the `recover` pointer, refuse auto-start; no auto-recovery |
@@ -223,9 +242,10 @@ falls back to a numeric-only signal from the current CLI.
   equivalent). Declined, unavailable or non-interactive authentication there
   means the stop did not happen: `recover` reports unknown/refused, preserves
   records, and does not start.
-- The new `up` keeps the existing elevation flow; the task-113 fix must make it
-  accept the forwarded operator directory owner. No new helper, install,
-  launchd/systemd unit, socket or standing privilege is introduced.
+- The new `up` keeps the existing elevation flow; the merged task-113 fix makes
+  it accept the authenticated forwarded operator directory owner. No new
+  helper, install, launchd/systemd unit, socket or standing privilege is
+  introduced.
 - No cross-UID live-identity read beyond the existing bounded read-only
   `__gateway-identity` prompt; that path is only for authenticated sidecar
   records and does not apply to legacy records.
@@ -316,8 +336,8 @@ owns these edits.
 
 | Area | Owner | Change |
 | --- | --- | --- |
-| Diagnostics | task 112 | Classified `legacy_record` in `gateway status --json` and the refusal message |
-| Elevated owner trust | task 113 | Fix `trusted_directory_owner` for the forwarded operator UID through the whole elevated chain |
+| Diagnostics (merged) | task 112, main `4201e0b3` | `LegacyIdentityRequired` error, preserved records; the proposal adds the structured `recovery` payload |
+| Elevated owner trust (merged) | task 113, main `4201e0b3` | Prerequisite satisfied; no work in this task |
 | Recovery entrypoint | gateway runner | `effigy gateway recover`, consent, lock, resolver, stop, confirm, cleanup, then `up` |
 | Previous binary resolution | gateway runner | Backup lookup, published-asset download + digest, operator path |
 | Installer | `scripts/build-local-bin.rhai` | Stage `effigy.previous` + `.version` before activation |
@@ -336,8 +356,9 @@ reverting the implementation commit restores current fail-closed behavior. Task
 113's trust fix is the only non-additive change and reverts to the current
 `gateway directory is unsafe` behavior. No data migration.
 
-Patch runway: `v0.14.1` = task 113 + task 112 + this flow + installer
-preservation. After tagged-source and install proof, re-pin `latest` and the
+Patch runway: `v0.14.1` = this flow + the structured recovery payload +
+installer preservation. Task 113 and the task-112 diagnostic are already in the
+Unreleased line. After tagged-source and install proof, re-pin `latest` and the
 Homebrew formula to 0.14.1. Do not touch the v0.14.0 tag, assets or workflows.
 Hold Q-001 release assurance until the patch passes its gates.
 
@@ -363,9 +384,10 @@ Hold Q-001 release assurance until the patch passes its gates.
 - The final identity-check-to-signal TOCTOU and the bounded macOS cross-UID
   reader limits recorded in [020](020-container-infrastructure-design.md#gateway-process-identity)
   remain unchanged.
-- The complete end-to-end path depends on task 113; without it, `recover` can
-  stop the old daemon but the new `up` still fails at the elevated owner trust
-  boundary.
+- The stop/confirm/start sequence is proven on the planner's host with an
+explicitly authorized, verified previous binary and the merged task-113 fix.
+The unimplemented part is the supported consumer entrypoint and the installer
+preservation, not the elevated start.
 
 ## Requirements mapping
 

@@ -103,6 +103,14 @@ impl GatewayRecordSnapshot {
         self.record.as_ref()
     }
 
+    /// True when the PID record has no identity sidecar at all.
+    ///
+    /// This distinguishes a legacy PID-only record from a present but invalid
+    /// sidecar, which remains an unknown record.
+    pub(crate) fn is_legacy_pid_only(&self) -> bool {
+        self.identity_bytes.is_none()
+    }
+
     /// Digest of the exact numeric PID and sidecar bytes.
     pub fn digest(&self) -> Option<String> {
         Some(GatewayIdentityRecord::digest_bytes(
@@ -170,6 +178,27 @@ pub fn probe_live_identity(record: &GatewayIdentityRecord) -> GatewayIdentityPro
 /// snapshot; it never authenticates a live process.
 pub fn read_snapshot(pid_path: &Path) -> Result<Option<GatewayRecordSnapshot>, GatewayError> {
     let owner_uid = trusted_directory_owner(pid_path)?;
+    read_snapshot_for_owner(pid_path, owner_uid)
+}
+
+/// Test seam for the elevated root context: resolves the directory owner
+/// with a modeled caller (effective UID plus authenticated operator) and
+/// then executes the real file validation rules. Production uses
+/// [`read_snapshot`].
+#[cfg(all(unix, test))]
+fn read_snapshot_with(
+    pid_path: &Path,
+    effective_uid: u32,
+    authenticated_operator: Option<u32>,
+) -> Result<Option<GatewayRecordSnapshot>, GatewayError> {
+    let owner_uid = trusted_directory_owner_with(pid_path, effective_uid, authenticated_operator)?;
+    read_snapshot_for_owner(pid_path, owner_uid)
+}
+
+fn read_snapshot_for_owner(
+    pid_path: &Path,
+    owner_uid: u32,
+) -> Result<Option<GatewayRecordSnapshot>, GatewayError> {
     let Some((pid_bytes, pid_file_owner, pid_file_mode)) =
         read_trusted_file(pid_path, owner_uid, MAX_PID_BYTES)?
     else {
@@ -325,7 +354,105 @@ fn ignore_not_found(error: std::io::Error) -> std::io::Result<()> {
 }
 
 #[cfg(unix)]
+fn escalated_marker_present() -> bool {
+    std::env::var("EFFIGY_GATEWAY_ESCALATED")
+        .ok()
+        .is_some_and(|value| matches!(value.trim(), "1" | "true" | "yes"))
+}
+
+#[cfg(unix)]
+fn operator_claim_uid() -> Option<u32> {
+    std::env::var("EFFIGY_GATEWAY_OPERATOR_UID")
+        .ok()?
+        .trim()
+        .parse::<u32>()
+        .ok()
+}
+
+#[cfg(unix)]
+fn passwd_home_for(uid: u32) -> Option<PathBuf> {
+    nix::unistd::User::from_uid(nix::unistd::Uid::from_raw(uid))
+        .ok()??
+        .dir
+        .into()
+}
+
+/// Authenticate the forwarded operator claim for an elevated root caller.
+///
+/// The claim is accepted only when the caller is root behind the existing
+/// administrator-elevation marker, the claimed UID is a non-root UID, an
+/// ambient `SUDO_UID` (when present) names the same UID, and `HOME` is
+/// byte-identical to that UID's passwd home. Any mismatch, missing value,
+/// or non-Unicode-safe comparison input yields `None` (fail closed). The
+/// env UID alone never authenticates an owner.
+#[cfg(unix)]
+fn authenticate_operator_claim(
+    effective_uid: u32,
+    escalated: bool,
+    operator: Option<u32>,
+    sudo_present: bool,
+    sudo_uid: Option<u32>,
+    home: Option<PathBuf>,
+    passwd_home: Option<PathBuf>,
+) -> Option<u32> {
+    if effective_uid != 0 || !escalated {
+        return None;
+    }
+    let operator = operator.filter(|uid| *uid != 0)?;
+    if sudo_present && sudo_uid != Some(operator) {
+        return None;
+    }
+    let home = home?;
+    let expected = passwd_home?;
+    (home == expected).then_some(operator)
+}
+
+#[cfg(unix)]
+fn authenticated_elevated_operator() -> Option<u32> {
+    let effective_uid = nix::unistd::Uid::effective().as_raw();
+    let escalated = escalated_marker_present();
+    let operator = operator_claim_uid();
+    let (sudo_present, sudo_uid) = match std::env::var("SUDO_UID") {
+        Err(std::env::VarError::NotPresent) => (false, None),
+        Ok(value) => (true, value.trim().parse::<u32>().ok()),
+        Err(_) => (true, None),
+    };
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let passwd_home = operator.and_then(passwd_home_for);
+    authenticate_operator_claim(
+        effective_uid,
+        escalated,
+        operator,
+        sudo_present,
+        sudo_uid,
+        home,
+        passwd_home,
+    )
+}
+
+#[cfg(unix)]
 fn trusted_directory_owner(pid_path: &Path) -> Result<u32, GatewayError> {
+    let effective_uid = nix::unistd::Uid::effective().as_raw();
+    let authenticated_operator = if nix::unistd::Uid::effective().is_root() {
+        authenticated_elevated_operator()
+    } else {
+        None
+    };
+    trusted_directory_owner_with(pid_path, effective_uid, authenticated_operator)
+}
+
+/// Core directory trust check with an explicit caller context. The filesystem
+/// rules (absolute path, no symlink, directory, no group/other write, parent
+/// safety) always execute; only the accepted-owner set varies. An
+/// authenticated elevated operator adds exactly that UID to the root owner;
+/// an unauthenticated root accepts only root ownership, so an operator-owned
+/// directory stays unsafe without its authenticated context.
+#[cfg(unix)]
+fn trusted_directory_owner_with(
+    pid_path: &Path,
+    effective_uid: u32,
+    authenticated_operator: Option<u32>,
+) -> Result<u32, GatewayError> {
     use std::os::unix::fs::MetadataExt;
     let parent = pid_path
         .parent()
@@ -334,10 +461,13 @@ fn trusted_directory_owner(pid_path: &Path) -> Result<u32, GatewayError> {
         return Err(invalid_record("gateway PID path must be absolute"));
     }
     let metadata = fs::symlink_metadata(parent).map_err(GatewayError::Io)?;
+    let accepted = metadata.uid() == 0
+        || (effective_uid != 0 && metadata.uid() == effective_uid)
+        || authenticated_operator.is_some_and(|uid| metadata.uid() == uid);
     if metadata.file_type().is_symlink()
         || !metadata.is_dir()
         || metadata.mode() & 0o022 != 0
-        || (metadata.uid() != 0 && metadata.uid() != nix::unistd::Uid::effective().as_raw())
+        || !accepted
     {
         return Err(invalid_record("gateway directory is unsafe"));
     }
@@ -900,5 +1030,205 @@ mod tests {
             owner_uid,
         );
         assert_eq!(result, GatewayIdentityProbe::Matched);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn gateway_identity_operator_claim_authentication_is_bound() {
+        use std::path::PathBuf;
+        let home = PathBuf::from("/home/operator");
+        // Valid sudo elevation: invoking UID, claimed UID, and passwd HOME agree.
+        assert_eq!(
+            authenticate_operator_claim(
+                0,
+                true,
+                Some(501),
+                true,
+                Some(501),
+                Some(home.clone()),
+                Some(home.clone()),
+            ),
+            Some(501)
+        );
+        // No sudo ambient (osascript path): HOME/passwd agreement still binds.
+        assert_eq!(
+            authenticate_operator_claim(
+                0,
+                true,
+                Some(501),
+                false,
+                None,
+                Some(home.clone()),
+                Some(home.clone()),
+            ),
+            Some(501)
+        );
+        // Root may never claim itself as the operator.
+        assert_eq!(
+            authenticate_operator_claim(
+                0,
+                true,
+                Some(0),
+                false,
+                None,
+                Some(home.clone()),
+                Some(PathBuf::from("/root")),
+            ),
+            None
+        );
+        // Missing elevation marker, non-root caller, forged SUDO_UID, and
+        // substituted HOME/passwd pairs all refuse.
+        assert_eq!(
+            authenticate_operator_claim(
+                0,
+                false,
+                Some(501),
+                false,
+                None,
+                Some(home.clone()),
+                Some(home.clone()),
+            ),
+            None
+        );
+        assert_eq!(
+            authenticate_operator_claim(
+                501,
+                true,
+                Some(501),
+                false,
+                None,
+                Some(home.clone()),
+                Some(home.clone()),
+            ),
+            None
+        );
+        assert_eq!(
+            authenticate_operator_claim(
+                0,
+                true,
+                Some(501),
+                true,
+                Some(502),
+                Some(home.clone()),
+                Some(home.clone()),
+            ),
+            None
+        );
+        assert_eq!(
+            authenticate_operator_claim(
+                0,
+                true,
+                Some(501),
+                false,
+                None,
+                Some(PathBuf::from("/home/attacker")),
+                Some(home.clone()),
+            ),
+            None
+        );
+        assert_eq!(
+            authenticate_operator_claim(0, true, None, false, None, Some(home.clone()), Some(home)),
+            None
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn gateway_identity_operator_dir_trust_across_modeled_elevation() {
+        use std::os::unix::fs::MetadataExt;
+        let dir = tempfile::tempdir().expect("fixture directory");
+        let pid_path = dir.path().join("gateway.pid");
+        fs::write(&pid_path, "4242\n").unwrap();
+        let owner = fs::metadata(dir.path()).unwrap().uid();
+        let unrelated = owner.wrapping_add(1);
+        // Ordinary operator trusts its own safe directory with real rules.
+        assert_eq!(
+            trusted_directory_owner_with(&pid_path, owner, None).unwrap(),
+            owner
+        );
+        // Unauthenticated root rejects the operator-owned directory: the
+        // v0.14.0 failure.
+        assert!(trusted_directory_owner_with(&pid_path, 0, None).is_err());
+        // The same directory with the same mode/owner checks accepts the
+        // authenticated operator UID.
+        assert_eq!(
+            trusted_directory_owner_with(&pid_path, 0, Some(owner)).unwrap(),
+            owner
+        );
+        // An unrelated owner is never accepted through the operator slot.
+        assert!(trusted_directory_owner_with(&pid_path, 0, Some(unrelated)).is_err());
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn gateway_identity_modeled_root_reads_operator_publication() {
+        use std::os::unix::fs::MetadataExt;
+        let dir = tempfile::tempdir().expect("fixture directory");
+        // Ordinary operator publishes; the modeled elevated root with the
+        // same authenticated context reads the identical trusted snapshot.
+        let (pid_path, published) = publish_current_fixture(dir.path());
+        let owner = fs::metadata(dir.path()).unwrap().uid();
+        assert_eq!(published.owner_uid(), owner);
+        assert_eq!(
+            fs::metadata(identity_path(&pid_path)).unwrap().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(fs::metadata(&pid_path).unwrap().uid(), owner);
+        let elevated = read_snapshot_with(&pid_path, 0, Some(owner))
+            .expect("trusted elevated read")
+            .expect("record pair");
+        assert_eq!(elevated.record(), published.record());
+        assert_eq!(elevated.digest(), published.digest());
+        assert_eq!(
+            read_only_elevated_check(
+                &pid_path,
+                published.digest().as_deref().unwrap(),
+                &published.target_digest().unwrap(),
+                owner,
+            ),
+            GatewayIdentityProbe::Matched
+        );
+        // Ordinary verification of the same generation still matches.
+        assert_eq!(
+            probe_live_identity(published.record().expect("record")),
+            GatewayIdentityProbe::Matched
+        );
+        // Without the authenticated context the same bytes stay untrusted.
+        assert!(read_snapshot_with(&pid_path, 0, None).is_err());
+        assert!(read_snapshot_with(&pid_path, 0, Some(owner.wrapping_add(1))).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn gateway_identity_modeled_root_preserves_legacy_and_rejects_unsafe_dirs() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let dir = tempfile::tempdir().expect("fixture directory");
+        let owner = {
+            use std::os::unix::fs::MetadataExt;
+            fs::metadata(dir.path()).unwrap().uid()
+        };
+        // Legacy numeric-only pair remains record-less (fail closed) under
+        // the authenticated elevated context, with bytes preserved.
+        let legacy_path = dir.path().join("gateway.pid");
+        fs::write(&legacy_path, "4242\n").unwrap();
+        let before = fs::read(&legacy_path).unwrap();
+        let legacy = read_snapshot_with(&legacy_path, 0, Some(owner))
+            .unwrap()
+            .unwrap();
+        assert!(legacy.record().is_none());
+        assert_eq!(fs::read(&legacy_path).unwrap(), before);
+        // Writable directory, symlinked parent, and absolute-path violations
+        // refuse even with the authenticated context.
+        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o777)).unwrap();
+        assert!(read_snapshot_with(&legacy_path, 0, Some(owner)).is_err());
+        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let link_parent = tempfile::tempdir().expect("link parent");
+        let linked = link_parent.path().join("linked-gateway");
+        symlink(dir.path(), &linked).unwrap();
+        assert!(read_snapshot_with(&linked.join("gateway.pid"), 0, Some(owner)).is_err());
+        assert!(
+            trusted_directory_owner_with(Path::new("relative/gateway.pid"), 0, Some(owner))
+                .is_err()
+        );
     }
 }
