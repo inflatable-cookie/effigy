@@ -92,6 +92,19 @@ the prepared tree. Invalid or stale policy data blocks planning; gate failure
 restores every planned file and writes no prepared state. The catalog parser's
 version-consistency check remains unchanged.
 
+### Publication authorization — 2026-10-06
+
+Tom answered "Approved" to publishing the prepared v0.14.0 release: supported
+release execution, the release commit and annotated tag, dispatch of the
+existing binary workflow, and artifact/install verification before announcing
+availability. This is separate from the earlier preparation ruling. It does
+not authorize workflow edits or live gateway/container migration.
+
+The reviewed prepared state aged beyond its one-hour threshold while awaiting
+this approval. Its exact source and all four fingerprints still matched and
+all seven gates had passed; the supported `--allow-stale` option acknowledges
+that deliberately reviewed age without waiving a gate or fabricating state.
+
 ### Admission for authorized preparation
 
 Ordinary milestone full QA remains planner-owned through Queue
