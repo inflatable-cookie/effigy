@@ -443,6 +443,29 @@ selector is for approved Effigy preparation only, not worker per-task QA, and
 it does not authorize tagging, publishing, installing or live operations. See
 [the release contract](../knowledge/contracts/release.md).
 
+### Effigy's admitted install verification selector
+
+After Effigy's release assets publish, use the maintained
+`admission = "heavy"` selector for the isolated tagged-source install proof:
+
+```sh
+./target/debug/effigy release:verify-install --tag vX.Y.Z
+```
+
+The selector fixes the command to
+`./target/debug/effigy release verify-install {args}` and forwards normal task
+arguments to that subcommand. The task runner shell-quotes each argument, so a
+value cannot change the fixed subcommand or become another shell command. Use
+a compatible source-built Effigy at `target/debug/effigy`; this invokes the
+selector without replacing or refreshing the installed local Effigy. The
+verifier installs into its own temporary root and checks the installed command
+against a fixture.
+
+This admitted path is for the planner's authorized post-publication proof. It
+does not replace milestone `project.qa.run`, authorize release preparation,
+or grant tag, publish, workflow-edit or live-operation authority. See
+[the release contract](../knowledge/contracts/release.md).
+
 ## 6) Gate Configuration
 
 Gate commands are normal shell commands. They do not need to be Rust-specific.

@@ -29,6 +29,7 @@ use sha2::{Digest, Sha256};
 const EFFIGY: &str = env!("CARGO_BIN_EXE_effigy");
 const SERVER_ENV: &str = "EFFIGY_HOST_RUN_PRIVATE_SERVER";
 const REQUIRE_SERVER_ENV: &str = "EFFIGY_REQUIRE_HOST_RUN_PRIVATE_SERVER";
+const REPO_TASKS: &str = include_str!("../config/tasks.toml");
 
 struct Server {
     _dir: tempfile::TempDir,
@@ -476,6 +477,27 @@ impl Workspace {
         self.root().join(name)
     }
 
+    fn install_recording_effigy(&self) {
+        let binary = self.file("target/debug/effigy");
+        let source_effigy = effigy_core::shell::shell_quote(EFFIGY);
+        fs::create_dir_all(binary.parent().expect("binary parent")).expect("target directory");
+        let script = format!(
+            r#"#!/bin/sh
+set -u
+: > child-started
+printf 'CALL\n' >> verify-args
+printf '%s\n' "$@" >> verify-args
+printf '%s\n' "$HOST_RUN_TOKEN" >> verify-tokens
+{source_effigy} "$@" --repo "$PWD" >> verify-output 2>&1
+printf 'status:%s\n' "$?" >> verify-output
+exec {source_effigy} nested-heavy --repo "$PWD"
+"#
+        );
+        fs::write(&binary, script).expect("recording child");
+        fs::set_permissions(&binary, PermissionsExt::from_mode(0o700))
+            .expect("make recording child executable");
+    }
+
     fn lines(&self, name: &str) -> usize {
         fs::read_to_string(self.file(name))
             .map(|text| text.lines().count())
@@ -684,6 +706,14 @@ run = "echo started >> $MARK; echo $$ > $PIDFILE; exec sleep 40"
 [tasks.outer]
 admission = "heavy"
 run = "{EFFIGY} heavy-echo --repo ."
+
+[tasks."release:verify-install"]
+admission = "heavy"
+run = "./target/debug/effigy release verify-install {args}"
+
+[tasks.nested-heavy]
+admission = "heavy"
+run = "echo nested >> nested-runs"
 "#;
 
 fn wait_for(what: &str, limit: Duration, mut condition: impl FnMut() -> bool) {
@@ -829,6 +859,111 @@ fn empty_override_reason_refuses_without_executing() {
         .expect("run effigy");
     assert_eq!(code(&output), 2);
     assert_eq!(ws.lines("mark"), 0);
+}
+
+fn assert_root_release_verify_selector() {
+    assert!(REPO_TASKS.contains("\"release:verify-install\".admission = \"heavy\""));
+    assert!(REPO_TASKS.contains(
+        "\"release:verify-install\".run = \"./target/debug/effigy release verify-install {args}\""
+    ));
+}
+
+#[test]
+#[ignore = "requires the private Queue fixture; run test:release:verification-admission"]
+fn release_verify_install_selector_preserves_fixed_command_and_host_run() {
+    assert_root_release_verify_selector();
+    let ws = Workspace::new(MANIFEST);
+    ws.install_recording_effigy();
+
+    let refused = ws
+        .command(
+            Some(&ws.file("no-scheduler-here")),
+            &["release:verify-install", "--tag", "v0.14.0"],
+        )
+        .output()
+        .expect("run refusal proof");
+    assert_eq!(code(&refused), 75, "{}", text(&refused.stderr));
+    assert!(text(&refused.stderr).contains("scheduler_unreachable"));
+    assert!(!ws.file("child-started").exists(), "child did not start");
+
+    let server = Server::start(None);
+
+    let help = ws
+        .command(
+            Some(&server.state),
+            &["release:verify-install", "--tag", "v0.14.0", "--help"],
+        )
+        .output()
+        .expect("run admitted verifier help");
+    assert_eq!(code(&help), 0, "{}", text(&help.stderr));
+    let verify_output = fs::read_to_string(ws.file("verify-output")).expect("verifier output");
+    assert!(verify_output.contains("status:0"));
+    assert_eq!(
+        fs::read_to_string(ws.file("verify-args")).expect("verifier args"),
+        "CALL\nrelease\nverify-install\n--tag\nv0.14.0\n--help\n"
+    );
+    assert!(!fs::read_to_string(ws.file("verify-tokens"))
+        .expect("host-run token")
+        .trim()
+        .is_empty());
+    assert_eq!(ws.lines("nested-runs"), 1);
+    let first_run = server.run_ids();
+    assert_eq!(first_run.len(), 1, "child did not submit a second run");
+    let nested = server
+        .facts()
+        .into_iter()
+        .filter(|fact| fact["kind"] == "nested")
+        .collect::<Vec<_>>();
+    assert_eq!(nested.len(), 2, "child reused its admitted host-run");
+    assert!(nested
+        .iter()
+        .all(|fact| fact["parentRunId"].as_str() == Some(first_run[0].as_str())));
+
+    let injection = "; touch shell-injection-ran;";
+    let rejected = ws
+        .command(
+            Some(&server.state),
+            &[
+                "release:verify-install",
+                "--tag",
+                "v0.14.0",
+                "execute",
+                "prepare",
+                injection,
+            ],
+        )
+        .output()
+        .expect("run admitted fixed-command rejection proof");
+    assert_eq!(code(&rejected), 0, "{}", text(&rejected.stderr));
+    let verify_output = fs::read_to_string(ws.file("verify-output")).expect("verifier output");
+    assert!(verify_output.contains("status:2"));
+    assert_eq!(
+        fs::read_to_string(ws.file("verify-args")).expect("verifier args"),
+        format!(
+            "CALL\nrelease\nverify-install\n--tag\nv0.14.0\n--help\nCALL\nrelease\nverify-install\n--tag\nv0.14.0\nexecute\nprepare\n{injection}\n"
+        )
+    );
+    assert!(!ws.file("shell-injection-ran").exists());
+    assert_eq!(ws.lines("nested-runs"), 2);
+
+    let run_ids = server.run_ids();
+    assert_eq!(run_ids.len(), 2, "one admitted run per selector invocation");
+    let nested = server
+        .facts()
+        .into_iter()
+        .filter(|fact| fact["kind"] == "nested")
+        .collect::<Vec<_>>();
+    assert_eq!(nested.len(), 4);
+    for run_id in &run_ids {
+        assert_eq!(
+            nested
+                .iter()
+                .filter(|fact| fact["parentRunId"].as_str() == Some(run_id.as_str()))
+                .count(),
+            2,
+            "selector child and nested task share run {run_id}"
+        );
+    }
 }
 
 #[test]

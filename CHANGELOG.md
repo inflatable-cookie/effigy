@@ -6,6 +6,14 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Added
+- `effigy release:verify-install` is a maintained heavy-admission selector for
+  Effigy's post-publication tagged-source install proof. Invoke it through
+  `./target/debug/effigy`; it runs the fixed child command
+  `./target/debug/effigy release verify-install {args}` and forwards
+  shell-quoted task arguments without replacing the installed local Effigy.
+  This source follow-up is after v0.14.0 and is not in the published binary.
+
 ## [0.14.0] - 2026-10-06
 
 ### Breaking
