@@ -749,6 +749,18 @@ fn run_git_bounded(
         .stderr(std::process::Stdio::piped());
     #[cfg(all(unix, debug_assertions))]
     let evidence = DoctorGitProcessEvidence::from_test_config();
+    #[cfg(all(unix, debug_assertions))]
+    if evidence.is_some() {
+        command
+            .env(
+                "EFFIGY_TEST_DOCTOR_GIT_CALLER",
+                "effigy-scan::execution::doctor_inventory::run_git_bounded",
+            )
+            .env(
+                "EFFIGY_TEST_DOCTOR_GIT_ARGS_JSON",
+                serde_json::to_string(args).unwrap_or_else(|_| "[]".to_owned()),
+            );
+    }
     #[cfg(unix)]
     // SAFETY: `pre_exec` runs this closure in the forked child before `exec`,
     // where only async-signal-safe work is allowed. `setpgid` is
@@ -794,6 +806,7 @@ fn run_git_bounded(
                 "pid": pid,
                 "ppid": std::process::id(),
                 "pgid": pgid,
+                "caller": "effigy-scan::execution::doctor_inventory::run_git_bounded",
                 "args": args,
                 "setpgid": {
                     "result": "ok",
@@ -1083,7 +1096,16 @@ impl DoctorGitProcessEvidence {
         }
         #[cfg(not(test))]
         {
-            None
+            let path = std::env::var_os("EFFIGY_TEST_DOCTOR_GIT_EVIDENCE")?;
+            Some(Self {
+                path: PathBuf::from(path),
+                invocation: std::env::var("EFFIGY_TEST_DOCTOR_GIT_INVOCATION")
+                    .unwrap_or_else(|_| "unspecified".to_owned()),
+                ready_marker: std::env::var_os("EFFIGY_TEST_DOCTOR_GIT_READY").map(PathBuf::from),
+                late_ready_marker: std::env::var_os("EFFIGY_TEST_DOCTOR_GIT_LATE_READY")
+                    .map(PathBuf::from),
+                started: Instant::now(),
+            })
         }
     }
 
