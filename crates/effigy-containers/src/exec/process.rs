@@ -653,6 +653,10 @@ mod tests {
     // seam; real process supervision is retained throughout.
     // ------------------------------------------------------------------
 
+    #[cfg(unix)]
+    const DEADLINE_MARKER_SCRIPT: &str =
+        "PATH=; export PATH; case \"$PATH\" in '') : > spawned ;; *) exit 97 ;; esac";
+
     fn deadline_fixture_root(label: &str) -> std::path::PathBuf {
         use std::fs;
         let root = std::env::temp_dir().join(format!(
@@ -697,10 +701,9 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn expired_absolute_deadline_never_spawns() {
+    fn deadline_marker_control_expired_deadline_never_spawns() {
         let root = deadline_fixture_root("expired");
         let marker = root.join("spawned");
-        let script = format!("touch '{}'", marker.display());
         let expired = Instant::now()
             .checked_sub(Duration::from_secs(1))
             .expect("expired instant");
@@ -708,7 +711,7 @@ mod tests {
         let error = run_command_capture_allow_failure_with_deadline(
             &root,
             "/bin/sh",
-            &["-c", script.as_str()],
+            &["-c", DEADLINE_MARKER_SCRIPT],
             "expired absolute probe",
             Some(expired),
         )
@@ -719,6 +722,7 @@ mod tests {
             !marker.exists(),
             "an expired absolute deadline must never spawn the child"
         );
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// Negative control for the expired-no-spawn oracle: without a caller
@@ -726,15 +730,14 @@ mod tests {
     /// no-spawn oracle is non-vacuous.
     #[cfg(unix)]
     #[test]
-    fn expired_no_spawn_oracle_fails_when_the_caller_has_no_deadline() {
+    fn deadline_marker_control_no_deadline_still_spawns() {
         let root = deadline_fixture_root("expired-control");
         let marker = root.join("spawned");
-        let script = format!("touch '{}'", marker.display());
 
         let output = run_command_capture_allow_failure_with_deadline(
             &root,
             "/bin/sh",
-            &["-c", script.as_str()],
+            &["-c", DEADLINE_MARKER_SCRIPT],
             "unbounded negative control",
             None,
         )

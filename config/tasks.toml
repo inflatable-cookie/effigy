@@ -465,6 +465,9 @@
   { id = "containers-absolute-deadline", run = "cargo test -p effigy-containers --lib exec::process::tests -- --nocapture", timeout_ms = 300000 },
   { id = "colima-discovery-deadline", run = "cargo test -p effigy --lib runner::exec_command::transport::colima::tests -- --nocapture", timeout_ms = 300000 },
 ]
+"test:containers:deadline-marker-controls" = [
+  { id = "deadline-marker-controls", run = "cargo nextest run --config-file tests/config/deadline-marker-nextest.toml --user-config-file none -p effigy-containers --lib --filterset 'test(deadline_marker_control_expired_deadline_never_spawns) | test(deadline_marker_control_no_deadline_still_spawns)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 300000 },
+]
 "check:runtime:deadline-continuity" = [
   "cargo check -p effigy-containers -p effigy --all-targets --profile test",
   # Match the existing selector convention: the root package is linted with
