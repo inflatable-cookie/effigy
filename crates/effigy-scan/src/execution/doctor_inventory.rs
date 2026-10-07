@@ -764,21 +764,109 @@ fn run_git_bounded(
         Ok(child) => child,
         Err(_) => return Ok(None),
     };
-    let pid = child.id();
-    let (sender, receiver) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let _ = sender.send(child.wait_with_output());
-    });
-    match receiver.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
-        Ok(Ok(output)) => Ok(Some(output)),
-        Ok(Err(_)) => Ok(None),
-        Err(_) => {
-            terminate_git_tree(pid);
-            // Reaping happens in the waiter thread once the tree is dead; wait
-            // briefly for its output so no zombie outlives this call.
-            let _ = receiver.recv_timeout(std::time::Duration::from_secs(5));
-            Err(git_budget_error())
+    let mut child = OwnedGitChild::new(child);
+    let stdout = child
+        .child_mut()
+        .stdout
+        .take()
+        .expect("bounded git stdout is piped");
+    let stderr = child
+        .child_mut()
+        .stderr
+        .take()
+        .expect("bounded git stderr is piped");
+    let stdout_reader = std::thread::spawn(move || read_child_output(stdout));
+    let stderr_reader = std::thread::spawn(move || read_child_output(stderr));
+
+    loop {
+        if Instant::now() >= deadline {
+            child.terminate_and_reap();
+            let _ = stdout_reader.join();
+            let _ = stderr_reader.join();
+            return Err(git_budget_error());
         }
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let stdout = stdout_reader.join().ok().and_then(Result::ok);
+                let stderr = stderr_reader.join().ok().and_then(Result::ok);
+                let (Some(stdout), Some(stderr)) = (stdout, stderr) else {
+                    return Ok(None);
+                };
+                return Ok(Some(std::process::Output {
+                    status,
+                    stdout,
+                    stderr,
+                }));
+            }
+            Ok(None) => {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                std::thread::sleep(std::time::Duration::from_millis(10).min(remaining));
+            }
+            Err(_) => {
+                child.terminate_and_reap();
+                let _ = stdout_reader.join();
+                let _ = stderr_reader.join();
+                return Ok(None);
+            }
+        }
+    }
+}
+
+fn read_child_output(mut stream: impl std::io::Read) -> std::io::Result<Vec<u8>> {
+    let mut output = Vec::new();
+    stream.read_to_end(&mut output)?;
+    Ok(output)
+}
+
+/// Keeps the direct child unreaped while its process group is terminated.
+/// The leader's unreaped PID pins the group identity through TERM/KILL
+/// escalation, so a reused numeric PID or process-group ID cannot be signaled.
+struct OwnedGitChild {
+    child: std::process::Child,
+    pid: u32,
+    settled: bool,
+}
+
+impl OwnedGitChild {
+    fn new(child: std::process::Child) -> Self {
+        let pid = child.id();
+        Self {
+            child,
+            pid,
+            settled: false,
+        }
+    }
+
+    fn child_mut(&mut self) -> &mut std::process::Child {
+        &mut self.child
+    }
+
+    fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
+        let result = self.child.try_wait()?;
+        if result.is_some() {
+            self.settled = true;
+        }
+        Ok(result)
+    }
+
+    fn terminate_and_reap(&mut self) {
+        if self.settled {
+            return;
+        }
+        // Keep the child unreaped until both process-group signals have been
+        // sent. Once the numeric identity has been used, do not signal it
+        // again even if `wait` reports an error.
+        self.settled = true;
+        terminate_git_tree(self.pid);
+        #[cfg(not(unix))]
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+impl Drop for OwnedGitChild {
+    fn drop(&mut self) {
+        self.terminate_and_reap();
     }
 }
 
@@ -790,15 +878,17 @@ fn git_budget_error() -> ScanError {
 fn terminate_git_tree(pid: u32) {
     use nix::sys::signal::{kill, Signal};
     use nix::unistd::Pid;
-    let pid = pid as i32;
+    let Ok(pid) = i32::try_from(pid) else {
+        return;
+    };
     if pid <= 0 {
         return;
     }
+    // `OwnedGitChild` keeps the group leader unreaped across this escalation,
+    // preventing the process-group ID from being reused between signals.
     let _ = kill(Pid::from_raw(-pid), Signal::SIGTERM);
-    let _ = kill(Pid::from_raw(pid), Signal::SIGTERM);
     std::thread::sleep(std::time::Duration::from_millis(500));
     let _ = kill(Pid::from_raw(-pid), Signal::SIGKILL);
-    let _ = kill(Pid::from_raw(pid), Signal::SIGKILL);
 }
 
 #[cfg(not(unix))]
