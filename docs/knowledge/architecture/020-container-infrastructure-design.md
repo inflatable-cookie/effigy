@@ -599,13 +599,18 @@ snapshot it published. No production caller uses a numeric-only signal path.
 Legacy records remain untouched and block `status`, `up`, `down`, and managed
 start. A missing sidecar is reported as a migration requirement rather than a
 process-probe failure; if the process probe itself is unknown, that unknown
-remains distinct. The diagnostic does not assume the previous executable is
-still installed and does not authorize PID-only signaling. The operator must
-independently identify and stop the old daemon, then confirm it is gone before
-removing its PID/version files and running `up` to publish a new pair. A
-v0.13.1 rollback ignores `gateway.identity` and restores the PID-only risk;
-downgrade is not claimed safe. Host-run contract 010 and its whole-second wire
-identity are unchanged. Non-Unix `down` remains unimplemented.
+remains distinct. Version-only, malformed, or symlink `gateway.version` state
+is the same fail-closed unknown: the shared classifier refuses before start
+can overwrite those files, and version publication refuses to follow a
+symlink target. The diagnostic does not assume the previous executable is
+still installed and does not authorize PID-only signaling. `effigy gateway
+recover` is the implemented consumer path; see
+[architecture 034](034-gateway-legacy-upgrade-recovery.md). `--yes` is only
+the absent-record start; a live daemon requires `--adopt-candidate` and
+interactive digest consent. A v0.13.1 rollback ignores `gateway.identity`
+and restores the PID-only risk; downgrade is not claimed safe. Host-run
+contract 010 and its whole-second wire identity are unchanged. Non-Unix
+`down` remains unimplemented.
 
 Private controls cover exact-byte preservation for legacy/malformed and
 interrupted pairs, unsafe/symlink records, owner-only publication, target/path

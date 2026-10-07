@@ -458,7 +458,7 @@ process that does not participate.
 | Record present | Capture; probe; absent → clean + start; running/unknown → `--adopt-candidate` inspects then generation-bound stop, or refuse without it |
 | Record absent initially | No captured PID and no inspection, including a missing gateway directory. Start only; if an old daemon still runs, the start fails to bind and the failure is surfaced. Never signal |
 | Record vanishes mid-operation | Treat as changed; refuse, no signal; re-run from capture |
-| Partial records (pid or version only) | Unknown; preserve; no inspection |
+| Partial records (pid or version only, including malformed or symlink `gateway.version`) | Unknown; preserve; no inspection. Ordinary `status`/`up`/`down`/managed and container auto-start share this classifier and refuse before overwrite |
 | Crash before inspection | Transition lock released on exit; records intact; rerunnable |
 | Crash after stop, before cleanup | Records intact; next `recover` probes absent → clean + start |
 | Crash after cleanup, before start | Absent records; next `recover`/`up` starts |
@@ -476,7 +476,9 @@ process that does not participate.
 | `gateway_up_for_managed_task` and managed `dev` auto-start | Detect a legacy record, surface the `recover` pointer, refuse auto-start; no auto-recovery |
 | Container activation auto-start | Same refusal; never a best-effort stop |
 
-Consent shows the candidate (including the live executable path), the exact
+Consent shows the candidate (including the live executable path rendered as
+lossless printable-ASCII with non-ASCII/control/bidi/zero-width scalars
+escaped; the candidate digest still binds the canonical path bytes), the exact
 adopted digest, and the stop it authorizes. `--json` emits
 `effigy.gateway.recover.v1` with `result` (`recovered` | `refused` |
 `already_stopped`), `pid`, `version`, `probe`, `candidate`, `adopted`,
@@ -620,7 +622,7 @@ Landed on corrected main under the operator ruling. Residual limits below remain
 | Recover entrypoint | gateway runner | `effigy gateway recover`: consent, transition lock, probe, confirmed-absence gate, compare-and-remove, release + start |
 | Candidate reader | gateway runner | `__gateway-legacy-candidate`, bounded read-only elevated role/owner/boot/start/path reader |
 | Generation-bound stop | gateway runner | `__gateway-legacy-stop`, fixed-arg generation-bound TERM/KILL handler |
-| Installer | `scripts/build-local-bin.rhai` | Stage `effigy.previous` + `.version` before activation, evidence/rollback only |
+| Installer | `scripts/build-local-bin.rhai` (`preserve_previous_local_install` / `activate_local_install`) | Stage `effigy.previous` + `.version` before activation, evidence/rollback only |
 | Selectors | `config/tasks.toml` | `test:gateway:legacy-recovery`, `check:gateway:legacy-recovery`, `test:install:previous-binary-preservation`; `qa:docs:gateway-identity` |
 
 Testing: private fixtures only, fresh `mktemp -d`, recording seams, real owned

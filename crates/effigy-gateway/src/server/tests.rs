@@ -46,7 +46,7 @@ fn pid_file_roundtrip() {
     let version_path = pid_path.with_extension("version");
 
     write_pid_file(&pid_path).unwrap();
-    write_gateway_version_file(&version_path).unwrap();
+    write_gateway_version_file(&pid_path).unwrap();
     let pid = read_pid_file(&pid_path).unwrap();
     assert_eq!(pid, std::process::id());
     assert!(read_gateway_version_file(&version_path).unwrap().is_some());
@@ -54,6 +54,32 @@ fn pid_file_roundtrip() {
     remove_pid_file(&pid_path);
     assert!(!pid_path.exists());
     assert!(!version_path.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn legacy_recovery_version_publication_refuses_symlink_without_following() {
+    use std::os::unix::fs::symlink;
+    let dir = tempfile::tempdir().unwrap();
+    let pid_path = dir.path().join("gateway.pid");
+    let version_path = pid_path.with_extension("version");
+    let outside = dir.path().join("outside-version");
+    std::fs::write(&outside, b"sentinel").unwrap();
+    symlink(&outside, &version_path).unwrap();
+    write_pid_file(&pid_path).unwrap();
+    let error = write_gateway_version_file(&pid_path).expect_err("symlink version must refuse");
+    assert!(error
+        .to_string()
+        .contains("gateway record replacement target is unsafe"));
+    assert_eq!(std::fs::read(&outside).unwrap(), b"sentinel");
+    assert!(std::fs::symlink_metadata(&version_path)
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    assert_ne!(
+        std::fs::read(&version_path).unwrap(),
+        effigy_core::build_info::active_version().as_bytes()
+    );
 }
 
 #[test]

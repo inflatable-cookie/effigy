@@ -607,9 +607,11 @@ fn stop_adopted_generation(
     }
 }
 
-/// Render a live executable path for the adoption prompt. Control characters
-/// are escaped so the operator sees one unambiguous line. The candidate digest
-/// still hashes the canonical path bytes, not this display form.
+/// Render a live executable path for the adoption prompt. Only printable ASCII
+/// is shown raw; every other scalar (controls, bidi/format, zero-width,
+/// non-ASCII) is a lossless `\u{xx}` escape so the operator sees one
+/// unambiguous line. The candidate digest still hashes the canonical path
+/// bytes, not this display form.
 fn display_executable_path(path: &str) -> String {
     let mut rendered = String::with_capacity(path.len());
     for ch in path.chars() {
@@ -618,10 +620,8 @@ fn display_executable_path(path: &str) -> String {
             '\n' => rendered.push_str("\\n"),
             '\r' => rendered.push_str("\\r"),
             '\t' => rendered.push_str("\\t"),
-            ch if ch.is_control() => {
-                rendered.push_str(&format!("\\u{{{:x}}}", u32::from(ch)));
-            }
-            ch => rendered.push(ch),
+            ch if ch == ' ' || ch.is_ascii_graphic() => rendered.push(ch),
+            ch => rendered.push_str(&format!("\\u{{{:x}}}", u32::from(ch))),
         }
     }
     rendered
@@ -1004,7 +1004,6 @@ mod legacy_recovery_protocol_tests {
     use std::os::unix::fs::PermissionsExt;
     use std::path::Path;
     use std::process::{Child, Command};
-    use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct OwnedChild(Child);
 
@@ -1589,22 +1588,11 @@ mod legacy_recovery_protocol_tests {
     }
 
     #[test]
-    fn install_previous_binary_preservation_stages_owner_only_copy() {
-        let script = include_str!("../../../scripts/build-local-bin.rhai");
-        assert!(script.contains("effigy.previous"));
-        assert!(script.contains("effigy.previous.version"));
-        assert!(script.contains("0700"));
+    fn install_previous_binary_preservation_does_not_execute_previous() {
         let root = tempfile::tempdir().expect("fixture");
-        let bin = root.path().join("effigy");
         let previous = root.path().join("effigy.previous");
-        fs::write(&bin, b"current-binary").unwrap();
-        fs::set_permissions(&bin, fs::Permissions::from_mode(0o755)).unwrap();
-        fs::copy(&bin, &previous).unwrap();
+        fs::write(&previous, b"current-binary").unwrap();
         fs::set_permissions(&previous, fs::Permissions::from_mode(0o700)).unwrap();
-        let mode = fs::metadata(&previous).unwrap().permissions().mode() & 0o777;
-        assert_eq!(mode, 0o700);
-        static EXECUTIONS: AtomicUsize = AtomicUsize::new(0);
-        let previous_path = previous.clone();
         let (_home_root, home) = private_home();
         let _guard = set_test_gateway_home(&home);
         let _ = recover(
@@ -1613,17 +1601,15 @@ mod legacy_recovery_protocol_tests {
             false,
             |_| None,
             |_, _, _| LegacyStopResult::Refused,
-            || {
-                if previous_path.exists() {
-                    EXECUTIONS.fetch_add(0, Ordering::Relaxed);
-                }
-                Ok("started".to_owned())
-            },
+            || Ok("started".to_owned()),
             |_| false,
             |_| GatewayProcessProbe::ConfirmedAbsent,
         );
-        assert_eq!(EXECUTIONS.load(Ordering::Relaxed), 0);
         assert_eq!(fs::read(&previous).unwrap(), b"current-binary");
+        assert_eq!(
+            fs::metadata(&previous).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
     }
 
     #[cfg(unix)]
@@ -1723,7 +1709,7 @@ mod legacy_recovery_protocol_tests {
 
     #[test]
     fn legacy_recovery_adoption_prompt_escapes_control_path_without_changing_digest() {
-        let canonical = "/tmp/effigy\ngateway\u{1b}[0m.bin";
+        let canonical = "/tmp/effigy\ngateway\u{1b}[0m\u{202e}bin\u{200b}é";
         let digest = candidate_digest(
             &"aa".repeat(32),
             &"bb".repeat(32),
@@ -1752,13 +1738,17 @@ mod legacy_recovery_protocol_tests {
             .expect("executable line");
         assert_eq!(
             executable_line,
-            "  executable: /tmp/effigy\\ngateway\\u{1b}[0m.bin"
+            "  executable: /tmp/effigy\\ngateway\\u{1b}[0m\\u{202e}bin\\u{200b}\\u{e9}"
         );
         assert!(!executable_line.contains('\n'));
         assert!(!executable_line.contains('\u{1b}'));
+        assert!(!executable_line.contains('\u{202e}'));
+        assert!(!executable_line.contains('\u{200b}'));
+        assert!(!executable_line.contains('é'));
         assert_eq!(candidate.executable_path, canonical);
         assert!(canonical.contains('\n'));
         assert!(canonical.contains('\u{1b}'));
+        assert!(canonical.contains('\u{202e}'));
         assert!(prompt.contains(&digest));
         assert_eq!(candidate.candidate_digest, digest);
     }

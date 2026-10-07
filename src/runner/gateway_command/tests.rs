@@ -530,6 +530,119 @@ fn gateway_identity_legacy_active_record_refused_by_status_up_down_and_managed_s
 
 #[cfg(unix)]
 #[test]
+fn gateway_identity_legacy_version_only_record_refused_by_status_up_down_and_managed_start() {
+    let root = tempfile::tempdir().expect("private fixture directory");
+    let home = root.path().join("home");
+    let gateway_home = home.join(GATEWAY_DIR_NAME);
+    std::fs::create_dir_all(&gateway_home).expect("create private gateway directory");
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&gateway_home, std::fs::Permissions::from_mode(0o700))
+            .expect("restrict private gateway directory");
+    }
+    let _home_guard = set_test_gateway_home(&home);
+    let version_path = gateway_home.join("gateway.version");
+    let pid_path = gateway_home.join("gateway.pid");
+    let identity_path = gateway_home.join("gateway.identity");
+    std::fs::write(&version_path, "v0.13.1+local.version-only\n").expect("write version-only");
+    let before_version = std::fs::read(&version_path).expect("read version fixture");
+
+    let status = run_gateway_status(false)
+        .expect_err("status must refuse a version-only record")
+        .to_string();
+    let up = run_gateway_up(false)
+        .expect_err("up must refuse to overwrite a version-only record")
+        .to_string();
+    let down = run_gateway_down(false)
+        .expect_err("down must refuse a version-only record")
+        .to_string();
+    let marker = root.path().join("managed-start-ran");
+    let command = format!("touch '{}'", marker.display());
+    let managed = gateway_up_for_managed_task(&command)
+        .expect_err("managed start must refuse a version-only record")
+        .to_string();
+
+    for message in [&status, &up, &down, &managed] {
+        assert!(message.contains("cannot determine gateway state"));
+        assert!(message.contains("gateway version exists without its PID"));
+        assert!(!message.contains("legacy gateway identity migration required"));
+    }
+    assert!(!marker.exists(), "managed startup command must not run");
+    assert!(
+        !gateway_home.join("routes.json").exists(),
+        "up must not stage elevated state before refusing a version-only record"
+    );
+    assert!(
+        !pid_path.exists(),
+        "start must not publish a PID over version-only"
+    );
+    assert!(!identity_path.exists(), "no identity may be synthesized");
+    assert_eq!(
+        std::fs::read(&version_path).expect("version remains"),
+        before_version
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn gateway_identity_legacy_version_symlink_refused_by_status_up_down_and_managed_start() {
+    use std::os::unix::fs::symlink;
+    let root = tempfile::tempdir().expect("private fixture directory");
+    let home = root.path().join("home");
+    let gateway_home = home.join(GATEWAY_DIR_NAME);
+    std::fs::create_dir_all(&gateway_home).expect("create private gateway directory");
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&gateway_home, std::fs::Permissions::from_mode(0o700))
+            .expect("restrict private gateway directory");
+    }
+    let _home_guard = set_test_gateway_home(&home);
+    let version_path = gateway_home.join("gateway.version");
+    let pid_path = gateway_home.join("gateway.pid");
+    let outside = root.path().join("outside-version");
+    std::fs::write(&outside, b"sentinel").expect("outside version target");
+    symlink(&outside, &version_path).expect("symlink version record");
+
+    let status = run_gateway_status(false)
+        .expect_err("status must refuse a symlink version")
+        .to_string();
+    let up = run_gateway_up(false)
+        .expect_err("up must refuse to follow a symlink version")
+        .to_string();
+    let down = run_gateway_down(false)
+        .expect_err("down must refuse a symlink version")
+        .to_string();
+    let marker = root.path().join("managed-start-ran");
+    let command = format!("touch '{}'", marker.display());
+    let managed = gateway_up_for_managed_task(&command)
+        .expect_err("managed start must refuse a symlink version")
+        .to_string();
+
+    for message in [&status, &up, &down, &managed] {
+        assert!(message.contains("cannot determine gateway state"));
+        assert!(message.contains("gateway record file is unsafe"));
+    }
+    assert!(!marker.exists(), "managed startup command must not run");
+    assert!(
+        !gateway_home.join("routes.json").exists(),
+        "up must not stage elevated state before refusing a symlink version"
+    );
+    assert!(
+        !pid_path.exists(),
+        "start must not publish a PID over a symlink version"
+    );
+    assert_eq!(
+        std::fs::read(&outside).expect("outside remains"),
+        b"sentinel"
+    );
+    assert!(std::fs::symlink_metadata(&version_path)
+        .expect("version symlink remains")
+        .file_type()
+        .is_symlink());
+}
+
+#[cfg(unix)]
+#[test]
 fn legacy_recovery_up_preflight_does_not_mutate_before_lock() {
     struct OwnedChild(std::process::Child);
 

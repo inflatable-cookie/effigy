@@ -88,6 +88,40 @@ fn local_active_version() {
     "v" + base + "+local." + hash
 }
 
+fn preserve_previous_local_install(target, previous_target, active_version_file, previous_version_file) {
+    if fs::exists(target) && fs::is_file(target) {
+        run_check("preserve previous local effigy binary", "cp", [target, previous_target]);
+        run_check(
+            "restrict previous local effigy binary to owner-only",
+            "chmod",
+            ["0700", previous_target],
+        );
+        if fs::exists(active_version_file) && fs::is_file(active_version_file) {
+            run_check(
+                "preserve previous local effigy version",
+                "cp",
+                [active_version_file, previous_version_file],
+            );
+            run_check(
+                "restrict previous local effigy version to owner-only",
+                "chmod",
+                ["0600", previous_version_file],
+            );
+        }
+    }
+}
+
+fn activate_local_install(source, staged_target, target, active_version_file, version) {
+    run_check("stage local effigy binary", "cp", [source, staged_target]);
+    run_check(
+        "mark staged local effigy binary executable",
+        "chmod",
+        ["0755", staged_target],
+    );
+    run_check("activate local effigy binary", "mv", [staged_target, target]);
+    fs::write_file(active_version_file, version + "\n");
+}
+
 run_check_stream(
     "cargo build --bin effigy",
     "cargo",
@@ -102,34 +136,8 @@ if !fs::exists(source) || !fs::is_file(source) {
 fs::create_dir(install_dir);
 let previous_target = path::join(install_dir, "effigy.previous");
 let previous_version_file = path::join(install_dir, "effigy.previous.version");
-if fs::exists(target) && fs::is_file(target) {
-    run_check("preserve previous local effigy binary", "cp", [target, previous_target]);
-    run_check(
-        "restrict previous local effigy binary to owner-only",
-        "chmod",
-        ["0700", previous_target],
-    );
-    if fs::exists(active_version_file) && fs::is_file(active_version_file) {
-        run_check(
-            "preserve previous local effigy version",
-            "cp",
-            [active_version_file, previous_version_file],
-        );
-        run_check(
-            "restrict previous local effigy version to owner-only",
-            "chmod",
-            ["0600", previous_version_file],
-        );
-    }
-}
-run_check("stage local effigy binary", "cp", [source, staged_target]);
-run_check(
-    "mark staged local effigy binary executable",
-    "chmod",
-    ["0755", staged_target],
-);
-run_check("activate local effigy binary", "mv", [staged_target, target]);
-fs::write_file(active_version_file, local_active_version() + "\n");
+preserve_previous_local_install(target, previous_target, active_version_file, previous_version_file);
+activate_local_install(source, staged_target, target, active_version_file, local_active_version());
 
 log("[ok] built local effigy binary");
 log("[ok] installed " + target);

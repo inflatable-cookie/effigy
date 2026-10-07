@@ -25,8 +25,13 @@ During v0.x, MINOR bumps may include breaking changes.
   80/443 role sockets), requires interactive digest consent (`--yes` cannot
   adopt), and stops only that adopted generation through
   `__gateway-legacy-stop` with per-signal revalidation. The adoption prompt
-  renders the live executable path with control characters escaped; the
-  candidate digest still binds the canonical path. Confirmed selected-
+  renders the live executable path as lossless printable-ASCII with every
+  other scalar escaped (`\n`/`\t`/`\r`/`\\` and `\u{xx}`), including bidi
+  and zero-width format characters; the candidate digest still binds the
+  canonical path. Version-only, malformed, or symlink `gateway.version`
+  records are unknown in the shared lifecycle classifier, so `status`/`up`/
+  `down` and managed auto-start refuse before start can overwrite them;
+  version publication refuses to follow a symlink target. Confirmed selected-
   generation absence then compare-and-removes the unchanged records and
   releases the lock before a normal `gateway up`. A missing gateway directory
   is the absent-only start path. `recover --json` refusals emit

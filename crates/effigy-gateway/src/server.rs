@@ -160,9 +160,8 @@ fn gateway_version_file_for(pid_file_path: &Path) -> PathBuf {
     pid_file_path.with_extension("version")
 }
 
-fn write_gateway_version_file(path: &Path) -> Result<(), GatewayError> {
-    std::fs::write(path, effigy_core::build_info::active_version())?;
-    Ok(())
+fn write_gateway_version_file(pid_path: &Path) -> Result<(), GatewayError> {
+    identity::publish_gateway_version(pid_path, &effigy_core::build_info::active_version())
 }
 
 fn read_gateway_version_file(path: &Path) -> Result<Option<String>, GatewayError> {
@@ -550,7 +549,7 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<(), GatewayError> {
     };
     let published_snapshot =
         identity::publish_current_gateway(&config.pid_file_path, operator_uid)?;
-    write_gateway_version_file(&gateway_version_file_for(&config.pid_file_path))?;
+    write_gateway_version_file(&config.pid_file_path)?;
 
     // Load the route table.
     let live_table = LiveRouteTable::new(config.route_table_path.clone())?;

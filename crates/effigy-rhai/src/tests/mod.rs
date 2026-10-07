@@ -22,6 +22,7 @@ mod engine_limits;
 mod forge;
 mod git;
 mod host_surface;
+mod previous_binary_preservation;
 mod prompt;
 mod runtime;
 mod script_policy;
