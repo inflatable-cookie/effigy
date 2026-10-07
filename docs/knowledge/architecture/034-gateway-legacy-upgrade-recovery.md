@@ -583,9 +583,14 @@ not widen the approved numeric-only route.
 
 Extend `effigy_process` with a granular classification, for example
 `BootIdentityComparison::AmbiguousLegacyBootTime`, distinct from `Match`,
-`DifferentSession`, and `Unknown`. It is produced only when all of the
-following hold:
+`DifferentSession`, and `Unknown`. `recover` never treats `Unknown` or
+`Mismatch` as this value.
 
+`AmbiguousLegacyBootTime` is produced only when **all** of the following hold:
+
+- the current kernel boot-session identity (`kern.bootsessionuuid`) is readable
+  and canonical; an unreadable, absent, or malformed current session identity
+  is `Unknown`;
 - a trusted `read_snapshot` returns a valid `GatewayIdentityRecord` whose
   decimal PID equals the compatibility PID and whose `start_identity` is the
   macOS `Macos { start_seconds, start_microseconds }` variant;
@@ -594,26 +599,41 @@ following hold:
   field), i.e. a genuine v0.14.0-era macOS sidecar;
 - the current kernel `kern.boottime` seconds differ from the recorded `sec`, or
   the current `kern.boottime` value cannot be read (wall-clock adjustment or
-  unreadable evidence).
+  unreadable legacy comparison evidence).
 
 Every other result keeps the existing classification and is **not**
-admissible: `Match`; `DifferentSession`; a malformed, missing, empty, or
-non-timeval `boot_identity`; a differing canonical session UUID; an
-unsupported-platform record; any process-identity read error; the elevated
-reader's permission-denied or Unknown result; and any digest, path, owner, or
-mode mismatch. Those keep the current `Unknown`/`Mismatch` behavior and
-preserve the record without a recovery route.
+admissible: `Match`; `DifferentSession`; an unreadable or malformed current
+`kern.bootsessionuuid`; a malformed, missing, empty, or non-timeval recorded
+`boot_identity`; a differing canonical session UUID; an unsupported-platform
+record; an unreadable, malformed, or permission-denied live process identity;
+the elevated reader's permission-denied or Unknown result; and any digest,
+path, owner, or mode mismatch. Those keep the current `Unknown`/`Mismatch`
+behavior and preserve the record without a recovery route. Only the two
+branches below may admit an `AmbiguousLegacyBootTime` capture; the capture
+itself is read-only and never requires a live process.
 
-`recover` admits the capture only when the granular result is
-`AmbiguousLegacyBootTime` **and** all of:
+**Live-adoption branch** (the only branch that may signal). All of:
 
+- the granular result is `AmbiguousLegacyBootTime`;
 - the production process probe for the recorded PID is `Running`;
-- the live exact process start identity equals the recorded `start_identity`
-  (mandatory, as everywhere else);
+- the live exact process start identity is readable and equals the recorded
+  `start_identity` (mandatory, as everywhere else);
 - the live kernel UID passes the existing operator/root policy
   (`candidate_uid_allowed`);
 - the gateway directory, files, owner, mode, and parent satisfy the existing
   trusted-read checks.
+
+**Confirmed-absent cleanup branch** (never signals; makes a post-stop rerun
+reachable). All of:
+
+- the granular result is `AmbiguousLegacyBootTime`;
+- the production process probe for the recorded PID is `ConfirmedAbsent`.
+
+No live start-identity or kernel-UID comparison applies in this branch because
+there is no live process. It exists so that a rerun after a crash between a
+generation-bound stop and its cleanup — when the daemon is already gone and the
+record cannot satisfy the live branch — can finish cleanup instead of being
+rejected before it starts.
 
 ### Capture (full PID/version/identity digest)
 
@@ -643,23 +663,48 @@ is changed, never absent.
 `candidate_digest` additionally binds `identity_digest`, so consent targets the
 exact sidecar bytes. No PID, path, or signal argument is added.
 
-### Cleanup: absent-only triple compare-and-remove
+### Cleanup: ordered, resumable compare-and-remove
 
-Cleanup is reached only after (a) the captured PID probes `ConfirmedAbsent`, or
-(b) a completed generation-bound stop is followed by a `ConfirmedAbsent`
-re-probe. Then, under the transition lock and the record lock:
+Cleanup is reached only through the confirmed-absent cleanup branch above:
+(a) the captured PID probes `ConfirmedAbsent`, or (b) a completed
+generation-bound stop is followed by a `ConfirmedAbsent` re-probe. It never
+runs while the process is `Running` or `Unknown`.
 
-1. re-read the triple and require it byte-for-byte equal to the capture with
-   the same owner (the `bytes_unchanged()` rule above);
-2. remove `gateway.identity`, `gateway.version`, and `gateway.pid` as one
-   locked compare-and-remove, mirroring `remove_if_unchanged` plus the version
-   file.
+Three separate filesystem unlinks are **not** one atomic operation, and this
+specification does not claim atomic three-file deletion. Cleanup is an ordered
+sequence of independent locked compare-and-removes, chosen so that every
+intermediate state is a record the existing classifier recognizes and a rerun
+can finish:
 
-If any file changed or vanished, refuse and preserve whatever remains; partial
-removal is never performed. A `Running`, `Unknown`, declined, changed, or
-mismatched record removes nothing. The identity sidecar is never rewritten and
-never deleted to "downgrade" the record to numeric-only. This preserves the
-existing publisher/remover lock and compare-and-remove invariants.
+1. Under the transition lock and the record lock, re-read the triple and
+   require it byte-for-byte equal to the capture with the same owner (the
+   `bytes_unchanged()` rule above). If it is not, refuse and preserve whatever
+   remains.
+2. Remove only `gateway.identity` with a locked compare-and-remove of the exact
+   captured identity bytes, re-checking the PID and version bytes in the same
+   lock. The remainder is then a genuine numeric-only legacy pair.
+3. Remove the remaining `gateway.pid` + `gateway.version` pair with the
+   existing approved numeric-only `remove_legacy_pair_if_unchanged`
+   compare-and-remove, which refuses on any change and is idempotent.
+
+Failure and crash behavior is part of the contract, not an exclusion:
+
+- Crash or unlink failure before step 2 completes leaves the full ambiguous
+  triple; a rerun takes the confirmed-absent cleanup branch again.
+- Crash or failure after step 2 leaves exactly `gateway.pid` +
+  `gateway.version`, which the existing approved numeric-only confirmed-absent
+  path removes on rerun.
+- Identity is removed before PID or version precisely so those are the only
+  two prefix states. Removing PID or version first is forbidden: a PID-less
+  identity-bearing remainder is the unrecoverable `gateway identity exists
+  without its PID` unknown.
+- No subset is ever removed while the process is live, and the identity sidecar
+  is never rewritten and never deleted to "downgrade" the record to
+  numeric-only outside this ordered confirmed-absent cleanup.
+
+A `Running`, `Unknown`, declined, changed, or mismatched record removes
+nothing. This preserves the existing publisher/remover lock and
+compare-and-remove invariants without asserting cross-file atomicity.
 
 ### Consent and diagnostics
 
@@ -684,11 +729,21 @@ approval of the 034 consent boundary before implementation.
 A future implementation task must land, at minimum, these proofs:
 
 - admission matrix: admitted only for `AmbiguousLegacyBootTime` + exact start +
-  acceptable UID + `Running`; refused for every other Unknown/Mismatch cause;
-- triple capture digest stability across a PID-only, version-only, and
-  identity-only byte change, and for each file's removal;
-- triple compare-and-remove: removes all three only when unchanged; refuses and
-  preserves on any change; never removes a subset; idempotent;
+  acceptable UID + `Running` (live branch), or `AmbiguousLegacyBootTime` +
+  `ConfirmedAbsent` (cleanup branch); refused for every other
+  `Unknown`/`Mismatch` cause, for an unreadable or malformed current
+  `kern.bootsessionuuid`, and for an unreadable or permission-denied live
+  process identity;
+- confirmed-absent crash resume: starting from (a) the full ambiguous triple
+  and (b) the numeric-only pair left after identity removal, a rerun completes
+  cleanup; a run that began while the PID was live but crashed after the stop
+  is not rejected before cleanup;
+- capture digest stability across a PID-only, version-only, and identity-only
+  byte change, and for each file's removal;
+- ordered cleanup: each step is an independent locked compare-and-remove;
+  identity is removed before PID or version; a simulated failure between steps
+  leaves only one of the two resumable prefix states, never an unrecognized
+  subset; the operation is idempotent on rerun;
 - forged or mismatched `capture_digest`, `identity_digest`, or phase is refused
   by the elevated stop handler;
 - ordinary `status`, `up`, `down`, and managed start still preserve and refuse

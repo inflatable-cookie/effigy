@@ -30,9 +30,9 @@ During v0.x, MINOR bumps may include breaking changes.
   approved `effigy gateway recover` route currently rejects sidecar-bearing
   records, so there is no automatic supported transition for an ambiguous
   identity-bearing record yet. A bounded, implementable specification of the
-  recovery input boundary and the absent-only triple cleanup is recorded in
-  architecture 034 for an operator ruling; it is not implemented and does not
-  widen the numeric-only route.
+  recovery input boundary and the ordered, resumable confirmed-absent cleanup
+  is recorded in architecture 034 for an operator ruling; it is not
+  implemented and does not widen the numeric-only route.
 - Elevated gateway lifecycle now accepts the authenticated operator-owned
   gateway directory instead of rejecting it as unsafe. An elevated root caller
   behind the existing administrator-elevation marker trusts a directory owned
