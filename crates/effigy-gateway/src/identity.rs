@@ -12,6 +12,7 @@ use crate::error::GatewayError;
 const IDENTITY_FORMAT_VERSION: u32 = 1;
 const MAX_PID_BYTES: usize = 32;
 const MAX_IDENTITY_BYTES: usize = 1024;
+const MAX_VERSION_BYTES: usize = 256;
 
 /// Precise, platform-specific start data stored with the gateway PID.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -24,6 +25,19 @@ pub enum GatewayStartIdentity {
         start_seconds: u64,
         start_microseconds: u64,
     },
+}
+
+impl GatewayStartIdentity {
+    /// Stable encoding used in candidate-generation digests.
+    pub fn digest_label(&self) -> String {
+        match self {
+            Self::Linux { start_ticks } => format!("linux:{start_ticks}"),
+            Self::Macos {
+                start_seconds,
+                start_microseconds,
+            } => format!("macos:{start_seconds}:{start_microseconds}"),
+        }
+    }
 }
 
 /// A versioned sidecar record that identifies one gateway generation.
@@ -107,8 +121,18 @@ impl GatewayRecordSnapshot {
     ///
     /// This distinguishes a legacy PID-only record from a present but invalid
     /// sidecar, which remains an unknown record.
-    pub(crate) fn is_legacy_pid_only(&self) -> bool {
+    pub fn is_legacy_pid_only(&self) -> bool {
         self.identity_bytes.is_none()
+    }
+
+    /// Canonical PID path that produced this snapshot.
+    pub fn pid_path(&self) -> &Path {
+        &self.pid_path
+    }
+
+    /// Exact `gateway.pid` bytes, including any trailing newline.
+    pub fn pid_bytes(&self) -> &[u8] {
+        &self.pid_bytes
     }
 
     /// Digest of the exact numeric PID and sidecar bytes.
@@ -175,7 +199,9 @@ pub fn probe_live_identity(record: &GatewayIdentityRecord) -> GatewayIdentityPro
 
 /// Safely read the decimal PID and optional sidecar without following file
 /// symlinks. A missing sidecar is retained as an unauthenticated legacy
-/// snapshot; it never authenticates a live process.
+/// snapshot; it never authenticates a live process. A version-only,
+/// malformed, or symlink `gateway.version` is unknown and is not treated as
+/// an empty gateway.
 pub fn read_snapshot(pid_path: &Path) -> Result<Option<GatewayRecordSnapshot>, GatewayError> {
     let owner_uid = trusted_directory_owner(pid_path)?;
     read_snapshot_for_owner(pid_path, owner_uid)
@@ -199,6 +225,11 @@ fn read_snapshot_for_owner(
     pid_path: &Path,
     owner_uid: u32,
 ) -> Result<Option<GatewayRecordSnapshot>, GatewayError> {
+    // Inspect version through the same no-follow trusted reader used for PID
+    // and identity so a version-only or symlink version cannot classify as
+    // absent and later be overwritten, including by `std::fs::write`.
+    let version_present =
+        read_trusted_file(&version_path(pid_path), owner_uid, MAX_VERSION_BYTES)?.is_some();
     let Some((pid_bytes, pid_file_owner, pid_file_mode)) =
         read_trusted_file(pid_path, owner_uid, MAX_PID_BYTES)?
     else {
@@ -206,6 +237,9 @@ fn read_snapshot_for_owner(
         // gateway state. Preserve it and fail closed for status/start.
         if read_trusted_file(&identity_path(pid_path), owner_uid, MAX_IDENTITY_BYTES)?.is_some() {
             return Err(invalid_record("gateway identity exists without its PID"));
+        }
+        if version_present {
+            return Err(invalid_record("gateway version exists without its PID"));
         }
         return Ok(None);
     };
@@ -306,6 +340,45 @@ pub fn remove_if_unchanged(snapshot: &GatewayRecordSnapshot) -> Result<bool, Gat
     Ok(true)
 }
 
+/// Remove a legacy PID/version pair only if both files still match the
+/// captured bytes. Comparison and deletion share the record lock so a
+/// substituted PID or version cannot be deleted. A vanished captured PID or
+/// version is a changed record and returns `Ok(false)`.
+pub(crate) fn remove_legacy_pair_if_unchanged(
+    pid_path: &Path,
+    owner_uid: u32,
+    pid_bytes: &[u8],
+    version_bytes: &[u8],
+) -> Result<bool, GatewayError> {
+    let _lock = GatewayRecordLock::acquire(pid_path, owner_uid)?;
+    let version_path = version_path(pid_path);
+    let current_version =
+        read_trusted_file(&version_path, owner_uid, MAX_VERSION_BYTES)?.map(|(bytes, _, _)| bytes);
+    let snapshot = match read_snapshot(pid_path) {
+        Ok(snapshot) => snapshot,
+        Err(GatewayError::Io(ref error)) if error.kind() == std::io::ErrorKind::InvalidData => {
+            // Version-only, symlink, or other untrusted remainder is a changed
+            // record. Preserve it; do not treat classifier refusal as cleanup.
+            return Ok(false);
+        }
+        Err(error) => return Err(error),
+    };
+    match (snapshot, current_version.as_deref()) {
+        (Some(snapshot), Some(current))
+            if snapshot.is_legacy_pid_only()
+                && snapshot.pid_bytes() == pid_bytes
+                && current == version_bytes
+                && snapshot.owner_uid() == owner_uid =>
+        {
+            fs::remove_file(identity_path(pid_path)).or_else(ignore_not_found)?;
+            fs::remove_file(pid_path).or_else(ignore_not_found)?;
+            fs::remove_file(&version_path).or_else(ignore_not_found)?;
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
+}
+
 /// Read and verify the only authorized target for the hidden elevated reader.
 /// It accepts a digest, never an arbitrary PID, and returns no live identity.
 pub fn read_only_elevated_check(
@@ -334,8 +407,32 @@ pub fn read_only_elevated_check(
     }
 }
 
-fn identity_path(pid_path: &Path) -> PathBuf {
+pub(crate) fn identity_path(pid_path: &Path) -> PathBuf {
     pid_path.with_extension("identity")
+}
+
+pub(crate) fn version_path(pid_path: &Path) -> PathBuf {
+    pid_path.with_extension("version")
+}
+
+/// Publish `gateway.version` beside a trusted PID path. Refuses a symlink or
+/// non-file replacement target so the writer cannot follow an untrusted path,
+/// including one that appeared after a vacant preflight.
+pub(crate) fn publish_gateway_version(pid_path: &Path, version: &str) -> Result<(), GatewayError> {
+    let owner_uid = trusted_directory_owner(pid_path)?;
+    let path = version_path(pid_path);
+    validate_version_replace_target(&path, owner_uid)?;
+    atomic_publish(&path, version.as_bytes(), owner_uid)
+}
+
+/// Read a trusted sidecar next to the PID file (version, identity, …).
+pub(crate) fn read_trusted_sidecar_bytes(
+    pid_path: &Path,
+    sidecar: &Path,
+    max_bytes: usize,
+) -> Result<Option<Vec<u8>>, GatewayError> {
+    let owner_uid = trusted_directory_owner(pid_path)?;
+    Ok(read_trusted_file(sidecar, owner_uid, max_bytes)?.map(|(bytes, _, _)| bytes))
 }
 
 fn invalid_record(message: &str) -> GatewayError {
@@ -431,7 +528,7 @@ fn authenticated_elevated_operator() -> Option<u32> {
 }
 
 #[cfg(unix)]
-fn trusted_directory_owner(pid_path: &Path) -> Result<u32, GatewayError> {
+pub(crate) fn trusted_directory_owner(pid_path: &Path) -> Result<u32, GatewayError> {
     let effective_uid = nix::unistd::Uid::effective().as_raw();
     let authenticated_operator = if nix::unistd::Uid::effective().is_root() {
         authenticated_elevated_operator()
@@ -472,25 +569,82 @@ fn trusted_directory_owner_with(
         return Err(invalid_record("gateway directory is unsafe"));
     }
     let gateway_owner_uid = metadata.uid();
+    check_effigy_ancestors(parent, gateway_owner_uid)?;
+    Ok(metadata.uid())
+}
+
+/// Validate `.effigy` ancestors without creating directories. Creation paths
+/// must call this before `create_dir_all` so a symlink `.effigy` cannot receive
+/// a gateway child in an untrusted location.
+#[cfg(unix)]
+fn ensure_gateway_parent_creatable(pid_path: &Path) -> Result<(), GatewayError> {
+    if !pid_path.is_absolute() {
+        return Err(invalid_record("gateway PID path must be absolute"));
+    }
+    let parent = pid_path
+        .parent()
+        .ok_or_else(|| invalid_record("gateway PID path has no parent"))?;
+    let effective_uid = nix::unistd::Uid::effective().as_raw();
+    let authenticated_operator = if nix::unistd::Uid::effective().is_root() {
+        authenticated_elevated_operator()
+    } else {
+        None
+    };
+    let expected_owner = authenticated_operator.unwrap_or(effective_uid);
+    check_effigy_ancestors(parent, expected_owner)
+}
+
+#[cfg(unix)]
+fn check_effigy_ancestors(parent: &Path, gateway_owner_uid: u32) -> Result<(), GatewayError> {
+    use std::os::unix::fs::MetadataExt;
     for ancestor in parent
         .ancestors()
         .filter(|path| path.file_name().is_some_and(|name| name == ".effigy"))
     {
-        let metadata = fs::symlink_metadata(ancestor).map_err(GatewayError::Io)?;
-        if metadata.file_type().is_symlink()
-            || !metadata.is_dir()
-            || metadata.mode() & 0o022 != 0
-            || (metadata.uid() != 0 && metadata.uid() != gateway_owner_uid)
-        {
-            return Err(invalid_record("gateway state parent is unsafe"));
+        match fs::symlink_metadata(ancestor) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(GatewayError::Io(error)),
+            Ok(metadata) => {
+                if metadata.file_type().is_symlink()
+                    || !metadata.is_dir()
+                    || metadata.mode() & 0o022 != 0
+                    || (metadata.uid() != 0 && metadata.uid() != gateway_owner_uid)
+                {
+                    return Err(invalid_record("gateway state parent is unsafe"));
+                }
+            }
         }
     }
-    Ok(metadata.uid())
+    Ok(())
 }
 
 #[cfg(not(unix))]
-fn trusted_directory_owner(_pid_path: &Path) -> Result<u32, GatewayError> {
+pub(crate) fn trusted_directory_owner(_pid_path: &Path) -> Result<u32, GatewayError> {
     Ok(0)
+}
+
+#[cfg(not(unix))]
+fn ensure_gateway_parent_creatable(_pid_path: &Path) -> Result<(), GatewayError> {
+    Ok(())
+}
+
+/// Validate `.effigy` ancestor trust, create a missing gateway parent, then
+/// re-check directory trust. Every create/open/lock path on an absent canonical
+/// gateway directory must call this before mutating that path.
+pub fn ensure_trusted_gateway_parent(pid_path: &Path) -> Result<u32, GatewayError> {
+    ensure_gateway_parent_creatable(pid_path)?;
+    let parent = pid_path
+        .parent()
+        .ok_or_else(|| invalid_record("gateway PID path has no parent"))?;
+    let parent_missing = match fs::symlink_metadata(parent) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+        Err(error) => return Err(GatewayError::Io(error)),
+        Ok(_) => false,
+    };
+    if parent_missing {
+        fs::create_dir_all(parent).map_err(GatewayError::Io)?;
+    }
+    trusted_directory_owner(pid_path)
 }
 
 #[cfg(unix)]
@@ -571,6 +725,32 @@ fn validate_replace_target(path: &Path, directory_owner: u32) -> Result<(), Gate
 
 #[cfg(not(unix))]
 fn validate_replace_target(_path: &Path, _directory_owner: u32) -> Result<(), GatewayError> {
+    Ok(())
+}
+
+/// Refuse a symlink or non-file version target. Existing regular files may be
+/// 0644 from older writers; replacement still publishes owner-only bytes.
+#[cfg(unix)]
+fn validate_version_replace_target(path: &Path, directory_owner: u32) -> Result<(), GatewayError> {
+    use std::os::unix::fs::MetadataExt;
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => Err(
+            invalid_record("gateway record replacement target is unsafe"),
+        ),
+        Ok(metadata) if metadata.uid() != directory_owner && metadata.uid() != 0 => {
+            Err(invalid_record("gateway record owner is untrusted"))
+        }
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(GatewayError::Io(error)),
+    }
+}
+
+#[cfg(not(unix))]
+fn validate_version_replace_target(
+    _path: &Path,
+    _directory_owner: u32,
+) -> Result<(), GatewayError> {
     Ok(())
 }
 
@@ -699,7 +879,26 @@ fn is_permission_denied(error: &std::io::Error) -> bool {
         || matches!(error.raw_os_error(), Some(libc::EACCES) | Some(libc::EPERM))
 }
 
-fn read_process_identity(pid: u32) -> Result<(String, GatewayStartIdentity), std::io::Error> {
+/// Live kernel identity used by both the sidecar matcher and legacy recovery.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LiveProcessIdentity {
+    /// Boot generation for this host.
+    pub boot_identity: String,
+    /// Precise process start identity.
+    pub start_identity: GatewayStartIdentity,
+    /// Kernel UID of the live process.
+    pub uid: u32,
+}
+
+pub(crate) fn read_process_identity(
+    pid: u32,
+) -> Result<(String, GatewayStartIdentity), std::io::Error> {
+    let live = read_live_process_identity(pid)?;
+    Ok((live.boot_identity, live.start_identity))
+}
+
+/// Read boot, precise start, and kernel UID for one PID.
+pub fn read_live_process_identity(pid: u32) -> Result<LiveProcessIdentity, std::io::Error> {
     if crate::server::checked_gateway_pid(pid).is_none() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
@@ -718,7 +917,12 @@ fn read_process_identity(pid: u32) -> Result<(String, GatewayStartIdentity), std
                 "Linux process start ticks are malformed",
             )
         })?;
-        Ok((boot, GatewayStartIdentity::Linux { start_ticks }))
+        let uid = linux_proc_euid(pid)?;
+        Ok(LiveProcessIdentity {
+            boot_identity: boot,
+            start_identity: GatewayStartIdentity::Linux { start_ticks },
+            uid,
+        })
     }
     #[cfg(target_os = "macos")]
     {
@@ -746,13 +950,14 @@ fn read_process_identity(pid: u32) -> Result<(String, GatewayStartIdentity), std
                 "macOS process identity returned a different PID",
             ));
         }
-        Ok((
-            boot,
-            GatewayStartIdentity::Macos {
+        Ok(LiveProcessIdentity {
+            boot_identity: boot,
+            start_identity: GatewayStartIdentity::Macos {
                 start_seconds: info.pbi_start_tvsec,
                 start_microseconds: info.pbi_start_tvusec,
             },
-        ))
+            uid: info.pbi_uid,
+        })
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
@@ -762,6 +967,32 @@ fn read_process_identity(pid: u32) -> Result<(String, GatewayStartIdentity), std
             "gateway process identity is unsupported on this platform",
         ))
     }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_proc_euid(pid: u32) -> Result<u32, std::io::Error> {
+    let status = fs::read_to_string(format!("/proc/{pid}/status"))?;
+    for line in status.lines() {
+        let Some(rest) = line.strip_prefix("Uid:") else {
+            continue;
+        };
+        let euid = rest.split_whitespace().nth(1).ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Linux process Uid line is malformed",
+            )
+        })?;
+        return euid.parse::<u32>().map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Linux process euid is malformed",
+            )
+        });
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        "Linux process status has no Uid line",
+    ))
 }
 
 #[cfg(target_os = "linux")]
@@ -915,6 +1146,46 @@ mod tests {
         let bytes = fs::read(&sidecar).unwrap();
         assert!(read_snapshot(&pid_path).is_err());
         assert_eq!(fs::read(&sidecar).unwrap(), bytes);
+    }
+
+    #[test]
+    fn legacy_recovery_version_without_pid_is_unknown_and_preserved() {
+        let dir = tempfile::tempdir().expect("fixture directory");
+        let pid_path = dir.path().join("gateway.pid");
+        let version = version_path(&pid_path);
+        fs::write(&version, b"v0.13.1+local.test\n").unwrap();
+        let before = fs::read(&version).unwrap();
+        let error = read_snapshot(&pid_path).expect_err("version-only is unknown");
+        assert!(error
+            .to_string()
+            .contains("gateway version exists without its PID"));
+        assert_eq!(fs::read(&version).unwrap(), before);
+        assert!(!pid_path.exists());
+        assert!(!identity_path(&pid_path).exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn legacy_recovery_version_symlink_is_rejected_without_following() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let dir = tempfile::tempdir().expect("fixture directory");
+        let pid_path = dir.path().join("gateway.pid");
+        let version = version_path(&pid_path);
+        let outside = dir.path().join("outside-version");
+        fs::write(&outside, b"sentinel").unwrap();
+        symlink(&outside, &version).unwrap();
+        assert!(read_snapshot(&pid_path).is_err());
+        assert_eq!(fs::read(&outside).unwrap(), b"sentinel");
+        assert!(fs::symlink_metadata(&version)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+
+        fs::write(&pid_path, "4242\n").unwrap();
+        fs::set_permissions(&pid_path, fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(read_snapshot(&pid_path).is_err());
+        assert_eq!(fs::read(&outside).unwrap(), b"sentinel");
+        assert_eq!(fs::read(&pid_path).unwrap(), b"4242\n");
     }
 
     #[cfg(unix)]

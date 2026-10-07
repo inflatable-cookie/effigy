@@ -379,8 +379,10 @@ and a `ps` launch failure, a failed `ps` carrying a diagnostic, or empty,
 malformed, mismatched or multiple rows is unknown. `effigy gateway status`,
 `up` and `down` and daemon start consume that value; unknown is never reported
 as stopped, never deletes the PID/version records and never starts a
-replacement daemon. Confirmed absence still clears the records and stop stays
-idempotent.
+replacement daemon. Status and unlocked `up` preflight are read-only:
+confirmed absence and a readable identity mismatch leave records in place.
+Authenticated stale-record cleanup runs after `gateway.transition.lock`, at
+daemon start (`check_existing_gateway_pid`) or on stop compare-and-remove.
 
 Those checks prove numeric domain and current liveness of some process. They
 do not prove that the live process is the gateway that wrote the file. See
@@ -522,10 +524,10 @@ ownership or relaxing trust for every owner is not a supported workaround. A
 legacy gateway also needs the explicit transition below. A previously installed
 binary may have been overwritten, and using an older CLI for development may
 fail to parse newer linked manifests; a general CLI downgrade is not a recovery
-strategy. The proposed supported upgrade/recovery design is
-[034](034-gateway-legacy-upgrade-recovery.md); it is proposed and
-unimplemented, not current behavior. Published v0.14.0 cannot complete a legacy
-upgrade; main `4201e0b3` can start but has no recovery entrypoint.
+strategy. The supported upgrade/recovery design is
+[034](034-gateway-legacy-upgrade-recovery.md). Published v0.14.0 cannot complete
+a legacy upgrade; corrected main provides `effigy gateway recover` on the
+task-112/113 base.
 
 The decimal `gateway.pid` remains compatible. `gateway.identity` is a
 version-1 JSON sidecar containing `format_version`, the same `pid`,
@@ -553,16 +555,17 @@ operator UID, so its publication carries the identical context.
 All production lifecycle paths carry `VerifiedGatewayStatus`, which keeps the
 unchanged public `GatewayStatus` output paired with the exact trusted record
 snapshot. `get_status` and `check_existing_gateway_pid` require the recorded
-PID, boot id and precise start identity to match. A readable different live
-generation is not Running and its stale record is removed only by byte-for-byte
-compare-and-remove. A readable PID-only record with no `gateway.identity`
-sidecar receives a specific legacy identity migration error after a read-only
-process probe. An unknown process probe keeps the distinct `ProcessStateUnknown`
-error; a running or confirmed-absent numeric-only record still preserves its
-files and refuses signal, cleanup, or replacement. A present but malformed,
-PID-mismatched, unreadable or otherwise untrusted identity also remains unknown
-and is preserved. Confirmed process absence can clear an authenticated record
-idempotently.
+PID, boot id and precise start identity to match. `get_status` is read-only: a
+readable different live generation is not Running, and confirmed absence is
+NotRunning, without deleting records. Stale authenticated records are removed
+only by byte-for-byte compare-and-remove after the transition lock, including
+`check_existing_gateway_pid` at daemon start. A readable PID-only record with
+no `gateway.identity` sidecar receives a specific legacy identity migration
+error after a read-only process probe. An unknown process probe keeps the
+distinct `ProcessStateUnknown` error; a running or confirmed-absent numeric-only
+record still preserves its files and refuses signal, cleanup, or replacement.
+A present but malformed, PID-mismatched, unreadable or otherwise untrusted
+identity also remains unknown and is preserved.
 Before TERM and again before KILL, stop rechecks the same record and live
 identity; `process_signal_accessible` performs the same check before its
 signal-zero permission probe. The `gateway up` check and record publication
@@ -596,13 +599,18 @@ snapshot it published. No production caller uses a numeric-only signal path.
 Legacy records remain untouched and block `status`, `up`, `down`, and managed
 start. A missing sidecar is reported as a migration requirement rather than a
 process-probe failure; if the process probe itself is unknown, that unknown
-remains distinct. The diagnostic does not assume the previous executable is
-still installed and does not authorize PID-only signaling. The operator must
-independently identify and stop the old daemon, then confirm it is gone before
-removing its PID/version files and running `up` to publish a new pair. A
-v0.13.1 rollback ignores `gateway.identity` and restores the PID-only risk;
-downgrade is not claimed safe. Host-run contract 010 and its whole-second wire
-identity are unchanged. Non-Unix `down` remains unimplemented.
+remains distinct. Version-only, malformed, or symlink `gateway.version` state
+is the same fail-closed unknown: the shared classifier refuses before start
+can overwrite those files, and version publication refuses to follow a
+symlink target. The diagnostic does not assume the previous executable is
+still installed and does not authorize PID-only signaling. `effigy gateway
+recover` is the implemented consumer path; see
+[architecture 034](034-gateway-legacy-upgrade-recovery.md). `--yes` is only
+the absent-record start; a live daemon requires `--adopt-candidate` and
+interactive digest consent. A v0.13.1 rollback ignores `gateway.identity`
+and restores the PID-only risk; downgrade is not claimed safe. Host-run
+contract 010 and its whole-second wire identity are unchanged. Non-Unix
+`down` remains unimplemented.
 
 Private controls cover exact-byte preservation for legacy/malformed and
 interrupted pairs, unsafe/symlink records, owner-only publication, target/path
@@ -637,11 +645,11 @@ a supported recovery flow even when installation replaced the old executable.
 Identity checks and fail-closed behavior remain required. The proposed design
 covering the consumer transition, including the public channel posture and a
 fix-forward patch runway, is
-[034](034-gateway-legacy-upgrade-recovery.md) (proposed and unimplemented). It
-keeps a numeric-only signal unauthorized. Its separate
+[034](034-gateway-legacy-upgrade-recovery.md). It keeps a numeric-only signal
+unauthorized. Its separate
 [operator ruling](034-gateway-legacy-upgrade-recovery.md#operator-ruling)
-authorizes implementation of bounded candidate inspection and generation-bound
-stop; it does not extend this one-host ruling to previous-binary delegation.
+authorized bounded candidate inspection and generation-bound stop; it does not
+extend this one-host ruling to previous-binary delegation.
 
 Tom ruled on 2026-10-05: block v0.14.0 publication until a persisted
 start-identity sidecar and fail-closed legacy policy are implemented. He does

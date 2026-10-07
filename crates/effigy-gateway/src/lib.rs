@@ -24,11 +24,16 @@
 //! ```
 
 mod atomic_write;
+#[cfg(target_os = "linux")]
+mod linux_net;
 mod locks;
+#[cfg(target_os = "macos")]
+mod macos_socket;
 
 pub mod dns;
 pub mod error;
 pub mod identity;
+pub mod legacy;
 pub mod loopback;
 pub mod ports;
 pub mod proxy;

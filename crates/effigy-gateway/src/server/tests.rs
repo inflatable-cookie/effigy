@@ -46,7 +46,7 @@ fn pid_file_roundtrip() {
     let version_path = pid_path.with_extension("version");
 
     write_pid_file(&pid_path).unwrap();
-    write_gateway_version_file(&version_path).unwrap();
+    write_gateway_version_file(&pid_path).unwrap();
     let pid = read_pid_file(&pid_path).unwrap();
     assert_eq!(pid, std::process::id());
     assert!(read_gateway_version_file(&version_path).unwrap().is_some());
@@ -54,6 +54,32 @@ fn pid_file_roundtrip() {
     remove_pid_file(&pid_path);
     assert!(!pid_path.exists());
     assert!(!version_path.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn legacy_recovery_version_publication_refuses_symlink_without_following() {
+    use std::os::unix::fs::symlink;
+    let dir = tempfile::tempdir().unwrap();
+    let pid_path = dir.path().join("gateway.pid");
+    let version_path = pid_path.with_extension("version");
+    let outside = dir.path().join("outside-version");
+    std::fs::write(&outside, b"sentinel").unwrap();
+    symlink(&outside, &version_path).unwrap();
+    write_pid_file(&pid_path).unwrap();
+    let error = write_gateway_version_file(&pid_path).expect_err("symlink version must refuse");
+    assert!(error
+        .to_string()
+        .contains("gateway record replacement target is unsafe"));
+    assert_eq!(std::fs::read(&outside).unwrap(), b"sentinel");
+    assert!(std::fs::symlink_metadata(&version_path)
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    assert_ne!(
+        std::fs::read(&version_path).unwrap(),
+        effigy_core::build_info::active_version().as_bytes()
+    );
 }
 
 #[test]
@@ -289,18 +315,20 @@ fn gateway_identity_legacy_record_requires_migration_and_unknown_probe_stays_dis
 }
 
 #[test]
-fn server_probe_state_status_confirmed_absent_clears_records() {
+fn server_probe_state_status_confirmed_absent_preserves_records() {
     let dir = tempfile::tempdir().unwrap();
     let config = GatewayConfig::standard(dir.path().to_path_buf());
     crate::identity::write_test_record(&config.pid_file_path, 4242);
     let version_path = config.pid_file_path.with_extension("version");
     std::fs::write(&version_path, "v0.13.1").unwrap();
+    let before_pid = std::fs::read(&config.pid_file_path).unwrap();
+    let before_version = std::fs::read(&version_path).unwrap();
 
     let result = get_status_with_probe(&config, |_| GatewayProcessProbe::ConfirmedAbsent);
 
     assert!(matches!(result, Err(GatewayError::NotRunning)));
-    assert!(!config.pid_file_path.exists());
-    assert!(!version_path.exists());
+    assert_eq!(std::fs::read(&config.pid_file_path).unwrap(), before_pid);
+    assert_eq!(std::fs::read(&version_path).unwrap(), before_version);
 }
 
 #[test]

@@ -16,6 +16,8 @@ use effigy_secrets::SecretValue;
 use effigy_ui::theme::{resolve_color_enabled, Theme};
 use effigy_ui::OutputMode;
 use rhai::module_resolvers::FileModuleResolver;
+#[cfg(test)]
+use rhai::CallFnOptions;
 use rhai::{Array, Dynamic, Engine, EvalAltResult, ImmutableString, Map, Scope};
 use ring::rand::SecureRandom;
 use ring::rand::SystemRandom;
@@ -316,6 +318,55 @@ fn execute_rhai_script_inner(
     with_rhai_secret_store(secret_store, || {
         engine
             .run_with_scope(&mut scope, script)
+            .map_err(|error| RhaiHostError::new(redact_active_rhai_secrets(&error.to_string())))
+    })
+}
+
+/// Compile `script` and call `function` without evaluating top-level statements.
+/// Installer proofs use this to exercise production staging functions without
+/// the script's cargo-build prologue.
+#[cfg(test)]
+pub(crate) fn call_rhai_function(
+    context: &ScriptContext,
+    script: &str,
+    function: &str,
+    args: impl rhai::FuncArgs,
+    callbacks: &HostCallbacks,
+) -> Result<(), RhaiHostError> {
+    let secret_store = resolve_rhai_secret_store(
+        &context.repo_root,
+        &[RhaiSecretTarget::Rhai],
+        rhai_secrets::rhai_script_consumes_secrets(script),
+    )?;
+    let context = Arc::new(context.clone());
+    let callbacks = callbacks.clone();
+    let mut engine = configured_rhai_engine();
+    let catalog_root = resolve_context_path(EFFIGY_RHAI_CATALOG_ROOT, &context.cwd);
+    let invocation_cwd = resolve_invocation_cwd(&context);
+    engine.set_module_resolver(FileModuleResolver::new_with_path(&catalog_root));
+    register_host_api(&mut engine, context.clone(), callbacks);
+
+    let mut scope = Scope::new();
+    scope.push_constant("args", Array::new());
+    scope.push_constant("cwd", context.cwd.display().to_string());
+    scope.push_constant("repo_root", context.repo_root.display().to_string());
+    scope.push_constant("catalog_root", catalog_root.display().to_string());
+    scope.push_constant("skill_root", catalog_root.display().to_string());
+    scope.push_constant("invocation_cwd", invocation_cwd.display().to_string());
+    scope.push("task_name", context.task_name.clone());
+
+    with_rhai_secret_store(secret_store, || {
+        let ast = engine
+            .compile(script)
+            .map_err(|error| RhaiHostError::new(error.to_string()))?;
+        engine
+            .call_fn_with_options::<()>(
+                CallFnOptions::new().eval_ast(false),
+                &mut scope,
+                &ast,
+                function,
+                args,
+            )
             .map_err(|error| RhaiHostError::new(redact_active_rhai_secrets(&error.to_string())))
     })
 }

@@ -142,6 +142,18 @@
   "cargo check -p effigy-gateway -p effigy-cli -p effigy --all-targets",
   "cargo clippy -p effigy-gateway -p effigy-cli -p effigy --all-targets -- -D warnings",
 ]
+"test:gateway:legacy-recovery" = [
+  { id = "gateway-legacy-recovery", run = "cargo test -p effigy-gateway -p effigy-cli -p effigy --lib legacy_recovery -- --nocapture", timeout_ms = 240000 },
+  { id = "gateway-legacy-identity-refusal", run = "cargo test -p effigy --lib gateway_identity_legacy -- --nocapture", timeout_ms = 120000 },
+  { id = "gateway-status-preflight-preserve", run = "cargo test -p effigy-gateway --lib server_probe_state_status -- --nocapture", timeout_ms = 120000 },
+]
+"check:gateway:legacy-recovery" = [
+  "cargo check -p effigy-gateway -p effigy-cli -p effigy --all-targets",
+  "cargo clippy -p effigy-gateway -p effigy-cli -p effigy --all-targets -- -D warnings",
+]
+"test:install:previous-binary-preservation" = [
+  { id = "install-previous-binary-preservation", run = "cargo test -p effigy -p effigy-rhai --lib previous_binary_preservation -- --nocapture", timeout_ms = 120000 },
+]
 "test:container:fake-runtime-lease-isolation" = [
   "cargo test --test cli_output_tests cli_container_data_seed_json_reports_seed_contract -- --nocapture",
   "cargo test --test cli_output_tests cli_container_data_seed_reaper_detector_catches_enabled_control_and_cleans_owned_child -- --nocapture",

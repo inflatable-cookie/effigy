@@ -6,14 +6,14 @@ use std::time::Duration;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 
+use effigy_gateway::identity;
 use effigy_gateway::server::{self, GatewayConfig};
 
 use crate::runner::error::RunnerError;
 
-use super::gateway_dir;
-
 pub(super) fn spawn_gateway_daemon(config: &GatewayConfig) -> Result<(), RunnerError> {
-    std::fs::create_dir_all(gateway_dir()?).map_err(RunnerError::Cwd)?;
+    identity::ensure_trusted_gateway_parent(&config.pid_file_path)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let effigy_bin = std::env::current_exe().map_err(RunnerError::Cwd)?;
     let stdout_log =
         std::fs::File::create(gateway_stdout_log_path(config)).map_err(RunnerError::Cwd)?;

@@ -80,3 +80,44 @@ fn parse_gateway_repair_accepts_yes_and_json() {
         })
     );
 }
+
+#[test]
+fn parse_gateway_recover_accepts_adopt_candidate_and_json() {
+    let cmd = parse_command(vec![
+        "gateway".to_owned(),
+        "recover".to_owned(),
+        "--adopt-candidate".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse recover");
+    assert_eq!(
+        cmd,
+        Command::Gateway(GatewayArgs {
+            subcommand: GatewaySubcommand::Recover {
+                yes: false,
+                adopt_candidate: true,
+            },
+            output_json: true,
+        })
+    );
+}
+
+#[test]
+fn parse_gateway_recover_yes_does_not_imply_adopt() {
+    let cmd = parse_command(vec![
+        "gateway".to_owned(),
+        "recover".to_owned(),
+        "--yes".to_owned(),
+    ])
+    .expect("parse recover --yes");
+    assert_eq!(
+        cmd,
+        Command::Gateway(GatewayArgs {
+            subcommand: GatewaySubcommand::Recover {
+                yes: true,
+                adopt_candidate: false,
+            },
+            output_json: false,
+        })
+    );
+}

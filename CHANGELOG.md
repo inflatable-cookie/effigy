@@ -17,11 +17,45 @@ During v0.x, MINOR bumps may include breaking changes.
   legacy/unknown handling, and fixed HOME/path target binding are unchanged.
 
 ### Added
+- `effigy gateway recover` restores an ordinary upgrade past a live
+  pre-identity gateway. It captures the trusted legacy PID/version pair,
+  holds `gateway.transition.lock` for `up`/`down`/`recover`, inspects a live
+  candidate through the bounded elevated `__gateway-legacy-candidate` reader
+  (canonical live path, kernel UID, boot, precise start, UDP 15353 plus TCP
+  80/443 role sockets), requires interactive digest consent (`--yes` cannot
+  adopt), and stops only that adopted generation through
+  `__gateway-legacy-stop` with per-signal revalidation. The adoption prompt
+  renders the live executable path as lossless printable-ASCII with every
+  other scalar escaped (`\n`/`\t`/`\r`/`\\` and `\u{xx}`), including bidi
+  and zero-width format characters; the candidate digest still binds the
+  canonical path. Version-only, malformed, or symlink `gateway.version`
+  records are unknown in the shared lifecycle classifier, so `status`/`up`/
+  `down` and managed auto-start refuse before start can overwrite them;
+  version publication refuses to follow a symlink target. Confirmed selected-
+  generation absence then compare-and-removes the unchanged records and
+  releases the lock before a normal `gateway up`. A missing gateway directory
+  is the absent-only start path. `recover --json` refusals emit
+  `effigy.gateway.recover.v1` (`ok: false`) on stdout; `status --json` emits
+  `effigy.gateway.status.v1` the same way. Unlocked `up` and `status` classify
+  without stopping, deleting records, or staging elevated state; mutation
+  runs after the transition lock (or in the elevated child that acquires it).
+  Privileged vacant first-start stages operator-owned files under that lock,
+  then releases before elevation. A vanished captured PID/version pair is
+  refused as a changed record. Lock acquisition, elevated-state preparation,
+  and daemon spawn refuse a symlink `.effigy` ancestor before creating a
+  missing gateway parent, so the symlink target is left untouched. Custom,
+  partial, or ambiguous endpoints refuse with no confirmation path. Managed
+  and container auto-start still refuse a legacy record and point at recover.
+  The local installer stages owner-only `effigy.previous` plus `.version` as
+  evidence; recover never executes it. Live role evidence is not historical
+  spawn proof; the last
+  check-to-signal interval remains a disclosed TOCTOU.
 - Gateway lifecycle commands now identify a numeric-only pre-identity record
   as requiring operator migration, distinct from an unavailable process
-  probe. They preserve its files and refuse to signal, clear, or replace it;
-  the recovery guidance accounts for the previous executable already being
-  replaced and requires independently confirming the daemon is stopped.
+  probe. They preserve its files and refuse to signal, clear, or replace it
+  from `up`/`down` or managed auto-start; `effigy gateway recover` is the
+  supported consumer path, including when the previous executable was already
+  replaced.
 - `effigy release:verify-install` is a maintained heavy-admission selector for
   Effigy's post-publication tagged-source install proof. Invoke it through
   `./target/debug/effigy`; it runs the fixed child command
@@ -429,7 +463,8 @@ During v0.x, MINOR bumps may include breaking changes.
   with a diagnostic, or malformed/mismatched/multiple rows is `Unknown`; status,
   up, down and daemon start refuse to report a false stop, keep the PID and
   version records byte-identical for reconciliation, and never start a
-  replacement. Confirmed absence still clears those records and stop stays
+  replacement. Status leaves confirmed-absent authenticated records in place;
+  locked start or stop compare-and-remove clears them. Stop stays
   idempotent. The probe result is now explicit (`GatewayProcessProbe`), so it is
   no longer collapsed to a `bool`. The task 104 identity sidecar and fail-closed
   legacy policy described above now prevent a PID-only record from authorizing
