@@ -1312,8 +1312,7 @@ run = [{ task = "db:migrate" }]
         use std::thread;
         use std::time::{Duration, Instant};
 
-        let _test_state_lock = crate::contract_test_support::lock_test();
-        let _lock = crate::runner::owned_children::hold_group_cleanup_test_lock();
+        let _locks = crate::runner::owned_children::hold_signal_proof_test_locks();
         let mut fixture = TimeoutDescendantFixture::new("effigy-seq-interrupt-");
         fixture.spawn_unrelated_sibling();
         let command = fixture.hang_command();
@@ -1344,8 +1343,8 @@ run = [{ task = "db:migrate" }]
         use std::thread;
         use std::time::{Duration, Instant};
 
-        let _test_state_lock = crate::contract_test_support::lock_test();
         let _seam = crate::runner::owned_children::disable_group_cleanup_for_test();
+        let _test_state_lock = crate::contract_test_support::lock_test();
         let _forwarding = crate::runner::owned_children::disable_forwarding_for_test();
         let mut fixture = TimeoutDescendantFixture::new("effigy-seq-interrupt-negative-");
         fixture.spawn_unrelated_sibling();

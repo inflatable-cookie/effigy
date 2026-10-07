@@ -489,6 +489,30 @@ pub(super) fn hold_group_cleanup_test_lock() -> std::sync::MutexGuard<'static, (
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
+/// Acquires the process-wide signal-proof lock before the environment lock.
+/// Keep this order shared with supervision-init proofs, whose child-spawn
+/// helper takes the environment lock reentrantly.
+#[cfg(all(test, unix))]
+pub(super) fn hold_signal_proof_test_locks() -> (
+    std::sync::MutexGuard<'static, ()>,
+    crate::contract_test_support::ReentrantTestLockGuard,
+) {
+    hold_signal_proof_test_locks_after_serial(|| {})
+}
+
+#[cfg(all(test, unix))]
+fn hold_signal_proof_test_locks_after_serial(
+    after_serial: impl FnOnce(),
+) -> (
+    std::sync::MutexGuard<'static, ()>,
+    crate::contract_test_support::ReentrantTestLockGuard,
+) {
+    let signal_proof_lock = hold_group_cleanup_test_lock();
+    after_serial();
+    let environment_lock = crate::contract_test_support::lock_test();
+    (signal_proof_lock, environment_lock)
+}
+
 /// Test-only negative seam. While held, timeout cleanup kills only the direct
 /// child pid and leaves the rest of the owned group running, so the reap
 /// oracle must fail. Never compiled into a release build.
@@ -920,7 +944,7 @@ mod supervision_init_tests {
         point: SupervisionInitFailurePointForTest,
         wait: impl FnOnce(Child) -> std::io::Result<()>,
     ) {
-        let _lock = super::hold_group_cleanup_test_lock();
+        let _signal_proof_lock = super::hold_group_cleanup_test_lock();
         let _inject = inject_supervision_init_failure_for_test(point);
         let mut fixture = TimeoutDescendantFixture::new(prefix);
         fixture.spawn_unrelated_sibling();
@@ -935,6 +959,31 @@ mod supervision_init_tests {
         );
         fixture.wait_until_owned_gone(&pids);
         fixture.assert_sibling_alive();
+    }
+
+    #[test]
+    fn signal_proof_lock_order_serializes_in_process() {
+        use std::sync::mpsc;
+        use std::thread;
+
+        let environment_lock = crate::contract_test_support::lock_test();
+        let (serial_acquired_tx, serial_acquired_rx) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            let _locks = super::hold_signal_proof_test_locks_after_serial(|| {
+                serial_acquired_tx
+                    .send(())
+                    .expect("report serial lock acquisition");
+            });
+        });
+        let serial_was_acquired_first = serial_acquired_rx
+            .recv_timeout(Duration::from_secs(5))
+            .is_ok();
+        drop(environment_lock);
+        worker.join().expect("signal proof lock acquisition exits");
+        assert!(
+            serial_was_acquired_first,
+            "signal proofs must acquire the group-cleanup lock before the environment lock"
+        );
     }
 
     #[test]

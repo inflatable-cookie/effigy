@@ -566,13 +566,6 @@ fn nested_queue_wait_comes_from_the_status_record_and_is_null_when_absent() {
     assert_eq!(queue_wait_from_status(&inverted), None);
 }
 
-/// Serializes the termination-proof tests that install the process-wide
-/// signal-forwarding scope with timeout-descendant interrupt proofs.
-#[cfg(unix)]
-fn owned_children_test_serial() -> std::sync::MutexGuard<'static, ()> {
-    crate::runner::owned_children::hold_group_cleanup_test_lock()
-}
-
 /// Owns the two children a termination proof creates. `cleanup` reaps them
 /// explicitly and reports the outcome; `Drop` is the unconditional backstop so
 /// an assertion failure or panic still kills and reaps both children.
@@ -723,8 +716,7 @@ fn observe_registered_child_termination(wait: std::time::Duration) -> Terminatio
 #[cfg(unix)]
 #[test]
 fn owned_children_scope_forwards_termination_only_to_registered_groups() {
-    let _test_state_lock = crate::contract_test_support::lock_test();
-    let _serial = owned_children_test_serial();
+    let _locks = crate::runner::owned_children::hold_signal_proof_test_locks();
     let observation = observe_registered_child_termination(std::time::Duration::from_secs(10));
     assert!(
         observation.owned_terminated_before_cleanup,
@@ -754,8 +746,7 @@ fn owned_children_scope_forwards_termination_only_to_registered_groups() {
 #[cfg(unix)]
 #[test]
 fn owned_children_termination_oracle_fails_when_forwarding_is_disabled() {
-    let _test_state_lock = crate::contract_test_support::lock_test();
-    let _serial = owned_children_test_serial();
+    let _locks = crate::runner::owned_children::hold_signal_proof_test_locks();
     let _seam = crate::runner::owned_children::disable_forwarding_for_test();
     let observation = observe_registered_child_termination(std::time::Duration::from_secs(1));
     assert!(
