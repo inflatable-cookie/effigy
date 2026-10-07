@@ -638,8 +638,10 @@ Identity checks and fail-closed behavior remain required. The proposed design
 covering the consumer transition, including the public channel posture and a
 fix-forward patch runway, is
 [034](034-gateway-legacy-upgrade-recovery.md) (proposed and unimplemented). It
-keeps a numeric-only signal unauthorized and states the smallest material
-ruling needed; it does not extend this ruling to consumer delegation.
+keeps a numeric-only signal unauthorized. Its separate
+[operator ruling](034-gateway-legacy-upgrade-recovery.md#operator-ruling)
+authorizes implementation of bounded candidate inspection and generation-bound
+stop; it does not extend this one-host ruling to previous-binary delegation.
 
 Tom ruled on 2026-10-05: block v0.14.0 publication until a persisted
 start-identity sidecar and fail-closed legacy policy are implemented. He does

@@ -7,9 +7,8 @@ the operator-owned gateway directory during elevation and reports
 `ProcessStateUnknown` for a record with no sidecar. Main `4201e0b3` (tasks 113
 and 112, PR228/PR229) corrects the directory check and adds the distinct
 `LegacyIdentityRequired` migration error, but still has no recovery entrypoint.
-The candidate-inspection and generation-bound stop below are an unapproved
-protocol that requires the material ruling in
-[Material ruling required](#material-ruling-required). See
+The candidate-inspection and generation-bound stop below are approved for implementation under the
+[operator ruling](#operator-ruling); they remain unavailable until implemented. See
 [020](020-container-infrastructure-design.md#gateway-process-identity) and
 [guide 083](../../guides/083-v0.14.0-consumer-migration.md).
 
@@ -27,8 +26,8 @@ authority is granted here. Nothing below authorizes a blind numeric-only signal.
 Upgrading an active pre-identity gateway must not strand the user. This document
 defines the fallback that current ownership policy already permits, a complete
 contingent candidate-inspection and generation-bound stop protocol that would
-finish the consumer path if the operator grants the ruling, and the exact ruling
-text. It is a design for a bounded implementation task, not an implementation.
+finish the consumer path under the operator ruling, and its exact authority
+boundary. It is a design for a bounded implementation task, not an implementation.
 
 Hard boundaries:
 
@@ -246,7 +245,7 @@ pid/version) are unknown, not inferred.
 
 ### Contingent: bounded candidate inspection
 
-Unapproved and unimplemented.
+Approved for implementation; unimplemented.
 
 **Reader surface.** A hidden, bounded, read-only `__gateway-legacy-candidate`
 command invoked through the existing administrator elevation (`/usr/bin/sudo` or
@@ -342,7 +341,7 @@ plus owner/boot/start is the live evidence; adoption is permission, not proof.
 
 ### Contingent: generation-bound stop surface
 
-Unapproved and unimplemented. This is a separate signal capability, not part of
+Approved for implementation; unimplemented. This is a separate signal capability, not part of
 the reader.
 
 `__gateway-legacy-stop` (hidden), invoked through the same elevation, accepts
@@ -461,7 +460,7 @@ process that does not participate.
 | `effigy gateway up`, `down` | Unchanged fail-closed refusal for legacy records; message points at `recover` |
 | `effigy gateway recover [--json]` | Fallback: verify + clean + start. Contingent `--adopt-candidate`: inspect, consent, generation-bound stop, clean, start. No blind numeric signal path |
 | `__gateway-legacy-candidate` (hidden) | Bounded read-only elevated reader. No signal, no write, no start |
-| `__gateway-legacy-stop` (hidden) | Bounded generation-bound elevated signal handler. Only TERM/KILL of the adopted generation. Unapproved |
+| `__gateway-legacy-stop` (hidden) | Bounded generation-bound elevated signal handler. Only TERM/KILL of the adopted generation. Approved for implementation; unavailable |
 | `gateway_up_for_managed_task` and managed `dev` auto-start | Detect a legacy record, surface the `recover` pointer, refuse auto-start; no auto-recovery |
 | Container activation auto-start | Same refusal; never a best-effort stop |
 
@@ -485,7 +484,7 @@ adopted digest, and the stop it authorizes. `--json` emits
   makes it accept the authenticated forwarded operator directory owner.
 - No new standing helper, install, launchd/systemd unit, socket or standing
   privilege. The Q-002 reader is not widened; the two hidden commands are
-  separate, narrower capabilities that require the ruling.
+  separate, narrower capabilities authorized only within the operator ruling.
 
 ## Error and edge matrix
 
@@ -594,7 +593,7 @@ no-defects claim:
 ## Implementation plan
 
 Minimal, bounded. Source unchanged by this assessment; the implementation task
-owns these edits, and the contingent protocol is blocked on the material ruling.
+owns these edits under the operator ruling; this assessment implements none of them.
 
 | Area | Owner | Change |
 | --- | --- | --- |
@@ -621,14 +620,19 @@ implementation commit restores current fail-closed behavior. No data migration.
 
 Patch runway: a PATCH release carrying the directory/diagnostic corrections
 from main plus the fallback flow and installer preservation; the contingent
-protocol waits for the ruling. After tagged-source and install proof, re-pin
+protocol is approved for implementation. Publication requires a separate operator
+ruling. After tagged-source and install proof, re-pin
 `latest` and the Homebrew formula in one formula commit. Do not touch the
 `v0.14.0` tag, assets or workflows.
 
-## Material ruling required
+## Operator ruling
 
-The smallest honest ruling has two parts. It does **not** ask to signal without
-ownership evidence:
+On 2026-10-07, Tom answered **"Go for it"** to decision
+`6af855c8-bbc4-490a-a371-f3cf63a964bb`, approving implementation and independent
+review of both bounded capabilities below. This grants no publication, tag,
+workflow, global installation, live gateway, VM, chown, purge or Queue-unpause
+authority. The protocol remains proposed and unimplemented. The two-part
+approval does **not** authorize a signal without the specified live evidence:
 
 > 1. Authorize a bounded, read-only elevated `__gateway-legacy-candidate` reader
 >    for the recorded legacy PID. It accepts only the canonical target digest,
@@ -644,11 +648,12 @@ ownership evidence:
 >    adopted generation; refuses every substitution or unknown; and signals only
 >    the adopted generation.
 
-Until that ruling is granted, the contingent protocol is unimplemented and only
-the fallback exists. The ruling does not authorize a blind numeric signal, a
-general previous-binary delegation, or a fabricated sidecar. If the operator
-declines, the honest outcome is the fallback plus the documented manual
-procedure, and the consumer gap remains.
+The ruling authorizes the specified reader and generation-bound stop, including
+private proofs. It does not authorize a blind numeric signal, general
+previous-binary delegation, fabricated sidecar, arbitrary-target helper or
+standing privilege. Live role evidence does not prove historical spawn ownership
+or eliminate a same-path impostor; the last identity-check-to-signal race remains
+explicitly disclosed. Neither capability is available until implementation.
 
 ## Residual limits and material rulings
 
@@ -687,5 +692,5 @@ procedure, and the consumer gap remains.
 | Missing record / crash treatment | [Missing record and crash treatment](#missing-record-and-crash-treatment) |
 | Private proof plan | [Private proofs](#private-proofs) |
 | Selectors + implementation/testing/rollback/patch | [Implementation plan](#implementation-plan) |
-| Residual limits and material ruling | [Material ruling required](#material-ruling-required), [Residual limits](#residual-limits-and-material-rulings) |
+| Residual limits and material ruling | [Operator ruling](#operator-ruling), [Residual limits](#residual-limits-and-material-rulings) |
 | Source unchanged; architecture/guidance corrected | This document; [020](020-container-infrastructure-design.md#gateway-process-identity); [083](../../guides/083-v0.14.0-consumer-migration.md) |
