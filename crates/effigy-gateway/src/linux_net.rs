@@ -89,8 +89,7 @@ fn parse_proc_net_table(
             }
         }
         let inode = cols
-            .skip(5)
-            .next()
+            .nth(5)
             .and_then(|value| value.parse::<u64>().ok())
             .ok_or_else(|| {
                 std::io::Error::new(

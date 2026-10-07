@@ -329,6 +329,42 @@ pub fn remove_if_unchanged(snapshot: &GatewayRecordSnapshot) -> Result<bool, Gat
     Ok(true)
 }
 
+/// Remove a legacy PID/version pair only if both files still match the
+/// captured bytes. Comparison and deletion share the record lock so a
+/// substituted PID or version cannot be deleted.
+pub(crate) fn remove_legacy_pair_if_unchanged(
+    pid_path: &Path,
+    owner_uid: u32,
+    pid_bytes: &[u8],
+    version_bytes: &[u8],
+) -> Result<bool, GatewayError> {
+    const MAX_VERSION_BYTES: usize = 256;
+    let _lock = GatewayRecordLock::acquire(pid_path, owner_uid)?;
+    let version_path = version_path(pid_path);
+    let current_version =
+        read_trusted_file(&version_path, owner_uid, MAX_VERSION_BYTES)?.map(|(bytes, _, _)| bytes);
+    let snapshot = read_snapshot(pid_path)?;
+    match (snapshot, current_version.as_deref()) {
+        (None, None) => Ok(true),
+        (None, Some(current)) if current == version_bytes => {
+            fs::remove_file(&version_path).or_else(ignore_not_found)?;
+            Ok(true)
+        }
+        (Some(snapshot), Some(current))
+            if snapshot.is_legacy_pid_only()
+                && snapshot.pid_bytes() == pid_bytes
+                && current == version_bytes
+                && snapshot.owner_uid() == owner_uid =>
+        {
+            fs::remove_file(identity_path(pid_path)).or_else(ignore_not_found)?;
+            fs::remove_file(pid_path).or_else(ignore_not_found)?;
+            fs::remove_file(&version_path).or_else(ignore_not_found)?;
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
+}
+
 /// Read and verify the only authorized target for the hidden elevated reader.
 /// It accepts a digest, never an arbitrary PID, and returns no live identity.
 pub fn read_only_elevated_check(

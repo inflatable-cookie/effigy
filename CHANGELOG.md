@@ -29,8 +29,10 @@ During v0.x, MINOR bumps may include breaking changes.
   releases the lock before a normal `gateway up`. A missing gateway directory
   is the absent-only start path. `recover --json` refusals emit
   `effigy.gateway.recover.v1` (`ok: false`) on stdout; `status --json` emits
-  `effigy.gateway.status.v1` the same way. `up` recognizes a live legacy
-  identity before elevation staging. Managed and container auto-start still
+  `effigy.gateway.status.v1` the same way. Unlocked `up` classifies a live
+  legacy or mismatched generation without stopping, deleting records, or
+  staging elevated state; mutation runs after the transition lock (or in the
+  elevated child that acquires it). Managed and container auto-start still
   refuse a legacy record and point at recover. The local installer stages
   owner-only `effigy.previous` plus `.version` as evidence; recover never
   executes it. Live role evidence is not historical spawn proof; the last

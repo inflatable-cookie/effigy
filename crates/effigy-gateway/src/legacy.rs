@@ -13,6 +13,7 @@ use crate::server::{self, GatewayProcessProbe};
 
 const MAX_VERSION_BYTES: usize = 256;
 const MAX_EXECUTABLE_PATH: usize = 4096;
+#[cfg(target_os = "macos")]
 const PROC_PIDPATHINFO_MAXSIZE: u32 = 4096;
 
 /// Transport for one gateway role endpoint.
@@ -411,7 +412,7 @@ fn read_executable_path(pid: u32) -> Option<String> {
     {
         let path = fs::read_link(format!("/proc/{pid}/exe")).ok()?;
         let text = path.to_str()?.to_owned();
-        if text.as_bytes().len() > MAX_EXECUTABLE_PATH {
+        if text.len() > MAX_EXECUTABLE_PATH {
             return None;
         }
         Some(text)
@@ -455,19 +456,16 @@ pub fn candidate_uid_allowed(candidate_uid: u32, operator_uid: u32) -> bool {
 }
 
 /// Compare-and-remove a legacy PID/version pair after confirmed absence.
+///
+/// PID and version bytes are compared under the record lock so a substituted
+/// pair is preserved.
 pub fn remove_legacy_if_unchanged(capture: &LegacyRecordCapture) -> Result<bool, GatewayError> {
-    if !capture.bytes_unchanged()? {
-        return Ok(false);
-    }
-    let snapshot = identity::read_snapshot(&capture.pid_path)?;
-    let Some(snapshot) = snapshot else {
-        let _ = fs::remove_file(identity::version_path(&capture.pid_path));
-        return Ok(true);
-    };
-    if !snapshot.is_legacy_pid_only() || snapshot.pid_bytes() != capture.pid_bytes.as_slice() {
-        return Ok(false);
-    }
-    identity::remove_if_unchanged(&snapshot)
+    identity::remove_legacy_pair_if_unchanged(
+        capture.pid_path(),
+        capture.directory_owner_uid,
+        &capture.pid_bytes,
+        &capture.version_bytes,
+    )
 }
 
 /// Owner-only exclusive lock covering one `up`/`down`/`recover` command.
@@ -774,6 +772,15 @@ mod legacy_recovery_tests {
         fs::write(dir.path().join("gateway.version"), "v0.13.1-changed").unwrap();
         assert!(!remove_legacy_if_unchanged(&capture).unwrap());
         assert!(pid_path.exists());
+        fs::write(dir.path().join("gateway.version"), "v0.13.1").unwrap();
+        fs::write(&pid_path, "9999\n").unwrap();
+        assert!(!remove_legacy_if_unchanged(&capture).unwrap());
+        assert!(pid_path.exists());
+        fs::write(&pid_path, "8888\n").unwrap();
+        fs::write(dir.path().join("gateway.version"), "v0.13.1-changed").unwrap();
+        assert!(!remove_legacy_if_unchanged(&capture).unwrap());
+        assert!(pid_path.exists());
+        fs::write(&pid_path, "4242\n").unwrap();
         fs::write(dir.path().join("gateway.version"), "v0.13.1").unwrap();
         assert!(remove_legacy_if_unchanged(&capture).unwrap());
         assert!(!pid_path.exists());

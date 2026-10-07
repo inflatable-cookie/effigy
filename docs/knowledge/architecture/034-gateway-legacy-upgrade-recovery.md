@@ -407,15 +407,20 @@ rollback. It is not signal authority and recover never executes it.
 ## Locking
 
 Current participants: `GatewayRecordLock` (`gateway.pid.with_extension("lock")`)
-is held only briefly inside `publish_current_gateway` and `remove_if_unchanged`
-(`identity.rs`). `run_gateway_up` and `run_gateway_down` do not hold it for the
+is held only briefly inside `publish_current_gateway`, `remove_if_unchanged`,
+and `remove_legacy_pair_if_unchanged` (`identity.rs`). The last of those
+compares both PID and version bytes under the lock before deleting a legacy
+pair. `run_gateway_up` and `run_gateway_down` do not hold it for the whole
 command, so it cannot serialize commands. The daemon's publication takes it
 briefly.
 
 Implemented locking:
 
 - Add an owner-only **transition lock** (`gateway.transition.lock`), held for the
-  whole command by `up`, `down` and `recover`.
+  whole command by `up`, `down` and `recover`. Unlocked `up` preflight is
+  classification-only: it does not stop a mismatched generation, delete
+  records, or stage elevated state. Stop and compare-and-remove run after the
+  lock is held (or in the elevated child that acquires it).
 - Keep the **record lock** as today: brief, only inside publication and
   compare-and-remove.
 - Acquisition order: transition lock (outer) → record lock (inner), never the

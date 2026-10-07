@@ -274,22 +274,22 @@ fn resolve_gateway_status(
     }
 }
 
-/// Handle any existing gateway before `up` starts a new daemon.
-///
-/// Returns `Ok(Some(rendered))` when `up` already has its answer, `Ok(None)`
-/// when no gateway is running and the caller should start one, and `Err` when
-/// the probe was ambiguous. An unknown or legacy probe must never fall through
-/// to `spawn_gateway_daemon` or elevation staging. `allow_elevation` is true
-/// only before `gateway.transition.lock` is held; nested elevate under that
-/// lock deadlocks the parent that still owns it.
-fn handle_existing_gateway_for_up(
+#[derive(Debug)]
+enum ExistingGateway {
+    Rendered(String),
+    Running(Box<VerifiedGatewayStatus>),
+    Absent,
+}
+
+/// Classify an existing gateway without signalling, deleting records, or
+/// staging elevated state. Mutation happens only after the transition lock.
+fn inspect_existing_gateway(
     config: &GatewayConfig,
     status: Result<VerifiedGatewayStatus, effigy_gateway::GatewayError>,
     output_json: bool,
-    allow_elevation: bool,
-) -> Result<Option<String>, RunnerError> {
+) -> Result<ExistingGateway, RunnerError> {
     let Some(status) = resolve_gateway_status(status)? else {
-        return Ok(None);
+        return Ok(ExistingGateway::Absent);
     };
     if gateway_status_matches_current_binary(&status) {
         let route_table = RouteTable::load(&config.route_table_path)
@@ -302,19 +302,21 @@ fn handle_existing_gateway_for_up(
             &[],
             output_json,
         )
-        .map(Some);
+        .map(ExistingGateway::Rendered);
     }
-    let needs_elevation = !gateway_invocation_is_escalated()
-        && gateway_down_requires_elevation(config, Some(&status))?;
-    if needs_elevation {
-        if !allow_elevation {
-            return Err(RunnerError::task_invocation(
-                "gateway replacement requires elevation while the transition lock is held; refusing nested elevation",
-            ));
-        }
-        prepare_gateway_state_for_elevated_run(config)?;
-        return run_gateway_elevated(GatewaySubcommand::Up, output_json).map(Some);
-    }
+    Ok(ExistingGateway::Running(Box::new(status)))
+}
+
+fn replacement_requires_elevation(
+    config: &GatewayConfig,
+    status: &VerifiedGatewayStatus,
+) -> Result<bool, RunnerError> {
+    Ok(!gateway_invocation_is_escalated()
+        && (gateway_down_requires_elevation(config, Some(status))?
+            || gateway_up_requires_elevation(config)))
+}
+
+fn stop_existing_gateway(status: &VerifiedGatewayStatus) -> Result<(), RunnerError> {
     stop_gateway_process(&status.snapshot)?;
     if !identity::remove_if_unchanged(&status.snapshot)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?
@@ -323,45 +325,61 @@ fn handle_existing_gateway_for_up(
             "gateway record changed during stop; refusing replacement",
         ));
     }
-    Ok(None)
+    Ok(())
 }
 
 fn run_gateway_up(output_json: bool) -> Result<String, RunnerError> {
     let config = gateway_config()?;
-    if let Some(rendered) = handle_existing_gateway_for_up(
-        &config,
-        verified_gateway_status(&config),
-        output_json,
-        true,
-    )? {
-        return Ok(rendered);
+    match inspect_existing_gateway(&config, verified_gateway_status(&config), output_json)? {
+        ExistingGateway::Rendered(rendered) => Ok(rendered),
+        ExistingGateway::Running(status) => {
+            if replacement_requires_elevation(&config, status.as_ref())? {
+                return run_gateway_elevated(GatewaySubcommand::Up, output_json);
+            }
+            run_gateway_up_after_lock(&config, output_json)
+        }
+        ExistingGateway::Absent => {
+            if !gateway_invocation_is_escalated() && gateway_up_requires_elevation(&config) {
+                prepare_gateway_state_for_elevated_run(&config)?;
+                return run_gateway_elevated(GatewaySubcommand::Up, output_json);
+            }
+            run_gateway_up_after_lock(&config, output_json)
+        }
     }
-    if !gateway_invocation_is_escalated() && gateway_up_requires_elevation(&config) {
-        prepare_gateway_state_for_elevated_run(&config)?;
-        return run_gateway_elevated(GatewaySubcommand::Up, output_json);
-    }
-    let _lock = recover::acquire_transition_lock(&config)?;
-    if let Some(rendered) = handle_existing_gateway_for_up(
-        &config,
-        verified_gateway_status(&config),
-        output_json,
-        false,
-    )? {
-        return Ok(rendered);
-    }
-    ensure_gateway_up_privileges(&config)?;
+}
 
-    spawn_gateway_daemon(&config)?;
-    wait_for_pid_file(&config)?;
-    let mut warnings = install_resolver_if_needed(&config);
-    warnings.extend(provision_loopback_aliases_if_needed(&config));
-    let status = verified_gateway_status(&config)
+fn run_gateway_up_after_lock(
+    config: &GatewayConfig,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    let _lock = recover::acquire_transition_lock(config)?;
+    match inspect_existing_gateway(config, verified_gateway_status(config), output_json)? {
+        ExistingGateway::Rendered(rendered) => return Ok(rendered),
+        ExistingGateway::Running(status) => {
+            if !gateway_invocation_is_escalated()
+                && gateway_down_requires_elevation(config, Some(status.as_ref()))?
+            {
+                return Err(RunnerError::task_invocation(
+                    "gateway replacement requires elevation while the transition lock is held; refusing nested elevation",
+                ));
+            }
+            stop_existing_gateway(status.as_ref())?;
+        }
+        ExistingGateway::Absent => {}
+    }
+    ensure_gateway_up_privileges(config)?;
+
+    spawn_gateway_daemon(config)?;
+    wait_for_pid_file(config)?;
+    let mut warnings = install_resolver_if_needed(config);
+    warnings.extend(provision_loopback_aliases_if_needed(config));
+    let status = verified_gateway_status(config)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let route_table = RouteTable::load(&config.route_table_path)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    let tls = gateway_tls_summary(&config, &route_table);
+    let tls = gateway_tls_summary(config, &route_table);
     render_gateway_up_result(
-        &config,
+        config,
         GatewayUpState::Started(status.status),
         &tls,
         &warnings,

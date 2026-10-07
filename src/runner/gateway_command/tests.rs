@@ -429,13 +429,13 @@ fn gateway_identity_elevated_reader_decline_or_unavailable_is_unknown() {
 
 #[test]
 fn probe_state_up_refuses_unknown_without_starting_a_replacement() {
-    // `run_gateway_up` only reaches `spawn_gateway_daemon` when this returns
-    // `Ok(None)`, so a `GatewayProcessProbe::Unknown` must surface as `Err`.
+    // `run_gateway_up` only reaches `spawn_gateway_daemon` after
+    // `inspect_existing_gateway` returns `Absent`, so a
+    // `GatewayProcessProbe::Unknown` must surface as `Err`.
     let config = GatewayConfig::standard(PathBuf::from("/tmp/effigy/gateway"));
-    let unknown = handle_existing_gateway_for_up(
+    let unknown = inspect_existing_gateway(
         &config,
         Err(effigy_gateway::GatewayError::ProcessStateUnknown { pid: 4242 }),
-        false,
         false,
     );
     assert!(
@@ -443,13 +443,12 @@ fn probe_state_up_refuses_unknown_without_starting_a_replacement() {
         "up must not start a replacement when the probe is unknown"
     );
 
-    let stopped = handle_existing_gateway_for_up(
+    let stopped = inspect_existing_gateway(
         &config,
         Err(effigy_gateway::GatewayError::NotRunning),
         false,
-        false,
     );
-    assert!(matches!(stopped, Ok(None)));
+    assert!(matches!(stopped, Ok(ExistingGateway::Absent)));
 }
 
 #[cfg(unix)]
@@ -527,4 +526,121 @@ fn gateway_identity_legacy_active_record_refused_by_status_up_down_and_managed_s
     );
     assert!(!identity_path.exists(), "no identity may be synthesized");
     assert!(child.0.try_wait().expect("probe private child").is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn legacy_recovery_up_preflight_does_not_mutate_before_lock() {
+    struct OwnedChild(std::process::Child);
+
+    impl Drop for OwnedChild {
+        fn drop(&mut self) {
+            if self.0.try_wait().ok().flatten().is_none() {
+                let _ = self.0.kill();
+            }
+            let _ = self.0.wait();
+        }
+    }
+
+    let root = tempfile::tempdir().expect("private fixture directory");
+    let home = root.path().join("home");
+    let gateway_home = home.join(GATEWAY_DIR_NAME);
+    std::fs::create_dir_all(&gateway_home).expect("create private gateway directory");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&gateway_home, std::fs::Permissions::from_mode(0o700))
+            .expect("restrict private gateway directory");
+    }
+    let _home_guard = set_test_gateway_home(&home);
+
+    let mut child = OwnedChild(
+        std::process::Command::new("sleep")
+            .arg("60")
+            .spawn()
+            .expect("start private process fixture"),
+    );
+    let pid = child.0.id();
+    let ready_deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while server::probe_gateway_process(pid) != GatewayProcessProbe::Running {
+        assert!(
+            std::time::Instant::now() < ready_deadline,
+            "private child was never observed running"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let live = identity::read_live_process_identity(pid).expect("live identity");
+    let pid_path = gateway_home.join("gateway.pid");
+    let version_path = gateway_home.join("gateway.version");
+    let identity_path = gateway_home.join("gateway.identity");
+    std::fs::write(&pid_path, pid.to_string()).expect("write PID record");
+    std::fs::write(&version_path, "v0.13.1+local.test\n").expect("write mismatched version");
+    std::fs::write(
+        &identity_path,
+        serde_json::to_vec(&serde_json::json!({
+            "format_version": 1,
+            "pid": pid,
+            "boot_identity": live.boot_identity,
+            "start_identity": live.start_identity,
+        }))
+        .expect("serialize identity"),
+    )
+    .expect("write identity");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&identity_path, std::fs::Permissions::from_mode(0o600))
+            .expect("protect identity");
+        std::fs::set_permissions(&pid_path, std::fs::Permissions::from_mode(0o600))
+            .expect("protect PID");
+        std::fs::set_permissions(&version_path, std::fs::Permissions::from_mode(0o600))
+            .expect("protect version");
+    }
+    let before_pid = std::fs::read(&pid_path).expect("read PID");
+    let before_version = std::fs::read(&version_path).expect("read version");
+    let before_identity = std::fs::read(&identity_path).expect("read identity");
+    let config = gateway_config().expect("config");
+
+    let classified = inspect_existing_gateway(&config, verified_gateway_status(&config), false)
+        .expect("unlocked classify");
+    assert!(
+        matches!(classified, ExistingGateway::Running(_)),
+        "mismatched generation must be classified running"
+    );
+    assert!(
+        child.0.try_wait().expect("probe private child").is_none(),
+        "unlocked classify must not signal"
+    );
+    assert_eq!(std::fs::read(&pid_path).expect("PID"), before_pid);
+    assert_eq!(
+        std::fs::read(&version_path).expect("version"),
+        before_version
+    );
+    assert_eq!(
+        std::fs::read(&identity_path).expect("identity"),
+        before_identity
+    );
+    assert!(
+        !gateway_home.join("routes.json").exists(),
+        "unlocked classify must not stage elevated state"
+    );
+
+    let _lock = super::recover::acquire_transition_lock(&config).expect("transition lock");
+    match inspect_existing_gateway(&config, verified_gateway_status(&config), false)
+        .expect("locked recheck")
+    {
+        ExistingGateway::Running(status) => {
+            stop_existing_gateway(&status).expect("locked stop");
+        }
+        other => panic!("expected running mismatched generation, got {other:?}"),
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while std::time::Instant::now() < deadline && child.0.try_wait().expect("reap probe").is_none()
+    {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert!(
+        child.0.try_wait().expect("reap").is_some(),
+        "locked recheck must stop the mismatched generation"
+    );
 }
