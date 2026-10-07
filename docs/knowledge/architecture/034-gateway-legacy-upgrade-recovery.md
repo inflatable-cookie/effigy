@@ -263,7 +263,7 @@ malformed output or digest mismatch is Unknown.
 | --- | --- |
 | `pid` | Derived from the trusted record, echoed for binding |
 | `candidate_uid` | Kernel UID of the live process |
-| `boot_identity` | Linux boot id / macOS `kern.boottime` |
+| `boot_identity` | Linux boot id / macOS `kern.bootsessionuuid` |
 | `start_identity` | Linux `/proc/<pid>/stat` field 22 ticks; macOS `pbi_start_tvsec` + `pbi_start_tvusec` |
 | `executable_path` | Canonical live executable path (`readlink /proc/<pid>/exe`; `proc_pidpath`), shown to the operator |
 | `executable_path_digest` | Digest of that canonical path |
@@ -547,6 +547,223 @@ same way.
 - Kickoff mechanism rejected: emptying the global route table to trigger the
   daemon's 5-minute idle shutdown would disturb other checkouts' routes and does
   not prove ownership.
+- Already-upgraded macOS `v0.14.0` sidecars stored the raw `kern.boottime`
+  timeval, whose microsecond field drifts and whose seconds component is
+  wall-clock-adjusted within one boot. Corrected main compares such a record
+  through its `sec` component plus the still-mandatory exact process start
+  identity. A changed or unreadable legacy value is `Unknown`, never a proven
+  different generation: the ordinary lifecycle preserves the record and refuses
+  (`status`/`up`/`down`/managed start) instead of deleting a live daemon. A
+  live pre-identity daemon still has the explicit `recover --adopt-candidate`
+  consent path; an ambiguous identity-bearing record is honestly refused rather
+  than guessed at. The record is never rewritten to the new
+  `kern.bootsessionuuid` value and is never reclassified as absent. New records
+  store the session identity and match exactly.
+
+## Ambiguous identity-bearing records (task 117): boundary and proposal
+
+**Current behavior.** A record can carry a valid identity sidecar whose macOS
+boot evidence is the legacy `kern.boottime` timeval and can no longer be proven
+for the current boot (wall-clock adjustment within one boot).
+`probe_live_identity` returns Unknown, so `status`, `up`, `down`, and managed
+auto-start preserve the record and refuse; nothing signals, cleans up, or
+starts a replacement. `capture_legacy_record` classifies any sidecar-bearing
+record as
+`LegacyCapture::Unknown { reason: "gateway identity sidecar is present or untrusted" }`,
+so `effigy gateway recover` — the approved numeric-only adoption route —
+refuses this case too. The approved route therefore does **not** handle an
+ambiguous identity-bearing record: honest refusal is the current product
+behavior and no automatic supported transition exists for it.
+
+**Proposal status.** Nothing below is implemented or authorized. It is a
+bounded specification so an operator can rule on a future extension. It does
+not widen the approved numeric-only route.
+
+### Admission predicate (the only new admit reason)
+
+Extend `effigy_process` with a granular classification, for example
+`BootIdentityComparison::AmbiguousLegacyBootTime`, distinct from `Match`,
+`DifferentSession`, and `Unknown`. `recover` never treats `Unknown` or
+`Mismatch` as this value.
+
+`AmbiguousLegacyBootTime` is produced only when **all** of the following hold:
+
+- the current kernel boot-session identity (`kern.bootsessionuuid`) is readable
+  and canonical; an unreadable, absent, or malformed current session identity
+  is `Unknown`;
+- a trusted `read_snapshot` returns a valid `GatewayIdentityRecord` whose
+  decimal PID equals the compatibility PID and whose `start_identity` is the
+  macOS `Macos { start_seconds, start_microseconds }` variant;
+- the recorded `boot_identity` is a strictly parseable legacy `kern.boottime`
+  timeval (braced, exactly one decimal `sec` and one decimal `usec`, no other
+  field), i.e. a genuine v0.14.0-era macOS sidecar;
+- the current kernel `kern.boottime` seconds differ from the recorded `sec`, or
+  the current `kern.boottime` value cannot be read (wall-clock adjustment or
+  unreadable legacy comparison evidence).
+
+Every other result keeps the existing classification and is **not**
+admissible: `Match`; `DifferentSession`; an unreadable or malformed current
+`kern.bootsessionuuid`; a malformed, missing, empty, or non-timeval recorded
+`boot_identity`; a differing canonical session UUID; an unsupported-platform
+record; an unreadable, malformed, or permission-denied live process identity;
+the elevated reader's permission-denied or Unknown result; and any digest,
+path, owner, or mode mismatch. Those keep the current `Unknown`/`Mismatch`
+behavior and preserve the record without a recovery route. Only the two
+branches below may admit an `AmbiguousLegacyBootTime` capture; the capture
+itself is read-only and never requires a live process.
+
+**Live-adoption branch** (the only branch that may signal). All of:
+
+- the granular result is `AmbiguousLegacyBootTime`;
+- the production process probe for the recorded PID is `Running`;
+- the live exact process start identity is readable and equals the recorded
+  `start_identity` (mandatory, as everywhere else);
+- the live kernel UID passes the existing operator/root policy
+  (`candidate_uid_allowed`);
+- the gateway directory, files, owner, mode, and parent satisfy the existing
+  trusted-read checks.
+
+**Confirmed-absent cleanup branch** (never signals; makes a post-stop rerun
+reachable). All of:
+
+- the granular result is `AmbiguousLegacyBootTime`;
+- the production process probe for the recorded PID is `ConfirmedAbsent`.
+
+No live start-identity or kernel-UID comparison applies in this branch because
+there is no live process. It exists so that a rerun from the full ambiguous
+triple, or from the numeric-only pair left after identity removal, can finish
+cleanup instead of being rejected before it starts. It does **not** make a
+version-only remnant recoverable; see [Cleanup](#cleanup-ordered-compare-and-remove-with-a-bounded-resumability-claim).
+
+### Capture (full PID/version/identity digest)
+
+Add a second capture variant, parallel to and never merged into
+`LegacyRecordCapture` (which stays numeric-only). Proposed
+`AmbiguousIdentityCapture`:
+
+- exact `pid_bytes`, `version_bytes`, and `identity_bytes`;
+- validated decimal PID (`> 1`) and `target_digest` for the canonical
+  `gateway.pid` path;
+- `identity_digest` = the existing `GatewayRecordSnapshot::digest()`
+  (SHA-256 over `pid_bytes` + `0` + `identity_bytes`), so the sidecar bytes are
+  bound exactly as the `__gateway-identity` reader binds them;
+- `capture_digest` = SHA-256 over `pid_bytes` + `0` + `version_bytes` + `0` +
+  `identity_bytes`, binding the full triple;
+- `directory_owner_uid`, authenticated `operator_uid`, parsed `version`, and
+  `pid_path`.
+
+`bytes_unchanged()` re-reads a snapshot and requires exact equality of all
+three byte vectors plus `owner_uid`, `target_digest`, `identity_digest`, and
+`capture_digest`. A vanished, replaced, resized, reordered, or partial triple
+is changed, never absent.
+
+`__gateway-legacy-candidate` and `__gateway-legacy-stop` take `target_digest` +
+`capture_digest` + `identity_digest` (instead of the numeric-only
+`record_digest`) and re-derive the same full capture. The adopted
+`candidate_digest` additionally binds `identity_digest`, so consent targets the
+exact sidecar bytes. No PID, path, or signal argument is added.
+
+### Cleanup: ordered compare-and-remove with a bounded resumability claim
+
+Cleanup is reached only through the confirmed-absent cleanup branch above:
+(a) the captured PID probes `ConfirmedAbsent`, or (b) a completed
+generation-bound stop is followed by a `ConfirmedAbsent` re-probe. It never
+runs while the process is `Running` or `Unknown`.
+
+Three separate filesystem unlinks are **not** one atomic operation, and this
+specification does not claim atomic three-file deletion. Cleanup is an ordered
+sequence of independent locked compare-and-removes, and its resumability is
+bounded and stated honestly:
+
+1. Under the transition lock and the record lock, re-read the triple and
+   require it byte-for-byte equal to the capture with the same owner (the
+   `bytes_unchanged()` rule above). If it is not, refuse and preserve whatever
+   remains.
+2. Remove only `gateway.identity` with a locked compare-and-remove of the exact
+   captured identity bytes, re-checking the PID and version bytes in the same
+   lock. The remainder is then a genuine numeric-only legacy pair.
+3. Remove the remaining `gateway.pid` + `gateway.version` pair with the
+   existing approved numeric-only `remove_legacy_pair_if_unchanged`
+   compare-and-remove. That helper unlinks the identity sidecar, then the PID,
+   then the version as three separate filesystem operations; this step adds no
+   atomicity.
+
+**Reachable prefix states.** Because the unlinks are separate, a crash or
+unlink failure can leave any of these:
+
+| Prefix left behind | Classifier result | Automatic resumability |
+| --- | --- | --- |
+| identity + PID + version (full ambiguous triple) | `AmbiguousLegacyBootTime` | Yes: a rerun takes the confirmed-absent cleanup branch again |
+| PID + version (numeric-only pair) | `LegacyCapture::Legacy` (numeric-only) | Yes: the existing approved numeric-only confirmed-absent path removes it |
+| version only | `read_snapshot` rejects it (`gateway version exists without its PID`); `capture_legacy_record` reports `Unknown` | **No.** Preserved and refused; no automatic completion |
+
+Identity is removed before PID and version so that the full-triple and
+numeric-only states are the reachable prefixes before the final pair removal.
+A version-only remnant can still be left between the PID and version unlinks of
+step 3, and it is not recoverable through any supported path today.
+
+**Actionable refusal for the version-only prefix.** A version-only remnant stays
+`Unknown` and fail-closed, exactly as the existing classifier already treats it:
+all files are preserved byte-for-byte, nothing is deleted, no PID or identity is
+fabricated or inferred, and no gateway is reported running or stopped. The
+diagnostic names the exact remnant ("a `gateway.version` remains without its
+`gateway.pid`; an interrupted legacy cleanup may have left it") and states that
+no automatic completion exists, so the operator must confirm no gateway process
+holds the recorded endpoints and manage the remnant outside Effigy. Completing
+that prefix automatically would require a new digest-bound recovery that binds
+the captured version bytes and proves the absence of both PID and identity;
+that is not proven within the currently reviewed authority and is explicitly
+not proposed here.
+
+A `Running`, `Unknown`, declined, changed, or mismatched record removes
+nothing. This preserves the existing publisher/remover lock and
+compare-and-remove invariants without asserting cross-file atomicity.
+
+### Consent and diagnostics
+
+The interactive adoption prompt names the ambiguity explicitly ("recorded boot
+time cannot be proven for this boot; current boot time differs or is
+unreadable"), shows the full triple digest, and states the stop it authorizes.
+`--yes` cannot adopt a live candidate; declined or noninteractive input refuses
+and preserves. `--json` carries a distinct reason (for example
+`ambiguous_legacy_boot_identity`) in the same structured refusal document.
+Ordinary `status`, `up`, `down`, and managed start continue to report the
+ambiguous record as unverifiable and never clean it up.
+
+### Scope guard and required proof for a future task
+
+This proposal adds no new read, privilege, or signal authority: the candidate
+reader stays bounded and read-only, and the stop handler revalidates role,
+owner, boot, precise start, and live path before each signal, exactly as the
+approved route does. Only the recover input gate widens from numeric-only
+records to this one narrowly defined ambiguity. It needs explicit operator
+approval of the 034 consent boundary before implementation.
+
+A future implementation task must land, at minimum, these proofs:
+
+- admission matrix: admitted only for `AmbiguousLegacyBootTime` + exact start +
+  acceptable UID + `Running` (live branch), or `AmbiguousLegacyBootTime` +
+  `ConfirmedAbsent` (cleanup branch); refused for every other
+  `Unknown`/`Mismatch` cause, for an unreadable or malformed current
+  `kern.bootsessionuuid`, and for an unreadable or permission-denied live
+  process identity;
+- confirmed-absent crash resume: starting from (a) the full ambiguous triple
+  and (b) the numeric-only pair left after identity removal, a rerun completes
+  cleanup; a run that began while the PID was live but crashed after the stop
+  is not rejected before cleanup; a version-only remnant is preserved,
+  reported `Unknown`, and does **not** claim automatic completion;
+- capture digest stability across a PID-only, version-only, and identity-only
+  byte change, and for each file's removal;
+- ordered cleanup: each step is an independent locked compare-and-remove;
+  identity is removed before PID and version; the reachable prefix states are
+  exactly the full triple, the numeric-only pair, and the version-only remnant;
+  the first two are idempotently resumable and the version-only remnant is
+  fail-closed with an actionable refusal that fabricates, deletes, and infers
+  nothing;
+- forged or mismatched `capture_digest`, `identity_digest`, or phase is refused
+  by the elevated stop handler;
+- ordinary `status`, `up`, `down`, and managed start still preserve and refuse
+  the ambiguous record and dispatch zero signals.
 
 ## Private proofs
 
@@ -568,6 +785,23 @@ mutation on refusal (cited, not modified):
 - `src/runner/gateway_command/tests.rs::gateway_identity_legacy_active_record_refused_by_status_up_down_and_managed_start`,
   `gateway_identity_elevated_reader_decline_or_unavailable_is_unknown`,
   `probe_state_up_refuses_unknown_without_starting_a_replacement`.
+- Stable macOS boot identity and legacy record compatibility (task 117):
+  `crates/effigy-process/src/identity.rs::boot_session_uuid_parser_rejects_missing_failed_and_malformed`,
+  `boot_session_identity_reader_is_stable_and_ignores_boot_time`,
+  `legacy_boot_time_identity_matches_across_microsecond_drift`,
+  `legacy_boot_time_change_is_unknown_not_a_different_session`,
+  `legacy_boot_time_parser_rejects_malformed_fields`,
+  `different_session_identity_is_known_different_and_malformed_is_unknown`,
+  `boot_identity_uncached_is_stable_across_separate_processes`;
+  `crates/effigy-gateway/src/identity.rs::gateway_identity_legacy_boot_time_record_matches_across_microsecond_drift`;
+  `crates/effigy-gateway/src/server/tests.rs::gateway_identity_legacy_boot_time_sidecar_stays_running_across_drift`,
+  `gateway_identity_ambiguous_legacy_boot_time_preserves_live_record`.
+- Managed auto-start terminal transport (task 117):
+  `src/runner/gateway_command/tests.rs::gateway_up_for_managed_task_preserves_terminal_stdin_and_diagnostics`
+  re-execs the test binary under a real private PTY and under null stdin;
+  `gateway_up_for_managed_task_startup_notice_is_state_accurate`. Selectors
+  `test:gateway:boot-identity`, `check:gateway:boot-identity`,
+  `test:gateway:managed-tty`.
 
 New private controls the implementation task must land (recording/fake fixtures,
 fresh `mktemp -d`, real owned children, no live gateway, no real elevated read,

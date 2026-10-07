@@ -154,6 +154,22 @@
   "cargo check -p effigy-gateway -p effigy-cli -p effigy --all-targets",
   "cargo clippy -p effigy-gateway -p effigy-cli -p effigy --all-targets -- -D warnings",
 ]
+# Stable per-boot identity primitives: parser/command controls, cross-process
+# uncached proof, and legacy `kern.boottime` compatibility. Private fixtures
+# only; no host mutation.
+"test:gateway:boot-identity" = [
+  { id = "gateway-boot-identity", run = "cargo test -p effigy-process --lib identity -- --nocapture", timeout_ms = 120000 },
+]
+"check:gateway:boot-identity" = [
+  "cargo check -p effigy-process --all-targets --profile test",
+  "cargo clippy -p effigy-process --all-targets -- -D warnings",
+]
+# Managed auto-start PTY transport: terminal stdin stays available to the
+# bounded elevated reader while stdout/stderr diagnostics stay captured. Real
+# private PTY; noninteractive controls refuse without running the body.
+"test:gateway:managed-tty" = [
+  { id = "gateway-managed-tty", run = "cargo test -p effigy --lib gateway_up_for_managed_task -- --nocapture", timeout_ms = 240000 },
+]
 "test:install:previous-binary-preservation" = [
   { id = "install-previous-binary-preservation", run = "cargo test -p effigy -p effigy-rhai --lib previous_binary_preservation -- --nocapture", timeout_ms = 120000 },
 ]

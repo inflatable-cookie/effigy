@@ -7,6 +7,34 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Fixed
+- Managed gateway auto-start keeps the operator terminal on the child's stdin
+  (`sh -lc` now inherits stdin instead of replacing it with null) so the
+  bounded read-only elevated identity reader can authenticate, while
+  stdout/stderr stay captured for diagnostics. A noninteractive, declined, or
+  otherwise unknown identity read still returns Unknown, so the lifecycle
+  refuses without signalling or launching a replacement. Startup text now
+  reports the preflight state
+  (stopped, replacing a different build, or unverified) instead of calling an
+  unknown or mismatched live daemon simply "down".
+- macOS gateway boot identity is now the stable `kern.bootsessionuuid` session
+  identity with validated command status and canonical-UUID parsing; missing,
+  failed, empty, or malformed output is Unknown rather than a guessed value.
+  Records written before this change stored the `kern.boottime` timeval, whose
+  microsecond field drifts and whose seconds component is wall-clock adjusted
+  within one boot. Those records still match the live daemon they published
+  through the boot-time seconds plus the still-mandatory exact process start
+  identity. A changed, unreadable, or malformed legacy value is Unknown: the
+  lifecycle preserves the record and refuses instead of deleting a live
+  daemon, so an old sidecar is never reclassified as absent or rewritten to
+  match. That ambiguous case is honestly refused rather than guessed at; the
+  approved `effigy gateway recover` route currently rejects sidecar-bearing
+  records, so there is no automatic supported transition for an ambiguous
+  identity-bearing record yet. A bounded, implementable specification of the
+  recovery input boundary and the ordered confirmed-absent cleanup (resumable
+  only from the full triple or the numeric-only pair, with a version-only
+  remnant kept fail-closed and actionably refused) is recorded in architecture
+  034 for an operator ruling; it is not implemented and does not widen the
+  numeric-only route.
 - Elevated gateway lifecycle now accepts the authenticated operator-owned
   gateway directory instead of rejecting it as unsafe. An elevated root caller
   behind the existing administrator-elevation marker trusts a directory owned
