@@ -18,6 +18,23 @@ and version authorization is still required.
 
 ## Prepare
 
+### v0.14.1 hotfix preparation authorization — 2026-10-07
+
+Tom reported: "OK, launching acowtancy now, gateway appears to be working.
+We can start prepping for a hotfix release" after the reviewed gateway
+replacement correction landed at `0bc3e0a2`. This is operator-reported local
+success, not a planner rerun or a general live recovery certification.
+
+Prepare v0.14.1 through the maintained admitted preparation selector, including
+exact-main validation-only CI, the configured gates, version/catalog/lockfile
+consistency, release notes and migration limits. The exact production-source
+milestone passed setup, QA and teardown with clean settlement, and workspace
+validation exited 0. Neither substitutes for the release gates. The
+identity-bearing ambiguous old-sidecar recovery extension remains unapproved
+and unimplemented; retain its honest refusal and disclose it in the hotfix
+notes. This authorization does not permit release execution, tagging,
+publication, binary-workflow dispatch, workflow edits or live operations.
+
 1. Start from clean, pushed `main`. Record `candidate_sha=$(git rev-parse HEAD)`.
 2. Dispatch `gh workflow run ci.yml --ref main`. Select the `workflow_dispatch` run for that exact SHA with `gh run list --workflow ci.yml --branch main --commit "$candidate_sha" --event workflow_dispatch --limit 1 --json databaseId,headSha,status,conclusion,url`, verify `headSha`, and wait with `gh run watch <RUN_ID> --exit-status`. Missing, pending, red, cancelled, or different-commit evidence blocks release.
 3. Run `effigy release status --check-gates`, `effigy release simulate`, and `effigy release prepare --plan`. Confirm the target version with Tom. During `v0.x`, PATCH is for compatible fixes; MINOR may break behavior with explicit migration notes. Removing a public API is a break (a `Removed` changelog entry), so it proposes MINOR under `pre-1-0` rather than PATCH. CI installs should pin exact versions.
