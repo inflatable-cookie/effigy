@@ -193,7 +193,15 @@ fn parse_legacy_boot_time_seconds(value: &str) -> Option<u64> {
         }
         match name.trim() {
             "sec" if seconds.is_none() => seconds = Some(number.parse::<u64>().ok()?),
-            "usec" if microseconds.is_none() => microseconds = Some(number.parse::<u64>().ok()?),
+            "usec" if microseconds.is_none() => {
+                let parsed = number.parse::<u64>().ok()?;
+                // A timeval microsecond field is in 0..1_000_000. An
+                // out-of-range value is malformed evidence, never a match.
+                if parsed > 999_999 {
+                    return None;
+                }
+                microseconds = Some(parsed);
+            }
             _ => return None,
         }
     }
@@ -342,6 +350,19 @@ mod tests {
             compare_boot_identity("{ sec = 999999999999, usec = 0 } extra text"),
             BootIdentityComparison::Unknown
         );
+        // The exact reported defect: a record with the current boot seconds but
+        // an out-of-range microsecond field is malformed evidence and must be
+        // Unknown, not a same-boot Match.
+        let raw = super::legacy_boot_time_identity().expect("kernel kern.boottime");
+        let (prefix, _) = raw.split_once("usec").expect("timeval usec field");
+        assert_eq!(
+            compare_boot_identity(&format!("{prefix}usec = 1000000 }}")),
+            BootIdentityComparison::Unknown
+        );
+        assert_eq!(
+            compare_boot_identity(&format!("{prefix}usec = 4294967296 }}")),
+            BootIdentityComparison::Unknown
+        );
     }
 
     #[cfg(target_os = "macos")]
@@ -356,6 +377,15 @@ mod tests {
             parse_legacy_boot_time_seconds("{ sec = 12, usec = 34 }"),
             Some(12)
         );
+        // The microsecond field is valid across its whole inclusive range.
+        assert_eq!(
+            parse_legacy_boot_time_seconds("{ sec = 12, usec = 0 }"),
+            Some(12)
+        );
+        assert_eq!(
+            parse_legacy_boot_time_seconds("{ sec = 12, usec = 999999 }"),
+            Some(12)
+        );
         for malformed in [
             "not-a-boot-identity",
             "sec = 12, usec = 34",
@@ -366,6 +396,12 @@ mod tests {
             "{ sec = 12, sec = 13, usec = 34 }",
             "{ sec = , usec = 34 }",
             "{ sec = 12, usec = 34 }garbage",
+            // Out-of-range microseconds are malformed and must never compare
+            // as a match for old-record compatibility.
+            "{ sec = 12, usec = 1000000 }",
+            "{ sec = 12, usec = 4294967296 }",
+            "{ sec = 12, usec = 18446744073709551615 }",
+            "{ sec = 12, usec = 999999999999999999999999 }",
         ] {
             assert_eq!(
                 parse_legacy_boot_time_seconds(malformed),
