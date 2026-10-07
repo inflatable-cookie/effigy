@@ -18,11 +18,15 @@ use effigy_ui::theme::is_ci_environment;
 use effigy_ui::theme::{resolve_color_enabled, Theme};
 use effigy_ui::OutputMode;
 use serde_json::json;
+use std::cell::Cell;
 use std::io::IsTerminal;
 
 use super::error::RunnerError;
 use daemon::normalize_gateway_daemon_output;
-use daemon::{spawn_gateway_daemon, stop_gateway_process, wait_for_pid_file};
+use daemon::{
+    spawn_gateway_daemon, stop_gateway_process, stop_gateway_process_for_replacement,
+    wait_for_pid_file,
+};
 #[cfg(all(test, target_os = "macos"))]
 use elevation::build_gateway_elevated_shell_command;
 use elevation::{
@@ -119,13 +123,16 @@ pub(in crate::runner) fn gateway_up_for_managed_task(command: &str) -> Result<()
     let mut state = ManagedStartState::Unverified;
     if effigy_core::executable_override::current().is_none() {
         let config = gateway_config()?;
-        if let Some(status) = resolve_gateway_status(verified_gateway_status(&config))? {
-            if gateway_status_matches_current_binary(&status) {
-                return Ok(());
+        let probe = verified_gateway_status_for_up(&config);
+        if !probe.identity_permission_denied {
+            if let Some(status) = resolve_gateway_status(probe.status)? {
+                if gateway_status_matches_current_binary(&status) {
+                    return Ok(());
+                }
+                state = ManagedStartState::Replacing;
+            } else {
+                state = ManagedStartState::Stopped;
             }
-            state = ManagedStartState::Replacing;
-        } else {
-            state = ManagedStartState::Stopped;
         }
     }
     emit_gateway_startup_notice(state);
@@ -282,6 +289,30 @@ fn gateway_identity_probe_with(
     }
 }
 
+struct GatewayUpStatusProbe {
+    status: Result<VerifiedGatewayStatus, effigy_gateway::GatewayError>,
+    identity_permission_denied: bool,
+}
+
+/// Keep replacement preflight read-only and local. If a live identity is
+/// inaccessible, the caller can move the complete locked up lifecycle through
+/// the existing elevation path once, where every poll and signal boundary
+/// performs a fresh identity read without another administrator handoff.
+fn verified_gateway_status_for_up(config: &GatewayConfig) -> GatewayUpStatusProbe {
+    let identity_permission_denied = Cell::new(false);
+    let status = server::get_verified_gateway_status_with(config, |record, _| {
+        let result = identity::probe_live_identity(record);
+        if result == GatewayIdentityProbe::PermissionDenied {
+            identity_permission_denied.set(true);
+        }
+        result
+    });
+    GatewayUpStatusProbe {
+        status,
+        identity_permission_denied: identity_permission_denied.get(),
+    }
+}
+
 fn verified_gateway_status(
     config: &GatewayConfig,
 ) -> Result<VerifiedGatewayStatus, effigy_gateway::GatewayError> {
@@ -347,12 +378,19 @@ fn replacement_requires_elevation(
     status: &VerifiedGatewayStatus,
 ) -> Result<bool, RunnerError> {
     Ok(!gateway_invocation_is_escalated()
-        && (gateway_down_requires_elevation(config, Some(status))?
+        && (!elevation::gateway_signal_accessible(status.pid)
             || gateway_up_requires_elevation(config)))
 }
 
 fn stop_existing_gateway(status: &VerifiedGatewayStatus) -> Result<(), RunnerError> {
-    stop_gateway_process(&status.snapshot)?;
+    stop_existing_gateway_with(status, stop_gateway_process_for_replacement)
+}
+
+fn stop_existing_gateway_with(
+    status: &VerifiedGatewayStatus,
+    stop: impl FnOnce(&GatewayRecordSnapshot) -> Result<(), RunnerError>,
+) -> Result<(), RunnerError> {
+    stop(&status.snapshot)?;
     if !identity::remove_if_unchanged(&status.snapshot)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?
     {
@@ -365,7 +403,16 @@ fn stop_existing_gateway(status: &VerifiedGatewayStatus) -> Result<(), RunnerErr
 
 fn run_gateway_up(output_json: bool) -> Result<String, RunnerError> {
     let config = gateway_config()?;
-    match inspect_existing_gateway(&config, verified_gateway_status(&config), output_json)? {
+    let probe = verified_gateway_status_for_up(&config);
+    if probe.identity_permission_denied {
+        return run_gateway_up_after_identity_permission_denied(
+            probe.status,
+            std::io::stdin().is_terminal(),
+            elevation::gateway_identity_elevation_allowed(),
+            || run_gateway_elevated(GatewaySubcommand::Up, output_json),
+        );
+    }
+    match inspect_existing_gateway(&config, probe.status, output_json)? {
         ExistingGateway::Rendered(rendered) => Ok(rendered),
         ExistingGateway::Running(status) => {
             if replacement_requires_elevation(&config, status.as_ref())? {
@@ -385,6 +432,23 @@ fn run_gateway_up(output_json: bool) -> Result<String, RunnerError> {
     }
 }
 
+fn run_gateway_up_after_identity_permission_denied(
+    status: Result<VerifiedGatewayStatus, effigy_gateway::GatewayError>,
+    interactive: bool,
+    elevation_allowed: bool,
+    elevate: impl FnOnce() -> Result<String, RunnerError>,
+) -> Result<String, RunnerError> {
+    if interactive && elevation_allowed {
+        return elevate();
+    }
+    match resolve_gateway_status(status) {
+        Err(error) => Err(error),
+        Ok(_) => Err(RunnerError::task_invocation(
+            "gateway identity is unknown; refusing replacement",
+        )),
+    }
+}
+
 /// Operator-owned first-start files are created under the transition lock,
 /// then the lock is dropped before elevation so the child can acquire it.
 fn stage_absent_up_under_lock(
@@ -392,7 +456,8 @@ fn stage_absent_up_under_lock(
     output_json: bool,
 ) -> Result<Option<String>, RunnerError> {
     let _lock = recover::acquire_transition_lock(config)?;
-    match inspect_existing_gateway(config, verified_gateway_status(config), output_json)? {
+    let probe = verified_gateway_status_for_up(config);
+    match inspect_existing_gateway(config, probe.status, output_json)? {
         ExistingGateway::Rendered(rendered) => Ok(Some(rendered)),
         ExistingGateway::Running(_) => Ok(None),
         ExistingGateway::Absent => {
@@ -407,11 +472,12 @@ fn run_gateway_up_after_lock(
     output_json: bool,
 ) -> Result<String, RunnerError> {
     let _lock = recover::acquire_transition_lock(config)?;
-    match inspect_existing_gateway(config, verified_gateway_status(config), output_json)? {
+    let probe = verified_gateway_status_for_up(config);
+    match inspect_existing_gateway(config, probe.status, output_json)? {
         ExistingGateway::Rendered(rendered) => return Ok(rendered),
         ExistingGateway::Running(status) => {
             if !gateway_invocation_is_escalated()
-                && gateway_down_requires_elevation(config, Some(status.as_ref()))?
+                && !elevation::gateway_signal_accessible(status.pid)
             {
                 return Err(RunnerError::task_invocation(
                     "gateway replacement requires elevation while the transition lock is held; refusing nested elevation",

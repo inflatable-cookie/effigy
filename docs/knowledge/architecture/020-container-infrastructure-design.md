@@ -710,6 +710,44 @@ Residual: the last identity comparison and TERM/KILL syscall are separate
 operations. A process can exit and its PID can be reused in that interval; this
 bounded portable fix does not claim atomic process targeting or add pidfd.
 
+#### Follow-up correction in task 118
+
+The managed build-replacement report identified two source-level failure
+paths. The previous managed preflight, `gateway up` preflight, and signal-access
+selection could each launch the bounded elevated identity reader. In addition,
+the stop loop treated the first ambiguous process observation after TERM or
+KILL as terminal, even when a later probe could confirm the target absent.
+These paths explain repeated authentication and a refused stop as possible
+source outcomes. The reported host's exact `ps` output and the cause of its
+PID 11887 failure were not observed or reproduced; no live gateway check was
+performed.
+
+Managed and ordinary `gateway up` preflight now read identity locally without
+the elevated-reader fallback. A verified different build that needs privilege
+delegates once to the existing elevated `gateway up` command, which acquires
+the transition lock and performs fresh identity reads through stop polling and
+at both signal boundaries. The signal-zero check only selects that transport;
+it does not authorize TERM or KILL. If local identity access is denied,
+noninteractive input or an already-elevated invocation refuses without record
+cleanup or replacement launch. Standalone status and the separate `down`
+preflight retain their bounded read-only reader behavior. The remaining
+identity-check-to-signal interval is still a TOCTOU.
+
+After TERM/KILL, an Unknown process observation now consumes the existing
+bounded polling window. Only a later confirmed absence or readable different
+generation completes reconciliation; persistent process or identity
+uncertainty still refuses, so the unchanged records remain available for
+operator reconciliation. Immediately before each signal the exact generation
+is still checked again. Private controls cover exit before TERM, transient and
+persistent Unknown after TERM, a failed TERM dispatch followed by confirmed
+absence, repeated fresh identity reads through TERM/KILL polling, signal order,
+byte-preserving refusal, and locked compare-and-remove before the replacement
+start path. A recording handoff control proves one interactive lifecycle
+handoff and zero handoff or replacement launch with null stdin. The maintained
+selectors remain `test:gateway:legacy-recovery`,
+`check:gateway:legacy-recovery`, `fmt:check`, and
+`qa:docs:gateway-identity` when docs change.
+
 ### Gateway process identity ruling
 
 Tom ruled on 2026-10-06: "Approved, but you need to fix this so other users

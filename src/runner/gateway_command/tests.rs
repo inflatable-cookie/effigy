@@ -378,6 +378,56 @@ fn probe_state_resolver_keeps_a_confirmed_running_gateway() {
 }
 
 #[test]
+fn gateway_identity_legacy_replacement_uses_one_interactive_handoff_and_refuses_null_stdin() {
+    use std::cell::Cell;
+
+    let handoffs = Cell::new(0);
+    let launches = Cell::new(0);
+    let status = Err(effigy_gateway::GatewayError::ProcessStateUnknown { pid: 4242 });
+    let result = run_gateway_up_after_identity_permission_denied(status, true, true, || {
+        handoffs.set(handoffs.get() + 1);
+        launches.set(launches.get() + 1);
+        Ok("elevated locked lifecycle completed".to_owned())
+    });
+    assert_eq!(
+        result.expect("interactive handoff"),
+        "elevated locked lifecycle completed"
+    );
+    assert_eq!(handoffs.get(), 1, "replacement has one auth handoff");
+    assert_eq!(
+        launches.get(),
+        1,
+        "replacement launches only in the handoff"
+    );
+
+    let status = Err(effigy_gateway::GatewayError::ProcessStateUnknown { pid: 4242 });
+    let noninteractive =
+        run_gateway_up_after_identity_permission_denied(status, false, false, || {
+            handoffs.set(handoffs.get() + 1);
+            launches.set(launches.get() + 1);
+            Ok("must not run".to_owned())
+        });
+    assert!(
+        noninteractive.is_err(),
+        "null stdin must refuse replacement"
+    );
+    assert_eq!(handoffs.get(), 1, "null stdin must not authenticate");
+    assert_eq!(launches.get(), 1, "null stdin must not launch replacement");
+
+    let status = Err(effigy_gateway::GatewayError::ProcessStateUnknown { pid: 4242 });
+    let declined = run_gateway_up_after_identity_permission_denied(status, true, true, || {
+        handoffs.set(handoffs.get() + 1);
+        Err(RunnerError::task_invocation("administrator declined"))
+    });
+    assert!(
+        declined.is_err(),
+        "a declined handoff must refuse replacement"
+    );
+    assert_eq!(handoffs.get(), 2);
+    assert_eq!(launches.get(), 1, "decline must not launch replacement");
+}
+
+#[test]
 fn gateway_identity_elevated_reader_is_bound_to_validated_snapshot() {
     use std::cell::Cell;
     let (_dir, verified) = gateway_status_fixture(4242);
@@ -714,8 +764,12 @@ fn legacy_recovery_up_preflight_does_not_mutate_before_lock() {
     let before_identity = std::fs::read(&identity_path).expect("read identity");
     let config = gateway_config().expect("config");
 
-    let classified = inspect_existing_gateway(&config, verified_gateway_status(&config), false)
-        .expect("unlocked classify");
+    let classified = inspect_existing_gateway(
+        &config,
+        verified_gateway_status_for_up(&config).status,
+        false,
+    )
+    .expect("unlocked classify");
     assert!(
         matches!(classified, ExistingGateway::Running(_)),
         "mismatched generation must be classified running"
@@ -739,8 +793,12 @@ fn legacy_recovery_up_preflight_does_not_mutate_before_lock() {
     );
 
     let _lock = super::recover::acquire_transition_lock(&config).expect("transition lock");
-    match inspect_existing_gateway(&config, verified_gateway_status(&config), false)
-        .expect("locked recheck")
+    match inspect_existing_gateway(
+        &config,
+        verified_gateway_status_for_up(&config).status,
+        false,
+    )
+    .expect("locked recheck")
     {
         ExistingGateway::Running(status) => {
             stop_existing_gateway(&status).expect("locked stop");
@@ -756,6 +814,117 @@ fn legacy_recovery_up_preflight_does_not_mutate_before_lock() {
         child.0.try_wait().expect("reap").is_some(),
         "locked recheck must stop the mismatched generation"
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn gateway_identity_legacy_replacement_reconciles_unknown_process_probes() {
+    use nix::sys::signal::Signal;
+    use std::cell::RefCell;
+    use std::collections::VecDeque;
+
+    fn records(status: &VerifiedGatewayStatus) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+        let pid_path = status.snapshot.pid_path();
+        let version_path = pid_path.with_extension("version");
+        let identity_path = pid_path.with_extension("identity");
+        (
+            std::fs::read(pid_path).expect("PID record"),
+            std::fs::read(version_path).expect("version record"),
+            std::fs::read(identity_path).expect("identity record"),
+        )
+    }
+
+    let (_failed_dir, failed) = gateway_status_fixture(4242);
+    let failed_version = failed.snapshot.pid_path().with_extension("version");
+    std::fs::write(&failed_version, "older-build\n").expect("write old build marker");
+    let failed_before = records(&failed);
+    let failed_config = GatewayConfig::standard(
+        failed
+            .snapshot
+            .pid_path()
+            .parent()
+            .expect("gateway directory")
+            .to_path_buf(),
+    );
+    let _failed_lock = recover::acquire_transition_lock(&failed_config).expect("failed lock");
+    let mut failed_process_states = VecDeque::from([GatewayProcessProbe::Running]);
+    let failed_signals = RefCell::new(Vec::new());
+    let failed_start = RefCell::new(false);
+    let failed_result = stop_existing_gateway_with(&failed, |snapshot| {
+        daemon::stop_gateway_process_with_test_control(
+            snapshot.pid(),
+            |_| {
+                failed_process_states
+                    .pop_front()
+                    .unwrap_or(GatewayProcessProbe::Unknown)
+            },
+            || GatewayIdentityProbe::Matched,
+            |_, signal| {
+                failed_signals.borrow_mut().push(signal);
+                Ok(())
+            },
+            |_| {},
+        )
+    });
+    if failed_result.is_ok() {
+        *failed_start.borrow_mut() = true;
+    }
+    assert!(
+        failed_result.is_err(),
+        "persistent unknown must refuse cleanup"
+    );
+    assert_eq!(*failed_signals.borrow(), [Signal::SIGTERM]);
+    assert!(
+        !*failed_start.borrow(),
+        "unknown stop must not launch replacement"
+    );
+    assert_eq!(records(&failed), failed_before);
+
+    let (_reconciled_dir, reconciled) = gateway_status_fixture(4243);
+    let reconciled_version = reconciled.snapshot.pid_path().with_extension("version");
+    std::fs::write(&reconciled_version, "older-build\n").expect("write old build marker");
+    let reconciled_config = GatewayConfig::standard(
+        reconciled
+            .snapshot
+            .pid_path()
+            .parent()
+            .expect("gateway directory")
+            .to_path_buf(),
+    );
+    let _reconciled_lock =
+        recover::acquire_transition_lock(&reconciled_config).expect("reconciliation lock");
+    let mut process_states = VecDeque::from([
+        GatewayProcessProbe::Running,
+        GatewayProcessProbe::Unknown,
+        GatewayProcessProbe::ConfirmedAbsent,
+    ]);
+    let signals = RefCell::new(Vec::new());
+    stop_existing_gateway_with(&reconciled, |snapshot| {
+        daemon::stop_gateway_process_with_test_control(
+            snapshot.pid(),
+            |_| {
+                process_states
+                    .pop_front()
+                    .unwrap_or(GatewayProcessProbe::Unknown)
+            },
+            || GatewayIdentityProbe::Matched,
+            |_, signal| {
+                signals.borrow_mut().push(signal);
+                Ok(())
+            },
+            |_| {},
+        )
+    })
+    .expect("confirmed absence must allow unchanged-record cleanup");
+    assert_eq!(*signals.borrow(), [Signal::SIGTERM]);
+    assert!(!reconciled.snapshot.pid_path().exists());
+    assert!(!reconciled_version.exists());
+    fn start_replacement(started: &mut bool) {
+        *started = true;
+    }
+    let mut replacement_started = false;
+    start_replacement(&mut replacement_started);
+    assert!(replacement_started, "start follows locked stop and cleanup");
 }
 
 #[cfg(unix)]

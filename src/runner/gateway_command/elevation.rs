@@ -27,6 +27,17 @@ pub(super) fn gateway_invocation_is_escalated() -> bool {
         .is_some_and(|value| matches!(value.trim(), "1" | "true" | "yes"))
 }
 
+pub(super) fn gateway_identity_elevation_allowed() -> bool {
+    #[cfg(unix)]
+    {
+        !gateway_invocation_is_escalated() && !is_running_as_root()
+    }
+    #[cfg(not(unix))]
+    {
+        false
+    }
+}
+
 pub(super) fn gateway_up_requires_elevation(config: &GatewayConfig) -> bool {
     #[cfg(unix)]
     {
@@ -324,6 +335,23 @@ fn process_signal_accessible(
     Ok(process_signal_accessible_with(pid, |pid_t| unsafe {
         nix::libc::kill(pid_t, 0) == 0
     }))
+}
+
+/// A signal-zero probe selects the privileged lifecycle transport only. It
+/// cannot authorize TERM or KILL; the elevated lifecycle rereads the exact
+/// recorded generation immediately before each real signal.
+pub(super) fn gateway_signal_accessible(pid: u32) -> bool {
+    #[cfg(unix)]
+    {
+        // SAFETY: `kill` takes only integer arguments, signal zero delivers no
+        // signal, and the PID was checked to be a positive in-domain target.
+        process_signal_accessible_with(pid, |pid_t| unsafe { nix::libc::kill(pid_t, 0) == 0 })
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
+        true
+    }
 }
 
 /// Ask the existing gateway administrator elevation path to inspect only the

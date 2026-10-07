@@ -93,6 +93,29 @@ pub(super) fn wait_for_pid_file(config: &GatewayConfig) -> Result<(), RunnerErro
 pub(super) fn stop_gateway_process(
     snapshot: &effigy_gateway::identity::GatewayRecordSnapshot,
 ) -> Result<(), RunnerError> {
+    stop_gateway_process_with_probe(snapshot, super::gateway_identity_probe)
+}
+
+pub(super) fn stop_gateway_process_for_replacement(
+    snapshot: &effigy_gateway::identity::GatewayRecordSnapshot,
+) -> Result<(), RunnerError> {
+    stop_gateway_process_with_probe(snapshot, |record, snapshot| {
+        super::gateway_identity_probe_with(
+            record,
+            snapshot,
+            identity::probe_live_identity,
+            |_, _, _| None,
+        )
+    })
+}
+
+fn stop_gateway_process_with_probe(
+    snapshot: &effigy_gateway::identity::GatewayRecordSnapshot,
+    mut identity_probe: impl FnMut(
+        &identity::GatewayIdentityRecord,
+        &effigy_gateway::identity::GatewayRecordSnapshot,
+    ) -> effigy_gateway::identity::GatewayIdentityProbe,
+) -> Result<(), RunnerError> {
     let Some(record) = snapshot.record() else {
         return Err(RunnerError::task_invocation(
             "gateway identity is missing; refusing to signal",
@@ -104,7 +127,7 @@ pub(super) fn stop_gateway_process(
         stop_gateway_process_with_identity(
             pid,
             server::probe_gateway_process,
-            || super::gateway_identity_probe(record, snapshot),
+            || identity_probe(record, snapshot),
             |pid_t, signal| {
                 nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid_t), signal)
                     .map_err(|error| error.to_string())
@@ -178,8 +201,15 @@ fn stop_gateway_process_with_identity(
     // Validate before even the first liveness probe; callers may bypass the
     // PID-file reader and this function owns the signal boundary.
     checked_gateway_signal_pid(pid)?;
-    if !check_process_generation(pid, &mut process_state, &mut generation_state)? {
-        return Ok(());
+    match process_generation_state(pid, &mut process_state, &mut generation_state) {
+        ProcessGenerationState::Absent => return Ok(()),
+        ProcessGenerationState::Running => {}
+        ProcessGenerationState::Unknown => {
+            if process_state(pid) == server::GatewayProcessProbe::ConfirmedAbsent {
+                return Ok(());
+            }
+            return Err(gateway_process_state_unknown(pid));
+        }
     }
 
     // Recheck the persisted generation immediately before the TERM dispatch.
@@ -188,17 +218,35 @@ fn stop_gateway_process_with_identity(
         effigy_gateway::identity::GatewayIdentityProbe::Mismatch => return Ok(()),
         effigy_gateway::identity::GatewayIdentityProbe::PermissionDenied
         | effigy_gateway::identity::GatewayIdentityProbe::Unknown => {
+            if process_state(pid) == server::GatewayProcessProbe::ConfirmedAbsent {
+                return Ok(());
+            }
             return Err(gateway_process_state_unknown(pid));
         }
     }
-    send_gateway_signal_with(pid, nix::sys::signal::Signal::SIGTERM, |pid_t, signal| {
-        dispatch(pid_t, signal)
-    })?;
-    for _ in 0..40 {
-        match check_process_generation(pid, &mut process_state, &mut generation_state)? {
-            false => return Ok(()),
-            true => wait(Duration::from_millis(50)),
+    if let Err(error) =
+        send_gateway_signal_with(pid, nix::sys::signal::Signal::SIGTERM, |pid_t, signal| {
+            dispatch(pid_t, signal)
+        })
+    {
+        if process_state(pid) == server::GatewayProcessProbe::ConfirmedAbsent {
+            return Ok(());
         }
+        return Err(error);
+    }
+    for _ in 0..40 {
+        match process_generation_state(pid, &mut process_state, &mut generation_state) {
+            ProcessGenerationState::Absent => return Ok(()),
+            ProcessGenerationState::Running | ProcessGenerationState::Unknown => {
+                wait(Duration::from_millis(50));
+            }
+        }
+    }
+
+    match process_generation_state(pid, &mut process_state, &mut generation_state) {
+        ProcessGenerationState::Absent => return Ok(()),
+        ProcessGenerationState::Running => {}
+        ProcessGenerationState::Unknown => return Err(gateway_process_state_unknown(pid)),
     }
 
     // Recheck the recorded identity again immediately before escalation.
@@ -207,39 +255,78 @@ fn stop_gateway_process_with_identity(
         effigy_gateway::identity::GatewayIdentityProbe::Mismatch => return Ok(()),
         effigy_gateway::identity::GatewayIdentityProbe::PermissionDenied
         | effigy_gateway::identity::GatewayIdentityProbe::Unknown => {
+            if process_state(pid) == server::GatewayProcessProbe::ConfirmedAbsent {
+                return Ok(());
+            }
             return Err(gateway_process_state_unknown(pid));
         }
     }
-    send_gateway_signal_with(pid, nix::sys::signal::Signal::SIGKILL, |pid_t, signal| {
-        dispatch(pid_t, signal)
-    })?;
+    if let Err(error) =
+        send_gateway_signal_with(pid, nix::sys::signal::Signal::SIGKILL, |pid_t, signal| {
+            dispatch(pid_t, signal)
+        })
+    {
+        if process_state(pid) == server::GatewayProcessProbe::ConfirmedAbsent {
+            return Ok(());
+        }
+        return Err(error);
+    }
     for _ in 0..20 {
-        match check_process_generation(pid, &mut process_state, &mut generation_state)? {
-            false => return Ok(()),
-            true => wait(Duration::from_millis(50)),
+        match process_generation_state(pid, &mut process_state, &mut generation_state) {
+            ProcessGenerationState::Absent => return Ok(()),
+            ProcessGenerationState::Running | ProcessGenerationState::Unknown => {
+                wait(Duration::from_millis(50));
+            }
         }
     }
 
-    Err(RunnerError::task_invocation(format!(
-        "gateway process {pid} did not stop after SIGTERM/SIGKILL"
-    )))
+    match process_generation_state(pid, &mut process_state, &mut generation_state) {
+        ProcessGenerationState::Absent => Ok(()),
+        ProcessGenerationState::Unknown => Err(gateway_process_state_unknown(pid)),
+        ProcessGenerationState::Running => Err(RunnerError::task_invocation(format!(
+            "gateway process {pid} did not stop after SIGTERM/SIGKILL"
+        ))),
+    }
+}
+
+#[cfg(all(test, unix))]
+pub(super) fn stop_gateway_process_with_test_control(
+    pid: u32,
+    process_state: impl FnMut(u32) -> server::GatewayProcessProbe,
+    generation_state: impl FnMut() -> effigy_gateway::identity::GatewayIdentityProbe,
+    dispatch: impl FnMut(i32, nix::sys::signal::Signal) -> Result<(), String>,
+    wait: impl FnMut(Duration),
+) -> Result<(), RunnerError> {
+    stop_gateway_process_with_identity(pid, process_state, generation_state, dispatch, wait)
 }
 
 #[cfg(unix)]
-fn check_process_generation(
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProcessGenerationState {
+    Running,
+    Absent,
+    Unknown,
+}
+
+#[cfg(unix)]
+fn process_generation_state(
     pid: u32,
     process_state: &mut impl FnMut(u32) -> server::GatewayProcessProbe,
     generation_state: &mut impl FnMut() -> effigy_gateway::identity::GatewayIdentityProbe,
-) -> Result<bool, RunnerError> {
+) -> ProcessGenerationState {
     match process_state(pid) {
-        server::GatewayProcessProbe::ConfirmedAbsent => Ok(false),
-        server::GatewayProcessProbe::Unknown => Err(gateway_process_state_unknown(pid)),
+        server::GatewayProcessProbe::ConfirmedAbsent => ProcessGenerationState::Absent,
+        server::GatewayProcessProbe::Unknown => ProcessGenerationState::Unknown,
         server::GatewayProcessProbe::Running => match generation_state() {
-            effigy_gateway::identity::GatewayIdentityProbe::Matched => Ok(true),
-            effigy_gateway::identity::GatewayIdentityProbe::Mismatch => Ok(false),
+            effigy_gateway::identity::GatewayIdentityProbe::Matched => {
+                ProcessGenerationState::Running
+            }
+            effigy_gateway::identity::GatewayIdentityProbe::Mismatch => {
+                ProcessGenerationState::Absent
+            }
             effigy_gateway::identity::GatewayIdentityProbe::PermissionDenied
             | effigy_gateway::identity::GatewayIdentityProbe::Unknown => {
-                Err(gateway_process_state_unknown(pid))
+                ProcessGenerationState::Unknown
             }
         },
     }
@@ -357,9 +444,10 @@ mod pid_domain_tests {
 
     #[cfg(unix)]
     #[test]
-    fn gateway_identity_stops_matched_term_resistant_owned_child() {
+    fn gateway_identity_legacy_stops_matched_term_resistant_owned_child() {
         use nix::sys::signal::{kill, Signal};
         use nix::unistd::Pid;
+        use std::cell::Cell;
         use std::io::{BufRead, BufReader};
         use std::os::fd::AsRawFd;
         use std::os::unix::net::UnixStream;
@@ -482,10 +570,14 @@ mod pid_domain_tests {
         await_term_resistance(&mut child, &mut readiness, Duration::from_secs(5))
             .expect("child must acknowledge TERM resistance before escalation proof");
         let mut signals = Vec::new();
+        let identity_reads = Cell::new(0);
         let result = stop_gateway_process_with_identity(
             pid,
             server::probe_gateway_process,
-            || effigy_gateway::identity::GatewayIdentityProbe::Matched,
+            || {
+                identity_reads.set(identity_reads.get() + 1);
+                effigy_gateway::identity::GatewayIdentityProbe::Matched
+            },
             |pid_t, signal| {
                 signals.push(signal);
                 kill(Pid::from_raw(pid_t), signal).map_err(|error| error.to_string())
@@ -494,6 +586,11 @@ mod pid_domain_tests {
         );
         result.expect("stop only this matched, owned child");
         assert_eq!(signals, [Signal::SIGTERM, Signal::SIGKILL]);
+        assert_eq!(
+            identity_reads.get(),
+            44,
+            "identity is reread at every poll and signal boundary"
+        );
         assert!(child.0.try_wait().expect("reap child").is_some());
         assert_eq!(
             server::probe_gateway_process(pid),
@@ -655,7 +752,120 @@ mod pid_domain_tests {
             1,
             "only the initial SIGTERM may be dispatched"
         );
-        assert_eq!(probes.get(), 2, "the first post-TERM probe is unknown");
+        assert_eq!(
+            probes.get(),
+            42,
+            "ambiguous post-TERM probes consume only the bounded reconciliation window"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn gateway_identity_legacy_transient_unknown_after_term_reconciles_confirmed_absence() {
+        use nix::sys::signal::Signal;
+        use std::cell::{Cell, RefCell};
+
+        let probes = Cell::new(0);
+        let generations = Cell::new(0);
+        let signals = RefCell::new(Vec::new());
+        let result = stop_gateway_process_with_identity(
+            4242,
+            |_| {
+                let probe = probes.get();
+                probes.set(probe + 1);
+                match probe {
+                    0 => server::GatewayProcessProbe::Running,
+                    1 => server::GatewayProcessProbe::Unknown,
+                    _ => server::GatewayProcessProbe::ConfirmedAbsent,
+                }
+            },
+            || {
+                generations.set(generations.get() + 1);
+                effigy_gateway::identity::GatewayIdentityProbe::Matched
+            },
+            |_, signal| {
+                signals.borrow_mut().push(signal);
+                Ok(())
+            },
+            |_| {},
+        );
+
+        result.expect("a later exact absence probe should reconcile the stopped generation");
+        assert_eq!(*signals.borrow(), [Signal::SIGTERM]);
+        assert_eq!(probes.get(), 3);
+        assert_eq!(generations.get(), 2);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn gateway_identity_legacy_exit_before_term_reconciles_only_after_absence_confirmation() {
+        use std::cell::{Cell, RefCell};
+
+        let probes = Cell::new(0);
+        let generations = Cell::new(0);
+        let signals = RefCell::new(Vec::new());
+        let result = stop_gateway_process_with_identity(
+            4242,
+            |_| {
+                probes.set(probes.get() + 1);
+                if probes.get() == 1 {
+                    server::GatewayProcessProbe::Running
+                } else {
+                    server::GatewayProcessProbe::ConfirmedAbsent
+                }
+            },
+            || {
+                generations.set(generations.get() + 1);
+                if generations.get() == 1 {
+                    effigy_gateway::identity::GatewayIdentityProbe::Matched
+                } else {
+                    effigy_gateway::identity::GatewayIdentityProbe::Unknown
+                }
+            },
+            |_, signal| {
+                signals.borrow_mut().push(signal);
+                Ok(())
+            },
+            |_| {},
+        );
+
+        result.expect("confirmed absence after the final identity read permits reconciliation");
+        assert!(
+            signals.borrow().is_empty(),
+            "TERM must not target an exited PID"
+        );
+        assert_eq!(probes.get(), 2);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn gateway_identity_legacy_term_race_reconciles_only_after_absence_confirmation() {
+        use nix::sys::signal::Signal;
+        use std::cell::{Cell, RefCell};
+
+        let probes = Cell::new(0);
+        let signals = RefCell::new(Vec::new());
+        let result = stop_gateway_process_with_identity(
+            4242,
+            |_| {
+                probes.set(probes.get() + 1);
+                if probes.get() == 1 {
+                    server::GatewayProcessProbe::Running
+                } else {
+                    server::GatewayProcessProbe::ConfirmedAbsent
+                }
+            },
+            || effigy_gateway::identity::GatewayIdentityProbe::Matched,
+            |_, signal| {
+                signals.borrow_mut().push(signal);
+                Err("target exited before signal delivery".to_owned())
+            },
+            |_| {},
+        );
+
+        result.expect("confirmed absence after failed TERM permits reconciliation");
+        assert_eq!(*signals.borrow(), [Signal::SIGTERM]);
+        assert_eq!(probes.get(), 2);
     }
 
     #[cfg(unix)]
