@@ -361,13 +361,11 @@ fn resolve_host_program_uses_host_cli_resolver_for_bare_names() {
         fs::set_permissions(&fake_colima, permissions).expect("chmod");
     }
 
-    let original_path = std::env::var_os("PATH");
-    std::env::set_var("PATH", &bin_dir);
+    let _env = crate::contract_test_support::EnvGuard::set_many(&[(
+        "PATH",
+        Some(bin_dir.display().to_string()),
+    )]);
     let resolved = resolve_host_program("colima");
-    match original_path {
-        Some(path) => std::env::set_var("PATH", path),
-        None => std::env::remove_var("PATH"),
-    }
 
     assert_eq!(resolved, fake_colima.into_os_string());
 }
@@ -389,10 +387,10 @@ fn copy_file_into_service_invocation_prefers_policy_backend_over_installed_docke
         fs::set_permissions(&fake_docker, permissions).expect("chmod");
     }
 
-    let original_path = std::env::var_os("PATH");
-    let original_backend = std::env::var_os("EFFIGY_COMPOSE_BACKEND");
-    std::env::set_var("PATH", &bin_dir);
-    std::env::remove_var("EFFIGY_COMPOSE_BACKEND");
+    let _env = crate::contract_test_support::EnvGuard::set_many(&[
+        ("PATH", Some(bin_dir.display().to_string())),
+        ("EFFIGY_COMPOSE_BACKEND", None),
+    ]);
 
     let args = vec![
         OsString::from("cp"),
@@ -401,15 +399,6 @@ fn copy_file_into_service_invocation_prefers_policy_backend_over_installed_docke
     ];
     let (program, resolved_args) =
         copy_file_into_service_invocation(&temp_dir, &test_policy(), &args).expect("invocation");
-
-    match original_path {
-        Some(path) => std::env::set_var("PATH", path),
-        None => std::env::remove_var("PATH"),
-    }
-    match original_backend {
-        Some(value) => std::env::set_var("EFFIGY_COMPOSE_BACKEND", value),
-        None => std::env::remove_var("EFFIGY_COMPOSE_BACKEND"),
-    }
 
     assert_eq!(program, OsString::from("colima"));
     assert_eq!(

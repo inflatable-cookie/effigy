@@ -902,6 +902,7 @@ mod supervision_init_tests {
     use std::time::{Duration, Instant};
 
     fn spawn_owned_hang(fixture: &TimeoutDescendantFixture) -> Child {
+        let _env_lock = crate::contract_test_support::lock_test();
         Command::new("sh")
             .arg("-c")
             .arg(fixture.hang_command())

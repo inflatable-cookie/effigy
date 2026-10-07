@@ -8,6 +8,16 @@ const TINY_BOUND_MS: &str = "1";
 const DISABLED_BOUND_MS: &str = "0";
 const TIMEOUT_SCHEMA: &str = "effigy.graph.timeout.v1";
 
+#[test]
+fn graph_timeout_uses_the_existing_two_minute_default_when_unset() {
+    let _env = EnvGuard::set_many(&[("EFFIGY_GRAPH_TIMEOUT_MS", None)]);
+
+    assert_eq!(
+        crate::runner::graph_time_budget::graph_time_budget(),
+        Some(Duration::from_secs(120))
+    );
+}
+
 fn docs_graph_fixture(name: &str) -> std::path::PathBuf {
     let root = temp_workspace(name);
     fs::create_dir_all(root.join("docs")).expect("mkdir docs");
