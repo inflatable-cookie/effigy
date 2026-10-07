@@ -464,6 +464,72 @@ fn gateway_identity_matching_private_child_is_reported_running() {
     assert_eq!(owned.0.id(), pid);
 }
 
+/// An already-upgraded v0.14.0 macOS sidecar stored `kern.boottime` with a
+/// drifting microsecond field. A live owned child with the exact recorded
+/// start identity must still be reported running, and status stays read-only.
+#[cfg(target_os = "macos")]
+#[test]
+fn gateway_identity_legacy_boot_time_sidecar_stays_running_across_drift() {
+    use std::process::{Child, Command};
+    use std::time::{Duration, Instant};
+
+    struct OwnedChild(Child);
+
+    impl Drop for OwnedChild {
+        fn drop(&mut self) {
+            if self.0.try_wait().ok().flatten().is_none() {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+    }
+
+    let owned = OwnedChild(
+        Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .expect("start private owned child"),
+    );
+    let pid = owned.0.id();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while probe_gateway_process(pid) != GatewayProcessProbe::Running {
+        assert!(
+            Instant::now() < deadline,
+            "private owned child was never observed running"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let config = GatewayConfig::standard(dir.path().to_path_buf());
+    crate::identity::write_test_record(&config.pid_file_path, pid);
+    let identity_path = config.pid_file_path.with_extension("identity");
+    let legacy = effigy_process::legacy_boot_time_identity().expect("kernel kern.boottime");
+    let (prefix, _) = legacy.split_once("usec").expect("kern.boottime usec field");
+    let drifted = format!("{prefix}usec = 999999 }}");
+    let mut record: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&identity_path).unwrap()).unwrap();
+    assert_ne!(
+        record["boot_identity"].as_str().unwrap(),
+        drifted,
+        "the fixture must actually exercise a drifted legacy boot value"
+    );
+    record["boot_identity"] = serde_json::Value::String(drifted);
+    std::fs::write(&identity_path, serde_json::to_vec(&record).unwrap()).unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&identity_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    let before_identity = std::fs::read(&identity_path).unwrap();
+    let before_pid = std::fs::read(&config.pid_file_path).unwrap();
+
+    let status = get_status(&config).expect("legacy boot-time sidecar stays running");
+    assert_eq!(status.pid, pid);
+    assert_eq!(std::fs::read(&identity_path).unwrap(), before_identity);
+    assert_eq!(std::fs::read(&config.pid_file_path).unwrap(), before_pid);
+    assert_eq!(owned.0.id(), pid);
+}
+
 /// A live foreign PID with a mismatched generation is NotRunning. Status is
 /// read-only: PID, identity and version bytes stay, and Drop may reap only
 /// the child this fixture started.

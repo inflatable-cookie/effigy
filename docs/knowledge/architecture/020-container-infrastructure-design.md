@@ -627,6 +627,64 @@ fills both fields from `p_start`. An actual cross-UID kernel read cannot be exer
 the prohibited live elevated daemon, so the implementation discloses that
 integration limitation rather than claiming it was run.
 
+#### Follow-up correction in task 117
+
+The task-104 correction left two defects that surfaced on the latest bootstrap
+against a live root gateway:
+
+- `gateway_up_for_managed_task` ran its `sh -lc` child through
+  `ProcessCommand::output()`, which replaces stdin with `null`. The bounded
+  read-only elevated identity reader requires `stdin.is_terminal()`, so a
+  managed auto-start against a root-owned live gateway could not read the
+  cross-UID generation and failed with an Unknown "cannot determine gateway
+  state" error even though the daemon was healthy. The managed transport now
+  spawns the child with `Stdio::inherit()` on stdin and piped stdout/stderr,
+  then drains both pipes with `wait_with_output`. Noninteractive and declined
+  authentication still return Unknown, so the lifecycle refuses without a
+  signal, cleanup, or replacement. Startup text is state-keyed (`stopped`,
+  `replacing a different build`, or `unverified`); an unknown or mismatched
+  live daemon is never described as "down".
+- The macOS boot identity was the raw `kern.boottime` timeval, whose
+  microsecond field is not stable across reads. A sidecar written by the
+  published v0.14.0 macOS build could therefore compare `Mismatch` against the
+  live process it had itself published. `effigy_process::boot_identity` now
+  reads the kernel `kern.bootsessionuuid` session identity through `sysctl`,
+  requires a successful command status, and accepts only a canonical
+  8-4-4-4-12 UUID; missing, failed, empty, non-UTF-8, or malformed output is
+  Unknown. Linux is unchanged (`/proc/sys/kernel/random/boot_id`).
+
+`effigy_process::boot_identity_matches` is the single comparison point. New
+records store the session UUID and match exactly. Records written before the
+change store the `kern.boottime` timeval; they match when the recorded `sec`
+component equals a successfully read current `kern.boottime` seconds, which is
+stable within a boot and distinct across a reboot at one-second resolution.
+The exact process start identity stays mandatory for every match, so a reused
+PID never matches. Unknown current evidence never matches, and no old sidecar
+is reclassified as absent or rewritten. `probe_live_identity` uses this
+comparison for both the ordinary and elevated readers. The legacy candidate
+digest path is unchanged: it inspects and re-inspects within one CLI
+generation, so it has no cross-version record to reconcile.
+
+Shared boot-ID callers are unaffected on macOS: `effigy_host_run` derives its
+wire identity from `pbi_start_tvsec` only, and the QA-group owner check uses
+`process_start_identity`, not `boot_identity`. The QA-group record's
+informational `boot_identity` field now carries the session UUID on macOS.
+
+Private controls added by task 117: `effigy-process`
+`boot_session_uuid_parser_rejects_missing_failed_and_malformed`,
+`boot_session_identity_reader_is_stable_and_ignores_boot_time`,
+`legacy_boot_time_identity_matches_across_microsecond_drift`, and the
+separate-process `boot_identity_uncached_is_stable_across_separate_processes`;
+`effigy-gateway`
+`gateway_identity_legacy_boot_time_record_matches_across_microsecond_drift`
+and the full-path
+`gateway_identity_legacy_boot_time_sidecar_stays_running_across_drift`;
+`effigy` `gateway_up_for_managed_task_preserves_terminal_stdin_and_diagnostics`
+(real private PTY plus null-stdin controls) and
+`gateway_up_for_managed_task_startup_notice_is_state_accurate`. Maintained
+selectors: `test:gateway:boot-identity`, `check:gateway:boot-identity`,
+`test:gateway:managed-tty`.
+
 Residual: the last identity comparison and TERM/KILL syscall are separate
 operations. A process can exit and its PID can be reused in that interval; this
 bounded portable fix does not claim atomic process targeting or add pidfd.

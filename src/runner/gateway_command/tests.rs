@@ -867,3 +867,263 @@ fn legacy_recovery_absent_up_stages_only_under_lock() {
         "locked absent stage writes operator-owned loopback registry"
     );
 }
+
+#[test]
+fn gateway_up_for_managed_task_startup_notice_is_state_accurate() {
+    let stopped = managed_startup_notice(ManagedStartState::Stopped);
+    assert!(stopped.contains("stopped"));
+    for state in [ManagedStartState::Replacing, ManagedStartState::Unverified] {
+        let text = managed_startup_notice(state);
+        assert!(
+            !text.contains("down"),
+            "startup notice claimed the daemon was down for {state:?}: {text}"
+        );
+        assert!(
+            !text.contains("stopped"),
+            "startup notice claimed the daemon was stopped for {state:?}: {text}"
+        );
+    }
+    assert!(managed_startup_notice(ManagedStartState::Replacing).contains("different build"));
+    assert!(managed_startup_notice(ManagedStartState::Unverified).contains("starting"));
+}
+
+#[cfg(unix)]
+const MANAGED_TTY_CASE_ENV: &str = "EFFIGY_TEST_GATEWAY_MANAGED_TTY_CASE";
+#[cfg(unix)]
+const MANAGED_TTY_ROOT_ENV: &str = "EFFIGY_TEST_GATEWAY_MANAGED_TTY_ROOT";
+#[cfg(unix)]
+const MANAGED_TTY_CHILD_TEST: &str =
+    "runner::gateway_command::tests::gateway_up_for_managed_task_preserves_terminal_stdin_and_diagnostics";
+
+/// The managed subprocess transport must keep the operator terminal on stdin
+/// so the bounded read-only elevated identity reader can authenticate, while
+/// stdout/stderr stay captured for diagnostics. Noninteractive control must
+/// refuse without running the replacement body.
+///
+/// The test binary re-execs itself under a private PTY (interactive case) or
+/// with a null stdin (noninteractive controls) so the transport under test is
+/// the real production `sh -lc` child, not a boolean stand-in.
+#[cfg(unix)]
+#[test]
+fn gateway_up_for_managed_task_preserves_terminal_stdin_and_diagnostics() {
+    if let Ok(case) = std::env::var(MANAGED_TTY_CASE_ENV) {
+        run_managed_tty_child_case(&case);
+        return;
+    }
+
+    let interactive_root = tempfile::tempdir().expect("private fixture directory");
+    let mut session = ManagedTtySession::spawn("interactive", interactive_root.path());
+    let status = session.wait_for_exit(std::time::Duration::from_secs(30));
+    assert!(
+        status.success(),
+        "interactive managed child failed: {}",
+        session.output_text()
+    );
+    assert!(
+        interactive_root.path().join("managed-started").exists(),
+        "interactive child must run the fixture with a terminal on stdin"
+    );
+    assert!(
+        !session.output_text().contains(" is down"),
+        "startup text must not call the managed start simply down: {}",
+        session.output_text()
+    );
+
+    for case in ["noninteractive-stderr", "noninteractive-stdout"] {
+        let root = tempfile::tempdir().expect("private fixture directory");
+        let output = std::process::Command::new(std::env::current_exe().expect("test executable"))
+            .args(["--exact", MANAGED_TTY_CHILD_TEST, "--nocapture"])
+            .env(MANAGED_TTY_CASE_ENV, case)
+            .env(MANAGED_TTY_ROOT_ENV, root.path())
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .output()
+            .expect("spawn noninteractive managed child");
+        assert!(
+            output.status.success(),
+            "noninteractive case {case} failed: stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            !root.path().join("managed-started").exists(),
+            "noninteractive case {case} must not run the replacement body"
+        );
+    }
+}
+
+#[cfg(unix)]
+fn run_managed_tty_child_case(case: &str) {
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::PathBuf;
+
+    let root = PathBuf::from(std::env::var_os(MANAGED_TTY_ROOT_ENV).expect("fixture root"));
+    let home = root.join("home");
+    let gateway_home = home.join(GATEWAY_DIR_NAME);
+    std::fs::create_dir_all(&gateway_home).expect("create private gateway directory");
+    std::fs::set_permissions(&gateway_home, std::fs::Permissions::from_mode(0o700))
+        .expect("restrict private gateway directory");
+    let _home_guard = set_test_gateway_home(&home);
+
+    let marker = root.join("managed-started");
+    let script = root.join("fixture-gateway-up.sh");
+    let body = match case {
+        "interactive" => format!(
+            "#!/bin/sh\nif [ -t 0 ]; then\n  : > '{marker}'\n  printf 'fixture gateway up observed a terminal\\n'\n  exit 0\nfi\nprintf 'fixture gateway up refused: no terminal\\n' >&2\nexit 3\n",
+            marker = marker.display()
+        ),
+        "noninteractive-stderr" => {
+            "#!/bin/sh\nprintf 'fixture gateway up refused: no terminal\\n' >&2\nexit 3\n".to_owned()
+        }
+        "noninteractive-stdout" => {
+            "#!/bin/sh\nprintf 'fixture gateway up refused stdout diagnostic\\n'\nexit 7\n"
+                .to_owned()
+        }
+        other => panic!("unknown managed tty case {other}"),
+    };
+    std::fs::write(&script, body).expect("write fixed fixture executable");
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
+        .expect("make fixture executable");
+    let command = format!("'{}'", script.display());
+    let result = gateway_up_for_managed_task(&command);
+    match case {
+        "interactive" => {
+            result.expect("interactive managed start must succeed");
+            assert!(
+                marker.exists(),
+                "fixture must observe the inherited terminal"
+            );
+        }
+        "noninteractive-stderr" => {
+            let error = result
+                .expect_err("noninteractive managed start must refuse")
+                .to_string();
+            assert!(
+                error.contains("fixture gateway up refused: no terminal"),
+                "captured stderr diagnostic missing: {error}"
+            );
+            assert!(
+                !marker.exists(),
+                "refused start must not run the fixture body"
+            );
+        }
+        "noninteractive-stdout" => {
+            let error = result
+                .expect_err("noninteractive managed start must refuse")
+                .to_string();
+            assert!(
+                error.contains("fixture gateway up refused stdout diagnostic"),
+                "captured stdout diagnostic missing: {error}"
+            );
+            assert!(
+                !marker.exists(),
+                "refused start must not run the fixture body"
+            );
+        }
+        _ => unreachable!("validated above"),
+    }
+}
+
+#[cfg(unix)]
+struct ManagedTtySession {
+    child: std::process::Child,
+    master: std::fs::File,
+    output: Vec<u8>,
+}
+
+#[cfg(unix)]
+impl ManagedTtySession {
+    fn spawn(case: &str, root: &std::path::Path) -> Self {
+        let window = nix::pty::Winsize {
+            ws_row: 24,
+            ws_col: 100,
+            ws_xpixel: 0,
+            ws_ypixel: 0,
+        };
+        let pty = nix::pty::openpty(Some(&window), None).expect("open private PTY");
+        let master = std::fs::File::from(pty.master);
+        let slave = std::fs::File::from(pty.slave);
+        let stdin = slave.try_clone().expect("clone PTY stdin");
+        let stdout = slave.try_clone().expect("clone PTY stdout");
+        let stderr = slave.try_clone().expect("clone PTY stderr");
+        let child = std::process::Command::new(std::env::current_exe().expect("test executable"))
+            .args(["--exact", MANAGED_TTY_CHILD_TEST, "--nocapture"])
+            .env(MANAGED_TTY_CASE_ENV, case)
+            .env(MANAGED_TTY_ROOT_ENV, root)
+            .stdin(std::process::Stdio::from(stdin))
+            .stdout(std::process::Stdio::from(stdout))
+            .stderr(std::process::Stdio::from(stderr))
+            .spawn()
+            .expect("spawn managed tty child under a private PTY");
+        drop(slave);
+        Self {
+            child,
+            master,
+            output: Vec::new(),
+        }
+    }
+
+    fn wait_for_exit(&mut self, timeout: std::time::Duration) -> std::process::ExitStatus {
+        use std::io::Read;
+        use std::os::fd::AsRawFd;
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            let mut poll_fd = libc::pollfd {
+                fd: self.master.as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            };
+            // SAFETY: `poll` receives one initialized descriptor record and a
+            // valid count; the record's lifetime covers the call.
+            let _ = unsafe { libc::poll(&mut poll_fd, 1, 50) };
+            if poll_fd.revents & libc::POLLIN != 0 {
+                let mut buffer = [0_u8; 4096];
+                match self.master.read(&mut buffer) {
+                    Ok(0) => {}
+                    Ok(read) => self.output.extend_from_slice(&buffer[..read]),
+                    Err(error) if error.raw_os_error() == Some(libc::EIO) => {}
+                    Err(error) => panic!("read managed tty output: {error}"),
+                }
+            }
+            if let Some(status) = self.child.try_wait().expect("poll managed tty child") {
+                self.drain();
+                return status;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "managed tty child did not exit: {}",
+                self.output_text()
+            );
+        }
+    }
+
+    fn drain(&mut self) {
+        use std::io::Read;
+        use std::os::fd::AsRawFd;
+        loop {
+            let mut poll_fd = libc::pollfd {
+                fd: self.master.as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            };
+            // SAFETY: `poll` receives one initialized descriptor record and a
+            // valid count; the record's lifetime covers the call.
+            let _ = unsafe { libc::poll(&mut poll_fd, 1, 50) };
+            if poll_fd.revents & libc::POLLIN == 0 {
+                return;
+            }
+            let mut buffer = [0_u8; 4096];
+            match self.master.read(&mut buffer) {
+                Ok(0) => return,
+                Ok(read) => self.output.extend_from_slice(&buffer[..read]),
+                Err(error) if error.raw_os_error() == Some(libc::EIO) => return,
+                Err(error) => panic!("drain managed tty output: {error}"),
+            }
+        }
+    }
+
+    fn output_text(&self) -> String {
+        String::from_utf8_lossy(&self.output).into_owned()
+    }
+}

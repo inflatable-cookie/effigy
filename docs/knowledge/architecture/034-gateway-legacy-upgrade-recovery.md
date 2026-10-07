@@ -263,7 +263,7 @@ malformed output or digest mismatch is Unknown.
 | --- | --- |
 | `pid` | Derived from the trusted record, echoed for binding |
 | `candidate_uid` | Kernel UID of the live process |
-| `boot_identity` | Linux boot id / macOS `kern.boottime` |
+| `boot_identity` | Linux boot id / macOS `kern.bootsessionuuid` |
 | `start_identity` | Linux `/proc/<pid>/stat` field 22 ticks; macOS `pbi_start_tvsec` + `pbi_start_tvusec` |
 | `executable_path` | Canonical live executable path (`readlink /proc/<pid>/exe`; `proc_pidpath`), shown to the operator |
 | `executable_path_digest` | Digest of that canonical path |
@@ -547,6 +547,15 @@ same way.
 - Kickoff mechanism rejected: emptying the global route table to trigger the
   daemon's 5-minute idle shutdown would disturb other checkouts' routes and does
   not prove ownership.
+- Already-upgraded macOS `v0.14.0` sidecars stored the raw `kern.boottime`
+  timeval, whose microsecond field drifts within one boot. Corrected main
+  compares such a record through its `sec` component plus the still-mandatory
+  exact process start identity, so the existing sidecar keeps matching the live
+  daemon it published. The record is never rewritten to the new
+  `kern.bootsessionuuid` value and is never reclassified as absent. New records
+  store the session identity and match exactly; unknown current evidence fails
+  closed. This is task 117 of the gateway recovery wave; ordinary `status`,
+  `up`, `down`, and managed auto-start share the comparison.
 
 ## Private proofs
 
@@ -568,6 +577,19 @@ mutation on refusal (cited, not modified):
 - `src/runner/gateway_command/tests.rs::gateway_identity_legacy_active_record_refused_by_status_up_down_and_managed_start`,
   `gateway_identity_elevated_reader_decline_or_unavailable_is_unknown`,
   `probe_state_up_refuses_unknown_without_starting_a_replacement`.
+- Stable macOS boot identity and legacy record compatibility (task 117):
+  `crates/effigy-process/src/identity.rs::boot_session_uuid_parser_rejects_missing_failed_and_malformed`,
+  `boot_session_identity_reader_is_stable_and_ignores_boot_time`,
+  `legacy_boot_time_identity_matches_across_microsecond_drift`,
+  `boot_identity_uncached_is_stable_across_separate_processes`;
+  `crates/effigy-gateway/src/identity.rs::gateway_identity_legacy_boot_time_record_matches_across_microsecond_drift`;
+  `crates/effigy-gateway/src/server/tests.rs::gateway_identity_legacy_boot_time_sidecar_stays_running_across_drift`.
+- Managed auto-start terminal transport (task 117):
+  `src/runner/gateway_command/tests.rs::gateway_up_for_managed_task_preserves_terminal_stdin_and_diagnostics`
+  re-execs the test binary under a real private PTY and under null stdin;
+  `gateway_up_for_managed_task_startup_notice_is_state_accurate`. Selectors
+  `test:gateway:boot-identity`, `check:gateway:boot-identity`,
+  `test:gateway:managed-tty`.
 
 New private controls the implementation task must land (recording/fake fixtures,
 fresh `mktemp -d`, real owned children, no live gateway, no real elevated read,

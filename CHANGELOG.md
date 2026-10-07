@@ -7,6 +7,21 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Fixed
+- Managed gateway auto-start keeps the operator terminal on the child's stdin
+  (`sh -lc` now inherits stdin instead of replacing it with null) so the
+  bounded read-only elevated identity reader can authenticate, while
+  stdout/stderr stay captured for diagnostics. A noninteractive or declined
+  reader still returns Unknown, so the lifecycle refuses without signalling or
+  launching a replacement. Startup text now reports the preflight state
+  (stopped, replacing a different build, or unverified) instead of calling an
+  unknown or mismatched live daemon simply "down".
+- macOS gateway boot identity is now the stable `kern.bootsessionuuid` session
+  identity with validated command status and canonical-UUID parsing; missing,
+  failed, empty, or malformed output is Unknown rather than a guessed value.
+  Records written before this change stored the `kern.boottime` timeval, whose
+  microsecond field drifts within one boot; those records remain matched
+  through the boot-time seconds plus the still-mandatory exact process start
+  identity. No old sidecar is reclassified as absent or rewritten to match.
 - Elevated gateway lifecycle now accepts the authenticated operator-owned
   gateway directory instead of rejecting it as unsafe. An elevated root caller
   behind the existing administrator-elevation marker trusts a directory owned

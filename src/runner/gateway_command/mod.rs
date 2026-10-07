@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::process::Command as ProcessCommand;
+use std::process::{Command as ProcessCommand, Stdio};
 
 use effigy_cli::{
     GatewayArgs, GatewaySubcommand, InternalGatewayArgs, InternalGatewayIdentityArgs,
@@ -39,8 +39,31 @@ mod recover;
 pub(super) const GATEWAY_DIR_NAME: &str = ".effigy/gateway";
 pub(super) const GATEWAY_ESCALATED_ENV: &str = "EFFIGY_GATEWAY_ESCALATED";
 pub(super) const GATEWAY_KEEP_RESOLVER_ENV: &str = "EFFIGY_GATEWAY_KEEP_RESOLVER";
-const GATEWAY_STARTUP_NOTICE: &str =
-    "gateway is down; starting local DNS/proxy (may prompt for password)";
+
+/// Why a managed auto-start decided to run the gateway command. Startup text
+/// keys off this so an unknown or replaced live daemon is never called simply
+/// "down".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ManagedStartState {
+    /// Records proved the gateway is not running.
+    Stopped,
+    /// A live gateway runs a different build and will be replaced.
+    Replacing,
+    /// The managed override skips the preflight, so state is unverified.
+    Unverified,
+}
+
+fn managed_startup_notice(state: ManagedStartState) -> &'static str {
+    match state {
+        ManagedStartState::Stopped => {
+            "gateway is stopped; starting local DNS/proxy (may prompt for password)"
+        }
+        ManagedStartState::Replacing => {
+            "gateway is running a different build; restarting with the current build (may prompt for password)"
+        }
+        ManagedStartState::Unverified => "starting local DNS/proxy (may prompt for password)",
+    }
+}
 
 #[cfg(test)]
 thread_local! {
@@ -93,20 +116,32 @@ pub(super) fn run_gateway(args: GatewayArgs) -> Result<String, RunnerError> {
 }
 
 pub(in crate::runner) fn gateway_up_for_managed_task(command: &str) -> Result<(), RunnerError> {
+    let mut state = ManagedStartState::Unverified;
     if effigy_core::executable_override::current().is_none() {
         let config = gateway_config()?;
         if let Some(status) = resolve_gateway_status(verified_gateway_status(&config))? {
             if gateway_status_matches_current_binary(&status) {
                 return Ok(());
             }
+            state = ManagedStartState::Replacing;
+        } else {
+            state = ManagedStartState::Stopped;
         }
     }
-    emit_gateway_startup_notice();
-    let output = ProcessCommand::new("sh")
+    emit_gateway_startup_notice(state);
+    // Inherit the operator terminal: the bounded read-only elevated identity
+    // reader requires `stdin.is_terminal()` to authenticate. `Command::output`
+    // would replace stdin with null and turn every managed cross-UID status
+    // read into Unknown. stdout/stderr stay captured for diagnostics.
+    let mut start = ProcessCommand::new("sh");
+    start
         .arg("-lc")
         .arg(command)
-        .output()
-        .map_err(RunnerError::Cwd)?;
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let child = start.spawn().map_err(RunnerError::Cwd)?;
+    let output = child.wait_with_output().map_err(RunnerError::Cwd)?;
     if output.status.success() {
         Ok(())
     } else {
@@ -907,7 +942,7 @@ fn render_gateway_tcp_conflict_lines(conflict: &GatewayTcpBindConflict) -> Vec<S
     lines
 }
 
-fn emit_gateway_startup_notice() {
+fn emit_gateway_startup_notice(state: ManagedStartState) {
     if !std::io::stderr().is_terminal() || is_ci_environment() {
         return;
     }
@@ -918,7 +953,7 @@ fn emit_gateway_startup_notice() {
             Theme::default().warning,
             "[gateway]"
         ),
-        GATEWAY_STARTUP_NOTICE
+        managed_startup_notice(state)
     );
 }
 

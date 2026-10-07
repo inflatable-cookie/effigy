@@ -186,9 +186,18 @@ pub fn gateway_target_digest(pid_path: &Path) -> Option<String> {
 }
 
 /// Classify the current process generation for one persisted record.
+///
+/// The exact process start identity is mandatory. The boot component may be
+/// either the stable kernel session identity or, for records written before
+/// that change, the legacy macOS `kern.boottime` timeval whose microsecond
+/// field drifts. The compatibility decision lives in
+/// [`effigy_process::boot_identity_matches`].
 pub fn probe_live_identity(record: &GatewayIdentityRecord) -> GatewayIdentityProbe {
-    match read_process_identity(record.pid) {
-        Ok(current) if current == (record.boot_identity.clone(), record.start_identity.clone()) => {
+    match read_live_process_identity(record.pid) {
+        Ok(live)
+            if live.start_identity == record.start_identity
+                && effigy_process::boot_identity_matches(&record.boot_identity) =>
+        {
             GatewayIdentityProbe::Matched
         }
         Ok(_) => GatewayIdentityProbe::Mismatch,
@@ -1240,6 +1249,63 @@ mod tests {
             probe_live_identity(&wrong_start),
             GatewayIdentityProbe::Mismatch
         );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn gateway_identity_legacy_boot_time_record_matches_across_microsecond_drift() {
+        let live = read_live_process_identity(std::process::id()).expect("live identity");
+        let legacy = effigy_process::legacy_boot_time_identity().expect("kernel kern.boottime");
+        let (prefix, _) = legacy.split_once("usec").expect("kern.boottime usec field");
+        let drifted = format!("{prefix}usec = 999999 }}");
+
+        let mut record = GatewayIdentityRecord {
+            format_version: IDENTITY_FORMAT_VERSION,
+            pid: std::process::id(),
+            boot_identity: drifted.clone(),
+            start_identity: live.start_identity.clone(),
+        };
+        assert!(record.is_valid());
+        // An already-upgraded v0.14.0 macOS sidecar stored the drifting
+        // `kern.boottime` microsecond field. With the exact process start
+        // identity intact it must still match this boot.
+        assert_eq!(
+            probe_live_identity(&record),
+            GatewayIdentityProbe::Matched,
+            "legacy boot-time record must survive usec drift"
+        );
+
+        // A reboot (different boot seconds) is a different generation.
+        record.boot_identity = "{ sec = 1, usec = 2 }".to_owned();
+        assert_eq!(probe_live_identity(&record), GatewayIdentityProbe::Mismatch);
+
+        // The exact start identity stays mandatory within the same boot.
+        record.boot_identity = drifted;
+        record.start_identity = perturbed_start_identity(&live.start_identity);
+        assert_eq!(probe_live_identity(&record), GatewayIdentityProbe::Mismatch);
+
+        // The new stable session identity matches exactly.
+        record.start_identity = live.start_identity;
+        record.boot_identity = effigy_process::boot_identity().expect("session identity");
+        assert_eq!(probe_live_identity(&record), GatewayIdentityProbe::Matched);
+
+        // Unknown recorded boot evidence is a mismatch, never a match.
+        record.boot_identity = "not-a-boot-identity".to_owned();
+        assert_eq!(probe_live_identity(&record), GatewayIdentityProbe::Mismatch);
+    }
+
+    #[cfg(target_os = "macos")]
+    fn perturbed_start_identity(identity: &GatewayStartIdentity) -> GatewayStartIdentity {
+        match identity {
+            GatewayStartIdentity::Linux { .. } => unreachable!("macOS fixture"),
+            GatewayStartIdentity::Macos {
+                start_seconds,
+                start_microseconds,
+            } => GatewayStartIdentity::Macos {
+                start_seconds: *start_seconds,
+                start_microseconds: (*start_microseconds + 1) % 1_000_000,
+            },
+        }
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]

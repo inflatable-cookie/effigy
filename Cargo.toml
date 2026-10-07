@@ -122,4 +122,6 @@ rpassword = "7"
 [dev-dependencies]
 base64 = "0.22"
 effigy-containers = { path = "crates/effigy-containers", features = ["test-support"] }
+# The managed gateway auto-start PTY proof uses a real private pseudo-terminal.
+nix = { version = "0.31", default-features = false, features = ["term"] }
 tempfile = "3"
