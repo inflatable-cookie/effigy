@@ -630,10 +630,10 @@ reachable). All of:
 - the production process probe for the recorded PID is `ConfirmedAbsent`.
 
 No live start-identity or kernel-UID comparison applies in this branch because
-there is no live process. It exists so that a rerun after a crash between a
-generation-bound stop and its cleanup — when the daemon is already gone and the
-record cannot satisfy the live branch — can finish cleanup instead of being
-rejected before it starts.
+there is no live process. It exists so that a rerun from the full ambiguous
+triple, or from the numeric-only pair left after identity removal, can finish
+cleanup instead of being rejected before it starts. It does **not** make a
+version-only remnant recoverable; see [Cleanup](#cleanup-ordered-compare-and-remove-with-a-bounded-resumability-claim).
 
 ### Capture (full PID/version/identity digest)
 
@@ -663,7 +663,7 @@ is changed, never absent.
 `candidate_digest` additionally binds `identity_digest`, so consent targets the
 exact sidecar bytes. No PID, path, or signal argument is added.
 
-### Cleanup: ordered, resumable compare-and-remove
+### Cleanup: ordered compare-and-remove with a bounded resumability claim
 
 Cleanup is reached only through the confirmed-absent cleanup branch above:
 (a) the captured PID probes `ConfirmedAbsent`, or (b) a completed
@@ -672,9 +672,8 @@ runs while the process is `Running` or `Unknown`.
 
 Three separate filesystem unlinks are **not** one atomic operation, and this
 specification does not claim atomic three-file deletion. Cleanup is an ordered
-sequence of independent locked compare-and-removes, chosen so that every
-intermediate state is a record the existing classifier recognizes and a rerun
-can finish:
+sequence of independent locked compare-and-removes, and its resumability is
+bounded and stated honestly:
 
 1. Under the transition lock and the record lock, re-read the triple and
    require it byte-for-byte equal to the capture with the same owner (the
@@ -685,22 +684,36 @@ can finish:
    lock. The remainder is then a genuine numeric-only legacy pair.
 3. Remove the remaining `gateway.pid` + `gateway.version` pair with the
    existing approved numeric-only `remove_legacy_pair_if_unchanged`
-   compare-and-remove, which refuses on any change and is idempotent.
+   compare-and-remove. That helper unlinks the identity sidecar, then the PID,
+   then the version as three separate filesystem operations; this step adds no
+   atomicity.
 
-Failure and crash behavior is part of the contract, not an exclusion:
+**Reachable prefix states.** Because the unlinks are separate, a crash or
+unlink failure can leave any of these:
 
-- Crash or unlink failure before step 2 completes leaves the full ambiguous
-  triple; a rerun takes the confirmed-absent cleanup branch again.
-- Crash or failure after step 2 leaves exactly `gateway.pid` +
-  `gateway.version`, which the existing approved numeric-only confirmed-absent
-  path removes on rerun.
-- Identity is removed before PID or version precisely so those are the only
-  two prefix states. Removing PID or version first is forbidden: a PID-less
-  identity-bearing remainder is the unrecoverable `gateway identity exists
-  without its PID` unknown.
-- No subset is ever removed while the process is live, and the identity sidecar
-  is never rewritten and never deleted to "downgrade" the record to
-  numeric-only outside this ordered confirmed-absent cleanup.
+| Prefix left behind | Classifier result | Automatic resumability |
+| --- | --- | --- |
+| identity + PID + version (full ambiguous triple) | `AmbiguousLegacyBootTime` | Yes: a rerun takes the confirmed-absent cleanup branch again |
+| PID + version (numeric-only pair) | `LegacyCapture::Legacy` (numeric-only) | Yes: the existing approved numeric-only confirmed-absent path removes it |
+| version only | `read_snapshot` rejects it (`gateway version exists without its PID`); `capture_legacy_record` reports `Unknown` | **No.** Preserved and refused; no automatic completion |
+
+Identity is removed before PID and version so that the full-triple and
+numeric-only states are the reachable prefixes before the final pair removal.
+A version-only remnant can still be left between the PID and version unlinks of
+step 3, and it is not recoverable through any supported path today.
+
+**Actionable refusal for the version-only prefix.** A version-only remnant stays
+`Unknown` and fail-closed, exactly as the existing classifier already treats it:
+all files are preserved byte-for-byte, nothing is deleted, no PID or identity is
+fabricated or inferred, and no gateway is reported running or stopped. The
+diagnostic names the exact remnant ("a `gateway.version` remains without its
+`gateway.pid`; an interrupted legacy cleanup may have left it") and states that
+no automatic completion exists, so the operator must confirm no gateway process
+holds the recorded endpoints and manage the remnant outside Effigy. Completing
+that prefix automatically would require a new digest-bound recovery that binds
+the captured version bytes and proves the absence of both PID and identity;
+that is not proven within the currently reviewed authority and is explicitly
+not proposed here.
 
 A `Running`, `Unknown`, declined, changed, or mismatched record removes
 nothing. This preserves the existing publisher/remover lock and
@@ -737,13 +750,16 @@ A future implementation task must land, at minimum, these proofs:
 - confirmed-absent crash resume: starting from (a) the full ambiguous triple
   and (b) the numeric-only pair left after identity removal, a rerun completes
   cleanup; a run that began while the PID was live but crashed after the stop
-  is not rejected before cleanup;
+  is not rejected before cleanup; a version-only remnant is preserved,
+  reported `Unknown`, and does **not** claim automatic completion;
 - capture digest stability across a PID-only, version-only, and identity-only
   byte change, and for each file's removal;
 - ordered cleanup: each step is an independent locked compare-and-remove;
-  identity is removed before PID or version; a simulated failure between steps
-  leaves only one of the two resumable prefix states, never an unrecognized
-  subset; the operation is idempotent on rerun;
+  identity is removed before PID and version; the reachable prefix states are
+  exactly the full triple, the numeric-only pair, and the version-only remnant;
+  the first two are idempotently resumable and the version-only remnant is
+  fail-closed with an actionable refusal that fabricates, deletes, and infers
+  nothing;
 - forged or mismatched `capture_digest`, `identity_digest`, or phase is refused
   by the elevated stop handler;
 - ordinary `status`, `up`, `down`, and managed start still preserve and refuse
