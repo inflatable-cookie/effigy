@@ -3951,7 +3951,9 @@ fn assert_no_doctor_cache_generation(root: &std::path::Path) {
 #[cfg(unix)]
 #[test]
 fn cli_deep_doctor_timeout_terminates_git_identity_tree() {
-    let root = temp_workspace("cli-doctor-git-timeout");
+    let temp = tempfile::tempdir().expect("private CLI doctor fixture directory");
+    let root = temp.path();
+    fs::write(root.join("package.json"), "{}\n").expect("write package marker");
     fs::create_dir_all(root.join("src")).expect("mkdir src");
     fs::write(
         root.join("effigy.toml"),
@@ -3959,40 +3961,56 @@ fn cli_deep_doctor_timeout_terminates_git_identity_tree() {
     )
     .expect("write manifest");
     fs::write(root.join("src/lib.rs"), "pub fn deep() {}\n").expect("write source");
-    init_git_repo(&root);
-    git_commit_all(&root, "deep fixture");
+    fs::write(root.join(".gitignore"), "/.doctor-process-evidence/\n")
+        .expect("ignore private process evidence");
+    init_git_repo(root);
+    git_commit_all(root, "deep fixture");
+    let evidence_dir = root.join(".doctor-process-evidence");
+    fs::create_dir_all(&evidence_dir).expect("create private process evidence directory");
 
-    // Block only the inventory identity probes. Structural checks shell out
-    // to `git status --porcelain` (no `=v1`) through the graph freshness
-    // gate, which must keep delegating to the real binary.
+    // Record every porcelain v1 caller. Only the inventory caller is blocked;
+    // graph dirty-paths gets the real Git response and its distinct argv and
+    // caller tag remain in the receipt.
     let real_git = real_path_binary("git");
-    let marker = root.join("leaked-git-child");
-    let reached_marker = root.join("blocked-git-invocations");
-    let bin = root.join("shim-bin");
-    write_blocking_shim(
-        &bin,
-        "git",
-        &real_git,
-        &["--porcelain=v1"],
-        &marker,
-        Some(&reached_marker),
-    );
+    let source_events = evidence_dir.join("doctor-process-evidence.jsonl");
+    let fixture_events = evidence_dir.join("fixture-process-evidence.jsonl");
+    let text_ready = evidence_dir.join("text-inventory-descendant-ready");
+    let json_ready = evidence_dir.join("json-inventory-descendant-ready");
+    let text_marker = evidence_dir.join("text-leaked-git-child");
+    let json_marker = evidence_dir.join("json-leaked-git-child");
+    let _receipt = DoctorGitReceiptGuard::new(vec![source_events.clone(), fixture_events.clone()]);
+    let mut fixture_guard = DoctorGitFixtureGuard::new(fixture_events.clone());
+    let bin = evidence_dir.join("shim-bin");
+    write_doctor_git_process_shim(&bin, &real_git);
     let path_value = shim_path_value(&bin);
+    let fixture_exe = std::env::current_exe().expect("current test executable");
+    let cli_fixture = DoctorGitCliFixture {
+        root,
+        path_value: &path_value,
+        fixture_exe: &fixture_exe,
+        source_events: &source_events,
+        fixture_events: &fixture_events,
+    };
 
     let started = Instant::now();
-    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .arg("doctor")
-        .arg("--deep")
-        .arg("--repo")
-        .arg(&root)
-        .env("EFFIGY_DOCTOR_TIMEOUT_MS", "800")
-        .env("PATH", &path_value)
-        .output()
-        .expect("run bounded deep doctor");
+    let output = run_doctor_git_cli(
+        &cli_fixture,
+        "text",
+        &text_ready,
+        &text_marker,
+        &mut fixture_guard,
+    );
+    let json = run_doctor_git_cli(
+        &cli_fixture,
+        "json",
+        &json_ready,
+        &json_marker,
+        &mut fixture_guard,
+    );
 
     assert!(
         started.elapsed() < Duration::from_secs(20),
-        "deep doctor outlived its overall budget by far"
+        "deep doctor invocations outlived their bounded budgets by far"
     );
     assert!(!output.status.success());
     let rendered = format!(
@@ -4000,7 +4018,6 @@ fn cli_deep_doctor_timeout_terminates_git_identity_tree() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_blocked_git_invocations(&reached_marker, 1, &rendered);
     assert!(
         rendered.contains("complete: false"),
         "deep doctor did not report its incomplete overall budget result:\n{rendered}"
@@ -4009,18 +4026,7 @@ fn cli_deep_doctor_timeout_terminates_git_identity_tree() {
         rendered.contains("scan_inventory"),
         "deep doctor timed out outside the Git scan inventory phase:\n{rendered}"
     );
-    assert_no_doctor_cache_generation(&root);
-
-    let json = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .arg("doctor")
-        .arg("--deep")
-        .arg("--json")
-        .arg("--repo")
-        .arg(&root)
-        .env("EFFIGY_DOCTOR_TIMEOUT_MS", "800")
-        .env("PATH", &path_value)
-        .output()
-        .expect("run bounded deep doctor json");
+    assert_no_doctor_cache_generation(root);
     assert!(!json.status.success());
     let parsed = parse_stdout_json(&json);
     assert_eq!(parsed["schema"], "effigy.command.v1");
@@ -4028,45 +4034,582 @@ fn cli_deep_doctor_timeout_terminates_git_identity_tree() {
     let report = &parsed["error"]["details"];
     assert_eq!(report["schema"], "effigy.doctor.v1");
     assert_eq!(report["run"]["complete"], false);
-    assert_blocked_git_invocations(&reached_marker, 2, &format!("{report}"));
-    assert_eq!(
-        report["run"]["budget_ms"], 800,
-        "deep doctor must retain the configured overall budget: {report}"
-    );
+    assert_eq!(report["run"]["budget_ms"], 800);
     assert_eq!(report["run"]["timeout_phase"], "scan_inventory");
-    assert!(
-        report["run"]["checks"]
-            .as_array()
-            .expect("checks")
-            .iter()
-            .any(|check| check["name"] == "scan_inventory" && check["state"] == "budget-exhausted"),
-        "missing scan_inventory budget-exhausted check: {report}"
-    );
-    assert_no_doctor_cache_generation(&root);
+    assert!(report["run"]["checks"]
+        .as_array()
+        .expect("checks")
+        .iter()
+        .any(|check| check["name"] == "scan_inventory" && check["state"] == "budget-exhausted"));
+    assert_no_doctor_cache_generation(root);
+
+    let (text_leader, text_leader_generation) =
+        assert_doctor_cli_process_evidence(&source_events, &fixture_events, "text", &text_ready);
+    let (json_leader, json_leader_generation) =
+        assert_doctor_cli_process_evidence(&source_events, &fixture_events, "json", &json_ready);
 
     let remaining = Duration::from_secs(6).saturating_sub(started.elapsed());
     std::thread::sleep(remaining);
     assert!(
-        !marker.exists(),
-        "timed-out git identity child survived doctor"
+        !text_marker.exists() && !json_marker.exists(),
+        "a timed-out Git inventory descendant survived doctor"
+    );
+    assert_doctor_cli_fixture_generations_reaped(
+        &fixture_events,
+        "text",
+        text_leader,
+        &text_leader_generation,
+    );
+    assert_doctor_cli_fixture_generations_reaped(
+        &fixture_events,
+        "json",
+        json_leader,
+        &json_leader_generation,
     );
 }
 
-fn assert_blocked_git_invocations(marker: &std::path::Path, expected: usize, report: &str) {
-    let reached = fs::read_to_string(marker).unwrap_or_default();
-    let invocations = reached.lines().collect::<Vec<_>>();
-    assert_eq!(
-        invocations.len(),
-        expected,
-        "expected {expected} blocked Git inventory invocation(s), observed {}: {invocations:?}\nactual doctor report:\n{report}",
-        invocations.len()
+#[cfg(unix)]
+struct DoctorGitCliFixture<'a> {
+    root: &'a std::path::Path,
+    path_value: &'a std::ffi::OsStr,
+    fixture_exe: &'a std::path::Path,
+    source_events: &'a std::path::Path,
+    fixture_events: &'a std::path::Path,
+}
+
+#[cfg(unix)]
+fn run_doctor_git_cli(
+    fixture: &DoctorGitCliFixture<'_>,
+    invocation: &str,
+    ready: &std::path::Path,
+    marker: &std::path::Path,
+    fixture_guard: &mut DoctorGitFixtureGuard,
+) -> std::process::Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_effigy"));
+    command
+        .arg("doctor")
+        .arg("--deep")
+        .arg("--repo")
+        .arg(fixture.root)
+        .env("EFFIGY_DOCTOR_TIMEOUT_MS", "800")
+        .env("PATH", fixture.path_value)
+        .env("EFFIGY_TEST_DOCTOR_GIT_EVIDENCE", fixture.source_events)
+        .env("EFFIGY_TEST_DOCTOR_GIT_INVOCATION", invocation)
+        .env("EFFIGY_TEST_DOCTOR_GIT_READY", ready)
+        .env("EFFIGY_TEST_DOCTOR_GIT_ROOT", fixture.root)
+        .env("EFFIGY_TEST_DOCTOR_GIT_INITIAL_READY", ready)
+        .env("EFFIGY_TEST_DOCTOR_GIT_INITIAL_MARKER", marker)
+        .env("EFFIGY_TEST_DOCTOR_GIT_FIXTURE_EXE", fixture.fixture_exe)
+        .env(
+            "EFFIGY_TEST_DOCTOR_GIT_FIXTURE_EVENTS",
+            fixture.fixture_events,
+        )
+        .env_remove("EFFIGY_TEST_DOCTOR_GIT_CALLER")
+        .env_remove("EFFIGY_TEST_DOCTOR_GIT_CALLER_PID")
+        .env_remove("EFFIGY_TEST_DOCTOR_GIT_ARGS_JSON")
+        .env_remove("EFFIGY_TEST_DOCTOR_FIXTURE_ROLE")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if invocation == "json" {
+        command.arg("--json");
+    }
+    let child = command.spawn().expect("spawn bounded deep doctor");
+    fixture_guard.track_process(child.id(), "doctor CLI");
+    child.wait_with_output().expect("wait bounded deep doctor")
+}
+
+#[cfg(unix)]
+fn write_doctor_git_process_shim(bin: &std::path::Path, real: &std::path::Path) {
+    fs::create_dir_all(bin).expect("mkdir doctor process shim bin");
+    let script = format!(
+        r##"#!/bin/sh
+case " $* " in
+  *--porcelain=v1*)
+    caller=${{EFFIGY_TEST_DOCTOR_GIT_CALLER:-unclassified}}
+    args_json=${{EFFIGY_TEST_DOCTOR_GIT_ARGS_JSON:-null}}
+    observer_ready="$EFFIGY_TEST_DOCTOR_GIT_ROOT/observer-ready-$$"
+    EFFIGY_TEST_DOCTOR_FIXTURE_ROLE=shim-observer \
+      EFFIGY_TEST_DOCTOR_GIT_CALLER="$caller" \
+      EFFIGY_TEST_DOCTOR_GIT_CALLER_PID="$PPID" \
+      EFFIGY_TEST_DOCTOR_GIT_ARGS_JSON="$args_json" \
+      EFFIGY_TEST_DOCTOR_GIT_ARGS_TEXT="$*" \
+      EFFIGY_TEST_DOCTOR_FIXTURE_READY="$observer_ready" \
+      "$EFFIGY_TEST_DOCTOR_GIT_FIXTURE_EXE" --exact command_behavior_tests::doctor_git_timeout_process_fixture_child --nocapture >/dev/null 2>&1 &
+    observer=$!
+    while [ ! -f "$observer_ready" ]; do :; done
+    wait "$observer"
+    if [ "$caller" = "effigy-scan::execution::doctor_inventory::run_git_bounded" ]; then
+      blocker_ready="$EFFIGY_TEST_DOCTOR_GIT_ROOT/blocker-ready-$$"
+      EFFIGY_TEST_DOCTOR_FIXTURE_ROLE=inventory-blocker \
+        EFFIGY_TEST_DOCTOR_FIXTURE_READY="$blocker_ready" \
+        "$EFFIGY_TEST_DOCTOR_GIT_FIXTURE_EXE" --exact command_behavior_tests::doctor_git_timeout_process_fixture_child --nocapture >/dev/null 2>&1 &
+      blocker=$!
+      while [ ! -f "$blocker_ready" ]; do :; done
+      EFFIGY_TEST_DOCTOR_FIXTURE_ROLE=inventory-descendant \
+        EFFIGY_TEST_DOCTOR_FIXTURE_READY="$EFFIGY_TEST_DOCTOR_GIT_INITIAL_READY" \
+        EFFIGY_TEST_DOCTOR_FIXTURE_MARKER="$EFFIGY_TEST_DOCTOR_GIT_INITIAL_MARKER" \
+        "$EFFIGY_TEST_DOCTOR_GIT_FIXTURE_EXE" --exact command_behavior_tests::doctor_git_timeout_process_fixture_child --nocapture >/dev/null 2>&1 &
+      descendant=$!
+      while [ ! -f "$EFFIGY_TEST_DOCTOR_GIT_INITIAL_READY" ]; do :; done
+      wait "$blocker"
+      wait "$descendant"
+      exit 0
+    fi
+    ;;
+esac
+exec "{real}" "$@"
+"##,
+        real = real.display(),
     );
+    let path = bin.join("git");
+    fs::write(&path, script).expect("write caller-aware Git shim");
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
+        .expect("make caller-aware Git shim executable");
+}
+
+#[cfg(unix)]
+struct DoctorGitReceiptGuard {
+    paths: Vec<PathBuf>,
+}
+
+#[cfg(unix)]
+impl DoctorGitReceiptGuard {
+    fn new(paths: Vec<PathBuf>) -> Self {
+        Self { paths }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for DoctorGitReceiptGuard {
+    fn drop(&mut self) {
+        for path in &self.paths {
+            let receipt = fs::read_to_string(path).unwrap_or_else(|_| "<empty>\n".to_owned());
+            eprintln!(
+                "DOCTOR_GIT_PROCESS_RECEIPT_BEGIN {}\n{}DOCTOR_GIT_PROCESS_RECEIPT_END",
+                path.display(),
+                receipt
+            );
+        }
+    }
+}
+
+#[cfg(unix)]
+struct DoctorGitFixtureGuard {
+    events: PathBuf,
+    owned: Vec<(u32, String)>,
+}
+
+#[cfg(unix)]
+impl DoctorGitFixtureGuard {
+    fn new(events: PathBuf) -> Self {
+        Self {
+            events,
+            owned: Vec::new(),
+        }
+    }
+
+    fn track_process(&mut self, pid: u32, label: &str) {
+        let identity = effigy_process::process_start_identity(pid)
+            .unwrap_or_else(|| panic!("read {label} process generation for PID {pid}"));
+        self.owned.push((pid, identity));
+    }
+
+    fn reap_recorded_processes(&mut self) {
+        if let Ok(contents) = fs::read_to_string(&self.events) {
+            for line in contents.lines() {
+                let Ok(event) = serde_json::from_str::<Value>(line) else {
+                    continue;
+                };
+                if let (Some(pid), Some(identity)) = (
+                    event["pid"]
+                        .as_u64()
+                        .and_then(|value| u32::try_from(value).ok()),
+                    event["start_identity"].as_str(),
+                ) {
+                    self.owned.push((pid, identity.to_owned()));
+                }
+                if let (Some(pid), Some(identity)) = (
+                    event["parent_pid"]
+                        .as_u64()
+                        .and_then(|value| u32::try_from(value).ok()),
+                    event["parent_start_identity"].as_str(),
+                ) {
+                    self.owned.push((pid, identity.to_owned()));
+                }
+            }
+        }
+        self.owned.sort();
+        self.owned.dedup();
+        for (pid, identity) in &self.owned {
+            if !effigy_process::process_start_identity_matches(*pid, identity) {
+                continue;
+            }
+            let Ok(pid_raw) = i32::try_from(*pid) else {
+                continue;
+            };
+            match nix::sys::signal::kill(
+                nix::unistd::Pid::from_raw(pid_raw),
+                nix::sys::signal::Signal::SIGKILL,
+            ) {
+                Ok(()) | Err(nix::errno::Errno::ESRCH) => {}
+                Err(error) => eprintln!("could not reap owned fixture PID {pid}: {error}"),
+            }
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while effigy_process::process_start_identity_matches(*pid, identity)
+                && Instant::now() < deadline
+            {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            if effigy_process::process_start_identity_matches(*pid, identity) {
+                eprintln!("owned fixture PID {pid} generation {identity} remained after cleanup");
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for DoctorGitFixtureGuard {
+    fn drop(&mut self) {
+        self.reap_recorded_processes();
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn doctor_git_timeout_process_fixture_child() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    let Ok(role) = std::env::var("EFFIGY_TEST_DOCTOR_FIXTURE_ROLE") else {
+        return;
+    };
     assert!(
-        invocations
-            .iter()
-            .all(|arguments| arguments.contains("--porcelain=v1")),
-        "shim readiness marker recorded a non-inventory Git command: {invocations:?}"
+        matches!(
+            role.as_str(),
+            "shim-observer" | "inventory-blocker" | "inventory-descendant"
+        ),
+        "unknown doctor Git fixture role {role}"
     );
+    let events = PathBuf::from(
+        std::env::var_os("EFFIGY_TEST_DOCTOR_GIT_FIXTURE_EVENTS").expect("fixture event path"),
+    );
+    let invocation =
+        std::env::var("EFFIGY_TEST_DOCTOR_GIT_INVOCATION").expect("fixture invocation");
+    let caller = std::env::var("EFFIGY_TEST_DOCTOR_GIT_CALLER")
+        .unwrap_or_else(|_| "unclassified".to_owned());
+    let caller_pid = std::env::var("EFFIGY_TEST_DOCTOR_GIT_CALLER_PID")
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok());
+    let args_json =
+        std::env::var("EFFIGY_TEST_DOCTOR_GIT_ARGS_JSON").unwrap_or_else(|_| "null".to_owned());
+    let ready = PathBuf::from(
+        std::env::var_os("EFFIGY_TEST_DOCTOR_FIXTURE_READY").expect("fixture ready path"),
+    );
+    let marker = std::env::var_os("EFFIGY_TEST_DOCTOR_FIXTURE_MARKER").map(PathBuf::from);
+    let terminated = Arc::new(AtomicBool::new(false));
+    if role == "inventory-descendant" {
+        signal_hook::flag::register(
+            nix::sys::signal::Signal::SIGTERM as i32,
+            Arc::clone(&terminated),
+        )
+        .expect("register fixture TERM observer");
+    }
+
+    let pid = std::process::id();
+    let pid_raw = i32::try_from(pid).expect("fixture PID fits process API");
+    let ppid = nix::unistd::getppid().as_raw();
+    let pgid = nix::unistd::getpgid(Some(nix::unistd::Pid::from_raw(pid_raw)))
+        .expect("read fixture PGID")
+        .as_raw();
+    let parent_pid = u32::try_from(ppid).expect("parent PID fits process API");
+    let start_identity = effigy_process::process_start_identity(pid)
+        .unwrap_or_else(|| panic!("read fixture process generation for PID {pid}"));
+    let parent_start_identity = effigy_process::process_start_identity(parent_pid)
+        .unwrap_or_else(|| panic!("read parent generation for PID {parent_pid}"));
+    let parent_pgid = nix::unistd::getpgid(Some(nix::unistd::Pid::from_raw(ppid)))
+        .expect("read parent PGID")
+        .as_raw();
+    let caller_evidence = caller_pid.map(|caller_pid| {
+        let caller_start_identity = effigy_process::process_start_identity(caller_pid)
+            .unwrap_or_else(|| panic!("read Git caller generation for PID {caller_pid}"));
+        let caller_pid_raw = i32::try_from(caller_pid).expect("caller PID fits process API");
+        let caller_pgid = nix::unistd::getpgid(Some(nix::unistd::Pid::from_raw(caller_pid_raw)))
+            .expect("read Git caller PGID")
+            .as_raw();
+        serde_json::json!({
+            "pid": caller_pid,
+            "pgid": caller_pgid,
+            "start_identity": caller_start_identity,
+        })
+    });
+    record_doctor_git_fixture_event(
+        &events,
+        serde_json::json!({
+            "invocation": invocation,
+            "event": "process_started",
+            "role": role,
+            "caller": caller,
+            "argv": serde_json::from_str::<Value>(&args_json).unwrap_or(Value::Null),
+            "argv_text": std::env::var("EFFIGY_TEST_DOCTOR_GIT_ARGS_TEXT").ok(),
+            "pid": pid,
+            "ppid": ppid,
+            "pgid": pgid,
+            "start_identity": start_identity,
+            "parent_pid": parent_pid,
+            "parent_pgid": parent_pgid,
+            "parent_start_identity": parent_start_identity,
+            "caller_process": caller_evidence,
+        }),
+    );
+    fs::write(&ready, b"ready\n").expect("publish process readiness after recording identity");
+    record_doctor_git_fixture_event(
+        &events,
+        serde_json::json!({
+            "invocation": invocation,
+            "event": "process_ready",
+            "role": role,
+            "pid": pid,
+        }),
+    );
+
+    match role.as_str() {
+        "shim-observer" => (),
+        "inventory-blocker" => std::thread::sleep(Duration::from_secs(12)),
+        "inventory-descendant" => {
+            let until = Instant::now() + Duration::from_secs(3);
+            while Instant::now() < until {
+                if terminated.swap(false, Ordering::AcqRel) {
+                    record_doctor_git_fixture_event(
+                        &events,
+                        serde_json::json!({
+                            "invocation": invocation,
+                            "event": "descendant_received_term",
+                            "role": role,
+                            "pid": pid,
+                        }),
+                    );
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            fs::write(
+                marker.expect("descendant marker path"),
+                format!("pid={pid} invocation={invocation}\n"),
+            )
+            .expect("write surviving descendant marker");
+        }
+        _ => unreachable!(),
+    }
+}
+
+#[cfg(unix)]
+fn record_doctor_git_fixture_event(path: &std::path::Path, event: Value) {
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .expect("open private process event receipt");
+    let mut line = serde_json::to_vec(&event).expect("serialize process event");
+    line.push(b'\n');
+    file.write_all(&line).expect("append process event");
+}
+
+#[cfg(unix)]
+fn assert_doctor_cli_process_evidence(
+    source_path: &std::path::Path,
+    fixture_path: &std::path::Path,
+    invocation: &str,
+    ready: &std::path::Path,
+) -> (u64, String) {
+    let source = fs::read_to_string(source_path).expect("read process source events");
+    let source_events = source
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).expect("source process event"))
+        .filter(|event| event["invocation"] == invocation)
+        .collect::<Vec<_>>();
+    let fixture = fs::read_to_string(fixture_path).expect("read private fixture events");
+    let fixture_events = fixture
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).expect("fixture process event"))
+        .filter(|event| event["invocation"] == invocation)
+        .collect::<Vec<_>>();
+    let observers = fixture_events
+        .iter()
+        .filter(|event| event["event"] == "process_started" && event["role"] == "shim-observer")
+        .collect::<Vec<_>>();
+    assert!(
+        !observers.is_empty(),
+        "no porcelain v1 caller entered shim: {fixture_events:?}"
+    );
+    for observer in &observers {
+        assert!(
+            observer["caller"] == "effigy-scan::execution::doctor_inventory::run_git_bounded"
+                || observer["caller"] == "effigy-codegraph::git::dirty_paths",
+            "unclassified production Git caller entered the shim: {observer:?}"
+        );
+        assert_eq!(observer["pgid"], observer["parent_pgid"]);
+        assert!(observer["parent_start_identity"].as_str().is_some());
+        assert!(observer["caller_process"]["pid"].as_u64().is_some());
+        assert!(observer["caller_process"]["pgid"].as_i64().is_some());
+        assert!(observer["caller_process"]["start_identity"]
+            .as_str()
+            .is_some());
+        if observer["caller"] == "effigy-codegraph::git::dirty_paths" {
+            assert_eq!(observer["caller_process"]["pgid"], observer["pgid"]);
+            assert_eq!(
+                observer["argv"],
+                serde_json::json!(["status", "--porcelain=v1", "-z", "--untracked-files=all"])
+            );
+        }
+    }
+    let inventory_observers = observers
+        .iter()
+        .filter(|event| {
+            event["caller"] == "effigy-scan::execution::doctor_inventory::run_git_bounded"
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        inventory_observers.len(),
+        1,
+        "inventory caller receipt: {observers:?}"
+    );
+    let observer = inventory_observers[0];
+    let leader_pid = observer["parent_pid"].as_u64().expect("shim leader PID");
+    let leader = source_events
+        .iter()
+        .find(|event| {
+            event["event"] == "leader_spawned"
+                && event["details"]["pid"].as_u64() == Some(leader_pid)
+        })
+        .expect("source receipt for exact inventory caller PID");
+    let leader_details = &leader["details"];
+    assert_eq!(leader_details["caller"], observer["caller"]);
+    assert_eq!(leader_details["args"], observer["argv"]);
+    let inventory_args = observer["argv"].as_array().expect("inventory argv");
+    assert_eq!(inventory_args.len(), 8);
+    assert_eq!(inventory_args[0], "-C");
+    assert_eq!(inventory_args[2], "status");
+    assert_eq!(inventory_args[3], "--porcelain=v1");
+    assert_eq!(inventory_args[4], "-z");
+    assert_eq!(inventory_args[5], "--untracked-files=all");
+    assert_eq!(inventory_args[6], "--");
+    assert_eq!(inventory_args[7], ".");
+    assert_eq!(
+        leader_details["ppid"], observer["caller_process"]["pid"],
+        "inventory source parent is the observed CLI caller"
+    );
+    assert_eq!(leader_details["pgid"].as_u64(), Some(leader_pid));
+    assert_eq!(observer["parent_pgid"].as_u64(), Some(leader_pid));
+    assert_ne!(
+        observer["caller_process"]["pgid"].as_u64(),
+        Some(leader_pid)
+    );
+    assert_eq!(leader_details["setpgid"]["return"].as_i64(), Some(0));
+    assert!(leader_details["setpgid"]["errno"].is_null());
+    assert!(leader_details["ppid"].as_u64().is_some());
+    assert!(
+        ready.exists(),
+        "inventory descendant was not ready before cleanup"
+    );
+
+    let leader_index = source_events
+        .iter()
+        .position(|event| {
+            event["event"] == "leader_spawned"
+                && event["details"]["pid"].as_u64() == Some(leader_pid)
+        })
+        .expect("leader spawn event");
+    let term_index = source_events
+        .iter()
+        .position(|event| event["event"] == "signal" && event["details"]["signal"] == "TERM")
+        .expect("TERM signal event");
+    let kill_index = source_events
+        .iter()
+        .position(|event| event["event"] == "signal" && event["details"]["signal"] == "KILL")
+        .expect("KILL signal event");
+    let reaped_index = source_events
+        .iter()
+        .position(|event| {
+            event["event"] == "leader_reaped"
+                && event["details"]["pid"].as_u64() == Some(leader_pid)
+        })
+        .expect("leader reaped event");
+    assert!(leader_index < term_index && term_index < kill_index && kill_index < reaped_index);
+    for index in [term_index, kill_index] {
+        let details = &source_events[index]["details"];
+        assert_eq!(
+            details["target"].as_i64(),
+            Some(-i64::try_from(leader_pid).unwrap())
+        );
+        assert_eq!(details["result"], "ok");
+        assert!(details["errno"].is_null());
+    }
+    assert_eq!(
+        source_events[term_index]["details"]["ready_at_signal"],
+        true
+    );
+    assert_eq!(
+        source_events[kill_index]["details"]["ready_at_signal"],
+        true
+    );
+    let reaped_status = &source_events[reaped_index]["details"]["status"];
+    assert!(reaped_status["code"].as_i64().is_some() || reaped_status["signal"].as_i64().is_some());
+    assert!(source_events[reaped_index]["details"]["errno"].is_null());
+    let descendant = fixture_events
+        .iter()
+        .find(|event| {
+            event["event"] == "process_started" && event["role"] == "inventory-descendant"
+        })
+        .expect("inventory descendant process generation");
+    assert_eq!(descendant["ppid"].as_u64(), Some(leader_pid));
+    assert_eq!(descendant["pgid"].as_u64(), Some(leader_pid));
+    assert_eq!(
+        descendant["parent_start_identity"],
+        observer["parent_start_identity"]
+    );
+    assert!(descendant["start_identity"].as_str().is_some());
+    assert!(fixture_events.iter().any(|event| {
+        event["event"] == "process_ready"
+            && event["role"] == "inventory-descendant"
+            && event["pid"] == descendant["pid"]
+    }));
+    assert!(fixture_events.iter().any(|event| {
+        event["event"] == "descendant_received_term" && event["role"] == "inventory-descendant"
+    }));
+    let leader_generation = observer["parent_start_identity"]
+        .as_str()
+        .expect("exact inventory leader generation")
+        .to_owned();
+    (leader_pid, leader_generation)
+}
+
+#[cfg(unix)]
+fn assert_doctor_cli_fixture_generations_reaped(
+    fixture_path: &std::path::Path,
+    invocation: &str,
+    leader_pid: u64,
+    leader_generation: &str,
+) {
+    let fixture = fs::read_to_string(fixture_path).expect("read private fixture events");
+    for event in fixture
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).expect("fixture process event"))
+        .filter(|event| event["invocation"] == invocation)
+        .filter(|event| event["event"] == "process_started")
+    {
+        let pid = event["pid"].as_u64().expect("fixture process PID");
+        let pid = u32::try_from(pid).expect("fixture PID fits process API");
+        let identity = event["start_identity"]
+            .as_str()
+            .expect("fixture process generation");
+        assert!(
+            !effigy_process::process_start_identity_matches(pid, identity),
+            "fixture process {pid} generation {identity} survived cleanup"
+        );
+    }
+    assert!(!effigy_process::process_start_identity_matches(
+        u32::try_from(leader_pid).expect("leader PID fits process API"),
+        leader_generation
+    ));
 }
 
 #[test]
