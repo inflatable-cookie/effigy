@@ -17,11 +17,26 @@ During v0.x, MINOR bumps may include breaking changes.
   legacy/unknown handling, and fixed HOME/path target binding are unchanged.
 
 ### Added
+- `effigy gateway recover` restores an ordinary upgrade past a live
+  pre-identity gateway. It captures the trusted legacy PID/version pair,
+  holds `gateway.transition.lock` for `up`/`down`/`recover`, inspects a live
+  candidate through the bounded elevated `__gateway-legacy-candidate` reader
+  (canonical live path, kernel UID, boot, precise start, UDP 15353 plus TCP
+  80/443 role sockets), requires interactive digest consent (`--yes` cannot
+  adopt), and stops only that adopted generation through
+  `__gateway-legacy-stop` with per-signal revalidation. Confirmed selected-
+  generation absence then compare-and-removes the unchanged records and
+  releases the lock before a normal `gateway up`. Managed and container
+  auto-start still refuse a legacy record and point at recover. The local
+  installer stages owner-only `effigy.previous` plus `.version` as evidence;
+  recover never executes it. Live role evidence is not historical spawn
+  proof; the last check-to-signal interval remains a disclosed TOCTOU.
 - Gateway lifecycle commands now identify a numeric-only pre-identity record
   as requiring operator migration, distinct from an unavailable process
-  probe. They preserve its files and refuse to signal, clear, or replace it;
-  the recovery guidance accounts for the previous executable already being
-  replaced and requires independently confirming the daemon is stopped.
+  probe. They preserve its files and refuse to signal, clear, or replace it
+  from `up`/`down` or managed auto-start; `effigy gateway recover` is the
+  supported consumer path, including when the previous executable was already
+  replaced.
 - `effigy release:verify-install` is a maintained heavy-admission selector for
   Effigy's post-publication tagged-source install proof. Invoke it through
   `./target/debug/effigy`; it runs the fixed child command

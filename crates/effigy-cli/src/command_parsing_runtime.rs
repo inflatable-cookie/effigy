@@ -26,14 +26,29 @@ where
         "down" => GatewaySubcommand::Down,
         "status" => GatewaySubcommand::Status,
         "repair" => GatewaySubcommand::Repair { yes: false },
+        "recover" => GatewaySubcommand::Recover {
+            yes: false,
+            adopt_candidate: false,
+        },
         "setup-tls" => GatewaySubcommand::SetupTls,
         other => return Err(unknown_argument(other)),
     };
 
+    let mut adopt_candidate = false;
     for arg in args {
         match arg.as_str() {
             "--json" => output_json = true,
-            "--yes" if matches!(subcommand, GatewaySubcommand::Repair { .. }) => yes = true,
+            "--yes"
+                if matches!(
+                    subcommand,
+                    GatewaySubcommand::Repair { .. } | GatewaySubcommand::Recover { .. }
+                ) =>
+            {
+                yes = true
+            }
+            "--adopt-candidate" if matches!(subcommand, GatewaySubcommand::Recover { .. }) => {
+                adopt_candidate = true
+            }
             "--help" | "-h" => return Ok(Command::Help(HelpTopic::Gateway)),
             other => return Err(unknown_argument(other)),
         }
@@ -41,6 +56,12 @@ where
 
     if matches!(subcommand, GatewaySubcommand::Repair { .. }) {
         subcommand = GatewaySubcommand::Repair { yes };
+    }
+    if matches!(subcommand, GatewaySubcommand::Recover { .. }) {
+        subcommand = GatewaySubcommand::Recover {
+            yes,
+            adopt_candidate,
+        };
     }
 
     Ok(Command::Gateway(GatewayArgs {

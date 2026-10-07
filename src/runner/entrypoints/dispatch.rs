@@ -21,6 +21,8 @@ use super::super::run_graph;
 use super::super::run_internal_container_lease_reaper;
 use super::super::run_internal_gateway;
 use super::super::run_internal_gateway_identity;
+use super::super::run_internal_gateway_legacy_candidate;
+use super::super::run_internal_gateway_legacy_stop;
 use super::super::run_internal_host_process_stop;
 use super::super::run_internal_host_process_supervise;
 use super::super::run_internal_script_run;
@@ -127,6 +129,10 @@ pub(super) fn run_command_with_cwd(cmd: Command, cwd: &Path) -> Result<String, R
         }
         Command::InternalGateway(args) => run_internal_gateway(args),
         Command::InternalGatewayIdentity(args) => run_internal_gateway_identity(args),
+        Command::InternalGatewayLegacyCandidate(args) => {
+            run_internal_gateway_legacy_candidate(args)
+        }
+        Command::InternalGatewayLegacyStop(args) => run_internal_gateway_legacy_stop(args),
         Command::InternalScriptRun(args) => run_internal_script_run(args),
         Command::InternalContainerLeaseReaper(args) => run_internal_container_lease_reaper(args),
         Command::InternalHostProcessSupervise(args) => run_internal_host_process_supervise(args),

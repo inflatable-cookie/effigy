@@ -31,11 +31,11 @@ use crate::command_surface;
 use crate::{
     BundleArgs, BundleSubcommand, Command, ContractsArgs, ContractsCheckMode,
     ContractsSelectionPrintMode, ContractsSubcommand, DeferArgs, DepsArgs, DepsManager,
-    DepsSubcommand, DoctorArgs, DraftArgs, DraftsArgs, HelpGroup, HelpTopic,
-    InternalContainerLeaseReaperArgs, InternalGatewayArgs, InternalGatewayIdentityArgs,
-    InternalHostProcessStopArgs, InternalHostProcessSuperviseArgs, InternalScriptRunArgs, RhaiArgs,
-    RhaiSubcommand, SkillArgs, SkillStdioMode, SkillSubcommand, TaskInvocation, TasksArgs,
-    TasksQaCommand, UninstallArgs,
+    DepsSubcommand, DoctorArgs, DraftArgs, DraftsArgs, GatewayLegacyStopPhase, HelpGroup,
+    HelpTopic, InternalContainerLeaseReaperArgs, InternalGatewayArgs, InternalGatewayIdentityArgs,
+    InternalGatewayLegacyCandidateArgs, InternalGatewayLegacyStopArgs, InternalHostProcessStopArgs,
+    InternalHostProcessSuperviseArgs, InternalScriptRunArgs, RhaiArgs, RhaiSubcommand, SkillArgs,
+    SkillStdioMode, SkillSubcommand, TaskInvocation, TasksArgs, TasksQaCommand, UninstallArgs,
 };
 use artifact::parse_artifact_command;
 use bootstrap::parse_bootstrap_command;
@@ -102,6 +102,8 @@ where
         "script" => parse_internal_script_command(args),
         "__gateway-run" => Ok(Command::InternalGateway(InternalGatewayArgs)),
         "__gateway-identity" => parse_internal_gateway_identity_command(args),
+        "__gateway-legacy-candidate" => parse_internal_gateway_legacy_candidate_command(args),
+        "__gateway-legacy-stop" => parse_internal_gateway_legacy_stop_command(args),
         "__container-lease-reaper" => parse_internal_container_lease_reaper_command(args),
         "__host-process-supervise" => parse_internal_host_process_supervise_command(args),
         "__host-process-stop" => parse_internal_host_process_stop_command(args),
@@ -169,6 +171,157 @@ where
             digest,
             target_digest,
             owner_uid,
+        },
+    ))
+}
+
+fn parse_hex64_flag<I>(
+    args: &mut I,
+    flag: &str,
+    dest: &mut Option<String>,
+) -> Result<(), CliParseError>
+where
+    I: Iterator<Item = String>,
+{
+    if dest.is_some() {
+        return Err(unknown_argument(flag));
+    }
+    let value = next_required_value(
+        args,
+        CliParseError::InvalidArguments(format!("missing value for {flag}")),
+    )?;
+    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(CliParseError::InvalidArguments(format!(
+            "{flag} must be 64 hexadecimal characters"
+        )));
+    }
+    *dest = Some(value.to_ascii_lowercase());
+    Ok(())
+}
+
+fn parse_uid_flag<I>(args: &mut I, flag: &str, dest: &mut Option<u32>) -> Result<(), CliParseError>
+where
+    I: Iterator<Item = String>,
+{
+    if dest.is_some() {
+        return Err(unknown_argument(flag));
+    }
+    let value = next_required_value(
+        args,
+        CliParseError::InvalidArguments(format!("missing value for {flag}")),
+    )?;
+    *dest = Some(value.parse::<u32>().map_err(|_| {
+        CliParseError::InvalidArguments(format!("{flag} must be an unsigned integer"))
+    })?);
+    Ok(())
+}
+
+fn parse_internal_gateway_legacy_candidate_command<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut target_digest = None;
+    let mut record_digest = None;
+    let mut owner_uid = None;
+    let mut directory_owner_uid = None;
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--target-digest" => {
+                parse_hex64_flag(&mut args, "--target-digest", &mut target_digest)?
+            }
+            "--record-digest" => {
+                parse_hex64_flag(&mut args, "--record-digest", &mut record_digest)?
+            }
+            "--owner-uid" => parse_uid_flag(&mut args, "--owner-uid", &mut owner_uid)?,
+            "--directory-owner-uid" => {
+                parse_uid_flag(&mut args, "--directory-owner-uid", &mut directory_owner_uid)?
+            }
+            _ => return Err(unknown_argument(&arg)),
+        }
+    }
+    let (Some(target_digest), Some(record_digest), Some(owner_uid), Some(directory_owner_uid)) =
+        (target_digest, record_digest, owner_uid, directory_owner_uid)
+    else {
+        return Err(CliParseError::InvalidArguments(
+            "__gateway-legacy-candidate requires --target-digest, --record-digest, --owner-uid, and --directory-owner-uid".to_owned(),
+        ));
+    };
+    Ok(Command::InternalGatewayLegacyCandidate(
+        InternalGatewayLegacyCandidateArgs {
+            target_digest,
+            record_digest,
+            owner_uid,
+            directory_owner_uid,
+        },
+    ))
+}
+
+fn parse_internal_gateway_legacy_stop_command<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut target_digest = None;
+    let mut record_digest = None;
+    let mut owner_uid = None;
+    let mut candidate_digest = None;
+    let mut phase = None;
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--target-digest" => {
+                parse_hex64_flag(&mut args, "--target-digest", &mut target_digest)?
+            }
+            "--record-digest" => {
+                parse_hex64_flag(&mut args, "--record-digest", &mut record_digest)?
+            }
+            "--owner-uid" => parse_uid_flag(&mut args, "--owner-uid", &mut owner_uid)?,
+            "--candidate-digest" => {
+                parse_hex64_flag(&mut args, "--candidate-digest", &mut candidate_digest)?
+            }
+            "--phase" if phase.is_none() => {
+                let value = next_required_value(
+                    &mut args,
+                    CliParseError::InvalidArguments("missing value for --phase".to_owned()),
+                )?;
+                phase = Some(match value.as_str() {
+                    "term" => GatewayLegacyStopPhase::Term,
+                    "kill" => GatewayLegacyStopPhase::Kill,
+                    _ => {
+                        return Err(CliParseError::InvalidArguments(
+                            "--phase must be term or kill".to_owned(),
+                        ));
+                    }
+                });
+            }
+            _ => return Err(unknown_argument(&arg)),
+        }
+    }
+    let (
+        Some(target_digest),
+        Some(record_digest),
+        Some(owner_uid),
+        Some(candidate_digest),
+        Some(phase),
+    ) = (
+        target_digest,
+        record_digest,
+        owner_uid,
+        candidate_digest,
+        phase,
+    )
+    else {
+        return Err(CliParseError::InvalidArguments(
+            "__gateway-legacy-stop requires --target-digest, --record-digest, --owner-uid, --candidate-digest, and --phase".to_owned(),
+        ));
+    };
+    Ok(Command::InternalGatewayLegacyStop(
+        InternalGatewayLegacyStopArgs {
+            target_digest,
+            record_digest,
+            owner_uid,
+            candidate_digest,
+            phase,
         },
     ))
 }

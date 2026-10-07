@@ -1,14 +1,14 @@
-# 034 - Gateway Legacy Upgrade and Recovery (Proposed)
+# 034 - Gateway Legacy Upgrade and Recovery
 
-Status: proposed and unavailable until implementation. No `effigy gateway
-recover` entrypoint, legacy-candidate reader or generation-bound stop exists
-today. The published `v0.14.0` tag cannot complete the path at all: it rejects
-the operator-owned gateway directory during elevation and reports
-`ProcessStateUnknown` for a record with no sidecar. Main `4201e0b3` (tasks 113
-and 112, PR228/PR229) corrects the directory check and adds the distinct
-`LegacyIdentityRequired` migration error, but still has no recovery entrypoint.
-The candidate-inspection and generation-bound stop below are approved for implementation under the
-[operator ruling](#operator-ruling); they remain unavailable until implemented. See
+Status: implemented on corrected main. `effigy gateway recover`, the bounded
+read-only `__gateway-legacy-candidate` reader, and generation-bound
+`__gateway-legacy-stop` are available. The published `v0.14.0` tag still cannot
+complete the path: it rejects the operator-owned gateway directory during
+elevation and reports `ProcessStateUnknown` for a record with no sidecar. Main
+`4201e0b3` (tasks 113 and 112, PR228/PR229) corrected the directory check and
+added `LegacyIdentityRequired`; this document's recovery protocol sits on that
+base. Residual limits in [Residual limits](#residual-limits-and-material-rulings)
+remain in force, including the disclosed last check-to-signal TOCTOU. See
 [020](020-container-infrastructure-design.md#gateway-process-identity) and
 [guide 083](../../guides/083-v0.14.0-consumer-migration.md).
 
@@ -24,10 +24,9 @@ authority is granted here. Nothing below authorizes a blind numeric-only signal.
 ## Purpose and boundary
 
 Upgrading an active pre-identity gateway must not strand the user. This document
-defines the fallback that current ownership policy already permits, a complete
-contingent candidate-inspection and generation-bound stop protocol that would
-finish the consumer path under the operator ruling, and its exact authority
-boundary. It is a design for a bounded implementation task, not an implementation.
+defines confirmed-absence recover, the candidate-inspection and generation-bound
+stop protocol that finishes the consumer path under the operator ruling, and its
+exact authority boundary.
 
 Hard boundaries:
 
@@ -51,7 +50,7 @@ Three different products are in scope. Do not mix them.
 | --- | --- | --- | --- |
 | Published `v0.14.0` tag | Rejects the operator-owned directory (`gateway directory is unsafe`) | `ProcessStateUnknown { pid }` | None. Cannot complete a legacy upgrade |
 | Main `4201e0b3` (tasks 113 + 112, PR228/PR229) | Accepts the authenticated operator-owned directory | `LegacyIdentityRequired { pid }` after a read-only probe; `ProcessStateUnknown` when the probe is unknown | None |
-| Proposed (this document, target corrected release) | Same as main | `LegacyIdentityRequired` plus a structured recovery payload | `effigy gateway recover` and the contingent inspection/stop protocol |
+| Corrected main (this document) | Same as main | `LegacyIdentityRequired` plus a structured recovery payload | `effigy gateway recover` and the inspection/stop protocol |
 
 The published `v0.14.0` binary is the one consumers have. Its start path stays
 broken even after records clear, so no current CLI on that binary can finish the
@@ -60,7 +59,7 @@ release that carries the directory correction and the new entrypoint.
 
 ## Current truth versus proposal
 
-| Concern | Current truth | Proposal in this document |
+| Concern | Published / pre-recovery main | This document (implemented) |
 | --- | --- | --- |
 | Legacy numeric-only record | Published `v0.14.0`: `ProcessStateUnknown`. Main `4201e0b3`: `LegacyIdentityRequired`; records preserved; no signal | Keep the fail-closed refusal; add a structured recovery payload |
 | Stopping the old daemon | No CLI signal path; main's guidance requires an operator-controlled stop with independently confirmed executable and owner | Fallback: operator stop + verify + clean + start. Contingent: bounded candidate inspection then a generation-bound stop |
@@ -112,10 +111,9 @@ byte-unchanged. This was a *one-host transition with independently confirmed
 executable and owner*. It is not a general exception for numeric-only signals
 and it is not the consumer flow.
 
-The gap the outcome requires closing: an ordinary user with an overwritten
-binary and an elevated legacy daemon has no supported way to confirm and stop
-it. The contingent protocol below is the design that closes it; it is not
-implemented and not authorized yet.
+The gap the outcome required closing: an ordinary user with an overwritten
+binary and an elevated legacy daemon had no supported way to confirm and stop
+it. The protocol below is the implemented consumer path.
 
 ## Public channel assessment
 
@@ -128,7 +126,7 @@ to change channels is claimed here.
 | GitHub Release `v0.14.0` | Published tag with a gateway warning in its body | Explicit downloads still possible; must not be deleted or re-tagged |
 | Homebrew tap `Formula/effigy.rb` | Restored to the exact v0.13.1 formula at `c7fa8c55597947c079def106c99f8dc2cdcd8305` (parent `c2045dc59` = the 0.14.0 bump; original v0.13.1 formula `27a79c277`) | `brew install` gets 0.13.1 again; existing 0.14.0 kegs are not silently downgraded |
 | `cargo install` from tag / direct binary download | `v0.14.0` tag and assets remain | Unprotected; only the release-body warning applies |
-| Local `bootstrap:local` install | `build-local-bin.rhai` `mv`s over `.local-install/bin/effigy`, writes `effigy.active-version` | No previous binary kept |
+| Local `bootstrap:local` install | `build-local-bin.rhai` stages owner-only `effigy.previous` + `.version` before `mv` over `.local-install/bin/effigy` | Previous binary is evidence/rollback only; recover never executes it |
 | Existing `v0.14.0` installs | Running binary unchanged | Not protected by channel changes; need the patch |
 
 Homebrew digests were compared against the v0.13.1 asset metadata and read back
@@ -188,15 +186,16 @@ Compatibility record. Source read at tag `v0.13.1` (`d186388fc`):
   recovery lock.
 
 Consequences: a delegated v0.13.1 stop cannot preserve records on an unknown
-probe, cannot serialize with the proposed recovery, cannot bind a generation,
+probe, cannot serialize with recovery, cannot bind a generation,
 and can remove resolver state.
 
-## Proposed flow
+## Recovery flow
 
-### Fallback supported within current policy: operator-verified recovery
+### Confirmed-absence recover
 
 `effigy gateway recover` performs the parts the CLI can prove and refuses the
-rest. It never signals, and the operator stops the daemon outside the CLI.
+rest. The confirmed-absence path never signals. A still-running daemon uses
+the inspection and generation-bound stop below.
 
 1. Capture the record (see [Legacy record capture](#legacy-record-capture)).
    Refuse on unknown/untrusted.
@@ -216,10 +215,9 @@ rest. It never signals, and the operator stops the daemon outside the CLI.
 6. Release the transition lock, then start through the normal elevated start
    (see [Locking](#locking)).
 
-The fallback is implementable now, but it does not close the outcome for an
-ordinary user: step 4's `Running` case still requires host process management an
-unelevated user may not be able to perform. The contingent protocol below is the
-route that closes it.
+The confirmed-absence path is the recover flow when the recorded PID is already
+gone. A still-running daemon uses the inspection and generation-bound stop
+below.
 
 ### Legacy record capture
 
@@ -243,9 +241,9 @@ previously captured PID whose records vanish mid-operation is treated as
 changed; the operation refuses and re-runs. Partial records (one of
 pid/version) are unknown, not inferred.
 
-### Contingent: bounded candidate inspection
+### Bounded candidate inspection
 
-Approved for implementation; unimplemented.
+Implemented.
 
 **Reader surface.** A hidden, bounded, read-only `__gateway-legacy-candidate`
 command invoked through the existing administrator elevation (`/usr/bin/sudo` or
@@ -326,7 +324,7 @@ cannot prove historical spawn ownership, that the process is not a same-path
 impostor, or that the live image equals the recorded version. The role predicate
 plus owner/boot/start is the live evidence; adoption is permission, not proof.
 
-### Contingent: consent and generation binding
+### Consent and generation binding
 
 1. `recover` invokes the reader for the captured record. Refuse on
    declined/unavailable/timeout/malformed, UID outside the allowed policy,
@@ -339,10 +337,9 @@ plus owner/boot/start is the live evidence; adoption is permission, not proof.
    `candidate_uid`, `boot_identity`, `start_identity`, `executable_path_digest`
    and `role_digest`. Adoption targets exactly this digest.
 
-### Contingent: generation-bound stop surface
+### Generation-bound stop surface
 
-Approved for implementation; unimplemented. This is a separate signal capability, not part of
-the reader.
+Implemented. This is a separate signal capability, not part of the reader.
 
 `__gateway-legacy-stop` (hidden), invoked through the same elevation, accepts
 only these fixed arguments:
@@ -402,10 +399,9 @@ participate in the transition lock. It is rejected, not laundered.
 
 ### Installer preservation
 
-The local installer should still stage the replaced binary as an owner-only
+The local installer stages the replaced binary as an owner-only
 `effigy.previous` + `effigy.previous.version` before activation, as evidence and
-rollback. It is not signal authority and the contingent protocol does not need
-it.
+rollback. It is not signal authority and recover never executes it.
 
 ## Locking
 
@@ -415,7 +411,7 @@ is held only briefly inside `publish_current_gateway` and `remove_if_unchanged`
 command, so it cannot serialize commands. The daemon's publication takes it
 briefly.
 
-Proposed change, implemented in the same change:
+Implemented locking:
 
 - Add an owner-only **transition lock** (`gateway.transition.lock`), held for the
   whole command by `up`, `down` and `recover`.
@@ -460,7 +456,7 @@ process that does not participate.
 | `effigy gateway up`, `down` | Unchanged fail-closed refusal for legacy records; message points at `recover` |
 | `effigy gateway recover [--json]` | Fallback: verify + clean + start. Contingent `--adopt-candidate`: inspect, consent, generation-bound stop, clean, start. No blind numeric signal path |
 | `__gateway-legacy-candidate` (hidden) | Bounded read-only elevated reader. No signal, no write, no start |
-| `__gateway-legacy-stop` (hidden) | Bounded generation-bound elevated signal handler. Only TERM/KILL of the adopted generation. Approved for implementation; unavailable |
+| `__gateway-legacy-stop` (hidden) | Bounded generation-bound elevated signal handler. Only TERM/KILL of the adopted generation |
 | `gateway_up_for_managed_task` and managed `dev` auto-start | Detect a legacy record, surface the `recover` pointer, refuse auto-start; no auto-recovery |
 | Container activation auto-start | Same refusal; never a best-effort stop |
 
@@ -592,37 +588,36 @@ no-defects claim:
 
 ## Implementation plan
 
-Minimal, bounded. Source unchanged by this assessment; the implementation task
-owns these edits under the operator ruling; this assessment implements none of them.
+Landed on corrected main under the operator ruling. Residual limits below remain.
 
 | Area | Owner | Change |
 | --- | --- | --- |
-| Diagnostics | main `4201e0b3` (task 112) | `LegacyIdentityRequired`, preserved records; the proposal adds the structured payload |
-| Elevated owner trust | main `4201e0b3` (task 113) | Prerequisite for the start; no work in this task |
-| Transition lock | gateway runner | Add `gateway.transition.lock`; hold in `up`/`down`/`recover`; inner record lock unchanged |
-| Fallback entrypoint | gateway runner | `effigy gateway recover`: consent, transition lock, probe, confirmed-absence gate, compare-and-remove, release + start |
-| Contingent reader | gateway runner | `__gateway-legacy-candidate`, bounded read-only elevated role/owner/boot/start/path reader |
-| Contingent stop | gateway runner | `__gateway-legacy-stop`, fixed-arg generation-bound TERM/KILL handler |
+| Diagnostics | main `4201e0b3` (task 112) plus this implementation | `LegacyIdentityRequired`, preserved records, structured recovery payload |
+| Elevated owner trust | main `4201e0b3` (task 113) | Prerequisite for the start |
+| Transition lock | gateway runner | `gateway.transition.lock`; hold in `up`/`down`/`recover`; inner record lock unchanged |
+| Recover entrypoint | gateway runner | `effigy gateway recover`: consent, transition lock, probe, confirmed-absence gate, compare-and-remove, release + start |
+| Candidate reader | gateway runner | `__gateway-legacy-candidate`, bounded read-only elevated role/owner/boot/start/path reader |
+| Generation-bound stop | gateway runner | `__gateway-legacy-stop`, fixed-arg generation-bound TERM/KILL handler |
 | Installer | `scripts/build-local-bin.rhai` | Stage `effigy.previous` + `.version` before activation, evidence/rollback only |
-| Selectors | `config/tasks.toml` | `test:gateway:legacy-recovery`, `check:gateway:legacy-recovery`, `test:install:previous-binary-preservation`; extend `qa:docs:gateway-identity` |
+| Selectors | `config/tasks.toml` | `test:gateway:legacy-recovery`, `check:gateway:legacy-recovery`, `test:install:previous-binary-preservation`; `qa:docs:gateway-identity` |
 
 Testing: private fixtures only, fresh `mktemp -d`, recording seams, real owned
-children, no live daemon, no install, no network. Suggested selectors:
+children, no live daemon, no install, no network. Maintained selectors:
 
-- `effigy test:gateway:identity` and `effigy check:gateway:identity` (existing).
-- `effigy test:gateway:legacy-recovery` and `check:gateway:legacy-recovery` (new).
-- `effigy test:gateway:probe-state`, `test:gateway:pid-domain` (existing refusal proofs).
+- `effigy test:gateway:legacy-recovery` and `check:gateway:legacy-recovery`.
+- `effigy test:install:previous-binary-preservation`.
 - `effigy qa:docs:gateway-identity` and `effigy fmt:check`.
+- Existing `test:gateway:identity`, `test:gateway:probe-state`, `test:gateway:pid-domain` remain for the sidecar/refusal proofs.
 
 Rollback: the transition lock, recovery entrypoint, structured payload,
-contingent reader/stop and installer backup are additive; reverting the
-implementation commit restores current fail-closed behavior. No data migration.
+reader/stop and installer backup are additive; reverting the implementation
+commit restores prior fail-closed behavior. No data migration.
 
 Patch runway: a PATCH release carrying the directory/diagnostic corrections
-from main plus the fallback flow and installer preservation; the contingent
-protocol is approved for implementation. Publication requires a separate operator
-ruling. After tagged-source and install proof, re-pin
-`latest` and the Homebrew formula in one formula commit. Do not touch the
+from main plus recover, the generation-bound stop, and installer preservation.
+Publication requires a separate operator ruling. After tagged-source and
+install proof, re-pin `latest` and the Homebrew formula in one formula commit.
+Do not touch the
 `v0.14.0` tag, assets or workflows.
 
 ## Operator ruling
@@ -631,8 +626,7 @@ On 2026-10-07, Tom answered **"Go for it"** to decision
 `6af855c8-bbc4-490a-a371-f3cf63a964bb`, approving implementation and independent
 review of both bounded capabilities below. This grants no publication, tag,
 workflow, global installation, live gateway, VM, chown, purge or Queue-unpause
-authority. The protocol remains proposed and unimplemented. The two-part
-approval does **not** authorize a signal without the specified live evidence:
+authority. The two-part approval does **not** authorize a signal without the specified live evidence:
 
 > 1. Authorize a bounded, read-only elevated `__gateway-legacy-candidate` reader
 >    for the recorded legacy PID. It accepts only the canonical target digest,
@@ -653,15 +647,15 @@ private proofs. It does not authorize a blind numeric signal, general
 previous-binary delegation, fabricated sidecar, arbitrary-target helper or
 standing privilege. Live role evidence does not prove historical spawn ownership
 or eliminate a same-path impostor; the last identity-check-to-signal race remains
-explicitly disclosed. Neither capability is available until implementation.
+explicitly disclosed. Both capabilities are implemented as specified. Residual limits below still apply.
 
 ## Residual limits and material rulings
 
-- Offline, overwritten, local-build records are reachable through the fallback;
+- Offline, overwritten, local-build records are reachable through recover;
   the CLI needs no network and no previous binary.
-- The fallback's `Running` case still needs operator host-process management; an
-  unelevated user may not be able to read an elevated daemon's identity. This is
-  the gap the contingent ruling closes.
+- A still-running elevated daemon is inspected and stopped only through the
+  bounded reader and generation-bound stop. Unelevated host process management
+  is no longer the required consumer path.
 - The numeric-only record still confers no ownership proof. The contingent
   protocol supplies live role/owner/boot/start evidence; the fallback relies on
   the operator's independent confirmation.
@@ -680,17 +674,17 @@ explicitly disclosed. Neither capability is available until implementation.
 
 | Brief requirement | Section |
 | --- | --- |
-| v0.13 active → upgrade → start path | [Failure](#failure), [Proposed flow](#proposed-flow) |
+| v0.13 active → upgrade → start path | [Failure](#failure), [Recovery flow](#recovery-flow) |
 | Already-upgraded recovery | [Version and state scoping](#version-and-state-scoping), [Error and edge matrix](#error-and-edge-matrix) |
 | Legacy record capture | [Legacy record capture](#legacy-record-capture) |
-| Concrete candidate-inspection route | [Contingent: bounded candidate inspection](#contingent-bounded-candidate-inspection) |
-| Daemon role evidence | [Contingent: bounded candidate inspection](#contingent-bounded-candidate-inspection) (role predicate, platform API proof) |
-| Owner policy | [Contingent: bounded candidate inspection](#contingent-bounded-candidate-inspection) (allowed daemon owner policy) |
-| Stop surface | [Contingent: generation-bound stop surface](#contingent-generation-bound-stop-surface) |
+| Concrete candidate-inspection route | [Bounded candidate inspection](#bounded-candidate-inspection) |
+| Daemon role evidence | [Bounded candidate inspection](#bounded-candidate-inspection) (role predicate, platform API proof) |
+| Owner policy | [Bounded candidate inspection](#bounded-candidate-inspection) (allowed daemon owner policy) |
+| Stop surface | [Generation-bound stop surface](#generation-bound-stop-surface) |
 | Exact entrypoints, privilege, consent | [Entrypoints](#entrypoints-and-consent-contract), [Privilege](#privilege-contract) |
 | Locking / non-reentrant start | [Locking](#locking) |
 | Missing record / crash treatment | [Missing record and crash treatment](#missing-record-and-crash-treatment) |
 | Private proof plan | [Private proofs](#private-proofs) |
 | Selectors + implementation/testing/rollback/patch | [Implementation plan](#implementation-plan) |
 | Residual limits and material ruling | [Operator ruling](#operator-ruling), [Residual limits](#residual-limits-and-material-rulings) |
-| Source unchanged; architecture/guidance corrected | This document; [020](020-container-infrastructure-design.md#gateway-process-identity); [083](../../guides/083-v0.14.0-consumer-migration.md) |
+| Implementation plus architecture/guidance | This document; [020](020-container-infrastructure-design.md#gateway-process-identity); [083](../../guides/083-v0.14.0-consumer-migration.md) |

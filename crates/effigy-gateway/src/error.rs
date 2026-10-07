@@ -131,9 +131,15 @@ pub enum GatewayError {
 
     /// A numeric-only gateway record cannot authenticate its process.
     #[error(
-        "legacy gateway identity migration required for PID {pid}: `gateway.identity` is missing. Effigy cannot verify or signal this process, remove its records, or start a replacement. Stop the old daemon only through an operator-controlled procedure that independently confirms its executable and owner; the previous executable may already have been replaced and is not guaranteed to be available. After confirming the daemon is stopped, remove the legacy `gateway.pid` and `gateway.version` records, then run `effigy gateway up`. If you cannot verify and stop it safely, leave the records untouched and ask the host administrator."
+        "legacy gateway identity migration required for PID {pid}: `gateway.identity` is missing. Effigy cannot verify or signal this process, remove its records, or start a replacement from `up`/`down` or managed auto-start. Run `effigy gateway recover` from an interactive terminal (add `--adopt-candidate` to inspect a live daemon and confirm its generation). The previous executable may already have been replaced and is not used as signal authority. If you cannot verify and stop it safely, leave the records untouched and ask the host administrator."
     )]
     LegacyIdentityRequired { pid: u32 },
+
+    /// Another `gateway up`, `down`, or `recover` holds the transition lock.
+    #[error(
+        "another gateway up, down, or recover command holds the transition lock; retry when that command finishes"
+    )]
+    TransitionLockHeld,
 
     /// Resolver suffix is invalid.
     #[error("resolver suffix `{suffix}` is invalid: {reason}")]

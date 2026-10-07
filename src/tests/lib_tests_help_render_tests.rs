@@ -309,6 +309,7 @@ fn render_gateway_help_shows_lifecycle_examples() {
     assert!(rendered.contains("effigy gateway up"));
     assert!(rendered.contains("effigy gateway down"));
     assert!(rendered.contains("effigy gateway status"));
+    assert!(rendered.contains("effigy gateway recover --adopt-candidate"));
     assert!(rendered.contains("effigy gateway setup-tls"));
     assert!(rendered.contains("/etc/resolver/test"));
 }

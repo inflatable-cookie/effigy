@@ -4,6 +4,7 @@ use std::process::Command as ProcessCommand;
 
 use effigy_cli::{
     GatewayArgs, GatewaySubcommand, InternalGatewayArgs, InternalGatewayIdentityArgs,
+    InternalGatewayLegacyCandidateArgs, InternalGatewayLegacyStopArgs,
 };
 use effigy_containers::exec::list_running_compose_containers;
 use effigy_gateway::identity::{self, GatewayIdentityProbe, GatewayRecordSnapshot};
@@ -33,6 +34,7 @@ use elevation::{
 
 mod daemon;
 mod elevation;
+mod recover;
 
 pub(super) const GATEWAY_DIR_NAME: &str = ".effigy/gateway";
 pub(super) const GATEWAY_ESCALATED_ENV: &str = "EFFIGY_GATEWAY_ESCALATED";
@@ -82,6 +84,10 @@ pub(super) fn run_gateway(args: GatewayArgs) -> Result<String, RunnerError> {
         GatewaySubcommand::Down => run_gateway_down(args.output_json),
         GatewaySubcommand::Status => run_gateway_status(args.output_json),
         GatewaySubcommand::Repair { yes } => run_gateway_repair(yes, args.output_json),
+        GatewaySubcommand::Recover {
+            yes,
+            adopt_candidate,
+        } => recover::run_gateway_recover(yes, adopt_candidate, args.output_json),
         GatewaySubcommand::SetupTls => run_gateway_setup_tls(args.output_json),
     }
 }
@@ -171,6 +177,18 @@ pub(super) fn run_internal_gateway_identity(
     ))
 }
 
+pub(super) fn run_internal_gateway_legacy_candidate(
+    args: InternalGatewayLegacyCandidateArgs,
+) -> Result<String, RunnerError> {
+    recover::run_internal_gateway_legacy_candidate(args)
+}
+
+pub(super) fn run_internal_gateway_legacy_stop(
+    args: InternalGatewayLegacyStopArgs,
+) -> Result<String, RunnerError> {
+    recover::run_internal_gateway_legacy_stop(args)
+}
+
 fn render_identity_reader_response(
     digest: &str,
     target_digest: &str,
@@ -248,7 +266,7 @@ fn resolve_gateway_status(
         Ok(status) => Ok(Some(status)),
         Err(effigy_gateway::GatewayError::NotRunning) => Ok(None),
         Err(error @ effigy_gateway::GatewayError::LegacyIdentityRequired { .. }) => {
-            Err(RunnerError::task_invocation(error.to_string()))
+            Err(legacy_identity_status_error(error, false))
         }
         Err(error) => Err(RunnerError::task_invocation(format!(
             "cannot determine gateway state ({error}); refusing to guess. The gateway PID record is left in place for reconciliation"
@@ -283,11 +301,6 @@ fn handle_existing_gateway_for_up(
         )
         .map(Some);
     }
-    if !gateway_invocation_is_escalated() && gateway_down_requires_elevation(config, Some(&status))?
-    {
-        prepare_gateway_state_for_elevated_run(config)?;
-        return run_gateway_elevated(GatewaySubcommand::Up, output_json).map(Some);
-    }
     stop_gateway_process(&status.snapshot)?;
     if !identity::remove_if_unchanged(&status.snapshot)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?
@@ -301,14 +314,15 @@ fn handle_existing_gateway_for_up(
 
 fn run_gateway_up(output_json: bool) -> Result<String, RunnerError> {
     let config = gateway_config()?;
+    if !gateway_invocation_is_escalated() && gateway_up_path_requires_elevation(&config)? {
+        prepare_gateway_state_for_elevated_run(&config)?;
+        return run_gateway_elevated(GatewaySubcommand::Up, output_json);
+    }
+    let _lock = recover::acquire_transition_lock(&config)?;
     if let Some(rendered) =
         handle_existing_gateway_for_up(&config, verified_gateway_status(&config), output_json)?
     {
         return Ok(rendered);
-    }
-    if !gateway_invocation_is_escalated() && gateway_up_requires_elevation(&config) {
-        prepare_gateway_state_for_elevated_run(&config)?;
-        return run_gateway_elevated(GatewaySubcommand::Up, output_json);
     }
     ensure_gateway_up_privileges(&config)?;
 
@@ -330,6 +344,18 @@ fn run_gateway_up(output_json: bool) -> Result<String, RunnerError> {
     )
 }
 
+fn gateway_up_path_requires_elevation(config: &GatewayConfig) -> Result<bool, RunnerError> {
+    if gateway_up_requires_elevation(config) {
+        return Ok(true);
+    }
+    match verified_gateway_status(config) {
+        Ok(status) if !gateway_status_matches_current_binary(&status) => {
+            gateway_down_requires_elevation(config, Some(&status))
+        }
+        _ => Ok(false),
+    }
+}
+
 fn run_gateway_down(output_json: bool) -> Result<String, RunnerError> {
     let config = gateway_config()?;
     let status = resolve_gateway_status(verified_gateway_status(&config))?;
@@ -338,6 +364,8 @@ fn run_gateway_down(output_json: bool) -> Result<String, RunnerError> {
     {
         return run_gateway_elevated(GatewaySubcommand::Down, output_json);
     }
+    let _lock = recover::acquire_transition_lock(&config)?;
+    let status = resolve_gateway_status(verified_gateway_status(&config))?;
     let warnings = if keep_gateway_resolver_on_down() {
         Vec::new()
     } else {
@@ -421,9 +449,40 @@ fn route_table_trust_fields(
     }
 }
 
+fn legacy_identity_status_error(
+    error: effigy_gateway::GatewayError,
+    output_json: bool,
+) -> RunnerError {
+    match error {
+        effigy_gateway::GatewayError::LegacyIdentityRequired { pid } if output_json => {
+            RunnerError::task_invocation(
+                json!({
+                    "schema": "effigy.gateway.status.v1",
+                    "schema_version": 1,
+                    "ok": false,
+                    "error": "legacy_identity_required",
+                    "pid": pid,
+                    "recovery": {
+                        "command": "effigy gateway recover",
+                        "adopt_candidate": "effigy gateway recover --adopt-candidate",
+                        "reason": "gateway.identity is missing"
+                    }
+                })
+                .to_string(),
+            )
+        }
+        other => RunnerError::task_invocation(other.to_string()),
+    }
+}
+
 fn run_gateway_status(output_json: bool) -> Result<String, RunnerError> {
     let config = gateway_config()?;
-    let status = resolve_gateway_status(verified_gateway_status(&config))?;
+    let status = match verified_gateway_status(&config) {
+        Err(error @ effigy_gateway::GatewayError::LegacyIdentityRequired { .. }) => {
+            return Err(legacy_identity_status_error(error, output_json));
+        }
+        other => resolve_gateway_status(other)?,
+    };
     let route_table = RouteTable::load(&config.route_table_path)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let tls = gateway_tls_summary(&config, &route_table);

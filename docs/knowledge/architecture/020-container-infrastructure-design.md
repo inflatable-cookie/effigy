@@ -522,10 +522,10 @@ ownership or relaxing trust for every owner is not a supported workaround. A
 legacy gateway also needs the explicit transition below. A previously installed
 binary may have been overwritten, and using an older CLI for development may
 fail to parse newer linked manifests; a general CLI downgrade is not a recovery
-strategy. The proposed supported upgrade/recovery design is
-[034](034-gateway-legacy-upgrade-recovery.md); it is proposed and
-unimplemented, not current behavior. Published v0.14.0 cannot complete a legacy
-upgrade; main `4201e0b3` can start but has no recovery entrypoint.
+strategy. The supported upgrade/recovery design is
+[034](034-gateway-legacy-upgrade-recovery.md). Published v0.14.0 cannot complete
+a legacy upgrade; corrected main provides `effigy gateway recover` on the
+task-112/113 base.
 
 The decimal `gateway.pid` remains compatible. `gateway.identity` is a
 version-1 JSON sidecar containing `format_version`, the same `pid`,
@@ -637,11 +637,11 @@ a supported recovery flow even when installation replaced the old executable.
 Identity checks and fail-closed behavior remain required. The proposed design
 covering the consumer transition, including the public channel posture and a
 fix-forward patch runway, is
-[034](034-gateway-legacy-upgrade-recovery.md) (proposed and unimplemented). It
-keeps a numeric-only signal unauthorized. Its separate
+[034](034-gateway-legacy-upgrade-recovery.md). It keeps a numeric-only signal
+unauthorized. Its separate
 [operator ruling](034-gateway-legacy-upgrade-recovery.md#operator-ruling)
-authorizes implementation of bounded candidate inspection and generation-bound
-stop; it does not extend this one-host ruling to previous-binary delegation.
+authorized bounded candidate inspection and generation-bound stop; it does not
+extend this one-host ruling to previous-binary delegation.
 
 Tom ruled on 2026-10-05: block v0.14.0 publication until a persisted
 start-identity sidecar and fail-closed legacy policy are implemented. He does

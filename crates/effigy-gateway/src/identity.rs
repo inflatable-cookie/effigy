@@ -26,6 +26,19 @@ pub enum GatewayStartIdentity {
     },
 }
 
+impl GatewayStartIdentity {
+    /// Stable encoding used in candidate-generation digests.
+    pub fn digest_label(&self) -> String {
+        match self {
+            Self::Linux { start_ticks } => format!("linux:{start_ticks}"),
+            Self::Macos {
+                start_seconds,
+                start_microseconds,
+            } => format!("macos:{start_seconds}:{start_microseconds}"),
+        }
+    }
+}
+
 /// A versioned sidecar record that identifies one gateway generation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -107,8 +120,18 @@ impl GatewayRecordSnapshot {
     ///
     /// This distinguishes a legacy PID-only record from a present but invalid
     /// sidecar, which remains an unknown record.
-    pub(crate) fn is_legacy_pid_only(&self) -> bool {
+    pub fn is_legacy_pid_only(&self) -> bool {
         self.identity_bytes.is_none()
+    }
+
+    /// Canonical PID path that produced this snapshot.
+    pub fn pid_path(&self) -> &Path {
+        &self.pid_path
+    }
+
+    /// Exact `gateway.pid` bytes, including any trailing newline.
+    pub fn pid_bytes(&self) -> &[u8] {
+        &self.pid_bytes
     }
 
     /// Digest of the exact numeric PID and sidecar bytes.
@@ -334,8 +357,22 @@ pub fn read_only_elevated_check(
     }
 }
 
-fn identity_path(pid_path: &Path) -> PathBuf {
+pub(crate) fn identity_path(pid_path: &Path) -> PathBuf {
     pid_path.with_extension("identity")
+}
+
+pub(crate) fn version_path(pid_path: &Path) -> PathBuf {
+    pid_path.with_extension("version")
+}
+
+/// Read a trusted sidecar next to the PID file (version, identity, …).
+pub(crate) fn read_trusted_sidecar_bytes(
+    pid_path: &Path,
+    sidecar: &Path,
+    max_bytes: usize,
+) -> Result<Option<Vec<u8>>, GatewayError> {
+    let owner_uid = trusted_directory_owner(pid_path)?;
+    Ok(read_trusted_file(sidecar, owner_uid, max_bytes)?.map(|(bytes, _, _)| bytes))
 }
 
 fn invalid_record(message: &str) -> GatewayError {
@@ -431,7 +468,7 @@ fn authenticated_elevated_operator() -> Option<u32> {
 }
 
 #[cfg(unix)]
-fn trusted_directory_owner(pid_path: &Path) -> Result<u32, GatewayError> {
+pub(crate) fn trusted_directory_owner(pid_path: &Path) -> Result<u32, GatewayError> {
     let effective_uid = nix::unistd::Uid::effective().as_raw();
     let authenticated_operator = if nix::unistd::Uid::effective().is_root() {
         authenticated_elevated_operator()
@@ -489,7 +526,7 @@ fn trusted_directory_owner_with(
 }
 
 #[cfg(not(unix))]
-fn trusted_directory_owner(_pid_path: &Path) -> Result<u32, GatewayError> {
+pub(crate) fn trusted_directory_owner(_pid_path: &Path) -> Result<u32, GatewayError> {
     Ok(0)
 }
 
@@ -699,7 +736,26 @@ fn is_permission_denied(error: &std::io::Error) -> bool {
         || matches!(error.raw_os_error(), Some(libc::EACCES) | Some(libc::EPERM))
 }
 
-fn read_process_identity(pid: u32) -> Result<(String, GatewayStartIdentity), std::io::Error> {
+/// Live kernel identity used by both the sidecar matcher and legacy recovery.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LiveProcessIdentity {
+    /// Boot generation for this host.
+    pub boot_identity: String,
+    /// Precise process start identity.
+    pub start_identity: GatewayStartIdentity,
+    /// Kernel UID of the live process.
+    pub uid: u32,
+}
+
+pub(crate) fn read_process_identity(
+    pid: u32,
+) -> Result<(String, GatewayStartIdentity), std::io::Error> {
+    let live = read_live_process_identity(pid)?;
+    Ok((live.boot_identity, live.start_identity))
+}
+
+/// Read boot, precise start, and kernel UID for one PID.
+pub fn read_live_process_identity(pid: u32) -> Result<LiveProcessIdentity, std::io::Error> {
     if crate::server::checked_gateway_pid(pid).is_none() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
@@ -718,7 +774,12 @@ fn read_process_identity(pid: u32) -> Result<(String, GatewayStartIdentity), std
                 "Linux process start ticks are malformed",
             )
         })?;
-        Ok((boot, GatewayStartIdentity::Linux { start_ticks }))
+        let uid = linux_proc_euid(pid)?;
+        Ok(LiveProcessIdentity {
+            boot_identity: boot,
+            start_identity: GatewayStartIdentity::Linux { start_ticks },
+            uid,
+        })
     }
     #[cfg(target_os = "macos")]
     {
@@ -746,13 +807,14 @@ fn read_process_identity(pid: u32) -> Result<(String, GatewayStartIdentity), std
                 "macOS process identity returned a different PID",
             ));
         }
-        Ok((
-            boot,
-            GatewayStartIdentity::Macos {
+        Ok(LiveProcessIdentity {
+            boot_identity: boot,
+            start_identity: GatewayStartIdentity::Macos {
                 start_seconds: info.pbi_start_tvsec,
                 start_microseconds: info.pbi_start_tvusec,
             },
-        ))
+            uid: info.pbi_uid,
+        })
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
@@ -762,6 +824,32 @@ fn read_process_identity(pid: u32) -> Result<(String, GatewayStartIdentity), std
             "gateway process identity is unsupported on this platform",
         ))
     }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_proc_euid(pid: u32) -> Result<u32, std::io::Error> {
+    let status = fs::read_to_string(format!("/proc/{pid}/status"))?;
+    for line in status.lines() {
+        let Some(rest) = line.strip_prefix("Uid:") else {
+            continue;
+        };
+        let euid = rest.split_whitespace().nth(1).ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Linux process Uid line is malformed",
+            )
+        })?;
+        return euid.parse::<u32>().map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Linux process euid is malformed",
+            )
+        });
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        "Linux process status has no Uid line",
+    ))
 }
 
 #[cfg(target_os = "linux")]
