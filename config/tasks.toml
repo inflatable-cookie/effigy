@@ -391,6 +391,18 @@
 "check:doctor:fixture-contract" = [
   "cargo clippy --all-targets -- -D warnings",
 ]
+# Cold deep-doctor Git inventory timeout proof. The fixture records the exact
+# porcelain identity probe before blocking it, and the task timeout contains
+# leaked test processes if the owned-child cleanup assertion ever regresses.
+"test:doctor:git-timeout-proof" = [
+  { id = "git-timeout-proof", run = "cargo nextest run -p effigy --test cli_output_tests --filter-expr 'test(cli_deep_doctor_timeout_terminates_git_identity_tree)' --no-capture --max-fail 1:immediate --no-tests fail", timeout_ms = 120000 },
+]
+"check:doctor:git-timeout-proof" = [
+  { id = "scan-compile", run = "cargo check -p effigy-scan --lib --profile test", timeout_ms = 600000 },
+  { id = "cli-proof-compile", run = "cargo check -p effigy --lib --test cli_output_tests --profile test", timeout_ms = 600000 },
+  { id = "scan-clippy", run = "cargo clippy -p effigy-scan --lib -- -D warnings", timeout_ms = 600000 },
+  { id = "cli-proof-clippy", run = "cargo clippy -p effigy --lib --test cli_output_tests -- -D warnings", timeout_ms = 600000 },
+]
 
 # Rhai storage retirement (contract 043): negative proofs that the removed
 # surface stays absent and neighbouring modules still work.

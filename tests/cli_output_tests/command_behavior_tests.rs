@@ -3746,12 +3746,17 @@ fn write_blocking_shim(
     real: &std::path::Path,
     blocked_fragments: &[&str],
     marker: &std::path::Path,
+    ready_marker: Option<&std::path::Path>,
 ) {
     fs::create_dir_all(bin).expect("mkdir shim bin");
     let alternatives = blocked_fragments.join("|*");
+    let ready_record = ready_marker
+        .map(|path| format!("    printf '%s\\n' \"$*\" >> \"{}\"\n", path.display()))
+        .unwrap_or_default();
     let script = format!(
-        "#!/bin/sh\ncase \" $* \" in\n  *{alternatives}*)\n    (sleep 3; printf leaked > \"{marker}\") &\n    sleep 30\n    exit 0\n    ;;\nesac\nexec \"{real}\" \"$@\"\n",
+        "#!/bin/sh\ncase \" $* \" in\n  *{alternatives}*)\n{ready_record}    (sleep 3; printf leaked > \"{marker}\") &\n    sleep 30\n    exit 0\n    ;;\nesac\nexec \"{real}\" \"$@\"\n",
         alternatives = alternatives,
+        ready_record = ready_record,
         marker = marker.display(),
         real = real.display(),
     );
@@ -3860,7 +3865,7 @@ fn cli_fast_doctor_timeout_terminates_cargo_metadata_tree() {
     let real_cargo = real_path_binary("cargo");
     let marker = consumer.join("leaked-metadata-child");
     let bin = consumer.join("shim-bin");
-    write_blocking_shim(&bin, "cargo", &real_cargo, &["metadata"], &marker);
+    write_blocking_shim(&bin, "cargo", &real_cargo, &["metadata"], &marker, None);
     let path_value = shim_path_value(&bin);
 
     let started = Instant::now();
@@ -3962,13 +3967,15 @@ fn cli_deep_doctor_timeout_terminates_git_identity_tree() {
     // gate, which must keep delegating to the real binary.
     let real_git = real_path_binary("git");
     let marker = root.join("leaked-git-child");
+    let reached_marker = root.join("blocked-git-invocations");
     let bin = root.join("shim-bin");
     write_blocking_shim(
         &bin,
         "git",
         &real_git,
-        &["ls-files", "--porcelain=v1"],
+        &["--porcelain=v1"],
         &marker,
+        Some(&reached_marker),
     );
     let path_value = shim_path_value(&bin);
 
@@ -3993,8 +4000,16 @@ fn cli_deep_doctor_timeout_terminates_git_identity_tree() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(rendered.contains("complete: false"));
-    assert!(rendered.contains("scan_inventory"));
+    assert_blocked_git_invocations(&reached_marker, 1, &rendered);
+    assert!(
+        rendered.contains("complete: false"),
+        "deep doctor did not report its incomplete overall budget result:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("scan_inventory"),
+        "deep doctor timed out outside the Git scan inventory phase:\n{rendered}"
+    );
+    assert_no_doctor_cache_generation(&root);
 
     let json = Command::new(env!("CARGO_BIN_EXE_effigy"))
         .arg("doctor")
@@ -4013,6 +4028,11 @@ fn cli_deep_doctor_timeout_terminates_git_identity_tree() {
     let report = &parsed["error"]["details"];
     assert_eq!(report["schema"], "effigy.doctor.v1");
     assert_eq!(report["run"]["complete"], false);
+    assert_blocked_git_invocations(&reached_marker, 2, &format!("{report}"));
+    assert_eq!(
+        report["run"]["budget_ms"], 800,
+        "deep doctor must retain the configured overall budget: {report}"
+    );
     assert_eq!(report["run"]["timeout_phase"], "scan_inventory");
     assert!(
         report["run"]["checks"]
@@ -4029,6 +4049,23 @@ fn cli_deep_doctor_timeout_terminates_git_identity_tree() {
     assert!(
         !marker.exists(),
         "timed-out git identity child survived doctor"
+    );
+}
+
+fn assert_blocked_git_invocations(marker: &std::path::Path, expected: usize, report: &str) {
+    let reached = fs::read_to_string(marker).unwrap_or_default();
+    let invocations = reached.lines().collect::<Vec<_>>();
+    assert_eq!(
+        invocations.len(),
+        expected,
+        "expected {expected} blocked Git inventory invocation(s), observed {}: {invocations:?}\nactual doctor report:\n{report}",
+        invocations.len()
+    );
+    assert!(
+        invocations
+            .iter()
+            .all(|arguments| arguments.contains("--porcelain=v1")),
+        "shim readiness marker recorded a non-inventory Git command: {invocations:?}"
     );
 }
 
