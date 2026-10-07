@@ -560,33 +560,139 @@ same way.
   `kern.bootsessionuuid` value and is never reclassified as absent. New records
   store the session identity and match exactly.
 
-## Ambiguous identity-bearing records (task 117)
+## Ambiguous identity-bearing records (task 117): boundary and proposal
 
-A record can carry a valid identity sidecar whose macOS boot evidence is the
-legacy `kern.boottime` timeval and can no longer be proven for the current boot
-(wall-clock adjustment within one boot). `probe_live_identity` returns Unknown,
-so `status`, `up`, `down`, and managed auto-start preserve the record and
-refuse; nothing signals, cleans up, or starts a replacement.
-
-`capture_legacy_record` classifies any sidecar-bearing record as
+**Current behavior.** A record can carry a valid identity sidecar whose macOS
+boot evidence is the legacy `kern.boottime` timeval and can no longer be proven
+for the current boot (wall-clock adjustment within one boot).
+`probe_live_identity` returns Unknown, so `status`, `up`, `down`, and managed
+auto-start preserve the record and refuse; nothing signals, cleans up, or
+starts a replacement. `capture_legacy_record` classifies any sidecar-bearing
+record as
 `LegacyCapture::Unknown { reason: "gateway identity sidecar is present or untrusted" }`,
-so `effigy gateway recover` — the approved 034 numeric-only adoption route —
+so `effigy gateway recover` — the approved numeric-only adoption route —
 refuses this case too. The approved route therefore does **not** handle an
-ambiguous identity-bearing record today: honest refusal is the current product
+ambiguous identity-bearing record: honest refusal is the current product
 behavior and no automatic supported transition exists for it.
 
-Smallest proposed extension (a proposal for review, not implemented and not
-current behavior): let `recover` route an identity-bearing record through the
-existing bounded read-only candidate inspection, explicit interactive digest
-consent, and generation-bound stop when `probe_live_identity` is Unknown and
-the kernel UID and exact process start identity still match. The candidate
-inspection already re-proves role, owner, boot, precise start, and live path,
-so this adds no new read or signal authority; it widens only the recover input
-gate from numeric-only records to records whose boot evidence is ambiguous.
-`Matched` records keep the normal running path, and provably
-`DifferentSession` records keep the existing locked-start compare-and-remove.
-Extending the reviewed 034 consent boundary needs explicit approval before
-implementation.
+**Proposal status.** Nothing below is implemented or authorized. It is a
+bounded specification so an operator can rule on a future extension. It does
+not widen the approved numeric-only route.
+
+### Admission predicate (the only new admit reason)
+
+Extend `effigy_process` with a granular classification, for example
+`BootIdentityComparison::AmbiguousLegacyBootTime`, distinct from `Match`,
+`DifferentSession`, and `Unknown`. It is produced only when all of the
+following hold:
+
+- a trusted `read_snapshot` returns a valid `GatewayIdentityRecord` whose
+  decimal PID equals the compatibility PID and whose `start_identity` is the
+  macOS `Macos { start_seconds, start_microseconds }` variant;
+- the recorded `boot_identity` is a strictly parseable legacy `kern.boottime`
+  timeval (braced, exactly one decimal `sec` and one decimal `usec`, no other
+  field), i.e. a genuine v0.14.0-era macOS sidecar;
+- the current kernel `kern.boottime` seconds differ from the recorded `sec`, or
+  the current `kern.boottime` value cannot be read (wall-clock adjustment or
+  unreadable evidence).
+
+Every other result keeps the existing classification and is **not**
+admissible: `Match`; `DifferentSession`; a malformed, missing, empty, or
+non-timeval `boot_identity`; a differing canonical session UUID; an
+unsupported-platform record; any process-identity read error; the elevated
+reader's permission-denied or Unknown result; and any digest, path, owner, or
+mode mismatch. Those keep the current `Unknown`/`Mismatch` behavior and
+preserve the record without a recovery route.
+
+`recover` admits the capture only when the granular result is
+`AmbiguousLegacyBootTime` **and** all of:
+
+- the production process probe for the recorded PID is `Running`;
+- the live exact process start identity equals the recorded `start_identity`
+  (mandatory, as everywhere else);
+- the live kernel UID passes the existing operator/root policy
+  (`candidate_uid_allowed`);
+- the gateway directory, files, owner, mode, and parent satisfy the existing
+  trusted-read checks.
+
+### Capture (full PID/version/identity digest)
+
+Add a second capture variant, parallel to and never merged into
+`LegacyRecordCapture` (which stays numeric-only). Proposed
+`AmbiguousIdentityCapture`:
+
+- exact `pid_bytes`, `version_bytes`, and `identity_bytes`;
+- validated decimal PID (`> 1`) and `target_digest` for the canonical
+  `gateway.pid` path;
+- `identity_digest` = the existing `GatewayRecordSnapshot::digest()`
+  (SHA-256 over `pid_bytes` + `0` + `identity_bytes`), so the sidecar bytes are
+  bound exactly as the `__gateway-identity` reader binds them;
+- `capture_digest` = SHA-256 over `pid_bytes` + `0` + `version_bytes` + `0` +
+  `identity_bytes`, binding the full triple;
+- `directory_owner_uid`, authenticated `operator_uid`, parsed `version`, and
+  `pid_path`.
+
+`bytes_unchanged()` re-reads a snapshot and requires exact equality of all
+three byte vectors plus `owner_uid`, `target_digest`, `identity_digest`, and
+`capture_digest`. A vanished, replaced, resized, reordered, or partial triple
+is changed, never absent.
+
+`__gateway-legacy-candidate` and `__gateway-legacy-stop` take `target_digest` +
+`capture_digest` + `identity_digest` (instead of the numeric-only
+`record_digest`) and re-derive the same full capture. The adopted
+`candidate_digest` additionally binds `identity_digest`, so consent targets the
+exact sidecar bytes. No PID, path, or signal argument is added.
+
+### Cleanup: absent-only triple compare-and-remove
+
+Cleanup is reached only after (a) the captured PID probes `ConfirmedAbsent`, or
+(b) a completed generation-bound stop is followed by a `ConfirmedAbsent`
+re-probe. Then, under the transition lock and the record lock:
+
+1. re-read the triple and require it byte-for-byte equal to the capture with
+   the same owner (the `bytes_unchanged()` rule above);
+2. remove `gateway.identity`, `gateway.version`, and `gateway.pid` as one
+   locked compare-and-remove, mirroring `remove_if_unchanged` plus the version
+   file.
+
+If any file changed or vanished, refuse and preserve whatever remains; partial
+removal is never performed. A `Running`, `Unknown`, declined, changed, or
+mismatched record removes nothing. The identity sidecar is never rewritten and
+never deleted to "downgrade" the record to numeric-only. This preserves the
+existing publisher/remover lock and compare-and-remove invariants.
+
+### Consent and diagnostics
+
+The interactive adoption prompt names the ambiguity explicitly ("recorded boot
+time cannot be proven for this boot; current boot time differs or is
+unreadable"), shows the full triple digest, and states the stop it authorizes.
+`--yes` cannot adopt a live candidate; declined or noninteractive input refuses
+and preserves. `--json` carries a distinct reason (for example
+`ambiguous_legacy_boot_identity`) in the same structured refusal document.
+Ordinary `status`, `up`, `down`, and managed start continue to report the
+ambiguous record as unverifiable and never clean it up.
+
+### Scope guard and required proof for a future task
+
+This proposal adds no new read, privilege, or signal authority: the candidate
+reader stays bounded and read-only, and the stop handler revalidates role,
+owner, boot, precise start, and live path before each signal, exactly as the
+approved route does. Only the recover input gate widens from numeric-only
+records to this one narrowly defined ambiguity. It needs explicit operator
+approval of the 034 consent boundary before implementation.
+
+A future implementation task must land, at minimum, these proofs:
+
+- admission matrix: admitted only for `AmbiguousLegacyBootTime` + exact start +
+  acceptable UID + `Running`; refused for every other Unknown/Mismatch cause;
+- triple capture digest stability across a PID-only, version-only, and
+  identity-only byte change, and for each file's removal;
+- triple compare-and-remove: removes all three only when unchanged; refuses and
+  preserves on any change; never removes a subset; idempotent;
+- forged or mismatched `capture_digest`, `identity_digest`, or phase is refused
+  by the elevated stop handler;
+- ordinary `status`, `up`, `down`, and managed start still preserve and refuse
+  the ambiguous record and dispatch zero signals.
 
 ## Private proofs
 

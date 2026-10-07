@@ -670,10 +670,12 @@ record is preserved and `status`/`up`/`down`/managed start refuse. A live
 pre-identity daemon still has the explicit `effigy gateway recover` consent
 path. An ambiguous identity-bearing record is honestly refused, not guessed at:
 the approved `recover` route currently rejects sidecar-bearing records, so no
-automatic supported transition exists for that case and the smallest proposed
-extension is recorded in
-[034](034-gateway-legacy-upgrade-recovery.md#ambiguous-identity-bearing-records-task-117)
-for review. The legacy candidate digest path is unchanged: it inspects and
+automatic supported transition exists for that case. A bounded, implementable
+specification of the recovery input boundary and the absent-only triple cleanup
+is recorded in
+[034](034-gateway-legacy-upgrade-recovery.md#ambiguous-identity-bearing-records-task-117-boundary-and-proposal)
+for an operator ruling; it is not implemented and does not widen the
+numeric-only route. The legacy candidate digest path is unchanged: it inspects and
 re-inspects within one CLI generation, so it has no cross-version record to
 reconcile.
 
