@@ -2,5 +2,5 @@
 inherits = "default"
 
 [[profile.doctor-process.overrides]]
-filter = 'test(cli_deep_doctor_timeout_terminates_git_identity_tree)'
+filter = 'test(doctor_git_timeout_process_group_evidence)'
 slow-timeout = { period = "45s", terminate-after = 1, grace-period = "2s" }
