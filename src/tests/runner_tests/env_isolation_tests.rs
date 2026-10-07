@@ -2,14 +2,12 @@
 //! parallel runner tests.
 //!
 //! Under plain `cargo test -p effigy --lib`, tests share one process on
-//! parallel threads, so every remaining global env writer must go through
-//! the shared reentrant test boundary — `EnvGuard`, which holds the same
-//! `lock_test()` every runner env test uses. Product-side readers that only
-//! needed an env fact (container handoff, deferred depth, build identity)
-//! take injected values instead, so no global writers remain outside this
-//! boundary. These tests prove the boundary actually excludes concurrent
-//! writers and protects the PATH and graph-budget readers used by release-
-//! preparation proofs.
+//! parallel threads. EnvGuard, cwd-sensitive tests, process-group signal
+//! proofs, and child fixtures that read PATH coordinate through the shared
+//! reentrant test boundary. Product-side readers that only needed an env fact
+//! (container handoff, deferred depth, build identity) take injected values
+//! instead. These tests prove concurrent writers do not overlap and exercise
+//! the PATH and graph-budget readers used by release-preparation proofs.
 
 use crate::runner::container_runtime::CONTAINER_HANDOFF_ENV_NAME;
 use crate::runner::tests::prelude::EnvGuard;
@@ -110,8 +108,9 @@ fn env_isolation_absence_reader_survives_parallel_handoff_writers() {
 }
 
 /// PATH based child spawning and graph-budget reads wait for an active scoped
-/// writer, then observe the restored process environment. This covers the two
-/// release-preparation failures without changing production behavior.
+/// writer, then observe the restored process environment. The proof records the
+/// reader's queue position before release and its acquisition after release;
+/// unrelated queued holders are reported separately from writer exclusion.
 #[test]
 fn env_isolation_path_and_graph_budget_readers_wait_for_scoped_writer() {
     const PATH: &str = "PATH";
@@ -131,13 +130,19 @@ fn env_isolation_path_and_graph_budget_readers_wait_for_scoped_writer() {
     let empty_bin = fixture.path().join("empty-bin");
     std::fs::create_dir(&empty_bin).expect("create empty PATH directory");
     let empty_path = empty_bin.display().to_string();
-    let (writer_active_tx, writer_active_rx) = mpsc::channel();
+    let (unrelated_start_tx, unrelated_start_rx) = mpsc::channel();
+    let (reader_start_tx, reader_start_rx) = mpsc::channel();
+    let (unrelated_attempting_tx, unrelated_attempting_rx) = mpsc::channel();
     let (reader_attempting_tx, reader_attempting_rx) = mpsc::channel();
+    let (unrelated_entered_tx, unrelated_entered_rx) = mpsc::channel();
     let (reader_entered_tx, reader_entered_rx) = mpsc::channel();
+    let (release_unrelated_tx, release_unrelated_rx) = mpsc::channel();
+    let writer_released = Arc::new(AtomicBool::new(false));
 
     let writer_path = empty_path.clone();
+    let writer_release_state = Arc::clone(&writer_released);
     let writer = thread::spawn(move || {
-        let _env = EnvGuard::set_many(&[
+        let env = EnvGuard::set_many(&[
             (PATH, Some(writer_path.clone())),
             (GRAPH_TIMEOUT, Some("1".to_owned())),
         ]);
@@ -149,31 +154,88 @@ fn env_isolation_path_and_graph_budget_readers_wait_for_scoped_writer() {
             crate::runner::graph_time_budget::graph_time_budget(),
             Some(Duration::from_millis(1))
         );
-        writer_active_tx.send(()).expect("notify active writer");
-        reader_attempting_rx
-            .recv_timeout(Duration::from_secs(5))
+        unrelated_start_tx
+            .send(())
+            .expect("start unrelated lock holder");
+        let unrelated_id = unrelated_attempting_rx
+            .recv_timeout(Duration::from_secs(30))
+            .expect("unrelated holder attempted to acquire the shared boundary");
+        let unrelated_position = crate::contract_test_support::test_lock_waiter_position(
+            unrelated_id,
+            Duration::from_secs(30),
+        )
+        .expect("unrelated holder registers while writer owns the lock");
+        reader_start_tx.send(()).expect("start protected reader");
+        let reader_id = reader_attempting_rx
+            .recv_timeout(Duration::from_secs(30))
             .expect("reader attempted to acquire the shared boundary");
+        let reader_position = crate::contract_test_support::test_lock_waiter_position(
+            reader_id,
+            Duration::from_secs(30),
+        )
+        .expect("reader registers in the lock queue while writer owns it");
         assert!(
-            reader_entered_rx
-                .recv_timeout(Duration::from_millis(100))
-                .is_err(),
-            "a reader entered while the scoped environment writer held the boundary"
+            reader_position > unrelated_position,
+            "reader queue position {reader_position} must follow unrelated waiter position {unrelated_position}"
         );
-        drop(_env);
+        assert!(
+            matches!(reader_entered_rx.try_recv(), Err(mpsc::TryRecvError::Empty)),
+            "reader acquired the lock before the writer released it"
+        );
+        assert!(
+            matches!(
+                unrelated_entered_rx.try_recv(),
+                Err(mpsc::TryRecvError::Empty)
+            ),
+            "unrelated holder acquired the lock before the writer released it"
+        );
+        drop(env);
+        writer_release_state.store(true, Ordering::SeqCst);
+        unrelated_entered_rx
+            .recv_timeout(Duration::from_secs(30))
+            .expect("unrelated waiter acquired after writer release");
+        release_unrelated_tx
+            .send(())
+            .expect("release unrelated lock holder");
         reader_entered_rx
-            .recv_timeout(Duration::from_secs(5))
-            .expect("reader proceeded after the writer restored the environment");
+            .recv_timeout(Duration::from_secs(30))
+            .unwrap_or_else(|error| {
+                panic!(
+                    "reader did not acquire after writer release and unrelated holder release (queue position {reader_position}, unrelated holder position {unrelated_position}): {error}"
+                )
+            });
+    });
+
+    let unrelated = thread::spawn(move || {
+        unrelated_start_rx
+            .recv_timeout(Duration::from_secs(30))
+            .expect("writer became active");
+        unrelated_attempting_tx
+            .send(thread::current().id())
+            .expect("notify unrelated holder attempting");
+        let _lock = crate::contract_test_support::lock_test();
+        unrelated_entered_tx
+            .send(())
+            .expect("notify unrelated holder entered");
+        release_unrelated_rx
+            .recv_timeout(Duration::from_secs(30))
+            .expect("writer released unrelated holder");
     });
 
     let reader_original_path = original_path.clone();
+    let reader_release_state = Arc::clone(&writer_released);
     let reader = thread::spawn(move || {
-        writer_active_rx
-            .recv_timeout(Duration::from_secs(5))
-            .expect("writer became active");
+        reader_start_rx
+            .recv_timeout(Duration::from_secs(30))
+            .expect("writer started protected reader");
         reader_attempting_tx
-            .send(())
+            .send(thread::current().id())
             .expect("notify reader attempting");
         let _lock = crate::contract_test_support::lock_test();
+        assert!(
+            reader_release_state.load(Ordering::SeqCst),
+            "reader acquired before writer released the environment lock"
+        );
         reader_entered_tx.send(()).expect("notify reader entered");
         assert_eq!(env::var_os(PATH), reader_original_path);
         assert_eq!(
@@ -189,6 +251,7 @@ fn env_isolation_path_and_graph_budget_readers_wait_for_scoped_writer() {
     });
 
     writer.join().expect("writer thread");
+    unrelated.join().expect("unrelated holder thread");
     reader.join().expect("reader thread");
 
     let unwind = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {

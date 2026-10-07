@@ -1,12 +1,13 @@
 use crate::runner::tests::prelude::{
     assert_json_bool_field_eq, assert_json_string_field_eq, assert_output_contains_all,
-    assert_output_excludes_all, install_local_vitest, install_local_vitest_marker,
+    assert_output_excludes_all, install_local_vitest, install_local_vitest_marker, lock_test,
     parse_json_output_with_schema, run_builtin_ok, temp_workspace, write_executable,
     write_package_json_with_test_script, write_root_manifest, EnvGuard,
 };
 
 #[test]
 fn run_manifest_task_builtin_test_json_suppresses_child_process_output() {
+    let _environment_lock = lock_test();
     let root = temp_workspace("builtin-test-json-suppresses-child-output");
     write_package_json_with_test_script(&root);
     install_local_vitest(
@@ -22,6 +23,7 @@ fn run_manifest_task_builtin_test_json_suppresses_child_process_output() {
 
 #[test]
 fn run_manifest_task_builtin_test_text_and_json_outputs_share_target_identity() {
+    let _environment_lock = lock_test();
     let root = temp_workspace("builtin-test-json-text-target-parity");
     write_package_json_with_test_script(&root);
     let marker = root.join("vitest-called.log");

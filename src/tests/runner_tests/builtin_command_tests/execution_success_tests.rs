@@ -7,6 +7,7 @@ use crate::runner::tests::prelude::{
 
 #[test]
 fn run_manifest_task_builtin_test_executes_local_vitest() {
+    let _environment_lock = lock_test();
     let root = temp_workspace("builtin-test-exec-vitest");
     let marker = root.join("vitest-called.log");
     write_package_json_with_test_script(&root);
@@ -41,6 +42,7 @@ fn run_manifest_task_builtin_test_executes_js_and_rust_suites_in_same_repo() {
 
 #[test]
 fn run_manifest_task_builtin_test_fans_out_across_catalog_roots() {
+    let _environment_lock = lock_test();
     let root = temp_workspace("builtin-test-fanout");
     let (catalog_a, catalog_b) = setup_fanout_catalog_repo(&root);
     let catalog_a_marker = catalog_a.join("vitest-called.log");
@@ -106,6 +108,7 @@ mounts = [{ source = "inline", catalog = true }]
 
 #[test]
 fn run_manifest_task_prefixed_builtin_test_targets_catalog_root_only() {
+    let _environment_lock = lock_test();
     let root = temp_workspace("builtin-test-prefixed-catalog");
     let (catalog_a, catalog_b) = setup_fanout_catalog_repo(&root);
     let catalog_a_marker = catalog_a.join("vitest-called.log");
