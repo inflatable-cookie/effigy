@@ -7,6 +7,16 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Fixed
+- Managed gateway build replacement now uses a local-only read-only preflight.
+  If the recorded live identity is inaccessible, one existing elevated
+  `gateway up` lifecycle performs the locked replacement; its process polls
+  and immediate pre-TERM/pre-KILL checks read identity afresh without launching
+  another administrator reader. A noninteractive or declined handoff preserves
+  records and starts no replacement. Post-signal process-probe uncertainty is
+  retried only within the existing bounded wait; cleanup and restart still
+  require confirmed absence or a readable different generation. A failed
+  signal is reconciled only after a fresh confirmed-absence probe, and
+  persistent unknown evidence remains refused.
 - Managed gateway auto-start keeps the operator terminal on the child's stdin
   (`sh -lc` now inherits stdin instead of replacing it with null) so the
   bounded read-only elevated identity reader can authenticate, while
