@@ -57,12 +57,12 @@ broken even after records clear, so no current CLI on that binary can finish the
 recovery. A consumer completes the path only after installing a corrected
 release that carries the directory correction and the new entrypoint.
 
-## Current truth versus proposal
+## Current truth versus this implementation
 
 | Concern | Published / pre-recovery main | This document (implemented) |
 | --- | --- | --- |
 | Legacy numeric-only record | Published `v0.14.0`: `ProcessStateUnknown`. Main `4201e0b3`: `LegacyIdentityRequired`; records preserved; no signal | Keep the fail-closed refusal; add a structured recovery payload |
-| Stopping the old daemon | No CLI signal path; main's guidance requires an operator-controlled stop with independently confirmed executable and owner | Fallback: operator stop + verify + clean + start. Contingent: bounded candidate inspection then a generation-bound stop |
+| Stopping the old daemon | No CLI signal path; main `4201e0b3` guidance requires an operator-controlled stop with independently confirmed executable and owner | Confirmed-absence recover never signals. A live daemon uses bounded candidate inspection then a generation-bound stop after interactive digest adoption |
 | Automated previous-binary stop | Not authorized by the 020 ruling; v0.13.1 `down` is not ownership-safe | Rejected; it cannot meet generation checks. See [Rejected](#rejected-delegated-previous-binary-stop) |
 | New daemon start | Published `v0.14.0`: rejected as unsafe. Main `4201e0b3`: works for the authenticated operator context | `recover` ends in a normal start after releasing the transition lock |
 | Public channels | `latest` = v0.13.1; Homebrew formula restored to v0.13.1; `v0.14.0` body warns | Keep the pin; ship the fix-forward patch |
@@ -332,8 +332,11 @@ plus owner/boot/start is the live evidence; adoption is permission, not proof.
    failed role predicate, unreadable boot/start, or any ambiguity. No signal.
 2. Show the candidate: `pid`, `candidate_uid`, `executable_path` (the actual
    path, not only a digest), boot/start, the role endpoints, and the candidate
-   digest. Require explicit interactive consent to adopt this exact generation.
-   `--yes` is not sufficient for a stop. Decline → refuse and preserve.
+   digest. The adoption prompt renders that live path with control characters
+   escaped so the operator sees one unambiguous line; the candidate digest still
+   hashes the canonical path bytes, not the display form. Require explicit
+   interactive consent to adopt this exact generation. `--yes` is not sufficient
+   for a stop. Decline → refuse and preserve.
 3. Bind `candidate_digest` = digest over `target_digest`, `record_digest`, `pid`,
    `candidate_uid`, `boot_identity`, `start_identity`, `executable_path_digest`
    and `role_digest`. Adoption targets exactly this digest.
@@ -452,7 +455,7 @@ process that does not participate.
 
 | Situation at `recover` start | Behavior |
 | --- | --- |
-| Record present | Capture; probe; absent → clean + start; running/unknown → inspect (contingent) or refuse (fallback) |
+| Record present | Capture; probe; absent → clean + start; running/unknown → `--adopt-candidate` inspects then generation-bound stop, or refuse without it |
 | Record absent initially | No captured PID and no inspection, including a missing gateway directory. Start only; if an old daemon still runs, the start fails to bind and the failure is surfaced. Never signal |
 | Record vanishes mid-operation | Treat as changed; refuse, no signal; re-run from capture |
 | Partial records (pid or version only) | Unknown; preserve; no inspection |
@@ -465,9 +468,9 @@ process that does not participate.
 
 | Surface | Behavior |
 | --- | --- |
-| `effigy gateway status [--json]` | Main: `LegacyIdentityRequired` plus the proposal's structured recovery payload. Never signals |
+| `effigy gateway status [--json]` | Corrected main: `LegacyIdentityRequired` plus a structured recovery payload. Never signals. Main `4201e0b3` has the diagnostic without recover |
 | `effigy gateway up`, `down` | Unchanged fail-closed refusal for legacy records; message points at `recover` |
-| `effigy gateway recover [--json]` | Fallback: verify + clean + start. Contingent `--adopt-candidate`: inspect, consent, generation-bound stop, clean, start. No blind numeric signal path |
+| `effigy gateway recover [--json]` | Confirmed-absence: verify + clean + start. Live daemon: `--adopt-candidate` inspects, requires interactive digest consent, generation-bound stop, clean, start. `--yes` cannot adopt. No blind numeric signal path |
 | `__gateway-legacy-candidate` (hidden) | Bounded read-only elevated reader. No signal, no write, no start |
 | `__gateway-legacy-stop` (hidden) | Bounded generation-bound elevated signal handler. Only TERM/KILL of the adopted generation |
 | `gateway_up_for_managed_task` and managed `dev` auto-start | Detect a legacy record, surface the `recover` pointer, refuse auto-start; no auto-recovery |
@@ -486,12 +489,12 @@ same way.
 
 - Classification, consent, lock, probe, cleanup and start decisioning run
   unelevated.
-- The fallback operator stop runs in the operator's host process-management
-  context.
-- The contingent reader and stop handler run as root behind the existing
-  elevation prompt. The reader is strictly read-only. The stop handler signals
-  only the adopted generation after re-validation, and only the enumerated
-  phase.
+- Confirmed-absence recover never signals. An operator-managed stop remains
+  available only as host process management when the daemon is already gone; it
+  is not the live-daemon recovery path.
+- The reader and stop handler run as root behind the existing elevation prompt.
+  The reader is strictly read-only. The stop handler signals only the adopted
+  generation after re-validation, and only the enumerated phase.
 - The start keeps the existing elevation flow; the task-113 correction in main
   makes it accept the authenticated forwarded operator directory owner.
 - No new standing helper, install, launchd/systemd unit, socket or standing
@@ -526,8 +529,10 @@ same way.
 ## Compatibility
 
 - Version scoping is authoritative: published `v0.14.0` cannot complete the
-  path; main `4201e0b3` can start but has no recovery; the proposal adds
-  recovery on a corrected release.
+  path; main `4201e0b3` can start but has no recover entrypoint; this document's
+  protocol is implemented on corrected main. A patch that ships that main to
+  consumers is a separate publication decision; GitHub `latest` and Homebrew
+  remain pinned to v0.13.1 until that patch is authorized.
 - Route table envelope (`_managed_by` marker, domain-keyed map) is unchanged
   between v0.13.1 and v0.14.0; recovery never rewrites it. A table that fails
   contract 033 trust is left for the operator.
@@ -673,16 +678,16 @@ explicitly disclosed. Both capabilities are implemented as specified. Residual l
 - A still-running elevated daemon is inspected and stopped only through the
   bounded reader and generation-bound stop. Unelevated host process management
   is no longer the required consumer path.
-- The numeric-only record still confers no ownership proof. The contingent
-  protocol supplies live role/owner/boot/start evidence; the fallback relies on
-  the operator's independent confirmation.
+- The numeric-only record still confers no ownership proof. The implemented
+  reader and generation-bound stop supply live role/owner/boot/start evidence;
+  confirmed-absence recover never signals and does not replace that evidence.
 - The role predicate proves the live process currently plays the gateway role.
   It does not prove historical spawn ownership, and it cannot auto-prove a
   custom-endpoint gateway. Custom, partial, or ambiguous endpoints refuse with
   no confirmation or adoption path. After a binary replacement the live path may
   be the replacement image; `gateway.version` is metadata, not a live version.
 - The final identity-check-to-signal TOCTOU is disclosed for both the existing
-  sidecar path and the contingent stop; neither claims atomic targeting.
+  sidecar path and the generation-bound stop; neither claims atomic targeting.
 - A delegated previous-binary stop is rejected; its v0.13.1 hazards are recorded
   in [v0.13.1 previous-binary behaviour](#v0131-previous-binary-behaviour).
 - The published `v0.14.0` binary cannot complete the path; a corrected release

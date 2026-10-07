@@ -24,7 +24,9 @@ During v0.x, MINOR bumps may include breaking changes.
   (canonical live path, kernel UID, boot, precise start, UDP 15353 plus TCP
   80/443 role sockets), requires interactive digest consent (`--yes` cannot
   adopt), and stops only that adopted generation through
-  `__gateway-legacy-stop` with per-signal revalidation. Confirmed selected-
+  `__gateway-legacy-stop` with per-signal revalidation. The adoption prompt
+  renders the live executable path with control characters escaped; the
+  candidate digest still binds the canonical path. Confirmed selected-
   generation absence then compare-and-removes the unchanged records and
   releases the lock before a normal `gateway up`. A missing gateway directory
   is the absent-only start path. `recover --json` refusals emit
@@ -40,8 +42,8 @@ During v0.x, MINOR bumps may include breaking changes.
   partial, or ambiguous endpoints refuse with no confirmation path. Managed
   and container auto-start still refuse a legacy record and point at recover.
   The local installer stages owner-only `effigy.previous` plus `.version` as
-  evidence; recover never
-  executes it. Live role evidence is not historical spawn proof; the last
+  evidence; recover never executes it. Live role evidence is not historical
+  spawn proof; the last
   check-to-signal interval remains a disclosed TOCTOU.
 - Gateway lifecycle commands now identify a numeric-only pre-identity record
   as requiring operator migration, distinct from an unavailable process

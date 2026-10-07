@@ -607,14 +607,32 @@ fn stop_adopted_generation(
     }
 }
 
-fn confirm_adoption_interactive(candidate: &LegacyCandidate) -> bool {
-    let mut stderr = io::stderr();
-    let _ = writeln!(
-        stderr,
+/// Render a live executable path for the adoption prompt. Control characters
+/// are escaped so the operator sees one unambiguous line. The candidate digest
+/// still hashes the canonical path bytes, not this display form.
+fn display_executable_path(path: &str) -> String {
+    let mut rendered = String::with_capacity(path.len());
+    for ch in path.chars() {
+        match ch {
+            '\\' => rendered.push_str("\\\\"),
+            '\n' => rendered.push_str("\\n"),
+            '\r' => rendered.push_str("\\r"),
+            '\t' => rendered.push_str("\\t"),
+            ch if ch.is_control() => {
+                rendered.push_str(&format!("\\u{{{:x}}}", u32::from(ch)));
+            }
+            ch => rendered.push(ch),
+        }
+    }
+    rendered
+}
+
+fn format_adoption_prompt(candidate: &LegacyCandidate) -> String {
+    format!(
         "legacy gateway candidate\n  pid: {}\n  uid: {}\n  executable: {}\n  boot: {}\n  start: {}\n  endpoints: {}\n  candidate_digest: {}\nType the candidate digest to adopt this generation and authorize TERM then KILL. The last identity-check-to-signal interval is a TOCTOU; live role evidence does not prove historical spawn ownership.",
         candidate.pid,
         candidate.candidate_uid,
-        candidate.executable_path,
+        display_executable_path(&candidate.executable_path),
         candidate.boot_identity,
         candidate.start_identity,
         candidate
@@ -627,7 +645,12 @@ fn confirm_adoption_interactive(candidate: &LegacyCandidate) -> bool {
             .collect::<Vec<_>>()
             .join(", "),
         candidate.candidate_digest
-    );
+    )
+}
+
+fn confirm_adoption_interactive(candidate: &LegacyCandidate) -> bool {
+    let mut stderr = io::stderr();
+    let _ = writeln!(stderr, "{}", format_adoption_prompt(candidate));
     let _ = write!(stderr, "adopt digest: ");
     let _ = stderr.flush();
     let mut line = String::new();
@@ -1696,6 +1719,48 @@ mod legacy_recovery_protocol_tests {
             server::probe_gateway_process(pid),
             GatewayProcessProbe::ConfirmedAbsent
         );
+    }
+
+    #[test]
+    fn legacy_recovery_adoption_prompt_escapes_control_path_without_changing_digest() {
+        let canonical = "/tmp/effigy\ngateway\u{1b}[0m.bin";
+        let digest = candidate_digest(
+            &"aa".repeat(32),
+            &"bb".repeat(32),
+            4242,
+            501,
+            "boot",
+            "start",
+            &"cc".repeat(32),
+            &"dd".repeat(32),
+        );
+        let candidate = LegacyCandidate {
+            pid: 4242,
+            candidate_uid: 501,
+            boot_identity: "boot".to_owned(),
+            start_identity: "start".to_owned(),
+            executable_path: canonical.to_owned(),
+            executable_path_digest: "cc".repeat(32),
+            role: canonical_gateway_role_endpoints(),
+            role_digest: "dd".repeat(32),
+            candidate_digest: digest.clone(),
+        };
+        let prompt = format_adoption_prompt(&candidate);
+        let executable_line = prompt
+            .lines()
+            .find(|line| line.starts_with("  executable: "))
+            .expect("executable line");
+        assert_eq!(
+            executable_line,
+            "  executable: /tmp/effigy\\ngateway\\u{1b}[0m.bin"
+        );
+        assert!(!executable_line.contains('\n'));
+        assert!(!executable_line.contains('\u{1b}'));
+        assert_eq!(candidate.executable_path, canonical);
+        assert!(canonical.contains('\n'));
+        assert!(canonical.contains('\u{1b}'));
+        assert!(prompt.contains(&digest));
+        assert_eq!(candidate.candidate_digest, digest);
     }
 
     #[test]
