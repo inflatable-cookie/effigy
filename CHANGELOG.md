@@ -26,11 +26,15 @@ During v0.x, MINOR bumps may include breaking changes.
   adopt), and stops only that adopted generation through
   `__gateway-legacy-stop` with per-signal revalidation. Confirmed selected-
   generation absence then compare-and-removes the unchanged records and
-  releases the lock before a normal `gateway up`. Managed and container
-  auto-start still refuse a legacy record and point at recover. The local
-  installer stages owner-only `effigy.previous` plus `.version` as evidence;
-  recover never executes it. Live role evidence is not historical spawn
-  proof; the last check-to-signal interval remains a disclosed TOCTOU.
+  releases the lock before a normal `gateway up`. A missing gateway directory
+  is the absent-only start path. `recover --json` refusals emit
+  `effigy.gateway.recover.v1` (`ok: false`) on stdout; `status --json` emits
+  `effigy.gateway.status.v1` the same way. `up` recognizes a live legacy
+  identity before elevation staging. Managed and container auto-start still
+  refuse a legacy record and point at recover. The local installer stages
+  owner-only `effigy.previous` plus `.version` as evidence; recover never
+  executes it. Live role evidence is not historical spawn proof; the last
+  check-to-signal interval remains a disclosed TOCTOU.
 - Gateway lifecycle commands now identify a numeric-only pre-identity record
   as requiring operator migration, distinct from an unavailable process
   probe. They preserve its files and refuse to signal, clear, or replace it

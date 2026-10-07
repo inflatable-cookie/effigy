@@ -235,8 +235,9 @@ below.
 Rules: a missing sidecar with a readable PID is legacy; a present but malformed
 sidecar, an identity-only pair, unsafe mode, symlink or untrusted owner is
 unknown and preserved. A PID alone grants no authority. If records are absent
-when `recover` starts, there is no captured PID and no inspection: only the
-absent-record start path applies (start, or surface a bind failure). A
+when `recover` starts, including when the gateway directory itself is missing,
+there is no captured PID and no inspection: only the absent-record start
+path applies (start, or surface a bind failure). A
 previously captured PID whose records vanish mid-operation is treated as
 changed; the operation refuses and re-runs. Partial records (one of
 pid/version) are unknown, not inferred.
@@ -440,7 +441,7 @@ process that does not participate.
 | Situation at `recover` start | Behavior |
 | --- | --- |
 | Record present | Capture; probe; absent → clean + start; running/unknown → inspect (contingent) or refuse (fallback) |
-| Record absent initially | No captured PID and no inspection. Start only; if an old daemon still runs, the start fails to bind and the failure is surfaced. Never signal |
+| Record absent initially | No captured PID and no inspection, including a missing gateway directory. Start only; if an old daemon still runs, the start fails to bind and the failure is surfaced. Never signal |
 | Record vanishes mid-operation | Treat as changed; refuse, no signal; re-run from capture |
 | Partial records (pid or version only) | Unknown; preserve; no inspection |
 | Crash before inspection | Transition lock released on exit; records intact; rerunnable |
@@ -464,7 +465,10 @@ Consent shows the candidate (including the live executable path), the exact
 adopted digest, and the stop it authorizes. `--json` emits
 `effigy.gateway.recover.v1` with `result` (`recovered` | `refused` |
 `already_stopped`), `pid`, `version`, `probe`, `candidate`, `adopted`,
-`records_removed`, `started`, and `warnings`. Refusals are structured.
+`records_removed`, `started`, and `warnings`. Refusals are that same document
+on stdout (`ok: false`, reason in `warnings`); they are not nested inside a
+task-failed envelope. `status --json` emits `effigy.gateway.status.v1` the
+same way.
 
 ## Privilege contract
 

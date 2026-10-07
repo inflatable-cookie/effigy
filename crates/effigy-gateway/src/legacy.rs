@@ -162,6 +162,12 @@ pub fn capture_legacy_record(
 ) -> Result<LegacyCapture, GatewayError> {
     let snapshot = match identity::read_snapshot(pid_path) {
         Ok(snapshot) => snapshot,
+        Err(GatewayError::Io(ref error))
+            if error.kind() == std::io::ErrorKind::NotFound
+                && gateway_directory_absent(pid_path) =>
+        {
+            return Ok(LegacyCapture::Absent);
+        }
         Err(_) => {
             return Ok(LegacyCapture::Unknown {
                 reason: "untrusted or malformed gateway record",
@@ -225,6 +231,19 @@ fn classify_snapshot(
         version,
         pid_path: snapshot.pid_path().to_path_buf(),
     }))
+}
+
+fn gateway_directory_absent(pid_path: &Path) -> bool {
+    let Some(parent) = pid_path.parent() else {
+        return false;
+    };
+    if parent.as_os_str().is_empty() {
+        return false;
+    }
+    matches!(
+        fs::symlink_metadata(parent),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound
+    )
 }
 
 fn record_digest(pid_bytes: &[u8], version_bytes: &[u8]) -> String {
@@ -613,6 +632,16 @@ mod legacy_recovery_tests {
         assert!(matches!(
             capture_legacy_record(&pid_path, operator).unwrap(),
             LegacyCapture::Unknown { .. }
+        ));
+    }
+
+    #[test]
+    fn legacy_recovery_missing_parent_directory_is_absent() {
+        let dir = private_gateway_dir();
+        let missing = dir.path().join("no-such-gateway").join("gateway.pid");
+        assert!(matches!(
+            capture_legacy_record(&missing, 501).unwrap(),
+            LegacyCapture::Absent
         ));
     }
 

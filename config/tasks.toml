@@ -144,6 +144,7 @@
 ]
 "test:gateway:legacy-recovery" = [
   { id = "gateway-legacy-recovery", run = "cargo test -p effigy-gateway -p effigy-cli -p effigy --lib legacy_recovery -- --nocapture", timeout_ms = 240000 },
+  { id = "gateway-legacy-identity-refusal", run = "cargo test -p effigy --lib gateway_identity_legacy_active_record -- --nocapture", timeout_ms = 120000 },
 ]
 "check:gateway:legacy-recovery" = [
   "cargo check -p effigy-gateway -p effigy-cli -p effigy --all-targets",

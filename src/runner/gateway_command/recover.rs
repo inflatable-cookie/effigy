@@ -185,20 +185,35 @@ fn run_gateway_recover_with(
     let capture =
         capture_legacy_record(&config.pid_file_path, operator).map_err(map_gateway_error)?;
     match capture {
-        LegacyCapture::Unknown { reason } => Err(RunnerError::task_invocation(format!(
-            "legacy gateway recovery refused: {reason}. records are preserved. run `effigy gateway status` and do not signal the recorded PID"
-        ))),
+        LegacyCapture::Unknown { reason } => Err(recover_refused(
+            output_json,
+            format!(
+                "legacy gateway recovery refused: {reason}. records are preserved. run `effigy gateway status` and do not signal the recorded PID"
+            ),
+            None,
+            None,
+            None,
+            None,
+        )),
         LegacyCapture::Absent => {
             if !interactive && !yes {
-                return Err(noninteractive_absent_error());
+                return Err(noninteractive_absent_error(output_json));
             }
-            let lock = acquire_transition_lock(config)?;
+            let lock = acquire_transition_lock(config)
+                .map_err(|error| recover_refused(output_json, error.to_string(), None, None, None, None))?;
             if !matches!(
-                capture_legacy_record(&config.pid_file_path, operator).map_err(map_gateway_error)?,
+                capture_legacy_record(&config.pid_file_path, operator).map_err(|error| {
+                    recover_refused(output_json, error.to_string(), None, None, None, None)
+                })?,
                 LegacyCapture::Absent
             ) {
-                return Err(RunnerError::task_invocation(
+                return Err(recover_refused(
+                    output_json,
                     "gateway record appeared during recover; refusing. re-run `effigy gateway recover`",
+                    None,
+                    None,
+                    None,
+                    None,
                 ));
             }
             drop(lock);
@@ -248,20 +263,62 @@ fn recover_legacy_capture(
     wait: &mut impl FnMut(Duration),
 ) -> Result<String, RunnerError> {
     if !interactive && !yes {
-        return Err(noninteractive_absent_error());
+        return Err(noninteractive_absent_error(output_json));
     }
-    let lock = acquire_transition_lock(config)?;
-    if !capture.bytes_unchanged().map_err(map_gateway_error)? {
-        return Err(changed_record_error());
+    let lock = acquire_transition_lock(config).map_err(|error| {
+        recover_refused(
+            output_json,
+            error.to_string(),
+            Some(capture.pid),
+            capture.version.as_deref(),
+            None,
+            None,
+        )
+    })?;
+    if !capture.bytes_unchanged().map_err(|error| {
+        recover_refused(
+            output_json,
+            error.to_string(),
+            Some(capture.pid),
+            capture.version.as_deref(),
+            None,
+            None,
+        )
+    })? {
+        return Err(changed_record_error(
+            output_json,
+            Some(capture.pid),
+            capture.version.as_deref(),
+        ));
     }
     match probe(capture.pid) {
-        GatewayProcessProbe::Unknown => Err(RunnerError::task_invocation(format!(
-            "cannot determine whether legacy gateway process {} is running; records preserved. re-run `effigy gateway recover`",
-            capture.pid
-        ))),
+        GatewayProcessProbe::Unknown => Err(recover_refused(
+            output_json,
+            format!(
+                "cannot determine whether legacy gateway process {} is running; records preserved. re-run `effigy gateway recover`",
+                capture.pid
+            ),
+            Some(capture.pid),
+            capture.version.as_deref(),
+            Some("unknown"),
+            None,
+        )),
         GatewayProcessProbe::ConfirmedAbsent => {
-            if !remove_legacy_if_unchanged(&capture).map_err(map_gateway_error)? {
-                return Err(changed_record_error());
+            if !remove_legacy_if_unchanged(&capture).map_err(|error| {
+                recover_refused(
+                    output_json,
+                    error.to_string(),
+                    Some(capture.pid),
+                    capture.version.as_deref(),
+                    Some("confirmed_absent"),
+                    None,
+                )
+            })? {
+                return Err(changed_record_error(
+                    output_json,
+                    Some(capture.pid),
+                    capture.version.as_deref(),
+                ));
             }
             drop(lock);
             let started = start()?;
@@ -279,56 +336,135 @@ fn recover_legacy_capture(
         }
         GatewayProcessProbe::Running => {
             if !adopt_candidate {
-                return Err(RunnerError::task_invocation(format!(
-                    "legacy gateway process {} is still running. from an interactive terminal run `effigy gateway recover --adopt-candidate` to inspect it and type its candidate digest to authorize a generation-bound stop. `--yes` cannot adopt a live candidate. records are preserved",
-                    capture.pid
-                )));
+                return Err(recover_refused(
+                    output_json,
+                    format!(
+                        "legacy gateway process {} is still running. from an interactive terminal run `effigy gateway recover --adopt-candidate` to inspect it and type its candidate digest to authorize a generation-bound stop. `--yes` cannot adopt a live candidate. records are preserved",
+                        capture.pid
+                    ),
+                    Some(capture.pid),
+                    capture.version.as_deref(),
+                    Some("running"),
+                    None,
+                ));
             }
             if !interactive {
-                return Err(RunnerError::task_invocation(
+                return Err(recover_refused(
+                    output_json,
                     "adopting a live legacy gateway requires an interactive terminal; `--yes` cannot substitute for consent",
+                    Some(capture.pid),
+                    capture.version.as_deref(),
+                    Some("running"),
+                    None,
                 ));
             }
             let Some(candidate) = inspect(&capture) else {
-                return Err(RunnerError::task_invocation(format!(
-                    "legacy gateway candidate {} could not be proved (role, owner, boot, start, or live path). records preserved; no signal",
-                    capture.pid
-                )));
+                return Err(recover_refused(
+                    output_json,
+                    format!(
+                        "legacy gateway candidate {} could not be proved (role, owner, boot, start, or live path). records preserved; no signal",
+                        capture.pid
+                    ),
+                    Some(capture.pid),
+                    capture.version.as_deref(),
+                    Some("running"),
+                    None,
+                ));
             };
             if candidate.pid != capture.pid
                 || !candidate_uid_allowed(candidate.candidate_uid, capture.operator_uid)
             {
-                return Err(RunnerError::task_invocation(format!(
-                    "legacy gateway candidate {} owner {} is outside the authenticated operator/root policy. records preserved; no signal",
-                    candidate.pid, candidate.candidate_uid
-                )));
-            }
-            if !confirm(&candidate) {
-                return Err(RunnerError::task_invocation(
-                    "legacy gateway candidate adoption declined. records preserved; no signal",
+                return Err(recover_refused(
+                    output_json,
+                    format!(
+                        "legacy gateway candidate {} owner {} is outside the authenticated operator/root policy. records preserved; no signal",
+                        candidate.pid, candidate.candidate_uid
+                    ),
+                    Some(capture.pid),
+                    capture.version.as_deref(),
+                    Some("running"),
+                    Some(&candidate),
                 ));
             }
-            stop_adopted_generation(&capture, &candidate.candidate_digest, inspect, stop_phase, probe, wait)?;
-            if !capture.bytes_unchanged().map_err(map_gateway_error)? {
-                return Err(changed_record_error());
+            if !confirm(&candidate) {
+                return Err(recover_refused(
+                    output_json,
+                    "legacy gateway candidate adoption declined. records preserved; no signal",
+                    Some(capture.pid),
+                    capture.version.as_deref(),
+                    Some("running"),
+                    Some(&candidate),
+                ));
+            }
+            stop_adopted_generation(
+                output_json,
+                &capture,
+                &candidate.candidate_digest,
+                inspect,
+                stop_phase,
+                probe,
+                wait,
+            )?;
+            if !capture.bytes_unchanged().map_err(|error| {
+                recover_refused(
+                    output_json,
+                    error.to_string(),
+                    Some(capture.pid),
+                    capture.version.as_deref(),
+                    Some("running"),
+                    Some(&candidate),
+                )
+            })? {
+                return Err(changed_record_error(
+                    output_json,
+                    Some(capture.pid),
+                    capture.version.as_deref(),
+                ));
             }
             match probe(capture.pid) {
                 GatewayProcessProbe::ConfirmedAbsent => {}
                 GatewayProcessProbe::Unknown => {
-                    return Err(RunnerError::task_invocation(format!(
-                        "cannot confirm selected-generation absence for PID {} after stop; records preserved",
-                        capture.pid
-                    )));
+                    return Err(recover_refused(
+                        output_json,
+                        format!(
+                            "cannot confirm selected-generation absence for PID {} after stop; records preserved",
+                            capture.pid
+                        ),
+                        Some(capture.pid),
+                        capture.version.as_deref(),
+                        Some("unknown"),
+                        Some(&candidate),
+                    ));
                 }
                 GatewayProcessProbe::Running => {
-                    return Err(RunnerError::task_invocation(format!(
-                        "legacy gateway process {} is still running after generation-bound stop; records preserved",
-                        capture.pid
-                    )));
+                    return Err(recover_refused(
+                        output_json,
+                        format!(
+                            "legacy gateway process {} is still running after generation-bound stop; records preserved",
+                            capture.pid
+                        ),
+                        Some(capture.pid),
+                        capture.version.as_deref(),
+                        Some("running"),
+                        Some(&candidate),
+                    ));
                 }
             }
-            if !remove_legacy_if_unchanged(&capture).map_err(map_gateway_error)? {
-                return Err(changed_record_error());
+            if !remove_legacy_if_unchanged(&capture).map_err(|error| {
+                recover_refused(
+                    output_json,
+                    error.to_string(),
+                    Some(capture.pid),
+                    capture.version.as_deref(),
+                    Some("confirmed_absent"),
+                    Some(&candidate),
+                )
+            })? {
+                return Err(changed_record_error(
+                    output_json,
+                    Some(capture.pid),
+                    capture.version.as_deref(),
+                ));
             }
             drop(lock);
             let started = start()?;
@@ -347,7 +483,9 @@ fn recover_legacy_capture(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn stop_adopted_generation(
+    output_json: bool,
     capture: &LegacyRecordCapture,
     adopted: &str,
     inspect: &mut impl FnMut(&LegacyRecordCapture) -> Option<LegacyCandidate>,
@@ -355,27 +493,46 @@ fn stop_adopted_generation(
     probe: &mut impl FnMut(u32) -> GatewayProcessProbe,
     wait: &mut impl FnMut(Duration),
 ) -> Result<(), RunnerError> {
+    let refused = |reason: String, probe: Option<&str>, candidate: Option<&LegacyCandidate>| {
+        recover_refused(
+            output_json,
+            reason,
+            Some(capture.pid),
+            capture.version.as_deref(),
+            probe,
+            candidate,
+        )
+    };
     let Some(current) = inspect(capture) else {
-        return Err(RunnerError::task_invocation(
-            "legacy gateway candidate changed before TERM; no signal",
+        return Err(refused(
+            "legacy gateway candidate changed before TERM; no signal".to_owned(),
+            Some("running"),
+            None,
         ));
     };
     if current.candidate_digest != adopted {
-        return Err(RunnerError::task_invocation(
-            "legacy gateway candidate generation changed before TERM; no signal",
+        return Err(refused(
+            "legacy gateway candidate generation changed before TERM; no signal".to_owned(),
+            Some("running"),
+            Some(&current),
         ));
     }
     match stop_phase(capture, adopted, GatewayLegacyStopPhase::Term) {
         LegacyStopResult::Absent => return Ok(()),
         LegacyStopResult::Sent => {}
         LegacyStopResult::Refused => {
-            return Err(RunnerError::task_invocation(
-                "legacy gateway TERM refused after revalidation; no further signal",
+            return Err(refused(
+                "legacy gateway TERM refused after revalidation; no further signal".to_owned(),
+                Some("running"),
+                Some(&current),
             ));
         }
         LegacyStopResult::Unknown => {
-            return Err(RunnerError::task_invocation(
-                "legacy gateway TERM result is unknown; records preserved; no further signal",
+            return Err(refused(
+                "legacy gateway TERM result is unknown; records preserved; no further signal"
+                    .to_owned(),
+                Some("unknown"),
+                Some(&current),
             ));
         }
     }
@@ -383,22 +540,30 @@ fn stop_adopted_generation(
         match probe(capture.pid) {
             GatewayProcessProbe::ConfirmedAbsent => return Ok(()),
             GatewayProcessProbe::Unknown => {
-                return Err(RunnerError::task_invocation(format!(
-                    "cannot determine whether legacy gateway process {} stopped after TERM; refusing success without KILL",
-                    capture.pid
-                )));
+                return Err(refused(
+                    format!(
+                        "cannot determine whether legacy gateway process {} stopped after TERM; refusing success without KILL",
+                        capture.pid
+                    ),
+                    Some("unknown"),
+                    Some(&current),
+                ));
             }
             GatewayProcessProbe::Running => wait(WAIT_SLICE),
         }
     }
     let Some(current) = inspect(capture) else {
-        return Err(RunnerError::task_invocation(
-            "legacy gateway candidate changed before KILL; no further signal",
+        return Err(refused(
+            "legacy gateway candidate changed before KILL; no further signal".to_owned(),
+            Some("running"),
+            None,
         ));
     };
     if current.candidate_digest != adopted {
-        return Err(RunnerError::task_invocation(
-            "legacy gateway candidate generation changed before KILL; no further signal",
+        return Err(refused(
+            "legacy gateway candidate generation changed before KILL; no further signal".to_owned(),
+            Some("running"),
+            Some(&current),
         ));
     }
     match stop_phase(capture, adopted, GatewayLegacyStopPhase::Kill) {
@@ -408,24 +573,36 @@ fn stop_adopted_generation(
                 match probe(capture.pid) {
                     GatewayProcessProbe::ConfirmedAbsent => return Ok(()),
                     GatewayProcessProbe::Unknown => {
-                        return Err(RunnerError::task_invocation(format!(
-                            "cannot determine whether legacy gateway process {} stopped after KILL; records preserved",
-                            capture.pid
-                        )));
+                        return Err(refused(
+                            format!(
+                                "cannot determine whether legacy gateway process {} stopped after KILL; records preserved",
+                                capture.pid
+                            ),
+                            Some("unknown"),
+                            Some(&current),
+                        ));
                     }
                     GatewayProcessProbe::Running => wait(WAIT_SLICE),
                 }
             }
-            Err(RunnerError::task_invocation(format!(
-                "legacy gateway process {} did not stop after TERM/KILL",
-                capture.pid
-            )))
+            Err(refused(
+                format!(
+                    "legacy gateway process {} did not stop after TERM/KILL",
+                    capture.pid
+                ),
+                Some("running"),
+                Some(&current),
+            ))
         }
-        LegacyStopResult::Refused => Err(RunnerError::task_invocation(
-            "legacy gateway KILL refused after revalidation; no further signal",
+        LegacyStopResult::Refused => Err(refused(
+            "legacy gateway KILL refused after revalidation; no further signal".to_owned(),
+            Some("running"),
+            Some(&current),
         )),
-        LegacyStopResult::Unknown => Err(RunnerError::task_invocation(
-            "legacy gateway KILL result is unknown; records preserved",
+        LegacyStopResult::Unknown => Err(refused(
+            "legacy gateway KILL result is unknown; records preserved".to_owned(),
+            Some("unknown"),
+            Some(&current),
         )),
     }
 }
@@ -507,15 +684,56 @@ fn render_recover(
     lines.join("\n")
 }
 
-fn noninteractive_absent_error() -> RunnerError {
-    RunnerError::task_invocation(
+fn recover_refused(
+    output_json: bool,
+    reason: impl Into<String>,
+    pid: Option<u32>,
+    version: Option<&str>,
+    probe: Option<&str>,
+    candidate: Option<&LegacyCandidate>,
+) -> RunnerError {
+    let reason = reason.into();
+    if output_json {
+        return RunnerError::CommandJsonFailure {
+            rendered: json!({
+                "schema": RECOVER_SCHEMA,
+                "schema_version": 1,
+                "ok": false,
+                "result": "refused",
+                "pid": pid,
+                "version": version,
+                "probe": probe,
+                "candidate": candidate,
+                "adopted": candidate.map(|value| value.candidate_digest.clone()),
+                "records_removed": false,
+                "started": false,
+                "warnings": [reason],
+            })
+            .to_string(),
+        };
+    }
+    RunnerError::task_invocation(reason)
+}
+
+fn noninteractive_absent_error(output_json: bool) -> RunnerError {
+    recover_refused(
+        output_json,
         "`effigy gateway recover` requires an interactive terminal, or `--yes` only when no live legacy daemon remains to adopt",
+        None,
+        None,
+        None,
+        None,
     )
 }
 
-fn changed_record_error() -> RunnerError {
-    RunnerError::task_invocation(
+fn changed_record_error(output_json: bool, pid: Option<u32>, version: Option<&str>) -> RunnerError {
+    recover_refused(
+        output_json,
         "gateway record changed during recover; refusing. re-run `effigy gateway recover`",
+        pid,
+        version,
+        None,
+        None,
     )
 }
 
@@ -853,6 +1071,13 @@ mod legacy_recovery_protocol_tests {
         )
     }
 
+    fn recover_error_body(error: &RunnerError) -> String {
+        error
+            .rendered_output()
+            .map(str::to_owned)
+            .unwrap_or_else(|| error.to_string())
+    }
+
     #[test]
     fn legacy_recovery_absent_yes_starts_without_signal() {
         let (_root, home) = private_home();
@@ -876,6 +1101,36 @@ mod legacy_recovery_protocol_tests {
             |_| panic!("absent path must not probe a PID"),
         )
         .expect("absent recover");
+        assert!(rendered.contains("already_stopped"));
+        assert_eq!(signals.get(), 0);
+        assert!(started.get());
+    }
+
+    #[test]
+    fn legacy_recovery_missing_gateway_directory_is_absent_start() {
+        let root = tempfile::tempdir().expect("fixture");
+        let home = root.path().join("home");
+        let _guard = set_test_gateway_home(&home);
+        let signals = Cell::new(0);
+        let started = Cell::new(false);
+        let rendered = recover(
+            true,
+            false,
+            false,
+            |_| panic!("missing directory must not inspect"),
+            |_, _, _| {
+                signals.set(signals.get() + 1);
+                LegacyStopResult::Sent
+            },
+            || {
+                started.set(true);
+                Ok("started".to_owned())
+            },
+            |_| panic!("missing directory must not confirm"),
+            |_| panic!("missing directory must not probe a PID"),
+        )
+        .expect("missing directory is the absent-only path");
+        assert!(rendered.contains(RECOVER_SCHEMA));
         assert!(rendered.contains("already_stopped"));
         assert_eq!(signals.get(), 0);
         assert!(started.get());
@@ -907,8 +1162,12 @@ mod legacy_recovery_protocol_tests {
             |_| GatewayProcessProbe::Running,
         )
         .expect_err("must refuse");
-        assert!(error.to_string().contains("--adopt-candidate"));
-        assert!(error.to_string().contains("`--yes` cannot adopt"));
+        let body = recover_error_body(&error);
+        assert!(body.contains(RECOVER_SCHEMA));
+        assert!(body.contains("\"result\":\"refused\""));
+        assert!(body.contains("\"ok\":false"));
+        assert!(body.contains("--adopt-candidate"));
+        assert!(body.contains("`--yes` cannot adopt"));
         assert_eq!(signals.get(), 0);
         assert!(!started.get());
         assert_eq!(fs::read(&pid_path).unwrap(), before);
@@ -942,7 +1201,7 @@ mod legacy_recovery_protocol_tests {
             |_| GatewayProcessProbe::Running,
         )
         .expect_err("declined");
-        assert!(error.to_string().contains("declined"));
+        assert!(recover_error_body(&error).contains("declined"));
         assert_eq!(signals.get(), 0);
         assert!(child.0.try_wait().unwrap().is_none());
     }
@@ -985,7 +1244,7 @@ mod legacy_recovery_protocol_tests {
             |_| GatewayProcessProbe::Running,
         )
         .expect_err("generation change");
-        assert!(error.to_string().contains("changed before TERM"));
+        assert!(recover_error_body(&error).contains("changed before TERM"));
         assert_eq!(signals.get(), 0);
         assert_eq!(adopted.len(), 64);
         assert!(child.0.try_wait().unwrap().is_none());
@@ -1027,7 +1286,7 @@ mod legacy_recovery_protocol_tests {
             },
         )
         .expect_err("unknown after TERM");
-        assert!(error.to_string().contains("without KILL"));
+        assert!(recover_error_body(&error).contains("without KILL"));
         assert_eq!(*phases.borrow(), [GatewayLegacyStopPhase::Term]);
         assert!(child.0.try_wait().unwrap().is_none());
     }
@@ -1191,7 +1450,7 @@ mod legacy_recovery_protocol_tests {
             |_| GatewayProcessProbe::ConfirmedAbsent,
         )
         .expect_err("contention");
-        assert!(error.to_string().contains("transition lock"));
+        assert!(recover_error_body(&error).contains("transition lock"));
         drop(held);
     }
 
@@ -1231,7 +1490,7 @@ mod legacy_recovery_protocol_tests {
             },
         )
         .expect_err("vanished");
-        assert!(error.to_string().contains("changed"));
+        assert!(recover_error_body(&error).contains("changed"));
         assert!(child.0.try_wait().unwrap().is_none());
     }
 

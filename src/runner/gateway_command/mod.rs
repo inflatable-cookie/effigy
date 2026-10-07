@@ -278,12 +278,15 @@ fn resolve_gateway_status(
 ///
 /// Returns `Ok(Some(rendered))` when `up` already has its answer, `Ok(None)`
 /// when no gateway is running and the caller should start one, and `Err` when
-/// the probe was ambiguous. An unknown probe must never fall through to
-/// `spawn_gateway_daemon`, so it returns before the start path.
+/// the probe was ambiguous. An unknown or legacy probe must never fall through
+/// to `spawn_gateway_daemon` or elevation staging. `allow_elevation` is true
+/// only before `gateway.transition.lock` is held; nested elevate under that
+/// lock deadlocks the parent that still owns it.
 fn handle_existing_gateway_for_up(
     config: &GatewayConfig,
     status: Result<VerifiedGatewayStatus, effigy_gateway::GatewayError>,
     output_json: bool,
+    allow_elevation: bool,
 ) -> Result<Option<String>, RunnerError> {
     let Some(status) = resolve_gateway_status(status)? else {
         return Ok(None);
@@ -301,6 +304,17 @@ fn handle_existing_gateway_for_up(
         )
         .map(Some);
     }
+    let needs_elevation = !gateway_invocation_is_escalated()
+        && gateway_down_requires_elevation(config, Some(&status))?;
+    if needs_elevation {
+        if !allow_elevation {
+            return Err(RunnerError::task_invocation(
+                "gateway replacement requires elevation while the transition lock is held; refusing nested elevation",
+            ));
+        }
+        prepare_gateway_state_for_elevated_run(config)?;
+        return run_gateway_elevated(GatewaySubcommand::Up, output_json).map(Some);
+    }
     stop_gateway_process(&status.snapshot)?;
     if !identity::remove_if_unchanged(&status.snapshot)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?
@@ -314,14 +328,25 @@ fn handle_existing_gateway_for_up(
 
 fn run_gateway_up(output_json: bool) -> Result<String, RunnerError> {
     let config = gateway_config()?;
-    if !gateway_invocation_is_escalated() && gateway_up_path_requires_elevation(&config)? {
+    if let Some(rendered) = handle_existing_gateway_for_up(
+        &config,
+        verified_gateway_status(&config),
+        output_json,
+        true,
+    )? {
+        return Ok(rendered);
+    }
+    if !gateway_invocation_is_escalated() && gateway_up_requires_elevation(&config) {
         prepare_gateway_state_for_elevated_run(&config)?;
         return run_gateway_elevated(GatewaySubcommand::Up, output_json);
     }
     let _lock = recover::acquire_transition_lock(&config)?;
-    if let Some(rendered) =
-        handle_existing_gateway_for_up(&config, verified_gateway_status(&config), output_json)?
-    {
+    if let Some(rendered) = handle_existing_gateway_for_up(
+        &config,
+        verified_gateway_status(&config),
+        output_json,
+        false,
+    )? {
         return Ok(rendered);
     }
     ensure_gateway_up_privileges(&config)?;
@@ -342,18 +367,6 @@ fn run_gateway_up(output_json: bool) -> Result<String, RunnerError> {
         &warnings,
         output_json,
     )
-}
-
-fn gateway_up_path_requires_elevation(config: &GatewayConfig) -> Result<bool, RunnerError> {
-    if gateway_up_requires_elevation(config) {
-        return Ok(true);
-    }
-    match verified_gateway_status(config) {
-        Ok(status) if !gateway_status_matches_current_binary(&status) => {
-            gateway_down_requires_elevation(config, Some(&status))
-        }
-        _ => Ok(false),
-    }
 }
 
 fn run_gateway_down(output_json: bool) -> Result<String, RunnerError> {
@@ -455,8 +468,8 @@ fn legacy_identity_status_error(
 ) -> RunnerError {
     match error {
         effigy_gateway::GatewayError::LegacyIdentityRequired { pid } if output_json => {
-            RunnerError::task_invocation(
-                json!({
+            RunnerError::CommandJsonFailure {
+                rendered: json!({
                     "schema": "effigy.gateway.status.v1",
                     "schema_version": 1,
                     "ok": false,
@@ -469,7 +482,7 @@ fn legacy_identity_status_error(
                     }
                 })
                 .to_string(),
-            )
+            }
         }
         other => RunnerError::task_invocation(other.to_string()),
     }

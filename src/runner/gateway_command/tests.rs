@@ -436,6 +436,7 @@ fn probe_state_up_refuses_unknown_without_starting_a_replacement() {
         &config,
         Err(effigy_gateway::GatewayError::ProcessStateUnknown { pid: 4242 }),
         false,
+        false,
     );
     assert!(
         unknown.is_err(),
@@ -445,6 +446,7 @@ fn probe_state_up_refuses_unknown_without_starting_a_replacement() {
     let stopped = handle_existing_gateway_for_up(
         &config,
         Err(effigy_gateway::GatewayError::NotRunning),
+        false,
         false,
     );
     assert!(matches!(stopped, Ok(None)));
@@ -487,6 +489,14 @@ fn gateway_identity_legacy_active_record_refused_by_status_up_down_and_managed_s
     let status = run_gateway_status(false)
         .expect_err("status must refuse the unauthenticated process")
         .to_string();
+    let status_json = run_gateway_status(true)
+        .expect_err("status --json must refuse the unauthenticated process");
+    let status_payload = status_json
+        .rendered_output()
+        .expect("status --json emits a structured payload");
+    assert!(status_payload.contains("\"schema\":\"effigy.gateway.status.v1\""));
+    assert!(status_payload.contains("legacy_identity_required"));
+    assert!(status_payload.contains("effigy gateway recover"));
     let up = run_gateway_up(false)
         .expect_err("up must refuse to replace the unauthenticated process")
         .to_string();
@@ -506,6 +516,10 @@ fn gateway_identity_legacy_active_record_refused_by_status_up_down_and_managed_s
         assert!(!message.contains("cannot determine gateway state"));
     }
     assert!(!marker.exists(), "managed startup command must not run");
+    assert!(
+        !gateway_home.join("routes.json").exists(),
+        "up must not stage elevated state before refusing legacy identity"
+    );
     assert_eq!(std::fs::read(&pid_path).expect("PID remains"), before_pid);
     assert_eq!(
         std::fs::read(&version_path).expect("version remains"),

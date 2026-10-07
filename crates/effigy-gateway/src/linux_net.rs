@@ -89,7 +89,8 @@ fn parse_proc_net_table(
             }
         }
         let inode = cols
-            .nth(5)
+            .skip(5)
+            .next()
             .and_then(|value| value.parse::<u64>().ok())
             .ok_or_else(|| {
                 std::io::Error::new(
@@ -171,7 +172,12 @@ mod linux_net_parse_tests {
         let mut inodes = BTreeSet::new();
         inodes.insert(7);
         let tcp_eps = parse_proc_net_table(tcp, GatewayTransport::Tcp, true, &inodes).unwrap();
-        assert_eq!(tcp_eps[0].transport, GatewayTransport::Tcp);
-        assert_eq!(tcp_eps[0].addr.port(), 15353);
+        assert_eq!(
+            tcp_eps,
+            vec![GatewayEndpoint {
+                transport: GatewayTransport::Tcp,
+                addr: SocketAddr::from((Ipv4Addr::LOCALHOST, 15353)),
+            }]
+        );
     }
 }
