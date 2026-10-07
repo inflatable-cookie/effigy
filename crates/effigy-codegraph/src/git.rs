@@ -157,12 +157,25 @@ pub(crate) fn update_index_stamp(
 /// `None` is not "clean": callers treat it as "identity unknown" and must not
 /// label any excerpt as committed bytes.
 pub(crate) fn dirty_paths(repo_root: &Path) -> Option<std::collections::BTreeSet<String>> {
-    let output = Command::new("git")
+    let mut command = Command::new("git");
+    command
         .arg("status")
         .args(["--porcelain=v1", "-z", "--untracked-files=all"])
-        .current_dir(repo_root)
-        .output()
-        .ok()?;
+        .current_dir(repo_root);
+    #[cfg(debug_assertions)]
+    if std::env::var_os("EFFIGY_TEST_DOCTOR_GIT_EVIDENCE").is_some() {
+        command
+            .env(
+                "EFFIGY_TEST_DOCTOR_GIT_CALLER",
+                "effigy-codegraph::git::dirty_paths",
+            )
+            .env(
+                "EFFIGY_TEST_DOCTOR_GIT_ARGS_JSON",
+                serde_json::json!(["status", "--porcelain=v1", "-z", "--untracked-files=all"])
+                    .to_string(),
+            );
+    }
+    let output = command.output().ok()?;
     if !output.status.success() {
         return None;
     }

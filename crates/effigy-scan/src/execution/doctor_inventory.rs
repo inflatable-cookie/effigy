@@ -736,17 +736,31 @@ fn run_git_bounded(
     deadline: Option<Instant>,
 ) -> Result<Option<std::process::Output>, ScanError> {
     let Some(deadline) = deadline else {
-        return Ok(Command::new("git").args(args).output().ok());
+        return Ok(doctor_git_command().args(args).output().ok());
     };
     if Instant::now() >= deadline {
         return Err(git_budget_error());
     }
-    let mut command = Command::new("git");
+    let mut command = doctor_git_command();
     command
         .args(args)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
+    #[cfg(all(unix, debug_assertions))]
+    let evidence = DoctorGitProcessEvidence::from_test_config();
+    #[cfg(all(unix, debug_assertions))]
+    if evidence.is_some() {
+        command
+            .env(
+                "EFFIGY_TEST_DOCTOR_GIT_CALLER",
+                "effigy-scan::execution::doctor_inventory::run_git_bounded",
+            )
+            .env(
+                "EFFIGY_TEST_DOCTOR_GIT_ARGS_JSON",
+                serde_json::to_string(args).unwrap_or_else(|_| "[]".to_owned()),
+            );
+    }
     #[cfg(unix)]
     // SAFETY: `pre_exec` runs this closure in the forked child before `exec`,
     // where only async-signal-safe work is allowed. `setpgid` is
@@ -762,8 +776,50 @@ fn run_git_bounded(
     }
     let child = match command.spawn() {
         Ok(child) => child,
-        Err(_) => return Ok(None),
+        Err(error) => {
+            #[cfg(all(unix, debug_assertions))]
+            if let Some(evidence) = &evidence {
+                evidence.record(
+                    "spawn_failed",
+                    serde_json::json!({
+                        "kind": format!("{:?}", error.kind()),
+                        "errno": error.raw_os_error(),
+                    }),
+                );
+            }
+            return Ok(None);
+        }
     };
+    #[cfg(all(unix, debug_assertions))]
+    if let Some(evidence) = &evidence {
+        let pid = child.id();
+        let pgid = i32::try_from(pid)
+            .ok()
+            .and_then(|pid| nix::unistd::getpgid(Some(nix::unistd::Pid::from_raw(pid))).ok())
+            .map(nix::unistd::Pid::as_raw);
+        // `Command::spawn` returns a child only when the `pre_exec` closure
+        // succeeds, so this records the actual `setpgid` result. The observed
+        // PGID independently checks the resulting kernel state.
+        evidence.record(
+            "leader_spawned",
+            serde_json::json!({
+                "pid": pid,
+                "ppid": std::process::id(),
+                "pgid": pgid,
+                "caller": "effigy-scan::execution::doctor_inventory::run_git_bounded",
+                "args": args,
+                "setpgid": {
+                    "result": "ok",
+                    "return": 0,
+                    "errno": null,
+                    "inferred_from_successful_spawn": true,
+                },
+            }),
+        );
+    }
+    #[cfg(all(unix, debug_assertions))]
+    let mut child = OwnedGitChild::new(child, evidence);
+    #[cfg(not(all(unix, debug_assertions)))]
     let mut child = OwnedGitChild::new(child);
     let stdout = child
         .child_mut()
@@ -812,6 +868,59 @@ fn run_git_bounded(
     }
 }
 
+#[cfg(all(unix, debug_assertions, test))]
+#[derive(Clone)]
+struct DoctorGitTestConfig {
+    program: PathBuf,
+    real_git: PathBuf,
+    fixture_executable: PathBuf,
+    source_events: PathBuf,
+    fixture_events: PathBuf,
+    shell_events: PathBuf,
+    invocation: String,
+    initial_ready: PathBuf,
+    late_ready: PathBuf,
+    initial_marker: PathBuf,
+    late_marker: PathBuf,
+}
+
+#[cfg(all(unix, debug_assertions, test))]
+thread_local! {
+    static DOCTOR_GIT_TEST_CONFIG: std::cell::RefCell<Option<DoctorGitTestConfig>> = const {
+        std::cell::RefCell::new(None)
+    };
+}
+
+#[cfg(all(unix, debug_assertions, test))]
+fn doctor_git_test_config() -> Option<DoctorGitTestConfig> {
+    DOCTOR_GIT_TEST_CONFIG.with(|config| config.borrow().clone())
+}
+
+fn doctor_git_command() -> Command {
+    #[cfg(all(unix, debug_assertions, test))]
+    if let Some(config) = doctor_git_test_config() {
+        let mut command = Command::new(config.program);
+        command
+            .env("EFFIGY_TEST_DOCTOR_REAL_GIT", config.real_git)
+            .env("EFFIGY_TEST_DOCTOR_FIXTURE_EXE", config.fixture_executable)
+            .env("EFFIGY_TEST_DOCTOR_GIT_INVOCATION", config.invocation)
+            .env(
+                "EFFIGY_TEST_DOCTOR_GIT_FIXTURE_EVENTS",
+                config.fixture_events,
+            )
+            .env("EFFIGY_TEST_DOCTOR_GIT_SHELL_EVENTS", config.shell_events)
+            .env("EFFIGY_TEST_DOCTOR_GIT_INITIAL_READY", config.initial_ready)
+            .env("EFFIGY_TEST_DOCTOR_GIT_LATE_READY", config.late_ready)
+            .env(
+                "EFFIGY_TEST_DOCTOR_GIT_INITIAL_MARKER",
+                config.initial_marker,
+            )
+            .env("EFFIGY_TEST_DOCTOR_GIT_LATE_MARKER", config.late_marker);
+        return command;
+    }
+    Command::new("git")
+}
+
 fn read_child_output(mut stream: impl std::io::Read) -> std::io::Result<Vec<u8>> {
     let mut output = Vec::new();
     stream.read_to_end(&mut output)?;
@@ -825,9 +934,23 @@ struct OwnedGitChild {
     child: std::process::Child,
     pid: u32,
     settled: bool,
+    #[cfg(all(unix, debug_assertions))]
+    evidence: Option<DoctorGitProcessEvidence>,
 }
 
 impl OwnedGitChild {
+    #[cfg(all(unix, debug_assertions))]
+    fn new(child: std::process::Child, evidence: Option<DoctorGitProcessEvidence>) -> Self {
+        let pid = child.id();
+        Self {
+            child,
+            pid,
+            settled: false,
+            evidence,
+        }
+    }
+
+    #[cfg(not(all(unix, debug_assertions)))]
     fn new(child: std::process::Child) -> Self {
         let pid = child.id();
         Self {
@@ -845,6 +968,20 @@ impl OwnedGitChild {
         let result = self.child.try_wait()?;
         if result.is_some() {
             self.settled = true;
+            #[cfg(all(unix, debug_assertions))]
+            if let Some(status) = result.as_ref() {
+                if let Some(evidence) = &self.evidence {
+                    evidence.record(
+                        "leader_exited",
+                        serde_json::json!({
+                            "pid": self.pid,
+                            "success": status.success(),
+                            "code": status.code(),
+                            "signal": std::os::unix::process::ExitStatusExt::signal(status),
+                        }),
+                    );
+                }
+            }
         }
         Ok(result)
     }
@@ -857,10 +994,36 @@ impl OwnedGitChild {
         // sent. Once the numeric identity has been used, do not signal it
         // again even if `wait` reports an error.
         self.settled = true;
+        #[cfg(all(unix, debug_assertions))]
+        terminate_git_tree(self.pid, self.evidence.as_ref());
+        #[cfg(not(all(unix, debug_assertions)))]
         terminate_git_tree(self.pid);
         #[cfg(not(unix))]
         let _ = self.child.kill();
-        let _ = self.child.wait();
+        #[cfg(all(unix, debug_assertions))]
+        {
+            let wait_result = self.child.wait();
+            if let Some(evidence) = &self.evidence {
+                evidence.record(
+                    "leader_reaped",
+                    serde_json::json!({
+                        "pid": self.pid,
+                        "status": wait_result.as_ref().ok().map(|status| {
+                            serde_json::json!({
+                                "success": status.success(),
+                                "code": status.code(),
+                                "signal": std::os::unix::process::ExitStatusExt::signal(status),
+                            })
+                        }),
+                        "errno": wait_result.as_ref().err().and_then(std::io::Error::raw_os_error),
+                    }),
+                );
+            }
+        }
+        #[cfg(not(all(unix, debug_assertions)))]
+        {
+            let _ = self.child.wait();
+        }
     }
 }
 
@@ -875,7 +1038,10 @@ fn git_budget_error() -> ScanError {
 }
 
 #[cfg(unix)]
-fn terminate_git_tree(pid: u32) {
+fn terminate_git_tree(
+    pid: u32,
+    #[cfg(debug_assertions)] evidence: Option<&DoctorGitProcessEvidence>,
+) {
     use nix::sys::signal::{kill, Signal};
     use nix::unistd::Pid;
     let Ok(pid) = i32::try_from(pid) else {
@@ -886,13 +1052,98 @@ fn terminate_git_tree(pid: u32) {
     }
     // `OwnedGitChild` keeps the group leader unreaped across this escalation,
     // preventing the process-group ID from being reused between signals.
-    let _ = kill(Pid::from_raw(-pid), Signal::SIGTERM);
+    let target = Pid::from_raw(-pid);
+    let term = kill(target, Signal::SIGTERM);
+    #[cfg(debug_assertions)]
+    if let Some(evidence) = evidence {
+        evidence.record_signal("TERM", target.as_raw(), &term);
+    }
     std::thread::sleep(std::time::Duration::from_millis(500));
-    let _ = kill(Pid::from_raw(-pid), Signal::SIGKILL);
+    let kill_result = kill(target, Signal::SIGKILL);
+    #[cfg(debug_assertions)]
+    if let Some(evidence) = evidence {
+        evidence.record_signal("KILL", target.as_raw(), &kill_result);
+    }
 }
 
 #[cfg(not(unix))]
 fn terminate_git_tree(_pid: u32) {}
+
+#[cfg(all(unix, debug_assertions))]
+/// Private debug-build recording enabled only by the doctor process fixture.
+/// With no test evidence path set, it has no filesystem or process effects.
+struct DoctorGitProcessEvidence {
+    path: PathBuf,
+    invocation: String,
+    ready_marker: Option<PathBuf>,
+    late_ready_marker: Option<PathBuf>,
+    started: Instant,
+}
+
+#[cfg(all(unix, debug_assertions))]
+impl DoctorGitProcessEvidence {
+    fn from_test_config() -> Option<Self> {
+        #[cfg(test)]
+        {
+            let config = doctor_git_test_config()?;
+            Some(Self {
+                path: config.source_events,
+                invocation: config.invocation,
+                ready_marker: Some(config.initial_ready),
+                late_ready_marker: Some(config.late_ready),
+                started: Instant::now(),
+            })
+        }
+        #[cfg(not(test))]
+        {
+            let path = std::env::var_os("EFFIGY_TEST_DOCTOR_GIT_EVIDENCE")?;
+            Some(Self {
+                path: PathBuf::from(path),
+                invocation: std::env::var("EFFIGY_TEST_DOCTOR_GIT_INVOCATION")
+                    .unwrap_or_else(|_| "unspecified".to_owned()),
+                ready_marker: std::env::var_os("EFFIGY_TEST_DOCTOR_GIT_READY").map(PathBuf::from),
+                late_ready_marker: std::env::var_os("EFFIGY_TEST_DOCTOR_GIT_LATE_READY")
+                    .map(PathBuf::from),
+                started: Instant::now(),
+            })
+        }
+    }
+
+    fn record(&self, event: &str, details: serde_json::Value) {
+        let record = serde_json::json!({
+            "invocation": self.invocation,
+            "elapsed_ms": self.started.elapsed().as_millis(),
+            "event": event,
+            "details": details,
+        });
+        let Ok(line) = serde_json::to_vec(&record) else {
+            return;
+        };
+        let Ok(mut file) = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)
+        else {
+            return;
+        };
+        let _ = file.write_all(&line);
+        let _ = file.write_all(b"\n");
+    }
+
+    fn record_signal(&self, signal: &str, target: i32, result: &Result<(), nix::errno::Errno>) {
+        self.record(
+            "signal",
+            serde_json::json!({
+                "signal": signal,
+                "target": target,
+                "result": if result.is_ok() { "ok" } else { "error" },
+                "errno": result.as_ref().err().map(|error| *error as i32),
+                "ready_at_signal": self.ready_marker.as_ref().is_some_and(|path| path.exists()),
+                "late_ready_at_signal": self.late_ready_marker.as_ref().is_some_and(|path| path.exists()),
+            }),
+        );
+    }
+}
 
 fn generated_in_src_category(value: &str) -> GeneratedInSrcCategory {
     match value {
@@ -1572,5 +1823,520 @@ mod tests {
         .expect_err("deadline should fail");
         assert!(error.to_string().contains("budget exhausted"));
         assert!(!cache_paths(root, "root", root).current.exists());
+    }
+
+    #[cfg(all(unix, debug_assertions))]
+    #[test]
+    fn doctor_git_timeout_process_group_evidence() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        std::fs::create_dir_all(root.join("src")).expect("source directory");
+        std::fs::write(root.join("src/lib.rs"), "pub fn cold() {}\n").expect("source");
+        let real_git = path_binary("git");
+        run_git(&real_git, root, &["init", "--quiet"]);
+        run_git(&real_git, root, &["add", "--", "."]);
+
+        let shim = root.join("git-timeout-shim");
+        write_doctor_git_timeout_shim(&shim);
+        let child_events = root.join("fixture-processes.jsonl");
+        let source_events = root.join("doctor-processes.jsonl");
+        let shell_events = root.join("shell-events.txt");
+        let initial_ready = root.join("initial-ready");
+        let late_ready = root.join("late-ready");
+        let initial_marker = root.join("initial-survived");
+        let late_marker = root.join("late-survived");
+        let fixture_guard = DoctorGitFixtureGuard::new(child_events.clone());
+        let mut sibling = DoctorProcessSibling::spawn();
+        let _config = DoctorGitTestConfigGuard::install(DoctorGitTestConfig {
+            program: shim,
+            real_git,
+            fixture_executable: std::env::current_exe().expect("test executable"),
+            source_events: source_events.clone(),
+            fixture_events: child_events.clone(),
+            shell_events: shell_events.clone(),
+            invocation: "direct-inventory".to_owned(),
+            initial_ready: initial_ready.clone(),
+            late_ready: late_ready.clone(),
+            initial_marker: initial_marker.clone(),
+            late_marker: late_marker.clone(),
+        });
+
+        let started = Instant::now();
+        let deadline = started + std::time::Duration::from_millis(800);
+        let error =
+            run_doctor_scan_inventory(root, "root", root, &[], &options(), false, Some(deadline))
+                .expect_err("the bounded Git status probe should exhaust its call budget");
+        assert!(error.to_string().contains("budget exhausted"), "{error}");
+        assert!(started.elapsed() < std::time::Duration::from_secs(20));
+        assert!(
+            !cache_paths(root, "root", root).directory.exists(),
+            "a timed-out scan published partial cache state"
+        );
+
+        let target = assert_doctor_git_process_evidence(
+            &source_events,
+            &child_events,
+            &shell_events,
+            "direct-inventory",
+        );
+        sibling.assert_survived();
+        assert_ne!(
+            sibling.pgid,
+            i32::try_from(target).expect("target fits i32")
+        );
+
+        let remaining = std::time::Duration::from_millis(4600).saturating_sub(started.elapsed());
+        std::thread::sleep(remaining);
+        assert!(
+            !initial_marker.exists(),
+            "initial marker writer survived cleanup"
+        );
+        assert!(!late_marker.exists(), "late marker writer survived cleanup");
+        assert_doctor_fixture_processes_reaped(&child_events, "direct-inventory");
+        drop(fixture_guard);
+    }
+
+    #[cfg(all(unix, debug_assertions))]
+    #[test]
+    fn doctor_git_timeout_process_fixture_child() {
+        use nix::sys::signal::Signal;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+
+        let Ok(role) = std::env::var("EFFIGY_TEST_DOCTOR_FIXTURE_ROLE") else {
+            return;
+        };
+        assert!(role == "initial" || role == "late", "unknown role {role}");
+        let events = PathBuf::from(
+            std::env::var_os("EFFIGY_TEST_DOCTOR_GIT_FIXTURE_EVENTS").expect("fixture event path"),
+        );
+        let invocation =
+            std::env::var("EFFIGY_TEST_DOCTOR_GIT_INVOCATION").expect("fixture invocation");
+        let (ready, marker) = if role == "initial" {
+            (
+                PathBuf::from(
+                    std::env::var_os("EFFIGY_TEST_DOCTOR_GIT_INITIAL_READY")
+                        .expect("initial readiness path"),
+                ),
+                PathBuf::from(
+                    std::env::var_os("EFFIGY_TEST_DOCTOR_GIT_INITIAL_MARKER")
+                        .expect("initial marker path"),
+                ),
+            )
+        } else {
+            (
+                PathBuf::from(
+                    std::env::var_os("EFFIGY_TEST_DOCTOR_GIT_LATE_READY")
+                        .expect("late readiness path"),
+                ),
+                PathBuf::from(
+                    std::env::var_os("EFFIGY_TEST_DOCTOR_GIT_LATE_MARKER")
+                        .expect("late marker path"),
+                ),
+            )
+        };
+        let terminated = Arc::new(AtomicBool::new(false));
+        signal_hook::flag::register(Signal::SIGTERM as i32, Arc::clone(&terminated))
+            .expect("register fixture TERM handler");
+        record_doctor_fixture_process(&events, &invocation, &role);
+        std::fs::write(&ready, b"ready\n").expect("publish fixture readiness");
+        record_doctor_fixture_event(
+            &events,
+            serde_json::json!({
+                "invocation": invocation,
+                "event": "process_ready",
+                "role": role,
+                "pid": std::process::id(),
+            }),
+        );
+
+        let until = Instant::now() + std::time::Duration::from_secs(3);
+        while Instant::now() < until {
+            if terminated.swap(false, Ordering::AcqRel) {
+                record_doctor_fixture_event(
+                    &events,
+                    serde_json::json!({
+                        "invocation": invocation,
+                        "event": "descendant_received_term",
+                        "role": role,
+                    }),
+                );
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        std::fs::write(marker, format!("pid={} role={role}\n", std::process::id()))
+            .expect("write surviving marker");
+    }
+
+    #[cfg(all(unix, debug_assertions))]
+    fn path_binary(name: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+
+        for directory in std::env::split_paths(&std::env::var_os("PATH").expect("PATH")) {
+            let candidate = directory.join(name);
+            let Ok(metadata) = std::fs::metadata(&candidate) else {
+                continue;
+            };
+            if metadata.is_file() && metadata.permissions().mode() & 0o111 != 0 {
+                return candidate;
+            }
+        }
+        panic!("could not find executable {name} on PATH");
+    }
+
+    #[cfg(all(unix, debug_assertions))]
+    fn run_git(program: &Path, root: &Path, args: &[&str]) {
+        let status = Command::new(program)
+            .arg("-C")
+            .arg(root)
+            .args(args)
+            .status()
+            .expect("run real Git fixture setup");
+        assert!(status.success(), "Git fixture setup failed: {args:?}");
+    }
+
+    #[cfg(all(unix, debug_assertions))]
+    fn write_doctor_git_timeout_shim(path: &Path) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let script = r##"#!/bin/sh
+case " $* " in
+  *" status --porcelain=v1 "*)
+    trap 'printf "shell_received_term %s\n" "$$" >> "$EFFIGY_TEST_DOCTOR_GIT_SHELL_EVENTS"; EFFIGY_TEST_DOCTOR_FIXTURE_ROLE=late "$EFFIGY_TEST_DOCTOR_FIXTURE_EXE" doctor_git_timeout_process_fixture_child --nocapture >/dev/null 2>&1 & while [ ! -f "$EFFIGY_TEST_DOCTOR_GIT_LATE_READY" ]; do :; done; exit 0' TERM
+    EFFIGY_TEST_DOCTOR_FIXTURE_ROLE=initial "$EFFIGY_TEST_DOCTOR_FIXTURE_EXE" doctor_git_timeout_process_fixture_child --nocapture >/dev/null 2>&1 &
+    while [ ! -f "$EFFIGY_TEST_DOCTOR_GIT_INITIAL_READY" ]; do :; done
+    while :; do :; done
+    ;;
+esac
+exec "$EFFIGY_TEST_DOCTOR_REAL_GIT" "$@"
+"##;
+        std::fs::write(path, script).expect("write process-group Git shim");
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
+            .expect("make Git shim executable");
+    }
+
+    #[cfg(all(unix, debug_assertions))]
+    fn record_doctor_fixture_process(events: &Path, invocation: &str, role: &str) {
+        let pid = std::process::id();
+        let pid_raw = i32::try_from(pid).expect("fixture PID fits process API");
+        let pgid = nix::unistd::getpgid(Some(nix::unistd::Pid::from_raw(pid_raw)))
+            .expect("read fixture process group")
+            .as_raw();
+        let start_identity = effigy_process::process_start_identity(pid)
+            .unwrap_or_else(|| panic!("read fixture process generation for PID {pid}"));
+        let ppid = nix::unistd::getppid().as_raw();
+        let parent_start_identity = u32::try_from(ppid)
+            .ok()
+            .and_then(effigy_process::process_start_identity);
+        record_doctor_fixture_event(
+            events,
+            serde_json::json!({
+                "invocation": invocation,
+                "event": "process_started",
+                "role": role,
+                "pid": pid,
+                "ppid": ppid,
+                "pgid": pgid,
+                "start_identity": start_identity,
+                "parent_start_identity": parent_start_identity,
+            }),
+        );
+    }
+
+    #[cfg(all(unix, debug_assertions))]
+    fn record_doctor_fixture_event(events: &Path, event: serde_json::Value) {
+        use std::io::Write;
+
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(events)
+            .expect("open fixture evidence");
+        let mut line = serde_json::to_vec(&event).expect("serialize fixture evidence");
+        line.push(b'\n');
+        file.write_all(&line).expect("write fixture evidence");
+    }
+
+    #[cfg(all(unix, debug_assertions))]
+    struct DoctorGitTestConfigGuard;
+
+    #[cfg(all(unix, debug_assertions))]
+    impl DoctorGitTestConfigGuard {
+        fn install(config: DoctorGitTestConfig) -> Self {
+            DOCTOR_GIT_TEST_CONFIG.with(|slot| {
+                assert!(slot.borrow().is_none(), "nested doctor Git test config");
+                *slot.borrow_mut() = Some(config);
+            });
+            Self
+        }
+    }
+
+    #[cfg(all(unix, debug_assertions))]
+    impl Drop for DoctorGitTestConfigGuard {
+        fn drop(&mut self) {
+            DOCTOR_GIT_TEST_CONFIG.with(|slot| {
+                slot.borrow_mut().take();
+            });
+        }
+    }
+
+    #[cfg(all(unix, debug_assertions))]
+    struct DoctorGitFixtureGuard {
+        events: PathBuf,
+    }
+
+    #[cfg(all(unix, debug_assertions))]
+    impl DoctorGitFixtureGuard {
+        fn new(events: PathBuf) -> Self {
+            Self { events }
+        }
+
+        fn reap_owned_processes(&self) {
+            let Ok(contents) = std::fs::read_to_string(&self.events) else {
+                return;
+            };
+            let mut owned = BTreeMap::new();
+            for line in contents.lines() {
+                let Ok(event) = serde_json::from_str::<serde_json::Value>(line) else {
+                    continue;
+                };
+                let (Some(pid), Some(identity)) = (
+                    event["pid"]
+                        .as_u64()
+                        .and_then(|value| u32::try_from(value).ok()),
+                    event["start_identity"].as_str(),
+                ) else {
+                    continue;
+                };
+                owned.insert(pid, identity.to_owned());
+                if event["event"] == "process_started" && event["role"] == "initial" {
+                    if let (Some(parent_pid), Some(parent_identity)) = (
+                        event["ppid"]
+                            .as_u64()
+                            .and_then(|value| u32::try_from(value).ok()),
+                        event["parent_start_identity"].as_str(),
+                    ) {
+                        owned.insert(parent_pid, parent_identity.to_owned());
+                    }
+                }
+            }
+            for (pid, identity) in owned {
+                if !effigy_process::process_start_identity_matches(pid, &identity) {
+                    continue;
+                }
+                let Ok(pid_raw) = i32::try_from(pid) else {
+                    continue;
+                };
+                match nix::sys::signal::kill(
+                    nix::unistd::Pid::from_raw(pid_raw),
+                    nix::sys::signal::Signal::SIGKILL,
+                ) {
+                    Ok(()) | Err(nix::errno::Errno::ESRCH) => {}
+                    Err(error) => eprintln!("could not reap fixture PID {pid}: {error}"),
+                }
+                let until = Instant::now() + std::time::Duration::from_secs(2);
+                while effigy_process::process_start_identity_matches(pid, &identity)
+                    && Instant::now() < until
+                {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                if effigy_process::process_start_identity_matches(pid, &identity) {
+                    eprintln!("fixture PID {pid} remained after cleanup deadline");
+                }
+            }
+        }
+    }
+
+    #[cfg(all(unix, debug_assertions))]
+    impl Drop for DoctorGitFixtureGuard {
+        fn drop(&mut self) {
+            self.reap_owned_processes();
+        }
+    }
+
+    #[cfg(all(unix, debug_assertions))]
+    struct DoctorProcessSibling {
+        child: std::process::Child,
+        pid: u32,
+        identity: String,
+        pgid: i32,
+    }
+
+    #[cfg(all(unix, debug_assertions))]
+    impl DoctorProcessSibling {
+        fn spawn() -> Self {
+            let child = Command::new("sleep")
+                .arg("30")
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .expect("spawn unrelated sibling");
+            let pid = child.id();
+            let pgid = nix::unistd::getpgid(Some(nix::unistd::Pid::from_raw(
+                i32::try_from(pid).expect("PID fits i32"),
+            )))
+            .expect("read unrelated sibling process group")
+            .as_raw();
+            let identity = effigy_process::process_start_identity(pid)
+                .unwrap_or_else(|| panic!("read sibling generation for PID {pid}"));
+            Self {
+                child,
+                pid,
+                identity,
+                pgid,
+            }
+        }
+
+        fn assert_survived(&mut self) {
+            assert!(effigy_process::process_start_identity_matches(
+                self.pid,
+                &self.identity
+            ));
+            assert!(self.child.try_wait().expect("inspect sibling").is_none());
+        }
+    }
+
+    #[cfg(all(unix, debug_assertions))]
+    impl Drop for DoctorProcessSibling {
+        fn drop(&mut self) {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
+
+    #[cfg(all(unix, debug_assertions))]
+    fn assert_doctor_git_process_evidence(
+        source_path: &Path,
+        fixture_path: &Path,
+        shell_path: &Path,
+        invocation: &str,
+    ) -> u64 {
+        let source = std::fs::read_to_string(source_path).expect("read source evidence");
+        let source_events = source
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("source event"))
+            .filter(|event| event["invocation"] == invocation)
+            .collect::<Vec<_>>();
+        let fixture = std::fs::read_to_string(fixture_path).expect("read fixture evidence");
+        let fixture_events = fixture
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("fixture event"))
+            .filter(|event| event["invocation"] == invocation)
+            .collect::<Vec<_>>();
+
+        let term_index = source_events
+            .iter()
+            .position(|event| event["event"] == "signal" && event["details"]["signal"] == "TERM")
+            .expect("TERM evidence");
+        let kill_index = source_events
+            .iter()
+            .position(|event| event["event"] == "signal" && event["details"]["signal"] == "KILL")
+            .expect("KILL evidence");
+        let target = source_events[term_index]["details"]["target"]
+            .as_i64()
+            .expect("TERM target");
+        let leader_pid = u64::try_from(-target).expect("positive leader PID");
+        let leader_index = source_events
+            .iter()
+            .position(|event| {
+                event["event"] == "leader_spawned"
+                    && event["details"]["pid"].as_u64() == Some(leader_pid)
+            })
+            .expect("spawned leader for signal target");
+        let reaped_index = source_events
+            .iter()
+            .position(|event| {
+                event["event"] == "leader_reaped"
+                    && event["details"]["pid"].as_u64() == Some(leader_pid)
+            })
+            .expect("reaped signal target leader");
+        assert!(leader_index < term_index && term_index < kill_index && kill_index < reaped_index);
+
+        let leader = &source_events[leader_index]["details"];
+        assert_eq!(leader["pgid"].as_u64(), Some(leader_pid));
+        assert!(leader["ppid"].as_u64().is_some());
+        assert_eq!(leader["setpgid"]["return"].as_i64(), Some(0));
+        assert!(leader["setpgid"]["errno"].is_null());
+        let args = leader["args"].as_array().expect("recorded Git args");
+        assert!(args.iter().any(|arg| arg == "status"));
+        assert!(args.iter().any(|arg| arg == "--porcelain=v1"));
+
+        let term = &source_events[term_index]["details"];
+        let kill = &source_events[kill_index]["details"];
+        assert_eq!(
+            term["target"].as_i64(),
+            Some(-i64::try_from(leader_pid).expect("leader PID fits i64"))
+        );
+        assert_eq!(kill["target"], term["target"]);
+        assert_eq!(term["result"], "ok");
+        assert_eq!(kill["result"], "ok");
+        assert!(term["errno"].is_null() && kill["errno"].is_null());
+        assert_eq!(term["ready_at_signal"], true);
+        assert_eq!(term["late_ready_at_signal"], false);
+        assert_eq!(kill["ready_at_signal"], true);
+        assert_eq!(kill["late_ready_at_signal"], true);
+        let status = &source_events[reaped_index]["details"]["status"];
+        assert_eq!(status["code"].as_i64(), Some(0));
+        assert!(status["signal"].is_null());
+
+        let shell_events = std::fs::read_to_string(shell_path).expect("read shell events");
+        assert!(shell_events
+            .lines()
+            .any(|line| line == format!("shell_received_term {leader_pid}")));
+        let mut parent_generation = None;
+        for role in ["initial", "late"] {
+            let process = fixture_events
+                .iter()
+                .find(|event| event["event"] == "process_started" && event["role"] == role)
+                .unwrap_or_else(|| panic!("missing {role} process generation: {fixture_events:?}"));
+            let pid = process["pid"].as_u64().expect("descendant PID");
+            assert!(process["start_identity"]
+                .as_str()
+                .is_some_and(|id| !id.is_empty()));
+            assert_eq!(process["ppid"].as_u64(), Some(leader_pid));
+            assert_eq!(process["pgid"].as_u64(), Some(leader_pid));
+            let generation = process["parent_start_identity"]
+                .as_str()
+                .filter(|identity| !identity.is_empty())
+                .expect("leader process generation");
+            if let Some(initial_generation) = parent_generation {
+                assert_eq!(generation, initial_generation);
+            } else {
+                parent_generation = Some(generation);
+            }
+            assert!(fixture_events.iter().any(|event| {
+                event["event"] == "process_ready"
+                    && event["role"] == role
+                    && event["pid"].as_u64() == Some(pid)
+            }));
+        }
+        assert!(fixture_events.iter().any(|event| {
+            event["event"] == "descendant_received_term" && event["role"] == "initial"
+        }));
+        assert!(!fixture_events.iter().any(|event| {
+            event["event"] == "descendant_received_term" && event["role"] == "late"
+        }));
+        leader_pid
+    }
+
+    #[cfg(all(unix, debug_assertions))]
+    fn assert_doctor_fixture_processes_reaped(events_path: &Path, invocation: &str) {
+        let events = std::fs::read_to_string(events_path).expect("read process generations");
+        for event in events
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("fixture event"))
+            .filter(|event| event["invocation"] == invocation)
+            .filter(|event| event["event"] == "process_started")
+        {
+            let pid = event["pid"].as_u64().expect("fixture PID");
+            let pid = u32::try_from(pid).expect("fixture PID fits process API");
+            let identity = event["start_identity"]
+                .as_str()
+                .expect("fixture process generation");
+            assert!(
+                !effigy_process::process_start_identity_matches(pid, identity),
+                "fixture process {pid} generation {identity} survived group KILL"
+            );
+        }
     }
 }
