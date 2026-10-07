@@ -1633,7 +1633,8 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn timeout_descendants_managed_interrupt_reaps_leader_and_descendant() {
+    fn release_preparation_fixture_timeout_descendants_managed_interrupt_reaps_leader_and_descendant(
+    ) {
         use crate::runner::owned_children::timeout_descendant_proof::TimeoutDescendantFixture;
         use std::thread;
         use std::time::{Duration, Instant};
@@ -1666,7 +1667,8 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn timeout_descendants_managed_interrupt_with_active_scope_reaps_group() {
+    fn release_preparation_fixture_timeout_descendants_managed_interrupt_with_active_scope_reaps_group(
+    ) {
         use crate::runner::owned_children::timeout_descendant_proof::TimeoutDescendantFixture;
         use std::thread;
         use std::time::{Duration, Instant};
@@ -1740,7 +1742,7 @@ mod tests {
     /// itself before the failure fires.
     #[cfg(unix)]
     #[test]
-    fn supervision_init_managed_caller_reports_error_and_reaps_tree() {
+    fn release_preparation_fixture_supervision_init_managed_caller_reports_error_and_reaps_tree() {
         use crate::runner::owned_children::timeout_descendant_proof::TimeoutDescendantFixture;
         use crate::runner::owned_children::SupervisionInitFailurePointForTest;
         use std::time::Duration;

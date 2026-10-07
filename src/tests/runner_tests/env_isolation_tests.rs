@@ -22,7 +22,7 @@ use std::time::Duration;
 /// must each observe their own values: the boundary cannot let one writer's
 /// window overlap another's.
 #[test]
-fn env_isolation_parallel_writers_do_not_overwrite_one_another() {
+fn release_preparation_fixture_env_isolation_parallel_writers_do_not_overwrite_one_another() {
     const WRITERS: usize = 4;
     const ROUNDS: usize = 50;
     let barrier = Arc::new(Barrier::new(WRITERS));
@@ -69,7 +69,7 @@ fn env_isolation_parallel_writers_do_not_overwrite_one_another() {
 /// parallel writers cycle the same key, because absence windows and writes
 /// take the same boundary.
 #[test]
-fn env_isolation_absence_reader_survives_parallel_handoff_writers() {
+fn release_preparation_fixture_env_isolation_absence_reader_survives_parallel_handoff_writers() {
     const ROUNDS: usize = 200;
     let stop = Arc::new(AtomicBool::new(false));
 
@@ -112,7 +112,8 @@ fn env_isolation_absence_reader_survives_parallel_handoff_writers() {
 /// reader's queue position before release and its acquisition after release;
 /// unrelated queued holders are reported separately from writer exclusion.
 #[test]
-fn env_isolation_path_and_graph_budget_readers_wait_for_scoped_writer() {
+fn release_preparation_fixture_env_isolation_path_and_graph_budget_readers_wait_for_scoped_writer()
+{
     const PATH: &str = "PATH";
     const GRAPH_TIMEOUT: &str = "EFFIGY_GRAPH_TIMEOUT_MS";
 

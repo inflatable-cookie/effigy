@@ -1307,7 +1307,8 @@ run = [{ task = "db:migrate" }]
 
     #[cfg(unix)]
     #[test]
-    fn timeout_descendants_sequence_interrupt_reaps_leader_and_descendant() {
+    fn release_preparation_fixture_timeout_descendants_sequence_interrupt_reaps_leader_and_descendant(
+    ) {
         use crate::runner::owned_children::timeout_descendant_proof::TimeoutDescendantFixture;
         use std::thread;
         use std::time::{Duration, Instant};
@@ -1337,7 +1338,8 @@ run = [{ task = "db:migrate" }]
 
     #[cfg(unix)]
     #[test]
-    fn timeout_descendants_sequence_interrupt_without_forwarding_fails_reap_oracle() {
+    fn release_preparation_fixture_timeout_descendants_sequence_interrupt_without_forwarding_fails_reap_oracle(
+    ) {
         use crate::runner::owned_children::timeout_descendant_proof::TimeoutDescendantFixture;
         use std::panic::AssertUnwindSafe;
         use std::thread;
@@ -1466,7 +1468,8 @@ run = [{ task = "db:migrate" }]
     /// itself before the failure fires.
     #[cfg(unix)]
     #[test]
-    fn supervision_init_sequence_owned_caller_reports_error_and_reaps_tree() {
+    fn release_preparation_fixture_supervision_init_sequence_owned_caller_reports_error_and_reaps_tree(
+    ) {
         use crate::runner::owned_children::timeout_descendant_proof::TimeoutDescendantFixture;
         use crate::runner::owned_children::SupervisionInitFailurePointForTest;
 

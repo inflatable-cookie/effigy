@@ -6,7 +6,7 @@ use crate::runner::tests::prelude::{
 };
 
 #[test]
-fn run_manifest_task_builtin_test_json_suppresses_child_process_output() {
+fn release_preparation_fixture_json_suppresses_child_process_output() {
     let _environment_lock = lock_test();
     let root = temp_workspace("builtin-test-json-suppresses-child-output");
     write_package_json_with_test_script(&root);
@@ -22,7 +22,7 @@ fn run_manifest_task_builtin_test_json_suppresses_child_process_output() {
 }
 
 #[test]
-fn run_manifest_task_builtin_test_text_and_json_outputs_share_target_identity() {
+fn release_preparation_fixture_text_and_json_outputs_share_target_identity() {
     let _environment_lock = lock_test();
     let root = temp_workspace("builtin-test-json-text-target-parity");
     write_package_json_with_test_script(&root);

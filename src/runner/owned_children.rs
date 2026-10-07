@@ -914,7 +914,7 @@ pub(super) mod timeout_descendant_proof {
 /// requires the already-owned tree to be terminated and reaped. The unrelated
 /// sibling is a separate process group and must survive.
 #[cfg(all(test, unix))]
-mod supervision_init_tests {
+mod release_preparation_fixture_supervision_init_tests {
     use super::timeout_descendant_proof::TimeoutDescendantFixture;
     use super::{
         inject_supervision_init_failure_for_test, pre_repair_ordering_control_for_test,
@@ -962,27 +962,38 @@ mod supervision_init_tests {
     }
 
     #[test]
-    fn signal_proof_lock_order_serializes_in_process() {
+    fn release_preparation_fixture_signal_proof_lock_order_serializes_in_process() {
         use std::sync::mpsc;
         use std::thread;
 
-        let environment_lock = crate::contract_test_support::lock_test();
         let (serial_acquired_tx, serial_acquired_rx) = mpsc::channel();
+        let (continue_tx, continue_rx) = mpsc::channel();
         let worker = thread::spawn(move || {
             let _locks = super::hold_signal_proof_test_locks_after_serial(|| {
                 serial_acquired_tx
-                    .send(())
-                    .expect("report serial lock acquisition");
+                    .send(thread::current().id())
+                    .expect("report serial lock acquisition before waiting for environment lock");
+                continue_rx
+                    .recv()
+                    .expect("continue after main thread owns environment lock");
             });
         });
-        let serial_was_acquired_first = serial_acquired_rx
-            .recv_timeout(Duration::from_secs(5))
-            .is_ok();
+        let worker_id = serial_acquired_rx
+            .recv()
+            .expect("worker acquires serial lock before environment lock");
+        let environment_lock = crate::contract_test_support::lock_test();
+        continue_tx
+            .send(())
+            .expect("allow worker to request environment lock");
+        let queued_on_environment_lock = crate::contract_test_support::test_lock_waiter_position(
+            worker_id,
+            Duration::from_secs(5),
+        );
         drop(environment_lock);
         worker.join().expect("signal proof lock acquisition exits");
         assert!(
-            serial_was_acquired_first,
-            "signal proofs must acquire the group-cleanup lock before the environment lock"
+            queued_on_environment_lock.is_some(),
+            "worker should queue for environment lock after acquiring serial lock"
         );
     }
 

@@ -715,7 +715,8 @@ fn observe_registered_child_termination(wait: std::time::Duration) -> Terminatio
 
 #[cfg(unix)]
 #[test]
-fn owned_children_scope_forwards_termination_only_to_registered_groups() {
+fn release_preparation_fixture_owned_children_scope_forwards_termination_only_to_registered_groups()
+{
     let _locks = crate::runner::owned_children::hold_signal_proof_test_locks();
     let observation = observe_registered_child_termination(std::time::Duration::from_secs(10));
     assert!(
@@ -745,7 +746,8 @@ fn owned_children_scope_forwards_termination_only_to_registered_groups() {
 
 #[cfg(unix)]
 #[test]
-fn owned_children_termination_oracle_fails_when_forwarding_is_disabled() {
+fn release_preparation_fixture_owned_children_termination_oracle_fails_when_forwarding_is_disabled()
+{
     let _locks = crate::runner::owned_children::hold_signal_proof_test_locks();
     let _seam = crate::runner::owned_children::disable_forwarding_for_test();
     let observation = observe_registered_child_termination(std::time::Duration::from_secs(1));
