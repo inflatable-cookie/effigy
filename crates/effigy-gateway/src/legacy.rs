@@ -477,10 +477,7 @@ impl GatewayTransitionLock {
         let parent = pid_path
             .parent()
             .ok_or_else(|| invalid_record("gateway PID path has no parent"))?;
-        if !parent.exists() {
-            fs::create_dir_all(parent).map_err(GatewayError::Io)?;
-        }
-        let owner_uid = identity::trusted_directory_owner(pid_path)?;
+        let owner_uid = identity::ensure_trusted_gateway_parent(pid_path)?;
         acquire_transition_lock(parent, owner_uid)
     }
 }
@@ -755,6 +752,87 @@ mod legacy_recovery_tests {
         assert!(matches!(second, Err(GatewayError::TransitionLockHeld)));
         drop(first);
         GatewayTransitionLock::try_acquire(&pid_path).expect("lock after release");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn legacy_recovery_transition_lock_refuses_symlinked_effigy_without_mutating_target() {
+        use std::os::unix::fs::{symlink, MetadataExt};
+
+        let root = tempfile::tempdir().expect("fixture directory");
+        let home = root.path().join("home");
+        let outside = root.path().join("outside");
+        fs::create_dir(&home).unwrap();
+        fs::create_dir(&outside).unwrap();
+        fs::set_permissions(&home, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::set_permissions(&outside, fs::Permissions::from_mode(0o700)).unwrap();
+        let sentinel = outside.join("sentinel");
+        fs::write(&sentinel, b"keep").unwrap();
+        let outside_names = || {
+            fs::read_dir(&outside)
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name())
+                .collect::<std::collections::BTreeSet<_>>()
+        };
+        let before_outside = outside_names();
+        let before_sentinel = fs::read(&sentinel).unwrap();
+        let before_ino = fs::symlink_metadata(&outside).unwrap().ino();
+        symlink(&outside, home.join(".effigy")).unwrap();
+        let pid_path = home.join(".effigy").join("gateway").join("gateway.pid");
+        let operator = fs::metadata(&home).unwrap().uid();
+
+        assert!(matches!(
+            capture_legacy_record(&pid_path, operator).unwrap(),
+            LegacyCapture::Absent
+        ));
+        match GatewayTransitionLock::try_acquire(&pid_path) {
+            Err(error) => {
+                let message = error.to_string();
+                assert!(
+                    message.contains("unsafe"),
+                    "expected ancestor-trust refusal, got {message}"
+                );
+            }
+            Ok(_) => panic!("symlink .effigy must refuse lock acquisition"),
+        }
+
+        assert_eq!(outside_names(), before_outside);
+        assert_eq!(fs::read(&sentinel).unwrap(), before_sentinel);
+        assert!(!outside.join("gateway").exists());
+        assert_eq!(fs::symlink_metadata(&outside).unwrap().ino(), before_ino);
+        assert!(home
+            .join(".effigy")
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_symlink());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn legacy_recovery_transition_lock_creates_genuine_absent_parent() {
+        use std::os::unix::fs::MetadataExt;
+
+        let root = tempfile::tempdir().expect("fixture directory");
+        let home = root.path().join("home");
+        fs::create_dir(&home).unwrap();
+        fs::set_permissions(&home, fs::Permissions::from_mode(0o700)).unwrap();
+        let pid_path = home.join(".effigy").join("gateway").join("gateway.pid");
+
+        let lock = GatewayTransitionLock::try_acquire(&pid_path).expect("genuine absent parent");
+        drop(lock);
+
+        let effigy = home.join(".effigy");
+        let gateway = effigy.join("gateway");
+        assert!(effigy.symlink_metadata().unwrap().is_dir());
+        assert!(!effigy.symlink_metadata().unwrap().file_type().is_symlink());
+        assert_eq!(
+            fs::symlink_metadata(&effigy).unwrap().uid(),
+            fs::metadata(&home).unwrap().uid()
+        );
+        assert!(gateway.is_dir());
+        assert!(gateway.join("gateway.transition.lock").is_file());
+        assert!(!pid_path.exists());
     }
 
     #[test]

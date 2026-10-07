@@ -1,5 +1,5 @@
 use effigy_cli::{GatewayLegacyStopPhase, GatewaySubcommand};
-use effigy_gateway::identity::GatewayIdentityProbe;
+use effigy_gateway::identity::{self, GatewayIdentityProbe};
 use effigy_gateway::legacy::LegacyCandidate;
 use effigy_gateway::loopback::LoopbackRegistry;
 #[cfg(target_os = "macos")]
@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 
 use crate::runner::error::RunnerError;
 
-use super::{gateway_dir, GATEWAY_ESCALATED_ENV, GATEWAY_KEEP_RESOLVER_ENV};
+use super::{GATEWAY_ESCALATED_ENV, GATEWAY_KEEP_RESOLVER_ENV};
 
 pub(super) fn gateway_invocation_is_escalated() -> bool {
     std::env::var(GATEWAY_ESCALATED_ENV)
@@ -141,7 +141,8 @@ pub(super) fn ensure_gateway_up_privileges(config: &GatewayConfig) -> Result<(),
 pub(super) fn prepare_gateway_state_for_elevated_run(
     config: &GatewayConfig,
 ) -> Result<(), RunnerError> {
-    std::fs::create_dir_all(gateway_dir()?).map_err(RunnerError::Cwd)?;
+    identity::ensure_trusted_gateway_parent(&config.pid_file_path)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     if !config.route_table_path.exists() {
         RouteTable::new()
             .save(&config.route_table_path)

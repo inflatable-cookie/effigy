@@ -34,9 +34,13 @@ During v0.x, MINOR bumps may include breaking changes.
   runs after the transition lock (or in the elevated child that acquires it).
   Privileged vacant first-start stages operator-owned files under that lock,
   then releases before elevation. A vanished captured PID/version pair is
-  refused as a changed record. Managed and container auto-start still
-  refuse a legacy record and point at recover. The local installer stages
-  owner-only `effigy.previous` plus `.version` as evidence; recover never
+  refused as a changed record. Lock acquisition, elevated-state preparation,
+  and daemon spawn refuse a symlink `.effigy` ancestor before creating a
+  missing gateway parent, so the symlink target is left untouched. Custom,
+  partial, or ambiguous endpoints refuse with no confirmation path. Managed
+  and container auto-start still refuse a legacy record and point at recover.
+  The local installer stages owner-only `effigy.previous` plus `.version` as
+  evidence; recover never
   executes it. Live role evidence is not historical spawn proof; the last
   check-to-signal interval remains a disclosed TOCTOU.
 - Gateway lifecycle commands now identify a numeric-only pre-identity record

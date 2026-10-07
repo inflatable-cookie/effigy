@@ -541,25 +541,82 @@ fn trusted_directory_owner_with(
         return Err(invalid_record("gateway directory is unsafe"));
     }
     let gateway_owner_uid = metadata.uid();
+    check_effigy_ancestors(parent, gateway_owner_uid)?;
+    Ok(metadata.uid())
+}
+
+/// Validate `.effigy` ancestors without creating directories. Creation paths
+/// must call this before `create_dir_all` so a symlink `.effigy` cannot receive
+/// a gateway child in an untrusted location.
+#[cfg(unix)]
+fn ensure_gateway_parent_creatable(pid_path: &Path) -> Result<(), GatewayError> {
+    if !pid_path.is_absolute() {
+        return Err(invalid_record("gateway PID path must be absolute"));
+    }
+    let parent = pid_path
+        .parent()
+        .ok_or_else(|| invalid_record("gateway PID path has no parent"))?;
+    let effective_uid = nix::unistd::Uid::effective().as_raw();
+    let authenticated_operator = if nix::unistd::Uid::effective().is_root() {
+        authenticated_elevated_operator()
+    } else {
+        None
+    };
+    let expected_owner = authenticated_operator.unwrap_or(effective_uid);
+    check_effigy_ancestors(parent, expected_owner)
+}
+
+#[cfg(unix)]
+fn check_effigy_ancestors(parent: &Path, gateway_owner_uid: u32) -> Result<(), GatewayError> {
+    use std::os::unix::fs::MetadataExt;
     for ancestor in parent
         .ancestors()
         .filter(|path| path.file_name().is_some_and(|name| name == ".effigy"))
     {
-        let metadata = fs::symlink_metadata(ancestor).map_err(GatewayError::Io)?;
-        if metadata.file_type().is_symlink()
-            || !metadata.is_dir()
-            || metadata.mode() & 0o022 != 0
-            || (metadata.uid() != 0 && metadata.uid() != gateway_owner_uid)
-        {
-            return Err(invalid_record("gateway state parent is unsafe"));
+        match fs::symlink_metadata(ancestor) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(GatewayError::Io(error)),
+            Ok(metadata) => {
+                if metadata.file_type().is_symlink()
+                    || !metadata.is_dir()
+                    || metadata.mode() & 0o022 != 0
+                    || (metadata.uid() != 0 && metadata.uid() != gateway_owner_uid)
+                {
+                    return Err(invalid_record("gateway state parent is unsafe"));
+                }
+            }
         }
     }
-    Ok(metadata.uid())
+    Ok(())
 }
 
 #[cfg(not(unix))]
 pub(crate) fn trusted_directory_owner(_pid_path: &Path) -> Result<u32, GatewayError> {
     Ok(0)
+}
+
+#[cfg(not(unix))]
+fn ensure_gateway_parent_creatable(_pid_path: &Path) -> Result<(), GatewayError> {
+    Ok(())
+}
+
+/// Validate `.effigy` ancestor trust, create a missing gateway parent, then
+/// re-check directory trust. Every create/open/lock path on an absent canonical
+/// gateway directory must call this before mutating that path.
+pub fn ensure_trusted_gateway_parent(pid_path: &Path) -> Result<u32, GatewayError> {
+    ensure_gateway_parent_creatable(pid_path)?;
+    let parent = pid_path
+        .parent()
+        .ok_or_else(|| invalid_record("gateway PID path has no parent"))?;
+    let parent_missing = match fs::symlink_metadata(parent) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+        Err(error) => return Err(GatewayError::Io(error)),
+        Ok(_) => false,
+    };
+    if parent_missing {
+        fs::create_dir_all(parent).map_err(GatewayError::Io)?;
+    }
+    trusted_directory_owner(pid_path)
 }
 
 #[cfg(unix)]

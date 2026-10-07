@@ -1134,6 +1134,77 @@ mod legacy_recovery_protocol_tests {
         assert!(rendered.contains("already_stopped"));
         assert_eq!(signals.get(), 0);
         assert!(started.get());
+        let effigy = home.join(".effigy");
+        let gateway = home.join(GATEWAY_DIR_NAME);
+        assert!(effigy.symlink_metadata().unwrap().is_dir());
+        assert!(!effigy.symlink_metadata().unwrap().file_type().is_symlink());
+        assert!(gateway.is_dir());
+        assert!(gateway.join("gateway.transition.lock").is_file());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn legacy_recovery_symlinked_effigy_refuses_without_mutating_target() {
+        use std::os::unix::fs::{symlink, MetadataExt};
+
+        let root = tempfile::tempdir().expect("fixture");
+        let home = root.path().join("home");
+        let outside = root.path().join("outside");
+        fs::create_dir(&home).unwrap();
+        fs::create_dir(&outside).unwrap();
+        fs::set_permissions(&home, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::set_permissions(&outside, fs::Permissions::from_mode(0o700)).unwrap();
+        let sentinel = outside.join("sentinel");
+        fs::write(&sentinel, b"keep").unwrap();
+        let outside_names = || {
+            fs::read_dir(&outside)
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name())
+                .collect::<std::collections::BTreeSet<_>>()
+        };
+        let before_outside = outside_names();
+        let before_sentinel = fs::read(&sentinel).unwrap();
+        let before_ino = fs::symlink_metadata(&outside).unwrap().ino();
+        symlink(&outside, home.join(".effigy")).unwrap();
+        let _guard = set_test_gateway_home(&home);
+
+        let signals = Cell::new(0);
+        let started = Cell::new(false);
+        let error = recover(
+            true,
+            false,
+            false,
+            |_| panic!("symlink ancestor must not inspect"),
+            |_, _, _| {
+                signals.set(signals.get() + 1);
+                LegacyStopResult::Sent
+            },
+            || {
+                started.set(true);
+                Ok("started".to_owned())
+            },
+            |_| panic!("symlink ancestor must not confirm"),
+            |_| panic!("symlink ancestor must not probe a PID"),
+        )
+        .expect_err("symlink .effigy must refuse recover");
+        let body = recover_error_body(&error);
+        assert!(
+            body.contains("unsafe"),
+            "expected ancestor-trust refusal, got {body}"
+        );
+        assert!(body.contains("refused"));
+        assert_eq!(signals.get(), 0);
+        assert!(!started.get());
+        assert_eq!(outside_names(), before_outside);
+        assert_eq!(fs::read(&sentinel).unwrap(), before_sentinel);
+        assert!(!outside.join("gateway").exists());
+        assert_eq!(fs::symlink_metadata(&outside).unwrap().ino(), before_ino);
+        assert!(home
+            .join(".effigy")
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_symlink());
     }
 
     #[test]

@@ -288,8 +288,8 @@ canonical defaults, never ambient `EFFIGY_GATEWAY_*` values the recovering CLI
 could have substituted. If the effective endpoint or config evidence is
 unavailable or ambiguous — custom endpoints, unreadable socket tables, or a
 partial role set — the reader returns Unknown and `recover` refuses. A gateway
-configured on custom endpoints cannot be auto-proven; it refuses unless the
-operator explicitly confirms the custom endpoints, which is a disclosed limit.
+configured on custom endpoints cannot be recovered through this path; there is
+no confirmation or adoption exception for non-canonical binds.
 
 **Supported platform API proof.**
 
@@ -424,7 +424,10 @@ Implemented locking:
   before elevation. Stop and compare-and-remove run after the lock is held (or
   in the elevated child that acquires it). A vanished captured PID/version pair
   is a changed record: `remove_legacy_pair_if_unchanged` refuses rather than
-  treating absence as successful cleanup.
+  treating absence as successful cleanup. Transition-lock acquisition, elevated
+  state preparation, and daemon spawn validate `.effigy` ancestor trust before
+  creating a missing gateway parent, so a symlink `.effigy` cannot receive a
+  gateway child in an untrusted location.
 - Keep the **record lock** as today: brief, only inside publication and
   compare-and-remove.
 - Acquisition order: transition lock (outer) → record lock (inner), never the
@@ -503,6 +506,7 @@ same way.
 | Candidate reader declined/unavailable/unknown | Refuse; preserve; no signal |
 | `candidate_uid` outside operator/root policy | Refuse; preserve; no signal |
 | Role predicate fails (no gateway listening sockets) | Refuse; preserve; no signal |
+| Custom, partial, or ambiguous endpoints | Refuse; no confirmation or adoption path |
 | Same-path foreign Effigy worker | Fails the role predicate; refuse; no signal |
 | Executable path unreadable/overlong, boot/start unreadable, ambiguity | Refuse; preserve; no signal |
 | Candidate generation changes between checks | Refuse; no signal; re-inspect |
@@ -674,8 +678,9 @@ explicitly disclosed. Both capabilities are implemented as specified. Residual l
   the operator's independent confirmation.
 - The role predicate proves the live process currently plays the gateway role.
   It does not prove historical spawn ownership, and it cannot auto-prove a
-  custom-endpoint gateway. After a binary replacement the live path may be the
-  replacement image; `gateway.version` is metadata, not a live version.
+  custom-endpoint gateway. Custom, partial, or ambiguous endpoints refuse with
+  no confirmation or adoption path. After a binary replacement the live path may
+  be the replacement image; `gateway.version` is metadata, not a live version.
 - The final identity-check-to-signal TOCTOU is disclosed for both the existing
   sidecar path and the contingent stop; neither claims atomic targeting.
 - A delegated previous-binary stop is rejected; its v0.13.1 hazards are recorded
