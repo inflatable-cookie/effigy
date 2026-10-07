@@ -484,12 +484,15 @@
 ]
 "check:env-isolation" = "cargo check -p effigy-core -p effigy --lib --profile test"
 
-# Release preparation environment regression: the scoped environment boundary
-# protects both PATH-based child spawning and graph budget reads; the existing
-# child-reap, cold stale-index, tiny-timeout, and default-budget controls remain
-# in the same focused run. Nextest timeouts and leak detection bound failures.
+# Release preparation fixture regression: run the selected built-in, environment,
+# signal, and supervision-init proofs together in one libtest process so their
+# process-global locks contend under the same model as `cargo test --workspace`.
+# The Effigy step timeout bounds a hung in-process fixture run.
+"test:release:prepared-tree-fixture-coordination" = [
+  { id = "prepared-tree-fixture-coordination", run = "cargo test -p effigy --lib release_preparation_fixture -- --nocapture --test-threads=8", timeout_ms = 240000 },
+]
 "test:release:preparation-environment-isolation" = [
-  { id = "preparation-environment-isolation", run = "cargo nextest run --config-file tests/config/release-preparation-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(env_isolation_path_and_graph_budget_readers_wait_for_scoped_writer) | test(supervision_init_unbounded_wait_failure_reaps_owned_tree) | test(graph_explore_cold_stale_index_names_next_action) | test(graph_cwd_selection_uses_captured_invocation_context) | test(docs_cold_refresh_fails_within_a_deliberately_tiny_bound) | test(graph_timeout_uses_the_existing_two_minute_default_when_unset) | test(resolve_host_program_uses_host_cli_resolver_for_bare_names) | test(copy_file_into_service_invocation_prefers_policy_backend_over_installed_docker)' --max-fail 1:immediate --retries 0", timeout_ms = 240000 },
+  { id = "preparation-environment-isolation", run = "cargo nextest run --config-file tests/config/release-preparation-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(release_preparation_fixture_env_isolation_path_and_graph_budget_readers_wait_for_scoped_writer) | test(supervision_init_unbounded_wait_failure_reaps_owned_tree) | test(graph_explore_cold_stale_index_names_next_action) | test(graph_cwd_selection_uses_captured_invocation_context) | test(docs_cold_refresh_fails_within_a_deliberately_tiny_bound) | test(graph_timeout_uses_the_existing_two_minute_default_when_unset) | test(resolve_host_program_uses_host_cli_resolver_for_bare_names) | test(copy_file_into_service_invocation_prefers_policy_backend_over_installed_docker)' --max-fail 1:immediate --retries 0", timeout_ms = 240000 },
 ]
 "check:release:preparation-environment-isolation" = [
   "cargo check -p effigy --lib --tests --profile test",
@@ -508,7 +511,7 @@
 "test:host-run:integration" = [
   "cargo test -p effigy --lib host_scheduler:: -- --nocapture",
   "cargo test -p effigy --lib container_command::shell_prep::tests::scheduler_tokens_are_not_forwarded_to_container_exec -- --nocapture",
-  "cargo test -p effigy --lib host_scheduler::tests::owned_children_scope_forwards_termination_only_to_registered_groups -- --nocapture",
+  "cargo test -p effigy --lib host_scheduler::tests::release_preparation_fixture_owned_children_scope_forwards_termination_only_to_registered_groups -- --nocapture",
   "cargo test -p effigy --lib container_removal_state -- --nocapture",
   "EFFIGY_REQUIRE_HOST_RUN_PRIVATE_SERVER=1 cargo test --test host_scheduler_integration -- --include-ignored --nocapture --test-threads=1",
 ]
@@ -531,8 +534,8 @@
 # the oracle fails when forwarding is disabled while unconditional exact-owned
 # cleanup still reaps both test-created children.
 "test:host-run:termination-proof" = [
-  "cargo test -p effigy --lib host_scheduler::tests::owned_children_scope_forwards_termination_only_to_registered_groups -- --nocapture",
-  "cargo test -p effigy --lib host_scheduler::tests::owned_children_termination_oracle_fails_when_forwarding_is_disabled -- --nocapture",
+  "cargo test -p effigy --lib host_scheduler::tests::release_preparation_fixture_owned_children_scope_forwards_termination_only_to_registered_groups -- --nocapture",
+  "cargo test -p effigy --lib host_scheduler::tests::release_preparation_fixture_owned_children_termination_oracle_fails_when_forwarding_is_disabled -- --nocapture",
 ]
 
 # Documentation QA

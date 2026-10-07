@@ -1307,12 +1307,13 @@ run = [{ task = "db:migrate" }]
 
     #[cfg(unix)]
     #[test]
-    fn timeout_descendants_sequence_interrupt_reaps_leader_and_descendant() {
+    fn release_preparation_fixture_timeout_descendants_sequence_interrupt_reaps_leader_and_descendant(
+    ) {
         use crate::runner::owned_children::timeout_descendant_proof::TimeoutDescendantFixture;
         use std::thread;
         use std::time::{Duration, Instant};
 
-        let _lock = crate::runner::owned_children::hold_group_cleanup_test_lock();
+        let _locks = crate::runner::owned_children::hold_signal_proof_test_locks();
         let mut fixture = TimeoutDescendantFixture::new("effigy-seq-interrupt-");
         fixture.spawn_unrelated_sibling();
         let command = fixture.hang_command();
@@ -1337,13 +1338,15 @@ run = [{ task = "db:migrate" }]
 
     #[cfg(unix)]
     #[test]
-    fn timeout_descendants_sequence_interrupt_without_forwarding_fails_reap_oracle() {
+    fn release_preparation_fixture_timeout_descendants_sequence_interrupt_without_forwarding_fails_reap_oracle(
+    ) {
         use crate::runner::owned_children::timeout_descendant_proof::TimeoutDescendantFixture;
         use std::panic::AssertUnwindSafe;
         use std::thread;
         use std::time::{Duration, Instant};
 
         let _seam = crate::runner::owned_children::disable_group_cleanup_for_test();
+        let _test_state_lock = crate::contract_test_support::lock_test();
         let _forwarding = crate::runner::owned_children::disable_forwarding_for_test();
         let mut fixture = TimeoutDescendantFixture::new("effigy-seq-interrupt-negative-");
         fixture.spawn_unrelated_sibling();
@@ -1465,7 +1468,8 @@ run = [{ task = "db:migrate" }]
     /// itself before the failure fires.
     #[cfg(unix)]
     #[test]
-    fn supervision_init_sequence_owned_caller_reports_error_and_reaps_tree() {
+    fn release_preparation_fixture_supervision_init_sequence_owned_caller_reports_error_and_reaps_tree(
+    ) {
         use crate::runner::owned_children::timeout_descendant_proof::TimeoutDescendantFixture;
         use crate::runner::owned_children::SupervisionInitFailurePointForTest;
 

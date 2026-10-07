@@ -566,13 +566,6 @@ fn nested_queue_wait_comes_from_the_status_record_and_is_null_when_absent() {
     assert_eq!(queue_wait_from_status(&inverted), None);
 }
 
-/// Serializes the termination-proof tests that install the process-wide
-/// signal-forwarding scope with timeout-descendant interrupt proofs.
-#[cfg(unix)]
-fn owned_children_test_serial() -> std::sync::MutexGuard<'static, ()> {
-    crate::runner::owned_children::hold_group_cleanup_test_lock()
-}
-
 /// Owns the two children a termination proof creates. `cleanup` reaps them
 /// explicitly and reports the outcome; `Drop` is the unconditional backstop so
 /// an assertion failure or panic still kills and reaps both children.
@@ -651,6 +644,13 @@ struct TerminationObservation {
     foreign_alive_before_cleanup: bool,
     /// True when unconditional exact-owned cleanup reaped both children.
     cleanup_reaped_both: bool,
+    /// Direct child identity and its isolated process group at signal time.
+    owned_pid: u32,
+    owned_start_identity: Option<String>,
+    owned_process_group: i32,
+    /// Exit evidence captured before fixture cleanup.
+    owned_exit_code: Option<i32>,
+    owned_signal: Option<i32>,
 }
 
 /// Enter the real owned-children scope, raise SIGTERM to this process, and
@@ -659,10 +659,19 @@ struct TerminationObservation {
 /// delivery for the negative proof.
 #[cfg(unix)]
 fn observe_registered_child_termination(wait: std::time::Duration) -> TerminationObservation {
+    use std::os::unix::process::ExitStatusExt;
     use std::time::Instant;
 
     let mut children = TerminationProofChildren::spawn_pair();
+    let owned_pid = children.owned_mut().id();
+    let owned_start_identity = effigy_process::process_start_identity(owned_pid);
+    let owned_process_group =
+        nix::unistd::getpgid(Some(nix::unistd::Pid::from_raw(owned_pid as i32)))
+            .expect("owned child process group")
+            .as_raw();
     let mut owned_terminated_before_cleanup = false;
+    let mut owned_exit_code = None;
+    let mut owned_signal = None;
     let foreign_alive_before_cleanup;
     {
         let _scope =
@@ -678,6 +687,8 @@ fn observe_registered_child_termination(wait: std::time::Duration) -> Terminatio
                 Some(status) => {
                     // The observed status must be a termination, never success.
                     owned_terminated_before_cleanup = !status.success();
+                    owned_exit_code = status.code();
+                    owned_signal = status.signal();
                     break;
                 }
                 None => std::thread::sleep(std::time::Duration::from_millis(20)),
@@ -694,18 +705,35 @@ fn observe_registered_child_termination(wait: std::time::Duration) -> Terminatio
         owned_terminated_before_cleanup,
         foreign_alive_before_cleanup,
         cleanup_reaped_both,
+        owned_pid,
+        owned_start_identity,
+        owned_process_group,
+        owned_exit_code,
+        owned_signal,
     }
 }
 
 #[cfg(unix)]
 #[test]
-fn owned_children_scope_forwards_termination_only_to_registered_groups() {
-    let _serial = owned_children_test_serial();
+fn release_preparation_fixture_owned_children_scope_forwards_termination_only_to_registered_groups()
+{
+    let _locks = crate::runner::owned_children::hold_signal_proof_test_locks();
     let observation = observe_registered_child_termination(std::time::Duration::from_secs(10));
     assert!(
         observation.owned_terminated_before_cleanup,
         "the registered child was terminated by the scope before any cleanup"
     );
+    assert!(
+        observation.owned_start_identity.is_some(),
+        "could not capture the registered child's process generation for PID {}",
+        observation.owned_pid
+    );
+    assert_eq!(
+        observation.owned_process_group,
+        observation.owned_pid as i32
+    );
+    assert_eq!(observation.owned_exit_code, None);
+    assert_eq!(observation.owned_signal, Some(libc::SIGTERM));
     assert!(
         observation.foreign_alive_before_cleanup,
         "an unregistered process group is never signalled"
@@ -718,8 +746,9 @@ fn owned_children_scope_forwards_termination_only_to_registered_groups() {
 
 #[cfg(unix)]
 #[test]
-fn owned_children_termination_oracle_fails_when_forwarding_is_disabled() {
-    let _serial = owned_children_test_serial();
+fn release_preparation_fixture_owned_children_termination_oracle_fails_when_forwarding_is_disabled()
+{
+    let _locks = crate::runner::owned_children::hold_signal_proof_test_locks();
     let _seam = crate::runner::owned_children::disable_forwarding_for_test();
     let observation = observe_registered_child_termination(std::time::Duration::from_secs(1));
     assert!(

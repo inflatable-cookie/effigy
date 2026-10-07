@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Condvar, Mutex, OnceLock};
@@ -44,9 +45,13 @@ pub(super) fn lock_test() -> ReentrantTestLockGuard {
     test_lock().lock()
 }
 
-/// Reentrant mutex used to serialize tests that touch process-global state
-/// (`cwd`, env vars). `std::sync::ReentrantLock` is still nightly-only, so
-/// we ship a minimal owner-tracking guard built on stable primitives.
+pub(super) fn test_lock_waiter_position(waiter: ThreadId, timeout: Duration) -> Option<usize> {
+    test_lock().waiter_position(waiter, timeout)
+}
+
+/// Reentrant FIFO mutex used to serialize tests that touch process-global
+/// state (`cwd`, env vars). `std::sync::ReentrantLock` is still nightly-only,
+/// so we ship a minimal owner-tracking guard built on stable primitives.
 pub(super) struct ReentrantTestLock {
     state: Mutex<ReentrantState>,
     cv: Condvar,
@@ -55,6 +60,7 @@ pub(super) struct ReentrantTestLock {
 struct ReentrantState {
     owner: Option<ThreadId>,
     count: u64,
+    waiters: VecDeque<ThreadId>,
 }
 
 impl ReentrantTestLock {
@@ -63,6 +69,7 @@ impl ReentrantTestLock {
             state: Mutex::new(ReentrantState {
                 owner: None,
                 count: 0,
+                waiters: VecDeque::new(),
             }),
             cv: Condvar::new(),
         }
@@ -71,20 +78,44 @@ impl ReentrantTestLock {
     fn lock(&'static self) -> ReentrantTestLockGuard {
         let me = thread::current().id();
         let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        if state.owner.as_ref() == Some(&me) {
+            state.count += 1;
+            return ReentrantTestLockGuard { lock: self };
+        }
+        if !state.waiters.contains(&me) {
+            state.waiters.push_back(me);
+            self.cv.notify_all();
+        }
         loop {
-            match state.owner {
-                None => {
-                    state.owner = Some(me);
-                    state.count = 1;
-                    return ReentrantTestLockGuard { lock: self };
-                }
-                Some(owner) if owner == me => {
-                    state.count += 1;
-                    return ReentrantTestLockGuard { lock: self };
-                }
-                _ => {
-                    state = self.cv.wait(state).unwrap_or_else(|p| p.into_inner());
-                }
+            if state.owner.is_none() && state.waiters.front() == Some(&me) {
+                state.waiters.pop_front();
+                state.owner = Some(me);
+                state.count = 1;
+                return ReentrantTestLockGuard { lock: self };
+            }
+            state = self.cv.wait(state).unwrap_or_else(|p| p.into_inner());
+        }
+    }
+
+    fn waiter_position(&'static self, waiter: ThreadId, timeout: Duration) -> Option<usize> {
+        let deadline = Instant::now() + timeout;
+        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        loop {
+            if let Some(position) = state.waiters.iter().position(|queued| queued == &waiter) {
+                return Some(position);
+            }
+
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return None;
+            }
+            let (next, timeout) = self
+                .cv
+                .wait_timeout(state, remaining)
+                .unwrap_or_else(|p| p.into_inner());
+            state = next;
+            if timeout.timed_out() && !state.waiters.iter().any(|queued| queued == &waiter) {
+                return None;
             }
         }
     }
@@ -100,7 +131,7 @@ impl Drop for ReentrantTestLockGuard {
         state.count -= 1;
         if state.count == 0 {
             state.owner = None;
-            self.lock.cv.notify_one();
+            self.lock.cv.notify_all();
         }
     }
 }
