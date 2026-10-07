@@ -118,7 +118,7 @@ pub(super) fn wait_for_path_exists(path: &Path, timeout: Duration, label: &str) 
 }
 
 pub(super) struct EnvGuard {
-    original: Vec<(String, Option<String>)>,
+    original: Vec<(String, Option<std::ffi::OsString>)>,
     // Holds the global test lock so concurrent tests that mutate process env
     // serialize against each other (and against `with_cwd`). The lock is
     // reentrant, so callers that already hold it don't deadlock.
@@ -130,7 +130,7 @@ impl EnvGuard {
         let lock = lock_test();
         let mut original = Vec::with_capacity(entries.len());
         for (key, value) in entries {
-            original.push(((*key).to_owned(), std::env::var(key).ok()));
+            original.push(((*key).to_owned(), std::env::var_os(key)));
             match value {
                 Some(v) => std::env::set_var(key, v),
                 None => std::env::remove_var(key),

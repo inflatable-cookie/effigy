@@ -1,6 +1,9 @@
 //! Catalog-scoped graph command surface (task g10.006).
 
-use crate::runner::entrypoints::{run_command, run_command_with_context};
+use crate::runner::entrypoints::{
+    run_command as run_command_without_env_lock,
+    run_command_with_context as run_command_with_context_without_env_lock,
+};
 use crate::runner::tests::prelude::{
     parse_json_output_with_schema_version, temp_workspace, write_root_manifest,
 };
@@ -8,6 +11,19 @@ use effigy_cli::{Command, GraphArgs, GraphSubcommand};
 use effigy_context::{CapturedEnv, EffigyRuntimeContext};
 use std::fs;
 use std::path::{Path, PathBuf};
+
+fn run_command(command: Command) -> Result<String, crate::runner::error::RunnerError> {
+    let _env_lock = crate::contract_test_support::lock_test();
+    run_command_without_env_lock(command)
+}
+
+fn run_command_with_context(
+    command: Command,
+    context: &EffigyRuntimeContext,
+) -> Result<String, crate::runner::error::RunnerError> {
+    let _env_lock = crate::contract_test_support::lock_test();
+    run_command_with_context_without_env_lock(command, context)
+}
 
 /// Root source plus two segmented catalogs, one of them independent.
 fn setup_catalog_fixture(name: &str) -> PathBuf {

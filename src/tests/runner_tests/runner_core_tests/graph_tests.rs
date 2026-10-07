@@ -1,9 +1,14 @@
-use crate::runner::entrypoints::run_command;
+use crate::runner::entrypoints::run_command as run_command_without_env_lock;
 use crate::runner::tests::prelude::{
     parse_json_output_with_schema_version, temp_workspace, write_root_manifest,
 };
 use effigy_cli::{Command, GraphArgs, GraphSubcommand};
 use std::fs;
+
+fn run_command(command: Command) -> Result<String, crate::runner::error::RunnerError> {
+    let _env_lock = crate::contract_test_support::lock_test();
+    run_command_without_env_lock(command)
+}
 
 fn setup_graph_fixture(name: &str) -> std::path::PathBuf {
     let root = temp_workspace(name);
@@ -603,6 +608,7 @@ fn graph_explore_stale_index_uses_last_complete_snapshot() {
 
 #[test]
 fn graph_explore_cold_stale_index_names_next_action() {
+    let _env_lock = crate::contract_test_support::lock_test();
     let root = setup_graph_fixture("graph-explore-cold-stale-index");
     let started = std::time::Instant::now();
     let explore = run_command(Command::Graph(GraphArgs {
