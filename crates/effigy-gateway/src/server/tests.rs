@@ -464,6 +464,9 @@ fn gateway_identity_matching_private_child_is_reported_running() {
     assert_eq!(owned.0.id(), pid);
 }
 
+/// A live foreign PID with a mismatched generation is NotRunning. Status is
+/// read-only: PID, identity and version bytes stay, and Drop may reap only
+/// the child this fixture started.
 #[cfg(unix)]
 #[test]
 fn gateway_identity_reused_live_pid_is_not_running_and_is_not_signalled() {
@@ -481,11 +484,12 @@ fn gateway_identity_reused_live_pid_is_not_running_and_is_not_signalled() {
         }
     }
 
-    let child = Command::new("sleep")
-        .arg("30")
-        .spawn()
-        .expect("start private child");
-    let mut owned = OwnedChild(child);
+    let mut owned = OwnedChild(
+        Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .expect("start private child"),
+    );
     let pid = owned.0.id();
     let deadline = Instant::now() + Duration::from_secs(5);
     while probe_gateway_process(pid) != GatewayProcessProbe::Running {
@@ -496,6 +500,72 @@ fn gateway_identity_reused_live_pid_is_not_running_and_is_not_signalled() {
     let config = GatewayConfig::standard(dir.path().to_path_buf());
     crate::identity::write_test_record(&config.pid_file_path, pid);
     let identity_path = config.pid_file_path.with_extension("identity");
+    let version_path = config.pid_file_path.with_extension("version");
+    let mut record: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&identity_path).unwrap()).unwrap();
+    record["boot_identity"] = serde_json::Value::String("different-boot".to_owned());
+    std::fs::write(&identity_path, serde_json::to_vec(&record).unwrap()).unwrap();
+    std::fs::write(&version_path, b"v0.13.1+local.test\n").unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&identity_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    let before_pid = std::fs::read(&config.pid_file_path).unwrap();
+    let before_identity = std::fs::read(&identity_path).unwrap();
+    let before_version = std::fs::read(&version_path).unwrap();
+
+    assert!(matches!(get_status(&config), Err(GatewayError::NotRunning)));
+    assert!(
+        owned.0.try_wait().unwrap().is_none(),
+        "foreign child stays alive"
+    );
+    assert_eq!(std::fs::read(&config.pid_file_path).unwrap(), before_pid);
+    assert_eq!(std::fs::read(&identity_path).unwrap(), before_identity);
+    assert_eq!(std::fs::read(&version_path).unwrap(), before_version);
+    assert_eq!(owned.0.id(), pid);
+}
+
+/// Authenticated mismatch cleanup belongs to locked start. Compare-and-remove
+/// refuses a substituted generation; Drop may reap only this fixture's child.
+#[cfg(unix)]
+#[test]
+fn gateway_identity_mismatch_clears_only_under_locked_start() {
+    use std::process::{Child, Command};
+    use std::time::{Duration, Instant};
+
+    struct OwnedChild(Child);
+
+    impl Drop for OwnedChild {
+        fn drop(&mut self) {
+            if self.0.try_wait().ok().flatten().is_none() {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+    }
+
+    let mut owned = OwnedChild(
+        Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .expect("start private child"),
+    );
+    let pid = owned.0.id();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while probe_gateway_process(pid) != GatewayProcessProbe::Running {
+        assert!(Instant::now() < deadline, "private child readiness timeout");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let config = GatewayConfig::standard(dir.path().to_path_buf());
+    crate::identity::write_test_record(&config.pid_file_path, pid);
+    let identity_path = config.pid_file_path.with_extension("identity");
+    let version_path = config.pid_file_path.with_extension("version");
+    std::fs::write(&version_path, b"v0.13.1+local.test\n").unwrap();
+    let old = crate::identity::read_snapshot(&config.pid_file_path)
+        .unwrap()
+        .expect("authenticated fixture snapshot");
     let mut record: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&identity_path).unwrap()).unwrap();
     record["boot_identity"] = serde_json::Value::String("different-boot".to_owned());
@@ -504,14 +574,29 @@ fn gateway_identity_reused_live_pid_is_not_running_and_is_not_signalled() {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&identity_path, std::fs::Permissions::from_mode(0o600)).unwrap();
     }
+    let before_pid = std::fs::read(&config.pid_file_path).unwrap();
+    let before_identity = std::fs::read(&identity_path).unwrap();
+    let before_version = std::fs::read(&version_path).unwrap();
 
-    assert!(matches!(get_status(&config), Err(GatewayError::NotRunning)));
+    assert!(!crate::identity::remove_if_unchanged(&old).unwrap());
+    assert_eq!(std::fs::read(&config.pid_file_path).unwrap(), before_pid);
+    assert_eq!(std::fs::read(&identity_path).unwrap(), before_identity);
+    assert_eq!(std::fs::read(&version_path).unwrap(), before_version);
     assert!(
         owned.0.try_wait().unwrap().is_none(),
-        "foreign child stays alive"
+        "changed-record refusal must not signal"
     );
+
+    check_existing_gateway_pid(&config, probe_gateway_process)
+        .expect("locked start clears the unchanged mismatched generation");
     assert!(!config.pid_file_path.exists());
     assert!(!identity_path.exists());
+    assert!(!version_path.exists());
+    assert!(
+        owned.0.try_wait().unwrap().is_none(),
+        "locked start mismatch cleanup must not signal the foreign child"
+    );
+    assert_eq!(owned.0.id(), pid);
 }
 
 #[tokio::test]
