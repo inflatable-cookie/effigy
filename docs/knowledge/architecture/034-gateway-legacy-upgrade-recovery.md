@@ -646,6 +646,23 @@ Do not touch the
 
 ## Operator ruling
 
+### Bounded independent review evidence — 2026-10-07
+
+The operator answered **"Authorize the bounded independent review"** to
+decision `701488ca-80ea-468d-9597-076e26ecb12d`. This authorizes exactly one
+independent review at source `74d4c4e4b086d6048f0be40761157bf1b215d98a`,
+retaining the prior independent evidence for unchanged terminal and signal
+paths and the current parser/CI evidence, without repeating tests. Only
+`crates/effigy-process/src/identity.rs` changed from the independently reviewed
+`4239a2615680abde09971e0a7cba9b0d86e8f25c` source. The reviewer must distinguish
+retained evidence from checks executed in its own turn and judge the exact
+source delta; this is no waiver of a correctness finding or approval verdict.
+
+The injected operator validation rule remains authoritative. This ruling
+does not authorize automatic further reviewer turns, implementation of the
+identity-bearing recovery input exception, publication, installation or live
+gateway operations.
+
 On 2026-10-07, Tom answered **"Go for it"** to decision
 `6af855c8-bbc4-490a-a371-f3cf63a964bb`, approving implementation and independent
 review of both bounded capabilities below. This grants no publication, tag,
