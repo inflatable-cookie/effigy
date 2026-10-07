@@ -929,7 +929,11 @@ fn gateway_up_for_managed_task_preserves_terminal_stdin_and_diagnostics() {
         session.output_text()
     );
 
-    for case in ["noninteractive-stderr", "noninteractive-stdout"] {
+    for case in [
+        "noninteractive-refuse",
+        "noninteractive-stderr",
+        "noninteractive-stdout",
+    ] {
         let root = tempfile::tempdir().expect("private fixture directory");
         let output = std::process::Command::new(std::env::current_exe().expect("test executable"))
             .args(["--exact", MANAGED_TTY_CHILD_TEST, "--nocapture"])
@@ -967,10 +971,27 @@ fn run_managed_tty_child_case(case: &str) {
     let _home_guard = set_test_gateway_home(&home);
 
     let marker = root.join("managed-started");
+    if case == "noninteractive-refuse" {
+        // A present but unusable identity makes the preflight Unknown - the
+        // same class a declined or noninteractive elevated identity read
+        // produces. The managed lifecycle must refuse before launching.
+        let pid_path = gateway_home.join("gateway.pid");
+        let identity_path = gateway_home.join("gateway.identity");
+        std::fs::write(&pid_path, "4242").expect("write PID record");
+        std::fs::write(&identity_path, b"{broken").expect("write malformed identity record");
+        std::fs::set_permissions(&pid_path, std::fs::Permissions::from_mode(0o600))
+            .expect("protect PID record");
+        std::fs::set_permissions(&identity_path, std::fs::Permissions::from_mode(0o600))
+            .expect("protect identity record");
+    }
     let script = root.join("fixture-gateway-up.sh");
     let body = match case {
         "interactive" => format!(
             "#!/bin/sh\nif [ -t 0 ]; then\n  : > '{marker}'\n  printf 'fixture gateway up observed a terminal\\n'\n  exit 0\nfi\nprintf 'fixture gateway up refused: no terminal\\n' >&2\nexit 3\n",
+            marker = marker.display()
+        ),
+        "noninteractive-refuse" => format!(
+            "#!/bin/sh\n: > '{marker}'\nexit 0\n",
             marker = marker.display()
         ),
         "noninteractive-stderr" => {
@@ -993,6 +1014,20 @@ fn run_managed_tty_child_case(case: &str) {
             assert!(
                 marker.exists(),
                 "fixture must observe the inherited terminal"
+            );
+        }
+        "noninteractive-refuse" => {
+            let error = result
+                .expect_err("an unknown identity preflight must refuse")
+                .to_string();
+            assert!(
+                error.contains("cannot determine gateway state"),
+                "unknown-preflight refusal missing: {error}"
+            );
+            assert!(
+                !marker.exists(),
+                "managed start must not launch the replacement command after an \
+                 unknown/declined identity read"
             );
         }
         "noninteractive-stderr" => {

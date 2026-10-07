@@ -653,17 +653,29 @@ against a live root gateway:
   8-4-4-4-12 UUID; missing, failed, empty, non-UTF-8, or malformed output is
   Unknown. Linux is unchanged (`/proc/sys/kernel/random/boot_id`).
 
-`effigy_process::boot_identity_matches` is the single comparison point. New
-records store the session UUID and match exactly. Records written before the
-change store the `kern.boottime` timeval; they match when the recorded `sec`
-component equals a successfully read current `kern.boottime` seconds, which is
-stable within a boot and distinct across a reboot at one-second resolution.
-The exact process start identity stays mandatory for every match, so a reused
-PID never matches. Unknown current evidence never matches, and no old sidecar
-is reclassified as absent or rewritten. `probe_live_identity` uses this
-comparison for both the ordinary and elevated readers. The legacy candidate
-digest path is unchanged: it inspects and re-inspects within one CLI
-generation, so it has no cross-version record to reconcile.
+`effigy_process::compare_boot_identity` is the single comparison point and
+returns three values: `Match`, `DifferentSession`, or `Unknown`. New records
+store the session UUID: an equal value is a match, and a different canonical
+session identity proves another boot. Records written before the change store
+the `kern.boottime` timeval. Its seconds component is wall-clock-adjusted
+within one boot (XNU adjusts the boot-time value on a calendar change), so a
+changed or unreadable legacy value is `Unknown`, never `DifferentSession`: the
+ordinary lifecycle preserves the record and refuses instead of deleting a live
+daemon. A parse must see the braced timeval with exact `sec` and `usec` decimal
+fields; malformed input is `Unknown`. The exact process start identity stays
+mandatory for every match, so a reused PID never matches. No old sidecar is
+reclassified as absent or rewritten. `probe_live_identity` uses this
+comparison for both the ordinary and elevated readers; `Unknown` means the
+record is preserved and `status`/`up`/`down`/managed start refuse. A live
+pre-identity daemon still has the explicit `effigy gateway recover` consent
+path. An ambiguous identity-bearing record is honestly refused, not guessed at:
+the approved `recover` route currently rejects sidecar-bearing records, so no
+automatic supported transition exists for that case and the smallest proposed
+extension is recorded in
+[034](034-gateway-legacy-upgrade-recovery.md#ambiguous-identity-bearing-records-task-117)
+for review. The legacy candidate digest path is unchanged: it inspects and
+re-inspects within one CLI generation, so it has no cross-version record to
+reconcile.
 
 Shared boot-ID callers are unaffected on macOS: `effigy_host_run` derives its
 wire identity from `pbi_start_tvsec` only, and the QA-group owner check uses
@@ -673,14 +685,20 @@ informational `boot_identity` field now carries the session UUID on macOS.
 Private controls added by task 117: `effigy-process`
 `boot_session_uuid_parser_rejects_missing_failed_and_malformed`,
 `boot_session_identity_reader_is_stable_and_ignores_boot_time`,
-`legacy_boot_time_identity_matches_across_microsecond_drift`, and the
-separate-process `boot_identity_uncached_is_stable_across_separate_processes`;
+`legacy_boot_time_identity_matches_across_microsecond_drift`,
+`legacy_boot_time_change_is_unknown_not_a_different_session`,
+`legacy_boot_time_parser_rejects_malformed_fields`,
+`different_session_identity_is_known_different_and_malformed_is_unknown`, and
+the separate-process `boot_identity_uncached_is_stable_across_separate_processes`;
 `effigy-gateway`
-`gateway_identity_legacy_boot_time_record_matches_across_microsecond_drift`
-and the full-path
-`gateway_identity_legacy_boot_time_sidecar_stays_running_across_drift`;
+`gateway_identity_legacy_boot_time_record_matches_across_microsecond_drift`,
+the full-path
+`gateway_identity_legacy_boot_time_sidecar_stays_running_across_drift`, and the
+preservation control
+`gateway_identity_ambiguous_legacy_boot_time_preserves_live_record`;
 `effigy` `gateway_up_for_managed_task_preserves_terminal_stdin_and_diagnostics`
-(real private PTY plus null-stdin controls) and
+(real private PTY, null-stdin diagnostics, and a null-stdin unknown-identity
+case proving the managed start never launches) and
 `gateway_up_for_managed_task_startup_notice_is_state_accurate`. Maintained
 selectors: `test:gateway:boot-identity`, `check:gateway:boot-identity`,
 `test:gateway:managed-tty`.

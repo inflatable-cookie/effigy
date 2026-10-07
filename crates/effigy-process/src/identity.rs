@@ -40,29 +40,64 @@ fn read_boot_identity() -> Option<String> {
     }
 }
 
-/// Whether `recorded` identifies the current boot session.
+/// Result of comparing a recorded boot identity with supported kernel
+/// evidence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BootIdentityComparison {
+    /// The recorded identity is proven to describe the current boot session.
+    Match,
+    /// The recorded identity is proven to describe a different boot session.
+    DifferentSession,
+    /// The recorded evidence cannot be compared safely. Records with this
+    /// result are preserved and refused, never classified as replaced.
+    Unknown,
+}
+
+/// Compare `recorded` with the current boot session.
 ///
-/// New records persist the stable kernel boot-session identity. Records
-/// written before that change persisted the macOS `kern.boottime` timeval
-/// string, whose microsecond field is not stable across reads. A legacy value
-/// therefore matches only through its seconds component, which is stable
-/// within a boot and distinct across a reboot at one-second resolution; the
-/// caller still requires the exact process start identity. Unreadable current
-/// evidence never matches.
-pub fn boot_identity_matches(recorded: &str) -> bool {
+/// New records persist the stable kernel boot-session identity and match exactly
+/// or name a different session. Records written before that change persisted
+/// the macOS `kern.boottime` timeval. `kern.boottime` is wall-clock-adjusted
+/// within one boot, so a changed or unreadable legacy value cannot distinguish
+/// a reboot from a clock adjustment; it is [`BootIdentityComparison::Unknown`],
+/// never a different session. The caller still requires the exact process
+/// start identity. Unreadable current evidence is always `Unknown`.
+pub fn compare_boot_identity(recorded: &str) -> BootIdentityComparison {
     let Some(current) = boot_identity() else {
-        return false;
+        return BootIdentityComparison::Unknown;
     };
     if recorded == current {
-        return true;
+        return BootIdentityComparison::Match;
     }
     #[cfg(target_os = "macos")]
     {
-        legacy_boot_time_matches(recorded)
+        // A different well-formed session identity can only come from another
+        // boot. Anything else is compared as the legacy timeval below.
+        if canonical_uuid(recorded) {
+            return BootIdentityComparison::DifferentSession;
+        }
+        match parse_legacy_boot_time_seconds(recorded) {
+            Some(recorded_seconds) => match current_boot_time_seconds() {
+                Some(current_seconds) if current_seconds == recorded_seconds => {
+                    BootIdentityComparison::Match
+                }
+                // A changed `kern.boottime` is ambiguous: same-boot clock
+                // adjustment and a real reboot are indistinguishable through
+                // this field. Preserve and refuse.
+                _ => BootIdentityComparison::Unknown,
+            },
+            None => BootIdentityComparison::Unknown,
+        }
     }
     #[cfg(not(target_os = "macos"))]
     {
-        false
+        // Linux boot ids are stable and unique per boot; a different canonical
+        // id is provably another boot. A malformed record is unknown.
+        if canonical_uuid(recorded) {
+            BootIdentityComparison::DifferentSession
+        } else {
+            BootIdentityComparison::Unknown
+        }
     }
 }
 
@@ -116,7 +151,6 @@ fn parse_boot_session_uuid(success: bool, stdout: &[u8]) -> Option<String> {
     canonical_uuid(value).then(|| value.to_owned())
 }
 
-#[cfg(target_os = "macos")]
 fn canonical_uuid(value: &str) -> bool {
     let bytes = value.as_bytes();
     bytes.len() == 36
@@ -127,26 +161,44 @@ fn canonical_uuid(value: &str) -> bool {
 }
 
 #[cfg(target_os = "macos")]
-fn legacy_boot_time_matches(recorded: &str) -> bool {
-    let Some(recorded_seconds) = parse_boot_time_seconds(recorded) else {
-        return false;
+fn current_boot_time_seconds() -> Option<u64> {
+    let (true, stdout) = run_sysctl("kern.boottime")? else {
+        return None;
     };
-    let Some((true, stdout)) = run_sysctl("kern.boottime") else {
-        return false;
-    };
-    let Ok(current) = String::from_utf8(stdout) else {
-        return false;
-    };
-    parse_boot_time_seconds(&current).is_some_and(|seconds| seconds == recorded_seconds)
+    let current = String::from_utf8(stdout).ok()?;
+    parse_legacy_boot_time_seconds(&current)
 }
 
-/// Seconds component of a `kern.boottime` timeval string.
+/// Seconds component of a legacy `kern.boottime` timeval.
+///
+/// The recorded value is `sysctl -n kern.boottime` output, for example
+/// `{ sec = 1791182898, usec = 362055 } Mon Oct  5 07:48:18 2026`. Both `sec`
+/// and `usec` must be exact decimal fields inside the braced timeval; unknown,
+/// duplicate, missing, or non-decimal fields and a missing brace are rejected.
+/// Trailing kernel-provided text after `}` is allowed.
 #[cfg(target_os = "macos")]
-fn parse_boot_time_seconds(value: &str) -> Option<u64> {
-    let (_, rest) = value.split_once("sec")?;
-    let rest = rest.trim_start().strip_prefix('=')?.trim_start();
-    let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
-    digits.parse().ok()
+fn parse_legacy_boot_time_seconds(value: &str) -> Option<u64> {
+    let rest = value.trim().strip_prefix('{')?;
+    let (timeval, trailing) = rest.split_once('}')?;
+    if !(trailing.is_empty() || trailing.starts_with(char::is_whitespace)) {
+        return None;
+    }
+    let mut seconds = None;
+    let mut microseconds = None;
+    for field in timeval.split(',') {
+        let (name, number) = field.split_once('=')?;
+        let number = number.trim();
+        if number.is_empty() || !number.bytes().all(|byte| byte.is_ascii_digit()) {
+            return None;
+        }
+        match name.trim() {
+            "sec" if seconds.is_none() => seconds = Some(number.parse::<u64>().ok()?),
+            "usec" if microseconds.is_none() => microseconds = Some(number.parse::<u64>().ok()?),
+            _ => return None,
+        }
+    }
+    microseconds?;
+    seconds
 }
 
 /// Start identity for one PID (process start time on supported hosts), or
@@ -194,8 +246,8 @@ pub fn process_start_identity_matches(pid: u32, start_identity: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        boot_identity, boot_identity_uncached, process_start_identity,
-        process_start_identity_matches,
+        boot_identity, boot_identity_uncached, compare_boot_identity, process_start_identity,
+        process_start_identity_matches, BootIdentityComparison,
     };
 
     #[test]
@@ -258,20 +310,86 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn legacy_boot_time_identity_matches_across_microsecond_drift() {
-        use super::{boot_identity_matches, legacy_boot_time_identity};
+        use super::legacy_boot_time_identity;
         let raw = legacy_boot_time_identity().expect("kernel kern.boottime");
         let (prefix, _) = raw.split_once("usec").expect("timeval usec field");
         let drifted = format!("{prefix}usec = 999999 }}");
         assert_ne!(raw, drifted);
-        assert!(boot_identity_matches(&drifted));
+        // Microsecond drift within one boot still matches through the seconds
+        // component plus the caller's exact process start identity.
+        assert_eq!(
+            compare_boot_identity(&drifted),
+            BootIdentityComparison::Match
+        );
         // The stable session identity exact-matches.
-        assert!(boot_identity_matches(
-            &boot_identity().expect("boot session identity")
-        ));
-        // A different boot's seconds is a different generation.
-        assert!(!boot_identity_matches("{ sec = 1, usec = 2 }"));
-        // Unknown or malformed recorded evidence never matches.
-        assert!(!boot_identity_matches("not-a-boot-identity"));
+        assert_eq!(
+            compare_boot_identity(&boot_identity().expect("boot session identity")),
+            BootIdentityComparison::Match
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn legacy_boot_time_change_is_unknown_not_a_different_session() {
+        // `kern.boottime` is wall-clock-adjusted within one boot, so a changed
+        // seconds component cannot be read as a reboot. It must stay unknown so
+        // a live record is preserved rather than cleaned up as replaced.
+        assert_eq!(
+            compare_boot_identity("{ sec = 1, usec = 2 }"),
+            BootIdentityComparison::Unknown
+        );
+        assert_eq!(
+            compare_boot_identity("{ sec = 999999999999, usec = 0 } extra text"),
+            BootIdentityComparison::Unknown
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn legacy_boot_time_parser_rejects_malformed_fields() {
+        use super::parse_legacy_boot_time_seconds;
+        assert_eq!(
+            parse_legacy_boot_time_seconds("{ sec = 12, usec = 34 } Mon Oct  5 07:48:18 2026"),
+            Some(12)
+        );
+        assert_eq!(
+            parse_legacy_boot_time_seconds("{ sec = 12, usec = 34 }"),
+            Some(12)
+        );
+        for malformed in [
+            "not-a-boot-identity",
+            "sec = 12, usec = 34",
+            "{ sec = 12, usec = 34",
+            "{ sec = 12abc, usec = 34 }",
+            "{ sec = 12, usec = 34, bogus = 1 }",
+            "{ sec = 12 }",
+            "{ sec = 12, sec = 13, usec = 34 }",
+            "{ sec = , usec = 34 }",
+            "{ sec = 12, usec = 34 }garbage",
+        ] {
+            assert_eq!(
+                parse_legacy_boot_time_seconds(malformed),
+                None,
+                "malformed legacy timeval must be rejected: {malformed}"
+            );
+        }
+    }
+
+    #[test]
+    fn different_session_identity_is_known_different_and_malformed_is_unknown() {
+        // A different canonical session id is provably another boot on every
+        // supported host.
+        assert_eq!(
+            compare_boot_identity("00000000-0000-0000-0000-000000000000"),
+            BootIdentityComparison::DifferentSession
+        );
+        // Recorded garbage that is neither the current id nor a legacy timeval
+        // is unknown, never a claimed different session.
+        assert_eq!(
+            compare_boot_identity("not-a-boot-identity"),
+            BootIdentityComparison::Unknown
+        );
+        assert_eq!(compare_boot_identity(""), BootIdentityComparison::Unknown);
     }
 
     #[cfg(target_os = "macos")]

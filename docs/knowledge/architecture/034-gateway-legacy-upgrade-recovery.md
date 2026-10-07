@@ -548,14 +548,45 @@ same way.
   daemon's 5-minute idle shutdown would disturb other checkouts' routes and does
   not prove ownership.
 - Already-upgraded macOS `v0.14.0` sidecars stored the raw `kern.boottime`
-  timeval, whose microsecond field drifts within one boot. Corrected main
-  compares such a record through its `sec` component plus the still-mandatory
-  exact process start identity, so the existing sidecar keeps matching the live
-  daemon it published. The record is never rewritten to the new
+  timeval, whose microsecond field drifts and whose seconds component is
+  wall-clock-adjusted within one boot. Corrected main compares such a record
+  through its `sec` component plus the still-mandatory exact process start
+  identity. A changed or unreadable legacy value is `Unknown`, never a proven
+  different generation: the ordinary lifecycle preserves the record and refuses
+  (`status`/`up`/`down`/managed start) instead of deleting a live daemon. A
+  live pre-identity daemon still has the explicit `recover --adopt-candidate`
+  consent path; an ambiguous identity-bearing record is honestly refused rather
+  than guessed at. The record is never rewritten to the new
   `kern.bootsessionuuid` value and is never reclassified as absent. New records
-  store the session identity and match exactly; unknown current evidence fails
-  closed. This is task 117 of the gateway recovery wave; ordinary `status`,
-  `up`, `down`, and managed auto-start share the comparison.
+  store the session identity and match exactly.
+
+## Ambiguous identity-bearing records (task 117)
+
+A record can carry a valid identity sidecar whose macOS boot evidence is the
+legacy `kern.boottime` timeval and can no longer be proven for the current boot
+(wall-clock adjustment within one boot). `probe_live_identity` returns Unknown,
+so `status`, `up`, `down`, and managed auto-start preserve the record and
+refuse; nothing signals, cleans up, or starts a replacement.
+
+`capture_legacy_record` classifies any sidecar-bearing record as
+`LegacyCapture::Unknown { reason: "gateway identity sidecar is present or untrusted" }`,
+so `effigy gateway recover` — the approved 034 numeric-only adoption route —
+refuses this case too. The approved route therefore does **not** handle an
+ambiguous identity-bearing record today: honest refusal is the current product
+behavior and no automatic supported transition exists for it.
+
+Smallest proposed extension (a proposal for review, not implemented and not
+current behavior): let `recover` route an identity-bearing record through the
+existing bounded read-only candidate inspection, explicit interactive digest
+consent, and generation-bound stop when `probe_live_identity` is Unknown and
+the kernel UID and exact process start identity still match. The candidate
+inspection already re-proves role, owner, boot, precise start, and live path,
+so this adds no new read or signal authority; it widens only the recover input
+gate from numeric-only records to records whose boot evidence is ambiguous.
+`Matched` records keep the normal running path, and provably
+`DifferentSession` records keep the existing locked-start compare-and-remove.
+Extending the reviewed 034 consent boundary needs explicit approval before
+implementation.
 
 ## Private proofs
 
@@ -581,9 +612,13 @@ mutation on refusal (cited, not modified):
   `crates/effigy-process/src/identity.rs::boot_session_uuid_parser_rejects_missing_failed_and_malformed`,
   `boot_session_identity_reader_is_stable_and_ignores_boot_time`,
   `legacy_boot_time_identity_matches_across_microsecond_drift`,
+  `legacy_boot_time_change_is_unknown_not_a_different_session`,
+  `legacy_boot_time_parser_rejects_malformed_fields`,
+  `different_session_identity_is_known_different_and_malformed_is_unknown`,
   `boot_identity_uncached_is_stable_across_separate_processes`;
   `crates/effigy-gateway/src/identity.rs::gateway_identity_legacy_boot_time_record_matches_across_microsecond_drift`;
-  `crates/effigy-gateway/src/server/tests.rs::gateway_identity_legacy_boot_time_sidecar_stays_running_across_drift`.
+  `crates/effigy-gateway/src/server/tests.rs::gateway_identity_legacy_boot_time_sidecar_stays_running_across_drift`,
+  `gateway_identity_ambiguous_legacy_boot_time_preserves_live_record`.
 - Managed auto-start terminal transport (task 117):
   `src/runner/gateway_command/tests.rs::gateway_up_for_managed_task_preserves_terminal_stdin_and_diagnostics`
   re-execs the test binary under a real private PTY and under null stdin;
