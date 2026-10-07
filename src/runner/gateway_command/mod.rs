@@ -340,10 +340,29 @@ fn run_gateway_up(output_json: bool) -> Result<String, RunnerError> {
         }
         ExistingGateway::Absent => {
             if !gateway_invocation_is_escalated() && gateway_up_requires_elevation(&config) {
-                prepare_gateway_state_for_elevated_run(&config)?;
+                if let Some(rendered) = stage_absent_up_under_lock(&config, output_json)? {
+                    return Ok(rendered);
+                }
                 return run_gateway_elevated(GatewaySubcommand::Up, output_json);
             }
             run_gateway_up_after_lock(&config, output_json)
+        }
+    }
+}
+
+/// Operator-owned first-start files are created under the transition lock,
+/// then the lock is dropped before elevation so the child can acquire it.
+fn stage_absent_up_under_lock(
+    config: &GatewayConfig,
+    output_json: bool,
+) -> Result<Option<String>, RunnerError> {
+    let _lock = recover::acquire_transition_lock(config)?;
+    match inspect_existing_gateway(config, verified_gateway_status(config), output_json)? {
+        ExistingGateway::Rendered(rendered) => Ok(Some(rendered)),
+        ExistingGateway::Running(_) => Ok(None),
+        ExistingGateway::Absent => {
+            prepare_gateway_state_for_elevated_run(config)?;
+            Ok(None)
         }
     }
 }
@@ -367,6 +386,7 @@ fn run_gateway_up_after_lock(
         }
         ExistingGateway::Absent => {}
     }
+    prepare_gateway_state_for_elevated_run(config)?;
     ensure_gateway_up_privileges(config)?;
 
     spawn_gateway_daemon(config)?;

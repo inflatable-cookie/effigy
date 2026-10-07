@@ -458,7 +458,7 @@ pub fn candidate_uid_allowed(candidate_uid: u32, operator_uid: u32) -> bool {
 /// Compare-and-remove a legacy PID/version pair after confirmed absence.
 ///
 /// PID and version bytes are compared under the record lock so a substituted
-/// pair is preserved.
+/// or vanished captured pair is preserved.
 pub fn remove_legacy_if_unchanged(capture: &LegacyRecordCapture) -> Result<bool, GatewayError> {
     identity::remove_legacy_pair_if_unchanged(
         capture.pid_path(),
@@ -780,6 +780,19 @@ mod legacy_recovery_tests {
         fs::write(dir.path().join("gateway.version"), "v0.13.1-changed").unwrap();
         assert!(!remove_legacy_if_unchanged(&capture).unwrap());
         assert!(pid_path.exists());
+        fs::write(&pid_path, "4242\n").unwrap();
+        fs::write(dir.path().join("gateway.version"), "v0.13.1").unwrap();
+        fs::remove_file(&pid_path).unwrap();
+        assert!(!remove_legacy_if_unchanged(&capture).unwrap());
+        assert!(dir.path().join("gateway.version").exists());
+        fs::write(&pid_path, "4242\n").unwrap();
+        fs::remove_file(dir.path().join("gateway.version")).unwrap();
+        assert!(!remove_legacy_if_unchanged(&capture).unwrap());
+        assert!(pid_path.exists());
+        fs::write(dir.path().join("gateway.version"), "v0.13.1").unwrap();
+        fs::remove_file(&pid_path).unwrap();
+        fs::remove_file(dir.path().join("gateway.version")).unwrap();
+        assert!(!remove_legacy_if_unchanged(&capture).unwrap());
         fs::write(&pid_path, "4242\n").unwrap();
         fs::write(dir.path().join("gateway.version"), "v0.13.1").unwrap();
         assert!(remove_legacy_if_unchanged(&capture).unwrap());

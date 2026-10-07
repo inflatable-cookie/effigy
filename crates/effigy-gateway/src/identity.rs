@@ -331,7 +331,8 @@ pub fn remove_if_unchanged(snapshot: &GatewayRecordSnapshot) -> Result<bool, Gat
 
 /// Remove a legacy PID/version pair only if both files still match the
 /// captured bytes. Comparison and deletion share the record lock so a
-/// substituted PID or version cannot be deleted.
+/// substituted PID or version cannot be deleted. A vanished captured PID or
+/// version is a changed record and returns `Ok(false)`.
 pub(crate) fn remove_legacy_pair_if_unchanged(
     pid_path: &Path,
     owner_uid: u32,
@@ -345,11 +346,6 @@ pub(crate) fn remove_legacy_pair_if_unchanged(
         read_trusted_file(&version_path, owner_uid, MAX_VERSION_BYTES)?.map(|(bytes, _, _)| bytes);
     let snapshot = read_snapshot(pid_path)?;
     match (snapshot, current_version.as_deref()) {
-        (None, None) => Ok(true),
-        (None, Some(current)) if current == version_bytes => {
-            fs::remove_file(&version_path).or_else(ignore_not_found)?;
-            Ok(true)
-        }
         (Some(snapshot), Some(current))
             if snapshot.is_legacy_pid_only()
                 && snapshot.pid_bytes() == pid_bytes

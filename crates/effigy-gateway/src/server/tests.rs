@@ -289,18 +289,20 @@ fn gateway_identity_legacy_record_requires_migration_and_unknown_probe_stays_dis
 }
 
 #[test]
-fn server_probe_state_status_confirmed_absent_clears_records() {
+fn server_probe_state_status_confirmed_absent_preserves_records() {
     let dir = tempfile::tempdir().unwrap();
     let config = GatewayConfig::standard(dir.path().to_path_buf());
     crate::identity::write_test_record(&config.pid_file_path, 4242);
     let version_path = config.pid_file_path.with_extension("version");
     std::fs::write(&version_path, "v0.13.1").unwrap();
+    let before_pid = std::fs::read(&config.pid_file_path).unwrap();
+    let before_version = std::fs::read(&version_path).unwrap();
 
     let result = get_status_with_probe(&config, |_| GatewayProcessProbe::ConfirmedAbsent);
 
     assert!(matches!(result, Err(GatewayError::NotRunning)));
-    assert!(!config.pid_file_path.exists());
-    assert!(!version_path.exists());
+    assert_eq!(std::fs::read(&config.pid_file_path).unwrap(), before_pid);
+    assert_eq!(std::fs::read(&version_path).unwrap(), before_version);
 }
 
 #[test]

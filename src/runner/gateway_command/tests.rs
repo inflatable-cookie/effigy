@@ -644,3 +644,113 @@ fn legacy_recovery_up_preflight_does_not_mutate_before_lock() {
         "locked recheck must stop the mismatched generation"
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn legacy_recovery_status_preflight_preserves_stale_records() {
+    let root = tempfile::tempdir().expect("private fixture directory");
+    let home = root.path().join("home");
+    let gateway_home = home.join(GATEWAY_DIR_NAME);
+    std::fs::create_dir_all(&gateway_home).expect("create private gateway directory");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&gateway_home, std::fs::Permissions::from_mode(0o700))
+            .expect("restrict private gateway directory");
+    }
+    let _home_guard = set_test_gateway_home(&home);
+    let config = gateway_config().expect("config");
+    let pid_path = config.pid_file_path.clone();
+    let version_path = pid_path.with_extension("version");
+    let identity_path = pid_path.with_extension("identity");
+    std::fs::write(&pid_path, "4242\n").expect("write PID");
+    std::fs::write(&version_path, "v0.13.1+local.test\n").expect("write version");
+    let live = identity::read_live_process_identity(std::process::id()).expect("self identity");
+    std::fs::write(
+        &identity_path,
+        serde_json::to_vec(&serde_json::json!({
+            "format_version": 1,
+            "pid": 4242,
+            "boot_identity": live.boot_identity,
+            "start_identity": live.start_identity,
+        }))
+        .expect("serialize identity"),
+    )
+    .expect("write identity");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&pid_path, std::fs::Permissions::from_mode(0o600))
+            .expect("protect PID");
+        std::fs::set_permissions(&version_path, std::fs::Permissions::from_mode(0o600))
+            .expect("protect version");
+        std::fs::set_permissions(&identity_path, std::fs::Permissions::from_mode(0o600))
+            .expect("protect identity");
+    }
+    let before_pid = std::fs::read(&pid_path).expect("PID");
+    let before_version = std::fs::read(&version_path).expect("version");
+    let before_identity = std::fs::read(&identity_path).expect("identity");
+
+    let classified = inspect_existing_gateway(&config, verified_gateway_status(&config), false)
+        .expect("unlocked classify");
+    assert!(
+        matches!(classified, ExistingGateway::Absent),
+        "confirmed-absent authenticated record must classify absent"
+    );
+    assert_eq!(std::fs::read(&pid_path).expect("PID"), before_pid);
+    assert_eq!(
+        std::fs::read(&version_path).expect("version"),
+        before_version
+    );
+    assert_eq!(
+        std::fs::read(&identity_path).expect("identity"),
+        before_identity
+    );
+    assert!(
+        !gateway_home.join("routes.json").exists(),
+        "status preflight must not stage elevated state"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn legacy_recovery_absent_up_stages_only_under_lock() {
+    let root = tempfile::tempdir().expect("private fixture directory");
+    let home = root.path().join("home");
+    let gateway_home = home.join(GATEWAY_DIR_NAME);
+    std::fs::create_dir_all(&gateway_home).expect("create private gateway directory");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&gateway_home, std::fs::Permissions::from_mode(0o700))
+            .expect("restrict private gateway directory");
+    }
+    let _home_guard = set_test_gateway_home(&home);
+    let config = gateway_config().expect("config");
+
+    let classified = inspect_existing_gateway(&config, verified_gateway_status(&config), false)
+        .expect("unlocked classify");
+    assert!(matches!(classified, ExistingGateway::Absent));
+    assert!(
+        !config.route_table_path.exists(),
+        "unlocked absent classify must not write routes"
+    );
+    assert!(
+        !config.loopback_registry_path.exists(),
+        "unlocked absent classify must not write loopback registry"
+    );
+
+    let rendered = stage_absent_up_under_lock(&config, false).expect("locked stage");
+    assert!(
+        rendered.is_none(),
+        "vacant first-start must not render running"
+    );
+    assert!(
+        config.route_table_path.exists(),
+        "locked absent stage writes operator-owned routes"
+    );
+    assert!(
+        config.loopback_registry_path.exists(),
+        "locked absent stage writes operator-owned loopback registry"
+    );
+}

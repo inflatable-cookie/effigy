@@ -417,10 +417,14 @@ briefly.
 Implemented locking:
 
 - Add an owner-only **transition lock** (`gateway.transition.lock`), held for the
-  whole command by `up`, `down` and `recover`. Unlocked `up` preflight is
-  classification-only: it does not stop a mismatched generation, delete
-  records, or stage elevated state. Stop and compare-and-remove run after the
-  lock is held (or in the elevated child that acquires it).
+  whole command by `up`, `down` and `recover`. `status` and unlocked `up`
+  preflight are classification-only: they do not stop a mismatched generation,
+  delete records, or stage elevated state. Privileged vacant first-start
+  creates operator-owned files under the parent transition lock, then drops it
+  before elevation. Stop and compare-and-remove run after the lock is held (or
+  in the elevated child that acquires it). A vanished captured PID/version pair
+  is a changed record: `remove_legacy_pair_if_unchanged` refuses rather than
+  treating absence as successful cleanup.
 - Keep the **record lock** as today: brief, only inside publication and
   compare-and-remove.
 - Acquisition order: transition lock (outer) → record lock (inner), never the

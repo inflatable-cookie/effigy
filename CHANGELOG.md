@@ -29,10 +29,12 @@ During v0.x, MINOR bumps may include breaking changes.
   releases the lock before a normal `gateway up`. A missing gateway directory
   is the absent-only start path. `recover --json` refusals emit
   `effigy.gateway.recover.v1` (`ok: false`) on stdout; `status --json` emits
-  `effigy.gateway.status.v1` the same way. Unlocked `up` classifies a live
-  legacy or mismatched generation without stopping, deleting records, or
-  staging elevated state; mutation runs after the transition lock (or in the
-  elevated child that acquires it). Managed and container auto-start still
+  `effigy.gateway.status.v1` the same way. Unlocked `up` and `status` classify
+  without stopping, deleting records, or staging elevated state; mutation
+  runs after the transition lock (or in the elevated child that acquires it).
+  Privileged vacant first-start stages operator-owned files under that lock,
+  then releases before elevation. A vanished captured PID/version pair is
+  refused as a changed record. Managed and container auto-start still
   refuse a legacy record and point at recover. The local installer stages
   owner-only `effigy.previous` plus `.version` as evidence; recover never
   executes it. Live role evidence is not historical spawn proof; the last
@@ -450,7 +452,8 @@ During v0.x, MINOR bumps may include breaking changes.
   with a diagnostic, or malformed/mismatched/multiple rows is `Unknown`; status,
   up, down and daemon start refuse to report a false stop, keep the PID and
   version records byte-identical for reconciliation, and never start a
-  replacement. Confirmed absence still clears those records and stop stays
+  replacement. Status leaves confirmed-absent authenticated records in place;
+  locked start or stop compare-and-remove clears them. Stop stays
   idempotent. The probe result is now explicit (`GatewayProcessProbe`), so it is
   no longer collapsed to a `bool`. The task 104 identity sidecar and fail-closed
   legacy policy described above now prevent a PID-only record from authorizing

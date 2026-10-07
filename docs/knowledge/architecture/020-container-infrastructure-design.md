@@ -379,8 +379,10 @@ and a `ps` launch failure, a failed `ps` carrying a diagnostic, or empty,
 malformed, mismatched or multiple rows is unknown. `effigy gateway status`,
 `up` and `down` and daemon start consume that value; unknown is never reported
 as stopped, never deletes the PID/version records and never starts a
-replacement daemon. Confirmed absence still clears the records and stop stays
-idempotent.
+replacement daemon. Status and unlocked `up` preflight are read-only:
+confirmed absence and a readable identity mismatch leave records in place.
+Authenticated stale-record cleanup runs after `gateway.transition.lock`, at
+daemon start (`check_existing_gateway_pid`) or on stop compare-and-remove.
 
 Those checks prove numeric domain and current liveness of some process. They
 do not prove that the live process is the gateway that wrote the file. See
@@ -553,16 +555,17 @@ operator UID, so its publication carries the identical context.
 All production lifecycle paths carry `VerifiedGatewayStatus`, which keeps the
 unchanged public `GatewayStatus` output paired with the exact trusted record
 snapshot. `get_status` and `check_existing_gateway_pid` require the recorded
-PID, boot id and precise start identity to match. A readable different live
-generation is not Running and its stale record is removed only by byte-for-byte
-compare-and-remove. A readable PID-only record with no `gateway.identity`
-sidecar receives a specific legacy identity migration error after a read-only
-process probe. An unknown process probe keeps the distinct `ProcessStateUnknown`
-error; a running or confirmed-absent numeric-only record still preserves its
-files and refuses signal, cleanup, or replacement. A present but malformed,
-PID-mismatched, unreadable or otherwise untrusted identity also remains unknown
-and is preserved. Confirmed process absence can clear an authenticated record
-idempotently.
+PID, boot id and precise start identity to match. `get_status` is read-only: a
+readable different live generation is not Running, and confirmed absence is
+NotRunning, without deleting records. Stale authenticated records are removed
+only by byte-for-byte compare-and-remove after the transition lock, including
+`check_existing_gateway_pid` at daemon start. A readable PID-only record with
+no `gateway.identity` sidecar receives a specific legacy identity migration
+error after a read-only process probe. An unknown process probe keeps the
+distinct `ProcessStateUnknown` error; a running or confirmed-absent numeric-only
+record still preserves its files and refuses signal, cleanup, or replacement.
+A present but malformed, PID-mismatched, unreadable or otherwise untrusted
+identity also remains unknown and is preserved.
 Before TERM and again before KILL, stop rechecks the same record and live
 identity; `process_signal_accessible` performs the same check before its
 signal-zero permission probe. The `gateway up` check and record publication

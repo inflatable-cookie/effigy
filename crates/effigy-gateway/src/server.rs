@@ -411,9 +411,9 @@ fn get_verified_gateway_status_with_probes(
     match process_probe(pid) {
         GatewayProcessProbe::Running => {}
         GatewayProcessProbe::ConfirmedAbsent => {
-            if !identity::remove_if_unchanged(&snapshot)? {
-                return Err(GatewayError::ProcessStateUnknown { pid });
-            }
+            // Status is read-only. Stale authenticated records are cleared
+            // after the transition lock, by start (`check_existing_gateway_pid`)
+            // or stop compare-and-remove.
             return Err(GatewayError::NotRunning);
         }
         GatewayProcessProbe::Unknown => {
@@ -426,9 +426,6 @@ fn get_verified_gateway_status_with_probes(
     match identity_probe(record, &snapshot) {
         GatewayIdentityProbe::Matched => {}
         GatewayIdentityProbe::Mismatch => {
-            if !identity::remove_if_unchanged(&snapshot)? {
-                return Err(GatewayError::ProcessStateUnknown { pid });
-            }
             return Err(GatewayError::NotRunning);
         }
         GatewayIdentityProbe::PermissionDenied | GatewayIdentityProbe::Unknown => {
