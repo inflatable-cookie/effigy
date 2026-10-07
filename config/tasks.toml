@@ -391,11 +391,13 @@
 "check:doctor:fixture-contract" = [
   "cargo clippy --all-targets -- -D warnings",
 ]
-# Cold deep-doctor Git inventory timeout proof. The fixture records the exact
-# porcelain identity probe before blocking it, and the task timeout contains
-# leaked test processes if the owned-child cleanup assertion ever regresses.
+# Cold deep-doctor Git inventory process proof. Debug-only source recording
+# captures the spawn-verified setpgid result and group-signal results; the
+# private fixture records leader/descendant generations and readiness before
+# TERM and after its late spawn. Nextest bounds the test and force-exits it if
+# a handle leaks.
 "test:doctor:git-timeout-proof" = [
-  { id = "git-timeout-proof", run = "cargo nextest run -p effigy --test cli_output_tests --filter-expr 'test(cli_deep_doctor_timeout_terminates_git_identity_tree)' --no-capture --max-fail 1:immediate --no-tests fail", timeout_ms = 120000 },
+  { id = "git-timeout-proof", run = "cargo nextest run -p effigy --test cli_output_tests --profile doctor-process --filter-expr 'test(cli_deep_doctor_timeout_terminates_git_identity_tree)' --no-capture --max-fail 1:immediate --no-tests fail", timeout_ms = 120000 },
 ]
 "check:doctor:git-timeout-proof" = [
   { id = "scan-compile", run = "cargo check -p effigy-scan --lib --profile test", timeout_ms = 600000 },

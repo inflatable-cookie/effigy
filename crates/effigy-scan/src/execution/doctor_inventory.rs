@@ -747,6 +747,8 @@ fn run_git_bounded(
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
+    #[cfg(all(unix, debug_assertions))]
+    let evidence = DoctorGitProcessEvidence::from_environment();
     #[cfg(unix)]
     // SAFETY: `pre_exec` runs this closure in the forked child before `exec`,
     // where only async-signal-safe work is allowed. `setpgid` is
@@ -762,8 +764,49 @@ fn run_git_bounded(
     }
     let child = match command.spawn() {
         Ok(child) => child,
-        Err(_) => return Ok(None),
+        Err(error) => {
+            #[cfg(all(unix, debug_assertions))]
+            if let Some(evidence) = &evidence {
+                evidence.record(
+                    "spawn_failed",
+                    serde_json::json!({
+                        "kind": format!("{:?}", error.kind()),
+                        "errno": error.raw_os_error(),
+                    }),
+                );
+            }
+            return Ok(None);
+        }
     };
+    #[cfg(all(unix, debug_assertions))]
+    if let Some(evidence) = &evidence {
+        let pid = child.id();
+        let pgid = i32::try_from(pid)
+            .ok()
+            .and_then(|pid| nix::unistd::getpgid(Some(nix::unistd::Pid::from_raw(pid))).ok())
+            .map(nix::unistd::Pid::as_raw);
+        // `Command::spawn` returns a child only when the `pre_exec` closure
+        // succeeds, so this records the actual `setpgid` result. The observed
+        // PGID independently checks the resulting kernel state.
+        evidence.record(
+            "leader_spawned",
+            serde_json::json!({
+                "pid": pid,
+                "ppid": std::process::id(),
+                "pgid": pgid,
+                "args": args,
+                "setpgid": {
+                    "result": "ok",
+                    "return": 0,
+                    "errno": null,
+                    "inferred_from_successful_spawn": true,
+                },
+            }),
+        );
+    }
+    #[cfg(all(unix, debug_assertions))]
+    let mut child = OwnedGitChild::new(child, evidence);
+    #[cfg(not(all(unix, debug_assertions)))]
     let mut child = OwnedGitChild::new(child);
     let stdout = child
         .child_mut()
@@ -825,9 +868,23 @@ struct OwnedGitChild {
     child: std::process::Child,
     pid: u32,
     settled: bool,
+    #[cfg(all(unix, debug_assertions))]
+    evidence: Option<DoctorGitProcessEvidence>,
 }
 
 impl OwnedGitChild {
+    #[cfg(all(unix, debug_assertions))]
+    fn new(child: std::process::Child, evidence: Option<DoctorGitProcessEvidence>) -> Self {
+        let pid = child.id();
+        Self {
+            child,
+            pid,
+            settled: false,
+            evidence,
+        }
+    }
+
+    #[cfg(not(all(unix, debug_assertions)))]
     fn new(child: std::process::Child) -> Self {
         let pid = child.id();
         Self {
@@ -845,6 +902,20 @@ impl OwnedGitChild {
         let result = self.child.try_wait()?;
         if result.is_some() {
             self.settled = true;
+            #[cfg(all(unix, debug_assertions))]
+            if let Some(status) = result.as_ref() {
+                if let Some(evidence) = &self.evidence {
+                    evidence.record(
+                        "leader_exited",
+                        serde_json::json!({
+                            "pid": self.pid,
+                            "success": status.success(),
+                            "code": status.code(),
+                            "signal": std::os::unix::process::ExitStatusExt::signal(status),
+                        }),
+                    );
+                }
+            }
         }
         Ok(result)
     }
@@ -857,10 +928,36 @@ impl OwnedGitChild {
         // sent. Once the numeric identity has been used, do not signal it
         // again even if `wait` reports an error.
         self.settled = true;
+        #[cfg(all(unix, debug_assertions))]
+        terminate_git_tree(self.pid, self.evidence.as_ref());
+        #[cfg(not(all(unix, debug_assertions)))]
         terminate_git_tree(self.pid);
         #[cfg(not(unix))]
         let _ = self.child.kill();
-        let _ = self.child.wait();
+        #[cfg(all(unix, debug_assertions))]
+        {
+            let wait_result = self.child.wait();
+            if let Some(evidence) = &self.evidence {
+                evidence.record(
+                    "leader_reaped",
+                    serde_json::json!({
+                        "pid": self.pid,
+                        "status": wait_result.as_ref().ok().map(|status| {
+                            serde_json::json!({
+                                "success": status.success(),
+                                "code": status.code(),
+                                "signal": std::os::unix::process::ExitStatusExt::signal(status),
+                            })
+                        }),
+                        "errno": wait_result.as_ref().err().and_then(std::io::Error::raw_os_error),
+                    }),
+                );
+            }
+        }
+        #[cfg(not(all(unix, debug_assertions)))]
+        {
+            let _ = self.child.wait();
+        }
     }
 }
 
@@ -875,7 +972,10 @@ fn git_budget_error() -> ScanError {
 }
 
 #[cfg(unix)]
-fn terminate_git_tree(pid: u32) {
+fn terminate_git_tree(
+    pid: u32,
+    #[cfg(debug_assertions)] evidence: Option<&DoctorGitProcessEvidence>,
+) {
     use nix::sys::signal::{kill, Signal};
     use nix::unistd::Pid;
     let Ok(pid) = i32::try_from(pid) else {
@@ -886,13 +986,84 @@ fn terminate_git_tree(pid: u32) {
     }
     // `OwnedGitChild` keeps the group leader unreaped across this escalation,
     // preventing the process-group ID from being reused between signals.
-    let _ = kill(Pid::from_raw(-pid), Signal::SIGTERM);
+    let target = Pid::from_raw(-pid);
+    let term = kill(target, Signal::SIGTERM);
+    #[cfg(debug_assertions)]
+    if let Some(evidence) = evidence {
+        evidence.record_signal("TERM", target.as_raw(), &term);
+    }
     std::thread::sleep(std::time::Duration::from_millis(500));
-    let _ = kill(Pid::from_raw(-pid), Signal::SIGKILL);
+    let kill_result = kill(target, Signal::SIGKILL);
+    #[cfg(debug_assertions)]
+    if let Some(evidence) = evidence {
+        evidence.record_signal("KILL", target.as_raw(), &kill_result);
+    }
 }
 
 #[cfg(not(unix))]
 fn terminate_git_tree(_pid: u32) {}
+
+#[cfg(all(unix, debug_assertions))]
+/// Private debug-build recording enabled only by the doctor process fixture.
+/// With no test evidence path set, it has no filesystem or process effects.
+struct DoctorGitProcessEvidence {
+    path: PathBuf,
+    invocation: String,
+    ready_marker: Option<PathBuf>,
+    late_ready_marker: Option<PathBuf>,
+    started: Instant,
+}
+
+#[cfg(all(unix, debug_assertions))]
+impl DoctorGitProcessEvidence {
+    fn from_environment() -> Option<Self> {
+        let path = std::env::var_os("EFFIGY_TEST_DOCTOR_GIT_EVIDENCE")?;
+        Some(Self {
+            path: PathBuf::from(path),
+            invocation: std::env::var("EFFIGY_TEST_DOCTOR_GIT_INVOCATION")
+                .unwrap_or_else(|_| "unspecified".to_owned()),
+            ready_marker: std::env::var_os("EFFIGY_TEST_DOCTOR_GIT_READY").map(PathBuf::from),
+            late_ready_marker: std::env::var_os("EFFIGY_TEST_DOCTOR_GIT_LATE_READY")
+                .map(PathBuf::from),
+            started: Instant::now(),
+        })
+    }
+
+    fn record(&self, event: &str, details: serde_json::Value) {
+        let record = serde_json::json!({
+            "invocation": self.invocation,
+            "elapsed_ms": self.started.elapsed().as_millis(),
+            "event": event,
+            "details": details,
+        });
+        let Ok(line) = serde_json::to_vec(&record) else {
+            return;
+        };
+        let Ok(mut file) = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)
+        else {
+            return;
+        };
+        let _ = file.write_all(&line);
+        let _ = file.write_all(b"\n");
+    }
+
+    fn record_signal(&self, signal: &str, target: i32, result: &Result<(), nix::errno::Errno>) {
+        self.record(
+            "signal",
+            serde_json::json!({
+                "signal": signal,
+                "target": target,
+                "result": if result.is_ok() { "ok" } else { "error" },
+                "errno": result.as_ref().err().map(|error| *error as i32),
+                "ready_at_signal": self.ready_marker.as_ref().is_some_and(|path| path.exists()),
+                "late_ready_at_signal": self.late_ready_marker.as_ref().is_some_and(|path| path.exists()),
+            }),
+        );
+    }
+}
 
 fn generated_in_src_category(value: &str) -> GeneratedInSrcCategory {
     match value {
