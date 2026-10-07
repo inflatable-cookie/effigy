@@ -14,6 +14,13 @@ as_of_release = "0.12.1"
 required_versions = ["0.12.1"]
 "#;
 
+const VALID_PREPARED_0141: &str = r#"
+schema_version = 1
+as_of_release = "0.14.1"
+required_versions = ["0.13.0", "0.13.1", "0.14.0", "0.14.1"]
+oldest_update_capable_release = "0.13.0"
+"#;
+
 fn version(raw: &str) -> Version {
     Version::parse(raw).expect("fixture version")
 }
@@ -32,6 +39,24 @@ fn parse_err(contents: &str, current: &str, capability: PackUpdateCapability) ->
         .to_string()
 }
 
+fn expected_required_versions(current: &Version) -> Vec<Version> {
+    match current.to_string().as_str() {
+        "0.13.1" => vec![version("0.13.0"), version("0.13.1")],
+        "0.14.0" => vec![version("0.13.0"), version("0.13.1"), version("0.14.0")],
+        "0.14.1" => vec![
+            version("0.13.0"),
+            version("0.13.1"),
+            version("0.14.0"),
+            version("0.14.1"),
+        ],
+        other => panic!("update the committed support expectation for Effigy {other}"),
+    }
+}
+
+fn matches_build_required_versions(policy: &CatalogPackUpdatePolicy, current: &Version) -> bool {
+    policy.required_versions == expected_required_versions(current)
+}
+
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
@@ -48,12 +73,7 @@ fn committed_file_matches_this_crate_release_with_oldest_field() {
 
     assert_eq!(policy.schema_version, 1);
     assert_eq!(policy.as_of_release, current);
-    let expected_required_versions = match current.to_string().as_str() {
-        "0.13.1" => vec![version("0.13.0"), version("0.13.1")],
-        "0.14.0" => vec![version("0.13.0"), version("0.13.1"), version("0.14.0")],
-        other => panic!("update the committed support expectation for Effigy {other}"),
-    };
-    assert_eq!(policy.required_versions, expected_required_versions);
+    assert!(matches_build_required_versions(&policy, &current));
     assert_eq!(
         policy.oldest_update_capable_release,
         Some(version("0.13.0"))
@@ -67,32 +87,66 @@ fn committed_file_matches_this_crate_release_with_oldest_field() {
 
 #[test]
 fn prepared_release_policy_preserves_catalog_update_capability_and_support_floor() {
-    let prepared_release = version("0.14.0");
+    let prepared_release = version("0.14.1");
     let policy = parse(
-        r#"
-schema_version = 1
-as_of_release = "0.14.0"
-required_versions = ["0.13.0", "0.13.1", "0.14.0"]
-oldest_update_capable_release = "0.13.0"
-"#,
-        "0.14.0",
-        PackUpdateCapability::Present,
+        VALID_PREPARED_0141,
+        "0.14.1",
+        PackUpdateCapability::for_this_build(),
     )
     .expect("prepared support floor keeps existing releases supported");
 
+    assert_eq!(policy.schema_version, 1);
     assert_eq!(policy.as_of_release, prepared_release);
-    assert_eq!(
-        policy.required_versions,
-        vec![version("0.13.0"), version("0.13.1"), prepared_release]
-    );
+    assert!(matches_build_required_versions(&policy, &prepared_release));
     assert_eq!(
         policy.oldest_update_capable_release,
         Some(version("0.13.0"))
     );
     assert_eq!(policy.minimum_required_version(), &version("0.13.0"));
-    assert_eq!(
+
+    let missing_historical_release = parse(
+        r#"
+schema_version = 1
+as_of_release = "0.14.1"
+required_versions = ["0.13.0", "0.14.0", "0.14.1"]
+oldest_update_capable_release = "0.13.0"
+"#,
+        "0.14.1",
         PackUpdateCapability::for_this_build(),
-        PackUpdateCapability::Present
+    );
+    let missing_historical_release = missing_historical_release
+        .expect("the parser accepts a structurally valid explicit support set");
+    assert!(!matches_build_required_versions(
+        &missing_historical_release,
+        &prepared_release
+    ));
+
+    let wrong_floor = parse_err(
+        r#"
+schema_version = 1
+as_of_release = "0.14.1"
+required_versions = ["0.13.0", "0.13.1", "0.14.0", "0.14.1"]
+oldest_update_capable_release = "0.13.1"
+"#,
+        "0.14.1",
+        PackUpdateCapability::for_this_build(),
+    );
+    assert!(
+        wrong_floor.contains(
+            "`oldest_update_capable_release` is 0.13.1, but the minimum required version is 0.13.0"
+        ),
+        "{wrong_floor}"
+    );
+
+    let mismatched_release = parse_err(
+        VALID_PREPARED_0141,
+        "0.14.0",
+        PackUpdateCapability::for_this_build(),
+    );
+    assert!(
+        mismatched_release
+            .contains("`as_of_release` is 0.14.1, but the current Effigy release is 0.14.0"),
+        "{mismatched_release}"
     );
 }
 
