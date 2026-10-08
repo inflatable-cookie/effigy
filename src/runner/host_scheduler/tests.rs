@@ -678,9 +678,9 @@ fn observe_registered_child_termination(wait: std::time::Duration) -> Terminatio
             crate::runner::owned_children::OwnedChildrenScope::enter().expect("enter scope");
         assert!(crate::runner::owned_children::signal_scope_active());
         crate::runner::owned_children::register_process_group(children.owned_mut().id());
-        unsafe {
-            libc::raise(libc::SIGTERM);
-        }
+        crate::runner::owned_children::record_test_signal_initiation(libc::SIGTERM);
+        let raise_result = unsafe { libc::raise(libc::SIGTERM) };
+        crate::runner::owned_children::record_test_signal_raise_result(libc::SIGTERM, raise_result);
         let deadline = Instant::now() + wait;
         while Instant::now() < deadline {
             match children.owned_mut().try_wait().expect("poll owned") {

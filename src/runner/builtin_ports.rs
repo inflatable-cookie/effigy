@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use effigy_builtin::{
     BuiltinContainerSuiteTarget, BuiltinError, BuiltinLockGuards, BuiltinRuntimePorts,
-    LockScope as BuiltinLockScope, TaskCacheEntry, UnlockResult,
+    BuiltinTestChildEvidence, LockScope as BuiltinLockScope, TaskCacheEntry, UnlockResult,
 };
 use effigy_cli::{Command, DoctorArgs, TaskInvocation, TasksArgs};
 use effigy_execution::ExecutionSurface;
@@ -38,6 +38,24 @@ impl RunnerBuiltinPorts {
 }
 
 impl BuiltinRuntimePorts for RunnerBuiltinPorts {
+    fn builtin_test_child_evidence_enabled(&self) -> bool {
+        #[cfg(test)]
+        {
+            crate::runner::owned_children::test_diagnostic_capture_active()
+        }
+        #[cfg(not(test))]
+        {
+            false
+        }
+    }
+
+    fn record_builtin_test_child_evidence(&self, evidence: BuiltinTestChildEvidence) {
+        #[cfg(test)]
+        crate::runner::owned_children::record_builtin_test_child_evidence(evidence);
+        #[cfg(not(test))]
+        let _ = evidence;
+    }
+
     fn acquire_scopes(
         &self,
         workspace_root: &Path,

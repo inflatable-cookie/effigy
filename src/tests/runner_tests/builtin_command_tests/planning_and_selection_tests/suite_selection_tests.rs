@@ -1,3 +1,5 @@
+use crate::runner::builtin_ports::RunnerBuiltinPorts;
+use crate::runner::error::RunnerError;
 use crate::runner::tests::prelude::cases::*;
 use crate::runner::tests::prelude::execution::run_manifest_task_with_cwd;
 use crate::runner::tests::prelude::harness::*;
@@ -5,11 +7,110 @@ use crate::runner::tests::prelude::json::*;
 use crate::runner::tests::prelude::output::*;
 use crate::runner::tests::prelude::setup_fanout_catalog_repo;
 use crate::runner::tests::prelude::TaskInvocation;
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+fn run_builtin_with_child_evidence(root: PathBuf, args: &[&str]) -> Result<String, RunnerError> {
+    let capture = crate::runner::owned_children::begin_test_diagnostic_capture();
+    let evidence_enabled = effigy_builtin::BuiltinRuntimePorts::builtin_test_child_evidence_enabled(
+        &RunnerBuiltinPorts::new(),
+    );
+    let result = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "test".to_owned(),
+            args: args.iter().map(|arg| (*arg).to_owned()).collect(),
+        },
+        root.clone(),
+    );
+    let events = capture.snapshot();
+    let requested_root = root.display().to_string();
+    let canonical_root = fs::canonicalize(&root)
+        .unwrap_or_else(|_| root.clone())
+        .display()
+        .to_string();
+    let all_children = events
+        .iter()
+        .filter_map(|event| event.child.as_ref())
+        .collect::<Vec<_>>();
+    let children = all_children
+        .iter()
+        .copied()
+        .filter(|child| child.root == requested_root || child.root == canonical_root)
+        .collect::<Vec<_>>();
+    let child_pids = children
+        .iter()
+        .map(|child| child.pid)
+        .collect::<BTreeSet<_>>();
+    let child_groups = children
+        .iter()
+        .filter_map(|child| child.process_group)
+        .collect::<BTreeSet<_>>();
+    let related_events = events
+        .iter()
+        .filter(|event| {
+            event.kind == "signal_listener_registered"
+                || event.kind == "active_signal_scope_snapshot"
+                || event.kind == "cancellation_observed"
+                || event.kind == "test_signal_initiated"
+                || event.kind == "test_signal_raise_result"
+                || event
+                    .process_id
+                    .is_some_and(|pid| child_pids.contains(&pid))
+                || event
+                    .process_group
+                    .is_some_and(|group| child_groups.contains(&group))
+                || event
+                    .process_groups
+                    .iter()
+                    .any(|group| child_groups.contains(group))
+        })
+        .collect::<Vec<_>>();
+    let receipt = serde_json::json!({
+        "fixture_root": requested_root,
+        "canonical_fixture_root": canonical_root,
+        "invocation_args": args,
+        "evidence_enabled": evidence_enabled,
+        "invocation_result": match &result {
+            Ok(_) => "ok".to_owned(),
+            Err(error) => format!("{error:?}"),
+        },
+        "child_count": children.len(),
+        "observed_child_roots": all_children
+            .iter()
+            .map(|child| &child.root)
+            .collect::<Vec<_>>(),
+        "children": children,
+        "signal_and_ownership_events": related_events,
+    });
+    eprintln!(
+        "prepared_tree_suite_child_evidence={}",
+        serde_json::to_string(&receipt).expect("serialize prepared-tree child evidence")
+    );
+    assert!(
+        !children.is_empty(),
+        "expected real built-in suite child evidence for {}",
+        root.display()
+    );
+    assert!(
+        children.iter().all(|child| {
+            child.spawned
+                && (child.exit_code.is_some()
+                    || child.signal.is_some()
+                    || child.wait_error.is_some())
+        }),
+        "every spawned suite child needs an observed wait result: {children:?}"
+    );
+    result
+}
+
+pub(super) fn run_builtin_ok_with_child_evidence(root: PathBuf, args: &[&str]) -> String {
+    run_builtin_with_child_evidence(root, args)
+        .expect("built-in invocation with child evidence should succeed")
+}
+
 #[test]
-fn run_manifest_task_builtin_test_uses_configured_suites_as_source_of_truth() {
+fn release_preparation_fixture_builtin_test_uses_configured_suites_as_source_of_truth() {
     let root = temp_workspace("builtin-test-configured-suites-source-of-truth");
     let configured_marker = root.join("configured-suite.log");
     let vitest_marker = root.join("vitest-suite.log");
@@ -23,14 +124,14 @@ unit = "sh -lc 'printf configured > \"{}\"'"
     write_package_json_with_test_script(&root);
     install_local_vitest_marker(&root, &vitest_marker);
 
-    let out = run_builtin_ok(root.to_path_buf(), "test", &["--verbose-results"]);
+    let out = run_builtin_ok_with_child_evidence(root.to_path_buf(), &["--verbose-results"]);
     assert_output_contains_all(&out, &["Test Results", "runner:unit"]);
     assert_path_exists(&configured_marker, "configured suite marker");
     assert_path_missing(&vitest_marker, "auto-detected vitest marker");
 }
 
 #[test]
-fn run_manifest_task_builtin_test_plans_and_runs_managed_suite_steps() {
+fn release_preparation_fixture_builtin_test_plans_and_runs_managed_suite_steps() {
     let root = temp_workspace("builtin-test-managed-suite-steps");
     let prepare_marker = root.join("prepare.log");
     let suite_marker = root.join("suite.log");
@@ -56,7 +157,7 @@ run = [
     assert_path_missing(&prepare_marker, "planned prepare marker");
     assert_path_missing(&suite_marker, "planned suite marker");
 
-    let out = run_builtin_ok(root, "test", &["composed"]);
+    let out = run_builtin_ok_with_child_evidence(root, &["composed"]);
     assert_output_contains_all(&out, &["Test Results", "root: ok"]);
     assert_path_exists(&prepare_marker, "executed prepare marker");
     assert_path_exists(&suite_marker, "executed suite marker");
@@ -80,7 +181,7 @@ fn run_manifest_task_builtin_test_with_configured_multi_suite_requires_explicit_
 }
 
 #[test]
-fn run_manifest_task_builtin_test_supports_configured_custom_suite_selector() {
+fn release_preparation_fixture_builtin_test_supports_configured_custom_suite_selector() {
     let root = temp_workspace("builtin-test-configured-custom-suite-selector");
     let unit_marker = root.join("unit-suite.log");
     let integration_marker = root.join("integration-suite.log");
@@ -94,14 +195,14 @@ integration = "sh -lc 'printf integration > \"{}\"'"
     );
     write_root_manifest(&root, &manifest);
 
-    let out = run_builtin_ok(root, "test", &["unit"]);
+    let out = run_builtin_ok_with_child_evidence(root, &["unit"]);
     assert_output_contains_all(&out, &["Test Results"]);
     assert_path_exists(&unit_marker, "unit suite marker");
     assert_path_missing(&integration_marker, "integration suite marker");
 }
 
 #[test]
-fn run_manifest_task_builtin_test_skips_on_demand_suites_by_default() {
+fn release_preparation_fixture_builtin_test_skips_on_demand_suites_by_default() {
     let root = temp_workspace("builtin-test-on-demand-suite");
     let unit_marker = root.join("unit-suite.log");
     let focused_marker = root.join("focused-suite.log");
@@ -120,12 +221,12 @@ default = false
         ),
     );
 
-    let default_out = run_builtin_ok(root.to_path_buf(), "test", &[]);
+    let default_out = run_builtin_ok_with_child_evidence(root.to_path_buf(), &[]);
     assert_output_contains_all(&default_out, &["Test Results", "root/unit: ok"]);
     assert_path_exists(&unit_marker, "default suite marker");
     assert_path_missing(&focused_marker, "on-demand suite marker");
 
-    let focused_out = run_builtin_ok(root, "test", &["focused"]);
+    let focused_out = run_builtin_ok_with_child_evidence(root, &["focused"]);
     assert_output_contains_all(&focused_out, &["Test Results", "root/focused: ok"]);
     assert_path_exists(&focused_marker, "selected on-demand suite marker");
 }
@@ -162,13 +263,13 @@ fn run_manifest_task_builtin_test_multi_suite_selector_errors_include_recovery_h
 }
 
 #[test]
-fn run_manifest_task_builtin_test_supports_positional_suite_selector() {
+fn release_preparation_fixture_builtin_test_supports_positional_suite_selector() {
     let root = temp_workspace("builtin-test-suite-selector");
     setup_multi_suite_repo(&root);
     let vitest_marker = root.join("vitest-called.log");
     install_local_vitest_marker(&root, &vitest_marker);
 
-    let out = run_builtin_ok(root.to_path_buf(), "test", &["vitest", "user-service"]);
+    let out = run_builtin_ok_with_child_evidence(root.to_path_buf(), &["vitest", "user-service"]);
     assert_output_contains_all(&out, &["Test Results", "root/vitest"]);
     assert_output_excludes_all(&out, &["root/cargo-"]);
     assert_path_exists(&vitest_marker, "vitest suite marker");
