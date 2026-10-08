@@ -77,6 +77,26 @@ imports are not silently included in this pinned rollout.
 
 ## Scheduler routing
 
+### Caller-controlled validation recovery authority
+
+Tom selected "Extend the Effigy client (Recommended)" on 2026-10-08,
+Nucleus decision `decision-8be0903e0a00fa4494455fff944b3e5a`, recorded in
+Nucleus contract 007 at `0481460`. This authorizes a bounded Effigy client
+extension for a caller-persisted request identity established before the first
+possible scheduler submission, and authenticated exact-identity recovery
+after client restart. It does not authorize a second scheduler client in
+Nucleus or change frozen scheduler contract 010.
+
+A missing candidate file is not proof that no submission occurred. Lost,
+unreadable or ambiguous replies remain held; only authenticated `unknown_run`
+permits same-key submission. Preserve selector resolution, budgeting,
+classification, priority, both deadlines, endpoint/peer trust, environment
+projection, authenticated result and settlement binding, and credential
+secrecy. No raw-command bypass, Queue settings/database change, scheduler
+authority or settlement-policy change, or release is included. The supported
+CLI/API shape must be documented and independently reviewed before Nucleus
+integrates it; implementation is not asserted by this ruling.
+
 - Unset or `EFFIGY_HOST_SCHEDULER=1` routes selected heavy work through the
   host-run scheduler. `EFFIGY_HOST_SCHEDULER=0` is retired and exits 2 with an
   explicit unsupported diagnostic before task effects; it never runs heavy
