@@ -262,6 +262,12 @@
 ]
 "test:init:upstream-guidance" = "cargo test -p effigy --lib init_upstream_guidance -- --nocapture"
 "check:init:upstream-guidance" = "cargo check -p effigy-builtin -p effigy --lib --bin effigy --tests"
+# Built-in suite child evidence ports must remain usable from test builds and
+# warning-clean across every target in their crate.
+"check:runner:builtin-child-evidence" = [
+  "cargo check -p effigy-builtin --all-targets --profile test",
+  "cargo clippy -p effigy-builtin --all-targets -- -D warnings",
+]
 "test:docs:skill-parity" = "cargo test --test documentation_coverage_tests project_local_and_distributed_effigy_skills_have_semantic_parity -- --nocapture"
 # Workspace rust/cache ownership: mount classification, permission prep,
 # doctor diagnosis, and the activation routing that must fail closed before

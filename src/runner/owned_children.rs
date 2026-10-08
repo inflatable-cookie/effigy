@@ -5,8 +5,246 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
+#[cfg(test)]
+use effigy_builtin::ports::BuiltinTestChildEvidence;
+#[cfg(test)]
+use serde::Serialize;
+#[cfg(test)]
+use std::sync::atomic::{AtomicU64, Ordering};
+
 static CURRENT_SIGNAL_STATE: OnceLock<Mutex<Option<Arc<Mutex<SignalState>>>>> = OnceLock::new();
 static INSTALLED_SCOPE: Mutex<Option<InstalledScope>> = Mutex::new(None);
+#[cfg(test)]
+static NEXT_SIGNAL_SCOPE_GENERATION: AtomicU64 = AtomicU64::new(1);
+#[cfg(test)]
+static NEXT_CANCELLATION_GENERATION: AtomicU64 = AtomicU64::new(1);
+
+#[cfg(test)]
+static TEST_DIAGNOSTICS: OnceLock<Mutex<TestDiagnostics>> = OnceLock::new();
+
+#[cfg(test)]
+#[derive(Debug, Clone, Serialize)]
+pub(super) struct TestDiagnosticEvent {
+    #[serde(skip)]
+    capture_ids: Vec<u64>,
+    pub(super) sequence: u64,
+    pub(super) kind: &'static str,
+    pub(super) scope_generation: Option<u64>,
+    pub(super) cancellation_generation: Option<u64>,
+    pub(super) process_id: Option<u32>,
+    pub(super) process_group: Option<i32>,
+    pub(super) process_groups: Vec<i32>,
+    pub(super) signals: Vec<i32>,
+    pub(super) signal: Option<i32>,
+    pub(super) cancellation_signals: Vec<i32>,
+    pub(super) source: Option<&'static str>,
+    pub(super) source_thread: Option<String>,
+    pub(super) result: Option<String>,
+    pub(super) child: Option<BuiltinTestChildEvidence>,
+}
+
+#[cfg(test)]
+#[derive(Default)]
+struct TestDiagnostics {
+    next_capture_id: u64,
+    next_event_sequence: u64,
+    active_capture_ids: BTreeSet<u64>,
+    events: Vec<TestDiagnosticEvent>,
+}
+
+#[cfg(test)]
+pub(super) struct TestDiagnosticCapture {
+    id: u64,
+}
+
+#[cfg(test)]
+impl TestDiagnosticCapture {
+    pub(super) fn snapshot(&self) -> Vec<TestDiagnosticEvent> {
+        diagnostics()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .events
+            .iter()
+            .filter(|event| event.capture_ids.contains(&self.id))
+            .cloned()
+            .collect()
+    }
+}
+
+#[cfg(test)]
+impl Drop for TestDiagnosticCapture {
+    fn drop(&mut self) {
+        let mut diagnostics = diagnostics()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        diagnostics.active_capture_ids.remove(&self.id);
+        if diagnostics.active_capture_ids.is_empty() {
+            diagnostics.events.clear();
+        }
+    }
+}
+
+#[cfg(test)]
+fn diagnostics() -> &'static Mutex<TestDiagnostics> {
+    TEST_DIAGNOSTICS.get_or_init(|| Mutex::new(TestDiagnostics::default()))
+}
+
+#[cfg(test)]
+pub(super) fn begin_test_diagnostic_capture() -> TestDiagnosticCapture {
+    let mut diagnostics = diagnostics()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    diagnostics.next_capture_id = diagnostics.next_capture_id.saturating_add(1);
+    let id = diagnostics.next_capture_id;
+    diagnostics.active_capture_ids.insert(id);
+    drop(diagnostics);
+    record_active_signal_scope_snapshot();
+    TestDiagnosticCapture { id }
+}
+
+#[cfg(test)]
+pub(super) fn test_diagnostic_capture_active() -> bool {
+    !diagnostics()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .active_capture_ids
+        .is_empty()
+}
+
+#[cfg(test)]
+pub(super) fn record_test_signal_initiation(signal: i32) {
+    let mut event = diagnostic_event("test_signal_initiated");
+    event.signal = Some(signal);
+    event.source = Some("test_fixture_signal_call");
+    event.result = Some("raise_requested".to_owned());
+    record_test_diagnostic_event(event);
+}
+
+#[cfg(test)]
+pub(super) fn record_test_signal_raise_result(signal: i32, result: i32) {
+    let mut event = diagnostic_event("test_signal_raise_result");
+    event.signal = Some(signal);
+    event.source = Some("test_fixture_signal_call");
+    event.result = Some(format!("libc::raise returned {result}"));
+    record_test_diagnostic_event(event);
+}
+
+#[cfg(test)]
+fn record_active_signal_scope_snapshot() {
+    let Some(state) = current_signal_state() else {
+        return;
+    };
+    let (scope_generation, cancellation_generation, groups, cancellation_signals) = {
+        let state = state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        (
+            state.scope_generation,
+            state.cancellation_generation,
+            state.process_groups.iter().copied().collect::<Vec<_>>(),
+            state.cancellation_signals.clone(),
+        )
+    };
+    let mut event = diagnostic_event("active_signal_scope_snapshot");
+    event.scope_generation = Some(scope_generation);
+    event.cancellation_generation = cancellation_generation;
+    event.process_groups = groups;
+    event.cancellation_signals = cancellation_signals;
+    #[cfg(unix)]
+    {
+        use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
+        event.signals = vec![SIGHUP, SIGINT, SIGTERM];
+    }
+    event.source = Some("current_owned_children_scope");
+    event.result = Some("active".to_owned());
+    record_test_diagnostic_event(event);
+}
+
+#[cfg(test)]
+pub(super) fn record_builtin_test_child_evidence(evidence: BuiltinTestChildEvidence) {
+    let state_snapshot = current_signal_state().map(|state| {
+        let state = state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        (
+            state.scope_generation,
+            state.cancellation_generation,
+            state.process_groups.iter().copied().collect::<Vec<_>>(),
+            state.cancellation_signals.clone(),
+        )
+    });
+    let mut event = diagnostic_event("builtin_test_child");
+    if let Some((scope_generation, cancellation_generation, groups, signals)) = state_snapshot {
+        event.scope_generation = Some(scope_generation);
+        event.cancellation_generation = cancellation_generation;
+        event.process_groups = groups;
+        event.cancellation_signals = signals;
+    }
+    event.process_id = Some(evidence.pid);
+    event.process_group = evidence.process_group;
+    event.source = Some("builtin_test_parallel_wait");
+    event.child = Some(evidence);
+    record_test_diagnostic_event(event);
+}
+
+#[cfg(test)]
+fn record_test_diagnostic_event(mut event: TestDiagnosticEvent) {
+    let mut diagnostics = diagnostics()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if diagnostics.active_capture_ids.is_empty() {
+        return;
+    }
+    event.capture_ids = diagnostics.active_capture_ids.iter().copied().collect();
+    diagnostics.next_event_sequence = diagnostics.next_event_sequence.saturating_add(1);
+    event.sequence = diagnostics.next_event_sequence;
+    if event.source_thread.is_none() {
+        event.source_thread = std::thread::current().name().map(str::to_owned);
+    }
+    diagnostics.events.push(event);
+}
+
+#[cfg(test)]
+fn diagnostic_event(kind: &'static str) -> TestDiagnosticEvent {
+    TestDiagnosticEvent {
+        capture_ids: Vec::new(),
+        sequence: 0,
+        kind,
+        scope_generation: None,
+        cancellation_generation: None,
+        process_id: None,
+        process_group: None,
+        process_groups: Vec::new(),
+        signals: Vec::new(),
+        signal: None,
+        cancellation_signals: Vec::new(),
+        source: None,
+        source_thread: None,
+        result: None,
+        child: None,
+    }
+}
+
+#[cfg(test)]
+fn record_owned_termination(pid: u32, process_group: Option<i32>, signal: i32, result: String) {
+    let state_snapshot = current_signal_state().map(|state| {
+        let state = state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        (state.scope_generation, state.cancellation_generation)
+    });
+    let mut event = diagnostic_event("owned_termination_attempt");
+    if let Some((scope_generation, cancellation_generation)) = state_snapshot {
+        event.scope_generation = Some(scope_generation);
+        event.cancellation_generation = cancellation_generation;
+    }
+    event.process_id = Some(pid);
+    event.process_group = process_group;
+    event.signal = Some(signal);
+    event.source = Some("terminate_owned_unix_tree");
+    event.result = Some(result);
+    record_test_diagnostic_event(event);
+}
 
 /// Process-wide install of the signal forwarder. Nested `OwnedChildrenScope`
 /// holders share one listener so parallel owned waits cannot replace each
@@ -268,26 +506,72 @@ fn terminate_owned_unix_tree(child: &mut Child) {
 
     let pid = child.id() as i32;
     if pid <= 1 {
+        #[cfg(test)]
+        let result = child.kill();
+        #[cfg(not(test))]
         let _ = child.kill();
+        #[cfg(test)]
+        record_owned_termination(
+            pid as u32,
+            None,
+            Signal::SIGKILL as i32,
+            termination_result(result),
+        );
         return;
     }
 
     #[cfg(all(test, unix))]
     if group_cleanup_disabled_for_test() {
-        let _ = child.kill();
+        let result = child.kill();
+        record_owned_termination(
+            pid as u32,
+            None,
+            Signal::SIGKILL as i32,
+            termination_result(result),
+        );
         return;
     }
 
     let caller_pgid = getpgrp().as_raw();
     if pid == caller_pgid {
+        #[cfg(test)]
+        let result = child.kill();
+        #[cfg(not(test))]
         let _ = child.kill();
+        #[cfg(test)]
+        record_owned_termination(
+            pid as u32,
+            None,
+            Signal::SIGKILL as i32,
+            termination_result(result),
+        );
         return;
     }
 
     let group = Pid::from_raw(-pid);
     let leader = Pid::from_raw(pid);
-    let _ = kill(group, Signal::SIGTERM);
-    let _ = kill(leader, Signal::SIGTERM);
+    #[cfg(test)]
+    {
+        let group_term = kill(group, Signal::SIGTERM);
+        let leader_term = kill(leader, Signal::SIGTERM);
+        record_owned_termination(
+            pid as u32,
+            Some(pid),
+            Signal::SIGTERM as i32,
+            termination_result(group_term),
+        );
+        record_owned_termination(
+            pid as u32,
+            None,
+            Signal::SIGTERM as i32,
+            termination_result(leader_term),
+        );
+    }
+    #[cfg(not(test))]
+    {
+        let _ = kill(group, Signal::SIGTERM);
+        let _ = kill(leader, Signal::SIGTERM);
+    }
     let grace = Instant::now() + Duration::from_millis(800);
     while Instant::now() < grace {
         match child.try_wait() {
@@ -296,14 +580,46 @@ fn terminate_owned_unix_tree(child: &mut Child) {
             _ => thread::sleep(Duration::from_millis(20)),
         }
     }
-    let _ = kill(group, Signal::SIGKILL);
-    let _ = kill(leader, Signal::SIGKILL);
+    #[cfg(test)]
+    {
+        let group_kill = kill(group, Signal::SIGKILL);
+        let leader_kill = kill(leader, Signal::SIGKILL);
+        record_owned_termination(
+            pid as u32,
+            Some(pid),
+            Signal::SIGKILL as i32,
+            termination_result(group_kill),
+        );
+        record_owned_termination(
+            pid as u32,
+            None,
+            Signal::SIGKILL as i32,
+            termination_result(leader_kill),
+        );
+    }
+    #[cfg(not(test))]
+    {
+        let _ = kill(group, Signal::SIGKILL);
+        let _ = kill(leader, Signal::SIGKILL);
+    }
+}
+
+#[cfg(test)]
+fn termination_result<E: std::fmt::Display>(result: Result<(), E>) -> String {
+    match result {
+        Ok(()) => "sent".to_owned(),
+        Err(error) => format!("failed:{error}"),
+    }
 }
 
 #[derive(Default)]
 struct SignalState {
     process_groups: BTreeSet<i32>,
     cancellation_signals: Vec<i32>,
+    #[cfg(test)]
+    scope_generation: u64,
+    #[cfg(test)]
+    cancellation_generation: Option<u64>,
 }
 
 struct SignalForwarder {
@@ -339,6 +655,13 @@ struct SignalListener {
 impl SignalForwarder {
     fn install() -> io::Result<Self> {
         let state = Arc::new(Mutex::new(SignalState::default()));
+        #[cfg(test)]
+        {
+            state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .scope_generation = NEXT_SIGNAL_SCOPE_GENERATION.fetch_add(1, Ordering::Relaxed);
+        }
         #[cfg(unix)]
         let listener = SignalListener::install(Arc::clone(&state))?;
         Ok(Self {
@@ -360,6 +683,18 @@ impl SignalListener {
             return Err(injected_supervision_init_error());
         }
         let mut signals = Signals::new([SIGHUP, SIGINT, SIGTERM])?;
+        #[cfg(test)]
+        {
+            let mut event = diagnostic_event("signal_listener_registered");
+            let state = state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            event.scope_generation = Some(state.scope_generation);
+            event.signals = vec![SIGHUP, SIGINT, SIGTERM];
+            event.source = Some("signal_hook_registration");
+            event.result = Some("registered".to_owned());
+            record_test_diagnostic_event(event);
+        }
         #[cfg(all(test, unix))]
         if injected_supervision_init_failure(SupervisionInitFailurePointForTest::AfterSignals) {
             return Err(injected_supervision_init_error());
@@ -369,7 +704,12 @@ impl SignalListener {
             .name("effigy-heavy-signal-forwarder".to_owned())
             .spawn(move || {
                 for signal in signals.forever() {
-                    let process_groups = {
+                    let process_groups;
+                    #[cfg(test)]
+                    let scope_generation;
+                    #[cfg(test)]
+                    let cancellation_generation;
+                    {
                         let mut state = state
                             .lock()
                             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -378,11 +718,40 @@ impl SignalListener {
                             .retain(|group| process_group_is_live(*group) != Some(false));
                         if !state.cancellation_signals.contains(&signal) {
                             state.cancellation_signals.push(signal);
+                            #[cfg(test)]
+                            if state.cancellation_generation.is_none() {
+                                state.cancellation_generation = Some(
+                                    NEXT_CANCELLATION_GENERATION.fetch_add(1, Ordering::Relaxed),
+                                );
+                            }
                         }
-                        state.process_groups.iter().copied().collect::<Vec<_>>()
-                    };
+                        process_groups = state.process_groups.iter().copied().collect::<Vec<_>>();
+                        #[cfg(test)]
+                        {
+                            scope_generation = state.scope_generation;
+                            cancellation_generation = state.cancellation_generation;
+                        }
+                    }
+                    #[cfg(test)]
+                    {
+                        let mut event = diagnostic_event("cancellation_observed");
+                        event.scope_generation = Some(scope_generation);
+                        event.cancellation_generation = cancellation_generation;
+                        event.signal = Some(signal);
+                        event.process_groups = process_groups.clone();
+                        event.cancellation_signals = vec![signal];
+                        event.source = Some("process_signal_listener");
+                        record_test_diagnostic_event(event);
+                    }
                     for process_group in process_groups {
-                        forward_signal_to_process_group(process_group, signal);
+                        forward_signal_to_process_group(
+                            process_group,
+                            signal,
+                            #[cfg(test)]
+                            Some(scope_generation),
+                            #[cfg(test)]
+                            cancellation_generation,
+                        );
                     }
                 }
             })?;
@@ -405,31 +774,91 @@ impl Drop for SignalListener {
 
 fn signal_state_register(state: &Arc<Mutex<SignalState>>, pid: u32) {
     let process_group = pid as i32;
-    let cancellation_signals = {
+    let cancellation_signals;
+    #[cfg(test)]
+    let scope_generation;
+    #[cfg(test)]
+    let cancellation_generation;
+    {
         let mut state = state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         state
             .process_groups
             .retain(|group| process_group_is_live(*group) != Some(false));
-        if state.process_groups.insert(process_group) {
+        let inserted = state.process_groups.insert(process_group);
+        cancellation_signals = if inserted {
             state.cancellation_signals.clone()
         } else {
             Vec::new()
+        };
+        #[cfg(test)]
+        {
+            scope_generation = state.scope_generation;
+            cancellation_generation = state.cancellation_generation;
+            let mut event = diagnostic_event("process_group_registration");
+            event.scope_generation = Some(scope_generation);
+            event.cancellation_generation = cancellation_generation;
+            event.process_id = Some(pid);
+            event.process_group = Some(process_group);
+            event.source = Some("effigy_process_group_observer");
+            event.result = Some(if inserted {
+                "inserted".to_owned()
+            } else {
+                "already_registered".to_owned()
+            });
+            record_test_diagnostic_event(event);
         }
-    };
+    }
     for signal in cancellation_signals {
-        forward_signal_to_process_group(process_group, signal);
+        forward_signal_to_process_group(
+            process_group,
+            signal,
+            #[cfg(test)]
+            Some(scope_generation),
+            #[cfg(test)]
+            cancellation_generation,
+        );
     }
 }
 
 fn signal_state_unregister_if_gone(state: &Arc<Mutex<SignalState>>, pid: u32) {
-    if process_group_is_live(pid as i32) == Some(false) {
+    let group_live = process_group_is_live(pid as i32);
+    #[cfg(test)]
+    let (scope_generation, cancellation_generation, groups, cancellation_signals) = {
+        let mut state = state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if group_live == Some(false) {
+            state.process_groups.remove(&(pid as i32));
+        }
+        (
+            state.scope_generation,
+            state.cancellation_generation,
+            state.process_groups.iter().copied().collect::<Vec<_>>(),
+            state.cancellation_signals.clone(),
+        )
+    };
+    #[cfg(not(test))]
+    if group_live == Some(false) {
         state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .process_groups
             .remove(&(pid as i32));
+    }
+    #[cfg(test)]
+    {
+        let mut event = diagnostic_event("process_group_stopped");
+        event.scope_generation = Some(scope_generation);
+        event.cancellation_generation = cancellation_generation;
+        event.process_id = Some(pid);
+        event.process_group = Some(pid as i32);
+        event.process_groups = groups;
+        event.cancellation_signals = cancellation_signals;
+        event.source = Some("effigy_process_group_observer");
+        event.result = Some(format!("group_live={group_live:?}"));
+        record_test_diagnostic_event(event);
     }
 }
 
@@ -668,9 +1097,22 @@ pub(super) fn pre_repair_ordering_control_for_test(
 }
 
 #[cfg(unix)]
-fn forward_signal_to_process_group(process_group: i32, signal: i32) {
+fn forward_signal_to_process_group(
+    process_group: i32,
+    signal: i32,
+    #[cfg(test)] scope_generation: Option<u64>,
+    #[cfg(test)] cancellation_generation: Option<u64>,
+) {
     #[cfg(test)]
     if forwarding_disabled_for_test() {
+        let mut event = diagnostic_event("signal_forward_attempt");
+        event.scope_generation = scope_generation;
+        event.cancellation_generation = cancellation_generation;
+        event.process_group = Some(process_group);
+        event.signal = Some(signal);
+        event.source = Some("process_group_signal_forwarder");
+        event.result = Some("disabled_by_test_seam".to_owned());
+        record_test_diagnostic_event(event);
         return;
     }
 
@@ -678,17 +1120,42 @@ fn forward_signal_to_process_group(process_group: i32, signal: i32) {
     use nix::unistd::Pid;
     use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
 
+    #[cfg(test)]
+    let signal_number = signal;
     let signal = match signal {
         SIGHUP => Signal::SIGHUP,
         SIGINT => Signal::SIGINT,
         SIGTERM => Signal::SIGTERM,
         _ => return,
     };
+    #[cfg(test)]
+    let result = kill(Pid::from_raw(-process_group), signal);
+    #[cfg(not(test))]
     let _ = kill(Pid::from_raw(-process_group), signal);
+    #[cfg(test)]
+    {
+        let mut event = diagnostic_event("signal_forward_attempt");
+        event.scope_generation = scope_generation;
+        event.cancellation_generation = cancellation_generation;
+        event.process_group = Some(process_group);
+        event.signal = Some(signal_number);
+        event.source = Some("process_group_signal_forwarder");
+        event.result = Some(match result {
+            Ok(()) => "sent".to_owned(),
+            Err(error) => format!("failed:{error}"),
+        });
+        record_test_diagnostic_event(event);
+    }
 }
 
 #[cfg(not(unix))]
-fn forward_signal_to_process_group(_process_group: i32, _signal: i32) {}
+fn forward_signal_to_process_group(
+    _process_group: i32,
+    _signal: i32,
+    #[cfg(test)] _scope_generation: Option<u64>,
+    #[cfg(test)] _cancellation_generation: Option<u64>,
+) {
+}
 
 /// Private leader/descendant fixtures for sequence and managed timeout-reap
 /// proofs. Readiness is the recorded pid file, never a short sleep.

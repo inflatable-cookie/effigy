@@ -1653,9 +1653,9 @@ mod tests {
         });
         TimeoutDescendantFixture::wait_until_signal_scope_active();
         let pids = fixture.wait_for_recorded_pids();
-        unsafe {
-            libc::raise(libc::SIGINT);
-        }
+        crate::runner::owned_children::record_test_signal_initiation(libc::SIGINT);
+        let raise_result = unsafe { libc::raise(libc::SIGINT) };
+        crate::runner::owned_children::record_test_signal_raise_result(libc::SIGINT, raise_result);
         let _ = handle.join().expect("managed interrupt wait thread");
         fixture.wait_until_owned_gone(&pids);
         fixture.assert_sibling_alive();
@@ -1689,9 +1689,9 @@ mod tests {
         });
         TimeoutDescendantFixture::wait_until_signal_scope_active();
         let pids = fixture.wait_for_recorded_pids();
-        unsafe {
-            libc::raise(libc::SIGINT);
-        }
+        crate::runner::owned_children::record_test_signal_initiation(libc::SIGINT);
+        let raise_result = unsafe { libc::raise(libc::SIGINT) };
+        crate::runner::owned_children::record_test_signal_raise_result(libc::SIGINT, raise_result);
         let _ = handle.join().expect("managed nested interrupt wait thread");
         fixture.wait_until_owned_gone(&pids);
         fixture.assert_sibling_alive();

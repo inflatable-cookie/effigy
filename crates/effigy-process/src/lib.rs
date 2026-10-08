@@ -53,6 +53,34 @@ pub fn process_group_observer_active() -> bool {
         .is_some()
 }
 
+/// Return the process group that currently contains `pid` on Unix.
+///
+/// This is used by test diagnostics to compare the group requested at spawn
+/// time with the child's actual group before it exits. Other platforms report
+/// the query as unsupported.
+pub fn process_group_id(pid: u32) -> std::io::Result<i32> {
+    #[cfg(unix)]
+    {
+        let pid = i32::try_from(pid).map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "process id exceeds the platform pid range",
+            )
+        })?;
+        nix::unistd::getpgid(Some(nix::unistd::Pid::from_raw(pid)))
+            .map(|group| group.as_raw())
+            .map_err(std::io::Error::from)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "process groups are unavailable on this platform",
+        ))
+    }
+}
+
 pub fn notify_process_group_started(pid: u32) -> bool {
     notify_process_group_event(ProcessGroupEvent::Started(pid))
 }

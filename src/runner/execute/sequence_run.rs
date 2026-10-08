@@ -1324,9 +1324,9 @@ run = [{ task = "db:migrate" }]
         });
         TimeoutDescendantFixture::wait_until_signal_scope_active();
         let pids = fixture.wait_for_recorded_pids();
-        unsafe {
-            libc::raise(libc::SIGINT);
-        }
+        crate::runner::owned_children::record_test_signal_initiation(libc::SIGINT);
+        let raise_result = unsafe { libc::raise(libc::SIGINT) };
+        crate::runner::owned_children::record_test_signal_raise_result(libc::SIGINT, raise_result);
         let _ = handle.join().expect("sequence interrupt wait thread");
         fixture.wait_until_owned_gone(&pids);
         fixture.assert_sibling_alive();
@@ -1357,9 +1357,9 @@ run = [{ task = "db:migrate" }]
         });
         TimeoutDescendantFixture::wait_until_signal_scope_active();
         let pids = fixture.wait_for_recorded_pids();
-        unsafe {
-            libc::raise(libc::SIGINT);
-        }
+        crate::runner::owned_children::record_test_signal_initiation(libc::SIGINT);
+        let raise_result = unsafe { libc::raise(libc::SIGINT) };
+        crate::runner::owned_children::record_test_signal_raise_result(libc::SIGINT, raise_result);
         let deadline = Instant::now() + Duration::from_millis(500);
         while Instant::now() < deadline {
             assert!(

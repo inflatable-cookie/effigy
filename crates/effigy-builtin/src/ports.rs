@@ -168,10 +168,43 @@ pub struct TaskCacheEntry {
     pub updated_at_epoch_ms: u128,
 }
 
+/// Process facts for one built-in suite command, delivered only when the
+/// runtime port explicitly enables test diagnostics.
+#[derive(Debug, Clone, Serialize)]
+pub struct BuiltinTestChildEvidence {
+    pub invocation_generation: u64,
+    pub child_generation: u64,
+    pub suite_name: String,
+    pub root: String,
+    pub pid: u32,
+    pub parent_pid: u32,
+    pub process_group: Option<i32>,
+    pub process_group_error: Option<String>,
+    pub observer_active_at_spawn: bool,
+    pub start_observer_notified: bool,
+    pub stop_observer_notified: bool,
+    pub spawned: bool,
+    pub exit_code: Option<i32>,
+    pub signal: Option<i32>,
+    pub wait_error: Option<String>,
+}
+
 /// Runtime services the built-in command layer depends on. Every
 /// reach-back from the built-in layer into the rest of the runner goes
 /// through this trait.
 pub trait BuiltinRuntimePorts {
+    /// Whether the caller wants test-only child evidence for built-in suite
+    /// executions. Production implementations leave this disabled.
+    fn builtin_test_child_evidence_enabled(&self) -> bool {
+        false
+    }
+
+    /// Receive child evidence without influencing command execution. The
+    /// default implementation intentionally discards it.
+    fn record_builtin_test_child_evidence(&self, evidence: BuiltinTestChildEvidence) {
+        let _ = evidence;
+    }
+
     // Locking.
     fn acquire_scopes(
         &self,

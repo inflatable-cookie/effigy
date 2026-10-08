@@ -1,3 +1,4 @@
+use super::suite_selection_tests::run_builtin_ok_with_child_evidence;
 use crate::runner::tests::prelude::{
     assert_output_contains_all, assert_output_excludes_all, assert_path_exists,
     assert_path_missing, fs, install_local_vitest, install_local_vitest_marker, run_builtin_ok,
@@ -82,7 +83,7 @@ fn run_manifest_task_builtin_test_runs_configured_vitest_test_dir() {
 }
 
 #[test]
-fn run_manifest_task_builtin_test_explicit_suite_override_stays_authoritative() {
+fn release_preparation_fixture_builtin_test_explicit_suite_override_stays_authoritative() {
     let root = temp_workspace("builtin-test-explicit-suite-over-vitest-dir");
     let configured_marker = root.join("configured-suite.log");
     let vitest_marker = root.join("vitest-suite.log");
@@ -107,7 +108,7 @@ unit = "sh -lc 'printf configured > \"{}\"'"
     assert_output_contains_all(&plan, &["suite-source: configured", "test.suites.unit"]);
     assert_output_excludes_all(&plan, &["vitest run --dir", "auto-detected"]);
 
-    let out = run_builtin_ok(root, "test", &["--verbose-results"]);
+    let out = run_builtin_ok_with_child_evidence(root, &["--verbose-results"]);
     assert_output_contains_all(&out, &["Test Results", "runner:unit"]);
     assert_path_exists(&configured_marker, "configured suite marker");
     assert_path_missing(&vitest_marker, "auto-detected vitest marker");

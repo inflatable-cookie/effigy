@@ -2,6 +2,7 @@ use std::collections::{HashMap, VecDeque};
 use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::process::{Command as ProcessCommand, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use effigy_core::shell::{shell_quote, with_local_node_bin_path};
@@ -12,9 +13,13 @@ use effigy_tui::multiprocess::{run_multiprocess_tui, MultiProcessTuiOptions};
 
 use super::planning::{BuiltinTargetRuntime, BuiltinTestRunnable};
 use super::{BuiltinError, BuiltinTestExecResult};
+use crate::ports::BuiltinTestChildEvidence;
 use crate::BuiltinRuntimePorts;
 #[path = "planning/runnable/cargo_env.rs"]
 mod cargo_env;
+
+static NEXT_TEST_INVOCATION_GENERATION: AtomicU64 = AtomicU64::new(1);
+static NEXT_TEST_CHILD_GENERATION: AtomicU64 = AtomicU64::new(1);
 
 pub(super) fn should_run_builtin_test_tui(force_tui: bool, suite_count: usize) -> bool {
     if !(std::io::stdin().is_terminal() && std::io::stdout().is_terminal()) {
@@ -96,6 +101,12 @@ pub(super) fn run_builtin_test_targets_parallel(
     if runnable.is_empty() {
         return Ok(Vec::new());
     }
+    let capture_child_evidence = ports.builtin_test_child_evidence_enabled();
+    let invocation_generation = if capture_child_evidence {
+        NEXT_TEST_INVOCATION_GENERATION.fetch_add(1, Ordering::Relaxed)
+    } else {
+        0
+    };
     let jobs = runnable
         .into_iter()
         .map(|job| {
@@ -136,9 +147,16 @@ pub(super) fn run_builtin_test_targets_parallel(
 
     std::thread::scope(
         |scope| -> Result<Vec<BuiltinTestExecResult>, BuiltinError> {
+            let (child_evidence_sender, child_evidence_receiver) = if capture_child_evidence {
+                let (sender, receiver) = std::sync::mpsc::channel::<BuiltinTestChildEvidence>();
+                (Some(sender), Some(receiver))
+            } else {
+                (None, None)
+            };
             let mut handles = Vec::with_capacity(worker_count);
             for _ in 0..worker_count {
                 let queue_ref = Arc::clone(&queue);
+                let child_evidence_sender = child_evidence_sender.clone();
                 handles.push(scope.spawn(move || {
                     let mut local = Vec::<BuiltinTestExecResult>::new();
                     loop {
@@ -149,10 +167,17 @@ pub(super) fn run_builtin_test_targets_parallel(
                         let Some((name, root, runner, command, execution_command)) = job else {
                             break;
                         };
+                        let child_generation = if capture_child_evidence {
+                            NEXT_TEST_CHILD_GENERATION.fetch_add(1, Ordering::Relaxed)
+                        } else {
+                            0
+                        };
                         let mut process = ProcessCommand::new("sh");
                         process.arg("-c").arg(&execution_command).current_dir(&root);
                         with_local_node_bin_path(&mut process, &root);
-                        if effigy_process::process_group_observer_active() {
+                        let observer_active_at_spawn =
+                            effigy_process::process_group_observer_active();
+                        if observer_active_at_spawn {
                             #[cfg(unix)]
                             {
                                 use std::os::unix::process::CommandExt;
@@ -170,8 +195,14 @@ pub(super) fn run_builtin_test_targets_parallel(
                                     error,
                                 })?;
                         let child_pid = child.id();
-                        effigy_process::notify_process_group_started(child_pid);
-                        let status = if capture_output {
+                        let process_group_result = if capture_child_evidence {
+                            Some(effigy_process::process_group_id(child_pid))
+                        } else {
+                            None
+                        };
+                        let start_observer_notified =
+                            effigy_process::notify_process_group_started(child_pid);
+                        let wait_result = if capture_output {
                             child
                                 .wait_with_output()
                                 .map(|output| output.status)
@@ -188,8 +219,56 @@ pub(super) fn run_builtin_test_targets_parallel(
                                     error,
                                 })
                         };
-                        effigy_process::notify_process_group_stopped(child_pid);
-                        let status = status?;
+                        let stop_observer_notified =
+                            effigy_process::notify_process_group_stopped(child_pid);
+                        if capture_child_evidence {
+                            let (process_group, process_group_error) = match process_group_result {
+                                Some(Ok(process_group)) => (Some(process_group), None),
+                                Some(Err(error)) => (None, Some(error.to_string())),
+                                None => (None, None),
+                            };
+                            let exit_code = wait_result
+                                .as_ref()
+                                .ok()
+                                .and_then(std::process::ExitStatus::code);
+                            let signal = wait_result.as_ref().ok().and_then(|status| {
+                                #[cfg(unix)]
+                                {
+                                    use std::os::unix::process::ExitStatusExt;
+                                    status.signal()
+                                }
+                                #[cfg(not(unix))]
+                                {
+                                    let _ = status;
+                                    None
+                                }
+                            });
+                            let wait_error = wait_result.as_ref().err().map(ToString::to_string);
+                            child_evidence_sender
+                                .as_ref()
+                                .expect("evidence capture creates its receiver")
+                                .send(BuiltinTestChildEvidence {
+                                    invocation_generation,
+                                    child_generation,
+                                    suite_name: name.clone(),
+                                    root: root.display().to_string(),
+                                    pid: child_pid,
+                                    parent_pid: std::process::id(),
+                                    process_group,
+                                    process_group_error,
+                                    observer_active_at_spawn,
+                                    start_observer_notified,
+                                    stop_observer_notified,
+                                    spawned: true,
+                                    exit_code,
+                                    signal,
+                                    wait_error,
+                                })
+                                .expect(
+                                    "child evidence receiver remains active until workers finish",
+                                );
+                        }
+                        let status = wait_result?;
                         local.push(BuiltinTestExecResult {
                             name,
                             runner,
@@ -201,6 +280,12 @@ pub(super) fn run_builtin_test_targets_parallel(
                     }
                     Ok::<Vec<BuiltinTestExecResult>, BuiltinError>(local)
                 }));
+            }
+            drop(child_evidence_sender);
+            if let Some(child_evidence_receiver) = child_evidence_receiver {
+                for evidence in child_evidence_receiver {
+                    ports.record_builtin_test_child_evidence(evidence);
+                }
             }
 
             let mut combined = Vec::<BuiltinTestExecResult>::new();
