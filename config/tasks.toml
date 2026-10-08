@@ -397,11 +397,11 @@
 "check:doctor:fixture-contract" = [
   "cargo clippy --all-targets -- -D warnings",
 ]
-# Original cold CLI doctor Git-timeout fixture. Private receipts tag every
-# porcelain-v1 caller and retain exact caller/leader/descendant generations,
-# argv, PGIDs, readiness, and termination/reap events on pass or failure.
+# Original cold whole-CLI fixture and direct inventory fixture run as separate
+# nextest calls; both keep their existing 800 ms deadline origin.
 "test:doctor:git-timeout-proof" = [
-  { id = "git-timeout-proof", run = "cargo nextest run -p effigy --test cli_output_tests --profile doctor-process --filter-expr 'test(cli_deep_doctor_timeout_terminates_git_identity_tree)' --no-capture --max-fail 1:immediate --no-tests fail", timeout_ms = 120000 },
+  { id = "cold-cli-git-timeout-proof", run = "cargo nextest run -p effigy --test cli_output_tests --profile doctor-process --filter-expr 'test(cli_deep_doctor_timeout_terminates_git_identity_tree)' --no-capture --max-fail 1:immediate --no-tests fail", timeout_ms = 120000 },
+  { id = "inventory-git-timeout-proof", run = "cargo nextest run -p effigy-scan --lib --profile doctor-process --filter-expr 'test(doctor_git_timeout_process_group_evidence)' --no-capture --max-fail 1:immediate --no-tests fail", timeout_ms = 120000 },
 ]
 "check:doctor:git-timeout-proof" = [
   { id = "graph-scan-test-compile", run = "cargo check -p effigy-codegraph -p effigy-scan --tests --profile test", timeout_ms = 600000 },
