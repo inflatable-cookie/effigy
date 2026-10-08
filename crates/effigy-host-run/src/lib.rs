@@ -13,9 +13,10 @@ pub use secure_fs::{Authority, HostRunRoot, TrustError};
 pub use token::{ParentToken, TokenError, TokenKeys};
 pub use transport::{
     container_removed_fact, container_started_fact, journal_facts_offline, nested_fact,
-    new_client_request_id, new_fact, override_fact, AttachEvent, BudgetFallback, ClassSource,
-    ClientError, Clock, HostRunClient, HostRunFact, IdentityProvider, OutputStream, Priority,
-    RunClass, Settlement, SettlementOutcome, StatusQuery, SubmitRequest, SubmitResult, SystemClock,
+    new_client_request_id, new_fact, override_fact, validate_client_caller,
+    validate_client_request_id, AttachEvent, BudgetFallback, ClassSource, ClientError, Clock,
+    HostRunClient, HostRunFact, IdentityProvider, OutputStream, Priority, RunClass, Settlement,
+    SettlementOutcome, StatusQuery, SubmitRequest, SubmitResult, SystemClock,
     SystemIdentityProvider, WireError,
 };
 

@@ -97,6 +97,49 @@ authority or settlement-policy change, or release is included. The supported
 CLI/API shape must be documented and independently reviewed before Nucleus
 integrates it; implementation is not asserted by this ruling.
 
+### Supported durable request identity surface
+
+For a top-level heavy selector, callers may provide a UUID before the selector:
+
+```sh
+EFFIGY_CALLER=northstar-worker effigy --host-run-request-id "$REQUEST_ID" qa:ci:fast
+effigy tasks request status --caller northstar-worker --request-id "$REQUEST_ID" --json
+effigy tasks request follow --caller northstar-worker --request-id "$REQUEST_ID" --json
+```
+
+Before starting Effigy, the caller persists the caller label and UUID together
+with its own effect/head/base/candidate/settings binding. `EFFIGY_CALLER` is
+the existing caller label; when it is unset, Effigy uses its existing default
+caller identity. The request UUID is scheduler metadata and is removed from
+the launched argv. The normal generated-UUID path remains unchanged.
+
+The Rust client exposes `HostRunClient::request_status(caller, request_id)`.
+It returns `Ok(Some(status))` only for a status body with a nonempty run ID,
+nonempty state, and an epoch equal to the current trusted authority; `Ok(None)`
+is returned only for the authenticated `unknown_run` wire response, and every
+other reply or transport condition is an error. Callers follow a found request
+with the existing `HostRunClient::attach(run_id, stdout_offset, stderr_offset)`
+API. The lookup uses the same trusted endpoint, peer checks, and protocol v1
+client as selector submission.
+
+The CLI status success payload uses
+`effigy.host_run.request-status.v1`; follow uses
+`effigy.host_run.request-follow.v1`. An authenticated absence is a JSON error
+with `error.details.state = "authenticated_absence"` and process exit 3. Held
+ambiguity uses `error.details.state = "held"` and exit 75. Only the former
+allows a caller to retry the same request UUID. `follow --json` keeps the JSON
+envelope on stdout and relays captured run output to stderr; its exit code is
+the launched run's real status. Text follow relays stdout and stderr to their
+matching streams. Expired output remains identified as a gap.
+
+The UUID flag is supported only for a top-level heavy selector request. Light,
+planned, nested, managed-control, and audited override routes refuse it before
+task effects; nested parent-token validation still occurs first. The caller
+remains responsible for its body/effect binding:
+Effigy does not persist candidate files or selector settings and missing local
+files never establish scheduler absence. A same-key/different-body scheduler
+conflict remains an error, while an unreadable or malformed reply stays held.
+
 - Unset or `EFFIGY_HOST_SCHEDULER=1` routes selected heavy work through the
   host-run scheduler. `EFFIGY_HOST_SCHEDULER=0` is retired and exits 2 with an
   explicit unsupported diagnostic before task effects; it never runs heavy

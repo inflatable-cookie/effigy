@@ -56,6 +56,7 @@ const SCHEDULER_PROVIDED_ENV: &[&str] = &[
 /// What the caller resolved before submitting.
 pub(in crate::runner) struct SubmitContext<'a> {
     pub(in crate::runner) selector: &'a str,
+    pub(in crate::runner) client_request_id: Option<&'a str>,
     pub(in crate::runner) class_source: ClassSource,
     pub(in crate::runner) repository: &'a Path,
     pub(in crate::runner) cwd: &'a Path,
@@ -289,7 +290,10 @@ fn build_request(ctx: &SubmitContext<'_>) -> Result<SubmitRequest, RunnerError> 
     let caller =
         std::env::var("EFFIGY_CALLER").unwrap_or_else(|_| super::default_caller_identity());
     Ok(SubmitRequest {
-        client_request_id: new_client_request_id().map_err(|error| refuse(1, error.to_string()))?,
+        client_request_id: match ctx.client_request_id {
+            Some(request_id) => request_id.to_owned(),
+            None => new_client_request_id().map_err(|error| refuse(1, error.to_string()))?,
+        },
         caller,
         repository: path_string(ctx.repository)?,
         cwd: ctx.cwd.to_path_buf(),
@@ -322,13 +326,19 @@ fn invocation_argv() -> Result<Vec<String>, RunnerError> {
     let exe = std::env::current_exe()
         .map_err(|error| refuse(1, format!("cannot resolve the effigy executable: {error}")))?;
     let mut argv = vec![path_string(&exe)?];
-    for arg in std::env::args_os().skip(1) {
-        let arg = arg.into_string().map_err(|_| {
-            refuse(
-                2,
-                "an argument is not valid UTF-8 and cannot be submitted to the scheduler",
-            )
-        })?;
+    let args = std::env::args_os()
+        .skip(1)
+        .map(|arg| {
+            arg.into_string().map_err(|_| {
+                refuse(
+                    2,
+                    "an argument is not valid UTF-8 and cannot be submitted to the scheduler",
+                )
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let args = strip_host_run_request_flag(&args);
+    for arg in args {
         argv.push(arg);
     }
     if argv.iter().any(String::is_empty) {
@@ -338,6 +348,44 @@ fn invocation_argv() -> Result<Vec<String>, RunnerError> {
         ));
     }
     Ok(argv)
+}
+
+fn strip_host_run_request_flag(args: &[String]) -> Vec<String> {
+    let mut filtered = Vec::with_capacity(args.len());
+    let mut index = 0;
+    let mut reading_globals = true;
+    while let Some(arg) = args.get(index) {
+        if !reading_globals {
+            filtered.extend_from_slice(&args[index..]);
+            break;
+        }
+        match arg.as_str() {
+            "--host-run-request-id" => index = (index + 2).min(args.len()),
+            "--repo" | "--env-schema" => {
+                filtered.extend_from_slice(&args[index..(index + 2).min(args.len())]);
+                index = (index + 2).min(args.len());
+            }
+            "--json" | "--verbose-root" => {
+                filtered.push(arg.clone());
+                index += 1;
+            }
+            "--" => {
+                reading_globals = false;
+                filtered.push(arg.clone());
+                index += 1;
+            }
+            other if other.starts_with('-') => {
+                filtered.push(arg.clone());
+                index += 1;
+            }
+            _ => {
+                reading_globals = false;
+                filtered.push(arg.clone());
+                index += 1;
+            }
+        }
+    }
+    filtered
 }
 
 /// Process environment names explicitly referenced by a selected task or any
@@ -731,5 +779,38 @@ fn signal_name(signal: i32) -> &'static str {
         2 => "SIGINT",
         15 => "SIGTERM",
         _ => "a signal",
+    }
+}
+
+#[cfg(test)]
+mod request_identity_tests {
+    use super::strip_host_run_request_flag;
+
+    #[test]
+    fn global_request_identity_is_not_forwarded_to_the_launched_selector() {
+        let args = [
+            "--json",
+            "--host-run-request-id",
+            "00000000-0000-4000-8000-000000000001",
+            "qa:ci:fast",
+            "--repo",
+            "/repo",
+            "--host-run-request-id",
+            "a-task-argument-after-selector",
+        ]
+        .map(str::to_owned);
+
+        assert_eq!(
+            strip_host_run_request_flag(&args),
+            [
+                "--json",
+                "qa:ci:fast",
+                "--repo",
+                "/repo",
+                "--host-run-request-id",
+                "a-task-argument-after-selector",
+            ]
+            .map(str::to_owned)
+        );
     }
 }

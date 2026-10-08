@@ -1233,6 +1233,8 @@ pub struct TasksArgs {
     pub status_all: bool,
     pub output_json: bool,
     pub pretty_json: bool,
+    /// Exact caller-owned host-run request lookup or follow operation.
+    pub request: Option<TasksRequestCommand>,
     /// Explicit bounded-QA-group subcommand (`tasks qa-groups` /
     /// `tasks qa-group`). Recognized only as the exact leading route so group
     /// verbs never take over task names or top-level selectors.
@@ -1249,9 +1251,18 @@ impl Default for TasksArgs {
             status_all: false,
             output_json: false,
             pretty_json: true,
+            request: None,
             qa: None,
         }
     }
+}
+
+/// `effigy tasks request status|follow` resolves the exact caller/request UUID
+/// through the trusted host-run client.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TasksRequestCommand {
+    Status { caller: String, request_id: String },
+    Follow { caller: String, request_id: String },
 }
 
 /// Bounded QA-group surfaces under `effigy tasks` (contract 051).
@@ -1364,6 +1375,11 @@ pub struct TaskInvocation {
     pub name: String,
     pub args: Vec<String>,
 }
+
+/// Internal argument used to carry a parsed global request identity to the
+/// selector runner without exposing it to the selected task's own arguments.
+#[doc(hidden)]
+pub const INTERNAL_HOST_RUN_REQUEST_ID_ARG: &str = "--__effigy-host-run-request-id";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CliParseError {

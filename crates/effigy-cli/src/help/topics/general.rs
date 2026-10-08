@@ -23,7 +23,7 @@ pub(crate) fn render_general_help<R: HelpRenderer + ?Sized>(
     )?;
     renderer.notice(
         NoticeLevel::Info,
-        "Global `--json` and `--repo <PATH>` now work before built-ins and task selectors. `--json` is an output format, never a planning or safety flag. Generic task invocations also accept `--verbose-root`, `--env-schema <PATH>`, and `--plan` after the selector.",
+        "Global `--json` and `--repo <PATH>` work before built-ins and task selectors. `--host-run-request-id <UUID>` is for a caller-persisted identity on one top-level heavy selector; recover it with `effigy tasks request status|follow`. `--json` is an output format, never a planning or safety flag. Generic task invocations also accept `--verbose-root`, `--env-schema <PATH>`, and `--plan` after the selector.",
     )?;
     renderer.notice(
         NoticeLevel::Info,
@@ -33,6 +33,10 @@ pub(crate) fn render_general_help<R: HelpRenderer + ?Sized>(
         KeyValue::new("-h, --help", "Print this help panel"),
         KeyValue::new("--version", "Print the current Effigy version"),
         KeyValue::new("--json", "Render command-envelope JSON for CI/tooling"),
+        KeyValue::new(
+            "--host-run-request-id <UUID>",
+            "Use a caller-persisted identity for one top-level heavy selector",
+        ),
         KeyValue::new(
             "<task> --plan",
             "Inspect the resolved task, catalog, and command without executing",

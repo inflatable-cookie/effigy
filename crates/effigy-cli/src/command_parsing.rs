@@ -35,7 +35,8 @@ use crate::{
     HelpTopic, InternalContainerLeaseReaperArgs, InternalGatewayArgs, InternalGatewayIdentityArgs,
     InternalGatewayLegacyCandidateArgs, InternalGatewayLegacyStopArgs, InternalHostProcessStopArgs,
     InternalHostProcessSuperviseArgs, InternalScriptRunArgs, RhaiArgs, RhaiSubcommand, SkillArgs,
-    SkillStdioMode, SkillSubcommand, TaskInvocation, TasksArgs, TasksQaCommand, UninstallArgs,
+    SkillStdioMode, SkillSubcommand, TaskInvocation, TasksArgs, TasksQaCommand,
+    TasksRequestCommand, UninstallArgs,
 };
 use artifact::parse_artifact_command;
 use bootstrap::parse_bootstrap_command;
@@ -1289,6 +1290,9 @@ where
         if arg == "qa-groups" || arg == "qa-group" {
             return parse_tasks_qa(arg == "qa-groups", args, repo_override);
         }
+        if arg == "request" {
+            return parse_tasks_request(args);
+        }
         match arg.as_str() {
             "status" => {
                 if task_name.is_some()
@@ -1385,7 +1389,69 @@ where
         status_all,
         output_json,
         pretty_json,
+        request: None,
         qa: None,
+    }))
+}
+
+fn parse_tasks_request<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let action = args.next().ok_or_else(|| {
+        CliParseError::InvalidArguments("`tasks request` requires `status` or `follow`".to_owned())
+    })?;
+    let mut caller = None;
+    let mut request_id = None;
+    let mut output_json = false;
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--caller" => {
+                if caller.is_some() {
+                    return Err(CliParseError::InvalidArguments(
+                        "`--caller` may be supplied only once".to_owned(),
+                    ));
+                }
+                caller = Some(next_required_value(
+                    &mut args,
+                    CliParseError::InvalidArguments("missing value for --caller".to_owned()),
+                )?);
+            }
+            "--request-id" => {
+                if request_id.is_some() {
+                    return Err(CliParseError::InvalidArguments(
+                        "`--request-id` may be supplied only once".to_owned(),
+                    ));
+                }
+                request_id = Some(next_required_value(
+                    &mut args,
+                    CliParseError::InvalidArguments("missing value for --request-id".to_owned()),
+                )?);
+            }
+            "--json" => output_json = true,
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Tasks)),
+            other => return Err(unknown_argument(other)),
+        }
+    }
+    let (Some(caller), Some(request_id)) = (caller, request_id) else {
+        return Err(CliParseError::InvalidArguments(
+            "`tasks request` requires both `--caller` and `--request-id`".to_owned(),
+        ));
+    };
+    let request = match action.as_str() {
+        "status" => TasksRequestCommand::Status { caller, request_id },
+        "follow" => TasksRequestCommand::Follow { caller, request_id },
+        other => {
+            return Err(CliParseError::InvalidArguments(format!(
+                "`tasks request` supports `status` or `follow`, not `{other}`"
+            )))
+        }
+    };
+    Ok(Command::Tasks(TasksArgs {
+        output_json,
+        request: Some(request),
+        ..TasksArgs::default()
     }))
 }
 
@@ -1457,6 +1523,7 @@ where
         }
         return Ok(Command::Tasks(TasksArgs {
             repo_override,
+            request: None,
             qa: Some(TasksQaCommand::GroupsList {
                 filter,
                 file,
@@ -1506,6 +1573,7 @@ where
             let selector = selector.ok_or(CliParseError::MissingQaGroupSelector)?;
             Ok(Command::Tasks(TasksArgs {
                 repo_override,
+                request: None,
                 qa: Some(TasksQaCommand::GroupRun {
                     selector,
                     file,
@@ -1520,6 +1588,7 @@ where
             let (run_id, output_json, repo_override) = parse_run_id_command(args, repo_override)?;
             Ok(Command::Tasks(TasksArgs {
                 repo_override,
+                request: None,
                 qa: Some(TasksQaCommand::GroupStatus { run_id, output_json }),
                 ..TasksArgs::default()
             }))
@@ -1550,6 +1619,7 @@ where
             let run_id = run_id.ok_or(CliParseError::MissingQaGroupRunId)?;
             Ok(Command::Tasks(TasksArgs {
                 repo_override: override_after,
+                request: None,
                 qa: Some(TasksQaCommand::GroupLogs { run_id, follow }),
                 ..TasksArgs::default()
             }))
@@ -1558,6 +1628,7 @@ where
             let (run_id, output_json, repo_override) = parse_run_id_command(args, repo_override)?;
             Ok(Command::Tasks(TasksArgs {
                 repo_override,
+                request: None,
                 qa: Some(TasksQaCommand::GroupStop { run_id, output_json }),
                 ..TasksArgs::default()
             }))
@@ -1613,6 +1684,7 @@ where
     }
     Ok(Command::Tasks(TasksArgs {
         repo_override: Some(PathBuf::from(repo_value)),
+        request: None,
         qa: Some(TasksQaCommand::GroupsList {
             filter,
             file,
