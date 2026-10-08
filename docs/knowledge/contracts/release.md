@@ -124,6 +124,22 @@ this approval. Its exact source and all four fingerprints still matched and
 all seven gates had passed; the supported `--allow-stale` option acknowledges
 that deliberately reviewed age without waiving a gate or fabricating state.
 
+### v0.14.1 publication authorization — 2026-10-08
+
+Tom answered "Authorise" to the inspected v0.14.1 publication proposal:
+execute the genuine prepared release, create and push the new annotated tag,
+dispatch the existing binary workflow, and verify its artifacts and tagged
+consumer installation. This does not authorize workflow edits, live gateway
+operations or catalog-pack publication. The immutable v0.14.0 tag remains.
+
+While approval was pending, the prepared state exceeded the one-hour age
+threshold. Main and all four prepared-file fingerprints still matched, and
+all seven gates had passed. The supported `--allow-stale` acknowledgement
+covers that deliberately reviewed age only; source drift and failed gates
+remain blockers. Historical readiness and child-termination causes remain
+unestablished; passing instrumented assurance is not a retrospective cause
+claim or a production termination repair.
+
 ### Admission for authorized preparation
 
 Ordinary milestone full QA remains planner-owned through Queue
