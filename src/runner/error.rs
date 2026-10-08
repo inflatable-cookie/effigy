@@ -50,6 +50,13 @@ pub enum RunnerError {
         code: i32,
         detail: String,
     },
+    /// An exact host-run request lookup or follow result with a versioned
+    /// machine-readable state.
+    HostRequestFailure {
+        code: i32,
+        detail: String,
+        json_details: String,
+    },
     /// The scheduler-launched child settled; its output was already relayed
     /// verbatim, so the caller exits with its real status and prints nothing.
     HostRunSettled {
@@ -237,9 +244,9 @@ impl RunnerError {
     /// Process exit code owned by the host scheduler routing, when it applies.
     pub fn host_scheduler_exit_code(&self) -> Option<i32> {
         match self {
-            RunnerError::HostRunSettled { code } | RunnerError::HostScheduler { code, .. } => {
-                Some(*code)
-            }
+            RunnerError::HostRunSettled { code }
+            | RunnerError::HostScheduler { code, .. }
+            | RunnerError::HostRequestFailure { code, .. } => Some(*code),
             _ => None,
         }
     }
@@ -408,9 +415,9 @@ impl RunnerError {
     // Effigy preserves is the launched child's status.
     pub fn task_exit_status(&self) -> Option<i32> {
         match self {
-            RunnerError::HostRunSettled { code } | RunnerError::HostScheduler { code, .. } => {
-                Some(*code)
-            }
+            RunnerError::HostRunSettled { code }
+            | RunnerError::HostScheduler { code, .. }
+            | RunnerError::HostRequestFailure { code, .. } => Some(*code),
             RunnerError::TaskCommandFailure { code, .. } => Some(code.unwrap_or(1)),
             RunnerError::CommandJsonFailure { .. } => Some(1),
             _ => None,

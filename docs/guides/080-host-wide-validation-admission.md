@@ -68,6 +68,65 @@ acknowledged. A removed fact is `true` only after observed successful teardown,
 observed. Other host-container leases and their reapers are independent and
 remain unchanged.
 
+## Caller-controlled request recovery
+
+A caller that may restart or lose the submit reply can choose a stable UUID
+before starting one heavy selector. Persist the caller label and UUID with the
+caller's own effect/head/base/candidate/settings binding first, then pass the
+UUID to Effigy:
+
+```sh
+EFFIGY_CALLER=northstar-worker effigy --host-run-request-id "$REQUEST_ID" qa:ci:fast
+effigy tasks request status --caller northstar-worker --request-id "$REQUEST_ID" --json
+effigy tasks request follow --caller northstar-worker --request-id "$REQUEST_ID" --json
+```
+
+`EFFIGY_CALLER` is the existing selector caller label. Set it to the stable
+label you persisted; when unset, Effigy uses its existing default caller
+identity, which the caller must persist exactly. The UUID flag is stripped from
+the launched argv and does not alter the normal generated-ID path. It is
+accepted only for a top-level heavy selector request. Light, `--plan`, nested,
+managed-control, and scheduler-override routes refuse it before task effects.
+A present parent token is still validated first.
+
+Status and follow query the exact caller/UUID through the trusted host-run
+client. A found request has a run ID and nonempty state in the current trusted
+authority epoch, and can be followed after Effigy exits.
+Only the scheduler's authenticated `unknown_run` response is an
+`authenticated_absence` (JSON error details schema
+`effigy.host_run.request-status.v1`, exit 3), which permits the caller to retry
+the same UUID. Endpoint loss, untrusted or malformed responses, and missing
+local candidate/result files remain held (state `held`, exit 75); they never
+imply that submission did not happen. A same caller/UUID with a different
+request body remains a scheduler conflict.
+
+The JSON envelope contains these versioned result or error detail shapes:
+
+- Status success: `schema = "effigy.host_run.request-status.v1"`,
+  `schema_version = 1`, `caller`, `request_id`, `state = "found"`, and the
+  scheduler's `run` status object.
+- Authenticated absence: the same status schema/version, `caller`,
+  `request_id`, `state = "authenticated_absence"`, and `reason = "unknown_run"`;
+  process exit 3.
+- Held ambiguity: the status schema/version, `caller`, `request_id`,
+  `state = "held"`, and a diagnostic `reason`; process exit 75.
+- Follow success: `schema = "effigy.host_run.request-follow.v1"`,
+  `schema_version = 1`, `caller`, `request_id`, `state = "followed"`,
+  `run_id`, `epoch`, `outcome`, `exit_code`, `settlement`, and
+  `output_expired`.
+
+Follow returns the scheduler settlement with the launched run's exit code.
+Text follow relays stdout and stderr to their matching streams. With `--json`,
+the JSON envelope stays on stdout and captured run output goes to stderr.
+Expired scheduler output is reported as a gap and is never replaced with
+guessed output.
+
+Rust callers can use `HostRunClient::request_status(caller, request_id)` and
+then the existing `attach(run_id, stdout_offset, stderr_offset)` API. That
+method returns `Ok(None)` only for authenticated `unknown_run`; every other
+failure is an error. See [contract 049](../knowledge/contracts/049-heavy-validation-admission-contract.md)
+for the binding and recovery limits.
+
 ## Historical state and rollback
 
 The former local store defaulted to `~/.cache/effigy/admission/state.json` and

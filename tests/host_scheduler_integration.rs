@@ -37,6 +37,36 @@ struct Server {
     child: Child,
 }
 
+fn submitted_run_ids(state: &Path) -> Vec<String> {
+    let runs = state.join("runs");
+    let Ok(entries) = fs::read_dir(runs) else {
+        return Vec::new();
+    };
+    let mut ids = Vec::new();
+    for entry in entries.flatten() {
+        let run_id = entry.file_name().to_string_lossy().into_owned();
+        let submission_path = entry.path().join("submission.json");
+        let submission = match fs::read(&submission_path) {
+            Ok(submission) => submission,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => panic!(
+                "read submission record {}: {error}",
+                submission_path.display()
+            ),
+        };
+        let submission: Value =
+            serde_json::from_slice(&submission).expect("parse scheduler submission record");
+        assert_eq!(
+            submission["stored"]["runId"].as_str(),
+            Some(run_id.as_str()),
+            "submission record must belong to its run directory"
+        );
+        ids.push(run_id);
+    }
+    ids.sort();
+    ids
+}
+
 impl Server {
     /// Start the private server, optionally with a shortened output retention
     /// (a copy of the pinned script that only adds `outputRetentionMs`).
@@ -121,16 +151,7 @@ impl Server {
     }
 
     fn run_ids(&self) -> Vec<String> {
-        let runs = self.state.join("runs");
-        let Ok(entries) = fs::read_dir(runs) else {
-            return Vec::new();
-        };
-        let mut ids: Vec<String> = entries
-            .flatten()
-            .map(|entry| entry.file_name().to_string_lossy().into_owned())
-            .collect();
-        ids.sort();
-        ids
+        submitted_run_ids(&self.state)
     }
 
     fn facts(&self) -> Vec<Value> {
@@ -277,17 +298,7 @@ impl RestartingServer {
     }
 
     fn run_ids(&self) -> Vec<String> {
-        let runs = self.state.join("runs");
-        let Ok(entries) = fs::read_dir(runs) else {
-            return Vec::new();
-        };
-        let mut ids: Vec<String> = entries
-            .flatten()
-            .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
-            .map(|entry| entry.file_name().to_string_lossy().into_owned())
-            .collect();
-        ids.sort();
-        ids
+        submitted_run_ids(&self.state)
     }
 
     fn status(&self, run_id: &str) -> Value {
@@ -506,6 +517,16 @@ exec {source_effigy} nested-heavy --repo "$PWD"
 
     fn command(&self, root: Option<&Path>, args: &[&str]) -> Command {
         self.command_with_setting(root, args, None)
+    }
+
+    fn request_command(&self, root: &Path, args: &[&str]) -> Command {
+        let mut command = Command::new(EFFIGY);
+        command
+            .args(args)
+            .current_dir(self.root())
+            .env("NO_COLOR", "1")
+            .env("EFFIGY_HOST_RUN_ROOT", root);
+        command
     }
 
     fn command_with_setting(
@@ -997,6 +1018,290 @@ fn unset_setting_routes_heavy_work_through_the_scheduler_once() {
         "the launched child reports its nested fact"
     );
     assert_eq!(nested[0]["parentRunId"], run.as_str());
+}
+
+#[test]
+#[ignore = "requires the private Queue fixture; run test:host-run:request-recovery"]
+fn selector_request_identity_recovers_after_client_restart_and_rejects_body_conflict() {
+    let server = Server::start(None);
+    let ws = Workspace::new(MANIFEST);
+    let mut manifest = fs::read_to_string(ws.file("effigy.toml")).expect("read manifest");
+    manifest.push_str(
+        "\n[tasks.identity-hold]\nadmission = \"heavy\"\nrun = \"echo durable-output; echo launched >> launched; sleep 3\"\n",
+    );
+    fs::write(ws.file("effigy.toml"), manifest).expect("add bounded recovery task");
+
+    let caller = "northstar-worker";
+    let request_id = "00000000-0000-4000-8000-000000000001";
+    let identity_path = ws.file("request-identity.json");
+    fs::write(
+        &identity_path,
+        serde_json::to_vec(&json!({
+            "caller": caller,
+            "request_id": request_id,
+            "candidate_path": ws.file("candidate.json"),
+        }))
+        .expect("serialize caller-persisted identity"),
+    )
+    .expect("persist identity before selector start");
+
+    let unavailable = ws
+        .request_command(
+            &ws.file("missing-host-run-state"),
+            &[
+                "--json",
+                "tasks",
+                "request",
+                "status",
+                "--caller",
+                caller,
+                "--request-id",
+                request_id,
+            ],
+        )
+        .output()
+        .expect("hold when the scheduler endpoint is unavailable");
+    assert_eq!(code(&unavailable), 75);
+    let unavailable_envelope: Value =
+        serde_json::from_slice(&unavailable.stdout).expect("one JSON envelope");
+    assert_eq!(unavailable_envelope["error"]["details"]["state"], "held");
+
+    let absent = ws
+        .request_command(
+            &server.state,
+            &[
+                "--json",
+                "tasks",
+                "request",
+                "status",
+                "--caller",
+                caller,
+                "--request-id",
+                request_id,
+            ],
+        )
+        .output()
+        .expect("check exact identity before submit");
+    assert_eq!(code(&absent), 3, "{}", text(&absent.stderr));
+    let absent_envelope: Value = serde_json::from_slice(&absent.stdout).expect("one JSON envelope");
+    assert_eq!(
+        absent_envelope["error"]["details"]["state"],
+        "authenticated_absence"
+    );
+    assert!(server.run_ids().is_empty());
+
+    let invalid = ws
+        .command(
+            Some(&server.state),
+            &["--host-run-request-id", "unsafe", "identity-hold"],
+        )
+        .env("EFFIGY_CALLER", caller)
+        .output()
+        .expect("refuse unsafe request identity");
+    assert_eq!(code(&invalid), 2);
+    assert!(
+        server.run_ids().is_empty(),
+        "invalid identity never submits"
+    );
+    assert_eq!(
+        ws.lines("launched"),
+        0,
+        "invalid identity has no task effect"
+    );
+
+    let invalid_caller = ws
+        .command(
+            Some(&server.state),
+            &["--host-run-request-id", request_id, "identity-hold"],
+        )
+        .env("EFFIGY_CALLER", "  ")
+        .output()
+        .expect("refuse unsafe caller label");
+    assert_eq!(code(&invalid_caller), 2);
+    assert!(server.run_ids().is_empty(), "invalid caller never submits");
+
+    let client_stderr = ws.file("request-client.stderr");
+    let mut first_client = ws
+        .command(
+            Some(&server.state),
+            &["--host-run-request-id", request_id, "identity-hold"],
+        )
+        .env("EFFIGY_CALLER", caller)
+        .stdout(Stdio::null())
+        .stderr(fs::File::create(&client_stderr).expect("create client diagnostic file"))
+        .spawn()
+        .expect("start durable identity selector");
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        if server.run_ids().len() == 1 && ws.lines("launched") == 1 {
+            break;
+        }
+        if let Some(status) = first_client.try_wait().expect("poll request selector") {
+            let stderr = fs::read_to_string(&client_stderr).unwrap_or_default();
+            panic!("request selector exited before acceptance with {status}: {stderr}");
+        }
+        if Instant::now() >= deadline {
+            let runs = server.run_ids();
+            let marker_lines = ws.lines("launched");
+            let _ = first_client.kill();
+            let _ = first_client.wait();
+            let stderr = fs::read_to_string(&client_stderr).unwrap_or_default();
+            panic!(
+                "timed out waiting for accepted request and launched child (runs: {runs:?}, marker lines: {marker_lines}): {stderr}"
+            );
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    // Simulate a client crash after scheduler acceptance but before it can
+    // persist a run/result receipt. Only this test-owned process is signalled.
+    unsafe {
+        libc::kill(first_client.id() as i32, libc::SIGKILL);
+    }
+    assert!(!first_client
+        .wait()
+        .expect("wait for crashed client")
+        .success());
+    assert!(!ws.file("candidate.json").exists());
+
+    let status = ws
+        .request_command(
+            &server.state,
+            &[
+                "--json",
+                "tasks",
+                "request",
+                "status",
+                "--caller",
+                caller,
+                "--request-id",
+                request_id,
+            ],
+        )
+        .output()
+        .expect("recover request status in a new process");
+    assert_eq!(code(&status), 0, "{}", text(&status.stderr));
+    let status_envelope: Value = serde_json::from_slice(&status.stdout).expect("one JSON envelope");
+    assert_eq!(
+        status_envelope["result"]["schema"],
+        "effigy.host_run.request-status.v1"
+    );
+    assert_eq!(status_envelope["result"]["state"], "found");
+    let run_id = status_envelope["result"]["run"]["runId"]
+        .as_str()
+        .expect("exact request run id");
+    assert_eq!(server.run_ids(), [run_id.to_owned()]);
+
+    let wrong_caller = ws
+        .request_command(
+            &server.state,
+            &[
+                "--json",
+                "tasks",
+                "request",
+                "status",
+                "--caller",
+                "different-worker",
+                "--request-id",
+                request_id,
+            ],
+        )
+        .output()
+        .expect("look up the same UUID under a different caller");
+    assert_eq!(code(&wrong_caller), 3);
+    let wrong_caller_envelope: Value =
+        serde_json::from_slice(&wrong_caller.stdout).expect("one JSON envelope");
+    assert_eq!(
+        wrong_caller_envelope["error"]["details"]["state"],
+        "authenticated_absence"
+    );
+    assert_eq!(server.run_ids(), [run_id.to_owned()]);
+
+    let followed = ws
+        .request_command(
+            &server.state,
+            &[
+                "--json",
+                "tasks",
+                "request",
+                "follow",
+                "--caller",
+                caller,
+                "--request-id",
+                request_id,
+            ],
+        )
+        .output()
+        .expect("follow exact request after restart");
+    assert_eq!(code(&followed), 0, "{}", text(&followed.stderr));
+    let follow_envelope: Value =
+        serde_json::from_slice(&followed.stdout).expect("one JSON follow envelope");
+    assert_eq!(
+        follow_envelope["result"]["schema"],
+        "effigy.host_run.request-follow.v1"
+    );
+    assert_eq!(follow_envelope["result"]["run_id"], run_id);
+    assert_eq!(follow_envelope["result"]["outcome"], "passed");
+    assert!(text(&followed.stderr).contains("durable-output"));
+    fs::write(
+        &identity_path,
+        serde_json::to_vec(&json!({
+            "caller": caller,
+            "request_id": request_id,
+            "candidate_path": ws.file("candidate.json"),
+            "result": {"run_id": run_id, "outcome": "passed"},
+        }))
+        .expect("serialize caller-persisted result"),
+    )
+    .expect("persist recovered result receipt");
+
+    let replay = ws
+        .command(
+            Some(&server.state),
+            &["--host-run-request-id", request_id, "identity-hold"],
+        )
+        .env("EFFIGY_CALLER", caller)
+        .output()
+        .expect("repeat exact request identity");
+    assert_eq!(code(&replay), 0, "{}", text(&replay.stderr));
+    assert_eq!(
+        server.run_ids().len(),
+        1,
+        "same body reuses the original run"
+    );
+    assert_eq!(ws.lines("launched"), 1, "repeat did not launch a duplicate");
+    let persisted: Value = serde_json::from_slice(
+        &fs::read(&identity_path).expect("read caller-persisted result receipt"),
+    )
+    .expect("parse caller-persisted result receipt");
+    assert_eq!(persisted["result"]["run_id"], run_id);
+    assert_eq!(persisted["result"]["outcome"], "passed");
+
+    let changed_settings = ws
+        .command(
+            Some(&server.state),
+            &["--host-run-request-id", request_id, "identity-hold"],
+        )
+        .env("EFFIGY_CALLER", caller)
+        .env("EFFIGY_ADMISSION_CPU_UNITS", "2")
+        .output()
+        .expect("reject changed request settings");
+    assert_ne!(code(&changed_settings), 0);
+    assert!(text(&changed_settings.stderr).contains("request id conflicts with a different body"));
+    assert_eq!(server.run_ids().len(), 1);
+    assert_eq!(ws.lines("launched"), 1, "changed settings did not launch");
+
+    let conflict = ws
+        .command(
+            Some(&server.state),
+            &["--host-run-request-id", request_id, "heavy-echo-b"],
+        )
+        .env("EFFIGY_CALLER", caller)
+        .output()
+        .expect("reject same identity with different selector body");
+    assert_ne!(code(&conflict), 0);
+    assert!(text(&conflict.stderr).contains("request id conflicts with a different body"));
+    assert_eq!(server.run_ids().len(), 1);
+    assert_eq!(ws.lines("mark-b"), 0, "conflicting selector never launches");
 }
 
 #[test]

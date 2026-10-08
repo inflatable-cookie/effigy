@@ -14,6 +14,7 @@ pub(super) fn runner_error_rendered_output(error: &RunnerError) -> Option<&str> 
 
 pub(super) fn runner_error_json_details(error: &RunnerError) -> Option<&str> {
     match error {
+        RunnerError::HostRequestFailure { json_details, .. } => non_empty_rendered(json_details),
         RunnerError::TaskLockConflict(details) => {
             details.details_json.as_deref().and_then(non_empty_rendered)
         }

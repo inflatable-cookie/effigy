@@ -54,7 +54,11 @@ pub(super) fn execute_group_run(
     // Routing decisions that can refuse (invalid setting, forged token, down
     // scheduler) happen here, before any ledger entry or member effect.
     let route = if heavy {
-        Some(host_scheduler::route_heavy(&selector, invocation_cwd)?)
+        Some(host_scheduler::route_heavy(
+            &selector,
+            invocation_cwd,
+            None,
+        )?)
     } else {
         None
     };
@@ -155,6 +159,7 @@ fn submit_group_run(
 ) -> Result<String, RunnerError> {
     let settled = host_scheduler::submit_and_settle(SubmitContext {
         selector,
+        client_request_id: None,
         class_source: effigy_host_run::ClassSource::Manifest,
         repository: root,
         cwd: invocation_cwd,

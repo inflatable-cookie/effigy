@@ -176,6 +176,7 @@ pub(super) fn fmt_runner_error(
         RunnerError::TaskLockConflict(details) => write_lock_conflict(f, details),
         RunnerError::TaskLockIo { path, error } => write_task_lock_io(f, path, error),
         RunnerError::HostScheduler { detail, .. } => f.write_str(detail),
+        RunnerError::HostRequestFailure { detail, .. } => f.write_str(detail),
         RunnerError::HostRunSettled { code } => {
             write!(f, "scheduler-launched run settled with exit {code}")
         }

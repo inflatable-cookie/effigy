@@ -1,8 +1,9 @@
 use crate::tests::prelude::{
     parse_command, strip_global_json_flag, strip_global_json_flags, Command, DoctorArgs, HelpGroup,
-    HelpTopic, PathBuf, TaskInvocation, TasksArgs,
+    HelpTopic, PathBuf, TaskInvocation, TasksArgs, TasksRequestCommand,
 };
 use effigy_cli::command_surface::HELP_COMMAND_TOPICS;
+use effigy_cli::INTERNAL_HOST_RUN_REQUEST_ID_ARG;
 
 fn parse(args: &[&str]) -> Command {
     parse_command(args.iter().map(|arg| (*arg).to_owned())).expect("parse should succeed")
@@ -139,6 +140,7 @@ fn parse_command_applies_leading_repo_and_json_to_tasks_builtin() {
             status_all: false,
             output_json: true,
             pretty_json: true,
+            request: None,
             qa: None,
         })
     );
@@ -203,6 +205,72 @@ fn parse_command_rejects_task_only_global_flags_for_builtin_commands() {
     let err = parse_command(vec!["--verbose-root".to_owned(), "doctor".to_owned()])
         .expect_err("parse should fail");
     assert_eq!(err.to_string(), "unknown argument: --verbose-root");
+}
+
+#[test]
+fn parse_command_carries_the_caller_request_id_only_to_a_selector() {
+    let request_id = "00000000-0000-4000-8000-000000000001";
+    let cmd = parse_command(vec![
+        "--host-run-request-id".to_owned(),
+        request_id.to_owned(),
+        "--json".to_owned(),
+        "heavy-check".to_owned(),
+    ])
+    .expect("parse selector request identity");
+    assert_eq!(
+        cmd,
+        Command::Task(TaskInvocation {
+            name: "heavy-check".to_owned(),
+            args: vec![
+                "--json".to_owned(),
+                INTERNAL_HOST_RUN_REQUEST_ID_ARG.to_owned(),
+                request_id.to_owned(),
+            ],
+        })
+    );
+}
+
+#[test]
+fn parse_command_parses_exact_host_run_request_status() {
+    let cmd = parse_command([
+        "tasks".to_owned(),
+        "request".to_owned(),
+        "status".to_owned(),
+        "--caller".to_owned(),
+        "northstar-worker".to_owned(),
+        "--request-id".to_owned(),
+        "00000000-0000-4000-8000-000000000001".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse exact request status");
+    assert_eq!(
+        cmd,
+        Command::Tasks(TasksArgs {
+            output_json: true,
+            request: Some(TasksRequestCommand::Status {
+                caller: "northstar-worker".to_owned(),
+                request_id: "00000000-0000-4000-8000-000000000001".to_owned(),
+            }),
+            ..TasksArgs::default()
+        })
+    );
+}
+
+#[test]
+fn parse_command_rejects_caller_request_id_for_non_selector_commands() {
+    let error = parse_command(vec![
+        "--host-run-request-id".to_owned(),
+        "00000000-0000-4000-8000-000000000001".to_owned(),
+        "tasks".to_owned(),
+        "request".to_owned(),
+        "status".to_owned(),
+        "--caller".to_owned(),
+        "northstar-worker".to_owned(),
+        "--request-id".to_owned(),
+        "00000000-0000-4000-8000-000000000001".to_owned(),
+    ])
+    .expect_err("request identity belongs on a selector invocation");
+    assert_eq!(error.to_string(), "unknown argument: --host-run-request-id");
 }
 
 #[test]

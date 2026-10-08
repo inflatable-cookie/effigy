@@ -1049,6 +1049,221 @@ fn ambiguous_submit_resolves_status_then_reuses_the_same_request_id() {
 }
 
 #[test]
+fn lost_submit_reply_recovers_the_existing_run_without_resubmitting() {
+    let fixture = make_fixture();
+    let mut client = client(&fixture);
+    let requests = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+    let captured = requests.clone();
+    let listener = fixture.listener;
+    let server = thread::spawn(move || {
+        for step in 0..2 {
+            let (mut stream, _) = listener.accept().unwrap();
+            let request = read_request(&mut stream);
+            captured.lock().unwrap().push(request.clone());
+            if step == 0 {
+                drop(stream);
+            } else {
+                send_response(
+                    &mut stream,
+                    &request,
+                    json!({"runId":"r1","state":"running","epoch":3}),
+                );
+            }
+        }
+    });
+    let request = SubmitRequest {
+        client_request_id: "00000000-0000-4000-8000-000000000001".into(),
+        caller: "worker".into(),
+        repository: "o/r".into(),
+        cwd: fixture.root_path.clone(),
+        selector: "qa:core".into(),
+        argv: vec!["effigy".into(), "qa:core".into()],
+        class: RunClass::Heavy,
+        class_source: ClassSource::Manifest,
+        priority: Priority::Validation,
+        budget_fallback: BudgetFallback {
+            cpu: 1,
+            memory_bytes: 8,
+        },
+        capacity_deadline_ms: 1_000,
+        run_timeout_ms: 2_000,
+        env: std::collections::BTreeMap::new(),
+        cancel_on_disconnect: false,
+    };
+    let result = client.submit_request(&request).unwrap();
+    assert_eq!(result.run_id, "r1");
+    assert_eq!(result.state, "running");
+    server.join().unwrap();
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 2, "a found request is never resubmitted");
+    assert_eq!(requests[0]["method"], "submit");
+    assert_eq!(requests[1]["method"], "status");
+    assert_eq!(
+        requests[1]["body"],
+        json!({
+            "caller":"worker",
+            "clientRequestId":"00000000-0000-4000-8000-000000000001"
+        })
+    );
+}
+
+#[test]
+fn ambiguous_submit_holds_when_exact_lookup_returns_another_error() {
+    let fixture = make_fixture();
+    let mut client = client(&fixture);
+    let requests = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+    let captured = requests.clone();
+    let listener = fixture.listener;
+    let server = thread::spawn(move || {
+        for step in 0..2 {
+            let (mut stream, _) = listener.accept().unwrap();
+            let request = read_request(&mut stream);
+            captured.lock().unwrap().push(request.clone());
+            if step == 0 {
+                drop(stream);
+            } else {
+                send_error(&mut stream, &request, "lookup_unavailable");
+            }
+        }
+    });
+    let body = json!({"clientRequestId":"00000000-0000-4000-8000-000000000001","caller":"worker","repository":"o/r","cwd":fixture.root_path,"selector":"qa:core","argv":["effigy","qa:core"],"class":"heavy","classSource":"manifest","priority":"interactive","budgetFallback":{"cpu":1,"memoryBytes":8},"capacityDeadlineMs":1000,"runTimeoutMs":2000,"env":{},"cancelOnDisconnect":false});
+    assert!(matches!(
+        client.submit(&body),
+        Err(ClientError::Wire(crate::WireError { ref code, .. })) if code == "lookup_unavailable"
+    ));
+    server.join().unwrap();
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 2, "only unknown_run permits a resubmit");
+    assert_eq!(requests[0]["method"], "submit");
+    assert_eq!(requests[1]["method"], "status");
+}
+
+#[test]
+fn exact_request_lookup_returns_found_status() {
+    let fixture = make_fixture();
+    let mut client = client(&fixture);
+    let expected_epoch = fixture.authority.epoch;
+    let listener = fixture.listener;
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let request = read_request(&mut stream);
+        send_response(
+            &mut stream,
+            &request,
+            json!({
+                "runId":"r1",
+                "state":"queued",
+                "epoch":expected_epoch,
+                "caller":"worker",
+                "clientRequestId":"00000000-0000-4000-8000-000000000001"
+            }),
+        );
+    });
+    let status = client
+        .request_status("worker", "00000000-0000-4000-8000-000000000001")
+        .unwrap()
+        .expect("found request");
+    assert_eq!(status["runId"], "r1");
+    server.join().unwrap();
+}
+
+#[test]
+fn exact_request_lookup_treats_only_authenticated_unknown_run_as_absence() {
+    let fixture = make_fixture();
+    let mut client = client(&fixture);
+    let listener = fixture.listener;
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let request = read_request(&mut stream);
+        assert_eq!(request["method"], "status");
+        assert_eq!(request["body"]["caller"], "worker");
+        assert_eq!(
+            request["body"]["clientRequestId"],
+            "00000000-0000-4000-8000-000000000001"
+        );
+        send_error(&mut stream, &request, "unknown_run");
+    });
+    assert_eq!(
+        client
+            .request_status("worker", "00000000-0000-4000-8000-000000000001")
+            .unwrap(),
+        None
+    );
+    server.join().unwrap();
+}
+
+#[test]
+fn exact_request_lookup_holds_mismatched_identity() {
+    let fixture = make_fixture();
+    let mut client = client(&fixture);
+    let listener = fixture.listener;
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let request = read_request(&mut stream);
+        send_response(
+            &mut stream,
+            &request,
+            json!({
+                "runId":"r1",
+                "state":"queued",
+                "epoch":3,
+                "caller":"different-caller",
+                "clientRequestId":"00000000-0000-4000-8000-000000000001"
+            }),
+        );
+    });
+    assert!(matches!(
+        client.request_status("worker", "00000000-0000-4000-8000-000000000001"),
+        Err(ClientError::InvalidRequestLookup(_))
+    ));
+    server.join().unwrap();
+}
+
+#[test]
+fn exact_request_lookup_holds_malformed_status() {
+    let fixture = make_fixture();
+    let mut client = client(&fixture);
+    let listener = fixture.listener;
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let request = read_request(&mut stream);
+        send_response(&mut stream, &request, json!({"state":"queued","epoch":3}));
+    });
+    assert!(matches!(
+        client.request_status("worker", "00000000-0000-4000-8000-000000000001"),
+        Err(ClientError::InvalidRequestLookup(_))
+    ));
+    server.join().unwrap();
+}
+
+#[test]
+fn exact_request_lookup_holds_status_from_another_epoch() {
+    let fixture = make_fixture();
+    let mut client = client(&fixture);
+    let listener = fixture.listener;
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let request = read_request(&mut stream);
+        send_response(
+            &mut stream,
+            &request,
+            json!({
+                "runId":"r1",
+                "state":"queued",
+                "epoch":2,
+                "caller":"worker",
+                "clientRequestId":"00000000-0000-4000-8000-000000000001"
+            }),
+        );
+    });
+    assert!(matches!(
+        client.request_status("worker", "00000000-0000-4000-8000-000000000001"),
+        Err(ClientError::InvalidRequestLookup(_))
+    ));
+    server.join().unwrap();
+}
+
+#[test]
 fn submit_conflict_is_not_retried() {
     let fixture = make_fixture();
     let mut client = client(&fixture);

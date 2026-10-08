@@ -49,6 +49,10 @@ For narrative workflow guidance instead of lookup, start with:
 - Need to inspect a selector without running it: use `effigy <selector> --plan`
   (or `effigy --json <selector> --plan`). `--json` alone still executes; see
   [`017-json-output-contracts.md`](017-json-output-contracts.md).
+- Need to recover a heavy selector after restart or a lost submit reply: persist
+  a UUID first, pass `--host-run-request-id <UUID>`, then use
+  `effigy tasks request status|follow`; see
+  [`080-host-wide-validation-admission.md`](080-host-wide-validation-admission.md).
 - Need machine-readable output: add top-level `effigy --json <command>` (or
   task-local `--json` where the command supports it; see
   [`017-json-output-contracts.md`](017-json-output-contracts.md)).
@@ -164,6 +168,7 @@ through the help route.
 | `effigy changelog` | Validate, format, analyze, and extract Northstar changelog content | `validate`, `format`, `analyze`, `extract`, `--repo`, `--write`, `--preview`, `--version`, `--json` | changelog subcommands render direct output; some results can be wrapped in `effigy.command.v1` with global JSON mode | `052-changelog-workflows-and-northstar-profile.md` |
 | `effigy state` | Plan, apply, capture, and inspect layered state-stack reports without moving app semantics into Effigy | `plan [<STACK>]`, `plan --manifest <PATH>`, `plan --stack <NAME>`, `apply [<STACK>]`, `capture <STACK> <PROFILE>`, `capture --role ... --source-env ... --key ...`, `history [<STACK>]`, `--write-report`, `--yes`, `--push`, `--repo`, `--json` | `effigy.state-stack.lineage.v1`, `effigy.state-stack.apply.v1`, `effigy.state-stack.capture.v1`, `effigy.state-stack.history.v1` | `073-state-stack-guide.md`, [`../contracts/016-state-stack-and-layered-seed-framework-contract.md`](../knowledge/contracts/016-state-stack-and-layered-seed-framework-contract.md) |
 | `effigy <task>` / `effigy <catalog>/<task>` | Run manifest-defined tasks with routing rules; `--plan` inspects the resolved task, catalog, and command without executing; managed tasks also support a concurrent headless supervisor selected by flag or environment | leading `--repo`, `--verbose-root`, `--env-schema`, `--lock-wait-ms`; `EFFIGY_LOCK_WAIT_MS`; `--plan`; managed `--headless` / `EFFIGY_MANAGED_HEADLESS=1`, `status`, `logs [process] [--follow]`, `stop`; passthrough args; task-local `--json` where supported | `effigy.task.run.v1`, `effigy.task.plan.v1`; lock-wait timeout details use `effigy.lock-wait.v1` | `012-dev-process-manager-tui.md`, `016-task-routing-precedence.md`, `020-dag-lock-policy-baseline.md`, `022-manifest-cookbook.md`, `050-env-schema-integration.md` |
+| `effigy --host-run-request-id <UUID> <task>` | Submit one top-level heavy selector with a caller-persisted identity | leading `--host-run-request-id`; existing `EFFIGY_CALLER` label | request status `effigy.host_run.request-status.v1`; follow `effigy.host_run.request-follow.v1` | `080-host-wide-validation-admission.md` |
 
 ## JSON Envelope
 
@@ -378,6 +383,9 @@ effigy init --list [--json]
 effigy tasks migrate [--from <PATH>] [--script <NAME>]... [--apply] [--json]
 effigy <task> [--repo <PATH>] [--verbose-root] [--env-schema <PATH>] [--lock-wait-ms <MS>] [--plan] [--json] [task args]
 effigy <catalog>/<task> [--repo <PATH>] [--verbose-root] [--env-schema <PATH>] [--lock-wait-ms <MS>] [--plan] [--json] [task args]
+effigy --host-run-request-id <UUID> <heavy-task>
+effigy tasks request status --caller <CALLER> --request-id <UUID> [--json]
+effigy tasks request follow --caller <CALLER> --request-id <UUID> [--json]
 ```
 
 See [`080-host-wide-validation-admission.md`](080-host-wide-validation-admission.md)

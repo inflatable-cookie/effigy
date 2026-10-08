@@ -175,6 +175,7 @@ pub enum ClientError {
     InvalidSettlement(&'static str),
     InvalidAttach(&'static str),
     InvalidSubmission(&'static str),
+    InvalidRequestLookup(&'static str),
     AmbiguousSubmit,
     InvalidParentToken(TokenError),
     SchedulerUnreachable,
@@ -193,6 +194,7 @@ impl std::fmt::Display for ClientError {
             Self::InvalidSettlement(s) => write!(f, "invalid host-run settlement: {s}"),
             Self::InvalidAttach(s) => write!(f, "invalid attach stream: {s}"),
             Self::InvalidSubmission(s) => write!(f, "invalid submission: {s}"),
+            Self::InvalidRequestLookup(s) => write!(f, "invalid request lookup: {s}"),
             Self::AmbiguousSubmit => {
                 f.write_str("scheduler_unreachable: submit outcome remains unknown")
             }
@@ -322,9 +324,11 @@ impl ClientError {
     /// Protocol-compatible process exit classification for callers.
     pub fn exit_code(&self) -> Option<u8> {
         match self {
-            Self::SchedulerUnreachable | Self::AmbiguousSubmit | Self::Io(_) | Self::Trust(_) => {
-                Some(75)
-            }
+            Self::SchedulerUnreachable
+            | Self::AmbiguousSubmit
+            | Self::InvalidRequestLookup(_)
+            | Self::Io(_)
+            | Self::Trust(_) => Some(75),
             Self::InvalidParentToken(TokenError::Invalid(_)) => Some(77),
             Self::InvalidParentToken(TokenError::SchedulerUnreachable) => Some(75),
             _ => None,
@@ -441,6 +445,54 @@ impl HostRunClient {
         self.status(&body)
     }
 
+    /// Look up one exact caller/request identity. `Ok(None)` is returned only
+    /// for the scheduler's authenticated `unknown_run` response; every other
+    /// failure remains an error so callers can keep the request held.
+    pub fn request_status(
+        &mut self,
+        caller: &str,
+        client_request_id: &str,
+    ) -> Result<Option<Value>, ClientError> {
+        validate_client_caller(caller)?;
+        validate_client_request_id(client_request_id)?;
+        let status = match self.status_query(StatusQuery::CallerRequest {
+            caller: caller.to_owned(),
+            client_request_id: client_request_id.to_owned(),
+        }) {
+            Ok(status) => status,
+            Err(ClientError::Wire(WireError { code, .. })) if code == "unknown_run" => {
+                return Ok(None)
+            }
+            Err(error) => return Err(error),
+        };
+        if !status
+            .get("runId")
+            .and_then(Value::as_str)
+            .is_some_and(|run_id| !run_id.trim().is_empty())
+            || !status
+                .get("state")
+                .and_then(Value::as_str)
+                .is_some_and(|state| !state.trim().is_empty())
+            || status.get("epoch").and_then(Value::as_u64) != Some(self.authority.epoch)
+        {
+            return Err(ClientError::InvalidRequestLookup(
+                "status did not identify a run in the current trusted epoch",
+            ));
+        }
+        if status
+            .get("caller")
+            .is_some_and(|actual| actual.as_str() != Some(caller))
+            || status
+                .get("clientRequestId")
+                .is_some_and(|actual| actual.as_str() != Some(client_request_id))
+        {
+            return Err(ClientError::InvalidRequestLookup(
+                "status did not match the requested caller identity",
+            ));
+        }
+        Ok(Some(status))
+    }
+
     pub fn submit_request(&mut self, request: &SubmitRequest) -> Result<SubmitResult, ClientError> {
         let body = request_body(request)?;
         let result = self.submit_validated(&body)?;
@@ -551,7 +603,6 @@ impl HostRunClient {
                 "clientRequestId must be a UUID",
             ));
         }
-        let lookup_body = json!({"caller":caller,"clientRequestId":request_id});
         match self.exchange("submit", body) {
             Ok(value) => Ok(value),
             Err(ClientError::Wire(WireError { code, .. })) if code == "conflict" => {
@@ -562,25 +613,17 @@ impl HostRunClient {
             }
             Err(ClientError::Wire(WireError { code, .. })) if code == "stale_epoch" => {
                 self.refresh()?;
-                match self.status(&lookup_body) {
-                    Ok(value) if value.get("runId").is_some() => Ok(value),
-                    Err(ClientError::Wire(WireError { code, .. })) if code == "unknown_run" => {
-                        self.exchange("submit", body)
-                    }
-                    Err(error) => Err(error),
-                    _ => Err(ClientError::AmbiguousSubmit),
+                match self.request_status(caller, request_id)? {
+                    Some(value) => Ok(value),
+                    None => self.exchange("submit", body),
                 }
             }
             Err(ClientError::Io(_))
             | Err(ClientError::SchedulerUnreachable)
             | Err(ClientError::Frame(_))
-            | Err(ClientError::Decode(_)) => match self.status(&lookup_body) {
-                Ok(value) if value.get("runId").is_some() => Ok(value),
-                Err(ClientError::Wire(WireError { code, .. })) if code == "unknown_run" => {
-                    self.exchange("submit", body)
-                }
-                Err(error) => Err(error),
-                _ => Err(ClientError::AmbiguousSubmit),
+            | Err(ClientError::Decode(_)) => match self.request_status(caller, request_id)? {
+                Some(value) => Ok(value),
+                None => self.exchange("submit", body),
             },
             Err(error) => Err(error),
         }
@@ -1159,7 +1202,7 @@ impl SubmitResult {
                 .ok_or(ClientError::InvalidSubmission(
                     "submit response missing state",
                 ))?;
-        if !matches!(state, "queued" | "admitted") {
+        if !matches!(state, "queued" | "admitted" | "running" | "settled") {
             return Err(ClientError::InvalidSubmission(
                 "submit response has invalid state",
             ));
@@ -1821,6 +1864,26 @@ pub fn new_fact(kind: &str, fields: Value, clock: &dyn Clock) -> Result<Value, C
 
 pub fn new_client_request_id() -> Result<String, ClientError> {
     fact_id()
+}
+
+/// Validate a caller-supplied stable identity before selector side effects.
+pub fn validate_client_request_id(value: &str) -> Result<(), ClientError> {
+    if is_uuid(value) {
+        Ok(())
+    } else {
+        Err(ClientError::InvalidSubmission(
+            "clientRequestId must be a UUID",
+        ))
+    }
+}
+
+/// Validate a caller label used as one half of a durable request identity.
+pub fn validate_client_caller(value: &str) -> Result<(), ClientError> {
+    if !value.trim().is_empty() && !value.contains('\0') {
+        Ok(())
+    } else {
+        Err(ClientError::InvalidSubmission("caller is empty or invalid"))
+    }
 }
 
 pub fn nested_fact(

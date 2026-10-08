@@ -15,6 +15,7 @@ pub(crate) fn run_tasks_from_repo(
             status_all: false,
             output_json,
             pretty_json: true,
+            request: None,
             qa: None,
         })
     })
@@ -31,6 +32,7 @@ pub(crate) fn run_task_status_from_repo(root: &Path, selector: &str, output_json
             status_all: false,
             output_json,
             pretty_json: true,
+            request: None,
             qa: None,
         })
     })
@@ -47,6 +49,7 @@ pub(crate) fn run_task_status_all_from_repo(root: &Path, output_json: bool) -> S
             status_all: true,
             output_json,
             pretty_json: true,
+            request: None,
             qa: None,
         })
     })
@@ -62,6 +65,7 @@ pub(crate) fn run_tasks_with_repo(root: PathBuf) -> Result<String, RunnerError> 
         status_all: false,
         output_json: false,
         pretty_json: true,
+        request: None,
         qa: None,
     })
 }

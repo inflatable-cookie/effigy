@@ -8,6 +8,7 @@
 
 mod config;
 mod facts;
+mod request;
 mod submit;
 #[cfg(test)]
 mod tests;
@@ -23,6 +24,7 @@ use super::error::RunnerError;
 
 use config::{capacity_wait_secs, default_caller_identity, requested_reservation_units};
 pub(super) use facts::{report_container_removed, report_container_started};
+pub(super) use request::run_request;
 pub(super) use submit::{
     selector_env_names_for_tasks, submit_and_settle, PreLaunch, Settled, SubmitContext,
 };
@@ -107,13 +109,40 @@ fn parse_scheduler_setting(value: Option<OsString>) -> Result<(), RunnerError> {
 
 /// Decide how one heavy invocation proceeds. Everything that can refuse does so
 /// here, before any build, setup, container or group effect.
-pub(super) fn route_heavy(selector: &str, cwd: &Path) -> Result<Route, RunnerError> {
+pub(super) fn route_heavy(
+    selector: &str,
+    cwd: &Path,
+    client_request_id: Option<&str>,
+) -> Result<Route, RunnerError> {
     // Parent authority is checked first even when a retired or malformed
     // routing setting is present. Validation itself records no facts and runs
     // no task effects.
     let nested = std::env::var_os(TOKEN_ENV)
         .map(|token| validate_parent_token(token, cwd))
         .transpose()?;
+    if let Some(request_id) = client_request_id {
+        effigy_host_run::validate_client_request_id(request_id)
+            .map_err(|error| refuse(2, error.to_string()))?;
+        let caller = std::env::var_os("EFFIGY_CALLER")
+            .map(|value| {
+                value.into_string().map_err(|_| {
+                    refuse(
+                        2,
+                        "EFFIGY_CALLER is not valid UTF-8 for a durable request identity",
+                    )
+                })
+            })
+            .transpose()?
+            .unwrap_or_else(default_caller_identity);
+        effigy_host_run::validate_client_caller(&caller)
+            .map_err(|error| refuse(2, error.to_string()))?;
+        if nested.is_some() {
+            return Err(refuse(
+                2,
+                "--host-run-request-id cannot be used by a nested heavy invocation",
+            ));
+        }
+    }
     scheduler_enabled()?;
     if let Some(nested) = nested {
         let _ = ACTIVE_NESTED.set(nested.clone());
@@ -121,6 +150,12 @@ pub(super) fn route_heavy(selector: &str, cwd: &Path) -> Result<Route, RunnerErr
         return Ok(Route::Nested(nested));
     }
     if let Some(reason) = override_reason()? {
+        if client_request_id.is_some() {
+            return Err(refuse(
+                2,
+                "--host-run-request-id cannot be used with EFFIGY_SCHEDULER_OVERRIDE",
+            ));
+        }
         facts::record_override(&reason, selector)?;
         return Ok(Route::Override);
     }

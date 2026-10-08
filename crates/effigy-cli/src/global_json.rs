@@ -8,6 +8,7 @@ pub struct GlobalCliOptions {
     pub repo_override: Option<PathBuf>,
     pub task_verbose_root: bool,
     pub task_env_schema: Option<PathBuf>,
+    pub host_run_request_id: Option<String>,
 }
 
 pub fn strip_global_cli_flags(
@@ -40,6 +41,17 @@ pub fn strip_global_cli_flags(
                         flag: "--env-schema".to_owned(),
                     },
                 )?));
+            }
+            "--host-run-request-id" => {
+                if options.host_run_request_id.is_some() {
+                    return Err(CliParseError::InvalidArguments(
+                        "`--host-run-request-id` may be supplied only once".to_owned(),
+                    ));
+                }
+                options.host_run_request_id =
+                    Some(args.next().ok_or(CliParseError::MissingFlagValue {
+                        flag: "--host-run-request-id".to_owned(),
+                    })?);
             }
             "--verbose-root" => options.task_verbose_root = true,
             "--help" | "-h" => {
@@ -230,6 +242,17 @@ pub fn apply_global_cli_options(
                 }
             }
             _ => return Err(unknown_argument("--env-schema")),
+        }
+    }
+
+    if let Some(request_id) = options.host_run_request_id.as_ref() {
+        match &mut cmd {
+            Command::Task(task) => {
+                task.args
+                    .push(crate::INTERNAL_HOST_RUN_REQUEST_ID_ARG.to_owned());
+                task.args.push(request_id.clone());
+            }
+            _ => return Err(unknown_argument("--host-run-request-id")),
         }
     }
 

@@ -6,6 +6,12 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Added
+- Heavy selector callers can persist and pass `--host-run-request-id` before
+  submission, then inspect or follow that exact request with `effigy tasks
+  request status|follow`. Only authenticated `unknown_run` permits a same-key
+  retry; ambiguous recovery remains held.
+
 ## [0.14.1] - 2026-10-08
 
 ### Added

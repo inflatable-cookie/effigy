@@ -426,6 +426,15 @@
 
 # Trusted host-run protocol client (contract 010 Client protocol v1)
 "test:host-run:protocol" = "cargo test -p effigy-host-run --lib -- --nocapture"
+"test:host-run:request-recovery" = [
+  { id = "request-lookup-protocol", run = "cargo nextest run -p effigy-host-run --lib --filterset 'test(exact_request_lookup)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { id = "lost-submit-reply-protocol", run = "cargo nextest run -p effigy-host-run --lib --filterset 'test(lost_submit_reply_recovers_the_existing_run_without_resubmitting)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { id = "unknown-run-resubmission-control", run = "cargo nextest run -p effigy-host-run --lib --filterset 'test(ambiguous_submit_resolves_status_then_reuses_the_same_request_id) | test(ambiguous_submit_holds_when_exact_lookup_returns_another_error)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { id = "selector-request-parser", run = "cargo nextest run -p effigy --lib --filterset 'test(parse_command_carries_the_caller_request_id_only_to_a_selector)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { id = "selector-request-command-parser", run = "cargo nextest run -p effigy --lib --filterset 'test(parse_command_parses_exact_host_run_request_status)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { id = "selector-request-argv", run = "cargo nextest run -p effigy --lib --filterset 'test(global_request_identity_is_not_forwarded_to_the_launched_selector)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { id = "private-cli-recovery", run = "EFFIGY_REQUIRE_HOST_RUN_PRIVATE_SERVER=1 cargo nextest run -p effigy --test host_scheduler_integration --run-ignored only --test-threads 1 --filterset 'test(selector_request_identity_recovers_after_client_restart_and_rejects_body_conflict)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 240000 },
+]
 "test:host-run:idle-follow" = "cargo test -p effigy-host-run --lib attach_idle_follow -- --nocapture"
 # Private queued-follow causes plus bounded outage and fail-closed controls.
 "test:host-run:queued-follow" = [
@@ -435,6 +444,10 @@
   "cargo test -p effigy-host-run --lib protocol_tests::attach_recovery_does_not_retry_malformed_protocol -- --exact --nocapture",
 ]
 "check:host-run:compile" = "cargo check -p effigy-host-run -p effigy --lib --bin effigy --test host_scheduler_integration --test cli_output_tests"
+"check:host-run:request-recovery:clippy" = [
+  "cargo clippy -p effigy-host-run -p effigy-cli --all-targets -- -D warnings",
+  "cargo clippy -p effigy --all-targets -- -D warnings",
+]
 # Peer identity refusal on a live private fixture (papercut 8947d524): held
 # accepted stream through trust, closed-peer fail-closed distinction, and
 # directory/socket mode refusals. Private tempfile only; no live endpoint.
