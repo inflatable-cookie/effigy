@@ -37,6 +37,36 @@ struct Server {
     child: Child,
 }
 
+fn submitted_run_ids(state: &Path) -> Vec<String> {
+    let runs = state.join("runs");
+    let Ok(entries) = fs::read_dir(runs) else {
+        return Vec::new();
+    };
+    let mut ids = Vec::new();
+    for entry in entries.flatten() {
+        let run_id = entry.file_name().to_string_lossy().into_owned();
+        let submission_path = entry.path().join("submission.json");
+        let submission = match fs::read(&submission_path) {
+            Ok(submission) => submission,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => panic!(
+                "read submission record {}: {error}",
+                submission_path.display()
+            ),
+        };
+        let submission: Value =
+            serde_json::from_slice(&submission).expect("parse scheduler submission record");
+        assert_eq!(
+            submission["stored"]["runId"].as_str(),
+            Some(run_id.as_str()),
+            "submission record must belong to its run directory"
+        );
+        ids.push(run_id);
+    }
+    ids.sort();
+    ids
+}
+
 impl Server {
     /// Start the private server, optionally with a shortened output retention
     /// (a copy of the pinned script that only adds `outputRetentionMs`).
@@ -121,16 +151,7 @@ impl Server {
     }
 
     fn run_ids(&self) -> Vec<String> {
-        let runs = self.state.join("runs");
-        let Ok(entries) = fs::read_dir(runs) else {
-            return Vec::new();
-        };
-        let mut ids: Vec<String> = entries
-            .flatten()
-            .map(|entry| entry.file_name().to_string_lossy().into_owned())
-            .collect();
-        ids.sort();
-        ids
+        submitted_run_ids(&self.state)
     }
 
     fn facts(&self) -> Vec<Value> {
@@ -277,17 +298,7 @@ impl RestartingServer {
     }
 
     fn run_ids(&self) -> Vec<String> {
-        let runs = self.state.join("runs");
-        let Ok(entries) = fs::read_dir(runs) else {
-            return Vec::new();
-        };
-        let mut ids: Vec<String> = entries
-            .flatten()
-            .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
-            .map(|entry| entry.file_name().to_string_lossy().into_owned())
-            .collect();
-        ids.sort();
-        ids
+        submitted_run_ids(&self.state)
     }
 
     fn status(&self, run_id: &str) -> Value {
@@ -1016,7 +1027,7 @@ fn selector_request_identity_recovers_after_client_restart_and_rejects_body_conf
     let ws = Workspace::new(MANIFEST);
     let mut manifest = fs::read_to_string(ws.file("effigy.toml")).expect("read manifest");
     manifest.push_str(
-        "\n[tasks.identity-hold]\nadmission = \"heavy\"\nrun = \"echo durable-output; echo launched >> $MARK; sleep 3\"\n",
+        "\n[tasks.identity-hold]\nadmission = \"heavy\"\nrun = \"echo durable-output; echo launched >> launched; sleep 3\"\n",
     );
     fs::write(ws.file("effigy.toml"), manifest).expect("add bounded recovery task");
 
@@ -1092,7 +1103,11 @@ fn selector_request_identity_recovers_after_client_restart_and_rejects_body_conf
         server.run_ids().is_empty(),
         "invalid identity never submits"
     );
-    assert_eq!(ws.lines("mark"), 0, "invalid identity has no task effect");
+    assert_eq!(
+        ws.lines("launched"),
+        0,
+        "invalid identity has no task effect"
+    );
 
     let invalid_caller = ws
         .command(
@@ -1105,6 +1120,7 @@ fn selector_request_identity_recovers_after_client_restart_and_rejects_body_conf
     assert_eq!(code(&invalid_caller), 2);
     assert!(server.run_ids().is_empty(), "invalid caller never submits");
 
+    let client_stderr = ws.file("request-client.stderr");
     let mut first_client = ws
         .command(
             Some(&server.state),
@@ -1112,14 +1128,30 @@ fn selector_request_identity_recovers_after_client_restart_and_rejects_body_conf
         )
         .env("EFFIGY_CALLER", caller)
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(fs::File::create(&client_stderr).expect("create client diagnostic file"))
         .spawn()
         .expect("start durable identity selector");
-    wait_for(
-        "accepted request and launched child",
-        Duration::from_secs(60),
-        || server.run_ids().len() == 1 && ws.lines("mark") == 1,
-    );
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        if server.run_ids().len() == 1 && ws.lines("launched") == 1 {
+            break;
+        }
+        if let Some(status) = first_client.try_wait().expect("poll request selector") {
+            let stderr = fs::read_to_string(&client_stderr).unwrap_or_default();
+            panic!("request selector exited before acceptance with {status}: {stderr}");
+        }
+        if Instant::now() >= deadline {
+            let runs = server.run_ids();
+            let marker_lines = ws.lines("launched");
+            let _ = first_client.kill();
+            let _ = first_client.wait();
+            let stderr = fs::read_to_string(&client_stderr).unwrap_or_default();
+            panic!(
+                "timed out waiting for accepted request and launched child (runs: {runs:?}, marker lines: {marker_lines}): {stderr}"
+            );
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
     // Simulate a client crash after scheduler acceptance but before it can
     // persist a run/result receipt. Only this test-owned process is signalled.
     unsafe {
@@ -1236,7 +1268,7 @@ fn selector_request_identity_recovers_after_client_restart_and_rejects_body_conf
         1,
         "same body reuses the original run"
     );
-    assert_eq!(ws.lines("mark"), 1, "repeat did not launch a duplicate");
+    assert_eq!(ws.lines("launched"), 1, "repeat did not launch a duplicate");
     let persisted: Value = serde_json::from_slice(
         &fs::read(&identity_path).expect("read caller-persisted result receipt"),
     )
@@ -1256,7 +1288,7 @@ fn selector_request_identity_recovers_after_client_restart_and_rejects_body_conf
     assert_ne!(code(&changed_settings), 0);
     assert!(text(&changed_settings.stderr).contains("request id conflicts with a different body"));
     assert_eq!(server.run_ids().len(), 1);
-    assert_eq!(ws.lines("mark"), 1, "changed settings did not launch");
+    assert_eq!(ws.lines("launched"), 1, "changed settings did not launch");
 
     let conflict = ws
         .command(
