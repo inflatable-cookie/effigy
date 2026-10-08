@@ -619,13 +619,13 @@ mod tests {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(BASELINE_LOCK_FILE)
     }
 
-    /// Identity facts of the accepted `v1.1.1` artifact, pinned here so a
+    /// Identity facts of the accepted `v1.1.2` artifact, pinned here so a
     /// future baseline bump must deliberately update both the lock and these
     /// markers together.
     const PINNED_CONTENT_IDENTITY: &str =
-        "sha256:c0f01547849f61e7f9465e6bc7fa483378c0748e75e7fe3fe0534ea0de797bc9";
+        "sha256:f65724ad5eef245fe4f2e6c3e831f1761b415daba8d8a5d4744d30341a6af022";
     const PINNED_OCI_MANIFEST_DIGEST: &str =
-        "sha256:a83b723e14a131d9bba0eaddeb931c8b881157948f5a8e47e68610e62ba91989";
+        "sha256:c7ed52c19ff498c0e4fe28eb33adf629fc96d9594962b95df3040b8a452c6d3d";
     const PINNED_FILE_COUNT: usize = 42;
     const PINNED_BYTE_COUNT: u64 = 93_849;
 
@@ -643,17 +643,17 @@ mod tests {
         }
     }
 
-    /// Provenance of the accepted `v1.1.1` publication recorded in the
+    /// Provenance of the accepted `v1.1.2` publication recorded in the
     /// committed lock.
     fn committed_provenance() -> BaselineSource {
         BaselineSource {
             source_repository: BASELINE_SOURCE_REPOSITORY.to_owned(),
-            source_commit: "c7ec113e0271157e867a6c27025268b34b7435f7".to_owned(),
-            source_created: "2026-10-02T09:20:21Z".to_owned(),
-            source_tag: "v1.1.1".to_owned(),
-            source_tag_object: "23ed1e2bf6a89d2f1f54d677859569eb338e1694".to_owned(),
+            source_commit: "bffcd0d8446286c49609c5b4659fe1d6f5d69c0f".to_owned(),
+            source_created: "2026-10-07T16:26:24Z".to_owned(),
+            source_tag: "v1.1.2".to_owned(),
+            source_tag_object: "e0b8c8bdb74cccf7b61f6ff4b8ccf8b67f1c713a".to_owned(),
             pack_id: "effigy-default-catalog".to_owned(),
-            pack_version: "1.1.1".to_owned(),
+            pack_version: "1.1.2".to_owned(),
         }
     }
 
@@ -706,6 +706,24 @@ mod tests {
             lock.identities.oci_manifest_digest,
             PINNED_OCI_MANIFEST_DIGEST
         );
+    }
+
+    #[test]
+    fn committed_snapshot_compatibility_covers_supported_releases() {
+        let manifest = PackManifest::load(&committed_snapshot_dir()).expect("committed manifest");
+
+        for version in ["0.13.0", "0.13.1", "0.14.0", "0.14.1"] {
+            assert!(
+                manifest.accepts_effigy(version),
+                "compiled baseline rejects supported Effigy {version}"
+            );
+        }
+        for version in ["0.12.1", "0.15.0"] {
+            assert!(
+                !manifest.accepts_effigy(version),
+                "compiled baseline unexpectedly accepts Effigy {version}"
+            );
+        }
     }
 
     #[test]

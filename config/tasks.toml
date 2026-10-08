@@ -80,7 +80,13 @@
 # Compiled-baseline provenance proof: the committed catalog snapshot and the
 # typed lock must agree with each other and with the pinned artifact
 # identities (crates/effigy-catalog/src/pack/baseline.rs).
-"test:catalog:baseline-lock" = "cargo test -p effigy-catalog --lib committed_snapshot_ -- --nocapture"
+"test:catalog:baseline-lock" = [
+  { id = "catalog-baseline-lock", run = "cargo test -p effigy-catalog --lib committed_snapshot_ -- --nocapture", timeout_ms = 600000 },
+]
+"check:catalog:baseline" = [
+  "cargo check -p effigy-catalog --all-targets",
+  "cargo clippy -p effigy-catalog --all-targets -- -D warnings",
+]
 "check:containers:scope-compile" = "cargo check -p effigy-containers -p effigy-runtime -p effigy --all-targets"
 "check:containers:retire-selection" = [
   "cargo check -p effigy-cli -p effigy --all-targets",
