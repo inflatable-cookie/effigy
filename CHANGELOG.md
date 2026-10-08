@@ -6,53 +6,7 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
-### Fixed
-- Managed gateway build replacement now uses a local-only read-only preflight.
-  If the recorded live identity is inaccessible, one existing elevated
-  `gateway up` lifecycle performs the locked replacement; its process polls
-  and immediate pre-TERM/pre-KILL checks read identity afresh without launching
-  another administrator reader. A noninteractive or declined handoff preserves
-  records and starts no replacement. Post-signal process-probe uncertainty is
-  retried only within the existing bounded wait; cleanup and restart still
-  require confirmed absence or a readable different generation. A failed
-  signal is reconciled only after a fresh confirmed-absence probe, and
-  persistent unknown evidence remains refused.
-- Managed gateway auto-start keeps the operator terminal on the child's stdin
-  (`sh -lc` now inherits stdin instead of replacing it with null) so the
-  bounded read-only elevated identity reader can authenticate, while
-  stdout/stderr stay captured for diagnostics. A noninteractive, declined, or
-  otherwise unknown identity read still returns Unknown, so the lifecycle
-  refuses without signalling or launching a replacement. Startup text now
-  reports the preflight state
-  (stopped, replacing a different build, or unverified) instead of calling an
-  unknown or mismatched live daemon simply "down".
-- macOS gateway boot identity is now the stable `kern.bootsessionuuid` session
-  identity with validated command status and canonical-UUID parsing; missing,
-  failed, empty, or malformed output is Unknown rather than a guessed value.
-  Records written before this change stored the `kern.boottime` timeval, whose
-  microsecond field drifts and whose seconds component is wall-clock adjusted
-  within one boot. Those records still match the live daemon they published
-  through the boot-time seconds plus the still-mandatory exact process start
-  identity. A changed, unreadable, or malformed legacy value is Unknown: the
-  lifecycle preserves the record and refuses instead of deleting a live
-  daemon, so an old sidecar is never reclassified as absent or rewritten to
-  match. That ambiguous case is honestly refused rather than guessed at; the
-  approved `effigy gateway recover` route currently rejects sidecar-bearing
-  records, so there is no automatic supported transition for an ambiguous
-  identity-bearing record yet. A bounded, implementable specification of the
-  recovery input boundary and the ordered confirmed-absent cleanup (resumable
-  only from the full triple or the numeric-only pair, with a version-only
-  remnant kept fail-closed and actionably refused) is recorded in architecture
-  034 for an operator ruling; it is not implemented and does not widen the
-  numeric-only route.
-- Elevated gateway lifecycle now accepts the authenticated operator-owned
-  gateway directory instead of rejecting it as unsafe. An elevated root caller
-  behind the existing administrator-elevation marker trusts a directory owned
-  by the forwarded operator UID only when that UID is non-root, matches an
-  ambient `SUDO_UID` when present, and owns the forwarded `HOME` per the
-  system passwd database. Unauthenticated root ownership checks, parent
-  safety, no-follow file checks, owner-only `0600` records, fail-closed
-  legacy/unknown handling, and fixed HOME/path target binding are unchanged.
+## [0.14.1] - 2026-10-08
 
 ### Added
 - `effigy gateway recover` restores an ordinary upgrade past a live
@@ -100,6 +54,54 @@ During v0.x, MINOR bumps may include breaking changes.
   `./target/debug/effigy release verify-install {args}` and forwards
   shell-quoted task arguments without replacing the installed local Effigy.
   This source follow-up is after v0.14.0 and is not in the published binary.
+
+### Fixed
+- Managed gateway build replacement now uses a local-only read-only preflight.
+  If the recorded live identity is inaccessible, one existing elevated
+  `gateway up` lifecycle performs the locked replacement; its process polls
+  and immediate pre-TERM/pre-KILL checks read identity afresh without launching
+  another administrator reader. A noninteractive or declined handoff preserves
+  records and starts no replacement. Post-signal process-probe uncertainty is
+  retried only within the existing bounded wait; cleanup and restart still
+  require confirmed absence or a readable different generation. A failed
+  signal is reconciled only after a fresh confirmed-absence probe, and
+  persistent unknown evidence remains refused.
+- Managed gateway auto-start keeps the operator terminal on the child's stdin
+  (`sh -lc` now inherits stdin instead of replacing it with null) so the
+  bounded read-only elevated identity reader can authenticate, while
+  stdout/stderr stay captured for diagnostics. A noninteractive, declined, or
+  otherwise unknown identity read still returns Unknown, so the lifecycle
+  refuses without signalling or launching a replacement. Startup text now
+  reports the preflight state
+  (stopped, replacing a different build, or unverified) instead of calling an
+  unknown or mismatched live daemon simply "down".
+- macOS gateway boot identity is now the stable `kern.bootsessionuuid` session
+  identity with validated command status and canonical-UUID parsing; missing,
+  failed, empty, or malformed output is Unknown rather than a guessed value.
+  Records written before this change stored the `kern.boottime` timeval, whose
+  microsecond field drifts and whose seconds component is wall-clock adjusted
+  within one boot. Those records still match the live daemon they published
+  through the boot-time seconds plus the still-mandatory exact process start
+  identity. A changed, unreadable, or malformed legacy value is Unknown: the
+  lifecycle preserves the record and refuses instead of deleting a live
+  daemon, so an old sidecar is never reclassified as absent or rewritten to
+  match. That ambiguous case is honestly refused rather than guessed at; the
+  approved `effigy gateway recover` route currently rejects sidecar-bearing
+  records, so there is no automatic supported transition for an ambiguous
+  identity-bearing record yet. A bounded, implementable specification of the
+  recovery input boundary and the ordered confirmed-absent cleanup (resumable
+  only from the full triple or the numeric-only pair, with a version-only
+  remnant kept fail-closed and actionably refused) is recorded in architecture
+  034 for an operator ruling; it is not implemented and does not widen the
+  numeric-only route.
+- Elevated gateway lifecycle now accepts the authenticated operator-owned
+  gateway directory instead of rejecting it as unsafe. An elevated root caller
+  behind the existing administrator-elevation marker trusts a directory owned
+  by the forwarded operator UID only when that UID is non-root, matches an
+  ambient `SUDO_UID` when present, and owns the forwarded `HOME` per the
+  system passwd database. Unauthenticated root ownership checks, parent
+  safety, no-follow file checks, owner-only `0600` records, fail-closed
+  legacy/unknown handling, and fixed HOME/path target binding are unchanged.
 
 ## [0.14.0] - 2026-10-06
 
