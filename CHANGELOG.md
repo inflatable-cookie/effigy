@@ -12,6 +12,12 @@ During v0.x, MINOR bumps may include breaking changes.
   request status|follow`. Only authenticated `unknown_run` permits a same-key
   retry; ambiguous recovery remains held.
 
+### Changed
+- The compiled catalog baseline now tracks catalog-pack v1.1.2
+  (`ghcr.io/inflatable-cookie/effigy-catalog-pack@sha256:c7ed52c19ff498c0e4fe28eb33adf629fc96d9594962b95df3040b8a452c6d3d`) with
+  compatibility `>=0.13, <0.15`, admitting the supported Effigy 0.13.x and
+  0.14.x releases without changing the support floor.
+
 ## [0.14.1] - 2026-10-08
 
 ### Added
