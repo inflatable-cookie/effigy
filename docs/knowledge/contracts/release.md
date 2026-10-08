@@ -60,6 +60,14 @@ Release prepare may reuse a hosted CI result for a gate explicitly configured wi
 - After artifacts publish, run
   `./target/debug/effigy release:verify-install --tag vX.Y.Z` in Effigy's own
   source checkout. Check the GitHub release and Homebrew tap.
+  If the checkout's SSH origin cannot authenticate Cargo's public fetch, use
+  the supported `--repo-url https://github.com/inflatable-cookie/effigy.git`
+  argument after verifying the remote tag identity. This changes transport,
+  not the selected tag or verification checks. The verifier installs into a
+  temporary root and checks version, fixture tasks, prefixed built-ins and
+  JSON help; it does not replace the global binary or prove live gateway
+  migration. Preserve the original fetch failure alongside the corrected
+  verification receipt.
 - If publication fails after tagging, keep the tag. Fix the cause and release the next PATCH; never re-tag a failed release.
 - For a broken published binary, pause new publishes, tell consumers the affected version, point install guidance at the last good version, and prepare a PATCH fix.
 
