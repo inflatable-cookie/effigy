@@ -492,3 +492,21 @@ input, not a completion prerequisite for the capabilities that unblock it.
 No prerequisite implements Vite/Rust adapters, adopts a consumer, replaces
 the host scheduler, changes its protocol, or implements the wider proposed
 owned-run supervision contract merely to satisfy this local development use.
+
+### Managed listener readiness diagnosis — 2026-10-09
+
+Tom authorized continuing the bounded readiness follow-through after the
+disposable Reference pilot reported an owned-listener startup timeout. The
+next work qualifies the generic HTTP probe against ordinary server behavior
+and preserves bounded, generation-bound phase evidence before cleanup. A
+transport correction requires a demonstrated counterexample; the observed
+pilot timeout alone does not establish its cause.
+
+Diagnostic evidence must distinguish report discovery, socket ownership,
+HTTP readiness and route publication without retaining credentials or
+response bodies. It is evidence, never authority to publish, signal or
+release resources. Existing identity, exclusivity, readiness deadlines,
+private TLS and generation-safe teardown guarantees remain mandatory.
+Framework adapters and fixture preconditions remain bundle-owned. This
+authorization does not restart the consumer pilot, change a live runtime,
+replace the installed binary or authorize a release.
