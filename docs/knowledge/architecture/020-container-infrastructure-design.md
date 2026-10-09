@@ -834,11 +834,12 @@ manual signal, global binary replacement or release is authorized here.
 The operator's installed `effigy v0.14.1+local.7b26a15` corresponds to source
 commit `7b26a15`. At that source, `run_gateway` documents TERM/INT shutdown but
 waits only for Ctrl-C. At task start, checkout `b0858d5c` already included the
-generation sidecar, the bounded read-only identity reader and legacy recovery;
-those additions are not present in the installed build. The reported root
-daemon's historical reason for ignoring TERM was not captured, so the missing
-TERM handler is a demonstrated source defect, not a proven explanation of
-that earlier incident.
+generation sidecar, the bounded read-only identity reader and legacy recovery.
+All three capabilities are also present and wired in source commit `7b26a15`;
+the source comparison isolates the TERM-handler mismatch from those identity
+and recovery features. The reported root daemon's historical reason for
+ignoring TERM was not captured, so the missing TERM handler is a demonstrated
+source defect, not a proven explanation of that earlier incident.
 
 The corrected daemon registers Unix TERM and INT handling before publishing
 its generation, sends the existing shutdown signal to its server tasks, and
