@@ -3,6 +3,7 @@
 use std::collections::BTreeSet;
 use std::fs;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
 
 use super::legacy::{GatewayEndpoint, GatewayTransport};
@@ -33,6 +34,77 @@ pub(super) fn process_listening_endpoints(
         )?);
     }
     Ok(endpoints)
+}
+
+pub(super) fn verify_process_listener_exclusive(
+    pid: u32,
+    endpoint: &GatewayEndpoint,
+) -> Result<(), std::io::Error> {
+    let process_net = fs::metadata(format!("/proc/{pid}/ns/net"))?;
+    let current_net = fs::metadata("/proc/self/ns/net")?;
+    if process_net.dev() != current_net.dev() || process_net.ino() != current_net.ino() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "managed listener is in a different network namespace",
+        ));
+    }
+
+    let owned_inodes = socket_inodes(pid)?;
+    let mut process_listener_inodes = BTreeSet::new();
+    for table in ["tcp", "tcp6"] {
+        let body = fs::read_to_string(format!("/proc/{pid}/net/{table}"))?;
+        for (current, inode) in parse_proc_net_socket_rows(&body, GatewayTransport::Tcp, true)? {
+            if current.addr == endpoint.addr && owned_inodes.contains(&inode) {
+                process_listener_inodes.insert(inode);
+            }
+        }
+    }
+    if process_listener_inodes.len() != 1 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            format!(
+                "recorded process does not own exactly one listener socket at {}",
+                endpoint.addr
+            ),
+        ));
+    }
+    let Some(expected_inode) = process_listener_inodes.first().copied() else {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            format!(
+                "recorded process does not own a listener socket at {}",
+                endpoint.addr
+            ),
+        ));
+    };
+
+    let mut matching_inodes = BTreeSet::new();
+    for table in ["tcp", "tcp6"] {
+        let body = fs::read_to_string(format!("/proc/self/net/{table}"))?;
+        for (current, inode) in parse_proc_net_socket_rows(&body, GatewayTransport::Tcp, true)? {
+            if endpoints_overlap(&current, endpoint) {
+                matching_inodes.insert(inode);
+            }
+        }
+    }
+    if matching_inodes.len() != 1 || !matching_inodes.contains(&expected_inode) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            format!(
+                "managed endpoint {} has conflicting kernel listener sockets",
+                endpoint.addr
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn endpoints_overlap(left: &GatewayEndpoint, right: &GatewayEndpoint) -> bool {
+    left.transport == right.transport
+        && left.addr.port() == right.addr.port()
+        && (left.addr.ip() == right.addr.ip()
+            || left.addr.ip().is_unspecified()
+            || right.addr.ip().is_unspecified())
 }
 
 fn socket_inodes(pid: u32) -> Result<BTreeSet<u64>, std::io::Error> {
@@ -66,6 +138,18 @@ fn parse_proc_net_table(
     listen_only: bool,
     inodes: &BTreeSet<u64>,
 ) -> Result<Vec<GatewayEndpoint>, std::io::Error> {
+    Ok(parse_proc_net_socket_rows(body, transport, listen_only)?
+        .into_iter()
+        .filter(|(_, inode)| inodes.contains(inode))
+        .map(|(endpoint, _)| endpoint)
+        .collect())
+}
+
+fn parse_proc_net_socket_rows(
+    body: &str,
+    transport: GatewayTransport,
+    listen_only: bool,
+) -> Result<Vec<(GatewayEndpoint, u64)>, std::io::Error> {
     let mut endpoints = Vec::new();
     for line in body.lines().skip(1) {
         let mut cols = line.split_whitespace();
@@ -97,16 +181,13 @@ fn parse_proc_net_table(
                     "Linux socket inode is malformed",
                 )
             })?;
-        if !inodes.contains(&inode) {
-            continue;
-        }
         let Some(addr) = parse_proc_net_addr(local) else {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 "Linux socket local address is malformed",
             ));
         };
-        endpoints.push(GatewayEndpoint { transport, addr });
+        endpoints.push((GatewayEndpoint { transport, addr }, inode));
     }
     Ok(endpoints)
 }
@@ -178,5 +259,15 @@ mod linux_net_parse_tests {
                 addr: SocketAddr::from((Ipv4Addr::LOCALHOST, 15353)),
             }]
         );
+    }
+
+    #[test]
+    fn managed_listener_snapshot_keeps_socket_identity_and_rejects_shared_wildcards() {
+        let table = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n   0: 0100007F:9C41 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 99 1 0000000000000000 100 0 0 10 0\n   1: 00000000:9C41 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 100 1 0000000000000000 100 0 0 10 0\n";
+        let records = parse_proc_net_socket_rows(table, GatewayTransport::Tcp, true).unwrap();
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].1, 99);
+        assert_eq!(records[1].1, 100);
+        assert!(endpoints_overlap(&records[0].0, &records[1].0));
     }
 }

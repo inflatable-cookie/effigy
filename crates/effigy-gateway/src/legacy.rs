@@ -475,6 +475,53 @@ pub fn listening_process_ids(endpoint: &GatewayEndpoint) -> Result<Vec<u32>, std
     Ok(owners)
 }
 
+/// Verify that `pid` owns the kernel listener socket and that no second
+/// listener socket can accept connections for the same endpoint.
+///
+/// Linux uses the kernel's socket inode table for the exclusivity check. This
+/// avoids requiring permission to inspect unrelated same-user processes while
+/// still detecting wildcard and `SO_REUSEPORT` collisions. macOS enumerates
+/// listener owners through libproc.
+pub fn verify_process_listener_exclusive(
+    pid: u32,
+    endpoint: &GatewayEndpoint,
+) -> Result<(), std::io::Error> {
+    if endpoint.transport != GatewayTransport::Tcp {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "managed host routes require TCP endpoints",
+        ));
+    }
+    #[cfg(target_os = "linux")]
+    {
+        crate::linux_net::verify_process_listener_exclusive(pid, endpoint)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let owners = listening_process_ids(endpoint)?;
+        if owners.as_slice() == [pid] {
+            Ok(())
+        } else {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!(
+                    "managed endpoint {} is shared or has unowned listeners: {owners:?}",
+                    endpoint.addr
+                ),
+            ))
+        }
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        let _ = pid;
+        let _ = endpoint;
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "managed listener exclusivity inspection is unsupported on this platform",
+        ))
+    }
+}
+
 fn process_has_disappeared(error: &std::io::Error) -> bool {
     error.kind() == std::io::ErrorKind::NotFound || error.raw_os_error() == Some(libc::ESRCH)
 }

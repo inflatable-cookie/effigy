@@ -2118,20 +2118,18 @@ fn wait_for_owned_listener(
                             "managed listener owner PID was reused during discovery",
                         ));
                     }
-                    let owners = effigy_gateway::legacy::listening_process_ids(&GatewayEndpoint {
-                        transport: GatewayTransport::Tcp,
-                        addr: address,
-                    })
+                    effigy_gateway::legacy::verify_process_listener_exclusive(
+                        pid,
+                        &GatewayEndpoint {
+                            transport: GatewayTransport::Tcp,
+                            addr: address,
+                        },
+                    )
                     .map_err(|error| {
                         RunnerError::task_invocation(format!(
                             "cannot prove exclusive managed listener ownership: {error}"
                         ))
                     })?;
-                    if owners.as_slice() != [pid] {
-                        return Err(RunnerError::task_invocation(format!(
-                            "managed listener endpoint {address} is shared by processes {owners:?}"
-                        )));
-                    }
                     found = Some(OwnedHostListener {
                         address,
                         listener_pid: pid,

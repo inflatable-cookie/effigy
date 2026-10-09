@@ -122,17 +122,13 @@ fn verify_exclusive_listener_owner(
     address: SocketAddr,
     expected_pid: u32,
 ) -> Result<(), io::Error> {
-    let owners = crate::legacy::listening_process_ids(&GatewayEndpoint {
-        transport: GatewayTransport::Tcp,
-        addr: address,
-    })?;
-    if owners.as_slice() != [expected_pid] {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            format!("managed endpoint {address} is shared or has an unowned listener: {owners:?}"),
-        ));
-    }
-    Ok(())
+    crate::legacy::verify_process_listener_exclusive(
+        expected_pid,
+        &GatewayEndpoint {
+            transport: GatewayTransport::Tcp,
+            addr: address,
+        },
+    )
 }
 
 fn verify_listener_availability(owner: &ManagedListenerRouteOwner) -> Result<(), io::Error> {
