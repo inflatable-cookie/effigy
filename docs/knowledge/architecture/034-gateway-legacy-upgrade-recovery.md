@@ -924,6 +924,75 @@ standing privilege. Live role evidence does not prove historical spawn ownership
 or eliminate a same-path impostor; the last identity-check-to-signal race remains
 explicitly disclosed. Both capabilities are implemented as specified. Residual limits below still apply.
 
+## Proposed read-only root-daemon attestation
+
+This is a concrete proposal for a separate operator ruling if Q-002's
+interactive identity reader cannot support prompt-free reuse of a healthy
+root-owned gateway. It grants no authority under the current task. The proposed
+capability only authenticates `AlreadyRunning` reuse of the exact current
+generation; replacement, down, legacy adoption and every signal continue to
+require their existing generation checks and administrator lifecycle path.
+
+### Endpoint and peer binding
+
+- The root daemon creates one Unix-domain socket for the recorded operator UID
+  under a root-owned, non-symlink runtime directory such as
+  `/run/effigy/gateway/`. The directory is root-owned and not writable by
+  callers. The socket is root-owned and connectable by local users; the server
+  accepts requests only when kernel peer credentials identify the UID recorded
+  in the trusted gateway identity sidecar (or root itself). The endpoint path,
+  owner, mode, file type and parent chain are checked without following
+  symlinks. A socket pathname or its presence never authenticates a daemon.
+- The client connects to the endpoint selected from trusted local configuration
+  and obtains the kernel-reported peer PID and UID (`SO_PEERCRED` on Linux and
+  the platform peer-credential API on macOS). The returned PID and UID must
+  equal that peer tuple and the sidecar's recorded PID and owner policy. The
+  response also carries the boot identity, precise process start identity,
+  canonical executable path, canonical gateway target digest, sidecar digest,
+  and the existing supported gateway role/endpoints. The client accepts only
+  the exact generation and default role already supported by the current
+  identity checks; custom, partial or ambiguous endpoints stay unknown.
+- Each request includes a fresh 256-bit client nonce, protocol version, target
+  digest and sidecar digest. The daemon echoes the nonce and both digests in a
+  bounded, length-framed response. The client checks one response on the same
+  connected peer, rejects a nonce reuse or mismatch, and caches no attestation.
+  A captured response therefore cannot be replayed against another connection,
+  target or generation.
+- The operation is read-only. It cannot update PID/version/identity records,
+  register routes, request signals, authorize recovery, or cause a daemon to
+  start. Peer UID, PID, boot/start identity, target digest, sidecar digest and
+  role are all required; health responses, HTTP status, PID alone, socket
+  ownership alone and readable sidecar bytes alone remain insufficient.
+
+### Refusal, compatibility and qualification
+
+- Missing, stale, replaced, symlinked, wrongly owned, wrongly permissioned or
+  untrusted endpoints refuse. A peer UID/PID mismatch, stale boot/start
+  identity, target or record digest mismatch, unexpected role, malformed frame,
+  unknown protocol, replayed nonce, timeout or peer disconnect returns unknown
+  without deleting records or signalling. Local denial-of-service against the
+  endpoint is possible; it can cause refusal, never successful reuse.
+- New clients use this proof only when the root daemon advertises the versioned
+  endpoint and the trusted sidecar binds the same generation. Old daemons have
+  no endpoint and continue through Q-002's existing bounded interactive
+  administrator reader. A declined prompt, null stdin or unavailable proof
+  remains unknown. No protocol negotiation may downgrade a mismatched or
+  malformed new-daemon response to a PID or sidecar-only match.
+- A private cross-UID qualification must run a daemon under a distinct root
+  identity and an unprivileged client in an isolated disposable environment.
+  It must pass the exact peer/PID/UID/boot/start/record binding and exercise
+  endpoint replacement, symlink, wrong owner/mode, wrong peer, stale generation,
+  wrong target/role, malformed response, nonce replay, timeout and disconnect.
+  It must also qualify mixed old-client/new-daemon and new-client/old-daemon
+  behavior. Injected privilege controls alone cannot claim cross-UID proof.
+- Root compromise remains outside this mechanism's protection. A live
+  attestation proves which process answered and its current identity evidence;
+  it does not prove historical spawn ownership or eliminate the final
+  identity-check-to-signal TOCTOU. Any signal still requires the existing
+  immediate generation recheck. Endpoint installation, socket permissions,
+  runtime-directory lifecycle and the cross-platform peer APIs need an explicit
+  operator ruling before implementation.
+
 ## Residual limits and material rulings
 
 - Offline, overwritten, local-build records are reachable through recover;
@@ -941,6 +1010,14 @@ explicitly disclosed. Both capabilities are implemented as specified. Residual l
   be the replacement image; `gateway.version` is metadata, not a live version.
 - The final identity-check-to-signal TOCTOU is disclosed for both the existing
   sidecar path and the generation-bound stop; neither claims atomic targeting.
+- Unix TERM/INT shutdown now enters the existing server shutdown channel and
+  waits for all owned server tasks before exact identity cleanup. The bounded
+  read-only reader is 15 seconds; complete administrator lifecycle and managed
+  startup handoffs are bounded to 30 and 35 seconds. A timed-out launcher is
+  reaped, but a privileged operation's completion is unknown; callers must
+  query status before retrying and must not infer that the gateway stopped.
+- Prompt-free root-owned daemon reuse is not implemented. The attestation
+  section above is a proposal only and leaves non-interactive unknown held.
 - A delegated previous-binary stop is rejected; its v0.13.1 hazards are recorded
   in [v0.13.1 previous-binary behaviour](#v0131-previous-binary-behaviour).
 - The published `v0.14.0` binary cannot complete the path; a corrected release

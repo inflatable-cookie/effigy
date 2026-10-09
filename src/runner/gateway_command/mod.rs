@@ -1,6 +1,8 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::process::{Command as ProcessCommand, Stdio};
+#[cfg(unix)]
+use std::time::Duration;
 
 use effigy_cli::{
     GatewayArgs, GatewayPrivateArgs, GatewaySubcommand, InternalGatewayArgs,
@@ -45,6 +47,8 @@ pub(super) const GATEWAY_ESCALATED_ENV: &str = "EFFIGY_GATEWAY_ESCALATED";
 pub(super) const GATEWAY_KEEP_RESOLVER_ENV: &str = "EFFIGY_GATEWAY_KEEP_RESOLVER";
 pub(super) const GATEWAY_PRIVATE_STATE_ROOT_ENV: &str =
     effigy_gateway::private_state::PRIVATE_STATE_ROOT_ENV;
+#[cfg(unix)]
+const MANAGED_GATEWAY_START_TIMEOUT: Duration = Duration::from_secs(35);
 
 /// Why a managed auto-start decided to run the gateway command. Startup text
 /// keys off this so an unknown or replaced live daemon is never called simply
@@ -62,12 +66,14 @@ enum ManagedStartState {
 fn managed_startup_notice(state: ManagedStartState) -> &'static str {
     match state {
         ManagedStartState::Stopped => {
-            "gateway is stopped; starting local DNS/proxy (may prompt for password)"
+            "gateway is stopped; starting local DNS/proxy. If an administrator prompt appears, approve it in this terminal; startup is bounded to 35 seconds"
         }
         ManagedStartState::Replacing => {
-            "gateway is running a different build; restarting with the current build (may prompt for password)"
+            "gateway is running a different build; restarting with the current build. If an administrator prompt appears, approve it in this terminal; startup is bounded to 35 seconds"
         }
-        ManagedStartState::Unverified => "starting local DNS/proxy (may prompt for password)",
+        ManagedStartState::Unverified => {
+            "starting local DNS/proxy. If an administrator prompt appears, approve it in this terminal; startup is bounded to 35 seconds"
+        }
     }
 }
 
@@ -146,10 +152,9 @@ pub(in crate::runner) fn gateway_up_for_managed_task(command: &str) -> Result<()
         }
     }
     emit_gateway_startup_notice(state);
-    // Inherit the operator terminal: the bounded read-only elevated identity
-    // reader requires `stdin.is_terminal()` to authenticate. `Command::output`
-    // would replace stdin with null and turn every managed cross-UID status
-    // read into Unknown. stdout/stderr stay captured for diagnostics.
+    // Keep the operator terminal available to sudo/osascript authentication,
+    // while bounding the complete managed startup handoff and retaining its
+    // output for an actionable failure.
     let mut start = ProcessCommand::new("sh");
     start
         .arg("-lc")
@@ -157,8 +162,18 @@ pub(in crate::runner) fn gateway_up_for_managed_task(command: &str) -> Result<()
         .stdin(Stdio::inherit())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let child = start.spawn().map_err(RunnerError::Cwd)?;
-    let output = child.wait_with_output().map_err(RunnerError::Cwd)?;
+    #[cfg(unix)]
+    let output = elevation::run_bounded_gateway_subprocess(
+        &mut start,
+        "managed gateway auto-start",
+        MANAGED_GATEWAY_START_TIMEOUT,
+    )?;
+    #[cfg(not(unix))]
+    let output = start
+        .spawn()
+        .map_err(RunnerError::Cwd)?
+        .wait_with_output()
+        .map_err(RunnerError::Cwd)?;
     if output.status.success() {
         Ok(())
     } else {
@@ -351,7 +366,7 @@ fn resolve_gateway_status(
             Err(legacy_identity_status_error(error, false))
         }
         Err(error) => Err(RunnerError::task_invocation(format!(
-            "cannot determine gateway state ({error}); refusing to guess. The gateway PID record is left in place for reconciliation"
+            "cannot determine gateway state ({error}); no signal was sent and the gateway PID record is left in place for reconciliation. If the reason is a permission denial for a root-owned gateway, rerun from an interactive admin-capable terminal and approve the bounded identity prompt"
         ))),
     }
 }
@@ -524,6 +539,19 @@ fn run_gateway_up_after_identity_permission_denied(
     }
 }
 
+fn run_gateway_down_after_identity_permission_denied(
+    interactive: bool,
+    elevation_allowed: bool,
+    elevate: impl FnOnce() -> Result<String, RunnerError>,
+) -> Result<String, RunnerError> {
+    if interactive && elevation_allowed {
+        return elevate();
+    }
+    Err(RunnerError::task_invocation(
+        "gateway process identity is unreadable without administrator access; no signal was sent and gateway records are preserved. Run `effigy gateway down` from an interactive admin-capable terminal and approve the bounded administrator request",
+    ))
+}
+
 /// Operator-owned first-start files are created under the transition lock,
 /// then the lock is dropped before elevation so the child can acquire it.
 fn stage_absent_up_under_lock(
@@ -594,7 +622,18 @@ fn run_gateway_down_with_config(
     config: &GatewayConfig,
     output_json: bool,
 ) -> Result<String, RunnerError> {
-    let status = resolve_gateway_status(verified_gateway_status(config))?;
+    let probe = verified_gateway_status_for_up(config);
+    if !config.is_private()
+        && !gateway_invocation_is_escalated()
+        && probe.identity_permission_denied
+    {
+        return run_gateway_down_after_identity_permission_denied(
+            std::io::stdin().is_terminal(),
+            elevation::gateway_identity_elevation_allowed(),
+            || run_gateway_elevated(GatewaySubcommand::Down, output_json),
+        );
+    }
+    let status = resolve_gateway_status(probe.status)?;
     if !config.is_private()
         && !gateway_invocation_is_escalated()
         && gateway_down_requires_elevation(config, status.as_ref())?
@@ -602,7 +641,13 @@ fn run_gateway_down_with_config(
         return run_gateway_elevated(GatewaySubcommand::Down, output_json);
     }
     let _lock = recover::acquire_transition_lock(config)?;
-    let status = resolve_gateway_status(verified_gateway_status(config))?;
+    let probe = verified_gateway_status_for_up(config);
+    if probe.identity_permission_denied {
+        return Err(RunnerError::task_invocation(
+            "gateway process identity became unreadable while the transition lock was held; no signal was sent and gateway records are preserved. Rerun `effigy gateway down` from an interactive admin-capable terminal",
+        ));
+    }
+    let status = resolve_gateway_status(probe.status)?;
     let warnings = if config.is_private() || keep_gateway_resolver_on_down() {
         Vec::new()
     } else {
