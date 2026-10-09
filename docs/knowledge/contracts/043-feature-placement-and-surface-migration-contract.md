@@ -439,3 +439,41 @@ development. Container parity remains available. This authority covers
 bounded Queue briefs, independent review and qualification; it does not
 authorize fleet configuration changes, live gateway or resolver mutation,
 data deletion, workflow edits, binary publication or global installation.
+
+#### Generic prerequisites and the designated pilot
+
+Underlay Reference is the designated pilot, using disposable owned checkouts
+and worktrees. Acowtancy is excluded until the solution is qualified and a
+later adoption is explicitly arranged. Configuration/plan receipts and
+synthetic listeners do not prove the actual Reference adapters ready.
+
+Private gateway qualification requires a supported explicit mode that keeps
+state and certificates in the caller-owned fixture, binds only unprivileged
+loopback endpoints, and never installs trust, writes host resolver files,
+adds host loopback aliases or escalates privilege. Clients verify TLS with
+the fixture's explicitly supplied CA and resolve its names explicitly; a
+private `CAROOT` alone does not isolate system trust. Defaults for ordinary
+operator gateway setup retain their existing behavior. Isolation must cover
+startup, daemon handoff, route changes, status and teardown, with unsafe or
+ambiguous configuration refused before effects. Test-only interception of
+the installer is not a supported consumer mode.
+
+Managed host-listener support must reuse Effigy's existing managed-process
+lifecycle and process identity primitives. Its language-neutral declaration
+binds a child selector to instance-scoped listener discovery, readiness and
+route intent. Discovery must prove the actual loopback socket belongs to the
+recorded child generation; a requested port, child-written address or HTTP
+response alone does not establish ownership. Endpoint projection to child
+environment and sibling connection URLs, publication and restart replacement
+must preserve this generation binding. Unknown ownership remains unavailable
+and cannot authorize signals, route takeover or reclamation. Static
+`target_host` configuration remains distinct from this managed ownership
+guarantee and is not retroactively certified by it.
+
+These prerequisites are independently reviewed implementation work within
+the authorized profile lane. Private gateway isolation precedes integrated
+listener/route qualification. The retained bundle qualification is evidence
+input, not a completion prerequisite for the capabilities that unblock it.
+No prerequisite implements Vite/Rust adapters, adopts a consumer, replaces
+the host scheduler, changes its protocol, or implements the wider proposed
+owned-run supervision contract merely to satisfy this local development use.
