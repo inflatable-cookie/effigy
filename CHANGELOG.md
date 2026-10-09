@@ -7,6 +7,14 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- Managed host processes can declare a loopback listener, HTTP readiness
+  check, browser route and listener dependencies. Effigy verifies the actual
+  process and socket owner before route publication, reports assigned
+  addresses from detached `container up --json`, propagates current URLs to
+  dependent children, and withdraws exact route generations before restart or
+  scoped teardown. The adapter report and versioned state-file contracts are
+  documented; Linux procfs and macOS libproc provide socket ownership checks,
+  while unsupported platforms fail closed.
 - `effigy gateway setup-tls` and `gateway up` now accept an explicit
   `--private-state-root` for disposable gateway instances. Private mode keeps
   routes, listeners, certificates, CA state, and process identity inside the

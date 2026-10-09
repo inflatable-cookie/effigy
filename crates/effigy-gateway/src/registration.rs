@@ -20,7 +20,7 @@ use chrono::Utc;
 use crate::error::GatewayError;
 use crate::ports::PortRegistry;
 use crate::routes::RouteTableLock;
-use crate::routes::{Route, RouteSource, RouteTable};
+use crate::routes::{ManagedListenerRouteOwner, Route, RouteSource, RouteTable};
 use effigy_core::worktree_scope;
 
 /// Resolve the generation that owns container gateway routes.
@@ -100,6 +100,12 @@ pub fn register_route(
     let mut table = RouteTable::load(route_table_path)?;
     let scope = project_scope(&registration.project_path)?;
     if let Some(existing) = table.lookup(&registration.domain) {
+        if existing.managed_listener.is_some() {
+            return Err(GatewayError::ForeignRoute {
+                domain: registration.domain.clone(),
+                project: existing.project.clone(),
+            });
+        }
         check_claim(existing, &registration.project_path, scope.as_deref())?;
     }
 
@@ -113,11 +119,141 @@ pub fn register_route(
         project: registration.project_path.clone(),
         tls: registration.tls,
         scope,
+        managed_listener: None,
         registered: Utc::now(),
     });
 
     table.save(route_table_path)?;
     Ok(())
+}
+
+/// Atomically publish a host-listener route for one managed process
+/// generation. A same-project route is not sufficient authority: replacement
+/// requires the exact stable listener owner and expected predecessor
+/// generation.
+pub fn register_managed_listener_route(
+    route_table_path: &Path,
+    project_path: &str,
+    domain: &str,
+    target: &str,
+    tls: bool,
+    owner: ManagedListenerRouteOwner,
+    expected_generation: Option<&str>,
+) -> Result<(), GatewayError> {
+    let parsed_target = target.parse::<std::net::SocketAddr>().map_err(|error| {
+        GatewayError::RouteTableReadError {
+            path: route_table_path.to_path_buf(),
+            reason: format!("managed listener target is not a socket address: {error}"),
+        }
+    })?;
+    if !parsed_target.ip().is_loopback()
+        || parsed_target.port() == 0
+        || owner.address != parsed_target.to_string()
+        || owner.route_tls != tls
+        || owner.owner.is_empty()
+        || owner.runtime_generation.is_empty()
+        || owner.generation.is_empty()
+    {
+        return Err(GatewayError::RouteTableReadError {
+            path: route_table_path.to_path_buf(),
+            reason: "managed listener route identity does not match its assigned loopback target"
+                .to_owned(),
+        });
+    }
+    let _lock = RouteTableLock::acquire(route_table_path)?;
+    let mut table = RouteTable::load(route_table_path)?;
+    let scope = project_scope(project_path)?;
+    if let Some(existing) = table.lookup(domain) {
+        let replaceable = owned_by(existing, project_path, scope.as_deref())
+            && existing.managed_listener.as_ref().is_some_and(|current| {
+                current.owner == owner.owner
+                    && expected_generation == Some(current.generation.as_str())
+            });
+        if !replaceable {
+            return Err(GatewayError::ForeignRoute {
+                domain: domain.to_owned(),
+                project: existing.project.clone(),
+            });
+        }
+    } else if expected_generation.is_some() {
+        return Err(GatewayError::RouteTableReadError {
+            path: route_table_path.to_path_buf(),
+            reason: format!(
+                "managed listener route `{domain}` disappeared before generation replacement"
+            ),
+        });
+    }
+
+    table.upsert(Route {
+        domain: domain.to_owned(),
+        target: Some(target.to_owned()),
+        dns_ip: None,
+        tcp_port: None,
+        tcp_target: None,
+        source: RouteSource::Task,
+        project: project_path.to_owned(),
+        scope,
+        tls,
+        managed_listener: Some(owner),
+        registered: Utc::now(),
+    });
+    table.save(route_table_path)
+}
+
+/// Check a requested listener domain before child startup. Existing claims are
+/// accepted only when they already belong to the exact stable managed owner;
+/// publication still requires a generation-guarded transaction later.
+pub fn check_managed_listener_route_claim(
+    route_table_path: &Path,
+    project_path: &str,
+    domain: &str,
+    owner: &str,
+) -> Result<(), GatewayError> {
+    let _lock = RouteTableLock::acquire(route_table_path)?;
+    let table = RouteTable::load(route_table_path)?;
+    let scope = project_scope(project_path)?;
+    if let Some(existing) = table.lookup(domain) {
+        let same_owner = owned_by(existing, project_path, scope.as_deref())
+            && existing
+                .managed_listener
+                .as_ref()
+                .is_some_and(|current| current.owner == owner);
+        if !same_owner {
+            return Err(GatewayError::ForeignRoute {
+                domain: domain.to_owned(),
+                project: existing.project.clone(),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Remove a managed listener route only when its stable owner and exact child
+/// generation still match. A stale stop or exit callback cannot remove a
+/// successor route.
+pub fn deregister_managed_listener_route(
+    route_table_path: &Path,
+    project_path: &str,
+    domain: &str,
+    owner: &str,
+    generation: &str,
+) -> Result<bool, GatewayError> {
+    let _lock = RouteTableLock::acquire(route_table_path)?;
+    let mut table = RouteTable::load(route_table_path)?;
+    let scope = project_scope(project_path)?;
+    let matches = table.lookup(domain).is_some_and(|route| {
+        owned_by(route, project_path, scope.as_deref())
+            && route
+                .managed_listener
+                .as_ref()
+                .is_some_and(|current| current.owner == owner && current.generation == generation)
+    });
+    if !matches {
+        return Ok(false);
+    }
+    let _ = table.deregister(domain);
+    table.save(route_table_path)?;
+    Ok(true)
 }
 
 /// Deregister a route from the route table file.

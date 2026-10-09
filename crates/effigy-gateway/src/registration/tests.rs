@@ -74,6 +74,96 @@ fn register_upserts_existing() {
 }
 
 #[test]
+fn managed_listener_routes_require_exact_generation_and_block_static_replacement() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("routes.json");
+    let project = dir.path().display().to_string();
+    let start = crate::identity::GatewayStartIdentity::Linux { start_ticks: 1 };
+    let make_owner = |generation: &str, address: &str| ManagedListenerRouteOwner {
+        owner: "main|web|test|app".to_owned(),
+        runtime_generation: "runtime-1".to_owned(),
+        generation: generation.to_owned(),
+        supervisor_pid: 10,
+        supervisor_boot_identity: "boot".to_owned(),
+        supervisor_start_identity: start.clone(),
+        root_pid: 11,
+        root_boot_identity: "boot".to_owned(),
+        root_start_identity: start.clone(),
+        listener_pid: 11,
+        listener_boot_identity: "boot".to_owned(),
+        listener_start_identity: start.clone(),
+        address: address.to_owned(),
+        route_tls: true,
+        availability_file: "/fixture/state.json".to_owned(),
+    };
+
+    register_managed_listener_route(
+        &path,
+        &project,
+        "app.example.test",
+        "127.0.0.1:43123",
+        true,
+        make_owner("child-1", "127.0.0.1:43123"),
+        None,
+    )
+    .unwrap();
+
+    let static_replacement = register_route(
+        &path,
+        &RouteRegistration {
+            domain: "app.example.test".to_owned(),
+            target: Some("127.0.0.1:8080".to_owned()),
+            dns_ip: None,
+            tcp_port: None,
+            tcp_target: None,
+            tls: false,
+            project_path: project.clone(),
+            source: RouteSource::Container,
+        },
+    );
+    assert!(matches!(
+        static_replacement,
+        Err(GatewayError::ForeignRoute { .. })
+    ));
+    assert!(!deregister_managed_listener_route(
+        &path,
+        &project,
+        "app.example.test",
+        "main|web|test|app",
+        "stale-callback",
+    )
+    .unwrap());
+
+    register_managed_listener_route(
+        &path,
+        &project,
+        "app.example.test",
+        "127.0.0.1:43124",
+        true,
+        make_owner("child-2", "127.0.0.1:43124"),
+        Some("child-1"),
+    )
+    .unwrap();
+    assert!(!deregister_managed_listener_route(
+        &path,
+        &project,
+        "app.example.test",
+        "main|web|test|app",
+        "child-1",
+    )
+    .unwrap());
+    assert_eq!(
+        RouteTable::load(&path)
+            .unwrap()
+            .lookup("app.example.test")
+            .unwrap()
+            .target
+            .as_deref(),
+        Some("127.0.0.1:43124")
+    );
+}
+
+#[test]
 fn deregister_nonexistent_is_idempotent() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("routes.json");

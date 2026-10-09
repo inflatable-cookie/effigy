@@ -26,8 +26,8 @@ use crate::{
 
 use super::model::{
     ContainerPolicyError, EffectiveAttachMode, EffectiveComposeSource, EffectiveContainerPolicy,
-    EffectiveDnsRoute, EffectiveHostProcess, EffectiveServiceAlias, HostProcessRestart,
-    HostProcessSignal,
+    EffectiveDnsRoute, EffectiveHostProcess, EffectiveManagedHostListener, EffectiveServiceAlias,
+    HostProcessRestart, HostProcessSignal,
 };
 
 pub fn load_container_policy(
@@ -491,6 +491,30 @@ fn resolve_host_process(
     EffectiveHostProcess {
         name: entry.name.trim().to_owned(),
         run: entry.run.clone(),
+        cwd: entry
+            .cwd
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_default(),
+        env: entry
+            .env
+            .iter()
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect(),
+        depends_on: entry.depends_on.clone(),
+        listener: entry
+            .listener
+            .as_ref()
+            .map(|listener| EffectiveManagedHostListener {
+                bind: listener.bind.clone(),
+                readiness_path: listener.readiness.path.clone(),
+                readiness_status: listener.readiness.status,
+                readiness_timeout_secs: listener.readiness.timeout_secs,
+                route_domain: listener.route.domain.clone(),
+                route_tls: listener.route.tls,
+            }),
         restart,
         restart_delay_ms: entry.restart_delay_ms.unwrap_or(1000),
         shutdown_signal,

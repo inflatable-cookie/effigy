@@ -87,6 +87,7 @@ struct ContainerUpPlan {
 
 struct ContainerUpRuntimeIntegrations {
     gateway_routes: Vec<super::gateway_registration::RegisteredGatewayRoute>,
+    managed_host_listeners: Vec<crate::runner::host_process::ManagedHostListenerResult>,
     tcp_alias_host_notes: Vec<String>,
     warnings: Vec<String>,
 }
@@ -158,6 +159,7 @@ fn prepare_container_up(
         ContainerLifecycleOperation::up(attach, detach),
     );
     validate_container_policy(repo_root, &policy)?;
+    crate::runner::host_process::validate_host_process_preflight(repo_root, &policy)?;
     validate_compose_backend_runtime(repo_root, &policy)?;
     let secret_runtime = if operation_plan.consumes_declared_container_secrets() {
         resolve_container_secret_runtime(repo_root, &policy, secrets_required())?
@@ -314,12 +316,26 @@ fn complete_container_up_runtime_integrations(
     };
 
     let mut warnings = plan.warnings.clone();
-    if let Err(error) = start_host_processes_for_container(repo_root, policy) {
-        warnings.push(format!("host-process supervisor failed to start: {error}"));
-    }
+    let managed_host_listeners = match start_host_processes_for_container(repo_root, policy) {
+        Ok(listeners) => listeners,
+        Err(error)
+            if policy
+                .host_processes
+                .iter()
+                .any(|process| process.listener.is_some()) =>
+        {
+            let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, policy);
+            return Err(finish_container_up_failure(error, cleanup_result));
+        }
+        Err(error) => {
+            warnings.push(format!("host-process supervisor failed to start: {error}"));
+            Vec::new()
+        }
+    };
 
     Ok(ContainerUpRuntimeIntegrations {
         gateway_routes,
+        managed_host_listeners,
         tcp_alias_host_notes,
         warnings,
     })
@@ -367,9 +383,32 @@ fn detached_container_up_report(
     let mut report = up_detached_report(&plan.policy, plan.colima_started, health);
     annotate_shared_service_notes(&mut report, &plan.shared_service_notes);
     annotate_registered_gateway_routes(&mut report, &integrations.gateway_routes);
+    annotate_managed_host_listeners(&mut report, &integrations.managed_host_listeners);
     annotate_tcp_alias_host_notes(&mut report, &integrations.tcp_alias_host_notes);
     annotate_warning_lines(&mut report, &integrations.warnings);
     report
+}
+
+fn annotate_managed_host_listeners(
+    report: &mut ContainerCommandReport,
+    listeners: &[crate::runner::host_process::ManagedHostListenerResult],
+) {
+    if listeners.is_empty() {
+        return;
+    }
+    if let Some(json) = report.json.as_object_mut() {
+        json.insert(
+            "managed_host_listeners".to_owned(),
+            serde_json::to_value(listeners).expect("managed listener result serializes"),
+        );
+    }
+    for listener in listeners {
+        report.success_text.push('\n');
+        report.success_text.push_str(&format!(
+            "[host listener] {} ready at {} -> {}",
+            listener.name, listener.address, listener.public_url
+        ));
+    }
 }
 
 pub(super) fn run_container_down_command(

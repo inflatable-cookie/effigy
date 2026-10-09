@@ -151,6 +151,27 @@
 "proof:gateway:private" = [
   { id = "gateway-private-cli-https", run = "cargo test -p effigy --test gateway_private -- --nocapture --test-threads=1", timeout_ms = 600000 },
 ]
+
+# Managed host listener ownership, readiness, route generations, dependency
+# URL propagation, and exact scoped teardown. Nextest gives each test a slow
+# timeout with forced termination and a bounded overall run time.
+"test:managed:host-listeners" = [
+  { id = "managed-host-listener-manifest", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy-manifest --lib --filterset 'test(managed_host_listener_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { id = "managed-host-listener-process", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy-process --lib --filterset 'test(identity)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { id = "managed-host-listener-registration", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy-gateway --lib --filterset 'test(managed_listener_routes_require_exact_generation_and_block_static_replacement)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { id = "managed-host-listener-gateway-registration", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy-gateway --lib --filterset 'test(registration)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { id = "managed-host-listener-runner-registration", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(gateway_registration)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { id = "managed-host-listener-proxy", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy-gateway --lib --filterset 'test(proxy)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { id = "managed-host-listener-supervisor", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(host_process)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { id = "managed-host-listener-gateway-transition", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy-gateway --lib --filterset 'test(legacy_recovery)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
+]
+"proof:managed:host-listeners" = [
+  { id = "managed-host-listener-cli-proof", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_host_listeners_bind_routes_propagate_restart_and_scope_teardown)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
+]
+"check:managed:host-listeners" = [
+  { id = "managed-host-listener-compile", run = "cargo check -p effigy-process -p effigy-gateway -p effigy-manifest -p effigy-containers -p effigy-cli -p effigy --all-targets --profile test", timeout_ms = 600000 },
+  { id = "managed-host-listener-clippy", run = "cargo clippy -p effigy-process -p effigy-gateway -p effigy-manifest -p effigy-containers -p effigy-cli -p effigy --all-targets -- -D warnings", timeout_ms = 600000 },
+]
 "test:gateway:identity" = [
   { id = "gateway-identity", run = "cargo test -p effigy-gateway -p effigy-cli -p effigy --lib gateway_identity -- --nocapture", timeout_ms = 240000 },
 ]

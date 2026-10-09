@@ -37,8 +37,9 @@ pub use policy::load::{
 };
 pub use policy::model::{
     ContainerEjectResult, ContainerPolicyError, EffectiveAttachMode, EffectiveComposeSource,
-    EffectiveContainerPolicy, EffectiveDnsRoute, EffectiveHostProcess, EffectiveServiceAlias,
-    HostProcessRestart, HostProcessSignal, SharedServiceBinding,
+    EffectiveContainerPolicy, EffectiveDnsRoute, EffectiveHostProcess,
+    EffectiveManagedHostListener, EffectiveServiceAlias, HostProcessRestart, HostProcessSignal,
+    SharedServiceBinding,
 };
 pub use report::{
     cache_list_global_report, cache_list_report, cache_prune_report, data_list_report,

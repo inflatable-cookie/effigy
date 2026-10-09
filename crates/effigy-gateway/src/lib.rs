@@ -35,6 +35,7 @@ pub mod error;
 pub mod identity;
 pub mod legacy;
 pub mod loopback;
+pub mod managed_listener;
 pub mod ports;
 pub mod private_state;
 pub mod proxy;

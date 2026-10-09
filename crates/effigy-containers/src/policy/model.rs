@@ -59,10 +59,24 @@ pub struct EffectiveContainerPolicy {
 pub struct EffectiveHostProcess {
     pub name: String,
     pub run: String,
+    pub cwd: PathBuf,
+    pub env: Vec<(String, String)>,
+    pub depends_on: Vec<String>,
+    pub listener: Option<EffectiveManagedHostListener>,
     pub restart: HostProcessRestart,
     pub restart_delay_ms: u64,
     pub shutdown_signal: HostProcessSignal,
     pub shutdown_grace_secs: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct EffectiveManagedHostListener {
+    pub bind: String,
+    pub readiness_path: String,
+    pub readiness_status: u16,
+    pub readiness_timeout_secs: u64,
+    pub route_domain: String,
+    pub route_tls: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

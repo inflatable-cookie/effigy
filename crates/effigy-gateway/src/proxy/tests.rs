@@ -192,6 +192,7 @@ fn http_route_redirects_to_https_when_tls_is_enabled() {
         project: "/tmp/project".to_owned(),
         tls: true,
         scope: None,
+        managed_listener: None,
         registered: Utc::now(),
     };
     let config = ProxyConfig {
@@ -230,6 +231,7 @@ fn https_route_does_not_redirect_when_request_is_already_https() {
         project: "/tmp/project".to_owned(),
         tls: true,
         scope: None,
+        managed_listener: None,
         registered: Utc::now(),
     };
     let config = ProxyConfig {

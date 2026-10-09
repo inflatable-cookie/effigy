@@ -101,12 +101,50 @@ pub struct Route {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope: Option<String>,
 
+    /// Process and listener generation that owns a dynamically managed host
+    /// listener route. Static `target_host` routes leave this unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub managed_listener: Option<ManagedListenerRouteOwner>,
+
     /// Whether TLS is enabled for this route.
     #[serde(default)]
     pub tls: bool,
 
     /// When this route was registered.
     pub registered: DateTime<Utc>,
+}
+
+/// Kernel identity for a managed host listener route. The gateway rechecks
+/// this identity after connecting to the upstream and before forwarding any
+/// request bytes, so a reused port cannot serve a foreign listener.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ManagedListenerRouteOwner {
+    /// Stable owner identity for one checkout/container/profile/process.
+    pub owner: String,
+    /// Container lifecycle generation that launched this supervisor.
+    pub runtime_generation: String,
+    /// Child restart generation.
+    pub generation: String,
+    /// Detached Effigy supervisor PID and exact generation identity.
+    pub supervisor_pid: u32,
+    pub supervisor_boot_identity: String,
+    pub supervisor_start_identity: crate::identity::GatewayStartIdentity,
+    /// Recorded managed shell leader PID and exact generation identity.
+    pub root_pid: u32,
+    pub root_boot_identity: String,
+    pub root_start_identity: crate::identity::GatewayStartIdentity,
+    /// Process that owns the listening socket and exact generation identity.
+    pub listener_pid: u32,
+    pub listener_boot_identity: String,
+    pub listener_start_identity: crate::identity::GatewayStartIdentity,
+    /// Exact loopback address checked against the route target.
+    pub address: String,
+    /// Whether the public route terminates TLS at the gateway.
+    pub route_tls: bool,
+    /// Generation state file that makes a cached route unavailable before
+    /// its child group is stopped or replaced.
+    pub availability_file: String,
 }
 
 /// Process-wide and cross-process lock for route-table read/check/write.

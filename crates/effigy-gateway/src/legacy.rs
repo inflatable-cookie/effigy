@@ -3,6 +3,7 @@
 use std::fs::{self, File, OpenOptions};
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -388,7 +389,12 @@ fn role_matches(owned: &[GatewayEndpoint], expected: &[GatewayEndpoint]) -> bool
     expected.iter().all(|need| owned.contains(need))
 }
 
-fn process_listening_endpoints(pid: u32) -> Result<Vec<GatewayEndpoint>, std::io::Error> {
+/// List TCP/UDP listening endpoints held by one live process.
+///
+/// This inspects kernel socket ownership on Linux and macOS. Unsupported
+/// platforms and unreadable process state return an error so callers can fail
+/// closed instead of inferring ownership from a connection probe.
+pub fn process_listening_endpoints(pid: u32) -> Result<Vec<GatewayEndpoint>, std::io::Error> {
     #[cfg(target_os = "linux")]
     {
         crate::linux_net::process_listening_endpoints(pid)
@@ -405,6 +411,127 @@ fn process_listening_endpoints(pid: u32) -> Result<Vec<GatewayEndpoint>, std::io
             "legacy candidate socket inspection is unsupported on this platform",
         ))
     }
+}
+
+/// Find every same-user process whose TCP listener can accept connections for
+/// `endpoint`. A managed route requires exactly one owner; `SO_REUSEPORT` or a
+/// wildcard listener shared with a foreign process is refused.
+pub fn listening_process_ids(endpoint: &GatewayEndpoint) -> Result<Vec<u32>, std::io::Error> {
+    if endpoint.transport != GatewayTransport::Tcp {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "managed host routes require TCP endpoints",
+        ));
+    }
+    let output = Command::new("ps").args(["-Ao", "pid=,uid="]).output()?;
+    if !output.status.success() {
+        return Err(std::io::Error::other(format!(
+            "cannot enumerate local process owners: ps exited with {}",
+            output.status
+        )));
+    }
+    let rendered = String::from_utf8(output.stdout).map_err(|error| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("local process inventory is not UTF-8: {error}"),
+        )
+    })?;
+    let effective_uid = nix::unistd::Uid::effective().as_raw();
+    let mut owners = Vec::new();
+    for row in rendered.lines() {
+        let mut fields = row.split_whitespace();
+        let Some(pid) = fields.next().and_then(|field| field.parse::<u32>().ok()) else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "local process inventory contains an invalid PID",
+            ));
+        };
+        let Some(uid) = fields.next().and_then(|field| field.parse::<u32>().ok()) else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "local process inventory contains an invalid UID",
+            ));
+        };
+        if pid == 0 || uid != effective_uid {
+            continue;
+        }
+        let endpoints = match process_listening_endpoints(pid) {
+            Ok(endpoints) => endpoints,
+            // The process inventory can race with a same-user process exiting.
+            // ESRCH proves that PID no longer owns a socket; permission and
+            // inspection errors remain fail-closed.
+            Err(error) if process_has_disappeared(&error) => continue,
+            Err(error) => return Err(error),
+        };
+        if endpoints
+            .iter()
+            .any(|current| endpoints_overlap(current, endpoint))
+        {
+            owners.push(pid);
+        }
+    }
+    owners.sort_unstable();
+    owners.dedup();
+    Ok(owners)
+}
+
+/// Verify that `pid` owns the kernel listener socket and that no second
+/// listener socket can accept connections for the same endpoint.
+///
+/// Linux uses the kernel's socket inode table for the exclusivity check. This
+/// avoids requiring permission to inspect unrelated same-user processes while
+/// still detecting wildcard and `SO_REUSEPORT` collisions. macOS enumerates
+/// listener owners through libproc.
+pub fn verify_process_listener_exclusive(
+    pid: u32,
+    endpoint: &GatewayEndpoint,
+) -> Result<(), std::io::Error> {
+    if endpoint.transport != GatewayTransport::Tcp {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "managed host routes require TCP endpoints",
+        ));
+    }
+    #[cfg(target_os = "linux")]
+    {
+        crate::linux_net::verify_process_listener_exclusive(pid, endpoint)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let owners = listening_process_ids(endpoint)?;
+        if owners.as_slice() == [pid] {
+            Ok(())
+        } else {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!(
+                    "managed endpoint {} is shared or has unowned listeners: {owners:?}",
+                    endpoint.addr
+                ),
+            ))
+        }
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        let _ = pid;
+        let _ = endpoint;
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "managed listener exclusivity inspection is unsupported on this platform",
+        ))
+    }
+}
+
+fn process_has_disappeared(error: &std::io::Error) -> bool {
+    error.kind() == std::io::ErrorKind::NotFound || error.raw_os_error() == Some(libc::ESRCH)
+}
+
+fn endpoints_overlap(left: &GatewayEndpoint, right: &GatewayEndpoint) -> bool {
+    left.transport == right.transport
+        && left.addr.port() == right.addr.port()
+        && (left.addr.ip() == right.addr.ip()
+            || left.addr.ip().is_unspecified()
+            || right.addr.ip().is_unspecified())
 }
 
 fn read_executable_path(pid: u32) -> Option<String> {
@@ -478,7 +605,18 @@ impl GatewayTransitionLock {
             .parent()
             .ok_or_else(|| invalid_record("gateway PID path has no parent"))?;
         let owner_uid = identity::ensure_trusted_gateway_parent(pid_path)?;
-        acquire_transition_lock(parent, owner_uid)
+        acquire_transition_lock(parent, owner_uid, false)
+    }
+
+    /// Acquire `gateway.transition.lock`, waiting for an active transition.
+    /// Certificate generation uses this form because multiple managed
+    /// profiles can request different certificates from the same private CA.
+    pub fn acquire(pid_path: &Path) -> Result<Self, GatewayError> {
+        let parent = pid_path
+            .parent()
+            .ok_or_else(|| invalid_record("gateway PID path has no parent"))?;
+        let owner_uid = identity::ensure_trusted_gateway_parent(pid_path)?;
+        acquire_transition_lock(parent, owner_uid, true)
     }
 }
 
@@ -486,6 +624,7 @@ impl GatewayTransitionLock {
 fn acquire_transition_lock(
     parent: &Path,
     owner_uid: u32,
+    wait: bool,
 ) -> Result<GatewayTransitionLock, GatewayError> {
     use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 
@@ -518,7 +657,12 @@ fn acquire_transition_lock(
         )
         .map_err(|error| GatewayError::Io(error.into()))?;
     }
-    match fs2::FileExt::try_lock_exclusive(&file) {
+    let lock_result = if wait {
+        fs2::FileExt::lock_exclusive(&file)
+    } else {
+        fs2::FileExt::try_lock_exclusive(&file)
+    };
+    match lock_result {
         Ok(()) => Ok(GatewayTransitionLock(file)),
         Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
             Err(GatewayError::TransitionLockHeld)
@@ -531,6 +675,7 @@ fn acquire_transition_lock(
 fn acquire_transition_lock(
     _parent: &Path,
     _owner_uid: u32,
+    _wait: bool,
 ) -> Result<GatewayTransitionLock, GatewayError> {
     Err(GatewayError::Io(std::io::Error::new(
         std::io::ErrorKind::Unsupported,
@@ -752,6 +897,32 @@ mod legacy_recovery_tests {
         assert!(matches!(second, Err(GatewayError::TransitionLockHeld)));
         drop(first);
         GatewayTransitionLock::try_acquire(&pid_path).expect("lock after release");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn legacy_recovery_transition_lock_can_wait_for_private_tls_generation() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let dir = private_gateway_dir();
+        let pid_path = dir.path().join("gateway.pid");
+        fs::write(&pid_path, "4242\n").unwrap();
+        let held = GatewayTransitionLock::try_acquire(&pid_path).expect("held lock");
+        let (started_tx, started_rx) = mpsc::channel();
+        let (acquired_tx, acquired_rx) = mpsc::channel();
+        let contender_path = pid_path.clone();
+        let contender = std::thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            let _lock = GatewayTransitionLock::acquire(&contender_path).unwrap();
+            acquired_tx.send(()).unwrap();
+        });
+
+        started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert!(acquired_rx.recv_timeout(Duration::from_millis(50)).is_err());
+        drop(held);
+        acquired_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        contender.join().unwrap();
     }
 
     #[cfg(unix)]
