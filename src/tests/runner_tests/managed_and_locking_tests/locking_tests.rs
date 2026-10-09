@@ -1,9 +1,11 @@
 use crate::runner::tests::prelude::{
     assert_live_dev_lock_conflict, assert_output_equals, assert_unlock_invocation_error_case_table,
     assert_unlock_success_case_table, lock_test, parse_json_output_with_schema_version, run_dev,
-    run_task_status_from_repo, run_task_with_repo, temp_workspace, thread, write_lock_files,
-    write_root_manifest, Duration, ManagedUnlockInvocationErrorCase, ManagedUnlockSuccessCase,
+    run_task_status_from_repo, run_task_with_repo, start_held_dev_owner, temp_workspace,
+    wait_for_live_task_owner, write_lock_files, write_root_manifest,
+    ManagedUnlockInvocationErrorCase, ManagedUnlockSuccessCase, OwnedThread,
 };
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -18,7 +20,64 @@ run = "sleep 1"
 "#,
     );
 
-    assert_live_dev_lock_conflict(&root, 120, "task:dev", "effigy tasks unlock task:dev");
+    assert_live_dev_lock_conflict(&root, "task:dev", "effigy tasks unlock task:dev");
+}
+
+#[test]
+fn live_lock_conflict_leaves_owner_active_record_in_place() {
+    let _guard = lock_test();
+    let root = temp_workspace("lock-conflict-preserves-active");
+    let owner = start_held_dev_owner(&root);
+
+    let active_dir = root.join(".effigy/runtime/tasks/active");
+    let before = read_single_json_file(&active_dir);
+    assert!(
+        before.contains("\"stage\": \"executing\""),
+        "hold-ready owner must already be past runtime-prep: {before}"
+    );
+
+    let err = run_dev(&root, &[]).expect_err("second run should conflict on lock");
+    crate::runner::tests::prelude::assert_lock_conflict(
+        err,
+        "task:dev",
+        "effigy tasks unlock task:dev",
+    );
+
+    let after = read_single_json_file(&active_dir);
+    assert_eq!(
+        after, before,
+        "live contender must not overwrite or delete the owner's active record"
+    );
+
+    owner.release_and_join().expect("first run should complete");
+}
+
+#[test]
+fn live_waiter_fails_closed_on_corrupt_active_record() {
+    let _guard = lock_test();
+    let root = temp_workspace("lock-conflict-corrupt-active");
+    let owner = start_held_dev_owner(&root);
+
+    let active_path = single_json_path(&root.join(".effigy/runtime/tasks/active"));
+    std::fs::write(&active_path, "").expect("corrupt active record");
+
+    let err = run_dev(&root, &[]).expect_err("corrupt active record must fail closed");
+    let message = err.to_string();
+    assert!(
+        message.contains("failed to parse active task-status record"),
+        "corrupt active must stay a parse error, got {message}"
+    );
+    assert!(
+        message.contains("EOF while parsing a value at line 1 column 0"),
+        "empty active must stay EOF, got {message}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&active_path).expect("reread corrupt active"),
+        "",
+        "waiter must not delete or replace a foreign active record"
+    );
+
+    owner.release_and_join().expect("first run should complete");
 }
 
 #[test]
@@ -234,14 +293,12 @@ run = "printf build-ok"
     );
 
     let root_for_thread = root.clone();
-    let join = thread::spawn(move || run_dev(&root_for_thread, &[]));
-    std::thread::sleep(Duration::from_millis(120));
+    let owner = OwnedThread::spawn(move || run_dev(&root_for_thread, &[]));
+    wait_for_live_task_owner(&root, "task-dev.lock");
 
     let _out = run_task_with_repo(&root, "build", &[]).expect("build should not block on dev");
 
-    join.join()
-        .expect("thread join")
-        .expect("first run should complete");
+    owner.join().expect("first run should complete");
 }
 
 #[test]
@@ -261,8 +318,8 @@ lock = "dev-stack"
     );
 
     let root_for_thread = root.clone();
-    let join = thread::spawn(move || run_dev(&root_for_thread, &[]));
-    std::thread::sleep(Duration::from_millis(120));
+    let owner = OwnedThread::spawn(move || run_dev(&root_for_thread, &[]));
+    wait_for_live_task_owner(&root, "shared-dev-stack.lock");
 
     let err = run_task_with_repo(&root, "build", &[]).expect_err("shared lock should conflict");
     crate::runner::tests::prelude::assert_lock_conflict(
@@ -271,9 +328,7 @@ lock = "dev-stack"
         "effigy tasks unlock shared:dev-stack",
     );
 
-    join.join()
-        .expect("thread join")
-        .expect("first run should complete");
+    owner.join().expect("first run should complete");
 }
 
 #[test]
@@ -291,17 +346,15 @@ run = "printf other-ok"
     );
 
     let root_for_thread = root.clone();
-    let join = thread::spawn(move || {
+    let owner = OwnedThread::spawn(move || {
         run_task_with_repo(&root_for_thread, "validate:activity-routing", &[])
     });
-    std::thread::sleep(Duration::from_millis(120));
+    wait_for_live_task_owner(&root, "task-validate-activity-routing.lock");
 
     let _out = run_task_with_repo(&root, "validate:other", &[])
         .expect("independent validation selector should not block");
 
-    join.join()
-        .expect("thread join")
-        .expect("first run should complete");
+    owner.join().expect("first run should complete");
 }
 
 #[test]
@@ -316,8 +369,8 @@ run = "sleep 1"
     );
 
     let root_for_thread = root.clone();
-    let join = thread::spawn(move || run_dev(&root_for_thread, &[]));
-    std::thread::sleep(Duration::from_millis(120));
+    let owner = OwnedThread::spawn(move || run_dev(&root_for_thread, &[]));
+    wait_for_live_task_owner(&root, "task-dev.lock");
 
     let err = run_dev(&root, &["--lock-wait-ms", "150"])
         .expect_err("live owner should survive a bounded wait");
@@ -329,9 +382,7 @@ run = "sleep 1"
     assert!(parsed["active"].is_object(), "live owner missing: {parsed}");
     assert!(parsed["active"]["owner_pid"].as_u64().is_some());
 
-    join.join()
-        .expect("thread join")
-        .expect("first run should complete");
+    owner.join().expect("first run should complete");
 }
 
 #[test]
@@ -349,8 +400,8 @@ run = "sleep 1"
     );
 
     let root_for_thread = root.clone();
-    let join = thread::spawn(move || run_task_with_repo(&root_for_thread, "validate", &[]));
-    std::thread::sleep(Duration::from_millis(150));
+    let owner = OwnedThread::spawn(move || run_task_with_repo(&root_for_thread, "validate", &[]));
+    wait_for_live_task_owner(&root, "task-validate.lock");
 
     let err = run_task_with_repo(&root, "validate", &["--lock-wait-ms", "150"])
         .expect_err("live sequence owner should survive a bounded wait");
@@ -371,9 +422,7 @@ run = "sleep 1"
         "live sequence owner missing: {parsed}"
     );
 
-    join.join()
-        .expect("thread join")
-        .expect("first run should complete");
+    owner.join().expect("first run should complete");
 }
 
 #[test]
@@ -388,16 +437,14 @@ run = "sleep 0.2"
     );
 
     let root_for_thread = root.clone();
-    let join = thread::spawn(move || run_dev(&root_for_thread, &[]));
-    std::thread::sleep(Duration::from_millis(80));
+    let owner = OwnedThread::spawn(move || run_dev(&root_for_thread, &[]));
+    wait_for_live_task_owner(&root, "task-dev.lock");
 
     let out =
         run_dev(&root, &["--lock-wait-ms", "2000"]).expect("waiter should acquire after release");
     assert_output_equals(&out, "");
 
-    join.join()
-        .expect("thread join")
-        .expect("first run should complete");
+    owner.join().expect("first run should complete");
 }
 
 #[test]
@@ -422,4 +469,23 @@ run = "printf ok"
     let out = run_dev(&root, &["--lock-wait-ms", "250"])
         .expect("stopped owner should be reclaimed during wait");
     assert_output_equals(&out, "");
+}
+
+fn single_json_path(dir: &Path) -> std::path::PathBuf {
+    let entries: Vec<_> = std::fs::read_dir(dir)
+        .expect("read active dir")
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().and_then(|value| value.to_str()) == Some("json"))
+        .collect();
+    assert_eq!(
+        entries.len(),
+        1,
+        "expected exactly one active json record, got {entries:?}"
+    );
+    entries.into_iter().next().expect("active json")
+}
+
+fn read_single_json_file(dir: &Path) -> String {
+    std::fs::read_to_string(single_json_path(dir)).expect("read active json")
 }

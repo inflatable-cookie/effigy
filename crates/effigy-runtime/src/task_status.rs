@@ -154,7 +154,7 @@ fn collect_active_task_status_keys(
             return Err(EffigyRuntimeError::task_invocation(format!(
                 "failed to read active task-status directory `{}`: {error}",
                 active_root.display()
-            )))
+            )));
         }
     };
 
@@ -191,7 +191,7 @@ fn collect_latest_task_status_keys(
             return Err(EffigyRuntimeError::task_invocation(format!(
                 "failed to read task-status reports directory `{}`: {error}",
                 reports_root.display()
-            )))
+            )));
         }
     };
 
@@ -271,7 +271,7 @@ fn load_json_file<T: serde::de::DeserializeOwned>(
             return Err(EffigyRuntimeError::task_invocation(format!(
                 "failed to read {label} `{}`: {error}",
                 path.display()
-            )))
+            )));
         }
     };
 
@@ -568,6 +568,40 @@ mod tests {
         assert_eq!(snapshot.stale_active, Some(active));
         assert_eq!(snapshot.warnings.len(), 1);
         assert_eq!(snapshot.warnings[0].code, "stale-active-heartbeat");
+    }
+
+    #[test]
+    fn load_helpers_fail_closed_on_empty_and_corrupt_records() {
+        let temp = tempdir().expect("tempdir");
+        let repo_root = temp.path();
+        let key = key();
+        let path = task_status_active_record_path(repo_root, &key);
+        fs::create_dir_all(path.parent().expect("active parent")).expect("mkdir active");
+
+        fs::write(&path, "").expect("empty active");
+        let empty = load_task_status_active_record(repo_root, &key)
+            .expect_err("empty active record must fail closed");
+        let empty_message = empty.to_string();
+        assert!(
+            empty_message.contains("failed to parse active task-status record"),
+            "{empty_message}"
+        );
+        assert!(
+            empty_message.contains("EOF while parsing a value at line 1 column 0"),
+            "{empty_message}"
+        );
+
+        fs::write(&path, "{").expect("partial active");
+        let partial = load_task_status_active_record(repo_root, &key)
+            .expect_err("partial active record must fail closed");
+        let partial_message = partial.to_string();
+        assert!(
+            partial_message.contains("failed to parse active task-status record"),
+            "{partial_message}"
+        );
+        let latest =
+            load_task_status_latest_record(repo_root, &key).expect("missing latest is absence");
+        assert!(latest.is_none());
     }
 
     #[test]
