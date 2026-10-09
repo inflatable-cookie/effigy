@@ -12,9 +12,8 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
-use std::io::{Read, Write};
-use std::net::Shutdown;
-use std::net::{SocketAddr, TcpStream};
+use std::io::Read;
+use std::net::SocketAddr;
 use std::os::unix::io::AsRawFd;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -43,6 +42,8 @@ use nix::sys::signal::{kill, Signal};
 use nix::unistd::Pid;
 
 use super::error::RunnerError;
+
+use super::managed_listener_readiness::{probe_http_readiness, HttpReadinessOutcome};
 
 const HOST_PROCESS_DIR: &str = ".effigy/runtime/host-processes";
 const HOST_PROCESS_SPEC_SCHEMA: &str = "effigy.managed.host-process-spec.v1";
@@ -149,6 +150,8 @@ struct HostListenerState {
     listener_boot_identity: Option<String>,
     listener_start_identity: Option<GatewayStartIdentity>,
     route_owner: Option<ManagedListenerRouteOwner>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    diagnostic: Option<HostListenerDiagnostic>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -899,9 +902,14 @@ fn wait_for_listener_state(
                     }
                 }
                 "failed" => {
+                    let detail = state
+                        .diagnostic
+                        .as_ref()
+                        .map(|diagnostic| format!(" ({})", diagnostic.summary()))
+                        .unwrap_or_default();
                     return Err(RunnerError::task_invocation(format!(
-                        "managed host listener `{process_name}` failed before readiness"
-                    )))
+                        "managed host listener `{process_name}` failed before readiness{detail}"
+                    )));
                 }
                 _ => {}
             }
@@ -1385,6 +1393,7 @@ fn supervise_managed_host_listener(
             break;
         };
         let generation = random_token()?;
+        let mut diagnostic = HostListenerDiagnostic::default();
         let report_path = report_dir.join(format!(
             "{}.{}.listener-report.json",
             sanitize(&args.process_name),
@@ -1504,16 +1513,19 @@ fn supervise_managed_host_listener(
             ),
         );
 
-        let owned = match wait_for_owned_listener(OwnedHostListenerWait {
-            supervisor,
-            root_pid: pid,
-            root_boot_identity: &live.boot_identity,
-            root_start_identity: &live.start_identity,
-            report_path: &report_path,
-            generation: &generation,
-            config: listener,
-            shutdown: &shutdown,
-        }) {
+        let owned = match wait_for_owned_listener(
+            OwnedHostListenerWait {
+                supervisor,
+                root_pid: pid,
+                root_boot_identity: &live.boot_identity,
+                root_start_identity: &live.start_identity,
+                report_path: &report_path,
+                generation: &generation,
+                config: listener,
+                shutdown: &shutdown,
+            },
+            &mut diagnostic,
+        ) {
             Ok(owned) => owned,
             Err(error) => {
                 terminate_owned_child_group(&mut child, &root_identity, Duration::from_secs(2))?;
@@ -1527,21 +1539,24 @@ fn supervise_managed_host_listener(
                 );
                 write_listener_state(
                     &spec.listener_state_file,
-                    listener_state(
-                        spec,
-                        supervisor,
-                        if shutdown.load(Ordering::SeqCst) {
-                            "stopped"
-                        } else {
-                            "failed"
-                        },
-                        Some(&generation),
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
+                    with_diagnostic(
+                        listener_state(
+                            spec,
+                            supervisor,
+                            if shutdown.load(Ordering::SeqCst) {
+                                "stopped"
+                            } else {
+                                "failed"
+                            },
+                            Some(&generation),
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                        ),
+                        &diagnostic,
                     ),
                 )?;
                 return Ok(());
@@ -1598,19 +1613,23 @@ fn supervise_managed_host_listener(
                 &log_path,
                 &format!("[effigy host-process] listener route preparation failed: {error}"),
             );
+            diagnostic.route = RouteObservation::PrepareFailed;
             write_listener_state(
                 &spec.listener_state_file,
-                listener_state(
-                    spec,
-                    supervisor,
-                    "failed",
-                    Some(&generation),
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
+                with_diagnostic(
+                    listener_state(
+                        spec,
+                        supervisor,
+                        "failed",
+                        Some(&generation),
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                    ),
+                    &diagnostic,
                 ),
             )?;
             return Ok(());
@@ -1697,19 +1716,23 @@ fn supervise_managed_host_listener(
                     "[effigy host-process] listener ownership changed before publication: {error}"
                 ),
             );
+            diagnostic.route = RouteObservation::OwnershipChanged;
             write_listener_state(
                 &spec.listener_state_file,
-                listener_state(
-                    spec,
-                    supervisor,
-                    "failed",
-                    Some(&generation),
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
+                with_diagnostic(
+                    listener_state(
+                        spec,
+                        supervisor,
+                        "failed",
+                        Some(&generation),
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                    ),
+                    &diagnostic,
                 ),
             )?;
             return Ok(());
@@ -1747,19 +1770,23 @@ fn supervise_managed_host_listener(
                 &log_path,
                 &format!("[effigy host-process] route publication failed: {error}"),
             );
+            diagnostic.route = RouteObservation::PublicationFailed;
             write_listener_state(
                 &spec.listener_state_file,
-                listener_state(
-                    spec,
-                    supervisor,
-                    "failed",
-                    Some(&generation),
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
+                with_diagnostic(
+                    listener_state(
+                        spec,
+                        supervisor,
+                        "failed",
+                        Some(&generation),
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                    ),
+                    &diagnostic,
                 ),
             )?;
             return Ok(());
@@ -1994,7 +2021,17 @@ fn listener_state(
         listener_boot_identity: listener.map(|identity| identity.listener_boot_identity.clone()),
         listener_start_identity: listener.map(|identity| identity.listener_start_identity.clone()),
         route_owner: route_owner.cloned(),
+        diagnostic: None,
     }
+}
+
+/// Attaches the last startup observation to a terminal generation state.
+fn with_diagnostic(
+    mut state: HostListenerState,
+    diagnostic: &HostListenerDiagnostic,
+) -> HostListenerState {
+    state.diagnostic = Some(*diagnostic);
+    state
 }
 
 struct OwnedHostListenerWait<'a> {
@@ -2008,8 +2045,151 @@ struct OwnedHostListenerWait<'a> {
     shutdown: &'a Arc<std::sync::atomic::AtomicBool>,
 }
 
+/// Records the latest startup observation for one child generation so a
+/// failed generation keeps evidence after its report file and child are gone.
+/// Tokens describe what was last seen; they never authorize ownership,
+/// signaling, publication or release, and they are not read back as identity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HostListenerDiagnostic {
+    report: ReportObservation,
+    claimed_address: Option<SocketAddr>,
+    ownership: OwnershipObservation,
+    candidates_inspected: Option<u32>,
+    observed_listener_pid: Option<u32>,
+    http_probe: Option<HttpReadinessOutcome>,
+    http_status: Option<u16>,
+    route: RouteObservation,
+}
+
+impl Default for HostListenerDiagnostic {
+    fn default() -> Self {
+        Self {
+            report: ReportObservation::NotObserved,
+            claimed_address: None,
+            ownership: OwnershipObservation::NotReached,
+            candidates_inspected: None,
+            observed_listener_pid: None,
+            http_probe: None,
+            http_status: None,
+            route: RouteObservation::NotReached,
+        }
+    }
+}
+
+impl HostListenerDiagnostic {
+    fn summary(&self) -> String {
+        let probe = match (self.http_probe, self.http_status) {
+            (Some(outcome), Some(status)) => format!("{}:{status}", outcome.as_str()),
+            (Some(outcome), None) => outcome.as_str().to_owned(),
+            (None, _) => "not_attempted".to_owned(),
+        };
+        format!(
+            "report={}, ownership={}, http_probe={probe}, route={}",
+            self.report.as_str(),
+            self.ownership.as_str(),
+            self.route.as_str()
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ReportObservation {
+    NotObserved,
+    Absent,
+    Unreadable,
+    Unsafe,
+    SchemaOrGenerationMismatch,
+    InvalidAddress,
+    BindMismatch,
+    Accepted,
+}
+
+impl ReportObservation {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::NotObserved => "not_observed",
+            Self::Absent => "absent",
+            Self::Unreadable => "unreadable",
+            Self::Unsafe => "unsafe",
+            Self::SchemaOrGenerationMismatch => "schema_or_generation_mismatch",
+            Self::InvalidAddress => "invalid_address",
+            Self::BindMismatch => "bind_mismatch",
+            Self::Accepted => "accepted",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum OwnershipObservation {
+    NotReached,
+    NoOwnerObserved,
+    ExclusiveOwnerObserved,
+    SupervisorChanged,
+    ChildChanged,
+    AncestryChanged,
+    AncestryUnavailable,
+    IdentityUnavailable,
+    IdentityChanged,
+    ListenerOutsideGeneration,
+    SocketInspectionFailed,
+    ExclusivityUnproven,
+}
+
+impl OwnershipObservation {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::NotReached => "not_reached",
+            Self::NoOwnerObserved => "no_owner_observed",
+            Self::ExclusiveOwnerObserved => "exclusive_owner_observed",
+            Self::SupervisorChanged => "supervisor_changed",
+            Self::ChildChanged => "child_changed",
+            Self::AncestryChanged => "ancestry_changed",
+            Self::AncestryUnavailable => "ancestry_unavailable",
+            Self::IdentityUnavailable => "identity_unavailable",
+            Self::IdentityChanged => "identity_changed",
+            Self::ListenerOutsideGeneration => "listener_outside_generation",
+            Self::SocketInspectionFailed => "socket_inspection_failed",
+            Self::ExclusivityUnproven => "exclusivity_unproven",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum RouteObservation {
+    NotReached,
+    PrepareFailed,
+    OwnershipChanged,
+    PublicationFailed,
+}
+
+impl RouteObservation {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::NotReached => "not_reached",
+            Self::PrepareFailed => "prepare_failed",
+            Self::OwnershipChanged => "ownership_changed",
+            Self::PublicationFailed => "publication_failed",
+        }
+    }
+}
+
+/// Keeps a diagnostic observation at the point it is seen, then passes the
+/// original verification error through unchanged.
+fn observe_ownership<T>(
+    diagnostic: &mut HostListenerDiagnostic,
+    observation: OwnershipObservation,
+    result: Result<T, RunnerError>,
+) -> Result<T, RunnerError> {
+    result.inspect_err(|_| diagnostic.ownership = observation)
+}
+
 fn wait_for_owned_listener(
     wait: OwnedHostListenerWait<'_>,
+    diagnostic: &mut HostListenerDiagnostic,
 ) -> Result<OwnedHostListener, RunnerError> {
     let OwnedHostListenerWait {
         supervisor,
@@ -2032,92 +2212,151 @@ fn wait_for_owned_listener(
                 "managed listener startup was stopped before readiness",
             ));
         }
-        verify_supervisor_identity(supervisor)?;
-        verify_child_identity(root_pid, root_boot_identity, root_start_identity)?;
+        observe_ownership(
+            diagnostic,
+            OwnershipObservation::SupervisorChanged,
+            verify_supervisor_identity(supervisor),
+        )?;
+        observe_ownership(
+            diagnostic,
+            OwnershipObservation::ChildChanged,
+            verify_child_identity(root_pid, root_boot_identity, root_start_identity),
+        )?;
         if !effigy_process::process_is_descendant_of(root_pid, supervisor.pid) {
+            diagnostic.ownership = OwnershipObservation::AncestryChanged;
             return Err(RunnerError::task_invocation(
                 "managed host child is no longer beneath its recorded supervisor",
             ));
         }
-        if let Ok(metadata) = fs::symlink_metadata(report_path) {
-            if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() > 4096 {
-                return Err(RunnerError::task_invocation(
-                    "managed listener report is not a small regular file",
-                ));
+        let metadata = match fs::symlink_metadata(report_path) {
+            Ok(metadata) => metadata,
+            Err(error) => {
+                diagnostic.report = if error.kind() == std::io::ErrorKind::NotFound {
+                    ReportObservation::Absent
+                } else {
+                    ReportObservation::Unreadable
+                };
+                if Instant::now() >= deadline {
+                    return Err(listener_readiness_timeout(timeout));
+                }
+                thread::sleep(Duration::from_millis(50));
+                continue;
             }
-            let report: HostListenerReport = read_private_json(report_path)?;
-            if report.schema != HOST_LISTENER_REPORT_SCHEMA || report.generation != generation {
-                return Err(RunnerError::task_invocation(
-                    "managed listener report has an unsupported schema or stale generation",
-                ));
+        };
+        if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() > 4096 {
+            diagnostic.report = ReportObservation::Unsafe;
+            return Err(RunnerError::task_invocation(
+                "managed listener report is not a small regular file",
+            ));
+        }
+        let report: HostListenerReport = match read_private_json(report_path) {
+            Ok(report) => report,
+            Err(error) => {
+                diagnostic.report = ReportObservation::Unreadable;
+                return Err(error);
             }
-            let address = report.address.parse::<SocketAddr>().map_err(|_| {
-                RunnerError::task_invocation(
+        };
+        if report.schema != HOST_LISTENER_REPORT_SCHEMA || report.generation != generation {
+            diagnostic.report = ReportObservation::SchemaOrGenerationMismatch;
+            return Err(RunnerError::task_invocation(
+                "managed listener report has an unsupported schema or stale generation",
+            ));
+        }
+        let address = match report.address.parse::<SocketAddr>() {
+            Ok(address) => address,
+            Err(_) => {
+                diagnostic.report = ReportObservation::InvalidAddress;
+                return Err(RunnerError::task_invocation(
                     "managed listener report address is not a socket address",
-                )
-            })?;
-            if !address.ip().is_loopback()
-                || address.port() == 0
-                || address.ip() != preferred.ip()
-                || (preferred.port() != 0 && address.port() != preferred.port())
-            {
-                return Err(RunnerError::task_invocation(
-                    "managed listener report does not match its declared loopback bind preference",
                 ));
             }
-            let mut candidates = vec![root_pid];
-            candidates.extend(effigy_process::process_descendant_ids(root_pid).map_err(
-                |error| {
-                    RunnerError::task_invocation(format!(
-                        "managed listener process ancestry is unavailable: {error}"
-                    ))
-                },
-            )?);
-            candidates.sort_unstable();
-            candidates.dedup();
-            let mut found = None;
-            for pid in candidates {
-                let identity = match read_live_process_identity(pid) {
-                    Ok(identity) => identity,
-                    Err(error)
-                        if error.kind() == std::io::ErrorKind::NotFound
-                            || error.raw_os_error() == Some(libc::ESRCH) =>
-                    {
-                        continue;
-                    }
-                    Err(error) => {
-                        return Err(RunnerError::task_invocation(format!(
+        };
+        diagnostic.claimed_address = Some(address);
+        if !address.ip().is_loopback()
+            || address.port() == 0
+            || address.ip() != preferred.ip()
+            || (preferred.port() != 0 && address.port() != preferred.port())
+        {
+            diagnostic.report = ReportObservation::BindMismatch;
+            return Err(RunnerError::task_invocation(
+                "managed listener report does not match its declared loopback bind preference",
+            ));
+        }
+        diagnostic.report = ReportObservation::Accepted;
+        let mut candidates = vec![root_pid];
+        let descendants = effigy_process::process_descendant_ids(root_pid).map_err(|error| {
+            diagnostic.ownership = OwnershipObservation::AncestryUnavailable;
+            RunnerError::task_invocation(format!(
+                "managed listener process ancestry is unavailable: {error}"
+            ))
+        })?;
+        candidates.extend(descendants);
+        candidates.sort_unstable();
+        candidates.dedup();
+        diagnostic.candidates_inspected = u32::try_from(candidates.len()).ok();
+        diagnostic.ownership = OwnershipObservation::NoOwnerObserved;
+        diagnostic.observed_listener_pid = None;
+        let mut found = None;
+        for pid in candidates {
+            let identity = match read_live_process_identity(pid) {
+                Ok(identity) => identity,
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::NotFound
+                        || error.raw_os_error() == Some(libc::ESRCH) =>
+                {
+                    continue;
+                }
+                Err(error) => {
+                    diagnostic.ownership = OwnershipObservation::IdentityUnavailable;
+                    return Err(RunnerError::task_invocation(format!(
                         "managed listener process identity is unavailable for PID {pid}: {error}"
-                    )))
+                    )));
+                }
+            };
+            let endpoints = match process_listening_endpoints(pid) {
+                Ok(endpoints) => endpoints,
+                Err(error) => {
+                    diagnostic.ownership = OwnershipObservation::SocketInspectionFailed;
+                    return Err(RunnerError::task_invocation(format!(
+                        "cannot inspect listener sockets for PID {pid}: {error}"
+                    )));
+                }
+            };
+            if endpoints.contains(&GatewayEndpoint {
+                transport: GatewayTransport::Tcp,
+                addr: address,
+            }) {
+                if pid != root_pid && !effigy_process::process_is_descendant_of(pid, root_pid) {
+                    diagnostic.ownership = OwnershipObservation::ListenerOutsideGeneration;
+                    return Err(RunnerError::task_invocation(
+                        "managed listener process is outside its recorded child generation",
+                    ));
+                }
+                observe_ownership(
+                    diagnostic,
+                    OwnershipObservation::ChildChanged,
+                    verify_child_identity(root_pid, root_boot_identity, root_start_identity),
+                )?;
+                let current = match read_live_process_identity(pid) {
+                    Ok(current) => current,
+                    Err(error) => {
+                        diagnostic.ownership = OwnershipObservation::IdentityUnavailable;
+                        return Err(RunnerError::task_invocation(format!(
+                            "managed listener owner identity changed during discovery: {error}"
+                        )));
                     }
                 };
-                let endpoints = process_listening_endpoints(pid).map_err(|error| {
-                    RunnerError::task_invocation(format!(
-                        "cannot inspect listener sockets for PID {pid}: {error}"
-                    ))
-                })?;
-                if endpoints.contains(&GatewayEndpoint {
-                    transport: GatewayTransport::Tcp,
-                    addr: address,
-                }) {
-                    if pid != root_pid && !effigy_process::process_is_descendant_of(pid, root_pid) {
-                        return Err(RunnerError::task_invocation(
-                            "managed listener process is outside its recorded child generation",
-                        ));
-                    }
-                    verify_child_identity(root_pid, root_boot_identity, root_start_identity)?;
-                    let current = read_live_process_identity(pid).map_err(|error| {
-                        RunnerError::task_invocation(format!(
-                            "managed listener owner identity changed during discovery: {error}"
-                        ))
-                    })?;
-                    if current.boot_identity != identity.boot_identity
-                        || current.start_identity != identity.start_identity
-                    {
-                        return Err(RunnerError::task_invocation(
-                            "managed listener owner PID was reused during discovery",
-                        ));
-                    }
+                if current.boot_identity != identity.boot_identity
+                    || current.start_identity != identity.start_identity
+                {
+                    diagnostic.ownership = OwnershipObservation::IdentityChanged;
+                    return Err(RunnerError::task_invocation(
+                        "managed listener owner PID was reused during discovery",
+                    ));
+                }
+                observe_ownership(
+                    diagnostic,
+                    OwnershipObservation::ExclusivityUnproven,
                     effigy_gateway::legacy::verify_process_listener_exclusive(
                         pid,
                         &GatewayEndpoint {
@@ -2129,37 +2368,55 @@ fn wait_for_owned_listener(
                         RunnerError::task_invocation(format!(
                             "cannot prove exclusive managed listener ownership: {error}"
                         ))
-                    })?;
-                    found = Some(OwnedHostListener {
-                        address,
-                        listener_pid: pid,
-                        listener_boot_identity: identity.boot_identity,
-                        listener_start_identity: identity.start_identity,
-                    });
-                    break;
-                }
+                    }),
+                )?;
+                diagnostic.ownership = OwnershipObservation::ExclusiveOwnerObserved;
+                diagnostic.observed_listener_pid = Some(pid);
+                found = Some(OwnedHostListener {
+                    address,
+                    listener_pid: pid,
+                    listener_boot_identity: identity.boot_identity,
+                    listener_start_identity: identity.start_identity,
+                });
+                break;
             }
-            if let Some(found) = found {
-                if probe_http_readiness(found.address, &config.route_domain, config) {
-                    verify_supervisor_identity(supervisor)?;
-                    verify_child_identity(root_pid, root_boot_identity, root_start_identity)?;
-                    if !effigy_process::process_is_descendant_of(root_pid, supervisor.pid) {
-                        return Err(RunnerError::task_invocation(
-                            "managed host child ancestry changed during readiness",
-                        ));
-                    }
-                    return Ok(found);
+        }
+        if let Some(found) = found {
+            let probe = probe_http_readiness(found.address, &config.route_domain, config);
+            diagnostic.http_probe = Some(probe.outcome);
+            diagnostic.http_status = probe.status;
+            if probe.outcome == HttpReadinessOutcome::Ready {
+                observe_ownership(
+                    diagnostic,
+                    OwnershipObservation::SupervisorChanged,
+                    verify_supervisor_identity(supervisor),
+                )?;
+                observe_ownership(
+                    diagnostic,
+                    OwnershipObservation::ChildChanged,
+                    verify_child_identity(root_pid, root_boot_identity, root_start_identity),
+                )?;
+                if !effigy_process::process_is_descendant_of(root_pid, supervisor.pid) {
+                    diagnostic.ownership = OwnershipObservation::AncestryChanged;
+                    return Err(RunnerError::task_invocation(
+                        "managed host child ancestry changed during readiness",
+                    ));
                 }
+                return Ok(found);
             }
         }
         if Instant::now() >= deadline {
-            return Err(RunnerError::task_invocation(format!(
-                "timed out after {}s waiting for an owned ready managed host listener",
-                timeout.as_secs()
-            )));
+            return Err(listener_readiness_timeout(timeout));
         }
         thread::sleep(Duration::from_millis(50));
     }
+}
+
+fn listener_readiness_timeout(timeout: Duration) -> RunnerError {
+    RunnerError::task_invocation(format!(
+        "timed out after {}s waiting for an owned ready managed host listener",
+        timeout.as_secs()
+    ))
 }
 
 fn verify_child_identity(
@@ -2194,37 +2451,6 @@ fn verify_supervisor_identity(record: &HostProcessRecord) -> Result<(), RunnerEr
         ));
     }
     Ok(())
-}
-
-fn probe_http_readiness(
-    address: SocketAddr,
-    domain: &str,
-    config: &EffectiveManagedHostListener,
-) -> bool {
-    let Ok(mut stream) = TcpStream::connect_timeout(&address, Duration::from_millis(300)) else {
-        return false;
-    };
-    let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
-    let _ = stream.set_write_timeout(Some(Duration::from_millis(500)));
-    let request = format!(
-        "GET {} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
-        config.readiness_path, domain
-    );
-    if stream.write_all(request.as_bytes()).is_err() {
-        return false;
-    }
-    let _ = stream.shutdown(Shutdown::Write);
-    let mut response = [0u8; 512];
-    let Ok(bytes) = stream.read(&mut response) else {
-        return false;
-    };
-    let first_line = String::from_utf8_lossy(&response[..bytes]);
-    first_line
-        .lines()
-        .next()
-        .and_then(|line| line.split_whitespace().nth(1))
-        .and_then(|status| status.parse::<u16>().ok())
-        == Some(config.readiness_status)
 }
 
 fn publish_managed_listener_route(
@@ -2898,6 +3124,90 @@ mod tests {
         assert!(!process_identity_is_absent(&std::io::Error::from(
             std::io::ErrorKind::PermissionDenied
         )));
+    }
+
+    fn legacy_listener_state_json(status: &str) -> serde_json::Value {
+        serde_json::json!({
+            "schema": HOST_LISTENER_STATE_SCHEMA,
+            "owner": "main|web|dev|app",
+            "runtime_generation": "runtime",
+            "generation": "generation",
+            "status": status,
+            "address": null,
+            "internal_url": null,
+            "public_url": null,
+            "route_domain": "app.test",
+            "supervisor_pid": 1,
+            "supervisor_boot_identity": "boot",
+            "supervisor_start_identity": {
+                "platform": "macos",
+                "start_seconds": 1,
+                "start_microseconds": 0
+            },
+            "child_pid": null,
+            "child_boot_identity": null,
+            "child_start_identity": null,
+            "listener_pid": null,
+            "listener_boot_identity": null,
+            "listener_start_identity": null,
+            "route_owner": null
+        })
+    }
+
+    /// States written before the diagnostic field existed still parse, and an
+    /// absent diagnostic is not serialized, so the existing shape is unchanged.
+    #[test]
+    fn host_process_listener_state_without_diagnostic_keeps_existing_shape() {
+        let state: HostListenerState =
+            serde_json::from_value(legacy_listener_state_json("failed")).unwrap();
+        assert!(state.diagnostic.is_none());
+        let rendered = serde_json::to_value(&state).unwrap();
+        assert!(rendered.get("diagnostic").is_none());
+    }
+
+    #[test]
+    fn host_process_listener_diagnostic_serializes_stable_bounded_tokens() {
+        let diagnostic = HostListenerDiagnostic {
+            report: ReportObservation::Accepted,
+            claimed_address: Some("127.0.0.1:41234".parse().unwrap()),
+            ownership: OwnershipObservation::ExclusiveOwnerObserved,
+            candidates_inspected: Some(2),
+            observed_listener_pid: Some(77),
+            http_probe: Some(HttpReadinessOutcome::StatusMismatch),
+            http_status: Some(503),
+            route: RouteObservation::NotReached,
+        };
+        let value = serde_json::to_value(diagnostic).unwrap();
+        assert_eq!(value["report"], "accepted");
+        assert_eq!(value["ownership"], "exclusive_owner_observed");
+        assert_eq!(value["http_probe"], "status_mismatch");
+        assert_eq!(value["http_status"], 503);
+        assert_eq!(value["route"], "not_reached");
+        assert_eq!(value["claimed_address"], "127.0.0.1:41234");
+        assert_eq!(value["candidates_inspected"], 2);
+        assert_eq!(value["observed_listener_pid"], 77);
+        assert_eq!(value.as_object().unwrap().len(), 8);
+        let round_trip: HostListenerDiagnostic = serde_json::from_value(value).unwrap();
+        assert_eq!(round_trip, diagnostic);
+    }
+
+    #[test]
+    fn host_process_listener_diagnostic_summary_names_last_observation() {
+        let diagnostic = HostListenerDiagnostic {
+            report: ReportObservation::Accepted,
+            ownership: OwnershipObservation::ExclusiveOwnerObserved,
+            http_probe: Some(HttpReadinessOutcome::StatusMismatch),
+            http_status: Some(503),
+            ..HostListenerDiagnostic::default()
+        };
+        assert_eq!(
+            diagnostic.summary(),
+            "report=accepted, ownership=exclusive_owner_observed, http_probe=status_mismatch:503, route=not_reached"
+        );
+        assert_eq!(
+            HostListenerDiagnostic::default().summary(),
+            "report=not_observed, ownership=not_reached, http_probe=not_attempted, route=not_reached"
+        );
     }
 
     #[test]

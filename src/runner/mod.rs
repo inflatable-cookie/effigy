@@ -34,6 +34,7 @@ mod host_process;
 mod host_scheduler;
 mod interactive_session;
 mod locking;
+mod managed_listener_readiness;
 mod managed_shell;
 mod manifest;
 mod owned_children;

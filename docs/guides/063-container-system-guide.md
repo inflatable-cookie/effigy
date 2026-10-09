@@ -316,6 +316,22 @@ currently supported on Linux and macOS; other platforms refuse when the
 process or socket owner cannot be established. Static `target_host` routes
 keep their existing external-target behavior.
 
+### Readiness failures
+
+A readiness request is one HTTP/1.1 `GET` to the configured path. Effigy reads
+the status line and accepts only the configured status. Connection failures,
+missing or malformed status lines, and other statuses keep the listener not
+ready. A consumer server does not need to keep its read side open or answer in
+one write.
+
+When startup fails, `<name>.listener.json` keeps a `diagnostic` object for the
+failed generation. It records the last observation for each phase: report,
+ownership, HTTP probe status and route. Unobserved phases show `not_reached` or
+`not_attempted`. The diagnostic does not release, signal, or publish anything,
+and the top-level `status` remains the current state. The field list is in
+the managed host listener section of the container runtime contract.
+
+Two shapes are supported.
 Two shapes are supported.
 
 - prefer catalog-driven generated compose for normal use

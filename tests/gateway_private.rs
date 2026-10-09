@@ -1186,6 +1186,186 @@ fn managed_listener_fixture_child() {
     }
 }
 
+/// Terminal readiness failure through the public container CLI. The owned
+/// listener is discovered and refuses readiness until the timeout; cleanup then
+/// removes the generation report and child while the state keeps the last
+/// startup observation for that exact generation.
+#[test]
+fn managed_host_readiness_terminal_failure_retains_phase_evidence() {
+    let fixture = tempfile::tempdir().expect("fresh readiness failure fixture");
+    let effects = HostEffectSentinels::new(fixture.path());
+    let docker_dir = std::env::split_paths(&effects.env_path)
+        .next()
+        .expect("sentinel PATH directory");
+    let docker_log = fixture.path().join("docker-fixture.log");
+    write_fake_docker(&docker_dir.join("docker"));
+
+    let home = fixture.path().join("home");
+    fs::create_dir(&home).expect("fixture home");
+    let private_gateway = private_root(fixture.path(), "readiness-failure-gateway");
+    let foreign_ca = fixture.path().join("foreign-ca");
+    fs::create_dir(&foreign_ca).expect("foreign CA sentinel");
+    let tls = run_gateway(
+        &private_gateway,
+        "setup-tls",
+        &effects,
+        Some(&foreign_ca),
+        &[],
+    );
+    assert_eq!(parse_json_success(tls)["private"], true);
+    let mut gateway_cleanup = GatewayCleanup::new(&effects, &foreign_ca);
+    let gateway = run_gateway(
+        &private_gateway,
+        "up",
+        &effects,
+        Some(&foreign_ca),
+        &[
+            "--dns-addr",
+            "127.0.0.1:0",
+            "--proxy-addr",
+            "127.0.0.1:0",
+            "--https-addr",
+            "127.0.0.1:0",
+        ],
+    );
+    parse_json_success(gateway);
+    gateway_cleanup.track(&private_gateway);
+
+    let checkout = fixture.path().join("primary");
+    fs::create_dir(&checkout).expect("primary fixture checkout");
+    fs::write(
+        checkout.join("compose.yml"),
+        "services:\n  app:\n    image: fixture\n",
+    )
+    .expect("write fixture compose file");
+    fs::write(
+        checkout.join("effigy.toml"),
+        "[containers]\ndefault = \"web\"\n",
+    )
+    .expect("seed manifest before git commit");
+    git(&checkout, &["init", "--initial-branch=main"]);
+    git(&checkout, &["config", "user.name", "Listener Fixture"]);
+    git(
+        &checkout,
+        &["config", "user.email", "listener-fixture@example.invalid"],
+    );
+    git(&checkout, &["add", "compose.yml", "effigy.toml"]);
+    git(&checkout, &["commit", "-m", "fixture base"]);
+
+    let control_dir = fixture.path().join("listener-control");
+    fs::create_dir(&control_dir).expect("listener control directory");
+    let child_binary = std::env::current_exe().expect("integration test binary");
+    let profile = "host-listener-failure";
+    write_listener_fixture_manifest(ListenerFixtureManifest {
+        checkout: &checkout,
+        profile,
+        domain: "readiness-failure.host.test",
+        body: "failure-body",
+        child_binary: &child_binary,
+        control_dir: &control_dir,
+        bind: "127.0.0.1:0",
+        readiness_timeout_secs: 1,
+        never_ready: true,
+    });
+    let cleanup = ManagedContainerCleanup {
+        checkouts: vec![checkout.clone()],
+        home: home.clone(),
+        private_gateway: private_gateway.clone(),
+        foreign_ca: foreign_ca.clone(),
+        effects_path: effects.env_path.clone(),
+        mkcert: effects.private_mkcert.clone(),
+        effect_log: effects.log.clone(),
+        mkcert_calls: effects.mkcert_calls.clone(),
+        docker_log,
+    };
+
+    let failed = run_container_cli(&checkout, &cleanup, &["up", "--detach", "--json"]);
+    let message = format!(
+        "{}{}",
+        String::from_utf8_lossy(&failed.stdout),
+        String::from_utf8_lossy(&failed.stderr)
+    );
+    assert!(
+        !failed.status.success(),
+        "a listener that never becomes ready must fail startup: {message}"
+    );
+    let state_path = checkout
+        .join(".effigy/runtime/host-processes/web")
+        .join(profile)
+        .join("app.listener.json");
+    let state = read_json_file(&state_path);
+    assert_eq!(state["status"], "failed", "{state}");
+    assert!(
+        state["address"].is_null()
+            && state["route_owner"].is_null()
+            && state["child_pid"].is_null()
+            && state["listener_pid"].is_null(),
+        "terminal failure must not retain endpoint or identity claims: {state}"
+    );
+
+    let diagnostic = &state["diagnostic"];
+    assert_eq!(diagnostic["report"], "accepted", "{state}");
+    assert_eq!(
+        diagnostic["ownership"], "exclusive_owner_observed",
+        "{state}"
+    );
+    assert_eq!(diagnostic["http_probe"], "status_mismatch", "{state}");
+    assert_eq!(diagnostic["http_status"], 503, "{state}");
+    assert_eq!(diagnostic["route"], "not_reached", "{state}");
+    assert!(diagnostic["observed_listener_pid"].is_u64(), "{state}");
+    assert!(
+        diagnostic["candidates_inspected"]
+            .as_u64()
+            .is_some_and(|count| count >= 1),
+        "{state}"
+    );
+    assert!(
+        diagnostic["claimed_address"]
+            .as_str()
+            .is_some_and(|address| address.starts_with("127.0.0.1:")),
+        "{state}"
+    );
+    let mut keys = diagnostic
+        .as_object()
+        .expect("diagnostic object")
+        .keys()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    keys.sort_unstable();
+    assert_eq!(
+        keys,
+        [
+            "candidates_inspected",
+            "claimed_address",
+            "http_probe",
+            "http_status",
+            "observed_listener_pid",
+            "ownership",
+            "report",
+            "route",
+        ],
+        "diagnostic must stay within its documented bounded shape"
+    );
+    assert!(
+        !state.to_string().contains("failure-body"),
+        "diagnostic must not retain fixture response bodies: {state}"
+    );
+
+    let generation = state["generation"].as_str().expect("generation");
+    let report_path = checkout
+        .join(".effigy/runtime/host-processes/web")
+        .join(profile)
+        .join(format!("app.{generation}.listener-report.json"));
+    assert!(
+        !report_path.exists(),
+        "generation cleanup should remove the report while the diagnostic remains"
+    );
+    assert!(
+        message.contains("http_probe=status_mismatch:503"),
+        "startup error should name the terminal probe observation: {message}"
+    );
+}
+
 fn private_root(parent: &Path, name: &str) -> PathBuf {
     let root = parent.join(name);
     fs::create_dir(&root).expect("create private root");

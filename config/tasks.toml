@@ -168,6 +168,13 @@
 "proof:managed:host-listeners" = [
   { id = "managed-host-listener-cli-proof", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_host_listeners_bind_routes_propagate_restart_and_scope_teardown)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
 ]
+# Isolated HTTP readiness compatibility and terminal diagnostic counterexamples
+# for managed host listeners. Disposable loopback fixtures only; no consumer
+# runtime, route table or host state is touched.
+"proof:managed:host-readiness" = [
+  { id = "managed-host-readiness-probe", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(managed_host_readiness_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { id = "managed-host-readiness-terminal", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_host_readiness_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
+]
 "check:managed:host-listeners" = [
   { id = "managed-host-listener-compile", run = "cargo check -p effigy-process -p effigy-gateway -p effigy-manifest -p effigy-containers -p effigy-cli -p effigy --all-targets --profile test", timeout_ms = 600000 },
   { id = "managed-host-listener-clippy", run = "cargo clippy -p effigy-process -p effigy-gateway -p effigy-manifest -p effigy-containers -p effigy-cli -p effigy --all-targets -- -D warnings", timeout_ms = 600000 },
