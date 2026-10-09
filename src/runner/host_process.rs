@@ -2337,7 +2337,7 @@ fn signal_owned_child_generation(
                 "managed host child PID was reused; refusing to signal its process group",
             ));
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) if process_identity_is_absent(&error) => {}
         Err(error) => {
             return Err(RunnerError::task_invocation(format!(
                 "managed host child identity is uncertain; refusing to signal its process group: {error}"
@@ -2356,6 +2356,10 @@ fn signal_owned_child_generation(
         )));
     }
     Ok(())
+}
+
+fn process_identity_is_absent(error: &std::io::Error) -> bool {
+    error.kind() == std::io::ErrorKind::NotFound || error.raw_os_error() == Some(libc::ESRCH)
 }
 
 fn terminate_owned_child_group(
@@ -2600,7 +2604,7 @@ fn stop_recorded_supervisor(
     }
     let live = match read_live_process_identity(pid) {
         Ok(live) => live,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) if process_identity_is_absent(&error) => return Ok(false),
         Err(error) => {
             return Err(RunnerError::task_invocation(format!(
                 "host process supervisor identity is unavailable; leaving its record held: {error}"
@@ -2630,7 +2634,7 @@ fn stop_recorded_supervisor(
                     "host process supervisor PID changed during shutdown; leaving its record held",
                 ));
             }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+            Err(error) if process_identity_is_absent(&error) => break,
             Err(error) => {
                 return Err(RunnerError::task_invocation(format!(
                     "host process supervisor identity became unknown during shutdown: {error}"
@@ -2643,11 +2647,15 @@ fn stop_recorded_supervisor(
                     "host process supervisor did not exit after its recorded generation was force-stopped; leaving its record held",
                 ));
             }
-            let current = read_live_process_identity(record.pid).map_err(|error| {
-                RunnerError::task_invocation(format!(
-                    "host process supervisor identity became unknown during shutdown: {error}"
-                ))
-            })?;
+            let current = match read_live_process_identity(record.pid) {
+                Ok(current) => current,
+                Err(error) if process_identity_is_absent(&error) => break,
+                Err(error) => {
+                    return Err(RunnerError::task_invocation(format!(
+                        "host process supervisor identity became unknown during shutdown: {error}"
+                    )))
+                }
+            };
             if current.boot_identity != record.boot_identity
                 || current.start_identity != record.start_identity
             {
@@ -2877,5 +2885,33 @@ mod tests {
             parse_signal_name(HostProcessSignal::Sigkill.as_str()),
             Signal::SIGKILL
         ));
+    }
+
+    #[test]
+    fn process_identity_absence_includes_esrch() {
+        assert!(process_identity_is_absent(&std::io::Error::from(
+            std::io::ErrorKind::NotFound
+        )));
+        assert!(process_identity_is_absent(
+            &std::io::Error::from_raw_os_error(libc::ESRCH)
+        ));
+        assert!(!process_identity_is_absent(&std::io::Error::from(
+            std::io::ErrorKind::PermissionDenied
+        )));
+    }
+
+    #[test]
+    fn stopping_absent_supervisor_returns_false_and_preserves_record() {
+        let record = HostProcessRecord {
+            schema: HOST_PROCESS_RECORD_SCHEMA.to_owned(),
+            pid: i32::MAX as u32,
+            boot_identity: "test-boot".to_owned(),
+            start_identity: GatewayStartIdentity::Macos {
+                start_seconds: 1,
+                start_microseconds: 0,
+            },
+        };
+        let result = stop_recorded_supervisor(Path::new("unused"), &record, Signal::SIGTERM, 1);
+        assert!(matches!(result, Ok(false)));
     }
 }
