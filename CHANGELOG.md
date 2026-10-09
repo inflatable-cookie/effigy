@@ -33,6 +33,11 @@ During v0.x, MINOR bumps may include breaking changes.
   retry; ambiguous recovery remains held.
 
 ### Changed
+- The gateway daemon now handles Unix TERM and INT through its owned shutdown
+  path and waits for server tasks before removing its exact generation record.
+  Administrator identity and lifecycle handoffs provide visible operator
+  guidance and bounded waits; after a timeout, check gateway status before
+  retrying because privileged completion may be unknown.
 - The compiled catalog baseline now tracks catalog-pack v1.1.2
   (`ghcr.io/inflatable-cookie/effigy-catalog-pack@sha256:c7ed52c19ff498c0e4fe28eb33adf629fc96d9594962b95df3040b8a452c6d3d`) with
   compatibility `>=0.13, <0.15`, admitting the supported Effigy 0.13.x and

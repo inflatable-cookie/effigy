@@ -831,6 +831,43 @@ widen Q-002, install a helper or grant standing privilege. The supported
 interactive administrator path remains available. No live gateway migration,
 manual signal, global binary replacement or release is authorized here.
 
+The operator's installed `effigy v0.14.1+local.7b26a15` corresponds to source
+commit `7b26a15`. At that source, `run_gateway` documents TERM/INT shutdown but
+waits only for Ctrl-C. At task start, checkout `b0858d5c` already included the
+generation sidecar, the bounded read-only identity reader and legacy recovery;
+those additions are not present in the installed build. The reported root
+daemon's historical reason for ignoring TERM was not captured, so the missing
+TERM handler is a demonstrated source defect, not a proven explanation of
+that earlier incident.
+
+The corrected daemon registers Unix TERM and INT handling before publishing
+its generation, sends the existing shutdown signal to its server tasks, and
+joins all owned DNS, HTTP and HTTPS server tasks plus the TCP alias manager
+before removing the exact unchanged identity record. Private-process proofs
+cover ready listeners,
+normal TERM/INT, inherited ignored TERM, owned PID cleanup, untouched routes
+and a foreign listener. The last identity-check-to-signal interval remains a
+TOCTOU.
+
+Operator recovery stays on Q-002's existing authority. The read-only identity
+reader remains bounded to 15 seconds and asks for visible administrator
+approval only from an interactive terminal. Full elevated lifecycle waits are
+bounded to 30 seconds; managed auto-start is bounded to 35 seconds and prints
+the required operator action before waiting. A timeout reaps only the owned
+launcher and reports that the gateway outcome is unknown; the caller does not
+guess that an elevated child finished or remove records. Run `effigy gateway
+status` before retrying. A non-interactive unknown identity remains held.
+
+For a task-local development restart, use the managed session controls in
+[guide 012](../../guides/012-dev-process-manager-tui.md#restart-the-managed-dev-session):
+`effigy dev status`, `effigy dev stop`, then the same `effigy dev --headless`
+task invocation. That restarts the managed dev session while the shared
+gateway remains available to other sessions.
+
+If Q-002's interactive reader cannot support prompt-free verification, see the
+separate [read-only daemon attestation proposal](034-gateway-legacy-upgrade-recovery.md#proposed-read-only-root-daemon-attestation).
+It is design evidence only; implementation needs a new operator ruling.
+
 On macOS, gateway setup manages `/etc/resolver/` files for local domains.
 HTTPS uses mkcert-backed certificates after `effigy gateway setup-tls`.
 Plain HTTP redirects to HTTPS for TLS routes. `.test` names work

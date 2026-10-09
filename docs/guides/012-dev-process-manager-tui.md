@@ -311,6 +311,23 @@ startup failures do not collapse to an unexplained exit code.
 - `EFFIGY_TUI_DIAGNOSTICS=1|true`
   - enables post-run TUI diagnostics summary for emulator/runtime debugging
 
+### Restart the managed dev session
+
+To restart the repository's managed `dev` session, inspect and stop that task
+session, then run the same task headlessly:
+
+```sh
+effigy dev status
+effigy dev stop
+effigy dev --headless
+```
+
+This sequence restarts the managed application processes and leaves the shared
+gateway available to other sessions. Gateway auto-start prints an operator
+notice before waiting if administrator approval may be needed. If startup times
+out, run `effigy gateway status` before retrying; an unknown process identity
+keeps its records held for reconciliation.
+
 ## 9) Validation Checklist
 
 1. Run `effigy dev` from repo root and verify the expected default profile

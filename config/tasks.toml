@@ -135,7 +135,7 @@
 # never `ConfirmedAbsent`, so lifecycle (status/up/down/start/stop) cannot
 # report a false stop, delete PID/version records, or start a replacement.
 "test:gateway:probe-state" = [
-  { id = "gateway-probe-state", run = "cargo test -p effigy-gateway -p effigy --lib probe_state -- --nocapture", timeout_ms = 240000 },
+  { id = "gateway-probe-state", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-gateway -p effigy --lib --filterset 'test(probe_state)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 240000 },
 ]
 "check:gateway:probe-state" = [
   "cargo check -p effigy-gateway -p effigy --all-targets",
@@ -149,7 +149,14 @@
   { id = "gateway-private-cli-parse", run = "cargo test -p effigy --lib parse_gateway -- --nocapture --test-threads=1", timeout_ms = 240000 },
 ]
 "proof:gateway:private" = [
-  { id = "gateway-private-cli-https", run = "cargo test -p effigy --test gateway_private -- --nocapture --test-threads=1", timeout_ms = 600000 },
+  { id = "gateway-private-cli-https", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(private_gateway_cli_serves_verified_https_and_isolates_concurrent_instances)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
+]
+
+# Real production-path TERM/INT handling after private HTTP readiness, including
+# a daemon that inherits SIGTERM ignored. The test signals and reaps only its
+# owned process and checks route and foreign-listener isolation.
+"proof:gateway:shutdown" = [
+  { id = "gateway-graceful-shutdown", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(private_gateway_shutdown_handles_owned_term_int_and_inherited_ignore)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 180000 },
 ]
 
 # Managed host listener ownership, readiness, route generations, dependency
@@ -180,12 +187,7 @@
   "cargo clippy -p effigy-gateway -p effigy-cli -p effigy-containers -p effigy --all-targets -- -D warnings",
 ]
 "test:gateway:legacy-recovery" = [
-  { id = "gateway-legacy-recovery", run = "cargo test -p effigy-gateway -p effigy-cli -p effigy --lib legacy_recovery -- --nocapture", timeout_ms = 240000 },
-  { id = "gateway-legacy-identity-refusal", run = "cargo test -p effigy --lib gateway_identity_legacy -- --nocapture", timeout_ms = 120000 },
-  { id = "gateway-status-preflight-preserve", run = "cargo test -p effigy-gateway --lib server_probe_state_status -- --nocapture", timeout_ms = 120000 },
-  # Reused-PID status preservation and locked-start mismatch cleanup. Keep this
-  # member so a recovery wave cannot omit the read-only status regression.
-  { id = "gateway-identity-reused-pid", run = "cargo test -p effigy-gateway --lib gateway_identity -- --nocapture", timeout_ms = 240000 },
+  { id = "gateway-legacy-recovery", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-gateway -p effigy-cli -p effigy --lib --filterset 'test(legacy_recovery) | test(gateway_identity_legacy) | test(gateway_identity)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 240000 },
 ]
 "check:gateway:legacy-recovery" = [
   "cargo check -p effigy-gateway -p effigy-cli -p effigy --all-targets",
@@ -205,7 +207,7 @@
 # bounded elevated reader while stdout/stderr diagnostics stay captured. Real
 # private PTY; noninteractive controls refuse without running the body.
 "test:gateway:managed-tty" = [
-  { id = "gateway-managed-tty", run = "cargo test -p effigy --lib gateway_up_for_managed_task -- --nocapture", timeout_ms = 240000 },
+  { id = "gateway-managed-tty-and-bounded-handoff", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(gateway_up_for_managed_task) | test(gateway_down_permission_denied_uses_one_lifecycle_handoff_or_preserves_unknown) | test(gateway_lifecycle_timeout_kills_and_reaps_only_its_owned_child)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 240000 },
 ]
 "test:install:previous-binary-preservation" = [
   { id = "install-previous-binary-preservation", run = "cargo test -p effigy -p effigy-rhai --lib previous_binary_preservation -- --nocapture", timeout_ms = 120000 },
@@ -609,7 +611,7 @@
 # parser `release status` uses, so an em-dash separator fails both surfaces.
 "qa:docs:changelog" = "cargo run --bin effigy -- changelog validate CHANGELOG.md"
 "qa:docs:gateway-identity" = [
-  "cargo run --bin effigy -- docs check links CHANGELOG.md docs/knowledge/architecture/020-container-infrastructure-design.md docs/knowledge/architecture/034-gateway-legacy-upgrade-recovery.md docs/knowledge/architecture/README.md docs/knowledge/questions.md docs/guides/083-v0.14.0-consumer-migration.md",
+  "cargo run --bin effigy -- docs check links CHANGELOG.md docs/knowledge/architecture/020-container-infrastructure-design.md docs/knowledge/architecture/034-gateway-legacy-upgrade-recovery.md docs/knowledge/architecture/README.md docs/knowledge/questions.md docs/guides/012-dev-process-manager-tui.md docs/guides/063-container-system-guide.md docs/guides/083-v0.14.0-consumer-migration.md",
   "cargo run --bin effigy -- changelog validate CHANGELOG.md",
 ]
 "qa:docs" = [

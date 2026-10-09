@@ -991,6 +991,19 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<(), GatewayError> {
         None
     };
 
+    // Install Unix signal handlers before publishing the generation record.
+    // A setup failure must not leave a record for a daemon that cannot shut
+    // down through the signals promised by this service.
+    #[cfg(unix)]
+    let (mut terminate_signal, mut interrupt_signal) = {
+        use tokio::signal::unix::SignalKind;
+
+        (
+            tokio::signal::unix::signal(SignalKind::terminate())?,
+            tokio::signal::unix::signal(SignalKind::interrupt())?,
+        )
+    };
+
     // Publish the sidecar and decimal compatibility PID as one generation.
     // The record belongs to the operator even when this daemon runs as root.
     let operator_uid = match std::env::var("EFFIGY_GATEWAY_OPERATOR_UID") {
@@ -1037,14 +1050,6 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<(), GatewayError> {
     // Create shutdown channel.
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
-    // Set up OS signal handler.
-    let signal_tx = shutdown_tx.clone();
-    tokio::spawn(async move {
-        tokio::signal::ctrl_c().await.ok();
-        info!("received shutdown signal");
-        let _ = signal_tx.send(true);
-    });
-
     // Reconcile route-driven `/etc/resolver/` files against the
     // initial route table. Best-effort — we run as root here, but
     // surfacing fs errors aborts the daemon, which is wrong for a
@@ -1080,51 +1085,86 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<(), GatewayError> {
         "gateway starting"
     );
 
-    // Run DNS and proxy concurrently.
-    let (dns_handle, proxy_handle, private_https_listener) = match private_listeners {
-        Some(listeners) => (
-            tokio::spawn(run_dns_server_on(
-                listeners.dns,
-                runtime_config.dns.clone(),
-                Arc::clone(&shared_table),
-                Arc::clone(&stats),
-                Arc::clone(&dns_cache),
-                shutdown_rx.clone(),
-            )),
-            tokio::spawn(run_proxy_server_on(
-                listeners.proxy,
-                runtime_config.proxy.clone(),
-                Arc::clone(&shared_table),
-                Arc::clone(&stats),
-                shutdown_rx.clone(),
-            )),
-            Some(listeners.https),
-        ),
-        None => (
-            tokio::spawn(run_dns_server(
-                runtime_config.dns.clone(),
-                Arc::clone(&shared_table),
-                Arc::clone(&stats),
-                Arc::clone(&dns_cache),
-                shutdown_rx.clone(),
-            )),
-            tokio::spawn(run_proxy_server(
-                runtime_config.proxy.clone(),
-                Arc::clone(&shared_table),
-                Arc::clone(&stats),
-                shutdown_rx.clone(),
-            )),
-            None,
-        ),
+    // Run DNS and proxy concurrently. Keep every task in one owned set so a
+    // shutdown signal can stop and join all listeners before identity cleanup.
+    let mut server_tasks = tokio::task::JoinSet::new();
+    let private_https_listener = match private_listeners {
+        Some(listeners) => {
+            let dns_config = runtime_config.dns.clone();
+            let proxy_config = runtime_config.proxy.clone();
+            let dns_table = Arc::clone(&shared_table);
+            let proxy_table = Arc::clone(&shared_table);
+            let dns_stats = Arc::clone(&stats);
+            let proxy_stats = Arc::clone(&stats);
+            let dns_cache = Arc::clone(&dns_cache);
+            let dns_shutdown = shutdown_rx.clone();
+            let proxy_shutdown = shutdown_rx.clone();
+            server_tasks.spawn(async move {
+                (
+                    "DNS server",
+                    run_dns_server_on(
+                        listeners.dns,
+                        dns_config,
+                        dns_table,
+                        dns_stats,
+                        dns_cache,
+                        dns_shutdown,
+                    )
+                    .await,
+                )
+            });
+            server_tasks.spawn(async move {
+                (
+                    "proxy server",
+                    run_proxy_server_on(
+                        listeners.proxy,
+                        proxy_config,
+                        proxy_table,
+                        proxy_stats,
+                        proxy_shutdown,
+                    )
+                    .await,
+                )
+            });
+            Some(listeners.https)
+        }
+        None => {
+            let dns_config = runtime_config.dns.clone();
+            let proxy_config = runtime_config.proxy.clone();
+            let dns_table = Arc::clone(&shared_table);
+            let proxy_table = Arc::clone(&shared_table);
+            let dns_stats = Arc::clone(&stats);
+            let proxy_stats = Arc::clone(&stats);
+            let dns_cache = Arc::clone(&dns_cache);
+            let dns_shutdown = shutdown_rx.clone();
+            let proxy_shutdown = shutdown_rx.clone();
+            server_tasks.spawn(async move {
+                (
+                    "DNS server",
+                    run_dns_server(dns_config, dns_table, dns_stats, dns_cache, dns_shutdown).await,
+                )
+            });
+            server_tasks.spawn(async move {
+                (
+                    "proxy server",
+                    run_proxy_server(proxy_config, proxy_table, proxy_stats, proxy_shutdown).await,
+                )
+            });
+            None
+        }
     };
 
-    let tcp_alias_handle = tokio::spawn(run_tcp_alias_manager(
-        Arc::clone(&shared_table),
-        shutdown_rx.clone(),
-    ));
+    let alias_table = Arc::clone(&shared_table);
+    let alias_shutdown = shutdown_rx.clone();
+    server_tasks.spawn(async move {
+        (
+            "TCP alias manager",
+            run_tcp_alias_manager(alias_table, alias_shutdown).await,
+        )
+    });
 
     // Optionally start the HTTPS proxy.
-    let (_tls_watcher, tls_handle) = if let (Some(tls_addr), Some(tls_config)) =
+    let _tls_watcher = if let (Some(tls_addr), Some(tls_config)) =
         (runtime_config.proxy.tls_bind_addr, &runtime_config.tls)
     {
         let certs_dir = tls_config.certs_dir.clone();
@@ -1154,42 +1194,90 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<(), GatewayError> {
             runtime_config.is_private(),
         )?;
         let server_config = Arc::new(server_config_from_resolver(resolver));
-        let handle = match private_https_listener {
-            Some(listener) => tokio::spawn(run_tls_proxy_server_on(
-                listener,
-                server_config,
-                Arc::clone(&shared_table),
-                Arc::clone(&stats),
-                runtime_config.proxy.clone(),
-                shutdown_rx,
-            )),
-            None => tokio::spawn(run_tls_proxy_server(
-                tls_addr,
-                server_config,
-                Arc::clone(&shared_table),
-                Arc::clone(&stats),
-                runtime_config.proxy.clone(),
-                shutdown_rx,
-            )),
-        };
-        (Some(tls_watcher), Some(handle))
+        match private_https_listener {
+            Some(listener) => {
+                let table = Arc::clone(&shared_table);
+                let tls_stats = Arc::clone(&stats);
+                let proxy_config = runtime_config.proxy.clone();
+                server_tasks.spawn(async move {
+                    (
+                        "HTTPS server",
+                        run_tls_proxy_server_on(
+                            listener,
+                            server_config,
+                            table,
+                            tls_stats,
+                            proxy_config,
+                            shutdown_rx,
+                        )
+                        .await,
+                    )
+                });
+            }
+            None => {
+                let table = Arc::clone(&shared_table);
+                let tls_stats = Arc::clone(&stats);
+                let proxy_config = runtime_config.proxy.clone();
+                server_tasks.spawn(async move {
+                    (
+                        "HTTPS server",
+                        run_tls_proxy_server(
+                            tls_addr,
+                            server_config,
+                            table,
+                            tls_stats,
+                            proxy_config,
+                            shutdown_rx,
+                        )
+                        .await,
+                    )
+                });
+            }
+        }
+        Some(tls_watcher)
     } else {
-        (None, None)
+        None
     };
 
-    // Wait for any server task to finish (typically all stop on shutdown).
-    tokio::select! {
-        result = dns_handle => handle_server_task_result(result, "DNS server")?,
-        result = proxy_handle => handle_server_task_result(result, "proxy server")?,
-        result = tcp_alias_handle => handle_server_task_result(result, "TCP alias manager")?,
-        result = async {
-            if let Some(handle) = tls_handle {
-                handle.await
-            } else {
-                // No TLS handle — never resolves, so the other branches win.
-                std::future::pending().await
+    // Start consuming signals only after every server task has cloned the
+    // shutdown receiver. The Unix handlers were registered before identity
+    // publication, so a signal received during startup is buffered here
+    // instead of being sent before later receivers can observe it.
+    let signal_tx = shutdown_tx.clone();
+    #[cfg(unix)]
+    tokio::spawn(async move {
+        tokio::select! {
+            _ = terminate_signal.recv() => info!("received SIGTERM"),
+            _ = interrupt_signal.recv() => info!("received SIGINT"),
+        }
+        let _ = signal_tx.send(true);
+    });
+    #[cfg(not(unix))]
+    tokio::spawn(async move {
+        match tokio::signal::ctrl_c().await {
+            Ok(()) => {
+                info!("received shutdown signal");
+                let _ = signal_tx.send(true);
             }
-        } => handle_server_task_result(result, "HTTPS server")?,
+            Err(error) => warn!(error = %error, "failed to install shutdown signal handler"),
+        }
+    });
+
+    // Any task exit starts shutdown for the rest. Drain the complete owned set
+    // before removing the exact generation record or returning an error.
+    let mut first_error = server_tasks
+        .join_next()
+        .await
+        .map(joined_server_task_result)
+        .and_then(Result::err);
+    let _ = shutdown_tx.send(true);
+    while let Some(result) = server_tasks.join_next().await {
+        if first_error.is_none() {
+            first_error = joined_server_task_result(result).err();
+        }
+    }
+    if let Some(error) = first_error {
+        return Err(error);
     }
 
     // Clean up PID file.
@@ -1201,6 +1289,15 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<(), GatewayError> {
 
     info!("gateway stopped");
     Ok(())
+}
+
+fn joined_server_task_result(
+    result: Result<(&'static str, Result<(), GatewayError>), tokio::task::JoinError>,
+) -> Result<(), GatewayError> {
+    match result {
+        Ok((label, result)) => handle_server_task_result(Ok(result), label),
+        Err(error) => handle_server_task_result(Err(error), "gateway server"),
+    }
 }
 
 /// Set up a filesystem watcher that reloads the route table when it changes.

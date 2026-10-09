@@ -16,10 +16,20 @@ use std::net::Ipv4Addr;
 use std::process::{Command as ProcessCommand, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
+#[cfg(unix)]
+use std::{
+    os::fd::AsRawFd,
+    process::{Child, Output},
+};
 
 use crate::runner::error::RunnerError;
 
 use super::{GATEWAY_ESCALATED_ENV, GATEWAY_KEEP_RESOLVER_ENV};
+
+#[cfg(unix)]
+const GATEWAY_ELEVATION_TIMEOUT: Duration = Duration::from_secs(30);
+#[cfg(unix)]
+const GATEWAY_COMMAND_OUTPUT_LIMIT: usize = 64 * 1024;
 
 pub(super) fn gateway_invocation_is_escalated() -> bool {
     std::env::var(GATEWAY_ESCALATED_ENV)
@@ -190,6 +200,9 @@ pub(super) fn run_gateway_elevated(
     subcommand: GatewaySubcommand,
     output_json: bool,
 ) -> Result<String, RunnerError> {
+    eprintln!(
+        "[gateway] administrator approval may be required; approve the visible prompt to continue. This request waits at most 30 seconds. If it times out, run `effigy gateway status` before retrying."
+    );
     #[cfg(target_os = "macos")]
     {
         run_gateway_elevated_via_osascript(subcommand, output_json)
@@ -389,6 +402,9 @@ pub(super) fn read_gateway_identity_elevated(
     if !identity_reader_invocation_allowed(std::io::stdin().is_terminal(), digest, target_digest) {
         return None;
     }
+    eprintln!(
+        "[gateway] process identity is unreadable to this user; approve the bounded read-only administrator verification prompt if it appears (15 seconds)"
+    );
     let executable = std::env::current_exe().ok()?;
     let mut command =
         build_gateway_identity_reader_command(&executable, digest, target_digest, owner_uid)?;
@@ -531,32 +547,42 @@ fn bounded_reader_output_with_timeout(
     timeout: Duration,
     max_bytes: usize,
 ) -> Option<Vec<u8>> {
-    command
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-    let mut child = command.spawn().ok()?;
-    let deadline = Instant::now() + timeout;
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) if status.success() => break,
-            Ok(Some(_)) | Err(_) => return None,
-            Ok(None) if Instant::now() >= deadline => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return None;
-            }
-            Ok(None) => thread::sleep(Duration::from_millis(25)),
-        }
+    #[cfg(unix)]
+    {
+        let output =
+            bounded_gateway_command_output_with_timeout(command, timeout, max_bytes).ok()?;
+        output.status.success().then_some(output.stdout)
     }
-    let mut output = Vec::new();
-    child
-        .stdout
-        .take()?
-        .take(max_bytes.saturating_add(1) as u64)
-        .read_to_end(&mut output)
-        .ok()?;
-    (output.len() <= max_bytes).then_some(output)
+
+    #[cfg(not(unix))]
+    {
+        command
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        let mut child = command.spawn().ok()?;
+        let deadline = Instant::now() + timeout;
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) if status.success() => break,
+                Ok(Some(_)) | Err(_) => return None,
+                Ok(None) if Instant::now() >= deadline => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return None;
+                }
+                Ok(None) => thread::sleep(Duration::from_millis(25)),
+            }
+        }
+        let mut output = Vec::new();
+        child
+            .stdout
+            .take()?
+            .take(max_bytes.saturating_add(1) as u64)
+            .read_to_end(&mut output)
+            .ok()?;
+        (output.len() <= max_bytes).then_some(output)
+    }
 }
 
 fn build_legacy_candidate_command(
@@ -743,14 +769,13 @@ fn run_gateway_elevated_via_osascript(
         "do shell script \"{}\" with administrator privileges",
         apple_script_escape(&shell_command)
     );
-    let output = ProcessCommand::new("osascript")
-        .arg("-e")
-        .arg(script)
-        .output()
-        .map_err(|error| RunnerError::TaskCommandLaunch {
-            command: "osascript".to_owned(),
-            error,
-        })?;
+    let mut command = ProcessCommand::new("osascript");
+    command.arg("-e").arg(script);
+    let output = run_bounded_gateway_subprocess(
+        &mut command,
+        "osascript gateway lifecycle",
+        GATEWAY_ELEVATION_TIMEOUT,
+    )?;
     elevated_gateway_command_result("osascript", output)
 }
 
@@ -760,13 +785,189 @@ fn run_gateway_elevated_via_sudo(
     output_json: bool,
 ) -> Result<String, RunnerError> {
     let mut command = build_gateway_elevated_command(subcommand, output_json)?;
-    let output = command.stdin(Stdio::inherit()).output().map_err(|error| {
-        RunnerError::TaskCommandLaunch {
-            command: "sudo".to_owned(),
-            error,
-        }
-    })?;
+    let output = run_bounded_gateway_subprocess(
+        &mut command,
+        "sudo gateway lifecycle",
+        GATEWAY_ELEVATION_TIMEOUT,
+    )?;
     elevated_gateway_command_result("sudo", output)
+}
+
+#[cfg(unix)]
+pub(super) fn run_bounded_gateway_subprocess(
+    command: &mut ProcessCommand,
+    label: &str,
+    timeout: Duration,
+) -> Result<Output, RunnerError> {
+    match bounded_gateway_command_output_with_timeout(
+        command,
+        timeout,
+        GATEWAY_COMMAND_OUTPUT_LIMIT,
+    ) {
+        Ok(output) => Ok(output),
+        Err(BoundedGatewayCommandError::Launch(error)) => Err(RunnerError::TaskCommandLaunch {
+            command: label.to_owned(),
+            error,
+        }),
+        Err(BoundedGatewayCommandError::Wait(error)) => Err(RunnerError::task_invocation(
+            format!(
+                "{label} could not be reaped cleanly ({error}); gateway state may have changed. Run `effigy gateway status` before retrying"
+            ),
+        )),
+        Err(BoundedGatewayCommandError::TimedOut) => Err(RunnerError::task_invocation(
+            format!(
+                "{label} timed out after {} seconds; its outcome is unknown and gateway state may have changed. Run `effigy gateway status` before retrying; records are preserved when identity is unknown",
+                timeout.as_secs()
+            ),
+        )),
+        Err(BoundedGatewayCommandError::OutputLimit) => Err(RunnerError::task_invocation(
+            format!(
+                "{label} exceeded the 64 KiB diagnostic limit; its outcome is unknown and gateway state may have changed. Run `effigy gateway status` before retrying"
+            ),
+        )),
+    }
+}
+
+#[cfg(unix)]
+#[derive(Debug)]
+enum BoundedGatewayCommandError {
+    Launch(std::io::Error),
+    Wait(std::io::Error),
+    TimedOut,
+    OutputLimit,
+}
+
+#[cfg(unix)]
+fn bounded_gateway_command_output_with_timeout(
+    command: &mut ProcessCommand,
+    timeout: Duration,
+    max_bytes_per_stream: usize,
+) -> Result<Output, BoundedGatewayCommandError> {
+    command
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command
+        .spawn()
+        .map_err(BoundedGatewayCommandError::Launch)?;
+    let mut stdout = child.stdout.take();
+    let mut stderr = child.stderr.take();
+    if let Some(pipe) = stdout.as_ref() {
+        if let Err(error) = set_pipe_nonblocking(pipe) {
+            stop_owned_gateway_command(&mut child);
+            return Err(BoundedGatewayCommandError::Wait(error));
+        }
+    }
+    if let Some(pipe) = stderr.as_ref() {
+        if let Err(error) = set_pipe_nonblocking(pipe) {
+            stop_owned_gateway_command(&mut child);
+            return Err(BoundedGatewayCommandError::Wait(error));
+        }
+    }
+
+    let deadline = Instant::now() + timeout;
+    let mut stdout_bytes = Vec::new();
+    let mut stderr_bytes = Vec::new();
+    loop {
+        let stdout_limited =
+            match drain_available_pipe(&mut stdout, &mut stdout_bytes, max_bytes_per_stream) {
+                Ok(output_limited) => output_limited,
+                Err(error) => {
+                    stop_owned_gateway_command(&mut child);
+                    return Err(BoundedGatewayCommandError::Wait(error));
+                }
+            };
+        let stderr_limited =
+            match drain_available_pipe(&mut stderr, &mut stderr_bytes, max_bytes_per_stream) {
+                Ok(output_limited) => output_limited,
+                Err(error) => {
+                    stop_owned_gateway_command(&mut child);
+                    return Err(BoundedGatewayCommandError::Wait(error));
+                }
+            };
+        if stdout_limited || stderr_limited {
+            stop_owned_gateway_command(&mut child);
+            return Err(BoundedGatewayCommandError::OutputLimit);
+        }
+
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let stdout_limited =
+                    drain_available_pipe(&mut stdout, &mut stdout_bytes, max_bytes_per_stream)
+                        .map_err(BoundedGatewayCommandError::Wait)?;
+                let stderr_limited =
+                    drain_available_pipe(&mut stderr, &mut stderr_bytes, max_bytes_per_stream)
+                        .map_err(BoundedGatewayCommandError::Wait)?;
+                if stdout_limited || stderr_limited {
+                    return Err(BoundedGatewayCommandError::OutputLimit);
+                }
+                return Ok(Output {
+                    status,
+                    stdout: stdout_bytes,
+                    stderr: stderr_bytes,
+                });
+            }
+            Ok(None) if Instant::now() < deadline => {
+                thread::sleep(Duration::from_millis(20));
+            }
+            Ok(None) => {
+                stop_owned_gateway_command(&mut child);
+                return Err(BoundedGatewayCommandError::TimedOut);
+            }
+            Err(error) => {
+                stop_owned_gateway_command(&mut child);
+                return Err(BoundedGatewayCommandError::Wait(error));
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+fn set_pipe_nonblocking(pipe: &impl AsRawFd) -> std::io::Result<()> {
+    let fd = pipe.as_raw_fd();
+    // SAFETY: F_GETFL/F_SETFL only inspect and update flags for the owned pipe FD.
+    let flags = unsafe { nix::libc::fcntl(fd, nix::libc::F_GETFL) };
+    if flags == -1 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: the FD remains owned by the child pipe while its flags are updated.
+    if unsafe { nix::libc::fcntl(fd, nix::libc::F_SETFL, flags | nix::libc::O_NONBLOCK) } == -1 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn drain_available_pipe<P: Read>(
+    pipe: &mut Option<P>,
+    captured: &mut Vec<u8>,
+    max_bytes: usize,
+) -> std::io::Result<bool> {
+    let mut buffer = [0; 4096];
+    while let Some(stream) = pipe.as_mut() {
+        let available = max_bytes.saturating_add(1).saturating_sub(captured.len());
+        if available == 0 {
+            return Ok(true);
+        }
+        let limit = available.min(buffer.len());
+        match stream.read(&mut buffer[..limit]) {
+            Ok(0) => {
+                *pipe = None;
+                return Ok(false);
+            }
+            Ok(read) => captured.extend_from_slice(&buffer[..read]),
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return Ok(false),
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(false)
+}
+
+#[cfg(unix)]
+fn stop_owned_gateway_command(child: &mut Child) {
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 fn elevated_gateway_command_result(
@@ -1120,6 +1321,40 @@ mod gateway_identity_reader_tests {
                 .is_none()
         );
         assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn gateway_lifecycle_timeout_kills_and_reaps_only_its_owned_child() {
+        let fixture = tempfile::tempdir().expect("fresh timeout fixture");
+        let child_pid_path = fixture.path().join("child.pid");
+        let mut command = ProcessCommand::new("sh");
+        command
+            .arg("-c")
+            .arg("printf '%s' \"$$\" > \"$1\"; exec sleep 10")
+            .arg("gateway-timeout-fixture")
+            .arg(&child_pid_path);
+        let started = Instant::now();
+        let result = bounded_gateway_command_output_with_timeout(
+            &mut command,
+            Duration::from_millis(250),
+            1024,
+        );
+        assert!(matches!(result, Err(BoundedGatewayCommandError::TimedOut)));
+        assert!(started.elapsed() < Duration::from_secs(2));
+
+        let pid = std::fs::read_to_string(&child_pid_path)
+            .expect("owned child writes its pid")
+            .parse::<i32>()
+            .expect("owned child pid");
+        // SAFETY: signal zero probes only the exact child PID written by the
+        // fixture process; no signal is delivered.
+        assert_eq!(unsafe { nix::libc::kill(pid, 0) }, -1);
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(nix::libc::ESRCH),
+            "the lifecycle transport child must be reaped before timeout returns"
+        );
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]

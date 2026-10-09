@@ -466,6 +466,39 @@ fn gateway_identity_legacy_replacement_uses_one_interactive_handoff_and_refuses_
 }
 
 #[test]
+fn gateway_down_permission_denied_uses_one_lifecycle_handoff_or_preserves_unknown() {
+    use std::cell::Cell;
+
+    let handoffs = Cell::new(0);
+    let result = run_gateway_down_after_identity_permission_denied(true, true, || {
+        handoffs.set(handoffs.get() + 1);
+        Ok("elevated down completed".to_owned())
+    });
+    assert_eq!(
+        result.expect("interactive down handoff"),
+        "elevated down completed"
+    );
+    assert_eq!(handoffs.get(), 1, "down has one administrator handoff");
+
+    let error = run_gateway_down_after_identity_permission_denied(false, true, || {
+        handoffs.set(handoffs.get() + 1);
+        Ok("must not run".to_owned())
+    })
+    .expect_err("headless identity uncertainty must stay held")
+    .to_string();
+    assert!(
+        error.contains("no signal was sent"),
+        "unexpected error: {error}"
+    );
+    assert!(
+        error.contains("records are preserved"),
+        "unexpected error: {error}"
+    );
+    assert!(error.contains("interactive admin-capable terminal"));
+    assert_eq!(handoffs.get(), 1, "headless down must not prompt or signal");
+}
+
+#[test]
 fn gateway_identity_elevated_reader_is_bound_to_validated_snapshot() {
     use std::cell::Cell;
     let (_dir, verified) = gateway_status_fixture(4242);
