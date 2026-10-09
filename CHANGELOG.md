@@ -53,6 +53,10 @@ During v0.x, MINOR bumps may include breaking changes.
   EOF are now probed correctly, and a status line split across writes is read
   to its line break. Connection failures, malformed or missing status lines,
   wrong statuses and silence remain not ready.
+- Managed host listener ownership on macOS no longer fails the whole process
+  inventory when `ps` reports a system daemon's UID in signed form (for
+  example `-2`). The UID is mapped to its unsigned value and compared with the
+  effective UID; malformed or out-of-range rows still fail closed.
 - Failed managed host listener startup keeps a bounded `diagnostic` in its
   state file. It records report, ownership, HTTP probe and route observations
   for the failed generation after its report and child are cleaned up. The

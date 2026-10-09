@@ -142,7 +142,11 @@ top-level `status` for current state. `not_reached` and `not_attempted` mean the
 phase was not observed, not that it succeeded or failed. Ownership observations
 depend on the Linux procfs or macOS libproc interfaces described below.
 
-Socket ownership uses Linux procfs and macOS libproc interfaces. Other
+Socket ownership uses Linux procfs and macOS libproc interfaces.
+On macOS, the same-user process inventory from `ps -Ao pid=,uid=` may print a
+UID in signed 32-bit form (for example `-2` for a system daemon). Effigy maps
+that presentation to its unsigned UID before comparing it with the effective
+UID. Any other malformed or out-of-range row fails the inventory closed. Other
 platforms fail closed when process or kernel socket ownership cannot be
 proved. `target_host` routes remain static external targets and do not gain
 managed-child ownership.

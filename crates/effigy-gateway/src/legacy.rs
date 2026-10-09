@@ -439,17 +439,10 @@ pub fn listening_process_ids(endpoint: &GatewayEndpoint) -> Result<Vec<u32>, std
     let effective_uid = nix::unistd::Uid::effective().as_raw();
     let mut owners = Vec::new();
     for row in rendered.lines() {
-        let mut fields = row.split_whitespace();
-        let Some(pid) = fields.next().and_then(|field| field.parse::<u32>().ok()) else {
+        let Some((pid, uid)) = parse_process_inventory_row(row) else {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                "local process inventory contains an invalid PID",
-            ));
-        };
-        let Some(uid) = fields.next().and_then(|field| field.parse::<u32>().ok()) else {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "local process inventory contains an invalid UID",
+                "local process inventory contains an invalid PID or UID",
             ));
         };
         if pid == 0 || uid != effective_uid {
@@ -520,6 +513,45 @@ pub fn verify_process_listener_exclusive(
             "managed listener exclusivity inspection is unsupported on this platform",
         ))
     }
+}
+
+/// Parses one `ps -Ao pid=,uid=` row into the PID and the owner UID as the
+/// kernel's unsigned `uid_t`.
+///
+/// `ps` can print a UID in signed 32-bit form: macOS shows some system daemons
+/// as `-2`. That presentation is an exact two's-complement encoding of the
+/// unsigned UID (`-2` is `4294967294`), so it is mapped to that value and then
+/// compared with the effective UID like any other row. A row whose owner is not
+/// representable as `i32::MIN..=u32::MAX`, a PID or UID with a sign, non-digit
+/// or missing field, and a row with trailing fields are rejected, so the whole
+/// inventory fails closed rather than skipping a row it could not classify.
+fn parse_process_inventory_row(row: &str) -> Option<(u32, u32)> {
+    let mut fields = row.split_whitespace();
+    let pid = u32::try_from(parse_ps_integer(fields.next()?, false)?).ok()?;
+    let uid = parse_ps_integer(fields.next()?, true)?;
+    if fields.next().is_some() {
+        return None;
+    }
+    let owner = if (i64::from(i32::MIN)..=i64::from(u32::MAX)).contains(&uid) {
+        u32::try_from(uid.rem_euclid(1 << 32)).ok()?
+    } else {
+        return None;
+    };
+    Some((pid, owner))
+}
+
+/// Parses a `ps` numeric column. Only ASCII digits are accepted, with a leading
+/// `-` allowed for the signed UID presentation.
+fn parse_ps_integer(token: &str, signed: bool) -> Option<i64> {
+    let digits = match token.strip_prefix('-') {
+        Some(rest) if signed => rest,
+        Some(_) => return None,
+        None => token,
+    };
+    if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    token.parse::<i64>().ok()
 }
 
 fn process_has_disappeared(error: &std::io::Error) -> bool {
@@ -705,6 +737,69 @@ pub fn is_hex64(value: &str) -> bool {
 #[cfg(test)]
 mod legacy_recovery_tests {
     use super::*;
+
+    /// Signed `-2` and unsigned `4294967294` are one kernel UID. A row printed
+    /// in signed form must compare equal to an effective UID of that value, and
+    /// an ordinary different UID must not match it.
+    #[test]
+    fn process_inventory_row_maps_signed_presentation_to_its_unsigned_uid() {
+        let unsigned_minus_two = u32::MAX - 1;
+        assert_eq!(
+            parse_process_inventory_row("84795    -2"),
+            Some((84795, unsigned_minus_two))
+        );
+        assert_eq!(
+            parse_process_inventory_row("3 4294967294"),
+            Some((3, unsigned_minus_two))
+        );
+        assert_eq!(parse_process_inventory_row("5 -1"), Some((5, u32::MAX)));
+        assert_eq!(
+            parse_process_inventory_row("4 -2147483648"),
+            Some((4, 1 << 31))
+        );
+        assert_eq!(parse_process_inventory_row("1 0"), Some((1, 0)));
+        assert_eq!(parse_process_inventory_row("  501 501"), Some((501, 501)));
+        assert_eq!(
+            parse_process_inventory_row("6 4294967295"),
+            Some((6, u32::MAX))
+        );
+        assert_ne!(
+            parse_process_inventory_row("84795 -2").map(|(_, owner)| owner),
+            Some(501)
+        );
+    }
+
+    /// Owners outside `i32::MIN..=u32::MAX` are not UIDs, and rows with missing,
+    /// signed-PID, non-digit or trailing fields cannot be classified. None of
+    /// them may be skipped as foreign.
+    #[test]
+    fn process_inventory_row_rejects_out_of_range_and_malformed_rows() {
+        for row in [
+            "6 4294967296",
+            "6 -2147483649",
+            "1",
+            "",
+            "x 501",
+            "501 unknown",
+            "501 501 extra",
+            "-1 501",
+            "+1 501",
+            "1 +501",
+            "1 -",
+            "1 1e3",
+        ] {
+            assert_eq!(parse_process_inventory_row(row), None, "row {row:?}");
+        }
+    }
+
+    #[test]
+    fn process_inventory_row_numeric_columns_accept_only_ascii_digits() {
+        assert_eq!(parse_ps_integer("42", false), Some(42));
+        assert_eq!(parse_ps_integer("-42", true), Some(-42));
+        assert_eq!(parse_ps_integer("-42", false), None);
+        assert_eq!(parse_ps_integer("", true), None);
+        assert_eq!(parse_ps_integer("٤٢", false), None);
+    }
     use std::net::TcpListener;
     use std::net::UdpSocket;
     use std::os::unix::fs::PermissionsExt;
