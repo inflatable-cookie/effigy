@@ -125,6 +125,9 @@ fn parse_status_code(line: &[u8]) -> Option<u16> {
     if status.len() != 3 || !status.bytes().all(|byte| byte.is_ascii_digit()) {
         return None;
     }
+    // RFC 9112 requires SP after the status code even when the reason phrase is
+    // empty, so a line that ends at the code is malformed.
+    parts.next()?;
     status.parse::<u16>().ok()
 }
 
@@ -311,7 +314,11 @@ mod tests {
     #[test]
     fn managed_host_readiness_status_line_parser_is_strict_and_bounded() {
         assert_eq!(parse_status_code(b"HTTP/1.1 200 OK\r\n"), Some(200));
-        assert_eq!(parse_status_code(b"HTTP/1.0 204\r\n"), Some(204));
+        assert_eq!(parse_status_code(b"HTTP/1.0 204 \r\n"), Some(204));
+        assert_eq!(parse_status_code(b"HTTP/1.1 200 OK\r\n"), Some(200));
+        assert_eq!(parse_status_code(b"HTTP/1.0 204\r\n"), None);
+        assert_eq!(parse_status_code(b"HTTP/1.1 200\r\n"), None);
+        assert_eq!(parse_status_code(b"HTTP/1.1 200OK\r\n"), None);
         assert_eq!(parse_status_code(b"HTTP/2 200\r\n"), None);
         assert_eq!(parse_status_code(b"HTTP/1.bad 200 OK\r\n"), None);
         assert_eq!(parse_status_code(b"HTTP/1. 200 OK\r\n"), None);
@@ -333,6 +340,20 @@ mod tests {
         });
         assert_eq!(
             probe_outcome(address, 200),
+            HttpReadinessOutcome::MalformedStatus
+        );
+    }
+
+    /// A status code with no separator after it is malformed even when the
+    /// digits match the configured readiness status.
+    #[test]
+    fn managed_host_readiness_rejects_status_code_without_separator() {
+        let address = spawn_raw_server(|mut stream| {
+            read_request_head(&mut stream);
+            let _ = stream.write_all(b"HTTP/1.0 204\r\n\r\n");
+        });
+        assert_eq!(
+            probe_outcome(address, 204),
             HttpReadinessOutcome::MalformedStatus
         );
     }

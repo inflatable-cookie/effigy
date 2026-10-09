@@ -102,7 +102,9 @@ Missing or uncertain identity remains held; it is not replaced by age-based
 cleanup.
 
 Readiness is one bounded HTTP/1.1 `GET` on the owned loopback socket. Effigy
-reads the first status line and accepts only the configured status. The request
+reads the first status line and accepts only the configured status. The line
+must be `HTTP/1.<digit>`, a space, a three-digit code, and a space before the
+optional reason phrase. The request
 side stays open after the request; `Connection: close` ends it, and an ordinary
 server may drop a response it sees as abandoned after EOF. A status line split
 across writes is read to its line break within a bounded response deadline.
