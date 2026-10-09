@@ -7,6 +7,16 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- `effigy gateway setup-tls` and `gateway up` now accept an explicit
+  `--private-state-root` for disposable gateway instances. Private mode keeps
+  routes, listeners, certificates, CA state, and process identity inside the
+  caller-owned owner-only root; it binds only unprivileged loopback endpoints,
+  returns actual listener addresses, and never installs host trust, writes
+  resolver files, provisions host aliases, or requests elevation. Container
+  route registration and managed startup inherit the same mode through
+  `EFFIGY_GATEWAY_PRIVATE_STATE_ROOT`. Clients explicitly trust the reported
+  fixture CA and resolve route names to the reported HTTPS address. Ordinary
+  operator gateway setup remains the default.
 - Heavy selector callers can persist and pass `--host-run-request-id` before
   submission, then inspect or follow that exact request with `effigy tasks
   request status|follow`. Only authenticated `unknown_run` permits a same-key

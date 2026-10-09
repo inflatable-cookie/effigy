@@ -239,6 +239,9 @@ pub(crate) fn build_host_mkcert_ca_mount(
     primary_service: &str,
     catalog_capabilities: WorkspaceCatalogCapabilities,
 ) -> Option<RenderedWorkspaceMount> {
+    if std::env::var_os(effigy_gateway::private_state::PRIVATE_STATE_ROOT_ENV).is_some() {
+        return None;
+    }
     let service = config.services.get(primary_service)?;
     if !catalog_capabilities.installs_mkcert_ca
         || !service_bool_param(service, "mount_host_mkcert_ca", true)

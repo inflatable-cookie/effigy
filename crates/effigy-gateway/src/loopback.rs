@@ -102,6 +102,8 @@ impl LoopbackRegistry {
             }
         })?;
 
+        set_owner_only_permissions(&temp_path)?;
+
         std::fs::rename(&temp_path, path).map_err(|error| GatewayError::LoopbackRegistryWrite {
             path: path.to_path_buf(),
             reason: format!("atomic rename failed: {error}"),
@@ -177,6 +179,22 @@ impl LoopbackRegistry {
             .map(|octet| Ipv4Addr::new(a, b, c, octet))
             .find(|candidate| !assigned.contains(candidate) && !reserved.contains(candidate))
     }
+}
+
+#[cfg(unix)]
+fn set_owner_only_permissions(path: &Path) -> Result<(), GatewayError> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).map_err(|error| {
+        GatewayError::LoopbackRegistryWrite {
+            path: path.to_path_buf(),
+            reason: format!("failed to set owner-only permissions: {error}"),
+        }
+    })
+}
+
+#[cfg(not(unix))]
+fn set_owner_only_permissions(_path: &Path) -> Result<(), GatewayError> {
+    Ok(())
 }
 
 #[cfg(test)]

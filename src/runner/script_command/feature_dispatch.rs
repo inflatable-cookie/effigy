@@ -1147,6 +1147,7 @@ fn run_container_json(
 fn run_gateway_json(subcommand: GatewaySubcommand) -> Result<String, RunnerError> {
     crate::runner::run_command(effigy_cli::Command::Gateway(GatewayArgs {
         subcommand,
+        private: None,
         output_json: true,
     }))
 }

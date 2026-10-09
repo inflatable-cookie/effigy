@@ -40,6 +40,64 @@ fn config_with_custom_addrs() {
 }
 
 #[test]
+fn private_config_rejects_non_loopback_privileged_and_escaped_paths() {
+    let fixture = tempfile::tempdir().expect("private root fixture");
+    let root = std::fs::canonicalize(fixture.path()).expect("canonical private root");
+    set_private_test_root_permissions(&root);
+
+    let mut config = GatewayConfig::private(root.clone());
+    config.dns.bind_addr = "0.0.0.0:0".parse().unwrap();
+    assert!(config.validate_private_mode().is_err());
+
+    let mut config = GatewayConfig::private(root.clone());
+    config.proxy.tls_bind_addr = Some("127.0.0.1:443".parse().unwrap());
+    assert!(config.validate_private_mode().is_err());
+
+    let mut config = GatewayConfig::private(root.clone());
+    config.route_table_path = fixture.path().join("escaped-routes.json");
+    assert!(config.validate_private_mode().is_err());
+}
+
+#[tokio::test]
+async fn private_startup_refuses_missing_ca_and_cert_before_publishing_identity() {
+    let fixture = tempfile::tempdir().expect("private root fixture");
+    let root = std::fs::canonicalize(fixture.path()).expect("canonical private root");
+    set_private_test_root_permissions(&root);
+    crate::private_state::prepare_root(&root).expect("prepare private root");
+    RouteTable::new()
+        .save(&root.join("routes.json"))
+        .expect("save trusted empty routes");
+    let config = GatewayConfig::private(root.clone());
+
+    let missing_ca = run_gateway(config.clone())
+        .await
+        .expect_err("private startup requires a fixture CA");
+    assert!(missing_ca.to_string().contains("requires its fixture CA"));
+    assert!(!root.join("gateway.pid").exists());
+    assert!(!root.join("gateway.addresses.json").exists());
+
+    std::fs::write(root.join("ca/rootCA.pem"), b"fixture CA sentinel\n")
+        .expect("write fixture CA sentinel");
+    let missing_cert = run_gateway(config)
+        .await
+        .expect_err("private startup requires a server certificate");
+    assert!(missing_cert
+        .to_string()
+        .contains("requires a certificate under"));
+    assert!(!root.join("gateway.pid").exists());
+    assert!(!root.join("gateway.addresses.json").exists());
+}
+
+fn set_private_test_root_permissions(root: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(root, std::fs::Permissions::from_mode(0o700))
+            .expect("set private fixture root mode");
+    }
+}
+
+#[test]
 fn pid_file_roundtrip() {
     let dir = tempfile::tempdir().unwrap();
     let pid_path = dir.path().join("test.pid");

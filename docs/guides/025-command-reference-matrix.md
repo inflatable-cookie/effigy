@@ -141,7 +141,7 @@ through the help route.
 | `effigy service` | Inspect the layered service catalog, extract bundled fragments into repo-owned overrides, and manage installed catalog packs | `list`, `extract`, `pack status`, `pack install <oci://...@sha256:...>`, `pack install --path <DIR>`, `pack update`, `pack rollback`, `pack reset`, `--repo`, `--dir`, `--path`, `--json` | `effigy.service.list.v1`, `effigy.service.extract.v1`, `effigy.service.pack.status.v1`, `effigy.service.pack.install.v1`, `effigy.service.pack.update.v1`, `effigy.service.pack.rollback.v1`, `effigy.service.pack.reset.v1` | [`067-catalog-services-reference.md`](067-catalog-services-reference.md), `063-container-system-guide.md` |
 | `effigy exec` | Run one ad-hoc command inside the manifest's default system workspace container; primary-service commands use its declared `workspace_user` and `workspace_home`, while non-console callers run without a TTY | `--repo`, `--service`, `--json` | exec commands render command-envelope JSON with exec payloads | `063-container-system-guide.md` |
 | `effigy secrets` | Inspect declared secret metadata, store and retrieve vault values, import declared keys from a `.env`-style file, and manage the local encrypted vault without printing values | `list`, `doctor`, `init`, `set`, `get`, `unset`, `import`, `change-passphrase`, `unlock`, `lock`, `export`, `--repo`, `--json` | `effigy.secrets.v1` | `075-secrets-and-vault-guide.md`, [`../contracts/032-secret-and-local-config-management-contract.md`](../knowledge/contracts/032-secret-and-local-config-management-contract.md) |
-| `effigy gateway` | Operate the host-native local DNS and reverse-proxy gateway for container-owned routes | `up`, `down`, `status`, `recover`, `repair`, `setup-tls`, `--json`, `--yes`, `--adopt-candidate` | gateway commands render command-envelope JSON with gateway payloads, including `effigy.gateway.recover.v1` | `063-container-system-guide.md`, `083-v0.14.0-consumer-migration.md` |
+| `effigy gateway` | Operate the host-native local DNS and reverse-proxy gateway for container-owned routes, or select an isolated disposable instance | `up`, `down`, `status`, `recover`, `repair`, `setup-tls`, `--private-state-root`, private `--dns-addr` / `--proxy-addr` / `--https-addr`, `--json`, `--yes`, `--adopt-candidate` | gateway commands render command-envelope JSON with gateway payloads, including `effigy.gateway.recover.v1`; private `up` and `status` report actual held loopback addresses and `client_ca_file` | `063-container-system-guide.md`, `083-v0.14.0-consumer-migration.md` |
 | `effigy doctor` | Run bounded structural checks by default, including `container.workspace-ownership`; opt into catalog-scoped scans and health with `--deep`; provide optional explain-mode selection diagnostics | `--repo`, `--fix`, `--verbose`, `--json`, `--deep`, `--catalog`, `--all-catalogs`, `--refresh` | `effigy.doctor.v1`, `effigy.doctor.explain.v1` | `018-doctor-explain-mode.md`, `063-container-system-guide.md`, [`../contracts/047-bounded-doctor-and-scan-cache-contract.md`](../knowledge/contracts/047-bounded-doctor-and-scan-cache-contract.md) |
 | `effigy docs` | Run reusable docs QA checks such as path presence, link validation, heading/content/forbidden-text checks, JSON example validation, markdown index consistency checks, next-action policy validation, workflow-path validation, and log-index entry insertion, plus bounded `docs context` documentation retrieval | `check <KIND>`, `context <QUERY>`, `add-log-index`, `--repo`, `--file`, `--section`, `--min-blocks`, `--require`, `--require-heading`, `--require-block`, `--forbid`, `--policy-index`, `--policy`, `--dir`, `--index`, `--max-sections`, `--max-bytes`, `--max-hops`, `--json` | `effigy.docs.link-check.v1`, `effigy.docs.json-examples.v1`, `effigy.docs.heading-check.v1`, `effigy.docs.path-check.v1`, `effigy.docs.contains-check.v1`, `effigy.docs.forbidden-check.v1`, `effigy.docs.index-check.v1`, `effigy.docs.next-action-check.v1`, `effigy.docs.workflow-path-check.v1`, `effigy.docs.add-log-index.v1`, `effigy.docs.context.v1` | `029-docs-qa-checklist-and-validation.md`, [`079-documentation-graph-profiles-and-context.md`](079-documentation-graph-profiles-and-context.md), [`../contracts/041-documentation-graph-profile-contract.md`](../knowledge/contracts/041-documentation-graph-profile-contract.md) |
 | `effigy contracts` | Validate reusable JSON contract artifacts such as selection payloads and schema-index contract coverage | `check-json`, `validate-selection`, `--repo`, `--index`, `--fast`, `--full`, `--changed-only`, `--print-selected`, `--contract`, `--artifact`, `--json` | `effigy.contracts.check-json.v1`, `effigy.contracts.selection-validation.v1` | `017-json-output-contracts.md` |
@@ -265,7 +265,8 @@ Common values:
 effigy service list [--repo <PATH>] [--json]
 effigy service extract <SERVICE> [--repo <PATH>] [--dir <PATH>] [--json]
 effigy exec [--repo <PATH>] [--service <NAME>] [--json] <COMMAND> [ARGS...]
-effigy gateway <up|down|status|setup-tls> [--json]
+effigy gateway <up|down|status|setup-tls> [--private-state-root <DIR>] [--json]
+effigy gateway up --private-state-root <DIR> [--dns-addr <IP:PORT>] [--proxy-addr <IP:PORT>] [--https-addr <IP:PORT>] [--json]
 effigy gateway recover [--yes] [--adopt-candidate] [--json]
 effigy gateway repair [--yes] [--json]
 effigy container up [--repo <PATH>] [--attach|--detach] [--json]
@@ -464,8 +465,13 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
   supplied; primary-service commands use the declared `workspace_user` and
   `workspace_home`, interactive callers retain a TTY, and non-console callers
   run without one
-- `gateway up`, `gateway down`, and `gateway setup-tls` may request host admin
-  approval
+- ordinary `gateway up`, `gateway down`, and `gateway setup-tls` may request
+  host admin approval; private mode does not request privilege, install trust,
+  change host resolver files, or provision host loopback aliases
+- `EFFIGY_GATEWAY_PRIVATE_STATE_ROOT=<DIR>` selects the same caller-owned
+  instance for container route registration and managed startup; clients must
+  explicitly trust `<DIR>/ca/rootCA.pem` and resolve each route name to the
+  actual HTTPS address shown by `gateway status --json`
 - routes with `tls = true` redirect plain HTTP to HTTPS once the gateway TLS
   listener is available
 - `container shell` and `workspace` are interactive and intentionally do not

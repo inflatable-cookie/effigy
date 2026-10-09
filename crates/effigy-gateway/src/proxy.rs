@@ -114,7 +114,7 @@ pub async fn run_proxy_server(
     config: ProxyConfig,
     route_table: Arc<RwLock<RouteTable>>,
     stats: Arc<GatewayStats>,
-    mut shutdown: tokio::sync::watch::Receiver<bool>,
+    shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> Result<(), crate::GatewayError> {
     let listener = TcpListener::bind(config.bind_addr).await.map_err(|e| {
         crate::GatewayError::ProxyBindError {
@@ -122,8 +122,19 @@ pub async fn run_proxy_server(
             reason: e.to_string(),
         }
     })?;
+    run_proxy_server_on(listener, config, route_table, stats, shutdown).await
+}
 
-    info!(addr = %config.bind_addr, "HTTP proxy started");
+pub(crate) async fn run_proxy_server_on(
+    listener: TcpListener,
+    config: ProxyConfig,
+    route_table: Arc<RwLock<RouteTable>>,
+    stats: Arc<GatewayStats>,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
+) -> Result<(), crate::GatewayError> {
+    let bind_addr = listener.local_addr().map_err(crate::GatewayError::Io)?;
+
+    info!(addr = %bind_addr, "HTTP proxy started");
 
     // Track in-flight connections for graceful drain.
     let inflight = Arc::new(std::sync::atomic::AtomicU32::new(0));
@@ -220,10 +231,8 @@ pub async fn run_tls_proxy_server(
     route_table: Arc<RwLock<RouteTable>>,
     stats: Arc<GatewayStats>,
     proxy_config: ProxyConfig,
-    mut shutdown: tokio::sync::watch::Receiver<bool>,
+    shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> Result<(), crate::GatewayError> {
-    let tls_acceptor = tokio_rustls::TlsAcceptor::from(tls_config);
-
     let listener =
         TcpListener::bind(bind_addr)
             .await
@@ -231,6 +240,27 @@ pub async fn run_tls_proxy_server(
                 addr: bind_addr.to_string(),
                 reason: format!("HTTPS bind failed: {e}"),
             })?;
+    run_tls_proxy_server_on(
+        listener,
+        tls_config,
+        route_table,
+        stats,
+        proxy_config,
+        shutdown,
+    )
+    .await
+}
+
+pub(crate) async fn run_tls_proxy_server_on(
+    listener: TcpListener,
+    tls_config: Arc<rustls::ServerConfig>,
+    route_table: Arc<RwLock<RouteTable>>,
+    stats: Arc<GatewayStats>,
+    proxy_config: ProxyConfig,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
+) -> Result<(), crate::GatewayError> {
+    let tls_acceptor = tokio_rustls::TlsAcceptor::from(tls_config);
+    let bind_addr = listener.local_addr().map_err(crate::GatewayError::Io)?;
 
     info!(addr = %bind_addr, "HTTPS proxy started");
 

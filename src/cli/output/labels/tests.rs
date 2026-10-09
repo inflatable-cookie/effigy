@@ -81,6 +81,7 @@ fn command_kind_and_name_maps_command_variants() {
     });
     let gateway = Command::Gateway(GatewayArgs {
         subcommand: GatewaySubcommand::Status,
+        private: None,
         output_json: false,
     });
     let doctor = Command::Doctor(DoctorArgs {
