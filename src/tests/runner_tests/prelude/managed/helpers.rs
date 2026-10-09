@@ -4,7 +4,9 @@ use super::super::output::{
     assert_output_contains_all, assert_output_contains_derived, assert_output_excludes_all,
     assert_path_exists, assert_path_missing,
 };
-use super::super::runtime::{fs, thread, Duration, Path, PathBuf, RunnerError, TaskInvocation};
+use super::super::runtime::{
+    fs, thread, Duration, Instant, Path, PathBuf, RunnerError, TaskInvocation,
+};
 use super::assertions::{
     assert_lock_conflict, assert_managed_non_zero_exit, assert_managed_profile_not_found,
     assert_unlock_invocation_error_contains,
@@ -18,6 +20,7 @@ use super::fixtures::{
     install_fake_container_runtime, write_managed_stream_builtin_test_manifest,
     write_managed_stream_builtin_test_profile_manifest,
 };
+use crate::contract_test_support::wait_for_path_exists;
 use crate::contract_test_support::ExecutableOverrideGuard;
 
 fn task_args(args: &[&str]) -> Vec<String> {
@@ -90,23 +93,86 @@ pub(in crate::runner::tests) fn run_managed_invocation(
     }
 }
 
+pub(in crate::runner::tests) struct OwnedThread<T> {
+    handle: Option<thread::JoinHandle<T>>,
+}
+
+impl<T> OwnedThread<T> {
+    pub(in crate::runner::tests) fn spawn<F>(work: F) -> Self
+    where
+        F: FnOnce() -> T + Send + 'static,
+        T: Send + 'static,
+    {
+        Self {
+            handle: Some(thread::spawn(work)),
+        }
+    }
+
+    pub(in crate::runner::tests) fn join(mut self) -> T {
+        self.handle
+            .take()
+            .expect("owned thread handle")
+            .join()
+            .expect("thread join")
+    }
+}
+
+impl<T> Drop for OwnedThread<T> {
+    fn drop(&mut self) {
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+pub(in crate::runner::tests) fn wait_for_live_task_owner(root: &Path, lock_file: &str) {
+    wait_for_path_exists(
+        &root.join(".effigy/locks").join(lock_file),
+        Duration::from_secs(5),
+        lock_file,
+    );
+    wait_for_parseable_active_task_status(root, Duration::from_secs(5));
+}
+
+fn wait_for_parseable_active_task_status(root: &Path, timeout: Duration) {
+    let active_dir = root.join(".effigy/runtime/tasks/active");
+    let started = Instant::now();
+    loop {
+        if let Ok(entries) = fs::read_dir(&active_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|value| value.to_str()) != Some("json") {
+                    continue;
+                }
+                if let Ok(body) = fs::read_to_string(&path) {
+                    if serde_json::from_str::<serde_json::Value>(&body).is_ok() {
+                        return;
+                    }
+                }
+            }
+        }
+        assert!(
+            started.elapsed() < timeout,
+            "parseable active task-status record was not published in time under {}",
+            active_dir.display()
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
 pub(in crate::runner::tests) fn assert_live_dev_lock_conflict(
     root: &Path,
-    warmup_ms: u64,
     expected_scope: &str,
     expected_remediation: &str,
 ) {
     let root_for_thread = root.to_path_buf();
-    let join = thread::spawn(move || run_dev(&root_for_thread, &[]));
-
-    std::thread::sleep(Duration::from_millis(warmup_ms));
+    let owner = OwnedThread::spawn(move || run_dev(&root_for_thread, &[]));
+    wait_for_live_task_owner(root, "task-dev.lock");
 
     let err = run_dev(root, &[]).expect_err("second run should conflict on lock");
     assert_lock_conflict(err, expected_scope, expected_remediation);
 
-    join.join()
-        .expect("thread join")
-        .expect("first run should complete");
+    owner.join().expect("first run should complete");
 }
 
 fn workspace_root(workspace: &str) -> PathBuf {

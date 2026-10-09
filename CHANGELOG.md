@@ -33,6 +33,10 @@ During v0.x, MINOR bumps may include breaking changes.
   retry; ambiguous recovery remains held.
 
 ### Changed
+- Task-status records are published by replacing a complete sibling file, so a
+  concurrent reader never observes a truncated or empty JSON document. A failed
+  publication keeps the previous valid record and removes only the writer's own
+  temporary file.
 - The gateway daemon now handles Unix TERM and INT through its owned shutdown
   path and waits for server tasks before removing its exact generation record.
   Administrator identity and lifecycle handoffs provide visible operator

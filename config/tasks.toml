@@ -234,6 +234,24 @@
   "cargo check -p effigy --test cli_output_tests --profile test",
   "cargo clippy -p effigy --all-targets -- -D warnings",
 ]
+# Task-status JSON publication: readers never observe truncated or empty
+# records. Writer/reader regression, live lock conflict, fail-closed
+# corrupt/empty reads, and owner-record preservation. Private fixtures;
+# owned threads reaped even on assertion failure.
+"test:task-status:publication" = [
+  { id = "publication-writer", run = "cargo test -p effigy --lib runner::execute::task_status::tests::publication:: -- --nocapture", timeout_ms = 600000 },
+  { id = "publication-runtime-reader", run = "cargo test -p effigy-runtime --lib task_status::tests:: -- --nocapture", timeout_ms = 600000 },
+  { id = "publication-live-lock", run = "cargo test -p effigy --lib run_manifest_task_rejects_live_lock_conflict -- --nocapture", timeout_ms = 600000 },
+  { id = "publication-owner-preservation", run = "cargo test -p effigy --lib live_lock_conflict_leaves_owner_active_record_in_place -- --nocapture", timeout_ms = 600000 },
+  { id = "publication-corrupt-active", run = "cargo test -p effigy --lib live_waiter_fails_closed_on_corrupt_active_record -- --nocapture", timeout_ms = 600000 },
+  { id = "publication-lock-owner-status", run = "cargo test -p effigy --lib lock_wait_timeout_names_live_owner_and_status_path -- --nocapture", timeout_ms = 600000 },
+  { id = "publication-lock-sequence-owner", run = "cargo test -p effigy --lib lock_wait_timeout_keeps_sequence_owner_on_status -- --nocapture", timeout_ms = 600000 },
+  { id = "publication-blocked-latest", run = "cargo test -p effigy --lib direct_task_dispatch_writes_blocked_task_status_record_for_lock_conflict -- --nocapture", timeout_ms = 600000 },
+]
+"check:task-status:publication" = [
+  "cargo check -p effigy -p effigy-runtime --lib --tests --profile test",
+  "cargo clippy -p effigy -p effigy-runtime --all-targets -- -D warnings",
+]
 # In-process sequence and managed-cleanup timeout descendant reap. Private
 # tempfile fixtures only; exact recorded PIDs/groups; no process-name kills.
 "test:runner:timeout-descendants" = [
