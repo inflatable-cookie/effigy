@@ -389,9 +389,22 @@ fn private_gateway_cli_serves_verified_https_and_isolates_concurrent_instances()
     );
 
     println!(
-        "private gateway proof: first pid={} https={}, second pid={} https={}, managed pid={} https={}",
-        first_up_json["pid"], first_https, second_up_json["pid"], second_https,
-        managed_status["pid"], managed_https
+        "private gateway proof: first root={} pid={} dns={} proxy={} https={}, second root={} pid={} dns={} proxy={} https={}, managed root={} pid={} dns={} proxy={} https={}",
+        first_up_json["gateway_dir"].as_str().expect("first private root"),
+        first_up_json["pid"],
+        first_up_json["dns_addr"].as_str().expect("first DNS address"),
+        first_up_json["proxy_addr"].as_str().expect("first proxy address"),
+        first_https,
+        second_up_json["gateway_dir"].as_str().expect("second private root"),
+        second_up_json["pid"],
+        second_up_json["dns_addr"].as_str().expect("second DNS address"),
+        second_up_json["proxy_addr"].as_str().expect("second proxy address"),
+        second_https,
+        managed_status["gateway_dir"].as_str().expect("managed private root"),
+        managed_status["pid"],
+        managed_status["dns_addr"].as_str().expect("managed DNS address"),
+        managed_status["proxy_addr"].as_str().expect("managed proxy address"),
+        managed_https
     );
 }
 
