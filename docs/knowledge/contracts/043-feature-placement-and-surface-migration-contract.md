@@ -458,6 +458,21 @@ startup, daemon handoff, route changes, status and teardown, with unsafe or
 ambiguous configuration refused before effects. Test-only interception of
 the installer is not a supported consumer mode.
 
+The supported Effigy surface is `gateway setup-tls --private-state-root
+<DIR>` and `gateway up --private-state-root <DIR>` with optional loopback
+address overrides. `EFFIGY_GATEWAY_PRIVATE_STATE_ROOT=<DIR>` carries the same
+policy through normal container route registration and managed gateway
+startup. The gateway reports its actual OS-assigned addresses and the fixture
+CA path; clients supply that CA and resolve route names to the HTTPS address.
+Private state validation currently requires Unix ownership and permission
+checks, and fails closed on other platforms.
+The implementation lives in `effigy-gateway` and the runner's gateway
+command boundary; the CLI and container host integration carry the selection.
+See the [private gateway guide](../../guides/063-container-system-guide.md#private-gateway-for-disposable-consumers)
+and [gateway architecture](../architecture/020-container-infrastructure-design.md).
+This capability does not qualify fixed-port consumer adapters or hybrid
+child-listener ownership.
+
 Managed host-listener support must reuse Effigy's existing managed-process
 lifecycle and process identity primitives. Its language-neutral declaration
 binds a child selector to instance-scoped listener discovery, readiness and

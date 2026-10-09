@@ -708,7 +708,17 @@ pub struct BundleArgs {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GatewayArgs {
     pub subcommand: GatewaySubcommand,
+    pub private: Option<GatewayPrivateArgs>,
     pub output_json: bool,
+}
+
+/// Explicit fixture-owned gateway state and optional loopback bind overrides.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GatewayPrivateArgs {
+    pub state_root: PathBuf,
+    pub dns_addr: Option<std::net::SocketAddr>,
+    pub proxy_addr: Option<std::net::SocketAddr>,
+    pub https_addr: Option<std::net::SocketAddr>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -900,7 +910,9 @@ pub enum GatewaySubcommand {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[doc(hidden)]
-pub struct InternalGatewayArgs;
+pub struct InternalGatewayArgs {
+    pub private: Option<GatewayPrivateArgs>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[doc(hidden)]

@@ -1,3 +1,4 @@
+use std::fs::{File, OpenOptions};
 use std::path::PathBuf;
 use std::process::{Command as ProcessCommand, Stdio};
 use std::thread;
@@ -12,13 +13,18 @@ use effigy_gateway::server::{self, GatewayConfig};
 use crate::runner::error::RunnerError;
 
 pub(super) fn spawn_gateway_daemon(config: &GatewayConfig) -> Result<(), RunnerError> {
-    identity::ensure_trusted_gateway_parent(&config.pid_file_path)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    if let Some(root) = config.private_state_root() {
+        effigy_gateway::private_state::validate_root(root)
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    } else {
+        identity::ensure_trusted_gateway_parent(&config.pid_file_path)
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    }
     let effigy_bin = std::env::current_exe().map_err(RunnerError::Cwd)?;
     let stdout_log =
-        std::fs::File::create(gateway_stdout_log_path(config)).map_err(RunnerError::Cwd)?;
+        create_gateway_log(gateway_stdout_log_path(config)).map_err(RunnerError::Cwd)?;
     let stderr_log =
-        std::fs::File::create(gateway_stderr_log_path(config)).map_err(RunnerError::Cwd)?;
+        create_gateway_log(gateway_stderr_log_path(config)).map_err(RunnerError::Cwd)?;
     let mut command = ProcessCommand::new(&effigy_bin);
     command
         .arg("__gateway-run")
@@ -26,6 +32,18 @@ pub(super) fn spawn_gateway_daemon(config: &GatewayConfig) -> Result<(), RunnerE
         .stdin(Stdio::null())
         .stdout(Stdio::from(stdout_log))
         .stderr(Stdio::from(stderr_log));
+    if let Some(root) = config.private_state_root() {
+        command
+            .arg("--private-state-root")
+            .arg(root)
+            .arg("--dns-addr")
+            .arg(config.dns.bind_addr.to_string())
+            .arg("--proxy-addr")
+            .arg(config.proxy.bind_addr.to_string());
+        if let Some(address) = config.proxy.tls_bind_addr {
+            command.arg("--https-addr").arg(address.to_string());
+        }
+    }
     // SAFETY: `pre_exec` runs this closure in the forked child before `exec`,
     // where only async-signal-safe work is allowed. `setsid` is
     // async-signal-safe. On failure, `io::Error::last_os_error()` captures
@@ -77,6 +95,27 @@ pub(super) fn spawn_gateway_daemon(config: &GatewayConfig) -> Result<(), RunnerE
     Ok(())
 }
 
+fn create_gateway_log(path: PathBuf) -> std::io::Result<File> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .mode(0o600)
+            .open(path)
+    }
+    #[cfg(not(unix))]
+    {
+        OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(path)
+    }
+}
+
 pub(super) fn wait_for_pid_file(config: &GatewayConfig) -> Result<(), RunnerError> {
     for _ in 0..20 {
         if config.pid_file_path.exists() {
@@ -90,10 +129,32 @@ pub(super) fn wait_for_pid_file(config: &GatewayConfig) -> Result<(), RunnerErro
     )))
 }
 
+pub(super) fn wait_for_private_gateway_ready(config: &GatewayConfig) -> Result<(), RunnerError> {
+    for _ in 0..40 {
+        match server::get_verified_gateway_status(config) {
+            Ok(_) => return Ok(()),
+            Err(effigy_gateway::GatewayError::NotRunning) => {}
+            Err(effigy_gateway::GatewayError::Io(error))
+                if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(RunnerError::task_invocation(error.to_string())),
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+    Err(RunnerError::task_invocation(
+        "private gateway did not publish verified listener addresses within one second",
+    ))
+}
+
 pub(super) fn stop_gateway_process(
     snapshot: &effigy_gateway::identity::GatewayRecordSnapshot,
 ) -> Result<(), RunnerError> {
     stop_gateway_process_with_probe(snapshot, super::gateway_identity_probe)
+}
+
+pub(super) fn stop_private_gateway_process(
+    snapshot: &effigy_gateway::identity::GatewayRecordSnapshot,
+) -> Result<(), RunnerError> {
+    stop_gateway_process_with_probe(snapshot, |record, _| identity::probe_live_identity(record))
 }
 
 pub(super) fn stop_gateway_process_for_replacement(

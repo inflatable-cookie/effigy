@@ -85,8 +85,8 @@ artifact refs or env files.
 
 ### HTTPS gateway routes (optional)
 
-If you use local domains with `tls = true`, install `mkcert` and run the
-one-time trust-store install:
+In ordinary operator mode, if you use local domains with `tls = true`, install
+`mkcert` and run the one-time trust-store install:
 
 ```bash
 brew install mkcert
@@ -94,7 +94,9 @@ mkcert -install
 ```
 
 Effigy also provides `effigy gateway setup-tls` as the “do the right thing”
-helper for mkcert-backed TLS.
+helper for mkcert-backed TLS. For disposable mode without host trust changes,
+use the [private gateway workflow](#private-gateway-for-disposable-consumers)
+instead; do not run `mkcert -install` for that fixture.
 
 Common commands:
 
@@ -826,6 +828,88 @@ Safety rules:
 TCP catalog services such as postgres, mariadb, redis, and memcached also get
 deterministic loopback aliases. That means host and container code can use the
 same stable names without hand-written `/etc/hosts` edits.
+
+### Private gateway for disposable consumers
+
+Use private mode when a disposable checkout needs real HTTPS without changing
+the user's trust store, resolver files, host aliases, or privilege state. The
+state root must already exist as a canonical directory owned by the current
+user with mode `0700`; Effigy creates its `ca/` and `certs/` subdirectories
+there. Private mode currently requires Unix ownership and permission checks;
+other platforms fail closed. Keep `ca/rootCA-key.pem` private. Share only
+`ca/rootCA.pem` with a client that should trust this fixture.
+
+```sh
+gateway_root=$(cd "$(mktemp -d)" && pwd -P)
+chmod 700 "$gateway_root"
+export EFFIGY_GATEWAY_PRIVATE_STATE_ROOT="$gateway_root"
+
+# Create a fixture CA and localhost certificate without installing trust.
+effigy gateway setup-tls --private-state-root "$gateway_root" --json
+
+# Normal container and managed startup inherit the same private state root.
+effigy container up
+
+# Capture the OS-assigned listeners and the CA path for this instance.
+effigy gateway status --json
+```
+
+Private TLS uses an absolute `EFFIGY_GATEWAY_MKCERT_BIN` executable when it is
+set; otherwise it searches Effigy's bounded trusted install prefixes. Set it
+only to a trusted mkcert executable. Effigy gives certificate generation the
+fixture's `ca/` directory as `CAROOT` and never runs `mkcert -install` in
+private mode. An invalid explicit path fails closed instead of selecting a
+different executable.
+
+Private startup binds DNS, HTTP, and HTTPS only to loopback. Each address can
+be pinned with `--dns-addr`, `--proxy-addr`, or `--https-addr` on `gateway up`,
+or with `EFFIGY_GATEWAY_DNS_ADDR`, `EFFIGY_GATEWAY_PROXY_ADDR`, and
+`EFFIGY_GATEWAY_HTTPS_ADDR`. Port `0` asks the OS to allocate a port; status
+and `up --json` report the address actually held. Do not assume an adapter
+using a fixed port has migrated to this mode.
+
+Clients explicitly trust the fixture CA and resolve the route name to the
+reported HTTPS loopback address. This example uses the domain from the
+consumer's TLS route; `--resolve` also sends that name for TLS verification
+and SNI:
+
+```sh
+https_addr=$(effigy gateway status --json | jq -r '.result.https_addr')
+https_port=${https_addr##*:}
+curl --cacert "$gateway_root/ca/rootCA.pem" \
+  --resolve "app.example.test:$https_port:127.0.0.1" \
+  "https://app.example.test:$https_port/"
+
+effigy gateway down --private-state-root "$gateway_root"
+```
+
+`setup-tls --json` reports `private: true`, `client_trust: "explicit_fixture_ca"`
+and `client_ca_file`; private `up` and `status` report `private: true`, the
+actual listener addresses, and the same CA path. A status payload has this
+shape (values vary per fixture):
+
+```json
+{
+  "schema": "effigy.gateway.status.v1",
+  "schema_version": 1,
+  "ok": true,
+  "running": true,
+  "pid": 48125,
+  "dns_addr": "127.0.0.1:53421",
+  "proxy_addr": "127.0.0.1:53422",
+  "https_addr": "127.0.0.1:53423",
+  "client_ca_file": "/tmp/private-gateway/ca/rootCA.pem",
+  "private": true,
+  "gateway_dir": "/tmp/private-gateway",
+  "route_table_trust": "trusted",
+  "route_count": 1
+}
+```
+
+Run `gateway down --private-state-root "$gateway_root"` before removing a
+fixture root. Private recovery refuses ambiguous identity instead of
+falling back to operator state. The normal operator gateway remains the
+default and keeps its existing setup behavior.
 
 Scoped checkouts — linked worktrees and marked ephemeral clones — register
 the effective host map from `effigy container hosts`, not the raw declared

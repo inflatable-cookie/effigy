@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use crate::value_parsing::{next_required_value, parse_repo_path};
 use crate::{
-    Command, ExecArgs, GatewayArgs, GatewaySubcommand, HelpTopic, ServiceArgs,
+    Command, ExecArgs, GatewayArgs, GatewayPrivateArgs, GatewaySubcommand, HelpTopic, ServiceArgs,
     ServicePackInstallSource, ServicePackSubcommand, ServiceSubcommand, SystemArgs,
     SystemSubcommand, WorkspaceArgs,
 };
@@ -35,9 +35,67 @@ where
     };
 
     let mut adopt_candidate = false;
-    for arg in args {
+    let mut private_state_root = None;
+    let mut dns_addr = None;
+    let mut proxy_addr = None;
+    let mut https_addr = None;
+    let mut args = args.peekable();
+    while let Some(arg) = args.next() {
         match arg.as_str() {
             "--json" => output_json = true,
+            "--private-state-root"
+                if matches!(
+                    subcommand,
+                    GatewaySubcommand::Up
+                        | GatewaySubcommand::Down
+                        | GatewaySubcommand::Status
+                        | GatewaySubcommand::SetupTls
+                ) && private_state_root.is_none() =>
+            {
+                private_state_root = Some(PathBuf::from(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--private-state-root".to_owned(),
+                    },
+                )?));
+            }
+            "--dns-addr" if matches!(subcommand, GatewaySubcommand::Up) && dns_addr.is_none() => {
+                dns_addr = Some(parse_gateway_addr(
+                    "--dns-addr",
+                    next_required_value(
+                        &mut args,
+                        CliParseError::MissingFlagValue {
+                            flag: "--dns-addr".to_owned(),
+                        },
+                    )?,
+                )?);
+            }
+            "--proxy-addr"
+                if matches!(subcommand, GatewaySubcommand::Up) && proxy_addr.is_none() =>
+            {
+                proxy_addr = Some(parse_gateway_addr(
+                    "--proxy-addr",
+                    next_required_value(
+                        &mut args,
+                        CliParseError::MissingFlagValue {
+                            flag: "--proxy-addr".to_owned(),
+                        },
+                    )?,
+                )?);
+            }
+            "--https-addr"
+                if matches!(subcommand, GatewaySubcommand::Up) && https_addr.is_none() =>
+            {
+                https_addr = Some(parse_gateway_addr(
+                    "--https-addr",
+                    next_required_value(
+                        &mut args,
+                        CliParseError::MissingFlagValue {
+                            flag: "--https-addr".to_owned(),
+                        },
+                    )?,
+                )?);
+            }
             "--yes"
                 if matches!(
                     subcommand,
@@ -64,10 +122,35 @@ where
         };
     }
 
+    if private_state_root.is_none()
+        && (dns_addr.is_some() || proxy_addr.is_some() || https_addr.is_some())
+    {
+        return Err(CliParseError::InvalidArguments(
+            "gateway bind overrides require `--private-state-root`".to_owned(),
+        ));
+    }
+
     Ok(Command::Gateway(GatewayArgs {
         subcommand,
+        private: private_state_root.map(|state_root| GatewayPrivateArgs {
+            state_root,
+            dns_addr,
+            proxy_addr,
+            https_addr,
+        }),
         output_json,
     }))
+}
+
+pub(super) fn parse_gateway_addr(
+    flag: &str,
+    value: String,
+) -> Result<std::net::SocketAddr, CliParseError> {
+    value.parse().map_err(|error| {
+        CliParseError::InvalidArguments(format!(
+            "{flag} expects an IP socket address, got {value:?}: {error}"
+        ))
+    })
 }
 
 pub(super) fn parse_system_command<I>(args: I) -> Result<Command, CliParseError>

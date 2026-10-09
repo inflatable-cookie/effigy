@@ -141,12 +141,22 @@
   "cargo check -p effigy-gateway -p effigy --all-targets",
   "cargo clippy -p effigy-gateway -p effigy --all-targets -- -D warnings",
 ]
+"test:gateway:private" = [
+  { id = "gateway-private-state-startup", run = "cargo test -p effigy-gateway --lib private_ -- --nocapture --test-threads=1", timeout_ms = 240000 },
+  { id = "gateway-private-tls", run = "cargo test -p effigy-gateway --lib tls::tests:: -- --nocapture --test-threads=1", timeout_ms = 240000 },
+  { id = "gateway-private-container-propagation", run = "cargo test -p effigy-containers private_gateway_does_not_resolve -- --nocapture --test-threads=1", timeout_ms = 240000 },
+  { id = "gateway-private-runner-policy", run = "cargo test -p effigy --lib private_gateway -- --nocapture --test-threads=1", timeout_ms = 240000 },
+  { id = "gateway-private-cli-parse", run = "cargo test -p effigy --lib parse_gateway -- --nocapture --test-threads=1", timeout_ms = 240000 },
+]
+"proof:gateway:private" = [
+  { id = "gateway-private-cli-https", run = "cargo test -p effigy --test gateway_private -- --nocapture --test-threads=1", timeout_ms = 600000 },
+]
 "test:gateway:identity" = [
   { id = "gateway-identity", run = "cargo test -p effigy-gateway -p effigy-cli -p effigy --lib gateway_identity -- --nocapture", timeout_ms = 240000 },
 ]
 "check:gateway:identity" = [
-  "cargo check -p effigy-gateway -p effigy-cli -p effigy --all-targets",
-  "cargo clippy -p effigy-gateway -p effigy-cli -p effigy --all-targets -- -D warnings",
+  "cargo check -p effigy-gateway -p effigy-cli -p effigy-containers -p effigy --all-targets",
+  "cargo clippy -p effigy-gateway -p effigy-cli -p effigy-containers -p effigy --all-targets -- -D warnings",
 ]
 "test:gateway:legacy-recovery" = [
   { id = "gateway-legacy-recovery", run = "cargo test -p effigy-gateway -p effigy-cli -p effigy --lib legacy_recovery -- --nocapture", timeout_ms = 240000 },

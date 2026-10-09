@@ -769,6 +769,38 @@ mod host_git_mount_tests {
     }
 
     #[test]
+    fn private_gateway_does_not_resolve_or_mount_the_host_mkcert_ca() {
+        let dir = temp_dir("private-gateway-mkcert");
+        let pem = dir.join("rootCA.pem");
+        fs::write(&pem, "host CA sentinel").expect("write host CA sentinel");
+        let config = make_config("php-fpm", enabled_params());
+        let variable = effigy_gateway::private_state::PRIVATE_STATE_ROOT_ENV;
+        let previous = std::env::var_os(variable);
+        std::env::set_var(variable, &dir);
+        let _restore = RestoreEnvironmentVariable { variable, previous };
+
+        let mount = with_test_host_mkcert_root_ca(Some(&pem), || {
+            build_host_mkcert_ca_mount(&config, "workspace")
+        });
+        assert!(mount.is_none());
+    }
+
+    struct RestoreEnvironmentVariable {
+        variable: &'static str,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl Drop for RestoreEnvironmentVariable {
+        fn drop(&mut self) {
+            if let Some(value) = self.previous.take() {
+                std::env::set_var(self.variable, value);
+            } else {
+                std::env::remove_var(self.variable);
+            }
+        }
+    }
+
+    #[test]
     fn mkcert_ca_mount_skipped_when_param_disabled() {
         let dir = temp_dir("mkcert-disabled");
         let pem = dir.join("rootCA.pem");

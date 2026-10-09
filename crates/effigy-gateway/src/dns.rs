@@ -132,7 +132,7 @@ pub async fn run_dns_server(
     route_table: Arc<RwLock<RouteTable>>,
     stats: Arc<GatewayStats>,
     dns_cache: Arc<DnsCache>,
-    mut shutdown: tokio::sync::watch::Receiver<bool>,
+    shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> Result<(), crate::GatewayError> {
     let socket =
         UdpSocket::bind(config.bind_addr)
@@ -142,7 +142,19 @@ pub async fn run_dns_server(
                 reason: e.to_string(),
             })?;
 
-    debug!(addr = %config.bind_addr, tld = %config.tld, "DNS resolver started");
+    run_dns_server_on(socket, config, route_table, stats, dns_cache, shutdown).await
+}
+
+pub(crate) async fn run_dns_server_on(
+    socket: UdpSocket,
+    config: DnsConfig,
+    route_table: Arc<RwLock<RouteTable>>,
+    stats: Arc<GatewayStats>,
+    dns_cache: Arc<DnsCache>,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
+) -> Result<(), crate::GatewayError> {
+    let bind_addr = socket.local_addr().map_err(crate::GatewayError::Io)?;
+    debug!(addr = %bind_addr, tld = %config.tld, "DNS resolver started");
 
     let mut buf = vec![0u8; 512];
 

@@ -124,16 +124,29 @@ impl RouteTableLock {
                 }
             })?;
         }
+        #[cfg(unix)]
+        let file = {
+            use std::os::unix::fs::OpenOptionsExt;
+            OpenOptions::new()
+                .create(true)
+                .truncate(false)
+                .read(true)
+                .write(true)
+                .mode(0o600)
+                .custom_flags(libc::O_NOFOLLOW)
+                .open(&lock_path)
+        };
+        #[cfg(not(unix))]
         let file = OpenOptions::new()
             .create(true)
             .truncate(false)
             .read(true)
             .write(true)
-            .open(&lock_path)
-            .map_err(|error| GatewayError::RouteTableWriteError {
-                path: lock_path.clone(),
-                reason: error.to_string(),
-            })?;
+            .open(&lock_path);
+        let file = file.map_err(|error| GatewayError::RouteTableWriteError {
+            path: lock_path.clone(),
+            reason: error.to_string(),
+        })?;
         file.lock_exclusive()
             .map_err(|error| GatewayError::RouteTableWriteError {
                 path: lock_path,

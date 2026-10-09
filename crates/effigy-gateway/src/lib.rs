@@ -36,6 +36,7 @@ pub mod identity;
 pub mod legacy;
 pub mod loopback;
 pub mod ports;
+pub mod private_state;
 pub mod proxy;
 pub mod registration;
 pub mod resolver_setup;
@@ -48,4 +49,4 @@ pub mod trust;
 
 pub use error::GatewayError;
 pub use routes::{Route, RouteTable};
-pub use server::GatewayConfig;
+pub use server::{GatewayConfig, GatewayMode, PrivateGatewayPolicy};

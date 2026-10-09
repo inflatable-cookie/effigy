@@ -826,6 +826,27 @@ route lifecycle remains tied to the owning environment. DNS-only TCP aliases
 for services such as Postgres, MariaDB, Redis, and Memcached use deterministic
 loopback targets, avoiding manual `/etc/hosts` edits.
 
+Disposable consumers can select a caller-owned private gateway with
+`effigy gateway setup-tls --private-state-root <DIR>` and
+`effigy gateway up --private-state-root <DIR>`. The existing root must be a
+canonical owner-only directory; private mode keeps routes, process records,
+listeners, certificates, and the mkcert CA under it. It binds DNS, HTTP, and
+HTTPS only to loopback, with unprivileged ports (port `0` requests actual OS
+allocation). Startup and status report the sockets held by that generation.
+Private state validation currently requires Unix ownership and permission
+checks; other platforms fail closed.
+`EFFIGY_GATEWAY_PRIVATE_STATE_ROOT=<DIR>` selects the same root for normal
+container route registration and managed startup. Private mode does not install
+CA trust, modify resolver files, provision host loopback aliases, or request
+elevation. An absolute `EFFIGY_GATEWAY_MKCERT_BIN` selects the mkcert executable
+for private certificate generation; otherwise Effigy searches its bounded
+trusted install prefixes. Invalid explicit paths fail closed. Effigy passes
+`<DIR>/ca` as `CAROOT` and invokes only certificate generation, never trust
+installation. Clients explicitly trust `<DIR>/ca/rootCA.pem` and resolve each
+route name to the reported HTTPS address; normal operator mode and its
+established host integration remain the default. Fixed-port consumer adapters
+and hybrid child-listener ownership are outside this capability.
+
 An isolated project's loopback assignment uses the same qualified identity in
 generated Compose and gateway registration:
 `project:<project-name>:<absolute-checkout>`. A legacy bare project key moves

@@ -31,12 +31,12 @@ use crate::command_surface;
 use crate::{
     BundleArgs, BundleSubcommand, Command, ContractsArgs, ContractsCheckMode,
     ContractsSelectionPrintMode, ContractsSubcommand, DeferArgs, DepsArgs, DepsManager,
-    DepsSubcommand, DoctorArgs, DraftArgs, DraftsArgs, GatewayLegacyStopPhase, HelpGroup,
-    HelpTopic, InternalContainerLeaseReaperArgs, InternalGatewayArgs, InternalGatewayIdentityArgs,
-    InternalGatewayLegacyCandidateArgs, InternalGatewayLegacyStopArgs, InternalHostProcessStopArgs,
-    InternalHostProcessSuperviseArgs, InternalScriptRunArgs, RhaiArgs, RhaiSubcommand, SkillArgs,
-    SkillStdioMode, SkillSubcommand, TaskInvocation, TasksArgs, TasksQaCommand,
-    TasksRequestCommand, UninstallArgs,
+    DepsSubcommand, DoctorArgs, DraftArgs, DraftsArgs, GatewayLegacyStopPhase, GatewayPrivateArgs,
+    HelpGroup, HelpTopic, InternalContainerLeaseReaperArgs, InternalGatewayArgs,
+    InternalGatewayIdentityArgs, InternalGatewayLegacyCandidateArgs, InternalGatewayLegacyStopArgs,
+    InternalHostProcessStopArgs, InternalHostProcessSuperviseArgs, InternalScriptRunArgs, RhaiArgs,
+    RhaiSubcommand, SkillArgs, SkillStdioMode, SkillSubcommand, TaskInvocation, TasksArgs,
+    TasksQaCommand, TasksRequestCommand, UninstallArgs,
 };
 use artifact::parse_artifact_command;
 use bootstrap::parse_bootstrap_command;
@@ -101,7 +101,7 @@ where
         "drafts" => parse_drafts(args),
         "draft" => parse_draft(args),
         "script" => parse_internal_script_command(args),
-        "__gateway-run" => Ok(Command::InternalGateway(InternalGatewayArgs)),
+        "__gateway-run" => parse_internal_gateway_command(args),
         "__gateway-identity" => parse_internal_gateway_identity_command(args),
         "__gateway-legacy-candidate" => parse_internal_gateway_legacy_candidate_command(args),
         "__gateway-legacy-stop" => parse_internal_gateway_legacy_stop_command(args),
@@ -111,6 +111,76 @@ where
         _ if cmd.starts_with('-') => Err(unknown_argument(cmd)),
         _ => parse_task_command(cmd, args),
     }
+}
+
+fn parse_internal_gateway_command<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut state_root = None;
+    let mut dns_addr = None;
+    let mut proxy_addr = None;
+    let mut https_addr = None;
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--private-state-root" if state_root.is_none() => {
+                state_root = Some(PathBuf::from(next_required_value(
+                    &mut args,
+                    CliParseError::InvalidArguments(
+                        "missing value for --private-state-root".to_owned(),
+                    ),
+                )?));
+            }
+            "--dns-addr" if dns_addr.is_none() => {
+                dns_addr = Some(runtime::parse_gateway_addr(
+                    "--dns-addr",
+                    next_required_value(
+                        &mut args,
+                        CliParseError::InvalidArguments("missing value for --dns-addr".to_owned()),
+                    )?,
+                )?);
+            }
+            "--proxy-addr" if proxy_addr.is_none() => {
+                proxy_addr = Some(runtime::parse_gateway_addr(
+                    "--proxy-addr",
+                    next_required_value(
+                        &mut args,
+                        CliParseError::InvalidArguments(
+                            "missing value for --proxy-addr".to_owned(),
+                        ),
+                    )?,
+                )?);
+            }
+            "--https-addr" if https_addr.is_none() => {
+                https_addr = Some(runtime::parse_gateway_addr(
+                    "--https-addr",
+                    next_required_value(
+                        &mut args,
+                        CliParseError::InvalidArguments(
+                            "missing value for --https-addr".to_owned(),
+                        ),
+                    )?,
+                )?);
+            }
+            other => return Err(unknown_argument(other)),
+        }
+    }
+    let private = match state_root {
+        Some(state_root) => Some(GatewayPrivateArgs {
+            state_root,
+            dns_addr,
+            proxy_addr,
+            https_addr,
+        }),
+        None if dns_addr.is_none() && proxy_addr.is_none() && https_addr.is_none() => None,
+        None => {
+            return Err(CliParseError::InvalidArguments(
+                "gateway bind overrides require `--private-state-root`".to_owned(),
+            ));
+        }
+    };
+    Ok(Command::InternalGateway(InternalGatewayArgs { private }))
 }
 
 fn parse_internal_gateway_identity_command<I>(args: I) -> Result<Command, CliParseError>

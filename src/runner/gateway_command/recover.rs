@@ -76,15 +76,20 @@ pub(super) fn operator_uid() -> u32 {
         .unwrap_or_else(|| nix::unistd::Uid::effective().as_raw())
 }
 
-pub(super) fn run_gateway_recover(
+pub(super) fn run_gateway_recover_with_config(
+    config: &GatewayConfig,
     yes: bool,
     adopt_candidate: bool,
     output_json: bool,
 ) -> Result<String, RunnerError> {
-    let config = gateway_config()?;
+    if config.is_private() {
+        return Err(RunnerError::task_invocation(
+            "`gateway recover` does not apply to private gateway state; private identity ambiguity remains preserved",
+        ));
+    }
     let interactive = io::stdin().is_terminal();
     run_gateway_recover_with(
-        &config,
+        config,
         yes,
         adopt_candidate,
         output_json,
@@ -1026,6 +1031,23 @@ mod legacy_recovery_protocol_tests {
         )
         .unwrap();
         (root, home)
+    }
+
+    #[test]
+    fn private_gateway_recovery_refuses_without_falling_back_to_operator_state() {
+        let root = tempfile::tempdir().expect("private gateway fixture");
+        let config = GatewayConfig::private(root.path().to_path_buf());
+        let error = run_gateway_recover_with_config(&config, false, false, true)
+            .expect_err("private recovery must preserve ambiguous identity");
+        assert!(error
+            .to_string()
+            .contains("private identity ambiguity remains preserved"));
+        assert_eq!(
+            std::fs::read_dir(root.path())
+                .expect("read private root")
+                .count(),
+            0
+        );
     }
 
     fn write_legacy(home: &Path, pid: u32, version: &str) -> std::path::PathBuf {

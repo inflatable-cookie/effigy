@@ -98,6 +98,7 @@ fn command_requests_json_checks_task_or_global_mode() {
     });
     let cmd_gateway = Command::Gateway(GatewayArgs {
         subcommand: GatewaySubcommand::Status,
+        private: None,
         output_json: true,
     });
     let cmd_demo = Command::Demo(DemoArgs {
@@ -167,6 +168,7 @@ fn apply_global_json_flag_sets_non_task_command_json_mode() {
     });
     let gateway_cmd = Command::Gateway(GatewayArgs {
         subcommand: GatewaySubcommand::Status,
+        private: None,
         output_json: false,
     });
     let demo_cmd = Command::Demo(DemoArgs {

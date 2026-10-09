@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use std::process::{Command as ProcessCommand, Stdio};
 
 use effigy_cli::{
-    GatewayArgs, GatewaySubcommand, InternalGatewayArgs, InternalGatewayIdentityArgs,
-    InternalGatewayLegacyCandidateArgs, InternalGatewayLegacyStopArgs,
+    GatewayArgs, GatewayPrivateArgs, GatewaySubcommand, InternalGatewayArgs,
+    InternalGatewayIdentityArgs, InternalGatewayLegacyCandidateArgs, InternalGatewayLegacyStopArgs,
 };
 use effigy_containers::exec::list_running_compose_containers;
 use effigy_gateway::identity::{self, GatewayIdentityProbe, GatewayRecordSnapshot};
@@ -25,7 +25,7 @@ use super::error::RunnerError;
 use daemon::normalize_gateway_daemon_output;
 use daemon::{
     spawn_gateway_daemon, stop_gateway_process, stop_gateway_process_for_replacement,
-    wait_for_pid_file,
+    stop_private_gateway_process, wait_for_pid_file, wait_for_private_gateway_ready,
 };
 #[cfg(all(test, target_os = "macos"))]
 use elevation::build_gateway_elevated_shell_command;
@@ -43,6 +43,8 @@ mod recover;
 pub(super) const GATEWAY_DIR_NAME: &str = ".effigy/gateway";
 pub(super) const GATEWAY_ESCALATED_ENV: &str = "EFFIGY_GATEWAY_ESCALATED";
 pub(super) const GATEWAY_KEEP_RESOLVER_ENV: &str = "EFFIGY_GATEWAY_KEEP_RESOLVER";
+pub(super) const GATEWAY_PRIVATE_STATE_ROOT_ENV: &str =
+    effigy_gateway::private_state::PRIVATE_STATE_ROOT_ENV;
 
 /// Why a managed auto-start decided to run the gateway command. Startup text
 /// keys off this so an unknown or replaced live daemon is never called simply
@@ -106,16 +108,24 @@ impl Drop for TestGatewayHomeGuard {
 }
 
 pub(super) fn run_gateway(args: GatewayArgs) -> Result<String, RunnerError> {
+    let config = gateway_config_with_private(args.private.as_ref())?;
     match args.subcommand {
-        GatewaySubcommand::Up => run_gateway_up(args.output_json),
-        GatewaySubcommand::Down => run_gateway_down(args.output_json),
-        GatewaySubcommand::Status => run_gateway_status(args.output_json),
-        GatewaySubcommand::Repair { yes } => run_gateway_repair(yes, args.output_json),
+        GatewaySubcommand::Up => run_gateway_up_with_config(&config, args.output_json),
+        GatewaySubcommand::Down => run_gateway_down_with_config(&config, args.output_json),
+        GatewaySubcommand::Status => run_gateway_status_with_config(&config, args.output_json),
+        GatewaySubcommand::Repair { yes } => {
+            run_gateway_repair_with_config(&config, yes, args.output_json)
+        }
         GatewaySubcommand::Recover {
             yes,
             adopt_candidate,
-        } => recover::run_gateway_recover(yes, adopt_candidate, args.output_json),
-        GatewaySubcommand::SetupTls => run_gateway_setup_tls(args.output_json),
+        } => recover::run_gateway_recover_with_config(
+            &config,
+            yes,
+            adopt_candidate,
+            args.output_json,
+        ),
+        GatewaySubcommand::SetupTls => run_gateway_setup_tls_with_config(&config, args.output_json),
     }
 }
 
@@ -168,8 +178,8 @@ pub(in crate::runner) fn gateway_up_for_managed_task(command: &str) -> Result<()
     }
 }
 
-pub(super) fn run_internal_gateway(_args: InternalGatewayArgs) -> Result<String, RunnerError> {
-    let config = gateway_config()?;
+pub(super) fn run_internal_gateway(args: InternalGatewayArgs) -> Result<String, RunnerError> {
+    let config = gateway_config_with_private(args.private.as_ref())?;
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -316,7 +326,13 @@ fn verified_gateway_status_for_up(config: &GatewayConfig) -> GatewayUpStatusProb
 fn verified_gateway_status(
     config: &GatewayConfig,
 ) -> Result<VerifiedGatewayStatus, effigy_gateway::GatewayError> {
-    server::get_verified_gateway_status_with(config, gateway_identity_probe)
+    if config.is_private() {
+        server::get_verified_gateway_status_with(config, |record, _| {
+            identity::probe_live_identity(record)
+        })
+    } else {
+        server::get_verified_gateway_status_with(config, gateway_identity_probe)
+    }
 }
 
 /// Resolve a `get_status` result for a lifecycle command.
@@ -403,7 +419,29 @@ fn stop_existing_gateway_with(
 
 fn run_gateway_up(output_json: bool) -> Result<String, RunnerError> {
     let config = gateway_config()?;
-    let probe = verified_gateway_status_for_up(&config);
+    run_gateway_up_with_config(&config, output_json)
+}
+
+#[cfg(test)]
+fn run_gateway_down(output_json: bool) -> Result<String, RunnerError> {
+    let config = gateway_config()?;
+    run_gateway_down_with_config(&config, output_json)
+}
+
+#[cfg(test)]
+fn run_gateway_status(output_json: bool) -> Result<String, RunnerError> {
+    let config = gateway_config()?;
+    run_gateway_status_with_config(&config, output_json)
+}
+
+fn run_gateway_up_with_config(
+    config: &GatewayConfig,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    if config.is_private() {
+        return run_private_gateway_up(config, output_json);
+    }
+    let probe = verified_gateway_status_for_up(config);
     if probe.identity_permission_denied {
         return run_gateway_up_after_identity_permission_denied(
             probe.status,
@@ -412,24 +450,61 @@ fn run_gateway_up(output_json: bool) -> Result<String, RunnerError> {
             || run_gateway_elevated(GatewaySubcommand::Up, output_json),
         );
     }
-    match inspect_existing_gateway(&config, probe.status, output_json)? {
+    match inspect_existing_gateway(config, probe.status, output_json)? {
         ExistingGateway::Rendered(rendered) => Ok(rendered),
         ExistingGateway::Running(status) => {
-            if replacement_requires_elevation(&config, status.as_ref())? {
+            if replacement_requires_elevation(config, status.as_ref())? {
                 return run_gateway_elevated(GatewaySubcommand::Up, output_json);
             }
-            run_gateway_up_after_lock(&config, output_json)
+            run_gateway_up_after_lock(config, output_json)
         }
         ExistingGateway::Absent => {
-            if !gateway_invocation_is_escalated() && gateway_up_requires_elevation(&config) {
-                if let Some(rendered) = stage_absent_up_under_lock(&config, output_json)? {
+            if !gateway_invocation_is_escalated() && gateway_up_requires_elevation(config) {
+                if let Some(rendered) = stage_absent_up_under_lock(config, output_json)? {
                     return Ok(rendered);
                 }
                 return run_gateway_elevated(GatewaySubcommand::Up, output_json);
             }
-            run_gateway_up_after_lock(&config, output_json)
+            run_gateway_up_after_lock(config, output_json)
         }
     }
+}
+
+fn run_private_gateway_up(
+    config: &GatewayConfig,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    let _lock = recover::acquire_transition_lock(config)?;
+    prepare_gateway_state_for_elevated_run(config)?;
+    let probe = verified_gateway_status_for_up(config);
+    if probe.identity_permission_denied {
+        return Err(RunnerError::task_invocation(
+            "private gateway identity is unknown; refusing startup or replacement",
+        ));
+    }
+    match inspect_existing_gateway(config, probe.status, output_json)? {
+        ExistingGateway::Rendered(rendered) => return Ok(rendered),
+        ExistingGateway::Running(status) => {
+            stop_existing_gateway(status.as_ref())?;
+            server::remove_private_gateway_addresses_if_unchanged(config, &status.snapshot)
+                .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+        }
+        ExistingGateway::Absent => {}
+    }
+    spawn_gateway_daemon(config)?;
+    wait_for_private_gateway_ready(config)?;
+    let status = verified_gateway_status(config)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let route_table = RouteTable::load(&config.route_table_path)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let tls = gateway_tls_summary(config, &route_table);
+    render_gateway_up_result(
+        config,
+        GatewayUpState::Started(status.status),
+        &tls,
+        &[],
+        output_json,
+    )
 }
 
 fn run_gateway_up_after_identity_permission_denied(
@@ -488,12 +563,19 @@ fn run_gateway_up_after_lock(
         ExistingGateway::Absent => {}
     }
     prepare_gateway_state_for_elevated_run(config)?;
-    ensure_gateway_up_privileges(config)?;
+    if !config.is_private() {
+        ensure_gateway_up_privileges(config)?;
+    }
 
     spawn_gateway_daemon(config)?;
     wait_for_pid_file(config)?;
-    let mut warnings = install_resolver_if_needed(config);
-    warnings.extend(provision_loopback_aliases_if_needed(config));
+    let warnings = if config.is_private() {
+        Vec::new()
+    } else {
+        let mut warnings = install_resolver_if_needed(config);
+        warnings.extend(provision_loopback_aliases_if_needed(config));
+        warnings
+    };
     let status = verified_gateway_status(config)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let route_table = RouteTable::load(&config.route_table_path)
@@ -508,24 +590,31 @@ fn run_gateway_up_after_lock(
     )
 }
 
-fn run_gateway_down(output_json: bool) -> Result<String, RunnerError> {
-    let config = gateway_config()?;
-    let status = resolve_gateway_status(verified_gateway_status(&config))?;
-    if !gateway_invocation_is_escalated()
-        && gateway_down_requires_elevation(&config, status.as_ref())?
+fn run_gateway_down_with_config(
+    config: &GatewayConfig,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    let status = resolve_gateway_status(verified_gateway_status(config))?;
+    if !config.is_private()
+        && !gateway_invocation_is_escalated()
+        && gateway_down_requires_elevation(config, status.as_ref())?
     {
         return run_gateway_elevated(GatewaySubcommand::Down, output_json);
     }
-    let _lock = recover::acquire_transition_lock(&config)?;
-    let status = resolve_gateway_status(verified_gateway_status(&config))?;
-    let warnings = if keep_gateway_resolver_on_down() {
+    let _lock = recover::acquire_transition_lock(config)?;
+    let status = resolve_gateway_status(verified_gateway_status(config))?;
+    let warnings = if config.is_private() || keep_gateway_resolver_on_down() {
         Vec::new()
     } else {
-        uninstall_resolver_if_needed(&config)
+        uninstall_resolver_if_needed(config)
     };
 
     if let Some(ref running) = status {
-        stop_gateway_process(&running.snapshot)?;
+        if config.is_private() {
+            stop_private_gateway_process(&running.snapshot)?;
+        } else {
+            stop_gateway_process(&running.snapshot)?;
+        }
     }
     if let Some(ref running) = status {
         match server::probe_gateway_process(running.pid) {
@@ -552,6 +641,14 @@ fn run_gateway_down(output_json: bool) -> Result<String, RunnerError> {
                 "gateway record changed during stop; refusing to report it stopped",
             ));
         }
+        if config.is_private()
+            && !server::remove_private_gateway_addresses_if_unchanged(config, &running.snapshot)
+                .map_err(|error| RunnerError::task_invocation(error.to_string()))?
+        {
+            return Err(RunnerError::task_invocation(
+                "private gateway endpoint receipt changed during shutdown; refusing to remove it",
+            ));
+        }
     }
 
     if output_json {
@@ -561,7 +658,7 @@ fn run_gateway_down(output_json: bool) -> Result<String, RunnerError> {
             "ok": true,
             "action": "down",
             "running": false,
-            "gateway_dir": config_dir_display(&config),
+            "gateway_dir": config_dir_display(config),
             "pid": status.map(|value| value.pid),
             "warnings": warnings,
         })
@@ -573,12 +670,12 @@ fn run_gateway_down(output_json: bool) -> Result<String, RunnerError> {
             "{}[ok] gateway stopped\npid: {}\nstate: {}",
             render_warning_lines(&warnings),
             value.pid,
-            config_dir_display(&config)
+            config_dir_display(config)
         ),
         None => format!(
             "{}[info] gateway already stopped\nstate: {}",
             render_warning_lines(&warnings),
-            config_dir_display(&config)
+            config_dir_display(config)
         ),
     })
 }
@@ -627,9 +724,11 @@ fn legacy_identity_status_error(
     }
 }
 
-fn run_gateway_status(output_json: bool) -> Result<String, RunnerError> {
-    let config = gateway_config()?;
-    let status = match verified_gateway_status(&config) {
+fn run_gateway_status_with_config(
+    config: &GatewayConfig,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    let status = match verified_gateway_status(config) {
         Err(error @ effigy_gateway::GatewayError::LegacyIdentityRequired { .. }) => {
             return Err(legacy_identity_status_error(error, output_json));
         }
@@ -637,8 +736,11 @@ fn run_gateway_status(output_json: bool) -> Result<String, RunnerError> {
     };
     let route_table = RouteTable::load(&config.route_table_path)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    let tls = gateway_tls_summary(&config, &route_table);
-    let routes = gateway_route_dashboard(&config, &route_table, &tls);
+    let mut tls = gateway_tls_summary(config, &route_table);
+    if let Some(https_addr) = status.as_ref().and_then(|value| value.https_addr) {
+        tls.https_addr = Some(https_addr);
+    }
+    let routes = gateway_route_dashboard(config, &route_table, &tls);
     let repair = gateway_repair_plan(&route_table, detect_active_gateway_projects());
     let (trust_state, trust_reason) = route_table_trust_fields(
         &effigy_gateway::trust::inspect_route_table_trust(&config.route_table_path),
@@ -655,8 +757,18 @@ fn run_gateway_status(output_json: bool) -> Result<String, RunnerError> {
             "current_binary_version": effigy_core::build_info::active_version(),
             "dns_addr": status.as_ref().map(|value| value.dns_addr.to_string()).unwrap_or_else(|| config.dns.bind_addr.to_string()),
             "proxy_addr": status.as_ref().map(|value| value.proxy_addr.to_string()).unwrap_or_else(|| config.proxy.bind_addr.to_string()),
-            "https_addr": tls.https_addr.map(|value| value.to_string()),
-            "gateway_dir": config_dir_display(&config),
+            "https_addr": status
+                .as_ref()
+                .and_then(|value| value.https_addr)
+                .or(tls.https_addr)
+                .map(|value| value.to_string()),
+            "client_ca_file": config
+                .tls
+                .as_ref()
+                .and_then(TlsConfig::private_ca_cert_path)
+                .map(|path| path.display().to_string()),
+            "private": config.is_private(),
+            "gateway_dir": config_dir_display(config),
             "tls": render_tls_json(&tls),
             "route_table_trust": trust_state,
             "route_table_trust_reason": trust_reason,
@@ -677,7 +789,7 @@ fn run_gateway_status(output_json: bool) -> Result<String, RunnerError> {
                 "stopped"
             }
         ),
-        format!("state: {}", config_dir_display(&config)),
+        format!("state: {}", config_dir_display(config)),
         format!(
             "dns: {}",
             status
@@ -694,7 +806,10 @@ fn run_gateway_status(output_json: bool) -> Result<String, RunnerError> {
         ),
         format!(
             "https: {}",
-            tls.https_addr
+            status
+                .as_ref()
+                .and_then(|value| value.https_addr)
+                .or(tls.https_addr)
                 .map(|value| value.to_string())
                 .unwrap_or_else(|| "disabled".to_owned())
         ),
@@ -731,8 +846,11 @@ fn run_gateway_status(output_json: bool) -> Result<String, RunnerError> {
     Ok(lines.join("\n"))
 }
 
-fn run_gateway_repair(yes: bool, output_json: bool) -> Result<String, RunnerError> {
-    let config = gateway_config()?;
+fn run_gateway_repair_with_config(
+    config: &GatewayConfig,
+    yes: bool,
+    output_json: bool,
+) -> Result<String, RunnerError> {
     let _lock = effigy_gateway::routes::RouteTableLock::acquire(&config.route_table_path)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let mut route_table = RouteTable::load(&config.route_table_path)
@@ -772,7 +890,7 @@ fn run_gateway_repair(yes: bool, output_json: bool) -> Result<String, RunnerErro
             "schema_version": 1,
             "ok": true,
             "applied": yes,
-            "gateway_dir": config_dir_display(&config),
+            "gateway_dir": config_dir_display(config),
             "repairable_count": plan.repairable_domains.len(),
             "repairable_domains": plan.repairable_domains,
             "removed_count": removed.len(),
@@ -1023,18 +1141,48 @@ fn emit_gateway_startup_notice(state: ManagedStartState) {
     );
 }
 
-fn run_gateway_setup_tls(output_json: bool) -> Result<String, RunnerError> {
-    let config = gateway_config()?;
-    let tls_config = gateway_tls_config(&config)?;
+fn run_gateway_setup_tls_with_config(
+    config: &GatewayConfig,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    let tls_config = gateway_tls_config(config)?;
 
-    if !TlsConfig::mkcert_available() {
-        return Err(RunnerError::task_invocation(
-            "`effigy gateway setup-tls` requires `mkcert` on PATH; install mkcert first, then rerun this command",
-        ));
+    let mkcert_available = if config.is_private() {
+        TlsConfig::private_mkcert_available()
+    } else {
+        TlsConfig::mkcert_available()
+    };
+    if !mkcert_available {
+        return Err(RunnerError::task_invocation(if config.is_private() {
+            "private TLS setup requires an executable from absolute `EFFIGY_GATEWAY_MKCERT_BIN` or a trusted install prefix"
+        } else {
+            "`effigy gateway setup-tls` requires `mkcert` on PATH; install mkcert first, then rerun this command"
+        }));
     }
 
-    let already_installed = ensure_gateway_tls_ca_ready(&tls_config, output_json)?;
-    let ca_installed = TlsConfig::ca_installed();
+    let already_installed = if config.is_private() {
+        prepare_gateway_state_for_elevated_run(config)?;
+        let had_ca = tls_config
+            .private_ca_cert_path()
+            .is_some_and(|path| path.is_file());
+        tls_config
+            .generate_cert("localhost")
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+        let ca_path = tls_config.private_ca_cert_path().ok_or_else(|| {
+            RunnerError::task_invocation("private TLS setup is missing its fixture CA path")
+        })?;
+        if !ca_path.is_file() {
+            return Err(RunnerError::task_invocation(format!(
+                "private TLS CA was not created at {}",
+                ca_path.display()
+            )));
+        }
+        had_ca
+    } else {
+        ensure_gateway_tls_ca_ready(&tls_config, output_json)?
+    };
+    let ca_installed = !config.is_private() && TlsConfig::ca_installed();
+    let private_ca_path = tls_config.private_ca_cert_path();
 
     if output_json {
         return Ok(json!({
@@ -1042,8 +1190,17 @@ fn run_gateway_setup_tls(output_json: bool) -> Result<String, RunnerError> {
             "schema_version": 1,
             "ok": true,
             "action": "setup-tls",
-            "result": if already_installed { "already_configured" } else { "installed" },
+            "result": if already_installed {
+                "already_configured"
+            } else if config.is_private() {
+                "private_ca_created"
+            } else {
+                "installed"
+            },
             "ca_installed": ca_installed,
+            "client_ca_file": private_ca_path.as_ref().map(|path| path.display().to_string()),
+            "client_trust": if config.is_private() { "explicit_fixture_ca" } else { "system" },
+            "private": config.is_private(),
             "mkcert_available": true,
             "certs_dir": tls_config.certs_dir.display().to_string(),
         })
@@ -1051,12 +1208,18 @@ fn run_gateway_setup_tls(output_json: bool) -> Result<String, RunnerError> {
     }
 
     Ok(format!(
-        "[ok] TLS {}\ncerts: {}",
+        "[ok] TLS {}{}\ncerts: {}",
         if already_installed {
             "already configured"
+        } else if config.is_private() {
+            "private CA created"
         } else {
             "configured"
         },
+        private_ca_path
+            .as_ref()
+            .map(|path| format!("\nclient CA: {} (not installed)", path.display()))
+            .unwrap_or_default(),
         tls_config.certs_dir.display()
     ))
 }
@@ -1066,6 +1229,9 @@ fn ensure_gateway_tls_ca_ready(
     output_json: bool,
 ) -> Result<bool, RunnerError> {
     std::fs::create_dir_all(&tls_config.certs_dir).map_err(RunnerError::Cwd)?;
+    if let Some(ca_path) = tls_config.private_ca_cert_path() {
+        return Ok(ca_path.is_file());
+    }
     let already_installed = TlsConfig::ca_installed();
     if !already_installed
         && !gateway_invocation_is_escalated()
@@ -1079,7 +1245,41 @@ fn ensure_gateway_tls_ca_ready(
 }
 
 fn gateway_config() -> Result<GatewayConfig, RunnerError> {
-    let mut config = GatewayConfig::standard(gateway_dir()?);
+    gateway_config_with_private(None)
+}
+
+fn gateway_config_with_private(
+    explicit: Option<&GatewayPrivateArgs>,
+) -> Result<GatewayConfig, RunnerError> {
+    let environment_root = std::env::var_os(GATEWAY_PRIVATE_STATE_ROOT_ENV).map(PathBuf::from);
+    let explicit_root = explicit.map(|private| private.state_root.clone());
+    if environment_root
+        .as_ref()
+        .zip(explicit_root.as_ref())
+        .is_some_and(|(environment, requested)| environment != requested)
+    {
+        return Err(RunnerError::task_invocation(format!(
+            "`{GATEWAY_PRIVATE_STATE_ROOT_ENV}` and `--private-state-root` select different paths"
+        )));
+    }
+    let private_root = explicit_root.or(environment_root);
+    if private_root.is_none()
+        && [
+            "EFFIGY_GATEWAY_DNS_ADDR",
+            "EFFIGY_GATEWAY_PROXY_ADDR",
+            "EFFIGY_GATEWAY_HTTPS_ADDR",
+        ]
+        .iter()
+        .any(|key| std::env::var_os(key).is_some())
+    {
+        return Err(RunnerError::task_invocation(format!(
+            "gateway address overrides require `{GATEWAY_PRIVATE_STATE_ROOT_ENV}`"
+        )));
+    }
+    let mut config = match private_root {
+        Some(root) => GatewayConfig::private(root),
+        None => GatewayConfig::standard(gateway_dir()?),
+    };
     if let Some(addr) = gateway_addr_from_env("EFFIGY_GATEWAY_DNS_ADDR")? {
         config.dns.bind_addr = addr;
     }
@@ -1089,10 +1289,30 @@ fn gateway_config() -> Result<GatewayConfig, RunnerError> {
     if let Some(addr) = gateway_addr_from_env("EFFIGY_GATEWAY_HTTPS_ADDR")? {
         config.proxy.tls_bind_addr = Some(addr);
     }
+    if let Some(private) = explicit {
+        if let Some(addr) = private.dns_addr {
+            config.dns.bind_addr = addr;
+        }
+        if let Some(addr) = private.proxy_addr {
+            config.proxy.bind_addr = addr;
+        }
+        if let Some(addr) = private.https_addr {
+            config.proxy.tls_bind_addr = Some(addr);
+        }
+    }
+    config
+        .validate_private_mode()
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     Ok(config)
 }
 
 pub(in crate::runner) fn gateway_dir() -> Result<PathBuf, RunnerError> {
+    if let Some(root) = std::env::var_os(GATEWAY_PRIVATE_STATE_ROOT_ENV) {
+        let root = PathBuf::from(root);
+        effigy_gateway::private_state::validate_root(&root)
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+        return Ok(root);
+    }
     #[cfg(test)]
     {
         let home = TEST_GATEWAY_HOME
@@ -1123,6 +1343,10 @@ fn render_gateway_up_result(
         GatewayUpState::Started(status) => ("started", status),
         GatewayUpState::AlreadyRunning(status) => ("already_running", status),
     };
+    let mut tls_status = tls.clone();
+    if let Some(https_addr) = status.https_addr {
+        tls_status.https_addr = Some(https_addr);
+    }
 
     if output_json {
         return Ok(json!({
@@ -1136,10 +1360,16 @@ fn render_gateway_up_result(
             "binary_version": status.binary_version,
             "dns_addr": status.dns_addr.to_string(),
             "proxy_addr": status.proxy_addr.to_string(),
-            "https_addr": tls.https_addr.map(|value| value.to_string()),
+            "https_addr": tls_status.https_addr.map(|value| value.to_string()),
+            "client_ca_file": config
+                .tls
+                .as_ref()
+                .and_then(TlsConfig::private_ca_cert_path)
+                .map(|path| path.display().to_string()),
+            "private": config.is_private(),
             "gateway_dir": config_dir_display(config),
             "route_count": status.route_count,
-            "tls": render_tls_json(tls),
+            "tls": render_tls_json(&tls_status),
             "warnings": warnings,
         })
         .to_string());
@@ -1161,10 +1391,11 @@ fn render_gateway_up_result(
             .unwrap_or_default(),
         status.dns_addr,
         status.proxy_addr,
-        tls.https_addr
+        tls_status
+            .https_addr
             .map(|value| value.to_string())
             .unwrap_or_else(|| "disabled".to_owned()),
-        render_tls_status_line(tls),
+        render_tls_status_line(&tls_status),
         status.route_count,
         config_dir_display(config),
     ))
@@ -1305,10 +1536,18 @@ fn config_dir_display(config: &GatewayConfig) -> String {
 pub(in crate::runner) fn ensure_gateway_tls_cert(domain: &str) -> Result<(), RunnerError> {
     let config = gateway_config()?;
     let tls_config = gateway_tls_config(&config)?;
-    if !TlsConfig::mkcert_available() {
+    let mkcert_available = if config.is_private() {
+        TlsConfig::private_mkcert_available()
+    } else {
+        TlsConfig::mkcert_available()
+    };
+    if !mkcert_available {
         return Err(RunnerError::task_invocation(format!(
             "container route `{domain}` requires TLS but `mkcert` is not installed; install mkcert and run `effigy gateway setup-tls` first"
         )));
+    }
+    if config.is_private() {
+        prepare_gateway_state_for_elevated_run(&config)?;
     }
     ensure_gateway_tls_ca_ready(&tls_config, false)?;
     tls_config
@@ -1347,8 +1586,12 @@ fn gateway_tls_summary(config: &GatewayConfig, route_table: &RouteTable) -> Gate
         route_count: 0,
         cert_ready_count: 0,
         missing_domains: Vec::new(),
-        mkcert_available: TlsConfig::mkcert_available(),
-        ca_installed: TlsConfig::ca_installed(),
+        mkcert_available: if config.is_private() {
+            TlsConfig::private_mkcert_available()
+        } else {
+            TlsConfig::mkcert_available()
+        },
+        ca_installed: !config.is_private() && TlsConfig::ca_installed(),
     };
 
     let Some(tls_config) = config.tls.as_ref() else {

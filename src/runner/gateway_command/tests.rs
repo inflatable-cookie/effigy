@@ -14,6 +14,33 @@ fn gateway_dir_uses_an_isolated_default_during_unit_tests() {
     );
 }
 
+#[test]
+fn private_gateway_host_effect_paths_are_inert() {
+    let root = tempfile::tempdir().expect("private gateway fixture");
+    let canonical_root = std::fs::canonicalize(root.path()).expect("canonical private root");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&canonical_root, std::fs::Permissions::from_mode(0o700))
+            .expect("private root mode");
+    }
+    let config = GatewayConfig::private(canonical_root);
+
+    assert!(!gateway_up_requires_elevation(&config));
+    assert!(!gateway_down_requires_elevation(&config, None).expect("down policy"));
+    ensure_gateway_up_privileges(&config).expect("private unprivileged startup");
+    assert!(install_resolver_if_needed(&config).is_empty());
+    assert!(provision_loopback_aliases_if_needed(&config).is_empty());
+    assert!(uninstall_resolver_if_needed(&config).is_empty());
+    assert_eq!(
+        std::fs::read_dir(root.path())
+            .expect("read private root")
+            .count(),
+        0,
+        "policy selection must not prepare state or write host-owned files"
+    );
+}
+
 fn tls_summary() -> GatewayTlsSummary {
     GatewayTlsSummary {
         https_addr: Some("127.0.0.1:443".parse().expect("https")),
@@ -64,6 +91,7 @@ fn render_gateway_up_text_mentions_state_dir() {
         pid: 1234,
         dns_addr: "127.0.0.1:15353".parse().expect("dns"),
         proxy_addr: "127.0.0.1:80".parse().expect("proxy"),
+        https_addr: Some("127.0.0.1:443".parse().expect("https")),
         route_count: 0,
         routes: Vec::new(),
         binary_version: Some("v0.3.2+local.test".to_owned()),
@@ -91,6 +119,7 @@ fn gateway_status_match_requires_current_binary_identity() {
         pid: 1234,
         dns_addr: "127.0.0.1:15353".parse().expect("dns"),
         proxy_addr: "127.0.0.1:80".parse().expect("proxy"),
+        https_addr: Some("127.0.0.1:443".parse().expect("https")),
         route_count: 0,
         routes: Vec::new(),
         binary_version: Some(current),
@@ -99,6 +128,7 @@ fn gateway_status_match_requires_current_binary_identity() {
         pid: 1234,
         dns_addr: "127.0.0.1:15353".parse().expect("dns"),
         proxy_addr: "127.0.0.1:80".parse().expect("proxy"),
+        https_addr: Some("127.0.0.1:443".parse().expect("https")),
         route_count: 0,
         routes: Vec::new(),
         binary_version: None,
@@ -136,6 +166,7 @@ fn render_gateway_up_text_includes_warning_lines() {
         pid: 1234,
         dns_addr: "127.0.0.1:15353".parse().expect("dns"),
         proxy_addr: "127.0.0.1:8080".parse().expect("proxy"),
+        https_addr: Some("127.0.0.1:443".parse().expect("https")),
         route_count: 0,
         routes: Vec::new(),
         binary_version: None,
@@ -344,6 +375,7 @@ fn gateway_status_fixture(pid: u32) -> (tempfile::TempDir, VerifiedGatewayStatus
                 pid,
                 dns_addr: "127.0.0.1:15353".parse().expect("dns"),
                 proxy_addr: "127.0.0.1:80".parse().expect("proxy"),
+                https_addr: Some("127.0.0.1:443".parse().expect("https")),
                 route_count: 0,
                 routes: Vec::new(),
                 binary_version: Some("v0.3.2+local.test".to_owned()),

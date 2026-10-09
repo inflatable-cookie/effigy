@@ -10,6 +10,8 @@
 //! The file watcher reloads the table when the JSON file changes. Shutdown
 //! is coordinated via a `tokio::sync::watch` channel.
 
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -17,20 +19,26 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
+use serde::{Deserialize, Serialize};
+use tokio::net::{TcpListener, UdpSocket};
 use tokio::sync::watch;
 use tracing::{debug, error, info};
 
-use crate::dns::{run_dns_server, DnsCache, DnsConfig};
+use crate::dns::{run_dns_server, run_dns_server_on, DnsCache, DnsConfig};
 use crate::error::GatewayError;
 use crate::identity::{self, GatewayIdentityProbe, GatewayRecordSnapshot};
-use crate::proxy::{run_proxy_server, run_tls_proxy_server, ProxyConfig};
+use crate::proxy::{
+    run_proxy_server, run_proxy_server_on, run_tls_proxy_server, run_tls_proxy_server_on,
+    ProxyConfig,
+};
 #[cfg(target_os = "macos")]
 use crate::resolver_setup;
 use crate::routes::{LiveRouteTable, RouteTable};
 use crate::stats::GatewayStats;
 use crate::tcp_alias::run_tcp_alias_manager;
 use crate::tls::{
-    server_config_from_resolver, sync_sni_resolver_from_dir, SniCertResolver, TlsConfig,
+    server_config_from_resolver, sync_private_sni_resolver_from_dir, sync_sni_resolver_from_dir,
+    SniCertResolver, TlsConfig,
 };
 
 const IDLE_SHUTDOWN_DELAY: Duration = Duration::from_secs(5 * 60);
@@ -62,6 +70,36 @@ pub struct GatewayConfig {
 
     /// Path to the PID file for lifecycle management.
     pub pid_file_path: PathBuf,
+
+    /// State and host-effect policy for this gateway instance.
+    pub mode: GatewayMode,
+}
+
+/// Selects the operator gateway defaults or a caller-owned private instance.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GatewayMode {
+    /// Existing operator setup, including its established system integration.
+    Operator,
+    /// Isolated state and loopback-only endpoints owned by the caller.
+    Private(PrivateGatewayPolicy),
+}
+
+/// Typed ownership boundary for private gateway state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrivateGatewayPolicy {
+    state_root: PathBuf,
+}
+
+impl PrivateGatewayPolicy {
+    /// Select a pre-created caller-owned state directory.
+    pub fn new(state_root: PathBuf) -> Self {
+        Self { state_root }
+    }
+
+    /// Private state directory supplied by the caller.
+    pub fn state_root(&self) -> &Path {
+        &self.state_root
+    }
 }
 
 impl GatewayConfig {
@@ -79,6 +117,76 @@ impl GatewayConfig {
             route_table_path: gateway_dir.join("routes.json"),
             loopback_registry_path: gateway_dir.join("loopback-ips.json"),
             pid_file_path: gateway_dir.join("gateway.pid"),
+            mode: GatewayMode::Operator,
+        }
+    }
+
+    /// Create a private gateway using dynamic, unprivileged loopback binds.
+    pub fn private(state_root: PathBuf) -> Self {
+        let mut config = Self::standard(state_root.clone()).with_addrs(
+            SocketAddr::from(([127, 0, 0, 1], 0)),
+            SocketAddr::from(([127, 0, 0, 1], 0)),
+        );
+        config.tls =
+            Some(TlsConfig::new(state_root.join("certs")).with_ca_root(state_root.join("ca")));
+        config.proxy.tls_bind_addr = Some(SocketAddr::from(([127, 0, 0, 1], 0)));
+        config.mode = GatewayMode::Private(PrivateGatewayPolicy::new(state_root));
+        config
+    }
+
+    /// Validate private state and bind policy before startup or lifecycle I/O.
+    pub fn validate_private_mode(&self) -> Result<(), GatewayError> {
+        let GatewayMode::Private(policy) = &self.mode else {
+            return Ok(());
+        };
+        crate::private_state::validate_root(policy.state_root())?;
+        let root = policy.state_root();
+        let tls_paths_match = self.tls.as_ref().is_some_and(|tls| {
+            tls.certs_dir == root.join("certs")
+                && tls.ca_root.as_deref() == Some(root.join("ca").as_path())
+        });
+        if self.route_table_path != root.join("routes.json")
+            || self.loopback_registry_path != root.join("loopback-ips.json")
+            || self.pid_file_path != root.join("gateway.pid")
+            || !tls_paths_match
+        {
+            return Err(GatewayError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "private gateway state and certificate paths must remain inside its selected root",
+            )));
+        }
+        let addresses = [
+            Some(self.dns.bind_addr),
+            Some(self.proxy.bind_addr),
+            self.proxy.tls_bind_addr,
+        ];
+        if addresses.into_iter().flatten().any(|address| {
+            !address.ip().is_loopback() || (address.port() != 0 && address.port() < 1024)
+        }) {
+            return Err(GatewayError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "private gateway endpoints must use unprivileged loopback addresses",
+            )));
+        }
+        if self.proxy.tls_bind_addr.is_none() || self.tls.is_none() {
+            return Err(GatewayError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "private gateway mode requires an HTTPS listener and certificate directory",
+            )));
+        }
+        Ok(())
+    }
+
+    /// Whether this configuration selects private caller-owned state.
+    pub fn is_private(&self) -> bool {
+        matches!(&self.mode, GatewayMode::Private(_))
+    }
+
+    /// Private caller-owned state root, if selected.
+    pub fn private_state_root(&self) -> Option<&Path> {
+        match &self.mode {
+            GatewayMode::Operator => None,
+            GatewayMode::Private(policy) => Some(policy.state_root()),
         }
     }
 
@@ -117,6 +225,9 @@ pub struct GatewayStatus {
     /// HTTP proxy bind address.
     pub proxy_addr: SocketAddr,
 
+    /// HTTPS proxy bind address when TLS is enabled.
+    pub https_addr: Option<SocketAddr>,
+
     /// Number of registered routes.
     pub route_count: usize,
 
@@ -125,6 +236,83 @@ pub struct GatewayStatus {
 
     /// Build identity of the running gateway daemon, if recorded.
     pub binary_version: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PrivateGatewayAddressRecord {
+    pid: u32,
+    identity_digest: String,
+    dns_addr: SocketAddr,
+    proxy_addr: SocketAddr,
+    https_addr: SocketAddr,
+}
+
+struct PrivateStartupRecordGuard {
+    snapshot: GatewayRecordSnapshot,
+    address_path: PathBuf,
+    address_bytes: Option<Vec<u8>>,
+    active: bool,
+}
+
+impl PrivateStartupRecordGuard {
+    fn new(snapshot: GatewayRecordSnapshot, address_path: PathBuf) -> Self {
+        Self {
+            snapshot,
+            address_path,
+            address_bytes: None,
+            active: true,
+        }
+    }
+
+    fn record_address_bytes(&mut self, bytes: Vec<u8>) {
+        self.address_bytes = Some(bytes);
+    }
+
+    fn disarm(&mut self) {
+        self.active = false;
+    }
+
+    fn finish(&mut self) -> Result<(), GatewayError> {
+        if let Some(expected) = &self.address_bytes {
+            if std::fs::read(&self.address_path).ok().as_ref() != Some(expected) {
+                return Err(GatewayError::ProcessStateUnknown {
+                    pid: self.snapshot.pid(),
+                });
+            }
+            std::fs::remove_file(&self.address_path).map_err(GatewayError::Io)?;
+        }
+        if !identity::remove_if_unchanged(&self.snapshot)? {
+            return Err(GatewayError::ProcessStateUnknown {
+                pid: self.snapshot.pid(),
+            });
+        }
+        self.disarm();
+        Ok(())
+    }
+}
+
+impl Drop for PrivateStartupRecordGuard {
+    fn drop(&mut self) {
+        if !self.active {
+            return;
+        }
+        if let Some(expected) = &self.address_bytes {
+            if std::fs::read(&self.address_path).ok().as_ref() == Some(expected) {
+                let _ = std::fs::remove_file(&self.address_path);
+            }
+        }
+        let _ = identity::remove_if_unchanged(&self.snapshot);
+    }
+}
+
+struct PrivateGatewayListeners {
+    dns: UdpSocket,
+    proxy: TcpListener,
+    https: TcpListener,
+    dns_addr: SocketAddr,
+    proxy_addr: SocketAddr,
+    https_addr: SocketAddr,
 }
 
 /// Gateway status paired with the exact trusted record generation that
@@ -384,6 +572,7 @@ fn get_verified_gateway_status_with_probes(
         &GatewayRecordSnapshot,
     ) -> GatewayIdentityProbe,
 ) -> Result<VerifiedGatewayStatus, GatewayError> {
+    config.validate_private_mode()?;
     let Some(snapshot) = identity::read_snapshot(&config.pid_file_path)? else {
         return Err(GatewayError::NotRunning);
     };
@@ -433,12 +622,23 @@ fn get_verified_gateway_status_with_probes(
     }
 
     let table = RouteTable::load(&config.route_table_path)?;
+    let (dns_addr, proxy_addr, https_addr) = if config.is_private() {
+        let record = read_private_gateway_addresses(config, &snapshot)?;
+        (record.dns_addr, record.proxy_addr, Some(record.https_addr))
+    } else {
+        (
+            config.dns.bind_addr,
+            config.proxy.bind_addr,
+            config.proxy.tls_bind_addr,
+        )
+    };
 
     Ok(VerifiedGatewayStatus {
         status: GatewayStatus {
             pid,
-            dns_addr: config.dns.bind_addr,
-            proxy_addr: config.proxy.bind_addr,
+            dns_addr,
+            proxy_addr,
+            https_addr,
             route_count: table.len(),
             routes: table.all_routes().into_iter().cloned().collect(),
             binary_version: read_gateway_version_file(&gateway_version_file_for(
@@ -447,6 +647,173 @@ fn get_verified_gateway_status_with_probes(
         },
         snapshot,
     })
+}
+
+fn read_private_gateway_addresses(
+    config: &GatewayConfig,
+    snapshot: &GatewayRecordSnapshot,
+) -> Result<PrivateGatewayAddressRecord, GatewayError> {
+    let path = config
+        .private_state_root()
+        .map(crate::private_state::private_endpoint_path)
+        .ok_or_else(|| {
+            GatewayError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "private gateway endpoint receipt requested for operator state",
+            ))
+        })?;
+    let bytes = std::fs::read(&path).map_err(|error| {
+        GatewayError::Io(std::io::Error::new(
+            error.kind(),
+            format!(
+                "private gateway endpoint receipt {} is unavailable: {error}",
+                path.display()
+            ),
+        ))
+    })?;
+    let record: PrivateGatewayAddressRecord = serde_json::from_slice(&bytes).map_err(|error| {
+        GatewayError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "invalid private gateway endpoint receipt {}: {error}",
+                path.display()
+            ),
+        ))
+    })?;
+    if record.pid != snapshot.pid()
+        || snapshot.digest().as_deref() != Some(record.identity_digest.as_str())
+        || [record.dns_addr, record.proxy_addr, record.https_addr]
+            .into_iter()
+            .any(|address| !address.ip().is_loopback() || address.port() < 1024)
+    {
+        return Err(GatewayError::ProcessStateUnknown {
+            pid: snapshot.pid(),
+        });
+    }
+    Ok(record)
+}
+
+/// Remove the private listener receipt only when it still belongs to the
+/// exact gateway generation captured by the caller.
+pub fn remove_private_gateway_addresses_if_unchanged(
+    config: &GatewayConfig,
+    snapshot: &GatewayRecordSnapshot,
+) -> Result<bool, GatewayError> {
+    config.validate_private_mode()?;
+    let Some(root) = config.private_state_root() else {
+        return Ok(false);
+    };
+    let path = crate::private_state::private_endpoint_path(root);
+    let bytes = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(true),
+        Err(error) => return Err(GatewayError::Io(error)),
+    };
+    let record: PrivateGatewayAddressRecord = serde_json::from_slice(&bytes).map_err(|error| {
+        GatewayError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "invalid private gateway endpoint receipt {}: {error}",
+                path.display()
+            ),
+        ))
+    })?;
+    if record.pid != snapshot.pid()
+        || snapshot.digest().as_deref() != Some(record.identity_digest.as_str())
+        || std::fs::read(&path).ok().as_deref() != Some(bytes.as_slice())
+    {
+        return Ok(false);
+    }
+    std::fs::remove_file(path).map_err(GatewayError::Io)?;
+    Ok(true)
+}
+
+async fn bind_private_gateway_listeners(
+    config: &GatewayConfig,
+) -> Result<PrivateGatewayListeners, GatewayError> {
+    let dns = UdpSocket::bind(config.dns.bind_addr)
+        .await
+        .map_err(|error| GatewayError::DnsBindError {
+            addr: config.dns.bind_addr.to_string(),
+            reason: error.to_string(),
+        })?;
+    let proxy = TcpListener::bind(config.proxy.bind_addr)
+        .await
+        .map_err(|error| GatewayError::ProxyBindError {
+            addr: config.proxy.bind_addr.to_string(),
+            reason: error.to_string(),
+        })?;
+    let https_bind_addr =
+        config
+            .proxy
+            .tls_bind_addr
+            .ok_or_else(|| GatewayError::ProxyBindError {
+                addr: "<missing>".to_owned(),
+                reason: "private gateway requires an HTTPS listener".to_owned(),
+            })?;
+    let https =
+        TcpListener::bind(https_bind_addr)
+            .await
+            .map_err(|error| GatewayError::ProxyBindError {
+                addr: https_bind_addr.to_string(),
+                reason: format!("HTTPS bind failed: {error}"),
+            })?;
+    let listeners = PrivateGatewayListeners {
+        dns_addr: dns.local_addr().map_err(GatewayError::Io)?,
+        proxy_addr: proxy.local_addr().map_err(GatewayError::Io)?,
+        https_addr: https.local_addr().map_err(GatewayError::Io)?,
+        dns,
+        proxy,
+        https,
+    };
+    if [
+        listeners.dns_addr,
+        listeners.proxy_addr,
+        listeners.https_addr,
+    ]
+    .into_iter()
+    .any(|address| !address.ip().is_loopback() || address.port() < 1024)
+    {
+        return Err(GatewayError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "operating system selected an unsafe private gateway endpoint",
+        )));
+    }
+    Ok(listeners)
+}
+
+fn write_private_gateway_addresses(
+    path: &Path,
+    record: &PrivateGatewayAddressRecord,
+) -> Result<Vec<u8>, GatewayError> {
+    let bytes = serde_json::to_vec(record).map_err(|error| {
+        GatewayError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("failed to encode private gateway endpoints: {error}"),
+        ))
+    })?;
+    let temp_path = crate::atomic_write::temp_path(path, "addresses");
+    #[cfg(unix)]
+    let mut file = {
+        use std::os::unix::fs::OpenOptionsExt;
+        OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .open(&temp_path)
+            .map_err(GatewayError::Io)?
+    };
+    #[cfg(not(unix))]
+    let mut file = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&temp_path)
+        .map_err(GatewayError::Io)?;
+    file.write_all(&bytes).map_err(GatewayError::Io)?;
+    file.sync_all().map_err(GatewayError::Io)?;
+    std::fs::rename(&temp_path, path).map_err(GatewayError::Io)?;
+    Ok(bytes)
 }
 
 /// Read status using this process's kernel identity access. Ordinary
@@ -505,6 +872,7 @@ fn check_existing_gateway_pid_with(
                     return Err(GatewayError::AlreadyRunning { pid });
                 }
                 GatewayIdentityProbe::Mismatch => {
+                    clear_private_addresses_for_snapshot(config, &snapshot)?;
                     if !identity::remove_if_unchanged(&snapshot)? {
                         return Err(GatewayError::ProcessStateUnknown { pid });
                     }
@@ -514,6 +882,7 @@ fn check_existing_gateway_pid_with(
                 }
             },
             GatewayProcessProbe::ConfirmedAbsent => {
+                clear_private_addresses_for_snapshot(config, &snapshot)?;
                 if !identity::remove_if_unchanged(&snapshot)? {
                     return Err(GatewayError::ProcessStateUnknown { pid });
                 }
@@ -526,14 +895,101 @@ fn check_existing_gateway_pid_with(
     Ok(())
 }
 
+fn clear_private_addresses_for_snapshot(
+    config: &GatewayConfig,
+    snapshot: &GatewayRecordSnapshot,
+) -> Result<(), GatewayError> {
+    if config.is_private() && !remove_private_gateway_addresses_if_unchanged(config, snapshot)? {
+        return Err(GatewayError::ProcessStateUnknown {
+            pid: snapshot.pid(),
+        });
+    }
+    Ok(())
+}
+
 /// Run the gateway server.
 ///
 /// This function blocks until a shutdown signal is received (SIGTERM/SIGINT).
 /// It starts the DNS resolver, HTTP proxy, and route table file watcher
 /// concurrently.
 pub async fn run_gateway(config: GatewayConfig) -> Result<(), GatewayError> {
+    config.validate_private_mode()?;
+    if let Some(root) = config.private_state_root() {
+        crate::private_state::prepare_root(root)?;
+    }
+
     // Check if already running.
     check_existing_gateway_pid(&config, probe_gateway_process)?;
+
+    if config.is_private()
+        && config.route_table_path.exists()
+        && crate::trust::load_trusted(&config.route_table_path)?.is_none()
+    {
+        return Err(GatewayError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "private gateway refuses an untrusted route table and preserves it",
+        )));
+    }
+
+    // Private listeners are bound before publishing process identity. A
+    // collision therefore leaves no live-generation record and reports only
+    // endpoints held by this private fixture.
+    let live_table = LiveRouteTable::new(config.route_table_path.clone())?;
+    let shared_table = live_table.shared_table();
+    if config.is_private() {
+        validate_private_routes(&crate::locks::read_tolerant(&shared_table))?;
+    }
+    let mut runtime_config = config.clone();
+    let private_tls_resolver = if config.is_private() {
+        let tls_config = config.tls.as_ref().ok_or_else(|| GatewayError::TlsError {
+            domain: "<CA>".to_owned(),
+            reason: "private gateway requires TLS configuration".to_owned(),
+        })?;
+        if !tls_config
+            .private_ca_cert_path()
+            .is_some_and(|path| path.is_file())
+        {
+            return Err(GatewayError::TlsError {
+                domain: "<CA>".to_owned(),
+                reason: "private gateway requires its fixture CA certificate under the selected state root".to_owned(),
+            });
+        }
+        let resolver = Arc::new(SniCertResolver::new());
+        let cert_count = sync_private_sni_resolver_from_dir(&resolver, &tls_config.certs_dir)?;
+        if cert_count == 0 {
+            return Err(GatewayError::TlsError {
+                domain: "<CA>".to_owned(),
+                reason: format!(
+                    "private HTTPS startup requires a certificate under {}",
+                    tls_config.certs_dir.display()
+                ),
+            });
+        }
+        Some((resolver, cert_count))
+    } else {
+        None
+    };
+    if let Some(root) = config.private_state_root() {
+        let address_path = crate::private_state::private_endpoint_path(root);
+        if address_path.exists() {
+            return Err(GatewayError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "private gateway endpoint receipt {} has no active startup owner; preserving it",
+                    address_path.display()
+                ),
+            )));
+        }
+    }
+    let private_listeners = if config.is_private() {
+        let listeners = bind_private_gateway_listeners(&config).await?;
+        runtime_config.dns.bind_addr = listeners.dns_addr;
+        runtime_config.proxy.bind_addr = listeners.proxy_addr;
+        runtime_config.proxy.tls_bind_addr = Some(listeners.https_addr);
+        Some(listeners)
+    } else {
+        None
+    };
 
     // Publish the sidecar and decimal compatibility PID as one generation.
     // The record belongs to the operator even when this daemon runs as root.
@@ -549,11 +1005,28 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<(), GatewayError> {
     };
     let published_snapshot =
         identity::publish_current_gateway(&config.pid_file_path, operator_uid)?;
+    let mut private_record_guard = config.private_state_root().map(|root| {
+        PrivateStartupRecordGuard::new(
+            published_snapshot.clone(),
+            crate::private_state::private_endpoint_path(root),
+        )
+    });
     write_gateway_version_file(&config.pid_file_path)?;
-
-    // Load the route table.
-    let live_table = LiveRouteTable::new(config.route_table_path.clone())?;
-    let shared_table = live_table.shared_table();
+    if let (Some(listeners), Some(guard)) = (&private_listeners, &mut private_record_guard) {
+        let record = PrivateGatewayAddressRecord {
+            pid: published_snapshot.pid(),
+            identity_digest: published_snapshot.digest().ok_or_else(|| {
+                GatewayError::ProcessStateUnknown {
+                    pid: published_snapshot.pid(),
+                }
+            })?,
+            dns_addr: listeners.dns_addr,
+            proxy_addr: listeners.proxy_addr,
+            https_addr: listeners.https_addr,
+        };
+        let bytes = write_private_gateway_addresses(&guard.address_path, &record)?;
+        guard.record_address_bytes(bytes);
+    }
 
     // Create stats tracker.
     let stats = Arc::new(GatewayStats::new());
@@ -576,7 +1049,7 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<(), GatewayError> {
     // initial route table. Best-effort — we run as root here, but
     // surfacing fs errors aborts the daemon, which is wrong for a
     // resolver-side concern. Just log and continue.
-    reconcile_route_resolver_files_from_table(&shared_table, &config);
+    reconcile_route_resolver_files_from_table(&shared_table, &runtime_config);
 
     // Set up file watcher for route table.
     // When routes change, the watcher reloads the table, clears the
@@ -585,8 +1058,8 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<(), GatewayError> {
     // get system resolver files written/removed in lockstep.
     let watcher_table = Arc::clone(&shared_table);
     let watcher_cache = Arc::clone(&dns_cache);
-    let watcher_path = config.route_table_path.clone();
-    let watcher_config = config.clone();
+    let watcher_path = runtime_config.route_table_path.clone();
+    let watcher_config = runtime_config.clone();
     let idle_shutdown_generation = Arc::new(AtomicU64::new(0));
     let _watcher = setup_file_watcher(
         &watcher_path,
@@ -597,31 +1070,53 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<(), GatewayError> {
         watcher_config,
     )?;
 
-    let has_tls = config.proxy.tls_bind_addr.is_some() && config.tls.is_some();
+    let has_tls = runtime_config.proxy.tls_bind_addr.is_some() && runtime_config.tls.is_some();
 
     info!(
-        dns = %config.dns.bind_addr,
-        proxy = %config.proxy.bind_addr,
+        dns = %runtime_config.dns.bind_addr,
+        proxy = %runtime_config.proxy.bind_addr,
         tls = has_tls,
-        tld = %config.dns.tld,
+        tld = %runtime_config.dns.tld,
         "gateway starting"
     );
 
     // Run DNS and proxy concurrently.
-    let dns_handle = tokio::spawn(run_dns_server(
-        config.dns.clone(),
-        Arc::clone(&shared_table),
-        Arc::clone(&stats),
-        Arc::clone(&dns_cache),
-        shutdown_rx.clone(),
-    ));
-
-    let proxy_handle = tokio::spawn(run_proxy_server(
-        config.proxy.clone(),
-        Arc::clone(&shared_table),
-        Arc::clone(&stats),
-        shutdown_rx.clone(),
-    ));
+    let (dns_handle, proxy_handle, private_https_listener) = match private_listeners {
+        Some(listeners) => (
+            tokio::spawn(run_dns_server_on(
+                listeners.dns,
+                runtime_config.dns.clone(),
+                Arc::clone(&shared_table),
+                Arc::clone(&stats),
+                Arc::clone(&dns_cache),
+                shutdown_rx.clone(),
+            )),
+            tokio::spawn(run_proxy_server_on(
+                listeners.proxy,
+                runtime_config.proxy.clone(),
+                Arc::clone(&shared_table),
+                Arc::clone(&stats),
+                shutdown_rx.clone(),
+            )),
+            Some(listeners.https),
+        ),
+        None => (
+            tokio::spawn(run_dns_server(
+                runtime_config.dns.clone(),
+                Arc::clone(&shared_table),
+                Arc::clone(&stats),
+                Arc::clone(&dns_cache),
+                shutdown_rx.clone(),
+            )),
+            tokio::spawn(run_proxy_server(
+                runtime_config.proxy.clone(),
+                Arc::clone(&shared_table),
+                Arc::clone(&stats),
+                shutdown_rx.clone(),
+            )),
+            None,
+        ),
+    };
 
     let tcp_alias_handle = tokio::spawn(run_tcp_alias_manager(
         Arc::clone(&shared_table),
@@ -629,35 +1124,58 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<(), GatewayError> {
     ));
 
     // Optionally start the HTTPS proxy.
-    let (_tls_watcher, tls_handle) =
-        if let (Some(tls_addr), Some(tls_config)) = (config.proxy.tls_bind_addr, &config.tls) {
-            let certs_dir = tls_config.certs_dir.clone();
+    let (_tls_watcher, tls_handle) = if let (Some(tls_addr), Some(tls_config)) =
+        (runtime_config.proxy.tls_bind_addr, &runtime_config.tls)
+    {
+        let certs_dir = tls_config.certs_dir.clone();
+        if !runtime_config.is_private() {
             std::fs::create_dir_all(&certs_dir)?;
-            let resolver = Arc::new(SniCertResolver::new());
-            let cert_count = sync_sni_resolver_from_dir(&resolver, &certs_dir)?;
-            if cert_count == 0 {
-                info!(
-                    "HTTPS enabled but no certificates found in {} — \
-                     run `effigy gateway setup-tls` and start a TLS-enabled route",
-                    certs_dir.display()
-                );
-            } else {
-                info!(certs = cert_count, "loaded TLS certificates for HTTPS");
+        }
+        let (resolver, cert_count) = match private_tls_resolver {
+            Some((resolver, count)) => (resolver, count),
+            None => {
+                let resolver = Arc::new(SniCertResolver::new());
+                let count = sync_sni_resolver_from_dir(&resolver, &certs_dir)?;
+                (resolver, count)
             }
-            let tls_watcher = setup_tls_watcher(&certs_dir, Arc::clone(&resolver))?;
-            let server_config = Arc::new(server_config_from_resolver(resolver));
-            let handle = tokio::spawn(run_tls_proxy_server(
+        };
+        if cert_count == 0 {
+            info!(
+                "HTTPS enabled but no certificates found in {} — \
+                     run `effigy gateway setup-tls` and start a TLS-enabled route",
+                certs_dir.display()
+            );
+        } else {
+            info!(certs = cert_count, "loaded TLS certificates for HTTPS");
+        }
+        let tls_watcher = setup_tls_watcher(
+            &certs_dir,
+            Arc::clone(&resolver),
+            runtime_config.is_private(),
+        )?;
+        let server_config = Arc::new(server_config_from_resolver(resolver));
+        let handle = match private_https_listener {
+            Some(listener) => tokio::spawn(run_tls_proxy_server_on(
+                listener,
+                server_config,
+                Arc::clone(&shared_table),
+                Arc::clone(&stats),
+                runtime_config.proxy.clone(),
+                shutdown_rx,
+            )),
+            None => tokio::spawn(run_tls_proxy_server(
                 tls_addr,
                 server_config,
                 Arc::clone(&shared_table),
                 Arc::clone(&stats),
-                config.proxy.clone(),
+                runtime_config.proxy.clone(),
                 shutdown_rx,
-            ));
-            (Some(tls_watcher), Some(handle))
-        } else {
-            (None, None)
+            )),
         };
+        (Some(tls_watcher), Some(handle))
+    } else {
+        (None, None)
+    };
 
     // Wait for any server task to finish (typically all stop on shutdown).
     tokio::select! {
@@ -675,7 +1193,11 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<(), GatewayError> {
     }
 
     // Clean up PID file.
-    identity::remove_if_unchanged(&published_snapshot)?;
+    if let Some(guard) = &mut private_record_guard {
+        guard.finish()?;
+    } else {
+        identity::remove_if_unchanged(&published_snapshot)?;
+    }
 
     info!("gateway stopped");
     Ok(())
@@ -705,6 +1227,7 @@ fn setup_file_watcher(
                             &dns_cache,
                             &idle_shutdown_generation,
                             &shutdown_tx,
+                            gateway_config.is_private(),
                         ) {
                             error!(error = %error, "failed to reload route table");
                         }
@@ -736,12 +1259,16 @@ fn reload_route_table_and_maybe_schedule_shutdown(
     dns_cache: &Arc<DnsCache>,
     idle_shutdown_generation: &Arc<AtomicU64>,
     shutdown_tx: &watch::Sender<bool>,
+    private: bool,
 ) -> Result<(), GatewayError> {
     // Enforce the read-path trust gate (contract 033). An untrusted file keeps
     // the last-known-good in-memory table rather than being adopted.
     let Some(new_table) = crate::trust::load_trusted(path)? else {
         return Ok(());
     };
+    if private {
+        validate_private_routes(&new_table)?;
+    }
     let action = apply_reloaded_route_table(table, new_table, dns_cache);
     debug!("route table reloaded, DNS cache cleared");
     match action {
@@ -760,6 +1287,19 @@ fn reload_route_table_and_maybe_schedule_shutdown(
             debug!("route table became non-empty; cancelled pending idle shutdown");
         }
         IdleShutdownAction::None => {}
+    }
+    Ok(())
+}
+
+fn validate_private_routes(table: &RouteTable) -> Result<(), GatewayError> {
+    if table.all_routes().iter().any(|route| {
+        route.dns_ip.is_some_and(|address| !address.is_loopback())
+            || route.tcp_port.is_some_and(|port| port < 1024)
+    }) {
+        return Err(GatewayError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "private gateway routes may bind only unprivileged loopback aliases",
+        )));
     }
     Ok(())
 }
@@ -806,6 +1346,7 @@ fn schedule_idle_shutdown(
 fn setup_tls_watcher(
     certs_dir: &Path,
     resolver: Arc<SniCertResolver>,
+    private: bool,
 ) -> Result<RecommendedWatcher, GatewayError> {
     let watched_dir = certs_dir.to_path_buf();
 
@@ -816,7 +1357,12 @@ fn setup_tls_watcher(
                 match ev.kind {
                     EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_) => {
                         debug!(path = %watched_dir.display(), "TLS cert directory changed, reloading");
-                        match sync_sni_resolver_from_dir(&resolver, &watched_dir) {
+                        let reload = if private {
+                            sync_private_sni_resolver_from_dir(&resolver, &watched_dir)
+                        } else {
+                            sync_sni_resolver_from_dir(&resolver, &watched_dir)
+                        };
+                        match reload {
                             Ok(count) => {
                                 debug!(certs = count, "TLS certs reloaded");
                             }
@@ -854,6 +1400,9 @@ fn reconcile_route_resolver_files_from_table(
     table: &Arc<RwLock<RouteTable>>,
     config: &GatewayConfig,
 ) {
+    if config.is_private() {
+        return;
+    }
     let domains: Vec<String> = {
         let guard = crate::locks::read_tolerant(table);
         guard

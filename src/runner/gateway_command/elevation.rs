@@ -39,6 +39,9 @@ pub(super) fn gateway_identity_elevation_allowed() -> bool {
 }
 
 pub(super) fn gateway_up_requires_elevation(config: &GatewayConfig) -> bool {
+    if config.is_private() {
+        return false;
+    }
     #[cfg(unix)]
     {
         if is_running_as_root() {
@@ -70,6 +73,9 @@ pub(super) fn gateway_down_requires_elevation(
     config: &GatewayConfig,
     status: Option<&super::VerifiedGatewayStatus>,
 ) -> Result<bool, RunnerError> {
+    if config.is_private() {
+        return Ok(false);
+    }
     #[cfg(unix)]
     {
         if is_running_as_root() {
@@ -116,6 +122,11 @@ pub(super) fn gateway_setup_tls_requires_elevation() -> bool {
 }
 
 pub(super) fn ensure_gateway_up_privileges(config: &GatewayConfig) -> Result<(), RunnerError> {
+    if config.is_private() {
+        return config
+            .validate_private_mode()
+            .map_err(|error| RunnerError::task_invocation(error.to_string()));
+    }
     #[cfg(unix)]
     {
         if is_running_as_root() {
@@ -152,8 +163,13 @@ pub(super) fn ensure_gateway_up_privileges(config: &GatewayConfig) -> Result<(),
 pub(super) fn prepare_gateway_state_for_elevated_run(
     config: &GatewayConfig,
 ) -> Result<(), RunnerError> {
-    identity::ensure_trusted_gateway_parent(&config.pid_file_path)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    if let Some(root) = config.private_state_root() {
+        effigy_gateway::private_state::prepare_root(root)
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    } else {
+        identity::ensure_trusted_gateway_parent(&config.pid_file_path)
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    }
     if !config.route_table_path.exists() {
         RouteTable::new()
             .save(&config.route_table_path)
@@ -194,6 +210,9 @@ pub(super) fn run_gateway_elevated(
 }
 
 pub(super) fn install_resolver_if_needed(config: &GatewayConfig) -> Vec<String> {
+    if config.is_private() {
+        return Vec::new();
+    }
     #[cfg(target_os = "macos")]
     {
         let spec = resolver_spec(config);
@@ -211,7 +230,10 @@ pub(super) fn install_resolver_if_needed(config: &GatewayConfig) -> Vec<String> 
     }
 }
 
-pub(super) fn provision_loopback_aliases_if_needed(_config: &GatewayConfig) -> Vec<String> {
+pub(super) fn provision_loopback_aliases_if_needed(config: &GatewayConfig) -> Vec<String> {
+    if config.is_private() {
+        return Vec::new();
+    }
     #[cfg(target_os = "macos")]
     {
         if loopback_alias_range_configured() {
@@ -228,6 +250,9 @@ pub(super) fn provision_loopback_aliases_if_needed(_config: &GatewayConfig) -> V
 }
 
 pub(super) fn uninstall_resolver_if_needed(config: &GatewayConfig) -> Vec<String> {
+    if config.is_private() {
+        return Vec::new();
+    }
     #[cfg(target_os = "macos")]
     {
         let mut warnings = Vec::new();

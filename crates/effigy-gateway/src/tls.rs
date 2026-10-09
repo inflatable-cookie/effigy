@@ -20,11 +20,12 @@ use rustls::sign::CertifiedKey;
 
 use crate::error::GatewayError;
 
-/// Optional explicit mkcert program path used by elevated gateway runs.
+/// Optional explicit mkcert program path used by private and elevated gateway runs.
 ///
 /// The runner resolves this from a bounded set of trusted host directories
 /// before privilege escalation so the root-owned gateway daemon does not need
-/// to trust a caller-controlled `PATH`.
+/// to trust a caller-controlled `PATH`. Private setup accepts only an absolute
+/// existing path here and otherwise searches the same bounded prefixes.
 pub const MKCERT_BIN_ENV: &str = "EFFIGY_GATEWAY_MKCERT_BIN";
 
 const SAFE_MKCERT_SEARCH_DIRS: &[&str] = &[
@@ -41,12 +42,29 @@ const SAFE_MKCERT_SEARCH_DIRS: &[&str] = &[
 pub struct TlsConfig {
     /// Directory where certificates are stored.
     pub certs_dir: PathBuf,
+
+    /// Optional mkcert CA directory owned by a private gateway fixture.
+    pub ca_root: Option<PathBuf>,
 }
 
 impl TlsConfig {
     /// Create a new TLS config with the given certificate directory.
     pub fn new(certs_dir: PathBuf) -> Self {
-        Self { certs_dir }
+        Self {
+            certs_dir,
+            ca_root: None,
+        }
+    }
+
+    /// Use a fixture-owned mkcert CA directory without installing trust.
+    pub fn with_ca_root(mut self, ca_root: PathBuf) -> Self {
+        self.ca_root = Some(ca_root);
+        self
+    }
+
+    /// Path to the private CA certificate when this config owns a CA root.
+    pub fn private_ca_cert_path(&self) -> Option<PathBuf> {
+        self.ca_root.as_ref().map(|root| root.join("rootCA.pem"))
     }
 
     /// Check whether mkcert is installed and available.
@@ -58,6 +76,20 @@ impl TlsConfig {
             .status()
             .map(|s| s.success())
             .unwrap_or(false)
+    }
+
+    /// Check for mkcert using the configured absolute override or trusted
+    /// install prefixes used by private mode.
+    pub fn private_mkcert_available() -> bool {
+        let Some(program) = private_mkcert_program() else {
+            return false;
+        };
+        Command::new(program)
+            .arg("-help")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success())
     }
 
     /// Check whether the mkcert CA is installed in the system trust store.
@@ -141,7 +173,12 @@ impl TlsConfig {
             });
         }
 
-        let output = mkcert_command()
+        let output = self
+            .mkcert_command()
+            .map_err(|reason| GatewayError::TlsError {
+                domain: domain.to_owned(),
+                reason,
+            })?
             .arg("-cert-file")
             .arg(&cert_path)
             .arg("-key-file")
@@ -204,6 +241,18 @@ impl TlsConfig {
         remove_file_if_exists(&paths.cert)?;
         remove_file_if_exists(&paths.key)?;
         Ok(())
+    }
+
+    fn mkcert_command(&self) -> Result<Command, String> {
+        let Some(ca_root) = &self.ca_root else {
+            return Ok(mkcert_command());
+        };
+        let program = private_mkcert_program().ok_or_else(|| {
+            "private TLS requires an executable from absolute EFFIGY_GATEWAY_MKCERT_BIN or a trusted install prefix".to_owned()
+        })?;
+        let mut command = Command::new(program);
+        command.env("CAROOT", ca_root);
+        Ok(command)
     }
 }
 
@@ -296,7 +345,14 @@ fn load_certified_key(
         }
     })?;
 
-    Ok(Arc::new(CertifiedKey::new(certs, signing_key)))
+    let certified_key = CertifiedKey::new(certs, signing_key);
+    certified_key
+        .keys_match()
+        .map_err(|error| GatewayError::TlsError {
+            domain: cert_path.display().to_string(),
+            reason: format!("certificate and private key do not match: {error}"),
+        })?;
+    Ok(Arc::new(certified_key))
 }
 
 /// SNI-based certificate resolver for multi-domain HTTPS.
@@ -451,6 +507,50 @@ pub fn sync_sni_resolver_from_dir(
     Ok(loaded)
 }
 
+/// Strictly reload fixture-owned certificates without replacing the last good
+/// set when any certificate/key pair is incomplete or invalid.
+pub(crate) fn sync_private_sni_resolver_from_dir(
+    resolver: &SniCertResolver,
+    certs_dir: &Path,
+) -> Result<usize, GatewayError> {
+    let mut certs = HashMap::new();
+    if certs_dir.is_dir() {
+        let entries = std::fs::read_dir(certs_dir).map_err(|error| GatewayError::TlsError {
+            domain: certs_dir.display().to_string(),
+            reason: format!("failed to read private certs directory: {error}"),
+        })?;
+        for entry in entries {
+            let entry = entry.map_err(|error| GatewayError::TlsError {
+                domain: certs_dir.display().to_string(),
+                reason: format!("failed to read private cert entry: {error}"),
+            })?;
+            let path = entry.path();
+            let filename = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or_default();
+            if !filename.ends_with(".pem") || filename.ends_with("-key.pem") {
+                continue;
+            }
+            let domain = filename.trim_end_matches(".pem");
+            let key_path = certs_dir.join(format!("{domain}-key.pem"));
+            if !key_path.is_file() {
+                return Err(GatewayError::TlsError {
+                    domain: domain.to_owned(),
+                    reason: format!(
+                        "private certificate {} has no matching key file",
+                        path.display()
+                    ),
+                });
+            }
+            certs.insert(domain.to_owned(), load_certified_key(&path, &key_path)?);
+        }
+    }
+    let count = certs.len();
+    *crate::locks::write_tolerant(&resolver.certs) = certs;
+    Ok(count)
+}
+
 fn remove_file_if_exists(path: &Path) -> Result<(), GatewayError> {
     match std::fs::remove_file(path) {
         Ok(()) => Ok(()),
@@ -499,6 +599,21 @@ fn mkcert_command() -> Command {
         return Command::new(program);
     }
     Command::new("mkcert")
+}
+
+fn private_mkcert_program() -> Option<PathBuf> {
+    if let Some(explicit) = std::env::var_os(MKCERT_BIN_ENV).map(PathBuf::from) {
+        if explicit.is_absolute() && explicit.is_file() {
+            return Some(explicit);
+        }
+        // An invalid explicit choice must not silently select another binary.
+        return None;
+    }
+
+    SAFE_MKCERT_SEARCH_DIRS
+        .iter()
+        .map(|dir| Path::new(dir).join("mkcert"))
+        .find(|path| path.is_file())
 }
 
 /// Resolve the mkcert program from an explicit absolute override or a bounded
