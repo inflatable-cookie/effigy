@@ -397,3 +397,45 @@ fixed file-count, byte-count, identity, offline snapshot, and deterministic
 regeneration proofs remain in place. Unrelated fixture provenance, the support
 floor, active user pack selection, and explicit-update semantics are
 unchanged.
+
+### Underlay development profiles and host listeners — 2026-10-09
+
+Tom authorized planning and promotion of the Underlay development-profile
+work: "OK, that sounds doable. Let's plan it out and promote it."
+
+The Underlay bundle owns its hybrid, container and short-lived test profile
+recipes, including Vite and Rust service launch adapters, configurable
+listeners, public URLs, service connection endpoints, browser origins and
+HMR wiring. The intended consumer surface is `dev` for hybrid development,
+`dev:container` for Linux runtime parity, and `dev:test` for disposable
+worktree testing. These are bundle/consumer task selectors, not new built-in
+Effigy commands. They are proposed behavior until independently qualified.
+
+Effigy may own reusable language-agnostic runtime identity, environment,
+readiness, interruption and gateway-route ownership invariants. It must not
+recognize Vite, Cargo, Rust APIs or Underlay service conventions in core.
+Rust compiler-cache management belongs to Oxide and is outside this work.
+
+Concurrent host listeners require instance-specific addresses and actual
+bind/readiness evidence before route publication. A free-port probe is not
+a reservation. OS-assigned listeners may report their actual addresses;
+adapters requiring an advance port need strict binding and bounded collision
+handling. Gateway targets, application connection URLs and HMR endpoints
+must agree with the actual listener. Restart and teardown may affect only
+the recorded instance's processes and routes; ambiguous ownership remains
+held rather than being reclaimed on age or PID disappearance.
+
+The first qualification uses disposable fixtures to establish supported
+interfaces and expose any missing generic prerequisite before dependent
+bundle implementation. It covers simultaneous checkouts, occupied ports,
+readiness, HTTPS/HMR routing, failed startup, restart and isolated teardown.
+It must not introduce an unmanaged duplicate supervisor or assume a new
+extension interface. Any generic Effigy prerequisite is a separate reviewed
+task linked to its bundle dependants.
+
+Because bundle consumers currently track `main`, profile additions preserve
+existing defaults until an explicit consumer migration selects hybrid
+development. Container parity remains available. This authority covers
+bounded Queue briefs, independent review and qualification; it does not
+authorize fleet configuration changes, live gateway or resolver mutation,
+data deletion, workflow edits, binary publication or global installation.
