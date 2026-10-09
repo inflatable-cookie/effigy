@@ -1,5 +1,6 @@
 use super::super::cases::assert_case_table;
 use super::super::execution::run_manifest_task_with_cwd;
+use super::super::harness::write_root_manifest;
 use super::super::output::{
     assert_output_contains_all, assert_output_contains_derived, assert_output_excludes_all,
     assert_path_exists, assert_path_missing,
@@ -132,6 +133,68 @@ pub(in crate::runner::tests) fn wait_for_live_task_owner(root: &Path, lock_file:
         lock_file,
     );
     wait_for_parseable_active_task_status(root, Duration::from_secs(5));
+}
+
+const HOLD_READY_NAME: &str = ".effigy-test-hold-ready";
+const HOLD_RELEASE_NAME: &str = ".effigy-test-hold-release";
+
+pub(in crate::runner::tests) struct HeldLiveOwner {
+    release_path: PathBuf,
+    owner: Option<OwnedThread<Result<String, RunnerError>>>,
+}
+
+impl HeldLiveOwner {
+    pub(in crate::runner::tests) fn release_and_join(mut self) -> Result<String, RunnerError> {
+        self.write_release();
+        self.owner.take().expect("held owner thread").join()
+    }
+
+    fn write_release(&self) {
+        fs::write(&self.release_path, b"release").expect("release held owner");
+    }
+}
+
+impl Drop for HeldLiveOwner {
+    fn drop(&mut self) {
+        let _ = fs::write(&self.release_path, b"release");
+    }
+}
+
+pub(in crate::runner::tests) fn start_held_dev_owner(root: &Path) -> HeldLiveOwner {
+    let ready_path = root.join(HOLD_READY_NAME);
+    let release_path = root.join(HOLD_RELEASE_NAME);
+    fs::write(
+        root.join("hold-owner.sh"),
+        concat!(
+            "#!/bin/sh\n",
+            "touch \"$1\"\n",
+            "n=0\n",
+            "while [ ! -f \"$2\" ]; do\n",
+            "  n=$((n + 1))\n",
+            "  if [ \"$n\" -ge 3000 ]; then\n",
+            "    exit 1\n",
+            "  fi\n",
+            "  sleep 0.01\n",
+            "done\n",
+        ),
+    )
+    .expect("write hold-owner script");
+    write_root_manifest(
+        root,
+        r#"[tasks.dev]
+run = "sh hold-owner.sh .effigy-test-hold-ready .effigy-test-hold-release"
+"#,
+    );
+
+    let root_for_thread = root.to_path_buf();
+    let owner = OwnedThread::spawn(move || run_dev(&root_for_thread, &[]));
+    let held = HeldLiveOwner {
+        release_path,
+        owner: Some(owner),
+    };
+    wait_for_live_task_owner(root, "task-dev.lock");
+    wait_for_path_exists(&ready_path, Duration::from_secs(5), HOLD_READY_NAME);
+    held
 }
 
 fn wait_for_parseable_active_task_status(root: &Path, timeout: Duration) {

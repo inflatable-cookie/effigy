@@ -1,9 +1,9 @@
 use crate::runner::tests::prelude::{
     assert_live_dev_lock_conflict, assert_output_equals, assert_unlock_invocation_error_case_table,
     assert_unlock_success_case_table, lock_test, parse_json_output_with_schema_version, run_dev,
-    run_task_status_from_repo, run_task_with_repo, temp_workspace, wait_for_live_task_owner,
-    write_lock_files, write_root_manifest, ManagedUnlockInvocationErrorCase,
-    ManagedUnlockSuccessCase, OwnedThread,
+    run_task_status_from_repo, run_task_with_repo, start_held_dev_owner, temp_workspace,
+    wait_for_live_task_owner, write_lock_files, write_root_manifest,
+    ManagedUnlockInvocationErrorCase, ManagedUnlockSuccessCase, OwnedThread,
 };
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -27,19 +27,14 @@ run = "sleep 1"
 fn live_lock_conflict_leaves_owner_active_record_in_place() {
     let _guard = lock_test();
     let root = temp_workspace("lock-conflict-preserves-active");
-    write_root_manifest(
-        &root,
-        r#"[tasks.dev]
-run = "sleep 1"
-"#,
-    );
-
-    let root_for_thread = root.clone();
-    let owner = OwnedThread::spawn(move || run_dev(&root_for_thread, &[]));
-    wait_for_live_task_owner(&root, "task-dev.lock");
+    let owner = start_held_dev_owner(&root);
 
     let active_dir = root.join(".effigy/runtime/tasks/active");
     let before = read_single_json_file(&active_dir);
+    assert!(
+        before.contains("\"stage\": \"executing\""),
+        "hold-ready owner must already be past runtime-prep: {before}"
+    );
 
     let err = run_dev(&root, &[]).expect_err("second run should conflict on lock");
     crate::runner::tests::prelude::assert_lock_conflict(
@@ -54,23 +49,14 @@ run = "sleep 1"
         "live contender must not overwrite or delete the owner's active record"
     );
 
-    owner.join().expect("first run should complete");
+    owner.release_and_join().expect("first run should complete");
 }
 
 #[test]
 fn live_waiter_fails_closed_on_corrupt_active_record() {
     let _guard = lock_test();
     let root = temp_workspace("lock-conflict-corrupt-active");
-    write_root_manifest(
-        &root,
-        r#"[tasks.dev]
-run = "sleep 1"
-"#,
-    );
-
-    let root_for_thread = root.clone();
-    let owner = OwnedThread::spawn(move || run_dev(&root_for_thread, &[]));
-    wait_for_live_task_owner(&root, "task-dev.lock");
+    let owner = start_held_dev_owner(&root);
 
     let active_path = single_json_path(&root.join(".effigy/runtime/tasks/active"));
     std::fs::write(&active_path, "").expect("corrupt active record");
@@ -91,7 +77,7 @@ run = "sleep 1"
         "waiter must not delete or replace a foreign active record"
     );
 
-    owner.join().expect("first run should complete");
+    owner.release_and_join().expect("first run should complete");
 }
 
 #[test]
