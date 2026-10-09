@@ -32,6 +32,7 @@ fn route_table_with(domain: &str) -> Arc<RwLock<RouteTable>> {
         project: "/tmp/test".to_string(),
         tls: false,
         scope: None,
+        managed_listener: None,
         registered: chrono::Utc::now(),
     });
     Arc::new(RwLock::new(table))
@@ -49,6 +50,7 @@ fn route_table_with_dns_ip(domain: &str, dns_ip: Ipv4Addr) -> Arc<RwLock<RouteTa
         project: "/tmp/test".to_string(),
         tls: false,
         scope: None,
+        managed_listener: None,
         registered: chrono::Utc::now(),
     });
     Arc::new(RwLock::new(table))

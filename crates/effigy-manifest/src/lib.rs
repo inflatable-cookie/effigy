@@ -345,7 +345,12 @@ impl TaskManifest {
                 if let Some(dns) = container.dns.as_ref() {
                     validate_dns_routes(manifest_path, container_name, dns)?;
                 }
-                validate_host_processes(manifest_path, container_name, &container.host_processes)?;
+                validate_host_processes(
+                    manifest_path,
+                    container_name,
+                    &container.host_processes,
+                    container.dns.as_ref(),
+                )?;
             }
         }
         Ok(())
@@ -466,10 +471,14 @@ fn validate_host_processes(
     manifest_path: &Path,
     container_name: &str,
     entries: &[crate::config_sections::ManifestContainerHostProcess],
+    dns: Option<&crate::config_sections::ManifestContainerDnsConfig>,
 ) -> Result<(), ManifestError> {
-    use std::collections::HashSet;
+    use std::collections::{HashMap, HashSet};
 
     let mut seen = HashSet::<String>::new();
+    let mut listener_domains = HashSet::<String>::new();
+    let mut dependency_env_names = HashSet::<String>::new();
+    let mut entries_by_name = HashMap::new();
     for (index, entry) in entries.iter().enumerate() {
         let scope = format!("containers.{container_name}.host_processes[{index}]");
         let trimmed_name = entry.name.trim();
@@ -477,6 +486,12 @@ fn validate_host_processes(
             return Err(ManifestError::Compose {
                 path: manifest_path.to_path_buf(),
                 detail: format!("{scope}.name is empty"),
+            });
+        }
+        if trimmed_name != entry.name {
+            return Err(ManifestError::Compose {
+                path: manifest_path.to_path_buf(),
+                detail: format!("{scope}.name cannot contain leading or trailing whitespace"),
             });
         }
         if !trimmed_name
@@ -498,11 +513,115 @@ fn validate_host_processes(
                 ),
             });
         }
+        let dependency_env_name = trimmed_name
+            .chars()
+            .map(|character| {
+                if character.is_ascii_alphanumeric() {
+                    character.to_ascii_uppercase()
+                } else {
+                    '_'
+                }
+            })
+            .collect::<String>();
+        if !dependency_env_names.insert(dependency_env_name) {
+            return Err(ManifestError::Compose {
+                path: manifest_path.to_path_buf(),
+                detail: format!(
+                    "{scope}.name collides with another host process after dependency environment normalization"
+                ),
+            });
+        }
+        entries_by_name.insert(trimmed_name.to_owned(), entry);
         if entry.run.trim().is_empty() {
             return Err(ManifestError::Compose {
                 path: manifest_path.to_path_buf(),
                 detail: format!("{scope}.run is empty"),
             });
+        }
+        if let Some(cwd) = entry.cwd.as_deref() {
+            let path = std::path::Path::new(cwd);
+            if path.is_absolute()
+                || path
+                    .components()
+                    .any(|component| component == std::path::Component::ParentDir)
+            {
+                return Err(ManifestError::Compose {
+                    path: manifest_path.to_path_buf(),
+                    detail: format!("{scope}.cwd must be a relative path inside the checkout"),
+                });
+            }
+        }
+        for key in entry.env.keys() {
+            if key.is_empty()
+                || !key
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+                || key.starts_with("EFFIGY_MANAGED_HOST_")
+            {
+                return Err(ManifestError::Compose {
+                    path: manifest_path.to_path_buf(),
+                    detail: format!(
+                        "{scope}.env contains invalid or reserved environment key `{key}`"
+                    ),
+                });
+            }
+        }
+        if let Some(listener) = entry.listener.as_ref() {
+            let bind = listener.bind.parse::<std::net::SocketAddr>().map_err(|_| {
+                ManifestError::Compose {
+                    path: manifest_path.to_path_buf(),
+                    detail: format!("{scope}.listener.bind must be a loopback socket address"),
+                }
+            })?;
+            if !bind.ip().is_loopback() || (bind.port() > 0 && bind.port() < 1024) {
+                return Err(ManifestError::Compose {
+                    path: manifest_path.to_path_buf(),
+                    detail: format!(
+                        "{scope}.listener.bind must use an unprivileged loopback address"
+                    ),
+                });
+            }
+            let readiness = &listener.readiness;
+            if !readiness.path.starts_with('/')
+                || readiness.path.chars().any(|character| {
+                    character.is_ascii_control() || character.is_ascii_whitespace()
+                })
+                || readiness.path.contains('#')
+                || !(100..=599).contains(&readiness.status)
+                || readiness.timeout_secs == 0
+                || readiness.timeout_secs > 3_600
+            {
+                return Err(ManifestError::Compose {
+                    path: manifest_path.to_path_buf(),
+                    detail: format!(
+                        "{scope}.listener.readiness requires an absolute HTTP path, status 100–599, and timeout_secs from 1 through 3600"
+                    ),
+                });
+            }
+            if listener.route.domain.trim() != listener.route.domain
+                || listener.route.domain.ends_with('.')
+            {
+                return Err(ManifestError::Compose {
+                    path: manifest_path.to_path_buf(),
+                    detail: format!(
+                        "{scope}.listener.route.domain must be canonical without surrounding whitespace or a trailing dot"
+                    ),
+                });
+            }
+            validate_dns_domain_name(
+                manifest_path,
+                &listener.route.domain,
+                &format!("{scope}.listener.route.domain"),
+            )?;
+            if !listener_domains.insert(listener.route.domain.to_ascii_lowercase()) {
+                return Err(ManifestError::Compose {
+                    path: manifest_path.to_path_buf(),
+                    detail: format!(
+                        "containers.{container_name}.host_processes contains duplicate managed listener route `{}`",
+                        listener.route.domain
+                    ),
+                });
+            }
         }
         if let Some(signal) = entry.shutdown_signal.as_deref() {
             let upper = signal.trim().to_ascii_uppercase();
@@ -515,6 +634,96 @@ fn validate_host_processes(
                     ),
                 });
             }
+        }
+    }
+
+    if let Some(dns) = dns {
+        let static_domains = dns
+            .resolved_routes()
+            .into_iter()
+            .map(|route| route.domain.to_ascii_lowercase())
+            .collect::<HashSet<_>>();
+        if let Some(domain) = listener_domains
+            .iter()
+            .find(|domain| static_domains.contains(*domain))
+        {
+            return Err(ManifestError::Compose {
+                path: manifest_path.to_path_buf(),
+                detail: format!(
+                    "containers.{container_name}.host_processes listener route `{domain}` conflicts with a static containers.{container_name}.dns route"
+                ),
+            });
+        }
+    }
+
+    for (index, entry) in entries.iter().enumerate() {
+        let scope = format!("containers.{container_name}.host_processes[{index}]");
+        let mut dependencies = HashSet::new();
+        for raw_dependency in &entry.depends_on {
+            let dependency = raw_dependency.trim();
+            if dependency.is_empty()
+                || dependency != raw_dependency
+                || dependency == entry.name.trim()
+                || !dependencies.insert(dependency.to_owned())
+            {
+                return Err(ManifestError::Compose {
+                    path: manifest_path.to_path_buf(),
+                    detail: format!("{scope}.depends_on must contain unique other process names"),
+                });
+            }
+            let Some(target) = entries_by_name.get(dependency) else {
+                return Err(ManifestError::Compose {
+                    path: manifest_path.to_path_buf(),
+                    detail: format!(
+                        "{scope}.depends_on references unknown host process `{dependency}`"
+                    ),
+                });
+            };
+            if target.listener.is_none() {
+                return Err(ManifestError::Compose {
+                    path: manifest_path.to_path_buf(),
+                    detail: format!(
+                        "{scope}.depends_on references `{dependency}`, which has no managed listener"
+                    ),
+                });
+            }
+        }
+    }
+
+    let mut complete = HashSet::new();
+    let mut visiting = HashSet::new();
+    fn visit(
+        name: &str,
+        entries: &HashMap<String, &crate::config_sections::ManifestContainerHostProcess>,
+        visiting: &mut HashSet<String>,
+        complete: &mut HashSet<String>,
+    ) -> bool {
+        if complete.contains(name) {
+            return true;
+        }
+        if !visiting.insert(name.to_owned()) {
+            return false;
+        }
+        let Some(entry) = entries.get(name) else {
+            return false;
+        };
+        for dependency in &entry.depends_on {
+            if !visit(dependency, entries, visiting, complete) {
+                return false;
+            }
+        }
+        visiting.remove(name);
+        complete.insert(name.to_owned());
+        true
+    }
+    for name in entries_by_name.keys() {
+        if !visit(name, &entries_by_name, &mut visiting, &mut complete) {
+            return Err(ManifestError::Compose {
+                path: manifest_path.to_path_buf(),
+                detail: format!(
+                    "containers.{container_name}.host_processes contains a managed listener dependency cycle"
+                ),
+            });
         }
     }
     Ok(())
@@ -833,5 +1042,137 @@ shutdown_grace_secs = 10
         manifest
             .validate(Path::new("/tmp/effigy.toml"))
             .expect("expected valid manifest");
+    }
+
+    #[test]
+    fn managed_host_listener_dynamic_bind_and_readiness_pass() {
+        let manifest = parse(
+            r#"
+[containers.web]
+primary_service = "app"
+
+[[containers.web.host_processes]]
+name = "frontend"
+run = "exec ./start-frontend"
+
+[containers.web.host_processes.listener]
+bind = "127.0.0.1:0"
+
+[containers.web.host_processes.listener.readiness]
+path = "/health"
+status = 204
+timeout_secs = 30
+
+[containers.web.host_processes.listener.route]
+domain = "frontend.example.test"
+tls = true
+
+[[containers.web.host_processes]]
+name = "consumer"
+run = "exec ./consume"
+depends_on = ["frontend"]
+"#,
+        );
+        manifest
+            .validate(Path::new("/tmp/effigy.toml"))
+            .expect("valid listener and dependency declarations");
+    }
+
+    #[test]
+    fn managed_host_listener_rejects_non_loopback_bind_and_bad_path() {
+        let non_loopback = parse(
+            r#"
+[containers.web]
+primary_service = "app"
+
+[[containers.web.host_processes]]
+name = "frontend"
+run = "exec ./start-frontend"
+
+[containers.web.host_processes.listener]
+bind = "0.0.0.0:4173"
+
+[containers.web.host_processes.listener.readiness]
+path = "/health"
+
+[containers.web.host_processes.listener.route]
+domain = "frontend.example.test"
+"#,
+        );
+        assert!(err(&non_loopback).contains("unprivileged loopback address"));
+
+        let bad_path = parse(
+            r#"
+[containers.web]
+primary_service = "app"
+
+[[containers.web.host_processes]]
+name = "frontend"
+run = "exec ./start-frontend"
+
+[containers.web.host_processes.listener]
+bind = "127.0.0.1:4173"
+
+[containers.web.host_processes.listener.readiness]
+path = "/health status=200"
+
+[containers.web.host_processes.listener.route]
+domain = "frontend.example.test"
+"#,
+        );
+        assert!(err(&bad_path).contains("absolute HTTP path"));
+
+        let unbounded_timeout = parse(
+            r#"
+[containers.web]
+primary_service = "app"
+
+[[containers.web.host_processes]]
+name = "frontend"
+run = "exec ./start-frontend"
+
+[containers.web.host_processes.listener]
+bind = "127.0.0.1:4173"
+
+[containers.web.host_processes.listener.readiness]
+path = "/health"
+timeout_secs = 3601
+
+[containers.web.host_processes.listener.route]
+domain = "frontend.example.test"
+"#,
+        );
+        assert!(err(&unbounded_timeout).contains("timeout_secs from 1 through 3600"));
+    }
+
+    #[test]
+    fn managed_host_listener_dependency_cycles_are_rejected() {
+        let manifest = parse(
+            r#"
+[containers.web]
+primary_service = "app"
+
+[[containers.web.host_processes]]
+name = "one"
+run = "exec ./one"
+depends_on = ["two"]
+
+[containers.web.host_processes.listener]
+bind = "127.0.0.1:0"
+readiness = { path = "/health" }
+route = { domain = "one.example.test" }
+
+[[containers.web.host_processes]]
+name = "two"
+run = "exec ./two"
+depends_on = ["one"]
+
+[containers.web.host_processes.listener]
+bind = "127.0.0.1:0"
+readiness = { path = "/health" }
+route = { domain = "two.example.test" }
+"#,
+        );
+        assert!(err(&manifest).contains("dependency cycle"));
     }
 }

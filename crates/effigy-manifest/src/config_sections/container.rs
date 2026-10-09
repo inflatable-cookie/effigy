@@ -540,6 +540,20 @@ pub struct ManifestContainerHostProcess {
     pub name: String,
     /// Host shell command to execute. Runs under `sh -lc <run>`.
     pub run: String,
+    /// Optional working directory, resolved relative to the manifest
+    /// checkout. Defaults to the checkout root.
+    #[serde(default)]
+    pub cwd: Option<String>,
+    /// Literal environment values provided to this process. Managed
+    /// dependency endpoint variables are added by Effigy.
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
+    /// Named host processes whose endpoint files this process consumes.
+    #[serde(default)]
+    pub depends_on: Vec<String>,
+    /// Bind, readiness, and route contract for an actually owned TCP listener.
+    #[serde(default)]
+    pub listener: Option<ManifestManagedHostListener>,
     /// Restart policy when the process exits. Defaults to `on-failure`
     /// (restart only when the exit code is non-zero). `always` restarts
     /// regardless; `never` exits the supervisor on first exit.
@@ -556,6 +570,42 @@ pub struct ManifestContainerHostProcess {
     /// `SIGKILL`. Defaults to 5.
     #[serde(default)]
     pub shutdown_grace_secs: Option<u64>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ManifestManagedHostListener {
+    /// Loopback preference passed to the adapter. Port 0 asks the adapter and
+    /// OS for a dynamic port; fixed ports must be bound strictly.
+    pub bind: String,
+    pub readiness: ManifestManagedHostListenerReadiness,
+    pub route: ManifestManagedHostListenerRoute,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ManifestManagedHostListenerReadiness {
+    pub path: String,
+    #[serde(default = "default_listener_status")]
+    pub status: u16,
+    #[serde(default = "default_listener_timeout_secs")]
+    pub timeout_secs: u64,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ManifestManagedHostListenerRoute {
+    pub domain: String,
+    #[serde(default)]
+    pub tls: bool,
+}
+
+fn default_listener_status() -> u16 {
+    200
+}
+
+fn default_listener_timeout_secs() -> u64 {
+    60
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, Default)]

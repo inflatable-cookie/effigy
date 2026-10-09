@@ -33,8 +33,9 @@ pub use container::{
     ManifestContainerOnTaskExit, ManifestContainerSecretDelivery, ManifestContainerSecretsConfig,
     ManifestContainerServiceConfig, ManifestContainerShutdownMode, ManifestContainerStartup,
     ManifestContainersConfig, ManifestDataConfig, ManifestDataTargetConfig,
-    ManifestInlineWorkspaceContainerConfig, ManifestSystemConfig, ManifestSystemMount,
-    ManifestSystemMountTable, ManifestSystemsConfig, ManifestWorkspaceConfig,
+    ManifestInlineWorkspaceContainerConfig, ManifestManagedHostListener,
+    ManifestManagedHostListenerReadiness, ManifestManagedHostListenerRoute, ManifestSystemConfig,
+    ManifestSystemMount, ManifestSystemMountTable, ManifestSystemsConfig, ManifestWorkspaceConfig,
     ManifestWorkspaceContainerRef,
 };
 pub use demo::{ManifestDemoConfig, ManifestDemoMode, ManifestDemoStatus};

@@ -229,6 +229,93 @@ If the question is instead:
 
 ## Manifest Shapes
 
+### Managed host listeners
+
+Host processes that serve a browser route can declare the listener they own.
+The language-specific adapter reads Effigy's bind and report variables, binds
+the address itself, and reports the actual socket. Port `0` lets the OS assign
+a port so separate checkouts can run together without fixed-port coordination.
+For disposable profiles, point `EFFIGY_GATEWAY_PRIVATE_STATE_ROOT` at an owned
+private root and start that instance with `gateway setup-tls` and `gateway up`
+using the same `--private-state-root`. This keeps trust and route state scoped
+to the profile.
+
+```toml
+[[containers.web.host_processes]]
+name = "frontend"
+run = 'exec ./scripts/start-frontend'
+cwd = "."
+restart = "on-failure"
+
+[containers.web.host_processes.listener]
+bind = "127.0.0.1:0"
+
+[containers.web.host_processes.listener.readiness]
+path = "/health"
+status = 200
+timeout_secs = 60
+
+[containers.web.host_processes.listener.route]
+domain = "frontend.example.test"
+tls = true
+```
+
+`container up --detach --json` returns each ready listener's actual address,
+internal URL, public URL, generation and state-file path. A listener result
+looks like this:
+
+```json
+{
+  "name": "frontend",
+  "status": "ready",
+  "runtime_generation": "runtime-generation-token",
+  "generation": "child-generation-token",
+  "address": "127.0.0.1:4173",
+  "internal_url": "http://127.0.0.1:4173",
+  "public_url": "https://frontend.example.test",
+  "route_domain": "frontend.example.test",
+  "route_tls": true,
+  "state_file": "/checkout/.effigy/runtime/host-processes/web/dev/frontend.listener.json"
+}
+```
+
+Effigy sets `EFFIGY_MANAGED_HOST_LISTENER_BIND` to the exact requested loopback
+address, `EFFIGY_MANAGED_HOST_LISTENER_REPORT_FILE` to a private report path,
+and `EFFIGY_MANAGED_HOST_LISTENER_GENERATION` to the current child generation.
+The adapter must bind strictly to the requested address and write the report
+after the socket is listening. Readiness is an HTTP `GET` to the configured
+path with the route domain as `Host`; only the configured status makes the
+listener ready. A failed or timed-out startup returns an error and leaves a
+`failed` or held `unavailable` state instead of publishing an endpoint.
+
+The versioned state file remains the current status source after startup.
+Use `depends_on = ["frontend"]` on another host process to wait for readiness
+and receive `EFFIGY_MANAGED_HOST_FRONTEND_INTERNAL_URL`,
+`EFFIGY_MANAGED_HOST_FRONTEND_PUBLIC_URL`,
+`EFFIGY_MANAGED_HOST_FRONTEND_STATE_FILE`, and
+`EFFIGY_MANAGED_HOST_FRONTEND_GENERATION`. When the listener restarts, the
+dependent process restarts with its new endpoint environment. Effigy checks
+actual process and socket ownership before publishing the gateway route and
+withdraws it before stopping or replacing a child generation.
+
+Adapters write a report like this to the path in
+`EFFIGY_MANAGED_HOST_LISTENER_REPORT_FILE`, echoing the exact supplied
+generation token and the address that is actually bound. Write the complete
+versioned document before exposing readiness to Effigy:
+
+```json
+{
+  "schema": "effigy.managed.host-listener-report.v1",
+  "generation": "child-generation-token",
+  "address": "127.0.0.1:4173"
+}
+```
+
+Fixed ports must bind exactly and fail on collision. Ownership proof is
+currently supported on Linux and macOS; other platforms refuse when the
+process or socket owner cannot be established. Static `target_host` routes
+keep their existing external-target behavior.
+
 Two shapes are supported.
 
 - prefer catalog-driven generated compose for normal use

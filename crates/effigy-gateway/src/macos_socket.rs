@@ -45,6 +45,15 @@ pub(super) fn process_listening_endpoints(
         match socket_endpoint(pid_t, fd) {
             Ok(Some(endpoint)) => endpoints.push(endpoint),
             Ok(None) => {}
+            // `PROC_PIDLISTFDS` is a snapshot. A non-listening connection may
+            // close before its descriptor is inspected; those vanished file
+            // descriptors no longer own a listener and can be skipped.
+            Err(error)
+                if error.raw_os_error() == Some(libc::EBADF)
+                    || error.raw_os_error() == Some(libc::ESRCH) =>
+            {
+                continue;
+            }
             Err(error) => return Err(error),
         }
     }
@@ -107,10 +116,20 @@ fn socket_endpoint(pid: i32, fd: i32) -> Result<Option<GatewayEndpoint>, std::io
             SOCKET_FDINFO_SIZE as i32,
         )
     };
+    if read < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // The descriptor list is a kernel snapshot. libproc returns zero bytes
+    // when a listed socket descriptor has disappeared before its detail query.
+    if read == 0 {
+        return Ok(None);
+    }
     if read != SOCKET_FDINFO_SIZE as i32 {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
-            "macOS socket_fdinfo size mismatch",
+            format!(
+                "macOS socket_fdinfo size mismatch: expected {SOCKET_FDINFO_SIZE} bytes, got {read}"
+            ),
         ));
     }
     parse_socket_fdinfo(&buf)

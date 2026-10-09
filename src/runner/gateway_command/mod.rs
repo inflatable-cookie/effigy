@@ -1546,6 +1546,18 @@ pub(in crate::runner) fn ensure_gateway_tls_cert(domain: &str) -> Result<(), Run
             "container route `{domain}` requires TLS but `mkcert` is not installed; install mkcert and run `effigy gateway setup-tls` first"
         )));
     }
+    let _transition_lock = if config.is_private() {
+        // OpenSSL's CA serial file is shared by domains in one private root.
+        // Serialize independent managed profile startups so concurrent
+        // certificate generation cannot consume the same serial or observe a
+        // half-written CA update.
+        Some(
+            effigy_gateway::legacy::GatewayTransitionLock::acquire(&config.pid_file_path)
+                .map_err(recover::map_gateway_error)?,
+        )
+    } else {
+        None
+    };
     if config.is_private() {
         prepare_gateway_state_for_elevated_run(&config)?;
     }

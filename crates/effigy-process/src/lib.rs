@@ -22,7 +22,10 @@ pub use identity::{
     boot_identity, boot_identity_uncached, compare_boot_identity, legacy_boot_time_identity,
     process_start_identity, process_start_identity_matches, BootIdentityComparison,
 };
-pub use signal::{process_is_descendant_of, process_is_running, terminate_process_tree};
+pub use signal::{
+    process_descendant_ids, process_group_member_ids, process_is_descendant_of, process_is_running,
+    terminate_process_tree,
+};
 const PROCESS_GRACEFUL_STOP_TIMEOUT: Duration = Duration::from_millis(800);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

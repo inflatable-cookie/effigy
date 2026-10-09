@@ -508,13 +508,32 @@ async fn handle_request(
             return Ok(no_route_response(&host));
         }
     };
+    if route
+        .managed_listener
+        .as_ref()
+        .is_some_and(|owner| owner.address != target)
+    {
+        GatewayStats::inc(&stats.upstream_errors);
+        return Ok(error_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Managed listener route target does not match its recorded address",
+        ));
+    }
 
     // Check for WebSocket upgrade.
     if is_websocket_upgrade(&req) {
         GatewayStats::inc(&stats.websocket_upgrades);
         debug!(host = %host, target = %target, "WebSocket upgrade");
-        return handle_websocket_upgrade(req, &target, &host, peer_addr, config, forwarded_https)
-            .await;
+        return handle_websocket_upgrade(
+            req,
+            &target,
+            &host,
+            peer_addr,
+            config,
+            forwarded_https,
+            route.managed_listener,
+        )
+        .await;
     }
 
     debug!(
@@ -525,7 +544,17 @@ async fn handle_request(
         "proxying request"
     );
 
-    match forward_request(req, &target, &host, peer_addr, config, forwarded_https).await {
+    match forward_request(
+        req,
+        &target,
+        &host,
+        peer_addr,
+        config,
+        forwarded_https,
+        route.managed_listener,
+    )
+    .await
+    {
         Ok(response) => {
             GatewayStats::inc(&stats.proxied_requests);
             Ok(response)
@@ -533,6 +562,14 @@ async fn handle_request(
         Err(e) => {
             GatewayStats::inc(&stats.upstream_errors);
             warn!(host = %host, target = %target, error = %e, "upstream error");
+            if e.downcast_ref::<std::io::Error>()
+                .is_some_and(|error| error.kind() == std::io::ErrorKind::PermissionDenied)
+            {
+                return Ok(error_response(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "Managed listener ownership is unavailable",
+                ));
+            }
             Ok(error_response(
                 StatusCode::BAD_GATEWAY,
                 &format!("Failed to connect to upstream {target}: {e}"),
@@ -593,6 +630,7 @@ async fn forward_request(
     peer_addr: SocketAddr,
     config: &ProxyConfig,
     forwarded_https: bool,
+    managed_listener: Option<crate::routes::ManagedListenerRouteOwner>,
 ) -> Result<Response<ProxyBody>, Box<dyn std::error::Error + Send + Sync>> {
     // Connect to upstream with timeout.
     let stream = tokio::time::timeout(config.connect_timeout, TcpStream::connect(target))
@@ -600,16 +638,28 @@ async fn forward_request(
         .map_err(|_| format!("connect timeout after {:?}", config.connect_timeout))?
         .map_err(|e| format!("connect failed: {e}"))?;
 
+    verify_connected_managed_listener(managed_listener).await?;
+
     let io = TokioIo::new(stream);
 
-    let (mut sender, conn) = hyper::client::conn::http1::handshake(io).await?;
+    let (mut sender, conn) = hyper::client::conn::http1::handshake(io)
+        .await
+        .map_err(|error| format!("upstream HTTP handshake failed: {error}"))?;
 
     // Spawn the connection driver.
     tokio::spawn(async move {
-        if let Err(e) = conn.await {
-            debug!(error = %e, "upstream connection closed");
+        if let Err(error) = conn.await {
+            debug!(error = %error, "upstream connection driver ended");
         }
     });
+
+    // The connection driver may not have polled the handshake yet. Wait until
+    // it is ready before dispatching the first request so the sender cannot
+    // report a canceled request during startup.
+    sender
+        .ready()
+        .await
+        .map_err(|error| format!("upstream connection was not ready: {error}"))?;
 
     // Prepare the upstream request.
     strip_hop_by_hop_headers(req.headers_mut());
@@ -624,7 +674,7 @@ async fn forward_request(
                 config.response_timeout
             )
         })?
-        .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?;
+        .map_err(|error| format!("upstream request failed: {error}"))?;
 
     // Strip hop-by-hop headers from response.
     let (mut parts, body) = response.into_parts();
@@ -641,6 +691,7 @@ async fn handle_websocket_upgrade(
     peer_addr: SocketAddr,
     config: &ProxyConfig,
     forwarded_https: bool,
+    managed_listener: Option<crate::routes::ManagedListenerRouteOwner>,
 ) -> Result<Response<ProxyBody>, hyper::Error> {
     // Connect to upstream.
     let upstream_stream =
@@ -660,6 +711,16 @@ async fn handle_websocket_upgrade(
                 ));
             }
         };
+
+    if verify_connected_managed_listener(managed_listener)
+        .await
+        .is_err()
+    {
+        return Ok(error_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Managed listener ownership is unavailable",
+        ));
+    }
 
     let upstream_io = TokioIo::new(upstream_stream);
 
@@ -771,6 +832,26 @@ async fn handle_websocket_upgrade(
     );
 
     Ok(response)
+}
+
+async fn verify_connected_managed_listener(
+    owner: Option<crate::routes::ManagedListenerRouteOwner>,
+) -> Result<(), std::io::Error> {
+    let Some(owner) = owner else {
+        return Ok(());
+    };
+    tokio::task::spawn_blocking(move || {
+        crate::managed_listener::verify_managed_listener_owner(&owner)
+    })
+    .await
+    .map_err(|error| {
+        std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            format!("listener ownership check did not complete: {error}"),
+        )
+    })?
+    .map_err(|error| std::io::Error::new(std::io::ErrorKind::PermissionDenied, error))?;
+    Ok(())
 }
 
 /// Remove hop-by-hop headers from a header map.

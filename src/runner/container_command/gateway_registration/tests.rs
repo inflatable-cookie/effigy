@@ -257,6 +257,7 @@ fn registered_gateway_routes_match_project_requires_exact_project_owned_routes()
         source: RouteSource::Container,
         project: repo_root.display().to_string(),
         tls: desired.tls,
+        managed_listener: None,
         registered: chrono::Utc::now(),
     });
     assert!(registered_gateway_routes_match_project(
@@ -1292,6 +1293,7 @@ fn prunes_stale_loopback_assignments_when_route_table_and_registry_drift() {
         source: RouteSource::Container,
         project: "/tmp/active".to_owned(),
         tls: false,
+        managed_listener: None,
         registered: chrono::Utc::now(),
     });
     route_table.upsert(effigy_gateway::routes::Route {
@@ -1304,6 +1306,7 @@ fn prunes_stale_loopback_assignments_when_route_table_and_registry_drift() {
         source: RouteSource::Container,
         project: "/tmp/stale".to_owned(),
         tls: false,
+        managed_listener: None,
         registered: chrono::Utc::now(),
     });
 

@@ -412,6 +412,7 @@ fn reconcile_gateway_routes(
             project: project_path.clone(),
             scope: scope.clone(),
             tls: route.tls,
+            managed_listener: None,
             registered: chrono::Utc::now(),
         });
     }

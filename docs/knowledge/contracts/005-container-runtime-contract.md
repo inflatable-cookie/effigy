@@ -1,7 +1,7 @@
 # 005 - Container Runtime Contract
 
 Owner: Platform
-Last Updated: 2026-10-04
+Last Updated: 2026-10-09
 
 This contract defines the required runtime guarantees for container-backed
 task execution in Effigy.
@@ -23,6 +23,90 @@ launched through a TUI, a plain shell, or a one-shot bootstrap path.
 
 This contract exists to keep one explicit runtime guarantee across those
 surfaces.
+
+## Managed host listener routes
+
+`[[containers.<name>.host_processes]]` may opt a process into Effigy's
+language-neutral listener contract. The manifest selects the process, bind
+preference, HTTP readiness request and browser route. Language adapters pass
+the bind preference to their server, bind it strictly, and report the actual
+socket.
+
+```toml
+[[containers.web.host_processes]]
+name = "frontend"
+run = 'exec ./scripts/start-frontend'
+cwd = "."
+restart = "on-failure"
+restart_delay_ms = 500
+
+[containers.web.host_processes.listener]
+bind = "127.0.0.1:0"
+
+[containers.web.host_processes.listener.readiness]
+path = "/health"
+status = 200
+timeout_secs = 60
+
+[containers.web.host_processes.listener.route]
+domain = "frontend.example.test"
+tls = true
+```
+
+The adapter receives `EFFIGY_MANAGED_HOST_LISTENER_BIND`,
+`EFFIGY_MANAGED_HOST_LISTENER_REPORT_FILE`, and
+`EFFIGY_MANAGED_HOST_LISTENER_GENERATION`. Port `0` requests an OS-assigned
+loopback port. A fixed preference must be bound exactly; collisions fail
+startup. After binding, the adapter writes a bounded JSON report to the
+provided report file. The generation value must be echoed exactly:
+
+```json
+{
+  "schema": "effigy.managed.host-listener-report.v1",
+  "generation": "child-generation-token",
+  "address": "127.0.0.1:4173"
+}
+```
+
+Effigy treats the report as a claim to verify. It checks the loopback socket
+against the recorded supervisor, child generation, listener PID/start
+identity, process ancestry and exclusive kernel socket ownership. Only an
+owned listener that passes the declared HTTP readiness request receives a
+gateway route. A successful HTTP response, open-port probe, free-port check,
+or report by itself cannot publish a route.
+
+Dependencies use `depends_on` and must name a declared managed listener. They
+start after that listener is ready. A dependent process receives
+`EFFIGY_MANAGED_HOST_<NAME>_INTERNAL_URL`, `_PUBLIC_URL`, `_STATE_FILE`, and
+`_GENERATION`; `<NAME>` is ASCII-uppercased with punctuation converted to
+`_`. Effigy reserves the `EFFIGY_MANAGED_HOST_` prefix. If a dependency
+restarts or loses readiness, Effigy stops the dependent generation and starts
+it with the current endpoint values.
+
+Detached `container up --json` includes `managed_host_listeners` entries for
+listeners that passed readiness. Entries report status, runtime and child
+generations, assigned address, internal and public URLs, route domain, TLS
+setting, and the versioned state-file path. The state file is the ongoing
+status source: `starting`, `ready`, `unavailable`, `failed`, or `stopped`. A
+child restart keeps the runtime generation and changes the child generation
+and address. The internal URL uses HTTP to the actual loopback socket. The
+public URL is `http[s]://<domain>`; the gateway terminates TLS when `tls = true`.
+
+Before a child is stopped or replaced, its state becomes unavailable and its
+exact route generation is removed. The gateway checks process identity and
+socket ownership after connecting and before forwarding HTTP or WebSocket
+bytes. A foreign process reusing the old port therefore receives no request.
+Stale stop callbacks can remove only their route generation. Teardown signals
+recorded supervisor/child generations and removes only their recorded routes.
+Missing or uncertain identity remains held; it is not replaced by age-based
+cleanup.
+
+Socket ownership uses Linux procfs and macOS libproc interfaces. Other
+platforms fail closed when process or kernel socket ownership cannot be
+proved. `target_host` routes remain static external targets and do not gain
+managed-child ownership.
+Existing container defaults and non-listener host-process behavior are
+unchanged; core does not select a framework or add a built-in dev verb.
 
 ## Runtime-backed execution surfaces
 

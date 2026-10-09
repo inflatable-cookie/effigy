@@ -837,6 +837,7 @@ fn demo_route_table() -> RouteTable {
         source: RouteSource::Container,
         project: "/tmp/demo".to_owned(),
         scope: None,
+        managed_listener: None,
         registered: chrono::Utc::now(),
     });
     table

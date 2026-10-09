@@ -257,6 +257,7 @@ mod tests {
             project: "/tmp/app".to_owned(),
             tls: false,
             scope: None,
+            managed_listener: None,
             registered: Utc::now(),
         });
 
@@ -282,6 +283,7 @@ mod tests {
                 project: "/tmp/app".to_owned(),
                 tls: false,
                 scope: None,
+                managed_listener: None,
                 registered: Utc::now(),
             });
         }

@@ -819,6 +819,7 @@ where
     let mut run: Option<String> = None;
     let mut pid_file: Option<PathBuf> = None;
     let mut log_file: Option<PathBuf> = None;
+    let mut spec_file: Option<PathBuf> = None;
     let mut restart: Option<String> = None;
     let mut restart_delay_ms: Option<u64> = None;
 
@@ -872,6 +873,14 @@ where
                     },
                 )?));
             }
+            "--spec-file" => {
+                spec_file = Some(PathBuf::from(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--spec-file".to_owned(),
+                    },
+                )?));
+            }
             "--restart" => {
                 restart = Some(next_required_value(
                     &mut args,
@@ -921,6 +930,9 @@ where
             })?,
             log_file: log_file.ok_or_else(|| CliParseError::MissingFlagValue {
                 flag: "--log-file".to_owned(),
+            })?,
+            spec_file: spec_file.ok_or_else(|| CliParseError::MissingFlagValue {
+                flag: "--spec-file".to_owned(),
             })?,
             restart: restart.unwrap_or_else(|| "on-failure".to_owned()),
             restart_delay_ms: restart_delay_ms.unwrap_or(1_000),

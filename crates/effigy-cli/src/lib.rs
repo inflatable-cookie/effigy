@@ -98,6 +98,8 @@ pub struct InternalHostProcessSuperviseArgs {
     pub run: String,
     pub pid_file: PathBuf,
     pub log_file: PathBuf,
+    /// Versioned host-process runtime configuration written by the caller.
+    pub spec_file: PathBuf,
     /// `on-failure`, `always`, or `never`.
     pub restart: String,
     pub restart_delay_ms: u64,

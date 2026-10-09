@@ -77,7 +77,15 @@ fn validate_root_entries(path: &Path) -> Result<(), GatewayError> {
     for entry in std::fs::read_dir(path).map_err(GatewayError::Io)? {
         let entry = entry.map_err(GatewayError::Io)?;
         let child = entry.path();
-        let metadata = std::fs::symlink_metadata(&child).map_err(GatewayError::Io)?;
+        // Certificate generation atomically replaces files while independent
+        // managed profiles validate the shared private root. An entry that
+        // vanished after `read_dir` no longer has a filesystem object to
+        // follow or trust; every entry that still exists is fully inspected.
+        let metadata = match std::fs::symlink_metadata(&child) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(GatewayError::Io(error)),
+        };
         if metadata.file_type().is_symlink() {
             return Err(unsafe_child(&child, "symlinks are not supported"));
         }
@@ -100,7 +108,11 @@ fn validate_directory_entries(path: &Path) -> Result<(), GatewayError> {
     for entry in std::fs::read_dir(path).map_err(GatewayError::Io)? {
         let entry = entry.map_err(GatewayError::Io)?;
         let child = entry.path();
-        let metadata = std::fs::symlink_metadata(&child).map_err(GatewayError::Io)?;
+        let metadata = match std::fs::symlink_metadata(&child) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(GatewayError::Io(error)),
+        };
         if metadata.file_type().is_symlink() || !metadata.is_file() {
             return Err(unsafe_child(
                 &child,
