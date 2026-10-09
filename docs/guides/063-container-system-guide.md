@@ -1036,6 +1036,17 @@ that predates this and see an "untrusted" warning, re-run `effigy container up`
 (or re-register routes) once to re-stamp the table. The full model is in
 [`033-gateway-route-table-trust-contract.md`](../knowledge/contracts/033-gateway-route-table-trust-contract.md).
 
+If gateway identity is unreadable to the current user, `effigy gateway status`
+may request the existing bounded, read-only administrator verification; a
+lifecycle command may request the existing bounded administrator operation.
+Approve that visible request in an interactive terminal. If the identity or
+lifecycle wait times out, run `effigy gateway status` before
+retrying; Effigy keeps records when the process generation is unknown and does
+not infer a match from a responding HTTP endpoint or PID file. To restart only
+the repository's managed development session while keeping the shared gateway
+available, use the task-local sequence in
+[`012-dev-process-manager-tui.md`](012-dev-process-manager-tui.md#restart-the-managed-dev-session).
+
 ## Troubleshooting: stale SSH-agent forwarding
 
 Symptom: `effigy container up` fails the workspace container with

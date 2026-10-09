@@ -101,6 +101,11 @@ The query surface merges status truth in this order:
 2. otherwise latest completed record
 3. otherwise no known status
 
+A missing record file is absence. An existing file that cannot be read or
+parsed is an error, not `unknown` and not a fallback to latest as if the
+active record were missing. The read path does not retry empty or corrupt
+bytes into absence.
+
 The read model must surface:
 
 - stale active record warnings/evidence from the `017` reconciliation layer
@@ -201,3 +206,4 @@ Update this contract when any of these change:
 - JSON schema ids or minimum fields
 - read-side ownership boundary between runtime/task discovery/report layers
 - the lock-wait inspect path that names `tasks status <selector>`
+- fail-closed handling of empty, partial, or otherwise unparseable status files

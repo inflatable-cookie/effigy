@@ -150,6 +150,24 @@ Completed records live under report history:
 
 The first round adds no retention or pruning policy.
 
+Active, latest, and history JSON files are published as complete documents.
+The writer stages bytes in a sibling temporary file in the destination
+directory, then replaces the destination name with an atomic rename. Readers
+observe:
+
+- no file, before the first successful publication
+- a complete previous document
+- a complete new document
+
+They never observe a destination truncated to empty or a partial JSON body from
+an in-progress write. A failed publication leaves the previous valid destination
+in place and removes only that writer's staged file. Staged names are not status
+records; they use a reserved `.*.effigy-status-*.tmp` form and are not listed as
+status keys.
+
+Unreadable or unparseable destination bytes remain a fail-closed error. Absence
+is only `NotFound`. Empty or corrupt content is not treated as no record.
+
 ## Minimum Active Record Fields
 
 Active records must capture at least:
@@ -268,6 +286,8 @@ Update this contract when any of these change:
 - execution surfaces that are covered by the shared writer
 - minimum record fields expected by later read/query layers
 - lock-wait timeout source, live-owner inspect path, or default task lock identity
+- whole-record publication visibility, including staged-file replace and
+  fail-closed empty or corrupt destination bytes
 
 ## Validation
 
@@ -275,4 +295,7 @@ Update this contract when any of these change:
   embedded surfaces
 - active-record stale/live reconciliation tests
 - descendant-scope collision tests
+- writer/reader publication regression for truncated versus complete records
+- publication failure preserves the prior valid record and removes only the
+  owned staged file
 - docs path checks for roadmap/spec/contract front doors

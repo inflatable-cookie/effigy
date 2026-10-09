@@ -15,6 +15,216 @@ use serde_json::Value;
 
 const EFFIGY: &str = env!("CARGO_BIN_EXE_effigy");
 
+#[cfg(unix)]
+#[test]
+fn private_gateway_shutdown_handles_owned_term_int_and_inherited_ignore() {
+    let fixture = tempfile::tempdir().expect("fresh private shutdown fixture");
+    let effects = HostEffectSentinels::new(fixture.path());
+    let upstream = Upstream::start("private-gateway-ready");
+    let foreign_listener = ForeignListener::bind("127.0.0.1:0".parse().unwrap());
+
+    for (name, signal, inherit_ignored_term) in [
+        ("term", nix::libc::SIGTERM, false),
+        ("int", nix::libc::SIGINT, false),
+        ("inherited-term", nix::libc::SIGTERM, true),
+    ] {
+        let root = private_root(fixture.path(), name);
+        let setup = run_gateway(&root, "setup-tls", &effects, None, &[]);
+        parse_json_success(setup);
+        save_plain_localhost_route(&root, upstream.address);
+        let route_path = root.join("routes.json");
+        let route_before = fs::read(&route_path).expect("trusted private route table");
+
+        let mut child = spawn_private_gateway_daemon(&root, inherit_ignored_term);
+        let addresses = wait_for_private_gateway_http_ready(
+            &mut child,
+            &root,
+            "private-gateway-ready",
+            Duration::from_secs(10),
+        );
+        let recorded_pid = fs::read_to_string(root.join("gateway.pid"))
+            .expect("daemon PID record")
+            .trim()
+            .parse::<u32>()
+            .expect("numeric daemon PID");
+        assert_eq!(
+            recorded_pid,
+            child.id(),
+            "the test signals its owned daemon"
+        );
+        assert_eq!(addresses["pid"].as_u64(), Some(u64::from(child.id())));
+
+        // SAFETY: this test signals only the exact child process it spawned.
+        let sent = unsafe { nix::libc::kill(child.id() as i32, signal) };
+        assert_eq!(sent, 0, "send signal {signal} to owned private daemon");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let status = loop {
+            if let Some(status) = child.try_wait().expect("reap signalled daemon") {
+                break status;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "private daemon did not finish signal {signal}; log={}",
+                fs::read_to_string(root.join("daemon.log")).unwrap_or_default()
+            );
+            thread::sleep(Duration::from_millis(10));
+        };
+        assert!(status.success(), "signal {signal} exited with {status}");
+        for record in [
+            "gateway.pid",
+            "gateway.identity",
+            "gateway.version",
+            "gateway.addresses.json",
+        ] {
+            assert!(
+                !root.join(record).exists(),
+                "graceful signal shutdown left owned record {record}"
+            );
+        }
+        assert_eq!(
+            fs::read(&route_path).expect("retained route table"),
+            route_before
+        );
+    }
+
+    let mut foreign_probe =
+        TcpStream::connect_timeout(&foreign_listener.address, Duration::from_secs(2))
+            .expect("foreign listener remains bound after private gateway shutdown");
+    foreign_probe
+        .write_all(b"still-owned\n")
+        .expect("probe foreign listener");
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while !foreign_listener.received_request() {
+        assert!(
+            Instant::now() < deadline,
+            "foreign listener stopped receiving"
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        fs::read_to_string(&effects.log)
+            .unwrap_or_default()
+            .is_empty(),
+        "private startup or shutdown touched a host effect"
+    );
+}
+
+#[cfg(unix)]
+fn spawn_private_gateway_daemon(root: &Path, inherit_ignored_term: bool) -> PrivateGatewayChild {
+    use std::os::unix::process::CommandExt;
+
+    let log = fs::File::create(root.join("daemon.log")).expect("private daemon log");
+    let stderr = log.try_clone().expect("clone private daemon log");
+    let mut command = Command::new(EFFIGY);
+    command
+        .args([
+            "__gateway-run",
+            "--private-state-root",
+            root.to_str().expect("UTF-8 fixture path"),
+            "--dns-addr",
+            "127.0.0.1:0",
+            "--proxy-addr",
+            "127.0.0.1:0",
+            "--https-addr",
+            "127.0.0.1:0",
+        ])
+        .env("EFFIGY_INTERNAL_SUPPRESS_HEADER", "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(log))
+        .stderr(Stdio::from(stderr));
+    // SAFETY: the pre-exec hook changes only this test-owned child's inherited
+    // SIGTERM disposition before exec; the parent's signal state is untouched.
+    unsafe {
+        command.pre_exec(move || {
+            if inherit_ignored_term
+                && nix::libc::signal(nix::libc::SIGTERM, nix::libc::SIG_IGN) == nix::libc::SIG_ERR
+            {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    PrivateGatewayChild(
+        command
+            .spawn()
+            .expect("spawn private production gateway daemon"),
+    )
+}
+
+#[cfg(unix)]
+fn wait_for_private_gateway_http_ready(
+    child: &mut PrivateGatewayChild,
+    root: &Path,
+    expected_body: &str,
+    timeout: Duration,
+) -> Value {
+    let address_path = root.join("gateway.addresses.json");
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(status) = child.try_wait().expect("check private daemon startup") {
+            panic!(
+                "private daemon exited before readiness ({status}); log={}",
+                fs::read_to_string(root.join("daemon.log")).unwrap_or_default()
+            );
+        }
+        if let Ok(bytes) = fs::read(&address_path) {
+            if let Ok(addresses) = serde_json::from_slice::<Value>(&bytes) {
+                if let Some(proxy_addr) = addresses["proxy_addr"].as_str() {
+                    if private_gateway_http_response(proxy_addr.parse().expect("proxy address"))
+                        .is_some_and(|response| response.contains(expected_body))
+                    {
+                        return addresses;
+                    }
+                }
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "private daemon did not serve the route before timeout; log={}",
+            fs::read_to_string(root.join("daemon.log")).unwrap_or_default()
+        );
+        thread::sleep(Duration::from_millis(15));
+    }
+}
+
+#[cfg(unix)]
+struct PrivateGatewayChild(std::process::Child);
+
+#[cfg(unix)]
+impl PrivateGatewayChild {
+    fn id(&self) -> u32 {
+        self.0.id()
+    }
+
+    fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
+        self.0.try_wait()
+    }
+}
+
+#[cfg(unix)]
+impl Drop for PrivateGatewayChild {
+    fn drop(&mut self) {
+        if matches!(self.0.try_wait(), Ok(None)) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+}
+
+#[cfg(unix)]
+fn private_gateway_http_response(address: SocketAddr) -> Option<String> {
+    let mut stream = TcpStream::connect_timeout(&address, Duration::from_millis(250)).ok()?;
+    stream
+        .set_read_timeout(Some(Duration::from_millis(250)))
+        .ok()?;
+    stream
+        .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        .ok()?;
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response).ok()?;
+    Some(String::from_utf8_lossy(&response).into_owned())
+}
+
 #[test]
 fn private_gateway_cli_serves_verified_https_and_isolates_concurrent_instances() {
     let fixture = tempfile::tempdir().expect("fresh private fixture");
@@ -1878,6 +2088,26 @@ fn save_localhost_route(root: &Path, target: SocketAddr) {
         scope: None,
         managed_listener: None,
         tls: true,
+        registered: Utc::now(),
+    });
+    routes
+        .save(&root.join("routes.json"))
+        .expect("write trusted private fixture route");
+}
+
+fn save_plain_localhost_route(root: &Path, target: SocketAddr) {
+    let mut routes = RouteTable::new();
+    routes.upsert(Route {
+        domain: "localhost".to_owned(),
+        target: Some(target.to_string()),
+        dns_ip: None,
+        tcp_port: None,
+        tcp_target: None,
+        source: RouteSource::Manual,
+        project: root.display().to_string(),
+        scope: None,
+        managed_listener: None,
+        tls: false,
         registered: Utc::now(),
     });
     routes

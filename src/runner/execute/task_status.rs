@@ -1,6 +1,8 @@
-use std::fs;
-use std::path::Path;
-use std::time::{Duration, Instant};
+use std::fs::{self, OpenOptions};
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use chrono::Utc;
 use effigy_execution::{
@@ -128,7 +130,7 @@ impl TaskStatusTracker {
                     return Err(RunnerError::task_invocation(format!(
                         "failed to remove active task-status record `{}`: {error}",
                         self.active_path.display()
-                    )))
+                    )));
                 }
             }
         }
@@ -308,10 +310,37 @@ fn display_path(path: &Path, repo_root: &Path) -> String {
         .to_string()
 }
 
+static STATUS_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+type AfterStagedHook<'a> = dyn Fn(&Path, &Path) + 'a;
+
+struct JsonPublicationHooks<'a> {
+    after_staged: Option<&'a AfterStagedHook<'a>>,
+    fail_before_publish: bool,
+}
+
+impl JsonPublicationHooks<'_> {
+    const fn none() -> Self {
+        Self {
+            after_staged: None,
+            fail_before_publish: false,
+        }
+    }
+}
+
 fn write_json_file(
     path: &Path,
     value: &impl serde::Serialize,
     label: &str,
+) -> Result<(), RunnerError> {
+    write_json_file_with_hooks(path, value, label, JsonPublicationHooks::none())
+}
+
+fn write_json_file_with_hooks(
+    path: &Path,
+    value: &impl serde::Serialize,
+    label: &str,
+    hooks: JsonPublicationHooks<'_>,
 ) -> Result<(), RunnerError> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| {
@@ -327,12 +356,97 @@ fn write_json_file(
             path.display()
         ))
     })?;
-    fs::write(path, encoded).map_err(|error| {
+    let (temp_path, mut file) = create_status_temp_file(path, label)?;
+    let staged = file
+        .write_all(encoded.as_bytes())
+        .and_then(|()| file.flush());
+    drop(file);
+    if let Err(error) = staged {
+        let _ = fs::remove_file(&temp_path);
+        return Err(json_write_error(path, label, error));
+    }
+    if let Some(after_staged) = hooks.after_staged {
+        after_staged(&temp_path, path);
+    }
+    if hooks.fail_before_publish {
+        let _ = fs::remove_file(&temp_path);
+        return Err(RunnerError::task_invocation(format!(
+            "failed to write {label} `{}`: publication probe refused rename",
+            path.display()
+        )));
+    }
+    match fs::rename(&temp_path, path) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let _ = fs::remove_file(&temp_path);
+            Err(json_write_error(path, label, error))
+        }
+    }
+}
+
+fn json_write_error(path: &Path, label: &str, error: impl std::fmt::Display) -> RunnerError {
+    RunnerError::task_invocation(format!(
+        "failed to write {label} `{}`: {error}",
+        path.display()
+    ))
+}
+
+fn create_status_temp_file(path: &Path, label: &str) -> Result<(PathBuf, fs::File), RunnerError> {
+    let filename = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("record");
+    for _ in 0..256 {
+        let counter = STATUS_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or_default();
+        let candidate = path.with_file_name(format!(
+            ".{filename}.effigy-status-{}-{nanos}-{counter}.tmp",
+            std::process::id()
+        ));
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(file) => return Ok((candidate, file)),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(json_write_error(path, label, error)),
+        }
+    }
+    Err(RunnerError::task_invocation(format!(
+        "failed to allocate a unique staged task-status file for `{}`",
+        path.display()
+    )))
+}
+
+#[cfg(test)]
+fn write_json_file_truncating_with_mid_write_pause(
+    path: &Path,
+    value: &impl serde::Serialize,
+    label: &str,
+    after_truncate: fn(&Path),
+) -> Result<(), RunnerError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "failed to create parent directory for {label} `{}`: {error}",
+                path.display()
+            ))
+        })?;
+    }
+    let encoded = serde_json::to_string_pretty(value).map_err(|error| {
         RunnerError::task_invocation(format!(
-            "failed to write {label} `{}`: {error}",
+            "failed to encode {label} `{}`: {error}",
             path.display()
         ))
-    })
+    })?;
+    let mut file = fs::File::create(path).map_err(|error| json_write_error(path, label, error))?;
+    after_truncate(path);
+    file.write_all(encoded.as_bytes())
+        .map_err(|error| json_write_error(path, label, error))
 }
 
 #[cfg(test)]
@@ -389,5 +503,210 @@ mod tests {
             blocked_or_failed(TaskStatusStage::Executing),
             TaskStatusState::Failed
         );
+    }
+
+    mod publication {
+        use std::fs;
+        use std::path::Path;
+
+        use serde_json::json;
+
+        use super::super::{
+            write_json_file, write_json_file_truncating_with_mid_write_pause,
+            write_json_file_with_hooks, JsonPublicationHooks,
+        };
+
+        fn status_temp_leftovers(dir: &Path) -> Vec<std::path::PathBuf> {
+            let mut leftovers = Vec::new();
+            let entries = match fs::read_dir(dir) {
+                Ok(entries) => entries,
+                Err(_) => return leftovers,
+            };
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let Some(name) = name.to_str() else {
+                    continue;
+                };
+                if name.contains(".effigy-status-") && name.ends_with(".tmp") {
+                    leftovers.push(entry.path());
+                }
+            }
+            leftovers
+        }
+
+        fn parse_error_is_empty_eof(error: &serde_json::Error) -> bool {
+            let message = error.to_string();
+            message.contains("EOF while parsing a value at line 1 column 0")
+        }
+
+        #[test]
+        fn publication_truncating_write_exposes_empty_json_to_a_waiting_reader() {
+            let temp = tempfile::tempdir().expect("tempdir");
+            let path = temp.path().join("active.json");
+            let value = json!({"state": "running", "generation": 1});
+
+            write_json_file_truncating_with_mid_write_pause(
+                &path,
+                &value,
+                "active task-status record",
+                |path| {
+                    let body = fs::read_to_string(path).expect("read truncated destination");
+                    assert!(
+                        body.is_empty(),
+                        "pre-fix fs::write window must expose empty destination bytes, got {body:?}"
+                    );
+                    let error = serde_json::from_str::<serde_json::Value>(&body)
+                        .expect_err("empty destination must fail closed");
+                    assert!(
+                        parse_error_is_empty_eof(&error),
+                        "expected EOF line 1 column 0, got {error}"
+                    );
+                },
+            )
+            .expect("truncating write should finish");
+
+            let complete = fs::read_to_string(&path).expect("read completed destination");
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&complete).expect("complete json"),
+                value
+            );
+        }
+
+        #[test]
+        fn publication_atomic_write_first_record_stays_absent_until_rename() {
+            let temp = tempfile::tempdir().expect("tempdir");
+            let path = temp.path().join("active.json");
+            let value = json!({"state": "running", "generation": 1});
+
+            write_json_file_with_hooks(
+                &path,
+                &value,
+                "active task-status record",
+                JsonPublicationHooks {
+                    after_staged: Some(&|staged, destination| {
+                        assert!(
+                            staged.exists(),
+                            "staged payload must exist before rename: {}",
+                            staged.display()
+                        );
+                        assert!(
+                            !destination.exists(),
+                            "destination must stay absent until rename: {}",
+                            destination.display()
+                        );
+                    }),
+                    fail_before_publish: false,
+                },
+            )
+            .expect("atomic first publication");
+
+            let body = fs::read_to_string(&path).expect("read published destination");
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&body).expect("published json"),
+                value
+            );
+            assert!(
+                status_temp_leftovers(temp.path()).is_empty(),
+                "successful publication must retire the staged file"
+            );
+        }
+
+        #[test]
+        fn publication_atomic_write_keeps_old_record_visible_until_rename() {
+            let temp = tempfile::tempdir().expect("tempdir");
+            let path = temp.path().join("latest.json");
+            let old = json!({"state": "succeeded", "generation": 1});
+            let new = json!({"state": "succeeded", "generation": 2});
+            write_json_file(&path, &old, "latest task-status record").expect("seed old record");
+            let old_bytes = fs::read_to_string(&path).expect("old bytes");
+
+            write_json_file_with_hooks(
+                &path,
+                &new,
+                "latest task-status record",
+                JsonPublicationHooks {
+                    after_staged: Some(&|_, destination| {
+                        let visible = fs::read_to_string(destination)
+                            .expect("read destination during staged window");
+                        assert_eq!(
+                            visible, old_bytes,
+                            "readers must keep the complete previous record until rename"
+                        );
+                    }),
+                    fail_before_publish: false,
+                },
+            )
+            .expect("atomic replacement");
+
+            let body = fs::read_to_string(&path).expect("read replaced destination");
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&body).expect("new json"),
+                new
+            );
+            assert!(status_temp_leftovers(temp.path()).is_empty());
+        }
+
+        #[test]
+        fn publication_failure_before_rename_preserves_old_record_and_removes_owned_temp() {
+            let temp = tempfile::tempdir().expect("tempdir");
+            let path = temp.path().join("latest.json");
+            let old = json!({"state": "succeeded", "generation": 1});
+            write_json_file(&path, &old, "latest task-status record").expect("seed old record");
+            let old_bytes = fs::read_to_string(&path).expect("old bytes");
+
+            let error = write_json_file_with_hooks(
+                &path,
+                &json!({"state": "failed", "generation": 2}),
+                "latest task-status record",
+                JsonPublicationHooks {
+                    after_staged: None,
+                    fail_before_publish: true,
+                },
+            )
+            .expect_err("probe must refuse rename");
+            assert!(
+                error
+                    .to_string()
+                    .contains("publication probe refused rename"),
+                "{error}"
+            );
+            assert_eq!(
+                fs::read_to_string(&path).expect("preserved destination"),
+                old_bytes
+            );
+            assert!(
+                status_temp_leftovers(temp.path()).is_empty(),
+                "failure must remove only the owned staged file"
+            );
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn publication_destination_permissions_match_plain_write() {
+            use std::os::unix::fs::PermissionsExt;
+
+            let temp = tempfile::tempdir().expect("tempdir");
+            let control = temp.path().join("control.json");
+            let path = temp.path().join("active.json");
+            fs::write(&control, "{\"ok\":true}").expect("plain write control");
+            write_json_file(&path, &json!({"ok": true}), "active task-status record")
+                .expect("atomic write");
+
+            let expected = fs::metadata(&control)
+                .expect("control metadata")
+                .permissions();
+            let actual = fs::metadata(&path)
+                .expect("published metadata")
+                .permissions();
+            assert_eq!(
+                actual.mode() & 0o777,
+                expected.mode() & 0o777,
+                "atomic publication must keep ordinary file permission bits"
+            );
+            assert!(
+                fs::metadata(&path).expect("published metadata").is_file(),
+                "published record must be a regular file"
+            );
+        }
     }
 }
