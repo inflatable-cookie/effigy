@@ -814,6 +814,23 @@ complete. The final identity-check-to-signal TOCTOU and the unrun live
 cross-UID daemon proof remain documented limitations; this is not acceptance
 of those risks or a release-readiness claim.
 
+### Root-owned gateway restart follow-through — 2026-10-09
+
+Tom requested a durable correction after repeated operator-account restarts
+could not verify a healthy root-owned gateway and manual SIGKILL was used.
+The bounded work first qualifies the existing identity/elevation path,
+corrects demonstrated shutdown and terminal-handoff defects, and makes
+refusal or authentication requirements visible within a bounded wait.
+Private fixtures must preserve unrelated gateway, route and process state.
+
+Successful HTTP traffic, a readable sidecar or a numeric PID alone still
+cannot authenticate the daemon. Non-interactive reuse through a new
+authenticated mechanism requires a concrete trust and compatibility proposal
+and its own ruling before implementation; this request does not silently
+widen Q-002, install a helper or grant standing privilege. The supported
+interactive administrator path remains available. No live gateway migration,
+manual signal, global binary replacement or release is authorized here.
+
 On macOS, gateway setup manages `/etc/resolver/` files for local domains.
 HTTPS uses mkcert-backed certificates after `effigy gateway setup-tls`.
 Plain HTTP redirects to HTTPS for TLS routes. `.test` names work
