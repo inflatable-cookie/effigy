@@ -112,23 +112,32 @@ fn read_status_line(stream: &mut TcpStream, deadline: Instant) -> Option<Vec<u8>
     Some(line)
 }
 
+/// Parses `HTTP/1.<digit> <3-digit code> <reason>` where the reason phrase is
+/// `*( HTAB / SP / VCHAR / obs-text )` (RFC 9112 section 4). Control bytes,
+/// including NUL and bare CR, make the line malformed even when the code is
+/// valid.
 fn parse_status_code(line: &[u8]) -> Option<u16> {
-    let text = std::str::from_utf8(line)
-        .ok()?
-        .trim_end_matches(['\r', '\n']);
-    let mut parts = text.split(' ');
-    let version = parts.next()?.as_bytes();
+    let text = line.strip_suffix(b"\n")?;
+    let text = text.strip_suffix(b"\r").unwrap_or(text);
+    let mut parts = text.splitn(3, |byte| *byte == b' ');
+    let version = parts.next()?;
     if version.len() != 8 || !version.starts_with(b"HTTP/1.") || !version[7].is_ascii_digit() {
         return None;
     }
     let status = parts.next()?;
-    if status.len() != 3 || !status.bytes().all(|byte| byte.is_ascii_digit()) {
+    if status.len() != 3 || !status.iter().all(u8::is_ascii_digit) {
         return None;
     }
     // RFC 9112 requires SP after the status code even when the reason phrase is
-    // empty, so a line that ends at the code is malformed.
-    parts.next()?;
-    status.parse::<u16>().ok()
+    // empty, so the reason field must be present.
+    let reason = parts.next()?;
+    let reason_is_valid = reason
+        .iter()
+        .all(|&byte| byte == b'\t' || (0x20..=0x7e).contains(&byte) || byte >= 0x80);
+    if !reason_is_valid {
+        return None;
+    }
+    std::str::from_utf8(status).ok()?.parse::<u16>().ok()
 }
 
 #[cfg(test)]
@@ -319,6 +328,15 @@ mod tests {
         assert_eq!(parse_status_code(b"HTTP/1.0 204\r\n"), None);
         assert_eq!(parse_status_code(b"HTTP/1.1 200\r\n"), None);
         assert_eq!(parse_status_code(b"HTTP/1.1 200OK\r\n"), None);
+        assert_eq!(parse_status_code(b"HTTP/1.1 200 OK\tdone\r\n"), Some(200));
+        assert_eq!(
+            parse_status_code(b"HTTP/1.1 200 caf\xc3\xa9\r\n"),
+            Some(200)
+        );
+        assert_eq!(parse_status_code(b"HTTP/1.1 200 \x00\r\n"), None);
+        assert_eq!(parse_status_code(b"HTTP/1.1 200 OK\x07\r\n"), None);
+        assert_eq!(parse_status_code(b"HTTP/1.1 200 \x7f\r\n"), None);
+        assert_eq!(parse_status_code(b"HTTP/1.1 200 bad\rline\r\n"), None);
         assert_eq!(parse_status_code(b"HTTP/2 200\r\n"), None);
         assert_eq!(parse_status_code(b"HTTP/1.bad 200 OK\r\n"), None);
         assert_eq!(parse_status_code(b"HTTP/1. 200 OK\r\n"), None);
@@ -354,6 +372,20 @@ mod tests {
         });
         assert_eq!(
             probe_outcome(address, 204),
+            HttpReadinessOutcome::MalformedStatus
+        );
+    }
+
+    /// A control byte in the reason phrase is malformed even when the status code
+    /// matches the configured readiness status.
+    #[test]
+    fn managed_host_readiness_rejects_control_bytes_in_reason_phrase() {
+        let address = spawn_raw_server(|mut stream| {
+            read_request_head(&mut stream);
+            let _ = stream.write_all(b"HTTP/1.1 200 \x00\r\nContent-Length: 0\r\n\r\n");
+        });
+        assert_eq!(
+            probe_outcome(address, 200),
             HttpReadinessOutcome::MalformedStatus
         );
     }

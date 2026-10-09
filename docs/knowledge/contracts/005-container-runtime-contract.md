@@ -104,7 +104,8 @@ cleanup.
 Readiness is one bounded HTTP/1.1 `GET` on the owned loopback socket. Effigy
 reads the first status line and accepts only the configured status. The line
 must be `HTTP/1.<digit>`, a space, a three-digit code, and a space before the
-optional reason phrase. The request
+reason phrase. The reason phrase may be empty and may contain only tabs,
+spaces, visible ASCII and non-ASCII bytes; control bytes make the line malformed. The request
 side stays open after the request; `Connection: close` ends it, and an ordinary
 server may drop a response it sees as abandoned after EOF. A status line split
 across writes is read to its line break within a bounded response deadline.
