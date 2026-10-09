@@ -16,7 +16,9 @@ During v0.x, MINOR bumps may include breaking changes.
   route registration and managed startup inherit the same mode through
   `EFFIGY_GATEWAY_PRIVATE_STATE_ROOT`. Clients explicitly trust the reported
   fixture CA and resolve route names to the reported HTTPS address. Ordinary
-  operator gateway setup remains the default.
+  operator gateway setup remains the default. Private certificate generation
+  accepts an absolute `EFFIGY_GATEWAY_MKCERT_BIN` override, fails closed for an
+  invalid override, and keeps its `CAROOT` inside the selected private root.
 - Heavy selector callers can persist and pass `--host-run-request-id` before
   submission, then inspect or follow that exact request with `effigy tasks
   request status|follow`. Only authenticated `unknown_run` permits a same-key

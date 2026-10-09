@@ -308,10 +308,12 @@ fn private_gateway_cli_serves_verified_https_and_isolates_concurrent_instances()
         )
         .env(
             "EFFIGY_GATEWAY_MKCERT_BIN",
-            effects.global_mkcert.as_os_str(),
+            effects.private_mkcert.as_os_str(),
         )
         .env("EFFECT_LOG", effects.log.as_os_str())
+        .env("MKCERT_CALLS", effects.mkcert_calls.as_os_str())
         .env("CAROOT", &foreign_ca_root)
+        .env("FOREIGN_CAROOT", &foreign_ca_root)
         .env("PATH", &effects.env_path)
         .output()
         .expect("run managed gateway command");
@@ -386,6 +388,16 @@ fn private_gateway_cli_serves_verified_https_and_isolates_concurrent_instances()
         !effects.log.exists() || fs::read(&effects.log).expect("effect log").is_empty(),
         "private startup invoked a blocked host-effect command: {}",
         fs::read_to_string(&effects.log).unwrap_or_default()
+    );
+    let mkcert_calls = fs::read_to_string(&effects.mkcert_calls).expect("private mkcert calls");
+    let expected_mkcert_calls = format!(
+        "{}|localhost\n{}|localhost\n",
+        first_root.join("ca").display(),
+        second_root.join("ca").display()
+    );
+    assert_eq!(
+        mkcert_calls, expected_mkcert_calls,
+        "private TLS must use the explicit fixture executable and keep CAROOT inside each instance"
     );
 
     println!(
@@ -466,12 +478,14 @@ fn run_gateway(
         .arg("--json")
         .env(
             "EFFIGY_GATEWAY_MKCERT_BIN",
-            effects.global_mkcert.as_os_str(),
+            effects.private_mkcert.as_os_str(),
         )
         .env("EFFECT_LOG", effects.log.as_os_str())
+        .env("MKCERT_CALLS", effects.mkcert_calls.as_os_str())
         .env("PATH", &effects.env_path);
     if let Some(foreign_ca_root) = foreign_ca_root {
         command.env("CAROOT", foreign_ca_root);
+        command.env("FOREIGN_CAROOT", foreign_ca_root);
     }
     command.output().expect("run public effigy CLI")
 }
@@ -685,7 +699,8 @@ fn respond_upstream(mut stream: TcpStream, body: &str) {
 struct HostEffectSentinels {
     env_path: OsString,
     log: PathBuf,
-    global_mkcert: PathBuf,
+    mkcert_calls: PathBuf,
+    private_mkcert: PathBuf,
 }
 
 impl HostEffectSentinels {
@@ -693,11 +708,13 @@ impl HostEffectSentinels {
         let path = parent.join("sentinel-bin");
         fs::create_dir(&path).expect("sentinel command directory");
         let log = parent.join("host-effects.log");
-        let global_mkcert = path.join("mkcert-global");
+        let mkcert_calls = parent.join("private-mkcert-calls.log");
+        let private_mkcert = path.join("mkcert-fixture");
         for name in ["sudo", "osascript", "ifconfig", "networksetup", "scutil"] {
             write_sentinel(&path.join(name));
         }
-        write_sentinel(&global_mkcert);
+        write_sentinel(&path.join("mkcert"));
+        write_private_mkcert(&private_mkcert);
         let env_path =
             std::env::join_paths(std::iter::once(path.clone()).chain(std::env::split_paths(
                 &std::env::var_os("PATH").expect("PATH must be available to tests"),
@@ -706,8 +723,91 @@ impl HostEffectSentinels {
         Self {
             env_path,
             log,
-            global_mkcert,
+            mkcert_calls,
+            private_mkcert,
         }
+    }
+}
+
+fn write_private_mkcert(path: &Path) {
+    fs::write(
+        path,
+        r#"#!/bin/sh
+set -eu
+if [ "${1-}" = "-help" ]; then
+    exit 0
+fi
+if [ "${1-}" = "-install" ]; then
+    printf '%s %s\n' "$0" "$*" >> "$EFFECT_LOG"
+    exit 97
+fi
+if [ -z "${CAROOT-}" ] || [ "$CAROOT" = "${FOREIGN_CAROOT-}" ]; then
+    printf '%s %s\n' "$0" "unexpected CAROOT=${CAROOT-}" >> "$EFFECT_LOG"
+    exit 97
+fi
+cert=
+key=
+domain=
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        -cert-file) cert=$2; shift 2 ;;
+        -key-file) key=$2; shift 2 ;;
+        *) domain=$1; shift ;;
+    esac
+done
+if [ -z "$cert" ] || [ -z "$key" ] || [ -z "$domain" ]; then
+    printf '%s\n' "unsupported mkcert fixture arguments" >> "$EFFECT_LOG"
+    exit 97
+fi
+mkdir -p "$CAROOT"
+if [ ! -f "$CAROOT/rootCA.pem" ] || [ ! -f "$CAROOT/rootCA-key.pem" ]; then
+    ca_config="$CAROOT/rootCA.cnf"
+    cat > "$ca_config" <<'EOF'
+[req]
+distinguished_name=dn
+x509_extensions=v3_ca
+prompt=no
+[dn]
+CN=Effigy disposable fixture CA
+[v3_ca]
+basicConstraints=critical,CA:TRUE
+keyUsage=critical,keyCertSign,cRLSign
+EOF
+    openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 3650 \
+        -keyout "$CAROOT/rootCA-key.pem" -out "$CAROOT/rootCA.pem" \
+        -config "$ca_config"
+    rm -f "$ca_config"
+fi
+csr="$cert.csr"
+ext="$cert.ext"
+cat > "$ext" <<EOF
+[req]
+distinguished_name=dn
+req_extensions=v3_req
+prompt=no
+[dn]
+CN=$domain
+[v3_req]
+subjectAltName=DNS:$domain
+basicConstraints=critical,CA:FALSE
+keyUsage=critical,digitalSignature,keyEncipherment
+extendedKeyUsage=serverAuth
+EOF
+openssl req -newkey rsa:2048 -nodes -sha256 \
+    -keyout "$key" -out "$csr" -config "$ext"
+openssl x509 -req -in "$csr" -CA "$CAROOT/rootCA.pem" \
+    -CAkey "$CAROOT/rootCA-key.pem" -CAcreateserial -sha256 -days 365 \
+    -extfile "$ext" -extensions v3_req -out "$cert"
+rm -f "$csr" "$ext"
+printf '%s|%s\n' "$CAROOT" "$domain" >> "$MKCERT_CALLS"
+"#,
+    )
+    .expect("write fixture mkcert executable");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+            .expect("make fixture mkcert executable");
     }
 }
 

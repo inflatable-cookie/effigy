@@ -82,3 +82,32 @@ fn resolved_mkcert_program_ignores_relative_override() {
 
     assert_ne!(resolved.as_deref(), Some(Path::new("mkcert")));
 }
+
+#[test]
+fn private_mkcert_program_uses_absolute_override_and_fails_closed_when_invalid() {
+    let dir = tempfile::tempdir().unwrap();
+    let mkcert = dir.path().join("mkcert-fixture");
+    std::fs::write(&mkcert, "fixture executable").unwrap();
+    let previous = std::env::var_os(MKCERT_BIN_ENV);
+
+    unsafe {
+        std::env::set_var(MKCERT_BIN_ENV, &mkcert);
+    }
+    let resolved = private_mkcert_program();
+
+    unsafe {
+        std::env::set_var(MKCERT_BIN_ENV, dir.path().join("missing-mkcert"));
+    }
+    let invalid = private_mkcert_program();
+
+    match previous {
+        Some(value) => unsafe { std::env::set_var(MKCERT_BIN_ENV, value) },
+        None => unsafe { std::env::remove_var(MKCERT_BIN_ENV) },
+    }
+
+    assert_eq!(resolved.as_deref(), Some(mkcert.as_path()));
+    assert!(
+        invalid.is_none(),
+        "an invalid explicit path must not fall back"
+    );
+}

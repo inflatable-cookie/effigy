@@ -1154,7 +1154,7 @@ fn run_gateway_setup_tls_with_config(
     };
     if !mkcert_available {
         return Err(RunnerError::task_invocation(if config.is_private() {
-            "private TLS setup requires `mkcert` in a trusted install prefix"
+            "private TLS setup requires an executable from absolute `EFFIGY_GATEWAY_MKCERT_BIN` or a trusted install prefix"
         } else {
             "`effigy gateway setup-tls` requires `mkcert` on PATH; install mkcert first, then rerun this command"
         }));

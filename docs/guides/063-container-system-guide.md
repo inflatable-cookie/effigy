@@ -854,6 +854,13 @@ effigy container up
 effigy gateway status --json
 ```
 
+Private TLS uses an absolute `EFFIGY_GATEWAY_MKCERT_BIN` executable when it is
+set; otherwise it searches Effigy's bounded trusted install prefixes. Set it
+only to a trusted mkcert executable. Effigy gives certificate generation the
+fixture's `ca/` directory as `CAROOT` and never runs `mkcert -install` in
+private mode. An invalid explicit path fails closed instead of selecting a
+different executable.
+
 Private startup binds DNS, HTTP, and HTTPS only to loopback. Each address can
 be pinned with `--dns-addr`, `--proxy-addr`, or `--https-addr` on `gateway up`,
 or with `EFFIGY_GATEWAY_DNS_ADDR`, `EFFIGY_GATEWAY_PROXY_ADDR`, and

@@ -838,7 +838,11 @@ checks; other platforms fail closed.
 `EFFIGY_GATEWAY_PRIVATE_STATE_ROOT=<DIR>` selects the same root for normal
 container route registration and managed startup. Private mode does not install
 CA trust, modify resolver files, provision host loopback aliases, or request
-elevation. Clients explicitly trust `<DIR>/ca/rootCA.pem` and resolve each
+elevation. An absolute `EFFIGY_GATEWAY_MKCERT_BIN` selects the mkcert executable
+for private certificate generation; otherwise Effigy searches its bounded
+trusted install prefixes. Invalid explicit paths fail closed. Effigy passes
+`<DIR>/ca` as `CAROOT` and invokes only certificate generation, never trust
+installation. Clients explicitly trust `<DIR>/ca/rootCA.pem` and resolve each
 route name to the reported HTTPS address; normal operator mode and its
 established host integration remain the default. Fixed-port consumer adapters
 and hybrid child-listener ownership are outside this capability.

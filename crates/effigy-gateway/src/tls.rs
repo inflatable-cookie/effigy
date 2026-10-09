@@ -20,11 +20,12 @@ use rustls::sign::CertifiedKey;
 
 use crate::error::GatewayError;
 
-/// Optional explicit mkcert program path used by elevated gateway runs.
+/// Optional explicit mkcert program path used by private and elevated gateway runs.
 ///
 /// The runner resolves this from a bounded set of trusted host directories
 /// before privilege escalation so the root-owned gateway daemon does not need
-/// to trust a caller-controlled `PATH`.
+/// to trust a caller-controlled `PATH`. Private setup accepts only an absolute
+/// existing path here and otherwise searches the same bounded prefixes.
 pub const MKCERT_BIN_ENV: &str = "EFFIGY_GATEWAY_MKCERT_BIN";
 
 const SAFE_MKCERT_SEARCH_DIRS: &[&str] = &[
@@ -77,7 +78,8 @@ impl TlsConfig {
             .unwrap_or(false)
     }
 
-    /// Check for mkcert in the trusted install prefixes used by private mode.
+    /// Check for mkcert using the configured absolute override or trusted
+    /// install prefixes used by private mode.
     pub fn private_mkcert_available() -> bool {
         let Some(program) = private_mkcert_program() else {
             return false;
@@ -246,7 +248,7 @@ impl TlsConfig {
             return Ok(mkcert_command());
         };
         let program = private_mkcert_program().ok_or_else(|| {
-            "private TLS requires mkcert from a trusted install prefix".to_owned()
+            "private TLS requires an executable from absolute EFFIGY_GATEWAY_MKCERT_BIN or a trusted install prefix".to_owned()
         })?;
         let mut command = Command::new(program);
         command.env("CAROOT", ca_root);
@@ -600,6 +602,14 @@ fn mkcert_command() -> Command {
 }
 
 fn private_mkcert_program() -> Option<PathBuf> {
+    if let Some(explicit) = std::env::var_os(MKCERT_BIN_ENV).map(PathBuf::from) {
+        if explicit.is_absolute() && explicit.is_file() {
+            return Some(explicit);
+        }
+        // An invalid explicit choice must not silently select another binary.
+        return None;
+    }
+
     SAFE_MKCERT_SEARCH_DIRS
         .iter()
         .map(|dir| Path::new(dir).join("mkcert"))
