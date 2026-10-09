@@ -117,7 +117,8 @@ fn parse_status_code(line: &[u8]) -> Option<u16> {
         .ok()?
         .trim_end_matches(['\r', '\n']);
     let mut parts = text.split(' ');
-    if !parts.next()?.starts_with("HTTP/1.") {
+    let version = parts.next()?.as_bytes();
+    if version.len() != 8 || !version.starts_with(b"HTTP/1.") || !version[7].is_ascii_digit() {
         return None;
     }
     let status = parts.next()?;
@@ -312,11 +313,28 @@ mod tests {
         assert_eq!(parse_status_code(b"HTTP/1.1 200 OK\r\n"), Some(200));
         assert_eq!(parse_status_code(b"HTTP/1.0 204\r\n"), Some(204));
         assert_eq!(parse_status_code(b"HTTP/2 200\r\n"), None);
+        assert_eq!(parse_status_code(b"HTTP/1.bad 200 OK\r\n"), None);
+        assert_eq!(parse_status_code(b"HTTP/1. 200 OK\r\n"), None);
+        assert_eq!(parse_status_code(b"HTTP/1.11 200 OK\r\n"), None);
         assert_eq!(parse_status_code(b"HTTP/1.1 20\r\n"), None);
         assert_eq!(parse_status_code(b"HTTP/1.1 2000\r\n"), None);
         assert_eq!(parse_status_code(b"HTTP/1.1 ABC\r\n"), None);
         assert_eq!(parse_status_code(b"HTTP/1.1\r\n"), None);
         assert_eq!(parse_status_code(b"\xff\xfe 200\r\n"), None);
+    }
+
+    /// A malformed HTTP version must fail closed even though its status digits
+    /// look valid; the old prefix-only grammar accepted this as 200.
+    #[test]
+    fn managed_host_readiness_rejects_malformed_http_version_with_valid_status() {
+        let address = spawn_raw_server(|mut stream| {
+            read_request_head(&mut stream);
+            let _ = stream.write_all(b"HTTP/1.bad 200 OK\r\nContent-Length: 0\r\n\r\n");
+        });
+        assert_eq!(
+            probe_outcome(address, 200),
+            HttpReadinessOutcome::MalformedStatus
+        );
     }
 
     #[test]

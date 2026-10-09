@@ -544,6 +544,7 @@ fn managed_host_listeners_bind_routes_propagate_restart_and_scope_teardown() {
             bind: "127.0.0.1:0",
             readiness_timeout_secs: 20,
             never_ready: false,
+            report_mode: "",
         });
     }
 
@@ -891,6 +892,7 @@ fn managed_host_listeners_bind_routes_propagate_restart_and_scope_teardown() {
         bind: &fixed_address.to_string(),
         readiness_timeout_secs: 5,
         never_ready: false,
+        report_mode: "",
     });
     let collision = run_container_cli(
         primary_checkout,
@@ -920,6 +922,7 @@ fn managed_host_listeners_bind_routes_propagate_restart_and_scope_teardown() {
         bind: "127.0.0.1:0",
         readiness_timeout_secs: 1,
         never_ready: true,
+        report_mode: "",
     });
     let delayed = run_container_cli(
         primary_checkout,
@@ -973,6 +976,7 @@ fn managed_host_listeners_bind_routes_propagate_restart_and_scope_teardown() {
         bind: "127.0.0.1:0",
         readiness_timeout_secs: 10,
         never_ready: false,
+        report_mode: "",
     });
     let claimed = run_container_cli(
         primary_checkout,
@@ -999,6 +1003,7 @@ fn managed_host_listeners_bind_routes_propagate_restart_and_scope_teardown() {
         bind: "127.0.0.1:0",
         readiness_timeout_secs: 10,
         never_ready: false,
+        report_mode: "",
     });
     let unknown_record = primary_checkout
         .join(".effigy/runtime/host-processes/web")
@@ -1105,6 +1110,13 @@ fn managed_listener_fixture_child() {
         .expect("Effigy supplies the generation report file");
     let generation = std::env::var("EFFIGY_MANAGED_HOST_LISTENER_GENERATION")
         .expect("Effigy supplies the listener generation");
+    let report_mode = std::env::var("FIXTURE_REPORT_MODE").unwrap_or_default();
+    if report_mode == "absent" {
+        // Neither reports nor serves: the supervisor must fail without any
+        // claimed or observed listener, and the test harness kills this child.
+        thread::sleep(Duration::from_secs(60 * 60));
+        return;
+    }
     let readiness_delay = if std::env::var("FIXTURE_NEVER_READY").is_ok() {
         Duration::from_secs(60 * 60)
     } else {
@@ -1133,12 +1145,37 @@ fn managed_listener_fixture_child() {
         break;
     }
     let (listener, address) = listener.expect("OS assigned a fresh dynamic port");
-    let report = serde_json::json!({
-        "schema": "effigy.managed.host-listener-report.v1",
-        "generation": generation,
-        "address": address.to_string(),
-    });
-    fs::write(report_file, serde_json::to_vec(&report).unwrap()).expect("write listener receipt");
+    let report = match report_mode.as_str() {
+        "stale" => serde_json::json!({
+            "schema": "effigy.managed.host-listener-report.v1",
+            "generation": "stale-generation",
+            "address": address.to_string(),
+        }),
+        "unbound" => {
+            // A loopback address nothing listens on: an accepted claim with no
+            // proven owner.
+            let free = {
+                let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("free port probe");
+                probe.local_addr().expect("free port address")
+            };
+            serde_json::json!({
+                "schema": "effigy.managed.host-listener-report.v1",
+                "generation": generation,
+                "address": free.to_string(),
+            })
+        }
+        _ => serde_json::json!({
+            "schema": "effigy.managed.host-listener-report.v1",
+            "generation": generation,
+            "address": address.to_string(),
+        }),
+    };
+    let receipt = if report_mode == "invalid" {
+        b"{not json".to_vec()
+    } else {
+        serde_json::to_vec(&report).unwrap()
+    };
+    fs::write(report_file, receipt).expect("write listener receipt");
     let body = std::env::var("FIXTURE_BODY").expect("fixture body");
     let restart_file = PathBuf::from(std::env::var("FIXTURE_RESTART_FILE").unwrap());
     let paused_file = PathBuf::from(std::env::var("FIXTURE_PAUSED_FILE").unwrap());
@@ -1186,10 +1223,11 @@ fn managed_listener_fixture_child() {
     }
 }
 
-/// Terminal readiness failure through the public container CLI. The owned
-/// listener is discovered and refuses readiness until the timeout; cleanup then
-/// removes the generation report and child while the state keeps the last
-/// startup observation for that exact generation.
+/// Terminal readiness failures through the public container CLI. Each case
+/// runs one owned listener with a single diagnostic control and asserts the
+/// phase observation that survives report and child cleanup: a refused owner,
+/// a missing report, a stale generation, an invalid report, and an accepted
+/// claim with no proven owner. Unobserved phases stay unknown.
 #[test]
 fn managed_host_readiness_terminal_failure_retains_phase_evidence() {
     let fixture = tempfile::tempdir().expect("fresh readiness failure fixture");
@@ -1230,140 +1268,201 @@ fn managed_host_readiness_terminal_failure_retains_phase_evidence() {
     );
     parse_json_success(gateway);
     gateway_cleanup.track(&private_gateway);
-
-    let checkout = fixture.path().join("primary");
-    fs::create_dir(&checkout).expect("primary fixture checkout");
-    fs::write(
-        checkout.join("compose.yml"),
-        "services:\n  app:\n    image: fixture\n",
-    )
-    .expect("write fixture compose file");
-    fs::write(
-        checkout.join("effigy.toml"),
-        "[containers]\ndefault = \"web\"\n",
-    )
-    .expect("seed manifest before git commit");
-    git(&checkout, &["init", "--initial-branch=main"]);
-    git(&checkout, &["config", "user.name", "Listener Fixture"]);
-    git(
-        &checkout,
-        &["config", "user.email", "listener-fixture@example.invalid"],
-    );
-    git(&checkout, &["add", "compose.yml", "effigy.toml"]);
-    git(&checkout, &["commit", "-m", "fixture base"]);
-
-    let control_dir = fixture.path().join("listener-control");
-    fs::create_dir(&control_dir).expect("listener control directory");
     let child_binary = std::env::current_exe().expect("integration test binary");
-    let profile = "host-listener-failure";
-    write_listener_fixture_manifest(ListenerFixtureManifest {
-        checkout: &checkout,
-        profile,
-        domain: "readiness-failure.host.test",
-        body: "failure-body",
-        child_binary: &child_binary,
-        control_dir: &control_dir,
-        bind: "127.0.0.1:0",
-        readiness_timeout_secs: 1,
-        never_ready: true,
-    });
-    let cleanup = ManagedContainerCleanup {
-        checkouts: vec![checkout.clone()],
-        home: home.clone(),
-        private_gateway: private_gateway.clone(),
-        foreign_ca: foreign_ca.clone(),
-        effects_path: effects.env_path.clone(),
-        mkcert: effects.private_mkcert.clone(),
-        effect_log: effects.log.clone(),
-        mkcert_calls: effects.mkcert_calls.clone(),
-        docker_log,
-    };
 
-    let failed = run_container_cli(&checkout, &cleanup, &["up", "--detach", "--json"]);
-    let message = format!(
-        "{}{}",
-        String::from_utf8_lossy(&failed.stdout),
-        String::from_utf8_lossy(&failed.stderr)
-    );
-    assert!(
-        !failed.status.success(),
-        "a listener that never becomes ready must fail startup: {message}"
-    );
-    let state_path = checkout
-        .join(".effigy/runtime/host-processes/web")
-        .join(profile)
-        .join("app.listener.json");
-    let state = read_json_file(&state_path);
-    assert_eq!(state["status"], "failed", "{state}");
-    assert!(
-        state["address"].is_null()
-            && state["route_owner"].is_null()
-            && state["child_pid"].is_null()
-            && state["listener_pid"].is_null(),
-        "terminal failure must not retain endpoint or identity claims: {state}"
-    );
+    // (case, report mode, refuse readiness with 503 instead of a report control)
+    let cases = [
+        ("refused-owner", "", true),
+        ("absent-report", "absent", false),
+        ("stale-report", "stale", false),
+        ("invalid-report", "invalid", false),
+        ("unbound-claim", "unbound", false),
+    ];
+    for (case, report_mode, never_ready) in cases {
+        let checkout = fixture.path().join(case);
+        fs::create_dir(&checkout).expect("readiness case checkout");
+        fs::write(
+            checkout.join("compose.yml"),
+            "services:\n  app:\n    image: fixture\n",
+        )
+        .expect("write fixture compose file");
+        fs::write(
+            checkout.join("effigy.toml"),
+            "[containers]\ndefault = \"web\"\n",
+        )
+        .expect("seed manifest before git commit");
+        git(&checkout, &["init", "--initial-branch=main"]);
+        git(&checkout, &["config", "user.name", "Listener Fixture"]);
+        git(
+            &checkout,
+            &["config", "user.email", "listener-fixture@example.invalid"],
+        );
+        git(&checkout, &["add", "compose.yml", "effigy.toml"]);
+        git(&checkout, &["commit", "-m", "fixture base"]);
 
-    let diagnostic = &state["diagnostic"];
-    assert_eq!(diagnostic["report"], "accepted", "{state}");
-    assert_eq!(
-        diagnostic["ownership"], "exclusive_owner_observed",
-        "{state}"
-    );
-    assert_eq!(diagnostic["http_probe"], "status_mismatch", "{state}");
-    assert_eq!(diagnostic["http_status"], 503, "{state}");
-    assert_eq!(diagnostic["route"], "not_reached", "{state}");
-    assert!(diagnostic["observed_listener_pid"].is_u64(), "{state}");
-    assert!(
-        diagnostic["candidates_inspected"]
-            .as_u64()
-            .is_some_and(|count| count >= 1),
-        "{state}"
-    );
-    assert!(
-        diagnostic["claimed_address"]
-            .as_str()
-            .is_some_and(|address| address.starts_with("127.0.0.1:")),
-        "{state}"
-    );
-    let mut keys = diagnostic
-        .as_object()
-        .expect("diagnostic object")
-        .keys()
-        .map(String::as_str)
-        .collect::<Vec<_>>();
-    keys.sort_unstable();
-    assert_eq!(
-        keys,
-        [
-            "candidates_inspected",
-            "claimed_address",
-            "http_probe",
-            "http_status",
-            "observed_listener_pid",
-            "ownership",
-            "report",
-            "route",
-        ],
-        "diagnostic must stay within its documented bounded shape"
-    );
-    assert!(
-        !state.to_string().contains("failure-body"),
-        "diagnostic must not retain fixture response bodies: {state}"
-    );
+        let control_dir = fixture.path().join(format!("{case}-control"));
+        fs::create_dir(&control_dir).expect("listener control directory");
+        let profile = "host-listener-failure";
+        let domain = format!("{case}.readiness.host.test");
+        write_listener_fixture_manifest(ListenerFixtureManifest {
+            checkout: &checkout,
+            profile,
+            domain: &domain,
+            body: "failure-body",
+            child_binary: &child_binary,
+            control_dir: &control_dir,
+            bind: "127.0.0.1:0",
+            readiness_timeout_secs: 1,
+            never_ready,
+            report_mode,
+        });
+        let cleanup = ManagedContainerCleanup {
+            checkouts: vec![checkout.clone()],
+            home: home.clone(),
+            private_gateway: private_gateway.clone(),
+            foreign_ca: foreign_ca.clone(),
+            effects_path: effects.env_path.clone(),
+            mkcert: effects.private_mkcert.clone(),
+            effect_log: effects.log.clone(),
+            mkcert_calls: effects.mkcert_calls.clone(),
+            docker_log: docker_log.clone(),
+        };
 
-    let generation = state["generation"].as_str().expect("generation");
-    let report_path = checkout
-        .join(".effigy/runtime/host-processes/web")
-        .join(profile)
-        .join(format!("app.{generation}.listener-report.json"));
-    assert!(
-        !report_path.exists(),
-        "generation cleanup should remove the report while the diagnostic remains"
-    );
-    assert!(
-        message.contains("http_probe=status_mismatch:503"),
-        "startup error should name the terminal probe observation: {message}"
-    );
+        let failed = run_container_cli(&checkout, &cleanup, &["up", "--detach", "--json"]);
+        let message = format!(
+            "{}{}",
+            String::from_utf8_lossy(&failed.stdout),
+            String::from_utf8_lossy(&failed.stderr)
+        );
+        assert!(
+            !failed.status.success(),
+            "{case}: a listener without a ready owned generation must fail startup: {message}"
+        );
+        let state_path = checkout
+            .join(".effigy/runtime/host-processes/web")
+            .join(profile)
+            .join("app.listener.json");
+        let state = read_json_file(&state_path);
+        assert_eq!(state["status"], "failed", "{case}: {state}");
+        assert!(
+            state["address"].is_null()
+                && state["route_owner"].is_null()
+                && state["child_pid"].is_null()
+                && state["listener_pid"].is_null(),
+            "{case}: terminal failure must not retain endpoint or identity claims: {state}"
+        );
+
+        let diagnostic = &state["diagnostic"];
+        let mut keys = diagnostic
+            .as_object()
+            .unwrap_or_else(|| panic!("{case}: diagnostic object: {state}"))
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            [
+                "candidates_inspected",
+                "claimed_address",
+                "http_probe",
+                "http_status",
+                "observed_listener_pid",
+                "ownership",
+                "report",
+                "route",
+            ],
+            "{case}: diagnostic must stay within its documented bounded shape"
+        );
+        assert!(
+            !state.to_string().contains("failure-body"),
+            "{case}: diagnostic must not retain fixture response bodies: {state}"
+        );
+        assert_eq!(diagnostic["route"], "not_reached", "{case}: {state}");
+
+        match case {
+            "refused-owner" => {
+                assert_eq!(diagnostic["report"], "accepted", "{state}");
+                assert_eq!(
+                    diagnostic["ownership"], "exclusive_owner_observed",
+                    "{state}"
+                );
+                assert_eq!(diagnostic["http_probe"], "status_mismatch", "{state}");
+                assert_eq!(diagnostic["http_status"], 503, "{state}");
+                assert!(diagnostic["observed_listener_pid"].is_u64(), "{state}");
+                assert!(
+                    diagnostic["candidates_inspected"]
+                        .as_u64()
+                        .is_some_and(|count| count >= 1),
+                    "{state}"
+                );
+                assert!(
+                    diagnostic["claimed_address"]
+                        .as_str()
+                        .is_some_and(|address| address.starts_with("127.0.0.1:")),
+                    "{state}"
+                );
+                assert!(
+                    message.contains("http_probe=status_mismatch:503"),
+                    "startup error should name the terminal probe observation: {message}"
+                );
+            }
+            "absent-report" => {
+                // No report: nothing is claimed, scanned or probed.
+                assert_eq!(diagnostic["report"], "absent", "{state}");
+                assert_eq!(diagnostic["ownership"], "not_reached", "{state}");
+                assert!(diagnostic["claimed_address"].is_null(), "{state}");
+                assert!(diagnostic["candidates_inspected"].is_null(), "{state}");
+                assert!(diagnostic["observed_listener_pid"].is_null(), "{state}");
+                assert!(diagnostic["http_probe"].is_null(), "{state}");
+                assert!(
+                    message.contains("report=absent, ownership=not_reached"),
+                    "{case}: {message}"
+                );
+            }
+            "stale-report" => {
+                assert_eq!(
+                    diagnostic["report"], "schema_or_generation_mismatch",
+                    "{state}"
+                );
+                assert_eq!(diagnostic["ownership"], "not_reached", "{state}");
+                assert!(diagnostic["claimed_address"].is_null(), "{state}");
+                assert!(diagnostic["http_probe"].is_null(), "{state}");
+            }
+            "invalid-report" => {
+                assert_eq!(diagnostic["report"], "unreadable", "{state}");
+                assert_eq!(diagnostic["ownership"], "not_reached", "{state}");
+                assert!(diagnostic["claimed_address"].is_null(), "{state}");
+                assert!(diagnostic["http_probe"].is_null(), "{state}");
+            }
+            "unbound-claim" => {
+                // The report is accepted as a claim, but nothing this child
+                // owns listens there: no owner is proven and no probe runs.
+                assert_eq!(diagnostic["report"], "accepted", "{state}");
+                assert_eq!(diagnostic["ownership"], "no_owner_observed", "{state}");
+                assert!(diagnostic["claimed_address"].is_string(), "{state}");
+                assert!(diagnostic["observed_listener_pid"].is_null(), "{state}");
+                assert!(diagnostic["http_probe"].is_null(), "{state}");
+                assert!(
+                    diagnostic["candidates_inspected"]
+                        .as_u64()
+                        .is_some_and(|count| count >= 1),
+                    "{state}"
+                );
+            }
+            other => unreachable!("unknown readiness case {other}"),
+        }
+
+        let generation = state["generation"].as_str().expect("generation");
+        let report_path = checkout
+            .join(".effigy/runtime/host-processes/web")
+            .join(profile)
+            .join(format!("app.{generation}.listener-report.json"));
+        assert!(
+            !report_path.exists(),
+            "{case}: generation cleanup should remove the report while the diagnostic remains"
+        );
+    }
 }
 
 fn private_root(parent: &Path, name: &str) -> PathBuf {
@@ -1401,6 +1500,9 @@ struct ListenerFixtureManifest<'a> {
     bind: &'a str,
     readiness_timeout_secs: u64,
     never_ready: bool,
+    /// Empty for the normal adapter report; otherwise a terminal-diagnostic
+    /// control mode read by `managed_listener_fixture_child`.
+    report_mode: &'a str,
 }
 
 fn write_listener_fixture_manifest(fixture: ListenerFixtureManifest<'_>) {
@@ -1414,6 +1516,7 @@ fn write_listener_fixture_manifest(fixture: ListenerFixtureManifest<'_>) {
         bind,
         readiness_timeout_secs,
         never_ready,
+        report_mode,
     } = fixture;
     let consumer_run = "printf 'internal=%s public=%s generation=%s\\n' \"$EFFIGY_MANAGED_HOST_APP_INTERNAL_URL\" \"$EFFIGY_MANAGED_HOST_APP_PUBLIC_URL\" \"$EFFIGY_MANAGED_HOST_APP_GENERATION\"; exec sleep 60";
     let app_run =
@@ -1423,10 +1526,16 @@ fn write_listener_fixture_manifest(fixture: ListenerFixtureManifest<'_>) {
     } else {
         ""
     };
+    let report_mode_env = if report_mode.is_empty() {
+        String::new()
+    } else {
+        format!("FIXTURE_REPORT_MODE = {}\n", toml_quote(report_mode))
+    };
     let fixture_env = format!(
-        "FIXTURE_READINESS_REFUSED_FILE = {}\n{}",
+        "FIXTURE_READINESS_REFUSED_FILE = {}\n{}{}",
         toml_quote(&control_dir.join("readiness-refused").display().to_string()),
         never_ready_env,
+        report_mode_env,
     );
     let manifest = format!(
         "[containers]\ndefault = \"web\"\n\n[containers.web]\ndriver = \"colima\"\nprofile = {}\ncompose_file = \"compose.yml\"\nprimary_service = \"app\"\nworking_dir = \"/workspace\"\n\n[[containers.web.host_processes]]\nname = \"consumer\"\nrun = {}\ndepends_on = [\"app\"]\nrestart = \"always\"\nrestart_delay_ms = 100\n\n[[containers.web.host_processes]]\nname = \"app\"\nrun = {}\nrestart = \"on-failure\"\nrestart_delay_ms = 100\n\n[containers.web.host_processes.env]\nFIXTURE_BINARY = {}\nFIXTURE_BODY = {}\nFIXTURE_PREVIOUS_PORT_FILE = {}\nFIXTURE_RESTART_FILE = {}\nFIXTURE_PAUSED_FILE = {}\nFIXTURE_CONTINUE_FILE = {}\n{}\n[containers.web.host_processes.listener]\nbind = {}\n\n[containers.web.host_processes.listener.readiness]\npath = \"/health\"\nstatus = 200\ntimeout_secs = {}\n\n[containers.web.host_processes.listener.route]\ndomain = {}\ntls = true\n",

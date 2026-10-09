@@ -116,8 +116,13 @@ and child cleanup. It records the last startup observation for that exact
 generation: `report` (`not_observed`, `absent`, `unreadable`, `unsafe`,
 `schema_or_generation_mismatch`, `invalid_address`, `bind_mismatch`,
 `accepted`), `claimed_address` (the adapter's loopback claim, when parsed),
-`ownership` (`not_reached`, `no_owner_observed`, `exclusive_owner_observed`
-and verification failures), `candidates_inspected`, `observed_listener_pid`,
+`ownership` (`not_reached`, `no_owner_observed`, `exclusive_owner_observed`,
+`supervisor_unavailable`, `supervisor_changed`, `child_unavailable`,
+`child_changed`, `identity_unavailable`, `identity_changed`,
+`ancestry_changed`, `ancestry_unavailable`, `listener_outside_generation`,
+`socket_inspection_failed`, `exclusivity_unproven`; `*_unavailable` means the
+identity could not be read now, `*_changed` means it was read and differs from
+the recorded identity), `candidates_inspected`, `observed_listener_pid`,
 `http_probe` (`ready`, `connect_failed`, `write_failed`, `no_status_line`,
 `malformed_status`, `status_mismatch`, or absent when not attempted),
 `http_status` (only for a parsed status line), and `route` (`not_reached`,

@@ -2128,7 +2128,9 @@ enum OwnershipObservation {
     NoOwnerObserved,
     ExclusiveOwnerObserved,
     SupervisorChanged,
+    ChildUnavailable,
     ChildChanged,
+    SupervisorUnavailable,
     AncestryChanged,
     AncestryUnavailable,
     IdentityUnavailable,
@@ -2145,7 +2147,9 @@ impl OwnershipObservation {
             Self::NoOwnerObserved => "no_owner_observed",
             Self::ExclusiveOwnerObserved => "exclusive_owner_observed",
             Self::SupervisorChanged => "supervisor_changed",
+            Self::ChildUnavailable => "child_unavailable",
             Self::ChildChanged => "child_changed",
+            Self::SupervisorUnavailable => "supervisor_unavailable",
             Self::AncestryChanged => "ancestry_changed",
             Self::AncestryUnavailable => "ancestry_unavailable",
             Self::IdentityUnavailable => "identity_unavailable",
@@ -2175,6 +2179,25 @@ impl RouteObservation {
             Self::PublicationFailed => "publication_failed",
         }
     }
+}
+
+/// Records an identity failure as unavailable or changed, never both.
+fn observe_identity(
+    diagnostic: &mut HostListenerDiagnostic,
+    unavailable: OwnershipObservation,
+    changed: OwnershipObservation,
+    result: Result<(), IdentityFailure>,
+) -> Result<(), RunnerError> {
+    result.map_err(|failure| match failure {
+        IdentityFailure::Unavailable(error) => {
+            diagnostic.ownership = unavailable;
+            error
+        }
+        IdentityFailure::Changed(error) => {
+            diagnostic.ownership = changed;
+            error
+        }
+    })
 }
 
 /// Keeps a diagnostic observation at the point it is seen, then passes the
@@ -2212,15 +2235,17 @@ fn wait_for_owned_listener(
                 "managed listener startup was stopped before readiness",
             ));
         }
-        observe_ownership(
+        observe_identity(
             diagnostic,
+            OwnershipObservation::SupervisorUnavailable,
             OwnershipObservation::SupervisorChanged,
-            verify_supervisor_identity(supervisor),
+            checked_supervisor_identity(supervisor),
         )?;
-        observe_ownership(
+        observe_identity(
             diagnostic,
+            OwnershipObservation::ChildUnavailable,
             OwnershipObservation::ChildChanged,
-            verify_child_identity(root_pid, root_boot_identity, root_start_identity),
+            checked_child_identity(root_pid, root_boot_identity, root_start_identity),
         )?;
         if !effigy_process::process_is_descendant_of(root_pid, supervisor.pid) {
             diagnostic.ownership = OwnershipObservation::AncestryChanged;
@@ -2332,10 +2357,11 @@ fn wait_for_owned_listener(
                         "managed listener process is outside its recorded child generation",
                     ));
                 }
-                observe_ownership(
+                observe_identity(
                     diagnostic,
+                    OwnershipObservation::ChildUnavailable,
                     OwnershipObservation::ChildChanged,
-                    verify_child_identity(root_pid, root_boot_identity, root_start_identity),
+                    checked_child_identity(root_pid, root_boot_identity, root_start_identity),
                 )?;
                 let current = match read_live_process_identity(pid) {
                     Ok(current) => current,
@@ -2386,15 +2412,17 @@ fn wait_for_owned_listener(
             diagnostic.http_probe = Some(probe.outcome);
             diagnostic.http_status = probe.status;
             if probe.outcome == HttpReadinessOutcome::Ready {
-                observe_ownership(
+                observe_identity(
                     diagnostic,
+                    OwnershipObservation::SupervisorUnavailable,
                     OwnershipObservation::SupervisorChanged,
-                    verify_supervisor_identity(supervisor),
+                    checked_supervisor_identity(supervisor),
                 )?;
-                observe_ownership(
+                observe_identity(
                     diagnostic,
+                    OwnershipObservation::ChildUnavailable,
                     OwnershipObservation::ChildChanged,
-                    verify_child_identity(root_pid, root_boot_identity, root_start_identity),
+                    checked_child_identity(root_pid, root_boot_identity, root_start_identity),
                 )?;
                 if !effigy_process::process_is_descendant_of(root_pid, supervisor.pid) {
                     diagnostic.ownership = OwnershipObservation::AncestryChanged;
@@ -2419,38 +2447,66 @@ fn listener_readiness_timeout(timeout: Duration) -> RunnerError {
     ))
 }
 
+/// A recorded process identity that could not be confirmed. `Unavailable`
+/// means the process could not be read now; `Changed` means it was read and
+/// does not match the recorded identity. Diagnostics keep them distinct.
+enum IdentityFailure {
+    Unavailable(RunnerError),
+    Changed(RunnerError),
+}
+
+impl From<IdentityFailure> for RunnerError {
+    fn from(failure: IdentityFailure) -> Self {
+        match failure {
+            IdentityFailure::Unavailable(error) | IdentityFailure::Changed(error) => error,
+        }
+    }
+}
+
+fn checked_child_identity(
+    pid: u32,
+    boot_identity: &str,
+    start_identity: &GatewayStartIdentity,
+) -> Result<(), IdentityFailure> {
+    let current = read_live_process_identity(pid).map_err(|error| {
+        IdentityFailure::Unavailable(RunnerError::task_invocation(format!(
+            "managed host child identity is unavailable: {error}"
+        )))
+    })?;
+    if current.boot_identity != boot_identity || &current.start_identity != start_identity {
+        return Err(IdentityFailure::Changed(RunnerError::task_invocation(
+            "managed host child PID was reused during listener discovery",
+        )));
+    }
+    Ok(())
+}
+
 fn verify_child_identity(
     pid: u32,
     boot_identity: &str,
     start_identity: &GatewayStartIdentity,
 ) -> Result<(), RunnerError> {
-    let current = read_live_process_identity(pid).map_err(|error| {
-        RunnerError::task_invocation(format!(
-            "managed host child identity is unavailable: {error}"
-        ))
+    Ok(checked_child_identity(pid, boot_identity, start_identity)?)
+}
+
+fn checked_supervisor_identity(record: &HostProcessRecord) -> Result<(), IdentityFailure> {
+    let current = read_live_process_identity(record.pid).map_err(|error| {
+        IdentityFailure::Unavailable(RunnerError::task_invocation(format!(
+            "managed host supervisor identity is unavailable: {error}"
+        )))
     })?;
-    if current.boot_identity != boot_identity || &current.start_identity != start_identity {
-        return Err(RunnerError::task_invocation(
-            "managed host child PID was reused during listener discovery",
-        ));
+    if current.boot_identity != record.boot_identity
+        || current.start_identity != record.start_identity
+    {
+        return Err(IdentityFailure::Changed(RunnerError::task_invocation(
+            "managed host supervisor PID was reused during listener discovery",
+        )));
     }
     Ok(())
 }
 
 fn verify_supervisor_identity(record: &HostProcessRecord) -> Result<(), RunnerError> {
-    let current = read_live_process_identity(record.pid).map_err(|error| {
-        RunnerError::task_invocation(format!(
-            "managed host supervisor identity is unavailable: {error}"
-        ))
-    })?;
-    if current.boot_identity != record.boot_identity
-        || current.start_identity != record.start_identity
-    {
-        return Err(RunnerError::task_invocation(
-            "managed host supervisor PID was reused during listener discovery",
-        ));
-    }
-    Ok(())
+    Ok(checked_supervisor_identity(record)?)
 }
 
 fn publish_managed_listener_route(
@@ -3189,6 +3245,28 @@ mod tests {
         assert_eq!(value.as_object().unwrap().len(), 8);
         let round_trip: HostListenerDiagnostic = serde_json::from_value(value).unwrap();
         assert_eq!(round_trip, diagnostic);
+    }
+
+    /// An identity that cannot be read stays unavailable; a readable identity
+    /// that differs from the recorded one is reported as changed.
+    #[test]
+    fn host_process_identity_failures_keep_unavailable_and_changed_apart() {
+        let current = read_live_process_identity(std::process::id()).expect("current identity");
+        let changed =
+            checked_child_identity(std::process::id(), "not-this-boot", &current.start_identity);
+        assert!(matches!(changed, Err(IdentityFailure::Changed(_))));
+        let unavailable = checked_child_identity(
+            i32::MAX as u32,
+            &current.boot_identity,
+            &current.start_identity,
+        );
+        assert!(matches!(unavailable, Err(IdentityFailure::Unavailable(_))));
+        assert!(checked_child_identity(
+            std::process::id(),
+            &current.boot_identity,
+            &current.start_identity
+        )
+        .is_ok());
     }
 
     #[test]
