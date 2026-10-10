@@ -749,7 +749,7 @@ name = "effigy"
 version = "0.14.1"
 dependencies = [
  "anstyle",
- "base64 0.22.1",
+ "base64 0.23.1",
  "bytes",
  "chrono",
  "crossterm",
@@ -1099,7 +1099,7 @@ dependencies = [
 name = "effigy-host-run"
 version = "0.14.1"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "chrono",
  "effigy-process",
  "fs2",
