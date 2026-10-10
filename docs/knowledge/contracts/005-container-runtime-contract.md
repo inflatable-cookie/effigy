@@ -101,7 +101,52 @@ recorded supervisor/child generations and removes only their recorded routes.
 Missing or uncertain identity remains held; it is not replaced by age-based
 cleanup.
 
-Socket ownership uses Linux procfs and macOS libproc interfaces. Other
+Readiness is one bounded HTTP/1.1 `GET` on the owned loopback socket. Effigy
+reads the first status line and accepts only the configured status. The line
+must be `HTTP/1.<digit>`, a space, a three-digit code, and a space before the
+reason phrase. The reason phrase may be empty and may contain only tabs,
+spaces, visible ASCII and non-ASCII bytes; control bytes make the line malformed. The request
+side stays open after the request; `Connection: close` ends it, and an ordinary
+server may drop a response it sees as abandoned after EOF. A status line split
+across writes is read to its line break within a bounded response deadline.
+Connection failure, write failure, EOF or silence before a status line,
+malformed status and any other status keep the listener not ready. The probe
+does not retry within one attempt; the startup deadline governs repeated
+attempts.
+
+A failed generation keeps a `diagnostic` object in its state file after report
+and child cleanup. It records the last startup observation for that exact
+generation: `report` (`not_observed`, `absent`, `unreadable`, `unsafe`,
+`schema_or_generation_mismatch`, `invalid_address`, `bind_mismatch`,
+`accepted`), `claimed_address` (the adapter's loopback claim, when parsed),
+`ownership` (`not_reached`, `no_owner_observed`, `exclusive_owner_observed`,
+`supervisor_unavailable`, `supervisor_changed`, `child_unavailable`,
+`child_changed`, `identity_unavailable`, `identity_changed`,
+`ancestry_changed`, `ancestry_unavailable`, `listener_outside_generation`,
+`socket_inspection_failed`, `exclusivity_unproven`; `*_unavailable` means the
+identity could not be read now, `*_changed` means it was read and differs from
+the recorded identity), `candidates_inspected`, `observed_listener_pid`,
+`http_probe` (`ready`, `connect_failed`, `write_failed`, `no_status_line`,
+`malformed_status`, `status_mismatch`, or absent when not attempted),
+`http_status` (only for a parsed status line), and `route` (`not_reached`,
+`prepare_failed`, `ownership_changed`, `publication_failed`). The object has
+exactly these eight fields. It keeps no response body, headers, environment, or
+credentials, and it is not replaced by a later observation until the next
+generation starts.
+
+The diagnostic is evidence, never authority. `observed_listener_pid` is a
+non-authoritative number; the identity fields remain null for a failed
+generation, and no process is signaled, reclaimed or published from a
+diagnostic. A value is what was last seen, not current state; read the
+top-level `status` for current state. `not_reached` and `not_attempted` mean the
+phase was not observed, not that it succeeded or failed. Ownership observations
+depend on the Linux procfs or macOS libproc interfaces described below.
+
+Socket ownership uses Linux procfs and macOS libproc interfaces.
+On macOS, the same-user process inventory from `ps -Ao pid=,uid=` may print a
+UID in signed 32-bit form (for example `-2` for a system daemon). Effigy maps
+that presentation to its unsigned UID before comparing it with the effective
+UID. Any other malformed or out-of-range row fails the inventory closed. Other
 platforms fail closed when process or kernel socket ownership cannot be
 proved. `target_host` routes remain static external targets and do not gain
 managed-child ownership.

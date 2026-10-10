@@ -121,6 +121,12 @@ rpassword = "7"
 
 [dev-dependencies]
 base64 = "0.22"
+# Ordinary HTTP/1 server fixture for the managed listener readiness probe.
+bytes = "1"
+http-body-util = "0.1"
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+tokio = { version = "1", features = ["net"] }
 effigy-containers = { path = "crates/effigy-containers", features = ["test-support"] }
 # The managed gateway auto-start PTY proof uses a real private pseudo-terminal.
 nix = { version = "0.31", default-features = false, features = ["term"] }

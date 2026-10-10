@@ -47,6 +47,21 @@ During v0.x, MINOR bumps may include breaking changes.
   compatibility `>=0.13, <0.15`, admitting the supported Effigy 0.13.x and
   0.14.x releases without changing the support floor.
 
+### Fixed
+- Managed host listener readiness no longer half-closes its one-shot HTTP
+  request before reading. Ordinary HTTP/1 servers that drop a response after
+  EOF are now probed correctly, and a status line split across writes is read
+  to its line break. Connection failures, malformed or missing status lines,
+  wrong statuses and silence remain not ready.
+- Managed host listener ownership on macOS no longer fails the whole process
+  inventory when `ps` reports a system daemon's UID in signed form (for
+  example `-2`). The UID is mapped to its unsigned value and compared with the
+  effective UID; malformed or out-of-range rows still fail closed.
+- Failed managed host listener startup keeps a bounded `diagnostic` in its
+  state file. It records report, ownership, HTTP probe and route observations
+  for the failed generation after its report and child are cleaned up. The
+  diagnostic is evidence only and does not change ownership or publication.
+
 ## [0.14.1] - 2026-10-08
 
 ### Added

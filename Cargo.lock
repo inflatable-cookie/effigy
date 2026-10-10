@@ -750,6 +750,7 @@ version = "0.14.1"
 dependencies = [
  "anstyle",
  "base64 0.22.1",
+ "bytes",
  "chrono",
  "crossterm",
  "effigy-artifacts",
@@ -789,6 +790,9 @@ dependencies = [
  "effigy-tui",
  "effigy-ui",
  "globset",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
  "libc",
  "minijinja",
  "nix 0.31.3",
