@@ -146,14 +146,18 @@ pub(crate) fn write_package_json_with_vitest_dev_dependency(root: &Path) {
     .expect("write package");
 }
 
-// These standalone test packages live under the checkout's ignored target/.
-// Give them a workspace root so Cargo does not inherit the Effigy workspace.
+// Standalone Cargo fixtures live under the checkout's ignored target/.
+// Give each package its own workspace root so Cargo does not inherit Effigy's.
+pub(crate) fn write_isolated_cargo_package_manifest(root: &Path, package: &str) {
+    fs::write(root.join("Cargo.toml"), format!("[workspace]\n\n{package}"))
+        .expect("write cargo toml");
+}
+
 pub(crate) fn write_multi_suite_cargo_manifest(root: &Path) {
-    fs::write(
-        root.join("Cargo.toml"),
-        "[workspace]\n\n[package]\nname = \"multi\"\nversion = \"0.1.0\"\n",
-    )
-    .expect("write cargo toml");
+    write_isolated_cargo_package_manifest(
+        root,
+        "[package]\nname = \"multi\"\nversion = \"0.1.0\"\n",
+    );
 }
 
 pub(crate) fn setup_multi_suite_repo(root: &Path) {

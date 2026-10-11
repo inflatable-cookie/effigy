@@ -1321,6 +1321,7 @@ fn fixture_runner_test_binary(repo_root: &Path) -> PathBuf {
         "runner::bootstrap_command::tests::run_bootstrap_with_cwd_auto_targets_single_database_bundle_seed_input",
         "runner::bootstrap_command::tests::run_bootstrap_with_cwd_runs_multi_target_db_seed_task_for_bundle_databases",
         "runner::tests::builtin_command_tests::execution_success_tests::run_manifest_task_builtin_test_executes_js_and_rust_suites_in_same_repo",
+        "runner::tests::builtin_command_tests::planning_and_selection_tests::vitest_detection_tests::run_manifest_task_builtin_test_skips_vitest_when_only_a_transitive_binary_exists",
     ];
     let current = std::env::current_exe().expect("current integration test binary");
     let deps = current.parent().expect("test binaries directory");
