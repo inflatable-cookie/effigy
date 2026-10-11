@@ -162,6 +162,20 @@ pub(super) fn route_heavy(
     Ok(Route::Submit)
 }
 
+/// Validate an inherited parent when execution does not pass through the
+/// heavy-selector routing branch. A container-bound task may use the host's
+/// already-owned execution path only after this check succeeds; an environment
+/// marker by itself never establishes parent authority.
+pub(super) fn validate_parent_if_present(cwd: &Path) -> Result<Option<Nested>, RunnerError> {
+    let Some(token) = std::env::var_os(TOKEN_ENV) else {
+        return Ok(None);
+    };
+    let nested = validate_parent_token(token, cwd)?;
+    scheduler_enabled()?;
+    let _ = ACTIVE_NESTED.set(nested.clone());
+    Ok(Some(nested))
+}
+
 fn validate_parent_token(token: OsString, cwd: &Path) -> Result<Nested, RunnerError> {
     let token = token.into_string().map_err(|_| {
         refuse(

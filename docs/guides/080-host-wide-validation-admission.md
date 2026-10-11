@@ -37,6 +37,26 @@ override. It records a bounded reason before direct execution; it does not
 broaden authority and cannot bypass invalid parent tokens or the retired zero
 setting.
 
+### Container tasks under an admitted host run
+
+When a selector runs under a verified host parent, Effigy keeps selector
+resolution and admission on the host. For a standard direct-command task whose
+resolved binding targets a container, the host executes the resolved command
+through the existing mapped container exec route. It does not re-enter Effigy
+inside the container. Host Effigy keeps the task lock, status/cache handling,
+nested composition, and result settlement. Heavy nested selectors and light
+container tasks both validate a present parent before using this route.
+
+The host passes the mapped working directory, resolved command, selector
+arguments, and task environment. `HOST_RUN_TOKEN` and `HOST_RUN_ID` stay out of
+container and `sudo` environments. This route does not cover task sequences or
+authorize a selector launched directly inside a container. Direct heavy work
+without a valid parent still needs scheduler authority and fails closed;
+`EFFIGY_INTERNAL_CONTAINER_HANDOFF=1` is not authority. A fake-backend test
+covers this host boundary with a stale reported container Effigy version. It
+does not qualify Linux kernel trust or replace a later disposable consumer
+proof.
+
 ## Waiting and execution
 
 The scheduler runs the submitted executable, arguments, working directory,

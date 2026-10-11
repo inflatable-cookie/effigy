@@ -737,6 +737,143 @@ admission = "heavy"
 run = "echo nested >> nested-runs"
 "#;
 
+const CONTAINER_ADMISSION_MANIFEST: &str = r#"
+[containers]
+default = "web"
+
+[containers.web]
+driver = "colima"
+profile = "admission-fixture"
+compose_file = "compose.yml"
+project_name = "container-admission"
+primary_service = "app"
+working_dir = "/workspace"
+
+[containers.web.lifecycle]
+on_task_exit = "leave-running"
+
+[systems]
+default = "web"
+
+[systems.web]
+default_workspace = "app"
+
+[systems.web.workspaces.app]
+container = "web"
+
+[tasks."nested-container"]
+admission = "heavy"
+run = "printf '%s|%s|%s|%s\\n' \"$TASK_VALUE\" \"${HOST_RUN_TOKEN-unset}\" \"${HOST_RUN_ID-unset}\" {args} | tee -a payload.out"
+run_in = "container"
+lock = "js-workspace-install"
+env = { TASK_VALUE = "allowed" }
+
+[tasks."nested-container-light"]
+run = "printf 'unexpected-light-payload\\n' > light-payload.out"
+run_in = "container"
+lock = "js-workspace-install"
+
+[tasks."host-sibling"]
+run = "printf 'host-sibling\\n' > host.out"
+run_in = "host"
+
+[tasks."container-failure"]
+admission = "heavy"
+run = "printf 'container-stdout\\n'; printf 'container-stderr\\n' >&2; exit 23"
+run_in = "container"
+
+[tasks."admitted-parent"]
+admission = "heavy"
+run_in = "host"
+run = "(cd nested && {EFFIGY} nested-container arg-one) && (cd nested && {EFFIGY} nested-container arg-two) && {EFFIGY} nested-container-light && {EFFIGY} host-sibling && if {EFFIGY} --json container-failure > failure.json; then exit 1; fi"
+env = { EFFIGY_COMPOSE_BACKEND = "docker", FAKE_EFFIGY_BIN = "{EFFIGY}", WORKSPACE_ROOT = "{project}", BACKEND_LOG = "{project}/backend.log", LOCK_MARKER = "{project}/lock-check-started", LOCK_OUTPUT = "{project}/lock-check-output", LOCK_EXIT = "{project}/lock-check-exit", PATH = "{project}/fake-bin:/usr/bin:/bin:/usr/sbin:/sbin" }
+"#;
+
+fn install_fake_container_backend(workspace: &Workspace) -> PathBuf {
+    let bin = workspace.file("fake-bin");
+    fs::create_dir_all(&bin).expect("fake backend bin");
+    let docker = bin.join("docker");
+    fs::write(
+        &docker,
+        r#"#!/bin/sh
+set -u
+printf '%s\n' "$*" >> "$BACKEND_LOG"
+operation=
+for arg in "$@"; do
+  case "$arg" in
+    ps) operation=ps ;;
+    exec) operation=exec ;;
+  esac
+done
+if [ "$operation" = ps ]; then
+  project=container-admission
+  expect_project=
+  for arg in "$@"; do
+    if [ "$expect_project" = yes ]; then project=$arg; expect_project=; continue; fi
+    if [ "$arg" = -p ]; then expect_project=yes; fi
+  done
+  printf 'ps-result|%s|%s\n' "$project" "$WORKSPACE_ROOT" >> "$BACKEND_LOG"
+  printf '%s-app-1\tUp 10 minutes\t\t%s\t%s\tapp\tfalse\n' "$project" "$project" "$WORKSPACE_ROOT"
+  exit 0
+fi
+[ "$operation" = exec ] || exit 0
+while [ "$#" -gt 0 ] && [ "$1" != exec ]; do shift; done
+[ "$#" -gt 0 ] || exit 0
+shift
+workdir=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -T) shift ;;
+    -e) export "$2"; shift 2 ;;
+    -w) workdir=$2; shift 2 ;;
+    -u) shift 2 ;;
+    -*) shift ;;
+    *) shift; break ;;
+  esac
+done
+if [ "${1-}" = which ]; then printf '/usr/local/bin/effigy\n'; exit 0; fi
+if [ "${1-}" = effigy ] && [ "${2-}" = version ]; then printf 'v0.13.1+local.6774846\n'; exit 0; fi
+if [ "${1-}" = /usr/local/bin/effigy ]; then
+  shift
+  unset HOST_RUN_TOKEN HOST_RUN_ID EFFIGY_HOST_RUN_ROOT
+  export EFFIGY_INTERNAL_CONTAINER_HANDOFF=1
+  export EFFIGY_HOST_RUN_ROOT="$WORKSPACE_ROOT/empty-inner-scheduler"
+  exec "$FAKE_EFFIGY_BIN" "$@" --repo "$WORKSPACE_ROOT"
+fi
+payload=no
+locked_payload=no
+for arg in "$@"; do
+  case "$arg" in
+    *payload.out*) payload=yes; locked_payload=yes ;;
+    *container-stdout*) payload=yes ;;
+  esac
+done
+[ "$payload" = yes ] || exit 0
+if [ "$locked_payload" = yes ] && [ ! -f "$LOCK_MARKER" ]; then
+  : > "$LOCK_MARKER"
+  (cd "$WORKSPACE_ROOT/nested" && "$FAKE_EFFIGY_BIN" nested-container-light --lock-wait-ms 0) > "$LOCK_OUTPUT" 2>&1
+  printf '%s\n' "$?" > "$LOCK_EXIT"
+fi
+unset HOST_RUN_TOKEN HOST_RUN_ID EFFIGY_HOST_RUN_ROOT
+suffix=${workdir#/workspace}
+cd "$WORKSPACE_ROOT$suffix" || exit 98
+exec "$@"
+"#,
+    )
+    .expect("write fake docker");
+    fs::set_permissions(&docker, PermissionsExt::from_mode(0o700))
+        .expect("make fake docker executable");
+    let colima = bin.join("colima");
+    fs::write(
+        &colima,
+        "#!/bin/sh\nprintf 'colima|%s\\n' \"$*\" >> \"$BACKEND_LOG\"\nprintf 'Running\\n'\n",
+    )
+    .expect("write fake colima");
+    fs::set_permissions(&colima, PermissionsExt::from_mode(0o700))
+        .expect("make fake colima executable");
+    bin
+}
+
 fn wait_for(what: &str, limit: Duration, mut condition: impl FnMut() -> bool) {
     let deadline = Instant::now() + limit;
     while Instant::now() < deadline {
@@ -985,6 +1122,144 @@ fn release_verify_install_selector_preserves_fixed_command_and_host_run() {
             "selector child and nested task share run {run_id}"
         );
     }
+}
+
+#[test]
+#[ignore = "requires the private Queue fixture; run test:exec:container-admission"]
+fn admitted_container_selector_stays_on_host_and_executes_its_resolved_payload() {
+    let ws = Workspace::new(CONTAINER_ADMISSION_MANIFEST);
+    eprintln!("container-admission fixture root: {}", ws.root().display());
+    fs::create_dir_all(ws.file("nested")).expect("nested working directory");
+    fs::write(
+        ws.file("compose.yml"),
+        "services:\n  app:\n    image: alpine:latest\n",
+    )
+    .expect("compose fixture");
+    let bin = install_fake_container_backend(&ws);
+    let server = Server::start(None);
+    let path = format!("{}:/usr/bin:/bin:/usr/sbin:/sbin", bin.display());
+
+    // This is the Linux-side re-entry control: the container handoff marker
+    // and a missing local scheduler root cannot authorize a heavy selector.
+    let missing_local_state = ws.file("empty-inner-scheduler");
+    let refused = ws
+        .command(Some(&missing_local_state), &["nested-container"])
+        .env("EFFIGY_INTERNAL_CONTAINER_HANDOFF", "1")
+        .output()
+        .expect("run unauthorised in-container selector");
+    assert_eq!(code(&refused), 75, "{}", text(&refused.stderr));
+    assert!(text(&refused.stderr).contains("scheduler_unreachable"));
+    assert!(
+        !ws.file("backend.log").exists(),
+        "the unauthorised selector refuses before container execution"
+    );
+
+    // A forged parent is still rejected before routing, even when the internal
+    // container marker is present and the private scheduler is reachable.
+    let forged = ws
+        .command(Some(&server.state), &["nested-container-light"])
+        .env("EFFIGY_INTERNAL_CONTAINER_HANDOFF", "1")
+        .env("HOST_RUN_TOKEN", "forged-parent-token")
+        .output()
+        .expect("run forged-parent refusal");
+    assert_eq!(code(&forged), 77, "{}", text(&forged.stderr));
+    assert!(text(&forged.stderr).contains("invalid_parent_token"));
+    assert!(server.run_ids().is_empty(), "refusals did not submit a run");
+
+    let output = ws
+        .command(Some(&server.state), &["admitted-parent"])
+        .env("PATH", &path)
+        .env("FAKE_EFFIGY_BIN", EFFIGY)
+        .env("WORKSPACE_ROOT", ws.root())
+        .env("BACKEND_LOG", ws.file("backend.log"))
+        .env("LOCK_MARKER", ws.file("lock-check-started"))
+        .env("LOCK_OUTPUT", ws.file("lock-check-output"))
+        .env("LOCK_EXIT", ws.file("lock-check-exit"))
+        .env("EFFIGY_ADMISSION_TIMEOUT_SECS", "5")
+        .output()
+        .expect("run host-admitted mixed selector");
+    assert_eq!(code(&output), 0, "{}", text(&output.stderr));
+
+    let backend = fs::read_to_string(ws.file("backend.log")).expect("captured fake backend");
+    assert!(backend.contains("-w /workspace app sh -lc"), "{backend}");
+    assert!(backend.contains("TASK_VALUE=allowed"), "{backend}");
+    assert!(backend.contains("arg-one"), "{backend}");
+    assert!(backend.contains("arg-two"), "{backend}");
+    assert!(
+        !backend.contains("/usr/local/bin/effigy"),
+        "the admitted payload did not re-enter the container Effigy: {backend}"
+    );
+    assert!(!backend.contains("HOST_RUN_TOKEN="), "{backend}");
+    assert!(!backend.contains("HOST_RUN_ID="), "{backend}");
+    assert_eq!(
+        fs::read_to_string(ws.file("payload.out")).expect("both completed container payloads"),
+        "allowed|unset|unset|arg-one\nallowed|unset|unset|arg-two\n"
+    );
+    assert_eq!(
+        fs::read_to_string(ws.file("light-payload.out")).expect("light container control"),
+        "unexpected-light-payload\n"
+    );
+    assert_eq!(
+        fs::read_to_string(ws.file("host.out")).expect("host-only sibling"),
+        "host-sibling\n"
+    );
+    assert!(text(&output.stdout).contains("allowed|unset|unset|arg-one\n"));
+    assert!(text(&output.stdout).contains("allowed|unset|unset|arg-two\n"));
+    assert!(
+        ws.file("lock-check-started").exists(),
+        "fake backend checked the selector lock while the payload was active"
+    );
+    let lock_exit = fs::read_to_string(ws.file("lock-check-exit"))
+        .expect("concurrent lock-control exit")
+        .trim()
+        .parse::<i32>()
+        .expect("numeric lock-control exit");
+    assert_ne!(lock_exit, 0, "same selector remained locked during payload");
+    assert!(
+        text(&fs::read(ws.file("lock-check-output")).expect("lock-control output"))
+            .to_ascii_lowercase()
+            .contains("lock"),
+        "contender reported the owned lock"
+    );
+
+    let parent_run_ids = server.run_ids();
+    assert_eq!(
+        parent_run_ids.len(),
+        1,
+        "one scheduler admission and launch"
+    );
+    let nested_facts: Vec<_> = server
+        .facts()
+        .into_iter()
+        .filter(|fact| fact["kind"] == "nested" && fact["selector"] == "nested-container")
+        .collect();
+    assert_eq!(
+        nested_facts.len(),
+        2,
+        "both selected container calls were host-bound"
+    );
+    assert!(nested_facts
+        .iter()
+        .all(|fact| fact["parentRunId"] == parent_run_ids[0]));
+
+    // The nested capture route returns the real container exit plus both
+    // streams while remaining under the parent's single admission.
+    let failed_json = fs::read_to_string(ws.file("failure.json")).expect("captured failure JSON");
+    let failed_value: Value = serde_json::from_str(&failed_json).expect("failure JSON object");
+    assert_eq!(
+        failed_value["error"]["details"]["stdout"],
+        "container-stdout\n"
+    );
+    assert_eq!(
+        failed_value["error"]["details"]["stderr"],
+        "container-stderr\n"
+    );
+    assert_eq!(failed_value["error"]["details"]["exit_code"], 23);
+    assert_eq!(
+        server.run_ids().len(),
+        1,
+        "nested capture reused parent admission"
+    );
 }
 
 #[test]
