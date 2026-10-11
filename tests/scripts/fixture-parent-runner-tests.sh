@@ -12,7 +12,14 @@ run_test() {
   local status=0
   local deadline
 
-  "$runner" "$test_name" --exact --nocapture --test-threads=1 &
+  local listing
+  listing=$("$runner" "$test_name" --exact --include-ignored --list)
+  if [[ "$listing" != "$test_name: test"* ]]; then
+    printf 'required fixture test is absent: %s\n' "$test_name" >&2
+    return 2
+  fi
+
+  "$runner" "$test_name" --exact --include-ignored --nocapture --test-threads=1 &
   local test_pid=$!
   deadline=$((SECONDS + 180))
   while kill -0 "$test_pid" 2>/dev/null; do
@@ -34,6 +41,17 @@ run_test() {
 }
 
 for test_name in \
+  runner::state_command::tests::state_fixture_old_placement_refuses_all_four_execution_paths \
+  runner::state_command::tests::state_apply_executes_declared_artifact_layer_hook_with_context \
+  runner::state_command::tests::state_apply_hook_receives_declared_state_secret \
+  runner::state_command::tests::state_apply_can_skip_selected_layers \
+  runner::state_command::tests::state_apply_reports_failed_hook_after_successful_artifact_stage \
+  runner::state_command::tests::state_apply_accepts_inline_hook_task_in_composed_manifest \
+  runner::state_command::tests::state_apply_rejects_unknown_skip_layers \
+  runner::state_command::tests::state_capture_push_embeds_pushed_artifact_report \
+  runner::state_command::tests::state_capture_executes_named_and_inline_tasks_with_context \
+  runner::state_command::tests::state_layer_hook_accepts_compact_inline_task_run_in \
+  runner::state_command::tests::state_capture_task_accepts_compact_inline_task_run_in \
   cli::version_dispatch::tests::build_version_payload_sets_schema_and_display \
   cli::help_dispatch::tests::build_help_payload_sets_schema_and_topic \
   cli::output::envelope::tests::build_json_envelope_error_sets_contract_shape \

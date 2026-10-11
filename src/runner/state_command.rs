@@ -1018,10 +1018,9 @@ fn write_state_apply_hook_context(
 
 #[cfg(test)]
 mod tests {
+    use crate::contract_test_support::temp_workspace;
     use std::fs;
     use std::path::Path;
-    use std::path::PathBuf;
-    use std::sync::atomic::{AtomicU64, Ordering};
 
     use effigy_artifacts::{
         OciArtifactDescriptor, OciArtifactError, OciArtifactInspectRequest, OciArtifactPullReport,
@@ -1035,17 +1034,6 @@ mod tests {
     };
 
     use super::*;
-
-    fn temp_repo(name: &str) -> PathBuf {
-        static COUNTER: AtomicU64 = AtomicU64::new(0);
-        let root = std::env::temp_dir().join(format!(
-            "effigy-state-command-{name}-{}-{}",
-            std::process::id(),
-            COUNTER.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir_all(&root).expect("create temp repo");
-        root
-    }
 
     struct ScopedEnvVar {
         key: String,
@@ -1206,7 +1194,7 @@ task = {task_value}
 
     #[test]
     fn state_capture_push_embeds_pushed_artifact_report() {
-        let repo = temp_repo("capture-push");
+        let repo = temp_workspace("capture-push");
         fs::create_dir_all(repo.join("captures")).expect("create captures dir");
         fs::write(repo.join("captures/uat.json"), "{}\n").expect("write capture payload");
 
@@ -1253,7 +1241,11 @@ task = {task_value}
 
     #[test]
     fn state_apply_executes_declared_artifact_layer_hook_with_context() {
-        let repo = temp_repo("apply-hook-success");
+        let repo = temp_workspace("apply-hook-success");
+        state_apply_executes_declared_artifact_layer_hook_with_context_at(&repo);
+    }
+
+    fn state_apply_executes_declared_artifact_layer_hook_with_context_at(repo: &Path) {
         fs::write(
             repo.join("effigy.toml"),
             r#"
@@ -1286,8 +1278,8 @@ hook = "apply-hook"
         let rendered = run_state_apply(
             Some(Path::new("state.toml")),
             None,
-            &repo,
-            &repo,
+            repo,
+            repo,
             true,
             &[],
             true,
@@ -1325,7 +1317,11 @@ hook = "apply-hook"
 
     #[test]
     fn state_apply_hook_receives_declared_state_secret() {
-        let repo = temp_repo("apply-hook-state-secret");
+        let repo = temp_workspace("apply-hook-state-secret");
+        state_apply_hook_receives_declared_state_secret_at(&repo);
+    }
+
+    fn state_apply_hook_receives_declared_state_secret_at(repo: &Path) {
         fs::write(
             repo.join("effigy.toml"),
             r#"
@@ -1346,11 +1342,7 @@ run = "sh -lc 'printf \"%s\" \"$STATE_TOKEN\" > state-secret.txt'"
 "#,
         )
         .expect("write effigy manifest");
-        write_state_test_vault(
-            &repo,
-            "vault-passphrase",
-            &[("state_token", "state_secret")],
-        );
+        write_state_test_vault(repo, "vault-passphrase", &[("state_token", "state_secret")]);
         let _env = ScopedEnvVar::set("EFFIGY_TEST_SECRETS_PASSPHRASE", "vault-passphrase");
         fs::write(repo.join("payload.txt"), "payload\n").expect("write payload");
         fs::write(
@@ -1373,17 +1365,19 @@ hook = "apply-hook"
         )
         .expect("write state manifest");
 
-        run_state_apply(
+        let rendered = run_state_apply(
             Some(Path::new("state.toml")),
             None,
-            &repo,
-            &repo,
+            repo,
+            repo,
             true,
             &[],
             true,
         )
         .expect("run state apply");
 
+        assert!(!rendered.contains("state_secret"));
+        assert!(!rendered.contains("vault-passphrase"));
         assert_eq!(
             fs::read_to_string(repo.join("state-secret.txt")).expect("read marker"),
             "state_secret"
@@ -1392,7 +1386,7 @@ hook = "apply-hook"
 
     #[test]
     fn state_apply_accepts_inline_hook_task_in_composed_manifest() {
-        let repo = temp_repo("apply-inline-hook");
+        let repo = temp_workspace("apply-inline-hook");
         fs::write(repo.join("payload.txt"), "payload\n").expect("write payload");
         fs::write(
             repo.join("effigy.toml"),
@@ -1435,7 +1429,11 @@ hook = [{ run = "sh -lc 'printf \"%s\" \"$EFFIGY_STATE_APPLY_CONTEXT\" > inline-
 
     #[test]
     fn state_apply_can_skip_selected_layers() {
-        let repo = temp_repo("apply-skip-layer");
+        let repo = temp_workspace("apply-skip-layer");
+        state_apply_can_skip_selected_layers_at(&repo);
+    }
+
+    fn state_apply_can_skip_selected_layers_at(repo: &Path) {
         fs::write(
             repo.join("effigy.toml"),
             r#"
@@ -1472,8 +1470,8 @@ run = "sh -lc 'echo overlay > overlay-ran.txt'"
         let rendered = run_state_apply(
             None,
             Some("uat"),
-            &repo,
-            &repo,
+            repo,
+            repo,
             true,
             &["structure".to_owned()],
             true,
@@ -1493,7 +1491,7 @@ run = "sh -lc 'echo overlay > overlay-ran.txt'"
 
     #[test]
     fn state_apply_rejects_unknown_skip_layers() {
-        let repo = temp_repo("apply-skip-layer-missing");
+        let repo = temp_workspace("apply-skip-layer-missing");
         fs::write(
             repo.join("effigy.toml"),
             r#"
@@ -1536,12 +1534,16 @@ run = "sh -lc 'echo schema > schema-ran.txt'"
 
     #[test]
     fn state_apply_reports_failed_hook_after_successful_artifact_stage() {
-        let repo = temp_repo("apply-hook-failure");
+        let repo = temp_workspace("apply-hook-failure");
+        state_apply_reports_failed_hook_after_successful_artifact_stage_at(&repo);
+    }
+
+    fn state_apply_reports_failed_hook_after_successful_artifact_stage_at(repo: &Path) {
         fs::write(
             repo.join("effigy.toml"),
             r#"
 [tasks.apply-hook]
-run = "sh -lc 'exit 12'"
+run = "sh -lc 'echo reached > failed-hook-ran.txt; exit 12'"
 "#,
         )
         .expect("write effigy manifest");
@@ -1569,8 +1571,8 @@ hook = "apply-hook"
         let error = run_state_apply(
             Some(Path::new("state.toml")),
             None,
-            &repo,
-            &repo,
+            repo,
+            repo,
             true,
             &[],
             true,
@@ -1592,7 +1594,158 @@ hook = "apply-hook"
         assert!(layer["hook_error"]
             .as_str()
             .expect("hook error")
-            .contains("failed"));
+            .contains("12"));
+        assert_eq!(
+            fs::read_to_string(repo.join("failed-hook-ran.txt")).expect("failure marker"),
+            "reached\n"
+        );
+    }
+
+    #[test]
+    fn state_capture_executes_named_and_inline_tasks_with_context() {
+        for task_value in [
+            r#""capture-task""#,
+            r#"{ run = "sh -lc 'printf \"%s\" \"$EFFIGY_STATE_CAPTURE_CONTEXT\" > capture-context.txt'" }"#,
+        ] {
+            let repo = temp_workspace("capture-task-context");
+            fs::write(
+                repo.join("effigy.toml"),
+                r#"
+[tasks.capture-task]
+run = "sh -lc 'printf \"%s\" \"$EFFIGY_STATE_CAPTURE_CONTEXT\" > capture-context.txt'"
+"#,
+            )
+            .expect("write capture task manifest");
+            fs::create_dir(repo.join("captures")).expect("capture directory");
+            fs::write(repo.join("captures/uat.json"), "{}\n").expect("capture payload");
+            let config: StateManifestConfig =
+                toml::from_str(&state_config_with_inline_task("hook", task_value))
+                    .expect("capture config");
+            let task = config
+                .capture_profile("uat", "media")
+                .expect("capture profile")
+                .task
+                .clone();
+            let report = build_state_stack_capture_report(
+                &lineage(),
+                StateCaptureRequest {
+                    profile: None,
+                    role: Some("uat-capture".to_owned()),
+                    source_env: Some("uat".to_owned()),
+                    key: Some("context-proof".to_owned()),
+                    source: Some("captures/uat.json".to_owned()),
+                    destination_ref: Some("oci://example.test/private/capture:proof".to_owned()),
+                    hook: None,
+                    task,
+                    yes: true,
+                    push: false,
+                },
+                &repo,
+                &FakeOciArtifactAdapter,
+            )
+            .expect("execute capture task");
+            assert!(report.ok);
+            assert_eq!(report.tasks.len(), 1);
+            assert_eq!(
+                report.tasks[0].status,
+                StateStackCaptureTaskStatus::Executed
+            );
+            let context_path = fs::read_to_string(repo.join("capture-context.txt"))
+                .expect("capture context marker");
+            assert_eq!(
+                report.tasks[0].context_path.as_deref(),
+                Some(context_path.as_str())
+            );
+            let context: Value = serde_json::from_str(
+                &fs::read_to_string(repo.join(context_path)).expect("capture context"),
+            )
+            .expect("context JSON");
+            assert_eq!(context["schema"], "effigy.state-stack.capture-context.v1");
+        }
+    }
+
+    #[test]
+    #[ignore = "requires an authenticated private parent; run test:qa:fixture-parent-isolation"]
+    fn state_fixture_old_placement_refuses_all_four_execution_paths() {
+        assert!(
+            std::env::var_os("HOST_RUN_TOKEN").is_some(),
+            "private authenticated parent required"
+        );
+        let checkout = fs::canonicalize(env!("CARGO_MANIFEST_DIR")).expect("canonical checkout");
+        type OutsideCase = (&'static str, fn(&Path), &'static str);
+        let cases: [OutsideCase; 4] = [
+            (
+                "named-hook",
+                state_apply_executes_declared_artifact_layer_hook_with_context_at,
+                "hook-path.txt",
+            ),
+            (
+                "state-secret",
+                state_apply_hook_receives_declared_state_secret_at,
+                "state-secret.txt",
+            ),
+            (
+                "task-layer",
+                state_apply_can_skip_selected_layers_at,
+                "overlay-ran.txt",
+            ),
+            (
+                "exit12-hook",
+                state_apply_reports_failed_hook_after_successful_artifact_stage_at,
+                "failed-hook-ran.txt",
+            ),
+        ];
+        for (name, exercise, marker) in cases {
+            let root = tempfile::Builder::new()
+                .prefix("effigy-state-outside-")
+                .tempdir()
+                .expect("owned outside fixture");
+            let repo = fs::canonicalize(root.path()).expect("canonical outside fixture");
+            assert!(
+                !repo.starts_with(&checkout),
+                "negative control must retain old outside-root placement"
+            );
+            let inherited_parent = std::env::var_os("HOST_RUN_TOKEN");
+            let inherited_run = std::env::var_os("HOST_RUN_ID");
+            let passphrase = std::env::var_os("EFFIGY_TEST_SECRETS_PASSPHRASE");
+            assert!(
+                std::panic::catch_unwind(|| exercise(&repo)).is_err(),
+                "old placement unexpectedly passed: {name}"
+            );
+            assert!(
+                std::env::var_os("HOST_RUN_TOKEN") == inherited_parent,
+                "parent token restored after unwind"
+            );
+            assert!(
+                std::env::var_os("HOST_RUN_ID") == inherited_run,
+                "parent run restored after unwind"
+            );
+            assert!(
+                std::env::var_os("EFFIGY_TEST_SECRETS_PASSPHRASE") == passphrase,
+                "passphrase restored after unwind"
+            );
+            let rendered = fs::read_to_string(
+                repo.join(".effigy/reports/state/acowtancy-uat/latest-apply.json"),
+            )
+            .expect("actual refused state report");
+            let report: Value = serde_json::from_str(&rendered).expect("refused report JSON");
+            assert_eq!(report["ok"], false);
+            let layers = report["layers"].as_array().expect("report layers");
+            assert!(
+                layers.iter().any(|layer| ["error", "hook_error"]
+                    .iter()
+                    .any(|key| layer[key].as_str()
+                        == Some("invalid_parent_token: cwd is outside token root"))),
+                "exact outside-root predicate required: {name}"
+            );
+            assert!(!repo.join(marker).exists(), "task effects refused: {name}");
+            assert!(!repo.join("schema-ran.txt").exists());
+            assert!(!rendered.contains("state_secret"));
+            // Retain actual failure reports without credentials or secret values.
+            eprintln!("old-placement {name}: invalid_parent_token: cwd is outside token root; effects absent; report={rendered}");
+            root.close().expect("remove exact owned outside fixture");
+            assert!(!repo.exists());
+        }
     }
 
     struct FakeOciArtifactAdapter;
