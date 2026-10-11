@@ -642,36 +642,11 @@ fn managed_host_listeners_bind_routes_propagate_restart_and_scope_teardown() {
 
     let home = fixture.path().join("home");
     fs::create_dir(&home).expect("fixture home");
-    let private_gateway = private_root(fixture.path(), "managed-listener-gateway");
     let foreign_ca = fixture.path().join("foreign-ca");
     fs::create_dir(&foreign_ca).expect("foreign CA sentinel");
-    let tls = run_gateway(
-        &private_gateway,
-        "setup-tls",
-        &effects,
-        Some(&foreign_ca),
-        &[],
-    );
-    let tls_json = parse_json_success(tls);
-    assert_eq!(tls_json["private"], true);
     let mut gateway_cleanup = GatewayCleanup::new(&effects, &foreign_ca);
-    let gateway = run_gateway(
-        &private_gateway,
-        "up",
-        &effects,
-        Some(&foreign_ca),
-        &[
-            "--dns-addr",
-            "127.0.0.1:0",
-            "--proxy-addr",
-            "127.0.0.1:0",
-            "--https-addr",
-            "127.0.0.1:0",
-        ],
-    );
-    let gateway_json = parse_json_success(gateway);
-    gateway_cleanup.track(&private_gateway);
-    let https_address = socket_field(&gateway_json, "https_addr");
+    let (private_gateway, https_address) =
+        start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut gateway_cleanup);
     let ca_path = private_gateway.join("ca/rootCA.pem");
 
     let primary = fixture.path().join("primary");
@@ -809,13 +784,33 @@ fn managed_host_listeners_bind_routes_propagate_restart_and_scope_teardown() {
                 .is_file(),
             "fixture listener should refuse readiness briefly before becoming healthy"
         );
-        assert_eq!(report["managed_host_listeners"][0]["status"], "ready");
-        assert_eq!(
-            report["managed_host_listeners"][0]["route_domain"],
-            checkouts[index].2
-        );
-        assert_eq!(report["managed_host_listeners"][0]["route_tls"], true);
+        let listener = &report["managed_host_listeners"][0];
+        assert_eq!(listener["status"], "ready");
+        assert_eq!(listener["declared_route_domain"], checkouts[index].2);
+        if index == 0 {
+            assert_eq!(listener["route_domain"], checkouts[index].2);
+        } else {
+            // A linked worktree publishes its checkout-scoped name instead.
+            assert_ne!(listener["route_domain"], checkouts[index].2);
+            assert!(listener["route_domain"]
+                .as_str()
+                .is_some_and(|name| name.ends_with(".test")));
+        }
+        assert_eq!(listener["route_tls"], true);
     }
+    // The rest of the proof uses each checkout's effective name, so routes,
+    // Host headers and dependent URLs are checked against what was published.
+    let checkouts = checkouts
+        .iter()
+        .zip(&reports)
+        .map(|((checkout, profile, _declared, body), report)| {
+            let effective = report["managed_host_listeners"][0]["route_domain"]
+                .as_str()
+                .expect("reported route domain")
+                .to_owned();
+            (checkout.clone(), *profile, effective, *body)
+        })
+        .collect::<Vec<_>>();
 
     let listener_state_path = |checkout: &Path, profile: &str, process: &str| {
         checkout
@@ -989,7 +984,7 @@ fn managed_host_listeners_bind_routes_propagate_restart_and_scope_teardown() {
         "managed listener WebSocket upgrade did not pass through verified private HTTPS"
     );
 
-    let sibling_domain = checkouts[2].2;
+    let sibling_domain = checkouts[2].2.as_str();
     let sibling_state = &app_states[2];
     let forged_listener = ForeignListener::bind("127.0.0.1:0".parse().unwrap());
     let route_path = private_gateway.join("routes.json");
@@ -1306,6 +1301,406 @@ fn managed_host_listeners_bind_routes_propagate_restart_and_scope_teardown() {
     println!(
         "managed listener identity and cleanup receipts: identities={}, primary_route_removed=true, worktree_routes_removed=true, foreign_port_received_no_request=true, private_host_effects=none",
         serde_json::Value::Array(identity_receipts)
+    );
+}
+
+/// One primary checkout and linked worktrees, all committed from one base.
+/// Each caller writes its own uncommitted listener manifest.
+fn create_listener_worktree_fixture(
+    root: &Path,
+    worktree_names: &[&str],
+) -> (PathBuf, Vec<PathBuf>) {
+    let primary = root.join("primary");
+    fs::create_dir(&primary).expect("scoped primary fixture checkout");
+    fs::write(
+        primary.join("compose.yml"),
+        "services:\n  app:\n    image: fixture\n",
+    )
+    .expect("write scoped fixture compose file");
+    fs::write(
+        primary.join("effigy.toml"),
+        "[containers]\ndefault = \"web\"\n",
+    )
+    .expect("seed scoped manifest before git commit");
+    git(&primary, &["init", "--initial-branch=main"]);
+    git(&primary, &["config", "user.name", "Listener Fixture"]);
+    git(
+        &primary,
+        &["config", "user.email", "listener-fixture@example.invalid"],
+    );
+    git(&primary, &["add", "compose.yml", "effigy.toml"]);
+    git(&primary, &["commit", "-m", "fixture base"]);
+    let worktrees = worktree_names
+        .iter()
+        .map(|name| {
+            let path = root.join(name);
+            let branch = format!("listener-{name}");
+            git(
+                &primary,
+                &[
+                    "worktree",
+                    "add",
+                    "-b",
+                    branch.as_str(),
+                    path.to_str().expect("fixture path is UTF-8"),
+                    "HEAD",
+                ],
+            );
+            path
+        })
+        .collect();
+    (primary, worktrees)
+}
+
+/// Starts the disposable private HTTPS gateway shared by managed listener
+/// proofs and returns its state root and OS-assigned HTTPS address.
+fn start_managed_listener_gateway(
+    fixture: &Path,
+    effects: &HostEffectSentinels,
+    foreign_ca: &Path,
+    gateway_cleanup: &mut GatewayCleanup<'_>,
+) -> (PathBuf, SocketAddr) {
+    let private_gateway = private_root(fixture, "managed-listener-gateway");
+    let tls = run_gateway(
+        &private_gateway,
+        "setup-tls",
+        effects,
+        Some(foreign_ca),
+        &[],
+    );
+    let tls_json = parse_json_success(tls);
+    assert_eq!(tls_json["private"], true);
+    let gateway = run_gateway(
+        &private_gateway,
+        "up",
+        effects,
+        Some(foreign_ca),
+        &[
+            "--dns-addr",
+            "127.0.0.1:0",
+            "--proxy-addr",
+            "127.0.0.1:0",
+            "--https-addr",
+            "127.0.0.1:0",
+        ],
+    );
+    let gateway_json = parse_json_success(gateway);
+    gateway_cleanup.track(&private_gateway);
+    let https_address = socket_field(&gateway_json, "https_addr");
+    (private_gateway, https_address)
+}
+
+/// Identical declared listener hosts in the primary checkout and two linked
+/// worktrees must each publish their checkout's scoped name. A shared-identity
+/// sibling keeps the declared name and is refused before any child starts.
+#[test]
+fn managed_host_listeners_scoped_host_routes_follow_checkout_identity() {
+    const DECLARED_HOST: &str = "api.acme.test";
+    let fixture = tempfile::tempdir().expect("fresh scoped listener fixture");
+    let effects = HostEffectSentinels::new(fixture.path());
+    let docker_dir = std::env::split_paths(&effects.env_path)
+        .next()
+        .expect("sentinel PATH directory");
+    let docker_log = fixture.path().join("docker-fixture.log");
+    write_fake_docker(&docker_dir.join("docker"));
+
+    let home = fixture.path().join("home");
+    fs::create_dir(&home).expect("fixture home");
+    let foreign_ca = fixture.path().join("foreign-ca");
+    fs::create_dir(&foreign_ca).expect("foreign CA sentinel");
+    let mut gateway_cleanup = GatewayCleanup::new(&effects, &foreign_ca);
+    let (private_gateway, https_address) =
+        start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut gateway_cleanup);
+    let ca_path = private_gateway.join("ca/rootCA.pem");
+    let routes_path = private_gateway.join("routes.json");
+
+    let (primary, worktrees) = create_listener_worktree_fixture(
+        fixture.path(),
+        &["worktree-one", "worktree-two", "worktree-shared"],
+    );
+    let child_binary = std::env::current_exe().expect("integration test binary");
+    let checkouts = [
+        (primary.clone(), "scoped-primary", "primary-body"),
+        (worktrees[0].clone(), "scoped-one", "one-body"),
+        (worktrees[1].clone(), "scoped-two", "two-body"),
+    ];
+    for (index, (checkout, profile, body)) in checkouts.iter().enumerate() {
+        let control_dir = fixture.path().join(format!("scoped-control-{index}"));
+        fs::create_dir(&control_dir).expect("scoped listener control directory");
+        write_listener_fixture_manifest(ListenerFixtureManifest {
+            checkout,
+            profile,
+            domain: DECLARED_HOST,
+            body,
+            child_binary: &child_binary,
+            control_dir: &control_dir,
+            bind: "127.0.0.1:0",
+            readiness_timeout_secs: 20,
+            never_ready: false,
+            report_mode: "",
+        });
+    }
+    let shared_checkout = &worktrees[2];
+    let shared_control = fixture.path().join("scoped-control-shared");
+    fs::create_dir(&shared_control).expect("shared control directory");
+    write_listener_fixture_manifest(ListenerFixtureManifest {
+        checkout: shared_checkout,
+        profile: "scoped-shared",
+        domain: DECLARED_HOST,
+        body: "shared-body",
+        child_binary: &child_binary,
+        control_dir: &shared_control,
+        bind: "127.0.0.1:0",
+        readiness_timeout_secs: 20,
+        never_ready: false,
+        report_mode: "",
+    });
+    let shared_manifest = fs::read_to_string(shared_checkout.join("effigy.toml"))
+        .expect("read shared-identity manifest");
+    fs::write(
+        shared_checkout.join("effigy.toml"),
+        shared_manifest.replace(
+            "[containers.web]\n",
+            "[containers.web]\nshare_runtime_identity = true\n",
+        ),
+    )
+    .expect("write shared-identity manifest");
+
+    let container_cleanup = ManagedContainerCleanup {
+        checkouts: checkouts
+            .iter()
+            .map(|(checkout, ..)| checkout.clone())
+            .chain(std::iter::once(shared_checkout.clone()))
+            .collect(),
+        home: home.clone(),
+        private_gateway: private_gateway.clone(),
+        foreign_ca: foreign_ca.clone(),
+        effects_path: effects.env_path.clone(),
+        mkcert: effects.private_mkcert.clone(),
+        effect_log: effects.log.clone(),
+        mkcert_calls: effects.mkcert_calls.clone(),
+        docker_log: docker_log.clone(),
+    };
+    let children = checkouts
+        .iter()
+        .map(|(checkout, ..)| {
+            spawn_container_cli(checkout, &container_cleanup, &["up", "--detach", "--json"])
+        })
+        .collect::<Vec<_>>();
+    let reports = children
+        .into_iter()
+        .map(|child| parse_json_success(child.wait_with_output().expect("wait for container up")))
+        .collect::<Vec<_>>();
+
+    let state_path = |checkout: &Path, profile: &str| {
+        checkout
+            .join(".effigy/runtime/host-processes/web")
+            .join(profile)
+            .join("app.listener.json")
+    };
+    let effective = reports
+        .iter()
+        .map(|report| {
+            let listener = &report["managed_host_listeners"][0];
+            assert_eq!(listener["status"], "ready");
+            assert_eq!(listener["route_tls"], true);
+            listener["route_domain"]
+                .as_str()
+                .expect("route domain")
+                .to_owned()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        effective[0], DECLARED_HOST,
+        "primary keeps its declared host"
+    );
+    for name in &effective[1..] {
+        assert!(
+            name.starts_with("api.acme-w") && name.ends_with(".test"),
+            "linked worktree must publish a scoped name, got {name}"
+        );
+    }
+    assert_ne!(effective[1], effective[2]);
+
+    let mut generations = Vec::new();
+    for (index, (checkout, profile, body)) in checkouts.iter().enumerate() {
+        let listener = &reports[index]["managed_host_listeners"][0];
+        let state = read_json_file(&state_path(checkout, profile));
+        let generation = state["generation"].as_str().expect("ready generation");
+        assert_eq!(state["route_domain"], effective[index]);
+        assert_eq!(listener["address"], state["address"]);
+        assert_eq!(listener["internal_url"], state["internal_url"]);
+        assert_eq!(
+            listener["public_url"],
+            format!("https://{}", effective[index])
+        );
+        let route = RouteTable::load(&routes_path)
+            .unwrap()
+            .lookup(&effective[index])
+            .cloned()
+            .expect("published scoped listener route");
+        assert_eq!(route.target.as_deref(), state["address"].as_str());
+        assert_eq!(
+            curl_https(https_address, &ca_path, &effective[index], "/"),
+            format!("{body}@{generation}"),
+            "scoped HTTPS name must reach its own listener"
+        );
+        let requests = fs::read_to_string(fixture.path().join(format!(
+            "scoped-control-{index}/readiness-refused.requests.log"
+        )))
+        .unwrap_or_default();
+        assert!(
+            requests.contains(&format!("host: {}", effective[index])),
+            "readiness must probe the effective host; requests={requests}"
+        );
+        wait_for_file_contains(
+            &checkout
+                .join(".effigy/runtime/host-processes/web")
+                .join(profile)
+                .join("consumer.log"),
+            &format!(
+                "internal={} public=https://{} generation={generation}",
+                state["internal_url"].as_str().unwrap(),
+                effective[index]
+            ),
+            Duration::from_secs(10),
+        );
+        generations.push(generation.to_owned());
+    }
+    assert_eq!(
+        curl_https(https_address, &ca_path, DECLARED_HOST, "/"),
+        format!("primary-body@{}", generations[0]),
+        "the declared host stays with the primary checkout"
+    );
+
+    // The inventory reports the listener-only declaration as declared -> effective.
+    let hosts = run_container_cli(&checkouts[1].0, &container_cleanup, &["hosts", "--json"]);
+    let hosts_json = parse_json_success(hosts);
+    let origin = format!("https://{}", effective[1]);
+    assert!(
+        hosts_json["routes"]
+            .as_array()
+            .expect("host inventory routes")
+            .iter()
+            .any(|route| {
+                route["declared"].as_str() == Some(DECLARED_HOST)
+                    && route["effective"].as_str() == Some(effective[1].as_str())
+                    && route["origin"].as_str() == Some(origin.as_str())
+            }),
+        "container hosts must list the scoped listener route: {hosts_json}"
+    );
+
+    // The shared-identity sibling claims the primary's declared host. Preflight
+    // refuses it before the child starts, so it leaves no listener state.
+    let shared = run_container_cli(
+        shared_checkout,
+        &container_cleanup,
+        &["up", "--detach", "--json"],
+    );
+    assert!(
+        !shared.status.success(),
+        "explicit shared identity must not take the primary's declared host"
+    );
+    assert!(
+        !state_path(shared_checkout, "scoped-shared").exists(),
+        "a refused shared-identity listener must leave no runtime state"
+    );
+    assert_eq!(
+        RouteTable::load(&routes_path)
+            .unwrap()
+            .lookup(DECLARED_HOST)
+            .and_then(|route| route.managed_listener.as_ref())
+            .map(|owner| owner.generation.clone()),
+        Some(generations[0].clone()),
+        "refused foreign claim must not replace the primary's route"
+    );
+
+    // Restart one worktree: its scoped endpoint and dependent URL move while
+    // the primary and sibling worktree keep their generations.
+    let (restart_checkout, restart_profile, restart_body) = &checkouts[1];
+    let restart_control = fixture.path().join("scoped-control-1");
+    let old_state = read_json_file(&state_path(restart_checkout, restart_profile));
+    fs::write(
+        restart_control.join("previous-port"),
+        old_state["address"]
+            .as_str()
+            .unwrap()
+            .rsplit(':')
+            .next()
+            .unwrap(),
+    )
+    .expect("record old dynamic port for the neutral adapter");
+    fs::write(restart_control.join("restart"), "restart\n").expect("request real child restart");
+    wait_for_path_exists(
+        &restart_control.join("listener-paused"),
+        Duration::from_secs(10),
+        "scoped listener release before restart",
+    );
+    fs::write(restart_control.join("continue-exit"), "continue\n")
+        .expect("allow old scoped generation to exit");
+    let new_state = wait_for_listener_generation(
+        &state_path(restart_checkout, restart_profile),
+        &routes_path,
+        &effective[1],
+        old_state["generation"].as_str().unwrap(),
+        Duration::from_secs(20),
+    );
+    assert_ne!(new_state["address"], old_state["address"]);
+    let new_generation = new_state["generation"].as_str().unwrap();
+    assert_eq!(
+        curl_https(https_address, &ca_path, &effective[1], "/"),
+        format!("{restart_body}@{new_generation}")
+    );
+    wait_for_file_contains(
+        &restart_checkout
+            .join(".effigy/runtime/host-processes/web")
+            .join(restart_profile)
+            .join("consumer.log"),
+        &format!(
+            "internal={} public=https://{} generation={new_generation}",
+            new_state["internal_url"].as_str().unwrap(),
+            effective[1]
+        ),
+        Duration::from_secs(15),
+    );
+    for index in [0, 2] {
+        let (checkout, profile, body) = &checkouts[index];
+        let state = read_json_file(&state_path(checkout, profile));
+        assert_eq!(
+            state["generation"].as_str(),
+            Some(generations[index].as_str()),
+            "a sibling restart must not change this generation"
+        );
+        assert_eq!(
+            curl_https(https_address, &ca_path, &effective[index], "/"),
+            format!("{body}@{}", generations[index])
+        );
+    }
+
+    // Stopping the restarted worktree removes only its scoped route.
+    let down = run_container_cli(restart_checkout, &container_cleanup, &["down", "--json"]);
+    assert_success(down);
+    assert!(
+        RouteTable::load(&routes_path)
+            .unwrap()
+            .lookup(&effective[1])
+            .is_none(),
+        "scoped stop must remove its own listener route"
+    );
+    for index in [0, 2] {
+        let (_, _, body) = &checkouts[index];
+        assert_eq!(
+            curl_https(https_address, &ca_path, &effective[index], "/"),
+            format!("{body}@{}", generations[index]),
+            "teardown of one scope must leave sibling routes unchanged"
+        );
+    }
+    assert!(
+        !effects.log.exists() || fs::read(&effects.log).unwrap_or_default().is_empty(),
+        "scoped listener proof invoked a host-global effect"
+    );
+    println!(
+        "scoped listener proof: declared={DECLARED_HOST}, effective={effective:?}, shared_refused=true, private_host_effects=none"
     );
 }
 

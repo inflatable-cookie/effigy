@@ -257,6 +257,181 @@ catalog = "workspace-rust-bun"
     });
 }
 
+fn listener_route(policy: &crate::EffectiveContainerPolicy) -> String {
+    policy.host_processes[0]
+        .listener
+        .as_ref()
+        .expect("managed listener")
+        .route_domain
+        .clone()
+}
+
+#[test]
+fn linked_worktrees_scope_managed_listener_routes_with_declared_hosts() {
+    with_temp_effigy_home("linked-worktree-listener-routes", |_| {
+        let _lock = crate::test_env_lock();
+        let root = temp_repo("linked-worktree-listener-routes");
+        let manifest = r#"
+[containers]
+default = "web"
+[containers.web]
+project_name = "app-dev"
+primary_service = "app"
+[containers.web.services.app]
+catalog = "workspace-rust-bun"
+[[containers.web.host_processes]]
+name = "api"
+run = "exec ./scripts/api"
+[containers.web.host_processes.listener]
+bind = "127.0.0.1:0"
+[containers.web.host_processes.listener.readiness]
+path = "/health"
+status = 200
+[containers.web.host_processes.listener.route]
+domain = "api.acme.test"
+tls = true
+"#;
+        let (primary, checkouts) = create_linked_worktree_fixture(&root, manifest, &["one", "two"]);
+        let primary_policy = load_container_policy(&primary, None).unwrap();
+        assert_eq!(listener_route(&primary_policy), "api.acme.test");
+        let mut preceding_policies = vec![primary_policy];
+        let mut effective = Vec::new();
+        for checkout in &checkouts {
+            let (policy, _) = crate::policy_support::with_test_loopback_inventory(
+                fixture_inventory(&preceding_policies),
+                || load_container_policy(checkout, None).unwrap(),
+            );
+            let domain = listener_route(&policy);
+            assert!(domain.starts_with("api.acme-w"), "got `{domain}`");
+            assert!(domain.ends_with(".test"), "got `{domain}`");
+            effective.push(domain);
+            preceding_policies.push(policy);
+        }
+        assert_ne!(effective[0], effective[1]);
+
+        let (again, _) = crate::policy_support::with_test_loopback_inventory(
+            fixture_inventory(&preceding_policies),
+            || load_container_policy(&checkouts[0], None).unwrap(),
+        );
+        assert_eq!(
+            listener_route(&again),
+            effective[0],
+            "repeated resolution must not scope the listener twice"
+        );
+    });
+}
+
+#[test]
+fn marked_clones_and_shared_identity_scope_listener_routes_like_dns() {
+    with_temp_effigy_home("scoped-listener-dns-match", |_| {
+        let _lock = crate::test_env_lock();
+        let root = temp_repo("scoped-listener-dns-match");
+        let manifest = r#"
+[containers]
+default = "web"
+[containers.web]
+project_name = "app-dev"
+primary_service = "app"
+[containers.web.dns]
+routes = [{ domain = "web.acme.test", tls = true, service = "app" }]
+[containers.web.services.app]
+catalog = "workspace-rust-bun"
+[[containers.web.host_processes]]
+name = "api"
+run = "exec ./scripts/api"
+[containers.web.host_processes.listener]
+bind = "127.0.0.1:0"
+[containers.web.host_processes.listener.readiness]
+path = "/health"
+status = 200
+[containers.web.host_processes.listener.route]
+domain = "api.acme.test"
+tls = true
+"#;
+        let (primary, checkouts) = create_linked_worktree_fixture(&root, manifest, &["one", "two"]);
+        let primary_policy = load_container_policy(&primary, None).unwrap();
+        assert_eq!(primary_policy.dns_routes[0].domain, "web.acme.test");
+        assert_eq!(listener_route(&primary_policy), "api.acme.test");
+        let mut preceding_policies = vec![primary_policy];
+        // DNS and listener names stay distinct but share one scoped apex.
+        let apex = |name: &str| name.split_once('.').expect("dotted host").1.to_owned();
+
+        // A marked ephemeral clone owns its Git directory and follows the
+        // same scope rule as a linked worktree.
+        let clone = root.join("clone");
+        run_git(
+            &root,
+            &[
+                "clone",
+                "--quiet",
+                primary.to_str().unwrap(),
+                clone.to_str().unwrap(),
+            ],
+        );
+        run_git(
+            &clone,
+            &["config", "--local", "effigy.runtimeScope", "ephemeral"],
+        );
+        let (clone_policy, _) = crate::policy_support::with_test_loopback_inventory(
+            fixture_inventory(&preceding_policies),
+            || load_container_policy(&clone, None).unwrap(),
+        );
+        let clone_listener = listener_route(&clone_policy);
+        assert!(
+            clone_listener.starts_with("api.acme-w"),
+            "got `{clone_listener}`"
+        );
+        assert_eq!(
+            apex(&clone_policy.dns_routes[0].domain),
+            apex(&clone_listener)
+        );
+        preceding_policies.push(clone_policy);
+
+        let (worktree, _) = crate::policy_support::with_test_loopback_inventory(
+            fixture_inventory(&preceding_policies),
+            || load_container_policy(&checkouts[0], None).unwrap(),
+        );
+        let worktree_listener = listener_route(&worktree);
+        assert!(worktree_listener.starts_with("api.acme-w"));
+        assert_ne!(worktree_listener, clone_listener);
+        assert_eq!(
+            apex(&worktree.dns_routes[0].domain),
+            apex(&worktree_listener)
+        );
+        assert!(worktree.dns_routes[0].domain.starts_with("web.acme-w"));
+
+        // Identical DNS and listener names are still one static conflict.
+        fs::write(
+            checkouts[1].join("effigy.toml"),
+            manifest.replace("domain = \"api.acme.test\"", "domain = \"web.acme.test\""),
+        )
+        .unwrap();
+        let (conflict, _) = crate::policy_support::with_test_loopback_inventory(
+            fixture_inventory(&preceding_policies),
+            || load_container_policy(&checkouts[1], None),
+        );
+        let conflict = conflict.expect_err("identical static and listener hosts must be refused");
+        assert!(
+            conflict.to_string().contains("conflicts with a static"),
+            "got `{conflict}`"
+        );
+
+        // An explicit shared runtime identity keeps the declared host, exactly
+        // like its DNS route, so the foreign-claim check still applies.
+        let shared_manifest = manifest.replace(
+            "[containers.web]\n",
+            "[containers.web]\nshare_runtime_identity = true\n",
+        );
+        fs::write(checkouts[1].join("effigy.toml"), shared_manifest).unwrap();
+        let (shared, _) = crate::policy_support::with_test_loopback_inventory(
+            fixture_inventory(&preceding_policies),
+            || load_container_policy(&checkouts[1], None).unwrap(),
+        );
+        assert_eq!(shared.dns_routes[0].domain, "web.acme.test");
+        assert_eq!(listener_route(&shared), "api.acme.test");
+    });
+}
+
 #[test]
 fn invalid_linked_worktree_admin_directory_is_refused() {
     let root = temp_repo("invalid-linked-worktree-admin");

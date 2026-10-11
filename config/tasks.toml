@@ -172,6 +172,15 @@
   { id = "managed-host-listener-supervisor", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(host_process)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
   { id = "managed-host-listener-gateway-transition", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy-gateway --lib --filterset 'test(legacy_recovery)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
 ]
+# Managed listener routes follow the checkout host map that container DNS
+# routes already use. The E2E proof runs a primary checkout and two linked
+# worktrees that declare one host on a disposable private gateway, plus an
+# explicit shared-identity refusal. Policy proofs cover marked clones and
+# matching DNS/listener declarations. Disposable loopback fixtures only.
+"test:managed:scoped-host-routes" = [
+  { id = "managed-scoped-host-routes-runtime", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(scoped_host_routes)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { id = "managed-scoped-host-routes-policy", run = "cargo test -p effigy-containers --lib listener_routes -- --nocapture", timeout_ms = 600000 },
+]
 "proof:managed:host-listeners" = [
   { id = "managed-host-listener-cli-proof", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_host_listeners_bind_routes_propagate_restart_and_scope_teardown)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
 ]

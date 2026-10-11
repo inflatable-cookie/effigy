@@ -6,7 +6,8 @@
 //! `<apex>-w<host-key>.<tld>`.
 
 use super::model::{
-    EffectiveContainerPolicy, EffectiveDnsRoute, EffectiveServiceAlias, SharedServiceBinding,
+    EffectiveContainerPolicy, EffectiveDnsRoute, EffectiveHostProcess, EffectiveServiceAlias,
+    SharedServiceBinding,
 };
 use effigy_core::worktree_scope;
 
@@ -212,6 +213,29 @@ pub fn build_host_map(
         declared_base,
         effective_base,
         routes,
+    }
+}
+
+/// Append managed host-listener declarations to the DNS inventory. Manifest
+/// validation already refuses a listener name that matches a static DNS route,
+/// so each listener adds one entry with its own declared-to-effective pair.
+pub fn add_managed_listener_routes(
+    map: &mut EffectiveHostMap,
+    host_processes: &[EffectiveHostProcess],
+) {
+    for listener in host_processes
+        .iter()
+        .filter_map(|process| process.listener.as_ref())
+    {
+        let scheme = if listener.route_tls { "https" } else { "http" };
+        map.routes.push(EffectiveHostRoute {
+            kind: HostRouteKind::Http,
+            declared: listener.declared_route_domain.clone(),
+            effective: listener.route_domain.clone(),
+            tls: listener.route_tls,
+            service: None,
+            origin: Some(format!("{scheme}://{}", listener.route_domain)),
+        });
     }
 }
 

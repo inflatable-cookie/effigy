@@ -10,7 +10,8 @@ use effigy_manifest::{
 
 use crate::mount_spec::resolve_host_mounts;
 use crate::policy::hosts::{
-    apply_scope_to_routes, build_host_map, host_key, scope_token, uses_shared_runtime_identity,
+    apply_scope_to_routes, build_host_map, host_key, rewrite_declared_host, scope_token,
+    uses_shared_runtime_identity,
 };
 use crate::policy::project::{
     default_project_name_base, resolve_project_name, validate_unique_project_names,
@@ -380,7 +381,8 @@ fn build_effective_policy(
         });
     }
     let runtime_token = scope_token(repo_root, config.share_runtime_identity)?;
-    if let Some(key) = runtime_token.as_deref().and_then(host_key) {
+    let runtime_host_key = runtime_token.as_deref().and_then(host_key);
+    if let Some(key) = runtime_host_key {
         apply_scope_to_routes(&mut dns_routes, key);
     }
     let service_aliases = effective_service_aliases(repo_root, config)?;
@@ -465,7 +467,7 @@ fn build_effective_policy(
         host_processes: config
             .host_processes
             .iter()
-            .map(resolve_host_process)
+            .map(|entry| resolve_host_process(entry, runtime_host_key))
             .collect(),
     };
     Ok(policy)
@@ -473,6 +475,7 @@ fn build_effective_policy(
 
 fn resolve_host_process(
     entry: &effigy_manifest::ManifestContainerHostProcess,
+    runtime_host_key: Option<&str>,
 ) -> EffectiveHostProcess {
     use effigy_manifest::ManifestContainerHostProcessRestart;
     let restart = match entry.restart.unwrap_or_default() {
@@ -504,17 +507,21 @@ fn resolve_host_process(
             .map(|(key, value)| (key.clone(), value.clone()))
             .collect(),
         depends_on: entry.depends_on.clone(),
-        listener: entry
-            .listener
-            .as_ref()
-            .map(|listener| EffectiveManagedHostListener {
+        listener: entry.listener.as_ref().map(|listener| {
+            let declared = listener.route.domain.clone();
+            EffectiveManagedHostListener {
                 bind: listener.bind.clone(),
                 readiness_path: listener.readiness.path.clone(),
                 readiness_status: listener.readiness.status,
                 readiness_timeout_secs: listener.readiness.timeout_secs,
-                route_domain: listener.route.domain.clone(),
+                route_domain: match runtime_host_key {
+                    Some(key) => rewrite_declared_host(&declared, key),
+                    None => declared.clone(),
+                },
+                declared_route_domain: declared,
                 route_tls: listener.route.tls,
-            }),
+            }
+        }),
         restart,
         restart_delay_ms: entry.restart_delay_ms.unwrap_or(1000),
         shutdown_signal,
