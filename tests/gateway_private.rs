@@ -1116,6 +1116,26 @@ fn managed_host_listeners_bind_routes_propagate_restart_and_scope_teardown() {
             .is_none()
     );
     drop(fixed_collision);
+    let collision_down =
+        run_container_cli(primary_checkout, &container_cleanup, &["down", "--json"]);
+    assert_success(collision_down);
+    let collision_stopped = read_json_file(&listener_state_path(
+        primary_checkout,
+        primary_profile,
+        "app",
+    ));
+    assert!(
+        matches!(
+            collision_stopped["status"].as_str(),
+            Some("failed" | "stopped")
+        ),
+        "collision cleanup did not reach a terminal state: {collision_stopped}"
+    );
+    assert!(
+        collision_stopped["child_pid"].is_null(),
+        "collision cleanup retained its child: {collision_stopped}"
+    );
+    let collision_generation = collision_stopped["generation"].clone();
 
     write_listener_fixture_manifest(ListenerFixtureManifest {
         checkout: primary_checkout,
@@ -1139,10 +1159,10 @@ fn managed_host_listeners_bind_routes_propagate_restart_and_scope_teardown() {
         "a listener that never becomes ready must fail startup"
     );
     let delayed_state_path = listener_state_path(primary_checkout, primary_profile, "app");
-    let delayed_deadline = Instant::now() + Duration::from_secs(5);
+    let delayed_deadline = Instant::now() + Duration::from_secs(10);
     let delayed_state = loop {
         let state = read_json_file(&delayed_state_path);
-        if state["status"] != "starting" {
+        if state["route_domain"] == "delayed.host.test" && state["status"] == "failed" {
             break state;
         }
         assert!(
@@ -1152,6 +1172,8 @@ fn managed_host_listeners_bind_routes_propagate_restart_and_scope_teardown() {
         thread::sleep(Duration::from_millis(25));
     };
     assert_eq!(delayed_state["status"], "failed");
+    assert_ne!(delayed_state["generation"], collision_generation);
+    assert_eq!(delayed_state["route_domain"], "delayed.host.test");
     assert!(
         delayed_state["route_owner"].is_null(),
         "failed startup retained an endpoint owner: {delayed_state}; stderr={}",
