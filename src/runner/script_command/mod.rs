@@ -185,6 +185,7 @@ fn host_callbacks() -> HostCallbacks {
                     name: Some(name.to_owned()),
                     service: service.map(str::to_owned),
                     command: Some(command.to_owned()),
+                    bounded: None,
                 },
             )
             .map_err(|error| error.to_string())

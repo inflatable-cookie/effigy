@@ -17,6 +17,7 @@ use lifecycle::{
 use profile::run_container_profile_command;
 use volume::run_container_volume_command;
 
+pub(in crate::runner) use bounded_exec::run_container_shell_bounded;
 pub(in crate::runner) use closeout::maybe_confirm_container_shell_exit_cleanup;
 pub(in crate::runner) use gateway_registration::{
     gateway_routes_registered_for_container, register_gateway_routes_for_container,
@@ -27,6 +28,7 @@ pub(in crate::runner) use lifecycle::{
 };
 pub(in crate::runner) use secret_env::container_secret_runtime_env_path;
 
+mod bounded_exec;
 mod cache;
 mod closeout;
 mod data;
@@ -117,15 +119,33 @@ pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, Ru
             name,
             service,
             command,
+            bounded,
         } => {
             let context = resolve_active_command_context(args.repo_override.clone())?;
-            run_container_shell(
-                &context.resolved.resolved_root,
-                name.as_deref(),
-                service.as_deref(),
-                command.as_deref(),
-                args.output_json,
-            )
+            match bounded {
+                Some(limits) => {
+                    let command = command.as_deref().ok_or_else(|| {
+                        RunnerError::task_invocation(
+                            "`effigy container <NAME> shell --bounded` requires `--command <CMD>`",
+                        )
+                    })?;
+                    run_container_shell_bounded(
+                        &context.resolved.resolved_root,
+                        name.as_deref(),
+                        service.as_deref(),
+                        command,
+                        limits,
+                        args.output_json,
+                    )
+                }
+                None => run_container_shell(
+                    &context.resolved.resolved_root,
+                    name.as_deref(),
+                    service.as_deref(),
+                    command.as_deref(),
+                    args.output_json,
+                ),
+            }
         }
         ContainerSubcommand::Reset {
             name,

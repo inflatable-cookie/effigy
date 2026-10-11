@@ -261,6 +261,26 @@
   "cargo test --test cli_output_tests cli_container_data_seed_reaper_detector_catches_enabled_control_and_cleans_owned_child -- --nocapture",
   "cargo test --test cli_output_tests cli_workspace_binding_handoff_stops_environment_after_return -- --nocapture",
 ]
+# Opt-in bounded finite container-command capture: strict bound parsing and the
+# default non-opt-in command shell path, plus the bounded reader and owned-group
+# termination primitive. Private fixtures only; no runtime, Reference, Acow,
+# Colima, gateway or service is started.
+"test:container:bounded-exec" = [
+  { id = "bounded-exec-parser", run = "cargo test -p effigy-cli --lib command_parsing::container::tests:: -- --nocapture", timeout_ms = 600000 },
+  { id = "bounded-exec-reader", run = "cargo test -p effigy --lib exec_command::bounded:: -- --nocapture", timeout_ms = 600000 },
+  { id = "bounded-exec-default-path", run = "cargo test -p effigy --lib container_command::lifecycle::tests:: -- --nocapture", timeout_ms = 600000 },
+]
+# Real private fake-backend production-path proof of the bounded opt-in
+# surface: both byte limits, one absolute deadline and inherited-pipe lifetime,
+# cumulative fallback accounting, selection and inner/outer exit distinctions.
+# Fake `colima`/`docker` doubles on `PATH` only; no live container runtime.
+"proof:container:bounded-exec" = [
+  { id = "bounded-exec-production-proof", run = "cargo test -p effigy --lib container_command::bounded_exec:: -- --nocapture --test-threads=1", timeout_ms = 600000 },
+]
+"check:container:bounded-exec" = [
+  { id = "bounded-exec-compile", run = "cargo check -p effigy-cli -p effigy-runtime -p effigy --all-targets --profile test", timeout_ms = 600000 },
+  { id = "bounded-exec-clippy", run = "cargo clippy -p effigy-cli -p effigy-runtime -p effigy --all-targets -- -D warnings", timeout_ms = 600000 },
+]
 
 # Bounded QA-group proofs (contract 051 implementation)
 "test:qa-groups:manifest" = "cargo test -p effigy-manifest --lib qa_groups -- --nocapture"

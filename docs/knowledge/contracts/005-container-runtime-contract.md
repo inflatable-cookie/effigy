@@ -352,6 +352,60 @@ Coherent main assurance and exact-source/platform checksum provenance precede
 consumer admission. No consumer runtime attempt, binary replacement, release,
 default migration or scheduler authority is granted by this ruling.
 
+### Supported bounded finite command surface
+
+`effigy container <NAME> shell --command <CMD> --bounded --deadline-ms <MS>
+--stdout-limit-bytes <N> --stderr-limit-bytes <N> [--service <SERVICE>] [--json]`
+is the opt-in invocation of that capability. All four bounded flags are
+required together with `--command`; each bound is strictly parsed as a positive
+integer and validated before any effect (`deadline_ms` 1..3600000,
+`stdout_limit_bytes` and `stderr_limit_bytes` 1..67108864). A missing, zero,
+negative, fractional, out-of-range or misplaced bound is refused at parse time;
+there is no partial-bound execution. Flags without `--bounded` are refused so
+the default command shell keeps its existing unbounded behavior.
+
+While the bounded option is present, the operation enforces one absolute
+deadline created before discovery and one cumulative stdout/stderr retention
+budget. The deadline is checked at every phase boundary — before discovery,
+after discovery, after preparation and before every client spawn, and
+throughout the final drain — so a phase that returns after it refuses without
+spawning. The shared session/runtime resolution and workspace-effigy
+preparation that precede the capture are existing steps and are not interrupted
+mid-capture; they run only before the bounded capture, and their deadline
+decision is the refusal before spawn. Both streams drain concurrently into
+bounded buffers; a stream that
+produces more than its remaining budget is an error even when the client exits
+`0`, and the retained prefix is never reported as success. The eligible
+existing missing-workspace-user fallback draws from the same remaining budget,
+so a second attempt cannot reset the hard total. Overflow, read failure,
+incomplete output and deadline refuse before any fallback or repeat. The client
+is launched into an exactly owned process group; on refusal Effigy terminates
+and reaps only that group with a fixed bounded SIGTERM-to-SIGKILL grace that
+does not rebase the command deadline.
+
+Selection stays on the existing supported resolution: checkout, named
+profile, service and working directory resolve exactly as the plain command
+shell resolves them, and the same workspace-user identity is attempted first.
+An inner command exit distinction is preserved: a complete in-budget capture
+with a nonzero client status is an `inner_command_failed` result carrying the
+inner code, distinct from the bounds/deadline reasons. Credentials are excluded
+by the shared secret-env rules; neither a bounds failure nor an inner failure
+dumps raw command output, arguments or configuration into diagnostics.
+
+`--json` is accepted only because the bounded mode is non-interactive. It emits
+the versioned `effigy.container.bounded-exec.v1` payload with `ok`, status,
+bounded captured bytes and byte counts, the declared limits, retained totals,
+the attempt count, the workspace-user-fallback flag and a
+`remote_cancellation: "unverified"` fact. Failure payloads carry only a reason,
+stream name, limit and safe counts. Terminating the owned host client group is
+not proof that a remote container process stopped: remote cancellation stays
+explicitly unverified, and no remote PID is guessed, no service or sibling is
+stopped, and an uncertain command is never automatically repeated. The bounded
+path runs the resolved compose invocation directly and performs no preparatory
+container-id capture, so every command-output path in the operation is the same
+bounded reader. The shared session/runtime resolution that precedes it is
+unchanged and is not part of the bounded capture.
+
 ## Runtime-backed execution surfaces
 
 The contract applies to any Effigy surface that:

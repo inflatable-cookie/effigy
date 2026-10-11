@@ -14,12 +14,12 @@ const CONTAINER_TTY_COLOR_ENV: [(&str, &str); 2] =
     [("TERM", "xterm-256color"), ("COLORTERM", "truecolor")];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct ResolvedWorkspaceExecIdentity {
-    pub(super) user: String,
-    pub(super) home: Option<String>,
+pub struct ResolvedWorkspaceExecIdentity {
+    pub user: String,
+    pub home: Option<String>,
 }
 
-pub(super) fn build_container_shell_args(
+pub fn build_container_shell_args(
     service: &str,
     command: Option<&str>,
     working_dir: Option<&Path>,

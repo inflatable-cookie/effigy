@@ -17,10 +17,8 @@ use effigy_ui::theme::{resolve_color_enabled, Theme};
 use effigy_ui::OutputMode;
 
 use crate::EffigyRuntimeError;
-use exec_args::{
-    build_container_shell_args, build_interactive_container_shell_args,
-    ResolvedWorkspaceExecIdentity,
-};
+use exec_args::build_interactive_container_shell_args;
+pub use exec_args::{build_container_shell_args, ResolvedWorkspaceExecIdentity};
 
 const DEFAULT_CONTAINER_SHELL: &str = "sh";
 
@@ -395,7 +393,7 @@ where
     Ok(None)
 }
 
-fn command_mode_failure_looks_like_missing_workspace_user(output: &Output) -> bool {
+pub fn command_mode_failure_looks_like_missing_workspace_user(output: &Output) -> bool {
     let combined = format!(
         "{}\n{}",
         String::from_utf8_lossy(&output.stdout),

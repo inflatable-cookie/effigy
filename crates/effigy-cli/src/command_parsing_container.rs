@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use crate::{
-    Command, ContainerArgs, ContainerCacheSubcommand, ContainerPortsSubcommand,
+    BoundedExecLimits, Command, ContainerArgs, ContainerCacheSubcommand, ContainerPortsSubcommand,
     ContainerProfileSubcommand, ContainerSubcommand, ContainerVolumeSubcommand, HelpTopic,
 };
 
@@ -926,11 +926,16 @@ where
     let mut output_json = false;
     let mut service: Option<String> = None;
     let mut command: Option<String> = None;
+    let mut bounded = false;
+    let mut deadline_ms: Option<u64> = None;
+    let mut stdout_limit_bytes: Option<u64> = None;
+    let mut stderr_limit_bytes: Option<u64> = None;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
             "--json" => output_json = true,
+            "--bounded" => bounded = true,
             "--service" => {
                 service = Some(next_required_value(
                     &mut args,
@@ -947,20 +952,81 @@ where
                     },
                 )?);
             }
+            "--deadline-ms" => deadline_ms = Some(parse_bounded_u64(&mut args, "--deadline-ms")?),
+            "--stdout-limit-bytes" => {
+                stdout_limit_bytes = Some(parse_bounded_u64(&mut args, "--stdout-limit-bytes")?);
+            }
+            "--stderr-limit-bytes" => {
+                stderr_limit_bytes = Some(parse_bounded_u64(&mut args, "--stderr-limit-bytes")?);
+            }
             "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
             other => return Err(unknown_argument(other)),
         }
     }
+
+    let limits = if bounded {
+        if command.is_none() {
+            return Err(CliParseError::InvalidArguments(
+                "`effigy container <NAME> shell --bounded` requires `--command <CMD>`".to_owned(),
+            ));
+        }
+        let limits = BoundedExecLimits {
+            deadline_ms: deadline_ms.ok_or_else(|| {
+                CliParseError::InvalidArguments(
+                    "`--bounded` requires `--deadline-ms <MS>`".to_owned(),
+                )
+            })?,
+            stdout_limit_bytes: stdout_limit_bytes.ok_or_else(|| {
+                CliParseError::InvalidArguments(
+                    "`--bounded` requires `--stdout-limit-bytes <N>`".to_owned(),
+                )
+            })?,
+            stderr_limit_bytes: stderr_limit_bytes.ok_or_else(|| {
+                CliParseError::InvalidArguments(
+                    "`--bounded` requires `--stderr-limit-bytes <N>`".to_owned(),
+                )
+            })?,
+        };
+        limits.validate().map_err(CliParseError::InvalidArguments)?;
+        Some(limits)
+    } else {
+        if deadline_ms.is_some() || stdout_limit_bytes.is_some() || stderr_limit_bytes.is_some() {
+            return Err(CliParseError::InvalidArguments(
+                "`--deadline-ms`, `--stdout-limit-bytes` and `--stderr-limit-bytes` require `--bounded`"
+                    .to_owned(),
+            ));
+        }
+        None
+    };
 
     Ok(Command::Container(ContainerArgs {
         subcommand: ContainerSubcommand::Shell {
             name,
             service,
             command,
+            bounded: limits,
         },
         repo_override,
         output_json,
     }))
+}
+
+fn parse_bounded_u64<I>(args: &mut I, flag: &str) -> Result<u64, CliParseError>
+where
+    I: Iterator<Item = String>,
+{
+    let raw = next_required_value(
+        args,
+        CliParseError::MissingFlagValue {
+            flag: flag.to_owned(),
+        },
+    )?;
+    raw.parse::<u64>()
+        .map_err(|_| CliParseError::InvalidFlagValue {
+            flag: flag.to_owned(),
+            value: raw,
+            expected: "a positive integer".to_owned(),
+        })
 }
 
 fn parse_named_container_simple_subcommand<I, F>(
@@ -1042,5 +1108,170 @@ mod tests {
         let argv = ["container", "web", "ports", "status"].map(str::to_owned);
         assert!(parse_command(argv).is_err());
         assert!(ports(&["status", "--repo", "/tmp/x"]).is_err());
+    }
+
+    fn shell(args: &[&str]) -> Result<ContainerSubcommand, crate::CliParseError> {
+        let mut argv = vec!["container", "web", "shell"];
+        argv.extend_from_slice(args);
+        match parse_command(argv.into_iter().map(str::to_owned))? {
+            Command::Container(container) => Ok(container.subcommand),
+            other => panic!("unexpected command {other:?}"),
+        }
+    }
+
+    fn bounded(args: &[&str]) -> Result<crate::BoundedExecLimits, crate::CliParseError> {
+        match shell(args)? {
+            ContainerSubcommand::Shell {
+                bounded: Some(limits),
+                ..
+            } => Ok(limits),
+            other => panic!("expected bounded shell, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn bounded_shell_parses_explicit_limits() {
+        let limits = bounded(&[
+            "--command",
+            "true",
+            "--bounded",
+            "--deadline-ms",
+            "1500",
+            "--stdout-limit-bytes",
+            "2048",
+            "--stderr-limit-bytes",
+            "4096",
+        ])
+        .expect("bounded limits parse");
+        assert_eq!(limits.deadline_ms, 1500);
+        assert_eq!(limits.stdout_limit_bytes, 2048);
+        assert_eq!(limits.stderr_limit_bytes, 4096);
+    }
+
+    #[test]
+    fn bounded_shell_requires_a_command_and_every_bound() {
+        assert!(shell(&[
+            "--bounded",
+            "--deadline-ms",
+            "1",
+            "--stdout-limit-bytes",
+            "1",
+            "--stderr-limit-bytes",
+            "1"
+        ])
+        .is_err());
+        assert!(shell(&[
+            "--command",
+            "true",
+            "--bounded",
+            "--stdout-limit-bytes",
+            "1",
+            "--stderr-limit-bytes",
+            "1"
+        ])
+        .is_err());
+        assert!(shell(&[
+            "--command",
+            "true",
+            "--bounded",
+            "--deadline-ms",
+            "1",
+            "--stderr-limit-bytes",
+            "1"
+        ])
+        .is_err());
+        assert!(shell(&[
+            "--command",
+            "true",
+            "--bounded",
+            "--deadline-ms",
+            "1",
+            "--stdout-limit-bytes",
+            "1"
+        ])
+        .is_err());
+    }
+
+    #[test]
+    fn bounded_flags_require_explicit_opt_in() {
+        assert!(shell(&["--command", "true", "--deadline-ms", "1"]).is_err());
+        assert!(shell(&["--command", "true", "--stdout-limit-bytes", "1"]).is_err());
+        assert!(shell(&["--command", "true", "--stderr-limit-bytes", "1"]).is_err());
+    }
+
+    #[test]
+    fn bounded_shell_rejects_zero_negative_and_garbage_bounds() {
+        for value in ["0", "-1", "1_000", "abc", ""] {
+            assert!(
+                shell(&[
+                    "--command",
+                    "true",
+                    "--bounded",
+                    "--deadline-ms",
+                    value,
+                    "--stdout-limit-bytes",
+                    "1",
+                    "--stderr-limit-bytes",
+                    "1",
+                ])
+                .is_err(),
+                "deadline {value:?} must be refused"
+            );
+            assert!(
+                shell(&[
+                    "--command",
+                    "true",
+                    "--bounded",
+                    "--deadline-ms",
+                    "1",
+                    "--stdout-limit-bytes",
+                    value,
+                    "--stderr-limit-bytes",
+                    "1",
+                ])
+                .is_err(),
+                "stdout limit {value:?} must be refused"
+            );
+        }
+    }
+
+    #[test]
+    fn bounded_shell_rejects_out_of_range_bounds() {
+        assert!(shell(&[
+            "--command",
+            "true",
+            "--bounded",
+            "--deadline-ms",
+            "3600001",
+            "--stdout-limit-bytes",
+            "1",
+            "--stderr-limit-bytes",
+            "1",
+        ])
+        .is_err());
+        assert!(shell(&[
+            "--command",
+            "true",
+            "--bounded",
+            "--deadline-ms",
+            "1",
+            "--stdout-limit-bytes",
+            "67108865",
+            "--stderr-limit-bytes",
+            "1",
+        ])
+        .is_err());
+    }
+
+    #[test]
+    fn shell_without_bounded_flags_stays_unbounded() {
+        match shell(&["--command", "true"]).expect("plain command shell parses") {
+            ContainerSubcommand::Shell {
+                bounded: None,
+                command: Some(command),
+                ..
+            } => assert_eq!(command, "true"),
+            other => panic!("unexpected shell shape {other:?}"),
+        }
     }
 }

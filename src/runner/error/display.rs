@@ -183,6 +183,7 @@ pub(super) fn fmt_runner_error(
         RunnerError::CommandJsonFailure { .. } => {
             write!(f, "command failed (json output available)")
         }
+        RunnerError::BoundedExecFailure { message, .. } => f.write_str(message),
         RunnerError::GraphOperationTimeout {
             command,
             timeout_ms,
