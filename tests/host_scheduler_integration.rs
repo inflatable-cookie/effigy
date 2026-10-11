@@ -1314,6 +1314,8 @@ fn assert_reviewed_private_queue_checkout() {
 
 fn fixture_runner_test_binary(repo_root: &Path) -> PathBuf {
     let required = [
+        "runner::state_command::tests::state_fixture_old_placement_refuses_all_four_execution_paths",
+        "runner::state_command::tests::state_capture_executes_named_and_inline_tasks_with_context",
         "runner::cache_tests::builtin::cache_builtin_inspect_and_invalidate_paths_are_available",
         "runner::bootstrap_command::tests::run_bootstrap_with_cwd_starts_when_requested",
         "runner::bootstrap_command::tests::run_bootstrap_with_cwd_stages_db_seed_before_root_run",
@@ -1389,6 +1391,10 @@ fn fixture_parent_runner_selector_succeeds_with_authenticated_parent_root() {
         .output()
         .expect("run fixture selector through private Queue parent");
     assert_eq!(code(&output), 0, "{}", text(&output.stderr));
+    // Preserve the actual outside-root state reports and each exact test
+    // result in the outer selector receipt, including expected unwind proof.
+    eprintln!("{}", text(&output.stderr));
+    println!("{}", text(&output.stdout));
 
     let run_ids = server.run_ids();
     assert_eq!(run_ids.len(), 1, "one admitted fixture-selector run");
