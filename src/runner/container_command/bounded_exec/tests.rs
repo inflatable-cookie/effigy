@@ -367,6 +367,7 @@ fn run_guarded_public_case(
     mode: &str,
     backend: &str,
     identity: &str,
+    deadline_ms: u64,
     stdout_limit: u64,
 ) -> Duration {
     use std::os::unix::process::CommandExt;
@@ -396,14 +397,7 @@ fn run_guarded_public_case(
         .env("FAKE_BOUNDED_PID_FILE", &pid_file)
         .env("FAKE_BOUNDED_FINAL_MARKER", &final_marker)
         .env("FAKE_BOUNDED_STDOUT_LIMIT", stdout_limit.to_string())
-        .env(
-            "FAKE_BOUNDED_DEADLINE_MS",
-            if mode.starts_with("valid-") {
-                "8000"
-            } else {
-                "2000"
-            },
-        )
+        .env("FAKE_BOUNDED_DEADLINE_MS", deadline_ms.to_string())
         .env("PATH", path)
         .env("HOME", dir.path())
         .env("EFFIGY_COMPOSE_BACKEND", backend)
@@ -585,6 +579,7 @@ fn public_entry_bounds_discovery_preparation_and_fallback_on_the_full_path() {
         "valid-identity",
         "docker",
         &identity,
+        8_000,
         256,
     );
     run_guarded_public_case(
@@ -594,6 +589,7 @@ fn public_entry_bounds_discovery_preparation_and_fallback_on_the_full_path() {
         "valid-colima",
         "colima",
         &identity,
+        8_000,
         256,
     );
     let elapsed = run_guarded_public_case(
@@ -603,6 +599,7 @@ fn public_entry_bounds_discovery_preparation_and_fallback_on_the_full_path() {
         "phase-continuity",
         "docker",
         &identity,
+        2_000,
         64,
     );
     assert!(
@@ -626,6 +623,7 @@ fn public_entry_bounds_discovery_preparation_and_fallback_on_the_full_path() {
             mode,
             backend,
             &identity,
+            2_000,
             if mode == "fallback-budget" {
                 identity.len() as u64 + 4
             } else {
@@ -642,6 +640,7 @@ fn public_entry_bounds_discovery_preparation_and_fallback_on_the_full_path() {
         "remove-before-command",
         "docker",
         &identity,
+        2_000,
         256,
     );
 }
