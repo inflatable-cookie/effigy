@@ -11,13 +11,14 @@ use std::process::Output;
 use effigy_catalog::volumes::{remove_volume_command, DockerCommand, ManagedVolume};
 use effigy_containers::ContainerAction;
 use effigy_containers::{
-    cache_list_global_report, cache_list_report, cache_prune_report, data_list_report,
-    data_transfer_report,
+    annotate_workspace_extra_mount_decisions, cache_list_global_report, cache_list_report,
+    cache_prune_report, data_list_report, data_transfer_report,
     exec::{runtime_backend_is_running, selected_backend_label},
-    load_container_policy, user_global_colima_profile, validate_compose_backend_runtime,
-    validate_container_policy, volume_list_report, volume_prune_report, ContainerCachePruneEntry,
-    ContainerCacheVolumeEntry, ContainerDataTransferAction, ContainerDataVolumeEntry,
-    ContainerVolumePruneEntry, EffectiveContainerPolicy,
+    load_container_policy, load_container_policy_for_creation, user_global_colima_profile,
+    validate_compose_backend_runtime, validate_container_policy, volume_list_report,
+    volume_prune_report, ContainerCachePruneEntry, ContainerCacheVolumeEntry,
+    ContainerDataTransferAction, ContainerDataVolumeEntry, ContainerVolumePruneEntry,
+    EffectiveContainerPolicy,
 };
 use effigy_containers::{
     ContainerCacheOperation, ContainerDataOperation, ContainerVolumeOperation,
@@ -579,7 +580,7 @@ where
     ) -> Result<Vec<RegisteredGatewayRoute>, EffigyRuntimeError>,
     FHook: Fn(&Path, &EffectiveContainerPolicy, &str) -> Result<(), EffigyRuntimeError>,
 {
-    let policy = load_container_policy(repo_root, name)
+    let mut policy = load_container_policy(repo_root, name)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     let _operation_plan = data_operation_plan(
         repo_root,
@@ -604,6 +605,14 @@ where
         effigy_containers::exec::ensure_runtime_backend_running(&policy, repo_root)
             .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     let shared_service_notes = ensure_shared_services_running(&policy)?;
+    let (creation_policy, workspace_mount_decisions) =
+        load_container_policy_for_creation(repo_root, Some(policy.name.as_str()))
+            .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+    policy.compose_files = creation_policy.compose_files;
+    validate_container_policy(repo_root, &policy)
+        .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+    validate_compose_backend_runtime(repo_root, &policy)
+        .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     let plan = crate::container_manager::compose_up_invocation_plan(
         repo_root,
         &policy,
@@ -623,11 +632,63 @@ where
     );
     annotate_shared_service_notes(&mut report, &shared_service_notes);
     annotate_registered_gateway_routes(&mut report, &gateway_routes);
+    annotate_workspace_extra_mount_decisions(&mut report, &workspace_mount_decisions);
     annotate_warning_lines(
         &mut report,
         &effigy_containers::exec::colima_profile_warnings(&policy, repo_root),
     );
     Ok(render_container_report(report, output_json))
+}
+
+#[cfg(test)]
+mod workspace_mount_report_tests {
+    use super::annotate_workspace_extra_mount_decisions;
+    use effigy_containers::{
+        ContainerCommandReport, WorkspaceExtraMountDecision, WorkspaceExtraMountDecisionKind,
+    };
+
+    #[test]
+    fn data_pull_workspace_mount_decisions_are_bounded_and_explicit() {
+        let long_path = format!("/workspace/{}", "x".repeat(500));
+        let mut report = ContainerCommandReport {
+            json: serde_json::json!({"schema": "effigy.container.data-pull-production.v1"}),
+            success_text: "pulled production data".to_owned(),
+        };
+
+        annotate_workspace_extra_mount_decisions(
+            &mut report,
+            &[WorkspaceExtraMountDecision {
+                source: long_path,
+                target: "/workspace/extra".to_owned(),
+                decision: WorkspaceExtraMountDecisionKind::IncludedInComposeSpec,
+            }],
+        );
+
+        assert_eq!(
+            report.json["workspace_extra_mounts"]["compose_up_dispatch"],
+            "succeeded"
+        );
+        assert_eq!(
+            report.json["workspace_extra_mounts"]["runtime_mount_verification"],
+            "not_performed"
+        );
+        assert_eq!(
+            report.json["workspace_extra_mounts"]["decisions"][0]["decision"],
+            "included_in_compose_spec"
+        );
+        assert_eq!(
+            report.json["workspace_extra_mounts"]["decisions"][0]["source"]
+                .as_str()
+                .expect("source is string")
+                .chars()
+                .count(),
+            385
+        );
+        assert!(report
+            .success_text
+            .contains("actual runtime mount state was not verified"));
+        assert!(!report.success_text.contains("applied"));
+    }
 }
 
 fn cache_volume_entry(volume: ManagedVolume) -> Option<ContainerCacheVolumeEntry> {

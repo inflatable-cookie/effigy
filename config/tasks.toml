@@ -413,6 +413,13 @@
   "cargo clippy -p effigy --all-targets -- -D warnings",
   "cargo clippy -p effigy-containers --lib -- -D warnings",
 ]
+# Resolve optional workspace extra mounts after preparation, then capture the
+# effective create spec through the selected Compose backend plan.
+"test:workspace:extra-mount-creation" = [
+  { id = "container-policy-mount-decisions", run = "cargo nextest run --config-file tests/config/deadline-marker-nextest.toml --user-config-file none -p effigy-containers --lib --filterset 'test(creation_policy_) | test(structured_mount_tests) | test(optional_source_tests) | test(absent_sibling_mount_is_skipped_instead_of_aborting) | test(absent_catalog_member_mount_still_fails)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 300000 },
+  { id = "runner-create-backend-capture", run = "cargo nextest run --config-file tests/config/deadline-marker-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(creation_refresh_is_captured_by_compose_backend_plan) | test(running_direct_primary_keeps_loaded_mount_spec)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 300000 },
+  { id = "data-pull-mount-decision-report", run = "cargo nextest run --config-file tests/config/deadline-marker-nextest.toml --user-config-file none -p effigy-runtime --lib --filterset 'test(data_pull_workspace_mount_decisions_are_bounded_and_explicit)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 300000 },
+]
 # Bulk ownership repair (papercut dab293be): O(volumes) runtime round trips
 # for owned Rust volumes, deadline/identity/protected-scope failures. Private
 # in-memory numeric-user backend only; no live VM/container/chown.

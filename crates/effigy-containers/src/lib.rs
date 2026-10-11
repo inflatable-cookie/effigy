@@ -33,7 +33,8 @@ pub use policy::inline_workspace::{
 };
 pub use policy::load::{
     effective_attach_mode, load_all_container_policies, load_container_exec_working_dir,
-    load_container_policy, load_container_policy_with_workspace, register_container_runtime_scope,
+    load_container_policy, load_container_policy_for_creation,
+    load_container_policy_with_workspace, register_container_runtime_scope,
 };
 pub use policy::model::{
     ContainerEjectResult, ContainerPolicyError, EffectiveAttachMode, EffectiveComposeSource,
@@ -42,11 +43,12 @@ pub use policy::model::{
     SharedServiceBinding,
 };
 pub use report::{
-    cache_list_global_report, cache_list_report, cache_prune_report, data_list_report,
-    data_pull_production_report, data_transfer_report, down_report, eject_report, hosts_report,
-    logs_report, reset_report, retire_report, retire_report_unverified, stats_global_report,
-    status_global_report, status_report, up_detached_report, volume_list_report,
-    volume_prune_report, AllocatedPortsSummary, ContainerCacheGlobalEntry,
+    annotate_workspace_extra_mount_decisions, cache_list_global_report, cache_list_report,
+    cache_prune_report, data_list_report, data_pull_production_report, data_transfer_report,
+    down_report, eject_report, hosts_report, logs_report, reset_report, retire_report,
+    retire_report_unverified, stats_global_report, status_global_report, status_report,
+    up_detached_report, volume_list_report, volume_prune_report,
+    workspace_extra_mount_decision_lines, AllocatedPortsSummary, ContainerCacheGlobalEntry,
     ContainerCachePruneEntry, ContainerCacheVolumeEntry, ContainerCommandReport,
     ContainerDataHookResult, ContainerDataTransferAction, ContainerDataVolumeEntry,
     ContainerStatsAllEntry, ContainerStatsService, ContainerStatusAllEntry, ContainerStatusService,
@@ -78,7 +80,8 @@ pub use runtime::scope::{
 };
 pub use workspace::{
     load_workspace_ownership_plan, load_workspace_ownership_targets, rust_cache_kind,
-    WorkspaceMountKind, WorkspaceOwnershipPlan, WorkspaceOwnershipTarget, WorkspaceRepairAuthority,
+    WorkspaceExtraMountDecision, WorkspaceExtraMountDecisionKind, WorkspaceMountKind,
+    WorkspaceOwnershipPlan, WorkspaceOwnershipTarget, WorkspaceRepairAuthority,
     WorkspaceRustCacheKind,
 };
 

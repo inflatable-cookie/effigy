@@ -396,6 +396,44 @@ downloads its own browser revision. Changing the value requires an image
 rebuild. See [`067`](067-catalog-services-reference.md) for the full
 parameter surface.
 
+### Optional extra workspace mounts
+
+Use `systems.<name>.workspaces.<workspace>.mounts` for optional sibling or
+external workspace paths. The legacy string and structured forms preserve
+their source, target, and option meanings:
+
+```toml
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
+working_dir = "/workspace"
+mounts = [
+  "../shared:/workspace/shared:ro",
+  { source = "../tooling", target = "/workspace/tooling", options = ["ro"] },
+]
+```
+
+`container up` resolves these optional sources after runtime and shared
+service preparation, just before it submits the primary Compose up. A source
+that is absent then is skipped; a required catalog member still fails if it
+is missing. Status and other policy reads do not announce a runtime skip, and
+Effigy does not create the host source directory for an optional mount.
+
+For direct Compose, an already-running primary service keeps its loaded mount
+spec for that `up`; Effigy does not refresh it just to apply an optional mount.
+No creation-time mount decision is reported in that case.
+
+After a new create spec is submitted and Compose up succeeds, the diagnostic
+reports each included or skipped source/target pair. Detached
+`container up --json` adds
+`workspace_extra_mounts` with `compose_up_dispatch: "succeeded"` and
+`runtime_mount_verification: "not_performed"`. This records the requested
+Compose spec, not proof that the runtime created or recreated a container or
+applied a mount. Unreadable sources and sources that disappear during
+resolution fail before Compose up.
+
 Effigy generates runtime-owned compose output under:
 
 - `.effigy/runtime/compose/.effigy-compose.generated.yml`

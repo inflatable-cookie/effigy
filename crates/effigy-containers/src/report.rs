@@ -12,6 +12,7 @@ use std::collections::BTreeMap;
 
 use crate::compose::shutdown_label;
 use crate::{driver_label, ContainerEjectResult, EffectiveContainerPolicy};
+use crate::{WorkspaceExtraMountDecision, WorkspaceExtraMountDecisionKind};
 
 /// Shape returned by each container-command report builder.
 ///
@@ -22,6 +23,92 @@ use crate::{driver_label, ContainerEjectResult, EffectiveContainerPolicy};
 pub struct ContainerCommandReport {
     pub json: JsonValue,
     pub success_text: String,
+}
+
+/// Add bounded workspace extra-mount decisions to a successful Compose-up report.
+/// The report records the Compose spec and dispatch result, not runtime mount
+/// verification.
+pub fn annotate_workspace_extra_mount_decisions(
+    report: &mut ContainerCommandReport,
+    decisions: &[WorkspaceExtraMountDecision],
+) {
+    if decisions.is_empty() {
+        return;
+    }
+    const MAX_JSON_DECISIONS: usize = 64;
+    let decision_rows = decisions
+        .iter()
+        .take(MAX_JSON_DECISIONS)
+        .map(|decision| WorkspaceExtraMountDecision {
+            source: bounded_workspace_mount_path(&decision.source),
+            target: bounded_workspace_mount_path(&decision.target),
+            decision: decision.decision,
+        })
+        .collect::<Vec<_>>();
+    if let Some(json_object) = report.json.as_object_mut() {
+        json_object.insert(
+            "workspace_extra_mounts".to_owned(),
+            json!({
+                "compose_up_dispatch": "succeeded",
+                "runtime_mount_verification": "not_performed",
+                "decisions": decision_rows,
+                "omitted_decision_count": decisions.len().saturating_sub(MAX_JSON_DECISIONS),
+            }),
+        );
+    }
+    for line in workspace_extra_mount_decision_lines(decisions) {
+        report.success_text.push('\n');
+        report.success_text.push_str(&line);
+    }
+}
+
+/// Render bounded human-readable decisions after Compose up succeeds.
+pub fn workspace_extra_mount_decision_lines(
+    decisions: &[WorkspaceExtraMountDecision],
+) -> Vec<String> {
+    const MAX_TEXT_DECISIONS: usize = 32;
+    let mut lines = decisions
+        .iter()
+        .take(MAX_TEXT_DECISIONS)
+        .map(|decision| {
+            let action = match decision.decision {
+                WorkspaceExtraMountDecisionKind::IncludedInComposeSpec => {
+                    "included in compose spec"
+                }
+                WorkspaceExtraMountDecisionKind::SkippedSourceAbsent => "skipped; source absent",
+            };
+            format!(
+                "[workspace mount] {} -> {}: {}; compose up succeeded; actual runtime mount state was not verified",
+                bounded_workspace_mount_path(&decision.source),
+                bounded_workspace_mount_path(&decision.target),
+                action
+            )
+        })
+        .collect::<Vec<_>>();
+    if decisions.len() > MAX_TEXT_DECISIONS {
+        lines.push(format!(
+            "[workspace mount] {} additional optional mount decision(s) omitted from diagnostics",
+            decisions.len() - MAX_TEXT_DECISIONS
+        ));
+    }
+    lines
+}
+
+fn bounded_workspace_mount_path(value: &str) -> String {
+    const MAX_PATH_CHARS: usize = 384;
+    let mut rendered = String::new();
+    let mut chars = value.chars();
+    for character in chars.by_ref().take(MAX_PATH_CHARS) {
+        rendered.push(if character.is_control() {
+            '\u{fffd}'
+        } else {
+            character
+        });
+    }
+    if chars.next().is_some() {
+        rendered.push('…');
+    }
+    rendered
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

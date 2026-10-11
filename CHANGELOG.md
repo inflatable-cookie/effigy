@@ -81,6 +81,10 @@ During v0.x, MINOR bumps may include breaking changes.
   0.14.x releases without changing the support floor.
 
 ### Fixed
+- Optional workspace mounts are now resolved after container preparation at
+  the Compose up boundary. The bounded decision report distinguishes the
+  submitted Compose spec from unverified runtime mount state, and missing
+  optional paths no longer produce misleading diagnostics during config loads.
 - Managed listener transition receipts now expose a missing initial sequence,
   preserve readable v1 history while new writers append v2 observations, and
   sync the containing directory when creating the receipt. Dependency
