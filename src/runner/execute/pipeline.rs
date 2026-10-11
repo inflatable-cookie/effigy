@@ -37,7 +37,12 @@ pub(super) fn run_execution_pipeline(
         return Ok(output);
     }
 
-    standard::run_standard_task(&preflight, &selection, &selection_plan)
+    standard::run_standard_task(
+        &preflight,
+        &selection,
+        &selection_plan,
+        crate::runner::host_scheduler::active_nested().is_some(),
+    )
 }
 
 fn render_resolved_selector_plan(

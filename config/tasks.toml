@@ -628,13 +628,22 @@
 # them and sets the required-fixture gate so a missing server fails instead of
 # silently skipping proofs. The separate protocol selector covers the client
 # crate.
-"test:host-run:env-projection" = "cargo test -p effigy --lib host_scheduler::tests::submitted_environment_ -- --nocapture"
+"test:host-run:env-projection" = [
+  { id = "host-run-env-projection", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(submitted_environment_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
+]
 "test:host-run:integration" = [
   "cargo test -p effigy --lib host_scheduler:: -- --nocapture",
   "cargo test -p effigy --lib container_command::shell_prep::tests::scheduler_tokens_are_not_forwarded_to_container_exec -- --nocapture",
   "cargo test -p effigy --lib host_scheduler::tests::release_preparation_fixture_owned_children_scope_forwards_termination_only_to_registered_groups -- --nocapture",
   "cargo test -p effigy --lib container_removal_state -- --nocapture",
   "EFFIGY_REQUIRE_HOST_RUN_PRIVATE_SERVER=1 cargo test --test host_scheduler_integration -- --include-ignored --nocapture --test-threads=1",
+]
+# Host-admitted container selectors stay in the owning host run and execute
+# the resolved payload without handing scheduler authority to Linux Effigy.
+# The private Queue fixture path is supplied by the caller; test-runner
+# timeouts bound a stuck child or leaked handle.
+"test:exec:container-admission" = [
+  { id = "container-selector-host-admission", run = "EFFIGY_REQUIRE_HOST_RUN_PRIVATE_SERVER=1 cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test host_scheduler_integration --run-ignored only --filterset 'test(admitted_container_selector_stays_on_host_and_executes_its_resolved_payload)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
 ]
 # One private-server proof for the fixed release install selector and nested
 # host-run inheritance; it never runs an install or contacts a release host.

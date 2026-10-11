@@ -50,6 +50,12 @@ During v0.x, MINOR bumps may include breaking changes.
   retry; ambiguous recovery remains held.
 
 ### Changed
+- Host-admitted standard direct-command tasks bound to a container now execute
+  their resolved command through mapped container exec instead of re-entering
+  Effigy inside the container. Selector resolution, parent validation, locks,
+  status/cache handling, and settlement stay on the host; scheduler credentials
+  remain excluded from container and `sudo` environments. Direct heavy
+  container selectors without valid scheduler authority still fail closed.
 - Managed host-listener routes follow the checkout host map that container
   DNS routes already use. A linked worktree or marked ephemeral clone that
   declares `[containers.<name>.host_processes.listener.route] domain` gets a

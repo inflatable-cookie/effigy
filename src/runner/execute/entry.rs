@@ -39,26 +39,36 @@ fn run_manifest_task_with_preflight_input(
         super::selection::SelectionResolution::Output(output) => {
             if request_id.is_some() {
                 return Err(host_scheduler::refuse(
-                        2,
-                        "--host-run-request-id cannot be used with a selector that does not submit a run",
-                    ));
+                    2,
+                    "--host-run-request-id cannot be used with a selector that does not submit a run",
+                ));
             }
             return Ok(output);
         }
     };
-    run_selected_task_with_scheduler(&preflight, &selection, request_id.as_deref(), || {
-        let _request_local_dev_secrets = request_id.as_ref().map(|_| {
-            crate::runner::secret_session::activate_local_dev_secret_access(
-                preflight.selector.task_name == "dev",
+    run_selected_task_with_scheduler(
+        &preflight,
+        &selection,
+        request_id.as_deref(),
+        |host_admitted| {
+            let _request_local_dev_secrets = request_id.as_ref().map(|_| {
+                crate::runner::secret_session::activate_local_dev_secret_access(
+                    preflight.selector.task_name == "dev",
+                )
+            });
+            if let Some(output) =
+                super::pipeline::managed::run_managed_task(&preflight, &selection, &selection_plan)?
+            {
+                return Ok(output);
+            }
+            super::pipeline::standard::run_standard_task(
+                &preflight,
+                &selection,
+                &selection_plan,
+                host_admitted,
             )
-        });
-        if let Some(output) =
-            super::pipeline::managed::run_managed_task(&preflight, &selection, &selection_plan)?
-        {
-            return Ok(output);
-        }
-        super::pipeline::standard::run_standard_task(&preflight, &selection, &selection_plan)
-    })
+        },
+    )
 }
 
 fn run_manifest_task_with_preflight_input_and_env(
@@ -92,9 +102,9 @@ fn run_manifest_task_with_preflight_input_and_env(
         super::selection::SelectionResolution::Output(output) => {
             if request_id.is_some() {
                 return Err(host_scheduler::refuse(
-                        2,
-                        "--host-run-request-id cannot be used with a selector that does not submit a run",
-                    ));
+                    2,
+                    "--host-run-request-id cannot be used with a selector that does not submit a run",
+                ));
             }
             return Ok(output);
         }
@@ -116,7 +126,7 @@ fn run_manifest_task_with_preflight_input_and_env(
         &preflight,
         &overridden_selection,
         request_id.as_deref(),
-        || {
+        |host_admitted| {
             let _request_local_dev_secrets = request_id.as_ref().map(|_| {
                 crate::runner::secret_session::activate_local_dev_secret_access(
                     preflight.selector.task_name == "dev",
@@ -133,6 +143,7 @@ fn run_manifest_task_with_preflight_input_and_env(
                 &preflight,
                 &overridden_selection,
                 &selection_plan,
+                host_admitted,
             )
         },
     )
@@ -142,11 +153,11 @@ fn run_selected_task_with_scheduler(
     preflight: &super::planning::ExecutionPreflight,
     selection: &TaskSelection<'_>,
     client_request_id: Option<&str>,
-    execute: impl FnOnce() -> Result<String, RunnerError>,
+    execute: impl FnOnce(bool) -> Result<String, RunnerError>,
 ) -> Result<String, RunnerError> {
     let in_owned_child_scope = crate::runner::owned_children::signal_scope_active();
     if in_owned_child_scope && client_request_id.is_none() {
-        return execute();
+        return execute(host_scheduler::active_nested().is_some());
     }
     let task_name = preflight.selector.task_name.as_str();
     let managed_control = is_managed_control_invocation(
@@ -154,7 +165,8 @@ fn run_selected_task_with_scheduler(
         &preflight.runtime_args_exec,
     )?;
     if managed_control && client_request_id.is_none() {
-        return execute();
+        let parent = host_scheduler::validate_parent_if_present(&preflight.invocation_cwd)?;
+        return execute(parent.is_some());
     }
     let selected_heavy = matches!(selection.task.admission, Some(ManifestTaskAdmission::Heavy));
     let heavy = selected_heavy || matches!(task_name, "qa" | "ci" | "ci:fresh");
@@ -179,11 +191,12 @@ fn run_selected_task_with_scheduler(
         ));
     }
     if !heavy {
-        return execute();
+        let parent = host_scheduler::validate_parent_if_present(&preflight.invocation_cwd)?;
+        return execute(parent.is_some());
     }
 
     match host_scheduler::route_heavy(&selector, &preflight.invocation_cwd, client_request_id)? {
-        Route::Nested(_) | Route::Override => {
+        Route::Nested(_) => {
             if client_request_id.is_some() {
                 return Err(host_scheduler::refuse(
                     2,
@@ -196,7 +209,24 @@ fn run_selected_task_with_scheduler(
                         "cannot install heavy-run signal forwarding: {error}"
                     ))
                 })?;
-            let result = execute();
+            let result = execute(true);
+            drop(scope);
+            result
+        }
+        Route::Override => {
+            if client_request_id.is_some() {
+                return Err(host_scheduler::refuse(
+                    2,
+                    "--host-run-request-id cannot be honored by nested or override execution",
+                ));
+            }
+            let scope =
+                crate::runner::owned_children::OwnedChildrenScope::enter().map_err(|error| {
+                    RunnerError::task_invocation(format!(
+                        "cannot install heavy-run signal forwarding: {error}"
+                    ))
+                })?;
+            let result = execute(false);
             drop(scope);
             result
         }

@@ -58,6 +58,7 @@ pub(in crate::runner) fn run_standard_task(
     preflight: &ExecutionPreflight,
     selection: &TaskSelection<'_>,
     selection_plan: &ExecutionSelectionPlan,
+    host_admitted_execution: bool,
 ) -> Result<String, RunnerError> {
     let env_schema_catalog = effigy_manifest::env_schema_declaring_catalog(
         &preflight.catalogs,
@@ -88,6 +89,7 @@ pub(in crate::runner) fn run_standard_task(
         &env_schema_resolved,
         &lock_scope,
         &mut status,
+        host_admitted_execution,
     );
     match result {
         Ok((output, summary)) => {
@@ -109,6 +111,7 @@ fn run_standard_task_inner(
     env_schema_resolved: &Option<ResolvedEnv>,
     lock_scope: &crate::runner::locking::model::LockScope,
     status: &mut TaskStatusTracker,
+    host_admitted_execution: bool,
 ) -> Result<(String, String), RunnerError> {
     let wait_timeout_ms = resolve_lock_wait_ms(preflight.runtime_args_raw.lock_wait_ms)?;
     let _lock_guards = acquire_scopes_with_wait(
@@ -190,6 +193,15 @@ fn run_standard_task_inner(
         "standard task execution",
     ));
     let container_binding = binding_resolution.binding();
+    let host_owned_container_payload = host_admitted_execution
+        && matches!(
+            container_binding,
+            ContainerExecutionBinding::Container { .. } | ContainerExecutionBinding::Inline { .. }
+        )
+        && matches!(
+            selection.task.run.as_ref(),
+            Some(ManifestManagedRun::Command(_))
+        );
     if let ContainerExecutionBinding::Inline { synthetic_name, .. } = container_binding {
         status.update_stage(
             TaskStatusStage::Handoff,
@@ -201,6 +213,7 @@ fn run_standard_task_inner(
             context,
             secret_ref,
             &binding_resolution,
+            host_owned_container_payload,
         )?;
         return Ok((output, "inline workspace task completed".to_owned()));
     }
@@ -284,6 +297,7 @@ fn run_standard_task_inner(
                     command: context.command(),
                     task_env: Some(&context.selection.task.env),
                     secret_env: secret_ref,
+                    host_admitted: host_owned_container_payload,
                 },
                 container,
             )?;
@@ -321,6 +335,7 @@ fn run_standard_task_inner(
                 command: context.command(),
                 task_env: Some(&context.selection.task.env),
                 secret_env: secret_ref,
+                host_admitted: host_owned_container_payload,
             },
             container,
         )?;
@@ -770,6 +785,7 @@ fn run_inline_workspace_standard_task(
     context: &ExecutionTaskContext<'_>,
     secret_ref: Option<&[(&str, &SecretString)]>,
     binding_resolution: &ExecutionBindingResolution,
+    host_admitted_execution: bool,
 ) -> Result<String, RunnerError> {
     let repo_root = &selection.catalog.catalog_root;
     let policy = binding_resolution
@@ -794,6 +810,7 @@ fn run_inline_workspace_standard_task(
                 command: context.command(),
                 task_env: Some(&context.selection.task.env),
                 secret_env: secret_ref,
+                host_admitted: host_admitted_execution,
             },
             &policy,
             &working_dir,
@@ -829,6 +846,7 @@ fn run_inline_workspace_standard_task(
                 command: context.command(),
                 task_env: Some(&context.selection.task.env),
                 secret_env: secret_ref,
+                host_admitted: host_admitted_execution,
             },
             &policy,
             &working_dir,

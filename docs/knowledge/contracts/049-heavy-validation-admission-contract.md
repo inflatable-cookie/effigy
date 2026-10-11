@@ -97,6 +97,37 @@ requires new cross-kernel authentication authority, stop with the exact
 proposal. A stale reusable Linux artifact is a separate compatibility issue;
 an update alone is not a proved scheduler recovery.
 
+The reproduced failure boundary was selector handoff. The host had already
+resolved and admitted a nested selector under its authenticated parent, but
+the standard container path selected `Handoff` whenever the container reported
+an installed Effigy binary. The handoff intentionally removed scheduler token
+and run ID before invoking that binary. Linux Effigy then attempted to open its
+own local scheduler state and failed closed when it was unavailable. The
+`determine_strategy` policy was the same in the retained `0.13.1` inner-source
+identity and the current source, so refreshing that artifact alone did not
+correct this path.
+
+For a standard direct-command task whose resolved execution binding targets a
+container, an authenticated host parent now keeps execution on the host: it
+passes the already-resolved command, mapped working directory, task arguments
+and environment through the existing raw container exec route. Selector
+resolution, parent verification, lock ownership, task status/cache handling,
+nested composition, and result settlement stay with host Effigy. This applies
+to heavy nested tasks and light container tasks running under the same verified
+parent. It does not convert task sequences or arbitrary container commands.
+Scheduler credentials remain excluded from container and `sudo` environments.
+
+Direct heavy invocation inside a container still requires supported scheduler
+authority and fails closed without it. `EFFIGY_INTERNAL_CONTAINER_HANDOFF` is
+only a recursion marker; it never validates a parent. Invalid tokens still
+refuse before task effects. The maintained production-path regression uses a
+private Queue fixture and a fake container backend with a reported stale inner
+Effigy version. It verifies routing, mapped cwd and task env, heavy/light lock
+contention, host-only sibling composition, one host admission, credential
+exclusion, and refusal controls. This is host/fake-backend evidence, not Linux
+kernel trust qualification; a later disposable consumer proof is still needed
+for genuine cross-kernel behavior and any broader selector shape.
+
 ### Caller-controlled validation recovery authority
 
 Tom selected "Extend the Effigy client (Recommended)" on 2026-10-08,

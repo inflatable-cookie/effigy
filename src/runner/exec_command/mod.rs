@@ -98,6 +98,10 @@ pub(in crate::runner) struct RoutedTaskExecRequest<'a> {
     pub command: &'a str,
     pub task_env: Option<&'a BTreeMap<String, String>>,
     pub secret_env: Option<&'a [(&'a str, &'a SecretString)]>,
+    /// True only when the selector has a validated host parent. A standard
+    /// direct-command container task then executes its resolved payload through
+    /// mapped raw exec instead of re-entering Effigy inside the container.
+    pub host_admitted: bool,
 }
 
 pub(in crate::runner) fn run_routed_task_container_exec(
@@ -356,20 +360,23 @@ fn run_routed_task_exec_internal_with_mapped_cwd(
         command,
         task_env,
         secret_env,
+        host_admitted,
         ..
     } = request;
+    let host_admitted = *host_admitted;
     let raw_command = vec!["sh".to_owned(), "-lc".to_owned(), (*command).to_owned()];
-    if routed_task_exec_requires_workspace_effigy(policy, service) {
+    if !host_admitted && routed_task_exec_requires_workspace_effigy(policy, service) {
         ensure_workspace_effigy_available_for_policy(repo_root, policy, None)?;
     }
     let capabilities = transport::probe_container_capabilities(repo_root, policy, service)?;
     let selector_name = render_task_selector(selector);
-    let strategy = determine_strategy(
+    let strategy = determine_routed_task_exec_strategy(
         &capabilities,
         &selector_name,
         task_args,
         mapped_cwd,
         &raw_command,
+        host_admitted,
     );
     if strategy_requires_workspace_effigy_install(&strategy) {
         ensure_workspace_effigy_available_for_policy(repo_root, policy, None)?;
@@ -392,6 +399,29 @@ fn run_routed_task_exec_internal_with_mapped_cwd(
     );
 
     run_compose_exec(repo_root, policy, &args, capture, "docker compose exec")
+}
+
+fn determine_routed_task_exec_strategy(
+    capabilities: &effigy_exec::detection::ContainerCapabilities,
+    selector_name: &str,
+    task_args: &[String],
+    mapped_cwd: &str,
+    raw_command: &[String],
+    host_admitted: bool,
+) -> effigy_exec::ExecStrategy {
+    if host_admitted {
+        return effigy_exec::ExecStrategy::RawExec {
+            working_dir: mapped_cwd.to_owned(),
+            command: raw_command.to_vec(),
+        };
+    }
+    determine_strategy(
+        capabilities,
+        selector_name,
+        task_args,
+        mapped_cwd,
+        raw_command,
+    )
 }
 
 fn finish_routed_task_exec(command: &str, output: Output) -> Result<String, RunnerError> {
