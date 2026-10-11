@@ -155,6 +155,33 @@ top-level `status` for current state. `not_reached` and `not_attempted` mean the
 phase was not observed, not that it succeeded or failed. Ownership observations
 depend on the Linux procfs or macOS libproc interfaces described below.
 
+### Managed child transition evidence ruling
+
+Tom's standing bounded hybrid-profile approval, reaffirmed on 2026-10-11,
+authorizes a generic transition-evidence capability. Current listener state and
+startup diagnostics do not retain the selected child replacement reason or
+its dependency assignments at launch. Two ready snapshots with different
+child generations cannot distinguish child exit from dependency unavailability
+or a changed dependency tuple, and cannot prove continuous dependency stability.
+Historical consumer causes remain unresolved.
+
+The capability must record the supervisor's existing selected cause, precise
+owner/runtime/supervisor/child identities, expected and observed dependency
+tuples (including missing or unreadable observations), and the reserved endpoint
+assignments actually supplied to each launched generation. Evidence must be
+versioned, ordered, durable and bounded, with visible gaps or truncation. A
+separately owned additive receipt is preferred: strict listener-state parsing
+and the eight-field startup diagnostic retain their existing meanings.
+
+This ruling changes observation only. Restart policy, timing, ownership proofs,
+route withdrawal, readiness and teardown authority stay intact. Receipts cannot
+authorize signals, cleanup or acceptance of a changed survivor baseline. They
+exclude arbitrary environment, commands, credentials and request bodies. Private
+generic production-path fixtures and independent review must qualify the
+contract before a consumer changes its exact-source/checksum gate. No live
+consumer retry, installed binary replacement or release authority follows from
+this ruling.
+
 Socket ownership uses Linux procfs and macOS libproc interfaces.
 On macOS, the same-user process inventory from `ps -Ao pid=,uid=` may print a
 UID in signed 32-bit form (for example `-2` for a system daemon). Effigy maps
