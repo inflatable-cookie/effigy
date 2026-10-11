@@ -170,6 +170,12 @@ returns after expiry refuses before the next phase or user command is spawned.
 Synchronous local filesystem calls cannot be interrupted mid-call; the shared
 deadline is checked before the next external operation and at phase boundaries.
 
+Workspace identity refresh keeps the existing primary-service repair selection,
+but the bounded runtime may refuse a repair that the plain shell would have
+more time to complete. The repair uses the operation's remaining deadline and
+budgets; bounded refusal does not fall back to unbounded shell preparation or
+launch the requested command.
+
 The stdout and stderr budgets are cumulative across the whole operation,
 including preparation captures and the existing missing-workspace-user
 fallback, so neither preparation nor a second attempt can reset the hard total.
@@ -186,7 +192,9 @@ expired deadline all refuse, and the retained prefix is never reported as
 success. Selection stays on the existing checkout/profile/service/working-
 directory resolution. A complete in-budget capture with a nonzero inner exit
 still fails with the inner code, which is distinct from the bounds and deadline
-reasons.
+reasons. Human mode emits retained command stdout/stderr only after a successful
+inner exit; a nonzero exit returns safe failure details without writing captured
+bytes.
 
 The `--json` payload is versioned `effigy.container.bounded-exec.v1`. Success
 returns the bounded command bytes and counts; a refusal returns a stable reason,

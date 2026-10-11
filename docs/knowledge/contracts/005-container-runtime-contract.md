@@ -377,6 +377,12 @@ selection checks are synchronous and have no command-output capture. Local
 filesystem calls cannot be interrupted mid-call; the shared deadline is checked
 before the next external operation and at phase boundaries.
 
+Workspace identity refresh keeps the existing primary-service repair selection,
+but the bounded runtime may refuse a repair that the plain shell would have
+more time to complete. The repair uses the operation's remaining deadline and
+budgets; bounded refusal does not fall back to unbounded shell preparation or
+launch the requested command.
+
 Both streams drain concurrently into bounded buffers; a stream that produces
 more than its remaining budget is an error even when the client exits `0`, and
 the retained prefix is never reported as success. Preparation captures and
@@ -404,6 +410,9 @@ with a nonzero client status is an `inner_command_failed` result carrying the
 inner code, distinct from the bounds/deadline reasons. Credentials are excluded
 by the shared secret-env rules; neither a bounds failure nor an inner failure
 dumps raw command output, arguments or configuration into diagnostics.
+Human mode emits retained command stdout/stderr only after a successful inner
+exit; a nonzero exit returns safe failure details without writing captured
+bytes.
 
 `--json` is accepted only because the bounded mode is non-interactive. It emits
 the versioned `effigy.container.bounded-exec.v1` payload with `ok`, status,

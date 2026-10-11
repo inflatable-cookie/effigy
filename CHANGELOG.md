@@ -25,7 +25,8 @@ During v0.x, MINOR bumps may include breaking changes.
   refusal payloads carry safe reason, phase, stream, limit and counts. Launch
   failures redact configured container/service names and exclude argv, command,
   output, credentials and host error payloads on human and JSON surfaces. Inner
-  nonzero exit stays distinct from bounds/deadline reasons. Remote container
+  nonzero exit stays distinct from bounds/deadline reasons; human mode emits
+  retained command output only after a successful inner exit. Remote container
   cancellation remains explicitly unverified. The default command shell keeps
   its existing unbounded behavior.
 - `effigy container ports status|reclaim` reports the generated-container port

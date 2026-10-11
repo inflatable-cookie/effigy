@@ -202,7 +202,7 @@ fn run_bounded_command_with_budget(
         first
     };
 
-    if !output_json {
+    if !output_json && capture.status.success() {
         emit_captured_output(&capture)?;
     }
     let render = BoundedRenderContext {
