@@ -685,6 +685,11 @@ fn public_entry_bounds_discovery_preparation_and_fallback_on_the_full_path() {
             stdout_limit: 256,
         },
     );
+    // The public Colima path guard requires a host-shared repo path. The
+    // macOS fixture lives under /Users/Shared; Linux covers Colima through
+    // the private transport-path case above and keeps public fixtures in its
+    // isolated temp directory.
+    #[cfg(target_os = "macos")]
     let _valid_colima = run_guarded_public_case(
         &dir,
         &bin_dir,
