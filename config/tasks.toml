@@ -654,6 +654,17 @@
 "test:exec:container-admission" = [
   { id = "container-selector-host-admission", run = "EFFIGY_REQUIRE_HOST_RUN_PRIVATE_SERVER=1 cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test host_scheduler_integration --run-ignored only --filterset 'test(admitted_container_selector_stays_on_host_and_executes_its_resolved_payload)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
 ]
+"test:qa:fixture-parent-isolation" = [
+  { id = "fixture-parent-scheduled-regression-and-controls", run = "bash tests/scripts/fixture-parent-isolation.sh", timeout_ms = 600000 },
+]
+"check:qa:fixture-parent-isolation" = "cargo clippy -p effigy -p effigy-bootstrap --all-targets -- -D warnings"
+# This heavy child is launched only by the controlled private-parent test.
+# It uses the already-built unit test executable, avoiding a nested Cargo
+# invocation while the integration test runner owns the build lock.
+"test:qa:fixture-parent-isolation:runner".admission = "heavy"
+"test:qa:fixture-parent-isolation:runner".run = [
+  { id = "fixture-parent-runner-tests", run = "bash tests/scripts/fixture-parent-runner-tests.sh {args}", timeout_ms = 600000 },
+]
 # One private-server proof for the fixed release install selector and nested
 # host-run inheritance; it never runs an install or contacts a release host.
 "test:release:verification-admission" = [

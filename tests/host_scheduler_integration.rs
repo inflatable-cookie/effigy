@@ -154,6 +154,17 @@ impl Server {
         submitted_run_ids(&self.state)
     }
 
+    fn status(&self, run_id: &str) -> Value {
+        let (root, authority) =
+            effigy_host_run::HostRunRoot::open(&self.state).expect("trusted current authority");
+        let mut client = effigy_host_run::HostRunClient::open(root, authority);
+        client
+            .status_query(effigy_host_run::StatusQuery::Run {
+                run_id: run_id.to_owned(),
+            })
+            .expect("query existing run status")
+    }
+
     fn facts(&self) -> Vec<Value> {
         fs::read_to_string(self.state.join("facts.jsonl"))
             .unwrap_or_default()
@@ -1259,6 +1270,149 @@ fn admitted_container_selector_stays_on_host_and_executes_its_resolved_payload()
         server.run_ids().len(),
         1,
         "nested capture reused parent admission"
+    );
+}
+
+fn assert_reviewed_private_queue_checkout() {
+    let queue = std::env::var_os(SERVER_ENV)
+        .map(PathBuf::from)
+        .expect("private Queue checkout path");
+    let queue = fs::canonicalize(queue).expect("canonical private Queue checkout");
+    let head = Command::new("git")
+        .current_dir(&queue)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .expect("read private Queue head");
+    assert!(head.status.success(), "git rev-parse failed");
+    assert_eq!(
+        text(&head.stdout).trim(),
+        "e9e4d12d1c232c534acf1e8dd5b34269ba7a38e5",
+        "fixture-parent proof requires the reviewed private Queue checkout"
+    );
+    let status = Command::new("git")
+        .current_dir(&queue)
+        .args(["status", "--porcelain"])
+        .output()
+        .expect("check private Queue worktree");
+    assert!(status.status.success(), "git status failed");
+    assert!(
+        text(&status.stdout).trim().is_empty(),
+        "private Queue checkout must be clean"
+    );
+    assert!(queue.join("package-lock.json").is_file());
+    assert!(queue.join("node_modules/tsx/package.json").is_file());
+    let node = Command::new("node")
+        .current_dir(&queue)
+        .args(["--import", "tsx", "--version"])
+        .output()
+        .expect("check private Queue Node dependency resolution");
+    assert!(
+        node.status.success(),
+        "Node cannot load the pinned tsx dependency"
+    );
+}
+
+fn fixture_runner_test_binary(repo_root: &Path) -> PathBuf {
+    let required = [
+        "runner::cache_tests::builtin::cache_builtin_inspect_and_invalidate_paths_are_available",
+        "runner::bootstrap_command::tests::run_bootstrap_with_cwd_starts_when_requested",
+        "runner::bootstrap_command::tests::run_bootstrap_with_cwd_stages_db_seed_before_root_run",
+        "runner::bootstrap_command::tests::run_bootstrap_with_cwd_runs_standard_db_seed_task_before_start",
+        "runner::bootstrap_command::tests::run_bootstrap_with_cwd_auto_targets_single_database_bundle_seed_input",
+        "runner::bootstrap_command::tests::run_bootstrap_with_cwd_runs_multi_target_db_seed_task_for_bundle_databases",
+    ];
+    let current = std::env::current_exe().expect("current integration test binary");
+    let deps = current.parent().expect("test binaries directory");
+    let mut matches = Vec::new();
+    for entry in fs::read_dir(deps).expect("read test binaries directory") {
+        let entry = entry.expect("test binary entry");
+        let path = entry.path();
+        if path == current || !entry.file_name().to_string_lossy().starts_with("effigy-") {
+            continue;
+        }
+        let metadata = entry.metadata().expect("test binary metadata");
+        if !metadata.is_file() || metadata.permissions().mode() & 0o111 == 0 {
+            continue;
+        }
+        let listed = Command::new(&path).arg("--list").output();
+        let Ok(listed) = listed else {
+            continue;
+        };
+        if !listed.status.success() {
+            continue;
+        }
+        let listing = text(&listed.stdout);
+        if required
+            .iter()
+            .all(|name| listing.lines().any(|line| line.starts_with(name)))
+        {
+            matches.push(path);
+        }
+    }
+    assert_eq!(
+        matches.len(),
+        1,
+        "expected exactly one already-built Effigy lib test binary"
+    );
+    let runner = fs::canonicalize(&matches[0]).expect("canonical fixture runner binary");
+    assert!(
+        runner.starts_with(repo_root.join("target")) || runner.starts_with(deps),
+        "fixture runner binary must belong to this test build"
+    );
+    runner
+}
+
+#[test]
+#[ignore = "requires the private Queue fixture; run test:qa:fixture-parent-isolation"]
+fn fixture_parent_runner_selector_succeeds_with_authenticated_parent_root() {
+    assert_reviewed_private_queue_checkout();
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let runner_test_binary = fixture_runner_test_binary(repo_root);
+    let server = Server::start(None);
+    let output = Command::new(EFFIGY)
+        .arg("test:qa:fixture-parent-isolation:runner")
+        .arg(&runner_test_binary)
+        .current_dir(repo_root)
+        .env("NO_COLOR", "1")
+        .env("EFFIGY_HOST_RUN_ROOT", &server.state)
+        .env("EFFIGY_ADMISSION_CPU_UNITS", "1")
+        .env("EFFIGY_ADMISSION_MEMORY_MIB", "64")
+        .env("EFFIGY_ADMISSION_TIMEOUT_SECS", "5")
+        .env_remove("HOST_RUN_TOKEN")
+        .env_remove("HOST_RUN_ID")
+        .env_remove("EFFIGY_INTERNAL_CONTAINER_HANDOFF")
+        .env_remove("EFFIGY_HOST_SCHEDULER")
+        .env_remove("EFFIGY_SCHEDULER_OVERRIDE")
+        .output()
+        .expect("run fixture selector through private Queue parent");
+    assert_eq!(code(&output), 0, "{}", text(&output.stderr));
+
+    let run_ids = server.run_ids();
+    assert_eq!(run_ids.len(), 1, "one admitted fixture-selector run");
+    let settled = server.status(&run_ids[0]);
+    assert_eq!(settled["runId"], run_ids[0]);
+    assert_eq!(settled["state"], "settled");
+    assert_eq!(settled["settlement"]["outcome"], "passed");
+    assert_eq!(settled["settlement"]["result"]["exitCode"], 0);
+
+    let fixture_roots: Vec<_> = fs::read_dir(repo_root)
+        .expect("read checkout after fixture run")
+        .flatten()
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("effigy-parent-fixtures-")
+                || entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("effigy-bootstrap-fixtures-")
+        })
+        .map(|entry| entry.file_name())
+        .collect();
+    assert!(
+        fixture_roots.is_empty(),
+        "test-owned fixture roots were removed after the run: {fixture_roots:?}"
     );
 }
 

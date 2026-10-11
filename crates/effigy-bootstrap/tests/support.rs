@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
@@ -6,22 +7,45 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 static TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+std::thread_local! {
+    static TEST_FIXTURE_ROOT: RefCell<Option<tempfile::TempDir>> = const { RefCell::new(None) };
+}
+
+fn test_fixture_root() -> PathBuf {
+    TEST_FIXTURE_ROOT.with(|root| {
+        let mut root = root.borrow_mut();
+        if root.is_none() {
+            *root = Some(
+                tempfile::Builder::new()
+                    .prefix("effigy-bootstrap-fixtures-")
+                    .tempdir_in(env!("CARGO_MANIFEST_DIR"))
+                    .expect("create bootstrap test fixture root beneath the package"),
+            );
+        }
+        root.as_ref()
+            .expect("bootstrap test fixture root")
+            .path()
+            .to_path_buf()
+    })
+}
+
 pub fn temp_dir(name: &str) -> PathBuf {
+    let fixture_root = test_fixture_root();
     for _ in 0..32 {
         let ts = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("time")
             .as_nanos();
         let seq = TEMP_DIR_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!("effigy-bootstrap-{name}-{ts}-{seq}"));
+        let dir = fixture_root.join(format!("effigy-bootstrap-{name}-{ts}-{seq}"));
         match fs::create_dir(&dir) {
             Ok(()) => return dir,
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(error) => panic!("mkdir temp failed for {}: {error}", dir.display()),
+            Err(error) => panic!("mkdir fixture failed for {}: {error}", dir.display()),
         }
     }
 
-    panic!("failed to allocate unique temp dir for {name}");
+    panic!("failed to allocate unique bootstrap fixture directory for {name}");
 }
 
 pub fn init_git_repo(root: &Path) {
