@@ -13,6 +13,9 @@ std::thread_local! {
 fn test_fixture_parent() -> PathBuf {
     let checkout = fs::canonicalize(env!("CARGO_MANIFEST_DIR"))
         .expect("canonicalize the Effigy checkout for test fixtures");
+    // Keep package fixtures inside the authenticated checkout so inherited
+    // parent tokens admit them. The prefix is Cargo-excluded in Cargo.toml and
+    // remains visible to graph and scan walks.
     let parent = fs::canonicalize(checkout.join("crates"))
         .expect("canonicalize the Effigy workspace crates directory");
     assert!(

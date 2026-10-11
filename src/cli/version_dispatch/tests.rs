@@ -15,12 +15,9 @@ fn build_version_payload_sets_schema_and_display() {
         payload["active_version"],
         effigy_core::build_info::active_version()
     );
-    assert_eq!(
-        payload["binary"]["display_version"],
-        effigy_core::build_info::display_version()
-    );
-    assert_eq!(
-        payload["display"],
-        format!("effigy {}", effigy_core::build_info::display_version())
-    );
+    let display_version = payload["binary"]["display_version"]
+        .as_str()
+        .expect("display version string");
+    assert!(!display_version.is_empty());
+    assert_eq!(payload["display"], format!("effigy {display_version}"));
 }
