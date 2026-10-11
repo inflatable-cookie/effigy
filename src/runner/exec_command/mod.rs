@@ -31,6 +31,7 @@ use surface::{
 };
 use transport::build_routed_task_exec_args;
 
+mod bounded;
 mod surface;
 mod transport;
 
@@ -41,6 +42,10 @@ pub(in crate::runner) use transport::{
     append_color_exec_env, copy_file_into_service, probe_container_capabilities,
     run_command_capture_until, run_compose_exec, run_compose_exec_plan_with_deadline,
     run_compose_exec_plan_with_options,
+};
+
+pub(in crate::runner) use bounded::{
+    BoundedCapture, BoundedCaptureFailure, BoundedCommandBudget, BoundedStream,
 };
 
 pub(super) fn run_exec(args: ExecArgs) -> Result<String, RunnerError> {

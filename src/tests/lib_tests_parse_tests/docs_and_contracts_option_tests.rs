@@ -897,6 +897,7 @@ fn parse_container_shell_with_command_override() {
                 name: Some("web".to_owned()),
                 service: None,
                 command: Some("php artisan tinker".to_owned()),
+                bounded: None,
             },
             repo_override: Some(PathBuf::from("/tmp/repo")),
             output_json: false,

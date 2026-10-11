@@ -986,6 +986,7 @@ pub enum ContainerSubcommand {
         name: Option<String>,
         service: Option<String>,
         command: Option<String>,
+        bounded: Option<BoundedExecLimits>,
     },
     Reset {
         name: Option<String>,
@@ -1022,6 +1023,46 @@ pub enum ContainerSubcommand {
     Ports {
         subcommand: ContainerPortsSubcommand,
     },
+}
+
+/// Strict caller-supplied limits for the opt-in bounded finite named
+/// container-command surface (`effigy container <NAME> shell --bounded`).
+///
+/// `deadline_ms` is one absolute deadline for the whole operation. The two
+/// stream limits are cumulative hard retention budgets in bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BoundedExecLimits {
+    pub deadline_ms: u64,
+    pub stdout_limit_bytes: u64,
+    pub stderr_limit_bytes: u64,
+}
+
+/// Longest accepted bounded-command deadline (one hour).
+pub const BOUNDED_EXEC_MAX_DEADLINE_MS: u64 = 60 * 60 * 1000;
+/// Largest accepted per-stream retention budget (64 MiB).
+pub const BOUNDED_EXEC_MAX_STREAM_BYTES: u64 = 64 * 1024 * 1024;
+
+impl BoundedExecLimits {
+    /// Validate every bound before any execution. Missing, zero, and
+    /// out-of-range bounds are refused; there is no partial-bound execution.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.deadline_ms == 0 || self.deadline_ms > BOUNDED_EXEC_MAX_DEADLINE_MS {
+            return Err(format!(
+                "`--deadline-ms` must be between 1 and {BOUNDED_EXEC_MAX_DEADLINE_MS}"
+            ));
+        }
+        if self.stdout_limit_bytes == 0 || self.stdout_limit_bytes > BOUNDED_EXEC_MAX_STREAM_BYTES {
+            return Err(format!(
+                "`--stdout-limit-bytes` must be between 1 and {BOUNDED_EXEC_MAX_STREAM_BYTES}"
+            ));
+        }
+        if self.stderr_limit_bytes == 0 || self.stderr_limit_bytes > BOUNDED_EXEC_MAX_STREAM_BYTES {
+            return Err(format!(
+                "`--stderr-limit-bytes` must be between 1 and {BOUNDED_EXEC_MAX_STREAM_BYTES}"
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

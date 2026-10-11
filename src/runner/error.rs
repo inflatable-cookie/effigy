@@ -155,6 +155,14 @@ pub enum RunnerError {
     CommandJsonFailure {
         rendered: String,
     },
+    /// An opt-in bounded container command did not produce a complete,
+    /// in-budget capture. Carries a safe machine-readable reason/count
+    /// diagnostic; never raw command output, arguments or credentials.
+    BoundedExecFailure {
+        code: i32,
+        message: String,
+        json_details: String,
+    },
     GraphOperationTimeout {
         command: String,
         timeout_ms: u64,
@@ -420,6 +428,7 @@ impl RunnerError {
             | RunnerError::HostRequestFailure { code, .. } => Some(*code),
             RunnerError::TaskCommandFailure { code, .. } => Some(code.unwrap_or(1)),
             RunnerError::CommandJsonFailure { .. } => Some(1),
+            RunnerError::BoundedExecFailure { code, .. } => Some(*code),
             _ => None,
         }
     }

@@ -640,6 +640,18 @@ where
     Ok(render_container_report(report, output_json))
 }
 
+fn cache_volume_entry(volume: ManagedVolume) -> Option<ContainerCacheVolumeEntry> {
+    let kind = volume.cache_kind()?;
+    Some(ContainerCacheVolumeEntry {
+        name: volume.name,
+        service: volume.service,
+        kind: cache_kind_label(kind).to_owned(),
+        size_bytes: volume.size_bytes,
+        mount_point: volume.mount_point,
+        mount_target: volume.mount_target,
+    })
+}
+
 #[cfg(test)]
 mod workspace_mount_report_tests {
     use super::annotate_workspace_extra_mount_decisions;
@@ -689,16 +701,4 @@ mod workspace_mount_report_tests {
             .contains("actual runtime mount state was not verified"));
         assert!(!report.success_text.contains("applied"));
     }
-}
-
-fn cache_volume_entry(volume: ManagedVolume) -> Option<ContainerCacheVolumeEntry> {
-    let kind = volume.cache_kind()?;
-    Some(ContainerCacheVolumeEntry {
-        name: volume.name,
-        service: volume.service,
-        kind: cache_kind_label(kind).to_owned(),
-        size_bytes: volume.size_bytes,
-        mount_point: volume.mount_point,
-        mount_target: volume.mount_target,
-    })
 }

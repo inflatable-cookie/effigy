@@ -7,6 +7,21 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- `effigy container <NAME> shell --command <CMD> --bounded --deadline-ms <MS>
+  --stdout-limit-bytes <N> --stderr-limit-bytes <N> [--json]` is an explicit
+  opt-in finite container-command surface. One absolute deadline covers
+  discovery, preparation, the eligible missing-workspace-user fallback and the
+  final drain; independent stdout/stderr budgets are enforced while reading and
+  accounted cumulatively across the fallback. Overflow, read failure,
+  incomplete output and deadline refuse even when the client exits `0`, never
+  report a retained prefix as success and never trigger a fallback or repeat.
+  Both streams drain concurrently, and only the exact owned client process
+  group is terminated and reaped on refusal. `--json` emits the versioned
+  `effigy.container.bounded-exec.v1` payload with bounded bytes and counts;
+  refusal payloads carry only a safe reason, stream, limit and counts. Inner
+  nonzero exit stays distinct from bounds/deadline reasons. Remote container
+  cancellation remains explicitly unverified. The default command shell keeps
+  its existing unbounded behavior.
 - `effigy container ports status|reclaim` reports the generated-container port
   registry: free 100-port range capacity before and after a plan, and a
   `retain`, `hold` or `reclaim` decision with a reason for each entry. Status

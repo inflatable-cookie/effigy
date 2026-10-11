@@ -138,12 +138,52 @@ Useful flags:
 - `--service <NAME>` focuses `logs` or `shell` on one service
 - `--global` turns `status` and `stats` into cross-project views
 - `--command <CMD>` runs one command string inside the service via `sh -lc`
+- `--bounded` opts a `--command` run into bounded finite capture and requires `--deadline-ms`, `--stdout-limit-bytes` and `--stderr-limit-bytes`; a bounds failure, read failure, incomplete output or deadline is an error even when the inner command exits `0`, and `--json` emits the `effigy.container.bounded-exec.v1` payload on both success and refusal
 - `reset` preserves persistent named volumes by default
 - `--wipe-data` deletes persistent named volumes during `reset`
 - `--keep-data` remains accepted as a compatibility alias for reset's default
 - `--json` returns machine-readable payloads for non-interactive paths
 - `hosts` prints the effective HTTP and TCP host map for this checkout
 - `retire --yes` removes only this runtime scope's owned resources; `--scope <TOKEN>` retries after the checkout directory is gone
+
+### Bounded finite command capture
+
+The plain command shell captures the whole command output before emission with
+no caller deadline and no stream budget. When a caller needs a hard bound, opt
+in explicitly:
+
+```sh
+effigy container web shell \
+  --command "php artisan some:report" \
+  --bounded --deadline-ms 30000 \
+  --stdout-limit-bytes 1048576 --stderr-limit-bytes 262144 --json
+```
+
+Each bound is a strictly parsed positive integer validated before any effect
+(`--deadline-ms` 1..3600000, stream limits 1..67108864). One absolute deadline
+is created before discovery and checked at every phase boundary; it governs the
+decision before discovery, before preparation, before both eligible fallback
+attempts and throughout the final drain. The shared session/runtime resolution
+and workspace-effigy preparation are existing steps that are not interrupted
+mid-capture; a step that returns after the deadline refuses before spawning.
+The stdout and stderr budgets are cumulative across the whole operation,
+including the existing missing-workspace-user fallback, so a second attempt
+cannot reset the hard total.
+
+Overflow of either stream, a stream read failure, incomplete output, or an
+expired deadline all refuse, and the retained prefix is never reported as
+success. Selection stays on the existing checkout/profile/service/working-
+directory resolution. A complete in-budget capture with a nonzero inner exit
+still fails with the inner code, which is distinct from the bounds and deadline
+reasons.
+
+The `--json` payload is versioned `effigy.container.bounded-exec.v1`. Success
+returns the bounded bytes and counts; a refusal returns only a reason, the
+stream name, the limit and safe counts, never raw output, arguments or
+credentials. Terminating the owned host client group is not proof that a
+remote container process stopped: `remote_cancellation` stays `unverified`,
+no remote PID is guessed and an uncertain command is never automatically
+repeated.
 
 ## QA Recipe
 
