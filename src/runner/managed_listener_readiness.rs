@@ -163,6 +163,7 @@ mod tests {
             readiness_path: "/health".to_owned(),
             readiness_status: status,
             readiness_timeout_secs: 5,
+            declared_route_domain: DOMAIN.to_owned(),
             route_domain: DOMAIN.to_owned(),
             route_tls: false,
         }

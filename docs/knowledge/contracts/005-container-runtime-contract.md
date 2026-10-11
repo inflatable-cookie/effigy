@@ -85,8 +85,21 @@ it with the current endpoint values.
 
 Detached `container up --json` includes `managed_host_listeners` entries for
 listeners that passed readiness. Entries report status, runtime and child
-generations, assigned address, internal and public URLs, route domain, TLS
-setting, and the versioned state-file path. The state file is the ongoing
+generations, assigned address, internal and public URLs, the declared route
+domain, the effective route domain, TLS setting, and the versioned state-file
+path.
+
+The declared route domain is the manifest value. The effective route domain is
+the name every Effigy surface uses: readiness `Host`, TLS certificate
+preparation, gateway publication, `public_url` and dependent endpoint
+variables. A linked worktree or marked ephemeral clone rewrites the apex with
+the same checkout host-key rule as container DNS routes, once, during policy
+resolution. The primary checkout and an explicit `share_runtime_identity = true`
+keep the declared name. Scope is the checkout generation token, never a port,
+process or log. A manifest that declares the same host as both a static DNS
+route and a listener is still refused. Listener-only declarations appear in
+`container hosts --json` as declared-to-effective HTTP routes. The route table
+still refuses a live foreign owner of the effective name. The state file is the ongoing
 status source: `starting`, `ready`, `unavailable`, `failed`, or `stopped`. A
 child restart keeps the runtime generation and changes the child generation
 and address. The internal URL uses HTTP to the actual loopback socket. The

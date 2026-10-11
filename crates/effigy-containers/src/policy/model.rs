@@ -75,6 +75,10 @@ pub struct EffectiveManagedHostListener {
     pub readiness_path: String,
     pub readiness_status: u16,
     pub readiness_timeout_secs: u64,
+    /// The manifest's declared host, before checkout scoping.
+    pub declared_route_domain: String,
+    /// The effective host for this checkout: the declared host for primary
+    /// and explicit shared-identity checkouts, otherwise the scoped apex.
     pub route_domain: String,
     pub route_tls: bool,
 }

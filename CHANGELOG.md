@@ -33,6 +33,16 @@ During v0.x, MINOR bumps may include breaking changes.
   retry; ambiguous recovery remains held.
 
 ### Changed
+- Managed host-listener routes follow the checkout host map that container
+  DNS routes already use. A linked worktree or marked ephemeral clone that
+  declares `[containers.<name>.host_processes.listener.route] domain` gets a
+  scoped apex (`api.acme.test` becomes `api.acme-w<host-key>.test`) for its
+  readiness `Host`, TLS certificate, gateway publication, `public_url` and
+  dependent `EFFIGY_MANAGED_HOST_<NAME>_PUBLIC_URL`. Primary checkouts and
+  `share_runtime_identity = true` keep the declared name. `container up --json`
+  reports `declared_route_domain` beside the effective `route_domain`, and
+  `container hosts --json` lists listener-only routes as declared-to-effective
+  entries. Identical declared hosts in two checkouts no longer collide.
 - Task-status records are published by replacing a complete sibling file, so a
   concurrent reader never observes a truncated or empty JSON document. A failed
   publication keeps the previous valid record and removes only the writer's own

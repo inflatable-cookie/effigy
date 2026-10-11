@@ -261,8 +261,10 @@ tls = true
 ```
 
 `container up --detach --json` returns each ready listener's actual address,
-internal URL, public URL, generation and state-file path. A listener result
-looks like this:
+internal URL, public URL, generation and state-file path. A linked worktree
+or marked ephemeral clone publishes its checkout-scoped name, so the same
+declared `domain` can run in several checkouts at once. The primary checkout
+keeps the declared name. A listener result looks like this:
 
 ```json
 {
@@ -273,6 +275,7 @@ looks like this:
   "address": "127.0.0.1:4173",
   "internal_url": "http://127.0.0.1:4173",
   "public_url": "https://frontend.example.test",
+  "declared_route_domain": "frontend.example.test",
   "route_domain": "frontend.example.test",
   "route_tls": true,
   "state_file": "/checkout/.effigy/runtime/host-processes/web/dev/frontend.listener.json"
@@ -284,7 +287,7 @@ address, `EFFIGY_MANAGED_HOST_LISTENER_REPORT_FILE` to a private report path,
 and `EFFIGY_MANAGED_HOST_LISTENER_GENERATION` to the current child generation.
 The adapter must bind strictly to the requested address and write the report
 after the socket is listening. Readiness is an HTTP `GET` to the configured
-path with the route domain as `Host`; only the configured status makes the
+path with the effective route domain as `Host`; only the configured status makes the
 listener ready. A failed or timed-out startup returns an error and leaves a
 `failed` or held `unavailable` state instead of publishing an endpoint.
 
@@ -409,10 +412,13 @@ added to its container.
 
 Scoped checkouts also get a distinct gateway host map. Declared `app.test`
 becomes `app-w<host-key>.test`; helpers such as `mail.app.test` stay under
-that apex. The primary checkout and unmarked clones keep the declared
+that apex. Managed listener `domain` values follow the same rule: a listener
+declared as `api.acme.test` publishes as `api.acme-w<host-key>.test` in a
+linked worktree. The primary checkout and unmarked clones keep the declared
 names. `effigy container hosts --json` is the machine-readable map for
 public URLs, origins, cookie scope, WebAuthn and test selectors, and
-reports scope kind `worktree` or `ephemeral-clone`. Effigy does not
+reports scope kind `worktree` or `ephemeral-clone`. Listener-only routes
+appear there with their declared and effective names. Effigy does not
 rewrite application configuration. `effigy container retire --yes` removes
 that scope's owned containers (running, stopped, or Created), networks,
 disposable caches, mutable volumes, isolated routes and ports using

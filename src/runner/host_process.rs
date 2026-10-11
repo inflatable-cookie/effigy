@@ -163,6 +163,7 @@ pub(in crate::runner) struct ManagedHostListenerResult {
     pub(in crate::runner) address: String,
     pub(in crate::runner) internal_url: String,
     pub(in crate::runner) public_url: String,
+    pub(in crate::runner) declared_route_domain: String,
     pub(in crate::runner) route_domain: String,
     pub(in crate::runner) route_tls: bool,
     pub(in crate::runner) state_file: String,
@@ -364,6 +365,7 @@ pub(in crate::runner) fn start_host_processes_for_container(
                     address: state.address.unwrap_or_default(),
                     internal_url: state.internal_url.unwrap_or_default(),
                     public_url: state.public_url.unwrap_or_default(),
+                    declared_route_domain: listener.declared_route_domain.clone(),
                     route_domain: state.route_domain.unwrap_or_default(),
                     route_tls: listener.route_tls,
                     state_file: host_process_state_path(&dir, &hp.name)

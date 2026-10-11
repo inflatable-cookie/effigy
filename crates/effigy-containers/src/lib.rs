@@ -25,8 +25,8 @@ pub use ops::{
     ContainerVolumeListOperation, ContainerVolumeOperation, ContainerVolumePruneOperation,
 };
 pub use policy::hosts::{
-    build_host_map, uses_shared_runtime_identity, EffectiveHostMap, EffectiveHostRoute,
-    HostRouteKind, HostScopeKind,
+    add_managed_listener_routes, build_host_map, uses_shared_runtime_identity, EffectiveHostMap,
+    EffectiveHostRoute, HostRouteKind, HostScopeKind,
 };
 pub use policy::inline_workspace::{
     load_inline_workspace_container_policy, resolve_inline_workspace_exec_working_dir,
