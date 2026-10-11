@@ -76,6 +76,7 @@ pub(in crate::runner) fn run_standard_task(
         preflight,
         selection,
         command::build_task_command(preflight, selection, &env_schema_resolved)?,
+        host_admitted_execution,
     );
 
     let lock_scope = crate::runner::manifest::task_lock_scope(selection.task, &preflight.selector);
@@ -89,7 +90,6 @@ pub(in crate::runner) fn run_standard_task(
         &env_schema_resolved,
         &lock_scope,
         &mut status,
-        host_admitted_execution,
     );
     match result {
         Ok((output, summary)) => {
@@ -111,7 +111,6 @@ fn run_standard_task_inner(
     env_schema_resolved: &Option<ResolvedEnv>,
     lock_scope: &crate::runner::locking::model::LockScope,
     status: &mut TaskStatusTracker,
-    host_admitted_execution: bool,
 ) -> Result<(String, String), RunnerError> {
     let wait_timeout_ms = resolve_lock_wait_ms(preflight.runtime_args_raw.lock_wait_ms)?;
     let _lock_guards = acquire_scopes_with_wait(
@@ -193,7 +192,7 @@ fn run_standard_task_inner(
         "standard task execution",
     ));
     let container_binding = binding_resolution.binding();
-    let host_owned_container_payload = host_admitted_execution
+    let host_owned_container_payload = context.host_admitted_execution
         && matches!(
             container_binding,
             ContainerExecutionBinding::Container { .. } | ContainerExecutionBinding::Inline { .. }

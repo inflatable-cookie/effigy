@@ -15,6 +15,7 @@ pub(super) struct ExecutionTaskContext<'a> {
     pub(super) resolved_root: &'a Path,
     pub(super) repo_for_task: PathBuf,
     pub(super) command: String,
+    pub(super) host_admitted_execution: bool,
 }
 
 impl<'a> ExecutionTaskContext<'a> {
@@ -22,6 +23,7 @@ impl<'a> ExecutionTaskContext<'a> {
         preflight: &'a ExecutionPreflight,
         selection: &'a TaskSelection<'a>,
         command: String,
+        host_admitted_execution: bool,
     ) -> Self {
         Self {
             resolved: &preflight.resolved,
@@ -32,6 +34,7 @@ impl<'a> ExecutionTaskContext<'a> {
                 .task_execution_root(&selection.catalog.catalog_root)
                 .to_path_buf(),
             command,
+            host_admitted_execution,
         }
     }
 
