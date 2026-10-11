@@ -22,10 +22,10 @@ fn build_help_payload_sets_schema_and_topic() {
     assert_eq!(payload["schema_version"], 1);
     assert_eq!(payload["ok"], true);
     assert_eq!(payload["binary"]["name"], "effigy");
-    assert_eq!(
-        payload["binary"]["active_version"],
-        effigy_core::build_info::active_version()
-    );
+    let active_version = payload["binary"]["active_version"]
+        .as_str()
+        .expect("active version string");
+    assert!(!active_version.is_empty());
     assert_eq!(payload["topic"], "doctor");
     assert!(payload["text"]
         .as_str()

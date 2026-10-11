@@ -1,9 +1,29 @@
+use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Condvar, Mutex, OnceLock};
 use std::thread::{self, ThreadId};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+std::thread_local! {
+    static TEST_FIXTURE_ROOT: RefCell<Option<tempfile::TempDir>> = const { RefCell::new(None) };
+}
+
+fn test_fixture_parent() -> PathBuf {
+    let checkout = fs::canonicalize(env!("CARGO_MANIFEST_DIR"))
+        .expect("canonicalize the Effigy checkout for test fixtures");
+    // Keep package fixtures inside the authenticated checkout so inherited
+    // parent tokens admit them. The prefix is Cargo-excluded in Cargo.toml and
+    // remains visible to graph and scan walks.
+    let parent = fs::canonicalize(checkout.join("crates"))
+        .expect("canonicalize the Effigy workspace crates directory");
+    assert!(
+        parent.starts_with(&checkout),
+        "test fixture parent must remain inside the authenticated checkout"
+    );
+    parent
+}
 
 pub(super) fn parse_json(text: &str) -> serde_json::Value {
     serde_json::from_str(text).expect("parse json")
@@ -18,7 +38,22 @@ pub(super) fn temp_workspace(name: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .expect("time")
         .as_nanos();
-    let root = std::env::temp_dir().join(format!("effigy-contract-{name}-{ts}"));
+    let fixture_root = TEST_FIXTURE_ROOT.with(|root| {
+        let mut root = root.borrow_mut();
+        if root.is_none() {
+            *root = Some(
+                tempfile::Builder::new()
+                    .prefix("effigy-parent-fixtures-")
+                    .tempdir_in(test_fixture_parent())
+                    .expect("create test fixture root beneath the Effigy workspace"),
+            );
+        }
+        root.as_ref()
+            .expect("test fixture root")
+            .path()
+            .to_path_buf()
+    });
+    let root = fixture_root.join(format!("{name}-{ts}"));
     fs::create_dir_all(&root).expect("mkdir workspace");
     fs::write(root.join("package.json"), "{}\n").expect("write package marker");
     root

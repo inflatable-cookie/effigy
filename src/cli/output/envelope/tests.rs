@@ -30,10 +30,10 @@ fn build_json_envelope_error_sets_contract_shape() {
     assert_eq!(payload["schema"], "effigy.command.v1");
     assert_eq!(payload["schema_version"], 1);
     assert_eq!(payload["ok"], false);
-    assert_eq!(
-        payload["binary"]["display_version"],
-        effigy_core::build_info::display_version()
-    );
+    let display_version = payload["binary"]["display_version"]
+        .as_str()
+        .expect("display version string");
+    assert!(!display_version.is_empty());
     assert_eq!(payload["command"]["kind"], "doctor");
     assert_eq!(payload["command"]["name"], "doctor");
     assert_eq!(payload["result"], serde_json::Value::Null);

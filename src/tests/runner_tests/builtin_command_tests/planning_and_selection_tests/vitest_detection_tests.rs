@@ -2,17 +2,17 @@ use super::suite_selection_tests::run_builtin_ok_with_child_evidence;
 use crate::runner::tests::prelude::{
     assert_output_contains_all, assert_output_excludes_all, assert_path_exists,
     assert_path_missing, fs, install_local_vitest, install_local_vitest_marker, run_builtin_ok,
-    temp_workspace, write_package_json_with_vitest_dev_dependency, write_root_manifest,
+    temp_workspace, write_isolated_cargo_package_manifest,
+    write_package_json_with_vitest_dev_dependency, write_root_manifest,
 };
 
 #[test]
 fn run_manifest_task_builtin_test_skips_vitest_when_only_a_transitive_binary_exists() {
     let root = temp_workspace("builtin-test-skip-transitive-vitest");
-    fs::write(
-        root.join("Cargo.toml"),
+    write_isolated_cargo_package_manifest(
+        &root,
         "[package]\nname = \"app\"\nversion = \"0.1.0\"\n",
-    )
-    .expect("write cargo toml");
+    );
     fs::write(root.join("package.json"), r#"{ "name": "app" }"#).expect("write package");
     fs::create_dir_all(root.join("src")).expect("mkdir src");
     fs::write(

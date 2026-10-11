@@ -10,5 +10,8 @@ description = "Bootstrap request resolution and execution contracts for Effigy"
 effigy-manifest = { path = "../effigy-manifest" }
 serde_json = "1"
 
+[dev-dependencies]
+tempfile = "3"
+
 [lints]
 workspace = true

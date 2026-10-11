@@ -211,6 +211,10 @@ run = "cargo run -p acme-jobs {args}"
 
 fn setup_deploy_transaction_fixture(name: &str) -> std::path::PathBuf {
     let root = temp_workspace(name);
+    // Test fixtures live below the authenticated checkout root. Give this
+    // deploy fixture its own repository so git lookups cannot inherit the
+    // checkout's tags and commits.
+    git(&["init", "-q"], &root);
     setup_workspace_app_path_bundle(&root);
     write_root_manifest(
         &root,

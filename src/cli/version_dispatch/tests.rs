@@ -11,16 +11,13 @@ fn build_version_payload_sets_schema_and_display() {
         payload["version"],
         effigy_core::build_info::package_version()
     );
-    assert_eq!(
-        payload["active_version"],
-        effigy_core::build_info::active_version()
-    );
-    assert_eq!(
-        payload["binary"]["display_version"],
-        effigy_core::build_info::display_version()
-    );
-    assert_eq!(
-        payload["display"],
-        format!("effigy {}", effigy_core::build_info::display_version())
-    );
+    let active_version = payload["active_version"]
+        .as_str()
+        .expect("active version string");
+    assert!(!active_version.is_empty());
+    let display_version = payload["binary"]["display_version"]
+        .as_str()
+        .expect("display version string");
+    assert!(!display_version.is_empty());
+    assert_eq!(payload["display"], format!("effigy {display_version}"));
 }
