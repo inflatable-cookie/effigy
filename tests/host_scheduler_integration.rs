@@ -1320,6 +1320,7 @@ fn fixture_runner_test_binary(repo_root: &Path) -> PathBuf {
         "runner::bootstrap_command::tests::run_bootstrap_with_cwd_runs_standard_db_seed_task_before_start",
         "runner::bootstrap_command::tests::run_bootstrap_with_cwd_auto_targets_single_database_bundle_seed_input",
         "runner::bootstrap_command::tests::run_bootstrap_with_cwd_runs_multi_target_db_seed_task_for_bundle_databases",
+        "runner::tests::builtin_command_tests::execution_success_tests::run_manifest_task_builtin_test_executes_js_and_rust_suites_in_same_repo",
     ];
     let current = std::env::current_exe().expect("current integration test binary");
     let deps = current.parent().expect("test binaries directory");
@@ -1395,8 +1396,8 @@ fn fixture_parent_runner_selector_succeeds_with_authenticated_parent_root() {
     assert_eq!(settled["settlement"]["outcome"], "passed");
     assert_eq!(settled["settlement"]["result"]["exitCode"], 0);
 
-    let fixture_roots: Vec<_> = fs::read_dir(repo_root)
-        .expect("read checkout after fixture run")
+    let fixture_roots: Vec<_> = fs::read_dir(repo_root.join("target"))
+        .expect("read ignored target directory after fixture run")
         .flatten()
         .filter(|entry| {
             entry

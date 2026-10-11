@@ -39,7 +39,8 @@ for test_name in \
   runner::bootstrap_command::tests::run_bootstrap_with_cwd_stages_db_seed_before_root_run \
   runner::bootstrap_command::tests::run_bootstrap_with_cwd_runs_standard_db_seed_task_before_start \
   runner::bootstrap_command::tests::run_bootstrap_with_cwd_auto_targets_single_database_bundle_seed_input \
-  runner::bootstrap_command::tests::run_bootstrap_with_cwd_runs_multi_target_db_seed_task_for_bundle_databases
+  runner::bootstrap_command::tests::run_bootstrap_with_cwd_runs_multi_target_db_seed_task_for_bundle_databases \
+  runner::tests::builtin_command_tests::execution_success_tests::run_manifest_task_builtin_test_executes_js_and_rust_suites_in_same_repo
 do
   run_test "$test_name"
 done

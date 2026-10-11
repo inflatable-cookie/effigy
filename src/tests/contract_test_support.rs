@@ -10,6 +10,18 @@ std::thread_local! {
     static TEST_FIXTURE_ROOT: RefCell<Option<tempfile::TempDir>> = const { RefCell::new(None) };
 }
 
+fn test_fixture_parent() -> PathBuf {
+    let checkout = fs::canonicalize(env!("CARGO_MANIFEST_DIR"))
+        .expect("canonicalize the Effigy checkout for test fixtures");
+    let target = fs::canonicalize(checkout.join("target"))
+        .expect("canonicalize the ignored Effigy target directory");
+    assert!(
+        target.starts_with(&checkout),
+        "test fixture target must remain inside the authenticated checkout"
+    );
+    target
+}
+
 pub(super) fn parse_json(text: &str) -> serde_json::Value {
     serde_json::from_str(text).expect("parse json")
 }
@@ -29,8 +41,8 @@ pub(super) fn temp_workspace(name: &str) -> PathBuf {
             *root = Some(
                 tempfile::Builder::new()
                     .prefix("effigy-parent-fixtures-")
-                    .tempdir_in(env!("CARGO_MANIFEST_DIR"))
-                    .expect("create test fixture root beneath the Effigy checkout"),
+                    .tempdir_in(test_fixture_parent())
+                    .expect("create test fixture root beneath the ignored target directory"),
             );
         }
         root.as_ref()
