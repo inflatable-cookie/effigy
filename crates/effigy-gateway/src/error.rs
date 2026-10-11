@@ -100,7 +100,7 @@ pub enum GatewayError {
     },
 
     /// No full port range remains available for a new project allocation.
-    #[error("port registry exhausted: no free {range}-port range remains")]
+    #[error("port registry exhausted: no free {range}-port range remains; run `effigy container ports status` for capacity and reclaim candidates")]
     PortRegistryExhausted { range: u16 },
 
     /// The bounded loopback-IP pool is exhausted.

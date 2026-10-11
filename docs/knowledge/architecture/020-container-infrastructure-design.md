@@ -1000,6 +1000,10 @@ include HTTP `+0`, MariaDB `+6`, Postgres `+32`, Redis `+79`, and Memcached
 `+11`. Assignments are keyed by service and container port, so an unchanged
 binding can keep its host port within the project's range. Exhaustion is an
 explicit error; a new service does not silently take another project's port.
+`effigy container ports status` reports free range capacity and per-entry
+decisions. `effigy container ports reclaim --apply --expect-plan <DIGEST>`
+releases only allocation entries proven stale under the registry lock; see the
+port registry recovery section of contract 005.
 
 `container status --global`,
 `container stats --global`, `container cache list --global`, and

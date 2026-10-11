@@ -57,6 +57,17 @@ pub use runtime::loopback::{
     prune_loopback_assignments, prune_loopback_assignments_with_rows, warn_skipped_reclamation,
     LoopbackPruneOutcome,
 };
+/// The Effigy state home for this process: `~/.effigy`, or the private
+/// fixture home while unit tests run. Callers that touch `ports.json` or other
+/// shared state must resolve it here rather than reading `HOME` directly.
+pub fn effigy_home() -> Option<std::path::PathBuf> {
+    policy_support::effigy_home_dir()
+}
+
+pub use runtime::port_recovery::{
+    port_reclaim_apply, port_reclaim_dry_run, port_report_json, port_status, Decision,
+    PortRecoveryReport, PortRecoveryRow, PORTS_SCHEMA,
+};
 pub use runtime::retire::{
     plan_retirement, remaining_after, ObservedKind, ObservedResource, RetirementPlan,
 };

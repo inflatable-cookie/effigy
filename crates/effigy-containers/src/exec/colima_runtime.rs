@@ -410,6 +410,30 @@ pub fn running_colima_profiles(repo_root: &Path) -> Result<Vec<String>, Containe
         .collect())
 }
 
+/// Profile names for a complete all-states inventory. Any profile that is not
+/// running is a hard failure: its containers cannot be listed without starting
+/// it, so the inventory cannot prove absence.
+pub(super) fn colima_profiles_for_complete_inventory() -> Result<Vec<String>, ContainerExecError> {
+    let entries = list_colima_profiles(Path::new("."))?;
+    let stopped = entries
+        .iter()
+        .filter(|entry| !entry.status.eq_ignore_ascii_case("running"))
+        .map(|entry| entry.name.as_str())
+        .collect::<Vec<_>>();
+    if !stopped.is_empty() {
+        return Err(ContainerExecError::Failure {
+            command: "colima list".to_owned(),
+            code: None,
+            stdout: String::new(),
+            stderr: format!(
+                "stopped colima profile(s) {} cannot be inspected for created or stopped containers without starting them",
+                stopped.join(", ")
+            ),
+        });
+    }
+    Ok(entries.into_iter().map(|entry| entry.name).collect())
+}
+
 pub(super) fn default_runtime_profile() -> String {
     user_global_colima_profile().unwrap_or_else(|| DEFAULT_COLIMA_PROFILE.to_owned())
 }

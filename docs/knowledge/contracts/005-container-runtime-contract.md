@@ -543,6 +543,20 @@ runtime-prep modules are side-effect adapters for that plan: they may start
 the runtime, perform readiness checks, reconcile aliases/routes, and refresh
 leases, but they must not invent a separate activation model.
 
+## Port registry recovery
+
+`effigy container ports` is the only supported way to release generated-port
+allocations outside `container retire`. `status` and `reclaim` without
+`--apply` are read-only. `reclaim --apply --expect-plan <DIGEST>` removes only
+entries whose project path is definitely missing and that no scope record,
+gateway route, container in any state, published port or bound host port still
+references. Its locked recomputation must reproduce the reviewed digest. Any
+incomplete inventory or unreadable ownership store holds every absent-path
+entry, and the report names the reason. Reclaim never removes runtime
+resources, data, volumes, routes, certificates, profiles, scheduler settings or
+loopback assignments. Writes use the registry's `ports.lock`, the same lock
+generated-compose allocation takes, and preserve unknown registry fields.
+
 ## Handoff contract
 
 Effigy has two valid execution modes inside a running container:

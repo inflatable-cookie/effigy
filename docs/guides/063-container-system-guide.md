@@ -1164,6 +1164,54 @@ When `container profile recreate` runs interactively without `--disk`, Effigy
 prompts for the disk size before continuing. Non-interactive runs use the
 configured/default target unless `--disk` is supplied.
 
+## Port registry capacity and recovery
+
+Generated container ports come from `~/.effigy/ports.json`, which holds one
+100-port range per project. Exhaustion blocks new allocations until a range is
+released. Check capacity first:
+
+```bash
+effigy container ports status --json
+effigy container ports reclaim --json                 # dry run, writes nothing
+effigy container ports reclaim --apply --expect-plan <DIGEST> --json
+```
+
+`status` and the dry run are read-only. They take no registry lock and create
+no files. Each row is `retain`, `hold` or `reclaim` with a reason, and the
+report includes free range capacity before and after the planned reclaim. The
+plan digest is over the decisions. `--apply` recomputes the plan under the
+registry lock and refuses to write if the digest differs from the reviewed one.
+
+An entry is reclaimed only when all of these hold:
+
+- its project path is definitely missing: the leaf is absent and its parent
+  directory is readable. Permission and I/O errors, and an absent parent such
+  as an unmounted volume, are unknown and hold the entry;
+- no runtime-scope record names the project or its checkout;
+- no gateway route names the project or path;
+- no container in any state (running, Created, exited) carries the project
+  label or working directory, and none publishes a host port in the range;
+- no host port in the range is in use on this machine (a wildcard bind probe
+  fails, or cannot be attempted);
+- no other allocation records the same project path.
+
+Incomplete proof holds the whole registry. An unreadable scope store or route
+table, or an incomplete container inventory, holds every absent-path entry.
+A stopped Colima profile is incomplete, because its created or stopped
+containers cannot be listed without starting it. Present paths are always
+retained.
+
+Apply removes only the reclaim rows. It saves the pre-edit file as
+`ports.json.reclaim-backup-<nanos>` and reports both SHA-256 values. It never
+touches containers, volumes, data, routes, certificates, profiles or loopback
+assignments. Normal `container down` keeps stable allocations. `container
+retire` releases the retired scope's own project allocations through its
+existing record path.
+
+Limits: the bound-port probe is a point-in-time check. A backup left by a
+crash between backup and rename is not removed automatically. Recovery does
+not expire entries by age.
+
 ## Current Limits
 
 Still intentionally narrow:

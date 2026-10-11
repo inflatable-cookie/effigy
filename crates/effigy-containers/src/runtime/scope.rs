@@ -329,6 +329,28 @@ pub fn load_for_checkout(checkout: &Path) -> io::Result<Vec<ScopeRecord>> {
     Ok(records)
 }
 
+/// Every readable record in the runtime-scope store, for ownership proofs that
+/// must not be limited to one checkout. Any unreadable record is an error, so
+/// callers cannot mistake a damaged store for an empty one.
+pub fn load_all() -> io::Result<Vec<ScopeRecord>> {
+    let dir = records_dir()?;
+    if !dir.is_dir() {
+        return Ok(Vec::new());
+    }
+    let mut records = Vec::new();
+    for entry in fs::read_dir(&dir)? {
+        let path = entry?.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
+        }
+        if let Some(record) = read_record_file(&path)? {
+            records.push(record);
+        }
+    }
+    records.sort_by(|left, right| left.token.cmp(&right.token));
+    Ok(records)
+}
+
 pub fn remove(token: &str) -> io::Result<()> {
     let path = record_path(token)?;
     match fs::remove_file(&path) {
