@@ -209,10 +209,6 @@ fn validate_running_container_runtime_match_bounded(
             None,
         )
     })?;
-    let rows = rows
-        .into_iter()
-        .filter(|row| row.project_name.as_deref() == Some(policy.project_name.as_str()))
-        .collect::<Vec<_>>();
     if super::support::running_container_runtime_mismatch(repo_root, policy, &rows).is_some() {
         return Err(bounded_phase_error(
             policy,

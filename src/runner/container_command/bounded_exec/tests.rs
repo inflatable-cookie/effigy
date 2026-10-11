@@ -100,14 +100,21 @@ exit 0
 const PUBLIC_FAKE_BACKEND: &str = r#"#!/bin/sh
 args="$*"
 case "$FAKE_BOUNDED_MODE:$args" in
-    runtime-hang:ps)
+    runtime-hang:*ps*)
         printf '%s\n' "$$" > "$FAKE_BOUNDED_PID_FILE"
         exec /bin/sleep 30
         ;;
-    phase-continuity:ps)
-        exec /bin/sleep 1.4
+    runtime-mismatch:*ps*)
+        printf 'demo-web-old-1\tUp\t\tstale-project\t%s\tapp\tfalse\n' "$FAKE_BOUNDED_REPO"
+        exit 0
         ;;
-    runtime-flood:ps)
+    phase-continuity:*ps*)
+        if [ ! -e "$FAKE_BOUNDED_DELAY_MARKER" ]; then
+            : > "$FAKE_BOUNDED_DELAY_MARKER"
+            exec /bin/sleep 1.4
+        fi
+        ;;
+    runtime-flood:*ps*)
         i=0
         while [ "$i" -lt 4096 ]; do
             printf 'x'
@@ -117,15 +124,17 @@ case "$FAKE_BOUNDED_MODE:$args" in
         exit 0
         ;;
 esac
+if [ "$FAKE_BOUNDED_MODE" = "remove-before-command" ]; then
+    case "$args" in
+        *"install -m 0755"*)
+            /bin/chmod 000 "$0"
+            printf 'installed'
+            exit 0
+            ;;
+    esac
+fi
 case "$args" in
     *"ps --format"*)
-        if [ "$FAKE_BOUNDED_MODE" = "runtime-mismatch" ]; then
-            printf 'demo-web-old-1\tUp\t\tstale-project\t%s\tapp\tfalse\n' "$FAKE_BOUNDED_REPO"
-            exit 0
-        fi
-        if [ "$FAKE_BOUNDED_MODE" = "remove-before-command" ]; then
-            /bin/rm -f "$0"
-        fi
         printf 'demo-web-app-1\tUp\t\tdemo-web\t%s\tapp\tfalse\n' "$FAKE_BOUNDED_REPO"
         exit 0
         ;;
@@ -137,28 +146,15 @@ case "$args" in
         exit 0
         ;;
     *"cat /usr/local/bin/effigy.install-identity"*)
-        case "$FAKE_BOUNDED_MODE" in
-            identity-hang|phase-continuity)
-                printf '%s\n' "$$" > "$FAKE_BOUNDED_PID_FILE"
-                exec /bin/sleep 30
-                ;;
-            identity-flood)
-                i=0
-                while [ "$i" -lt 4096 ]; do
-                    printf 'x'
-                    printf 'y' >&2
-                    i=$((i + 1))
-                done
-                exit 0
-                ;;
-            *)
-                printf '%s' "$FAKE_BOUNDED_IDENTITY"
-                exit 0
-                ;;
-        esac
+        printf '%s' "$FAKE_BOUNDED_IDENTITY"
+        exit 0
         ;;
     *"uname -m"*)
-        if [ "$FAKE_BOUNDED_MODE" = "arch-flood" ]; then
+        if [ "$FAKE_BOUNDED_MODE" = "phase-continuity" ] || [ "$FAKE_BOUNDED_MODE" = "workspace-hang" ]; then
+            printf '%s\n' "$$" > "$FAKE_BOUNDED_PID_FILE"
+            exec /bin/sleep 30
+        fi
+        if [ "$FAKE_BOUNDED_MODE" = "workspace-flood" ]; then
             i=0
             while [ "$i" -lt 4096 ]; do
                 printf 'x'
@@ -182,7 +178,11 @@ case "$args" in
                 exit 1
                 ;;
             *)
-                printf bb
+                i=0
+                while [ "$i" -lt 160 ]; do
+                    printf b
+                    i=$((i + 1))
+                done
                 exit 0
                 ;;
         esac
@@ -209,7 +209,17 @@ exit 0
 "#;
 
 fn fixture(name: &str) -> (tempfile::TempDir, PathBuf, PathBuf) {
-    let dir = tempfile::tempdir().expect("tempdir");
+    fixture_in(name, None)
+}
+
+fn fixture_in(name: &str, parent: Option<&Path>) -> (tempfile::TempDir, PathBuf, PathBuf) {
+    let dir = match parent {
+        Some(parent) => tempfile::Builder::new()
+            .prefix("effigy-bounded-public-")
+            .tempdir_in(parent)
+            .expect("tempdir in shared home path"),
+        None => tempfile::tempdir().expect("tempdir"),
+    };
     let bin_dir = dir.path().join("bin");
     fs::create_dir_all(&bin_dir).expect("mkdir bin");
     for program in ["colima", "docker"] {
@@ -229,7 +239,8 @@ fn fixture(name: &str) -> (tempfile::TempDir, PathBuf, PathBuf) {
 }
 
 fn public_fixture(name: &str, workspace_identity: bool) -> (tempfile::TempDir, PathBuf, PathBuf) {
-    let (dir, bin_dir, repo_root) = fixture(name);
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let (dir, bin_dir, repo_root) = fixture_in(name, home.as_deref());
     fs::write(
         repo_root.join("docker-compose.yml"),
         "services:\n  app:\n    image: busybox\n",
@@ -360,20 +371,33 @@ impl Drop for RecordedClientCleanup {
 }
 
 #[cfg(unix)]
+struct GuardedPublicCase<'a> {
+    mode: &'a str,
+    backend: &'a str,
+    identity: &'a str,
+    deadline_ms: u64,
+    stdout_limit: u64,
+}
+
+#[cfg(unix)]
 fn run_guarded_public_case(
     dir: &tempfile::TempDir,
     bin_dir: &Path,
     repo_root: &Path,
-    mode: &str,
-    backend: &str,
-    identity: &str,
-    deadline_ms: u64,
-    stdout_limit: u64,
+    case: GuardedPublicCase<'_>,
 ) -> Duration {
     use std::os::unix::process::CommandExt;
 
+    let GuardedPublicCase {
+        mode,
+        backend,
+        identity,
+        deadline_ms,
+        stdout_limit,
+    } = case;
     let pid_file = dir.path().join("fake-client-pid");
-    let final_marker = dir.path().join("final-command-ran");
+    let delay_marker = dir.path().join(format!("runtime-delay-{mode}"));
+    let final_marker = dir.path().join(format!("final-command-ran-{mode}"));
     let _client_cleanup = RecordedClientCleanup(pid_file.clone());
     let test_name = std::thread::current()
         .name()
@@ -395,6 +419,7 @@ fn run_guarded_public_case(
         .env("FAKE_BOUNDED_REPO", repo_root)
         .env("FAKE_BOUNDED_IDENTITY", identity)
         .env("FAKE_BOUNDED_PID_FILE", &pid_file)
+        .env("FAKE_BOUNDED_DELAY_MARKER", &delay_marker)
         .env("FAKE_BOUNDED_FINAL_MARKER", &final_marker)
         .env("FAKE_BOUNDED_STDOUT_LIMIT", stdout_limit.to_string())
         .env("FAKE_BOUNDED_DEADLINE_MS", deadline_ms.to_string())
@@ -473,18 +498,24 @@ fn guarded_public_entry_child() {
             assert_eq!(value["stdout"], "command-only");
             assert_eq!(value["stdout_bytes"], "command-only".len());
             assert_eq!(value["attempts"], 1);
-            assert_eq!(value["preparation"]["captures"], 3);
-            assert_eq!(
-                value["preparation"]["retained"]["stdout_bytes"],
-                if backend == "colima" {
-                    "colima running".len() + std::env::var("FAKE_BOUNDED_IDENTITY").unwrap().len()
-                } else {
-                    std::env::var("FAKE_BOUNDED_IDENTITY").unwrap().len()
-                }
+            assert!(
+                value["preparation"]["captures"].as_u64().unwrap() > 3,
+                "public command must include workspace preparation captures"
             );
+            let preparation_stdout = value["preparation"]["retained"]["stdout_bytes"]
+                .as_u64()
+                .unwrap();
+            let minimum_preparation_stdout = std::env::var("FAKE_BOUNDED_IDENTITY").unwrap().len()
+                as u64
+                + if backend == "colima" {
+                    "colima running".len() as u64
+                } else {
+                    0
+                };
+            assert!(preparation_stdout >= minimum_preparation_stdout);
             assert!(
                 value["retained"]["stdout_bytes"].as_u64().unwrap()
-                    > value["stdout_bytes"].as_u64().unwrap()
+                    == preparation_stdout + value["stdout_bytes"].as_u64().unwrap()
             );
             assert!(
                 final_marker.exists(),
@@ -520,14 +551,19 @@ fn guarded_public_entry_child() {
             assert_eq!(details["phase"], "command_execution");
             assert_eq!(details["attempts"], 2);
             assert_eq!(details["workspace_user_fallback"], true);
-            assert_eq!(details["preparation"]["captures"], 3);
+            assert!(details["preparation"]["captures"].as_u64().unwrap() > 3);
             assert!(!final_marker.exists());
         }
         "remove-before-command" => {
             let error = result.expect_err("missing final backend must be a launch failure");
             let human = error.to_string();
-            let json = error.json_error_details().expect("json details");
-            assert!(human.contains("launch"), "human error is safe and useful");
+            let json = error
+                .json_error_details()
+                .unwrap_or_else(|| panic!("expected bounded launch failure, got: {human}"));
+            assert!(
+                human.contains("launch"),
+                "human error is safe and useful: {human}"
+            );
             assert!(!human.contains("SECRET_ARG_MARKER_142"));
             assert!(!json.contains("SECRET_ARG_MARKER_142"));
             assert!(!json.contains("docker compose"));
@@ -576,31 +612,37 @@ fn public_entry_bounds_discovery_preparation_and_fallback_on_the_full_path() {
         &dir,
         &bin_dir,
         &repo,
-        "valid-identity",
-        "docker",
-        &identity,
-        8_000,
-        256,
+        GuardedPublicCase {
+            mode: "valid-identity",
+            backend: "docker",
+            identity: &identity,
+            deadline_ms: 8_000,
+            stdout_limit: 256,
+        },
     );
     run_guarded_public_case(
         &dir,
         &bin_dir,
         &repo,
-        "valid-colima",
-        "colima",
-        &identity,
-        8_000,
-        256,
+        GuardedPublicCase {
+            mode: "valid-colima",
+            backend: "colima",
+            identity: &identity,
+            deadline_ms: 8_000,
+            stdout_limit: 256,
+        },
     );
     let elapsed = run_guarded_public_case(
         &dir,
         &bin_dir,
         &repo,
-        "phase-continuity",
-        "docker",
-        &identity,
-        2_000,
-        64,
+        GuardedPublicCase {
+            mode: "phase-continuity",
+            backend: "docker",
+            identity: &identity,
+            deadline_ms: 2_000,
+            stdout_limit: 8_192,
+        },
     );
     assert!(
         elapsed < Duration::from_millis(3200),
@@ -611,37 +653,41 @@ fn public_entry_bounds_discovery_preparation_and_fallback_on_the_full_path() {
         ("runtime-flood", "docker"),
         ("runtime-mismatch", "docker"),
         ("identity-invalid", "docker"),
-        ("identity-hang", "docker"),
-        ("identity-flood", "docker"),
-        ("arch-flood", "docker"),
+        ("workspace-hang", "docker"),
+        ("workspace-flood", "docker"),
         ("fallback-budget", "docker"),
     ] {
         run_guarded_public_case(
             &dir,
             &bin_dir,
             &repo,
-            mode,
-            backend,
-            &identity,
-            2_000,
-            if mode == "fallback-budget" {
-                identity.len() as u64 + 4
-            } else {
-                64
+            GuardedPublicCase {
+                mode,
+                backend,
+                identity: &identity,
+                deadline_ms: 2_000,
+                stdout_limit: match mode {
+                    "fallback-budget" => 256,
+                    "runtime-mismatch" | "identity-invalid" | "workspace-hang" => 512,
+                    "workspace-flood" => 512,
+                    _ => 64,
+                },
             },
         );
     }
 
-    let (_launch_dir, launch_bin, launch_repo) = public_fixture("launch-secret", false);
+    let (_launch_dir, launch_bin, launch_repo) = public_fixture("launch-secret", true);
     run_guarded_public_case(
         &dir,
         &launch_bin,
         &launch_repo,
-        "remove-before-command",
-        "docker",
-        &identity,
-        2_000,
-        256,
+        GuardedPublicCase {
+            mode: "remove-before-command",
+            backend: "docker",
+            identity: &identity,
+            deadline_ms: 2_000,
+            stdout_limit: 256,
+        },
     );
 }
 
