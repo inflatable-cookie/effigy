@@ -1322,6 +1322,7 @@ fn fixture_runner_test_binary(repo_root: &Path) -> PathBuf {
         "runner::bootstrap_command::tests::run_bootstrap_with_cwd_runs_multi_target_db_seed_task_for_bundle_databases",
         "runner::tests::builtin_command_tests::execution_success_tests::run_manifest_task_builtin_test_executes_js_and_rust_suites_in_same_repo",
         "runner::tests::builtin_command_tests::planning_and_selection_tests::vitest_detection_tests::run_manifest_task_builtin_test_skips_vitest_when_only_a_transitive_binary_exists",
+        "runner::tests::builtin_command_tests::scan_tests::dead_code::run_manifest_task_builtin_scan_dead_code_auto_refreshes_stale_index",
     ];
     let current = std::env::current_exe().expect("current integration test binary");
     let deps = current.parent().expect("test binaries directory");
@@ -1397,21 +1398,20 @@ fn fixture_parent_runner_selector_succeeds_with_authenticated_parent_root() {
     assert_eq!(settled["settlement"]["outcome"], "passed");
     assert_eq!(settled["settlement"]["result"]["exitCode"], 0);
 
-    let fixture_roots: Vec<_> = fs::read_dir(repo_root.join("target"))
-        .expect("read ignored target directory after fixture run")
-        .flatten()
-        .filter(|entry| {
-            entry
-                .file_name()
-                .to_string_lossy()
-                .starts_with("effigy-parent-fixtures-")
-                || entry
-                    .file_name()
-                    .to_string_lossy()
-                    .starts_with("effigy-bootstrap-fixtures-")
-        })
-        .map(|entry| entry.file_name())
-        .collect();
+    let mut fixture_roots = Vec::new();
+    for directory in ["crates", "target"] {
+        fixture_roots.extend(
+            fs::read_dir(repo_root.join(directory))
+                .expect("read fixture parent after scheduled run")
+                .flatten()
+                .filter(|entry| {
+                    let name = entry.file_name().to_string_lossy().into_owned();
+                    name.starts_with("effigy-parent-fixtures-")
+                        || name.starts_with("effigy-bootstrap-fixtures-")
+                })
+                .map(|entry| entry.file_name()),
+        );
+    }
     assert!(
         fixture_roots.is_empty(),
         "test-owned fixture roots were removed after the run: {fixture_roots:?}"

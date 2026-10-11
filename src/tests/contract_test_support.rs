@@ -13,13 +13,13 @@ std::thread_local! {
 fn test_fixture_parent() -> PathBuf {
     let checkout = fs::canonicalize(env!("CARGO_MANIFEST_DIR"))
         .expect("canonicalize the Effigy checkout for test fixtures");
-    let target = fs::canonicalize(checkout.join("target"))
-        .expect("canonicalize the ignored Effigy target directory");
+    let parent = fs::canonicalize(checkout.join("crates"))
+        .expect("canonicalize the Effigy workspace crates directory");
     assert!(
-        target.starts_with(&checkout),
-        "test fixture target must remain inside the authenticated checkout"
+        parent.starts_with(&checkout),
+        "test fixture parent must remain inside the authenticated checkout"
     );
-    target
+    parent
 }
 
 pub(super) fn parse_json(text: &str) -> serde_json::Value {
@@ -42,7 +42,7 @@ pub(super) fn temp_workspace(name: &str) -> PathBuf {
                 tempfile::Builder::new()
                     .prefix("effigy-parent-fixtures-")
                     .tempdir_in(test_fixture_parent())
-                    .expect("create test fixture root beneath the ignored target directory"),
+                    .expect("create test fixture root beneath the Effigy workspace"),
             );
         }
         root.as_ref()

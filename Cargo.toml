@@ -1,4 +1,5 @@
 [workspace]
+exclude = ["crates/effigy-parent-fixtures-*"]
 members = [
     "crates/effigy-bootstrap",
     "crates/effigy-artifacts",

@@ -146,8 +146,9 @@ pub(crate) fn write_package_json_with_vitest_dev_dependency(root: &Path) {
     .expect("write package");
 }
 
-// Standalone Cargo fixtures live under the checkout's ignored target/.
-// Give each package its own workspace root so Cargo does not inherit Effigy's.
+// Standalone Cargo packages live under the authenticated checkout's disposable
+// fixture root. Give each package its own workspace so Cargo does not inherit
+// Effigy's workspace.
 pub(crate) fn write_isolated_cargo_package_manifest(root: &Path, package: &str) {
     fs::write(root.join("Cargo.toml"), format!("[workspace]\n\n{package}"))
         .expect("write cargo toml");
