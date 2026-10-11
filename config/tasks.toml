@@ -269,6 +269,7 @@
   { id = "bounded-exec-parser", run = "cargo test -p effigy-cli --lib command_parsing::container::tests:: -- --nocapture", timeout_ms = 600000 },
   { id = "bounded-exec-reader", run = "cargo test -p effigy --lib exec_command::bounded:: -- --nocapture", timeout_ms = 600000 },
   { id = "bounded-exec-default-path", run = "cargo test -p effigy --lib container_command::lifecycle::tests:: -- --nocapture", timeout_ms = 600000 },
+  { id = "bounded-exec-help", run = "cargo test -p effigy --lib render_container_help -- --nocapture", timeout_ms = 600000 },
 ]
 # Real private fake-backend production-path proof of the bounded opt-in
 # surface: both byte limits, one absolute deadline and inherited-pipe lifetime,
