@@ -161,14 +161,25 @@ effigy container web shell \
 
 Each bound is a strictly parsed positive integer validated before any effect
 (`--deadline-ms` 1..3600000, stream limits 1..67108864). One absolute deadline
-is created before discovery and checked at every phase boundary; it governs the
-decision before discovery, before preparation, before both eligible fallback
-attempts and throughout the final drain. The shared session/runtime resolution
-and workspace-effigy preparation are existing steps that are not interrupted
-mid-capture; a step that returns after the deadline refuses before spawning.
+is created before runtime discovery and carried through runtime liveness and
+identity inspection, primary workspace Effigy identity and architecture
+probes, artifact build or download, service copies and install captures, user
+command execution and the final drain. Each process capture uses the same
+bounded reader; requests and processes use the remaining deadline. A phase that
+returns after expiry refuses before the next phase or user command is spawned.
+Synchronous local filesystem calls cannot be interrupted mid-call; the shared
+deadline is checked before the next external operation and at phase boundaries.
+
 The stdout and stderr budgets are cumulative across the whole operation,
-including the existing missing-workspace-user fallback, so a second attempt
-cannot reset the hard total.
+including preparation captures and the existing missing-workspace-user
+fallback, so neither preparation nor a second attempt can reset the hard total.
+`retained` reports all bytes retained by the operation. The returned `stdout`,
+`stderr`, `stdout_bytes` and `stderr_bytes` contain only the completed user
+command capture. JSON also reports `preparation.captures` and per-stream
+preparation retained counts; these are additive fields in schema v1. Those
+retained counts cover process stdout/stderr; downloaded artifact bytes are not
+stream output. Local manifest and artifact selection checks are synchronous
+and do not capture command output.
 
 Overflow of either stream, a stream read failure, incomplete output, or an
 expired deadline all refuse, and the retained prefix is never reported as
@@ -178,12 +189,16 @@ still fails with the inner code, which is distinct from the bounds and deadline
 reasons.
 
 The `--json` payload is versioned `effigy.container.bounded-exec.v1`. Success
-returns the bounded bytes and counts; a refusal returns only a reason, the
-stream name, the limit and safe counts, never raw output, arguments or
-credentials. Terminating the owned host client group is not proof that a
-remote container process stopped: `remote_cancellation` stays `unverified`,
-no remote PID is guessed and an uncertain command is never automatically
-repeated.
+returns the bounded command bytes and counts; a refusal returns a stable reason,
+phase, optional stream name, limit and safe counts. Launch diagnostics on both
+human and JSON surfaces exclude raw argv, command strings, configured
+container/service names, output, credentials and host error payloads. The
+schema-v1 `container` and `service` keys retain their shape and contain the
+literal `[redacted]` on launch failure. Other failures also do not echo
+captured output or credentials. Terminating the owned host client group is not
+proof that a remote container process stopped:
+`remote_cancellation` stays `unverified`, no remote PID is guessed and an
+uncertain command is never automatically repeated.
 
 ## QA Recipe
 

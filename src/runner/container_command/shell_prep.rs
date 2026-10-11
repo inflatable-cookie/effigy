@@ -5,13 +5,19 @@ use std::path::{Path, PathBuf};
 use effigy_containers::{
     exec::{runtime_backend_is_running, selected_backend_label},
     load_container_exec_working_dir, load_container_policy, validate_compose_backend_runtime,
-    validate_container_policy, EffectiveContainerPolicy,
+    validate_container_policy, ContainerAction, EffectiveContainerPolicy,
 };
 use effigy_exec::CwdMapper;
 
-use crate::runner::container_command::support::validate_running_container_runtime_match;
+use crate::runner::container_command::support::{
+    runtime_probe_means_runtime_not_running, validate_running_container_runtime_match,
+};
+use crate::runner::container_command::{bounded_failure_error, bounded_phase_error};
 use crate::runner::error::RunnerError;
+use crate::runner::exec_command::{BoundedCommandBudget, BoundedCommandPhase};
 use crate::runner::system_command::ensure_workspace_effigy_available_for_policy;
+
+const DOCKER_PS_FORMAT: &str = "{{.Names}}\t{{.Status}}\t{{.Ports}}\t{{.Label \"com.docker.compose.project\"}}\t{{.Label \"com.docker.compose.project.working_dir\"}}\t{{.Label \"com.docker.compose.service\"}}\t{{.Label \"com.docker.compose.oneoff\"}}";
 
 pub(super) fn resolve_container_shell_session(
     repo_root: &Path,
@@ -37,6 +43,190 @@ pub(super) fn resolve_container_shell_session(
     Ok((policy, service, working_dir))
 }
 
+pub(super) fn resolve_container_shell_session_bounded(
+    repo_root: &Path,
+    name: Option<&str>,
+    service: Option<&str>,
+    budget: &mut BoundedCommandBudget,
+) -> Result<(EffectiveContainerPolicy, String, Option<PathBuf>), RunnerError> {
+    let policy = load_container_policy(repo_root, name)?;
+    validate_container_policy(repo_root, &policy)?;
+    validate_compose_backend_runtime(repo_root, &policy)?;
+    if !runtime_backend_is_running_bounded(repo_root, &policy, budget)? {
+        return Err(RunnerError::task_invocation(format!(
+            "{} runtime is not available for container `{}`",
+            selected_backend_label(&policy, repo_root),
+            policy.name
+        )));
+    }
+    validate_running_container_runtime_match_bounded(repo_root, &policy, budget)?;
+    let service = service
+        .unwrap_or(policy.primary_service.as_str())
+        .to_owned();
+    let working_dir =
+        resolve_container_exec_working_dir_for_service(repo_root, name, &policy, &service)?;
+    Ok((policy, service, working_dir))
+}
+
+fn runtime_backend_is_running_bounded(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    budget: &mut BoundedCommandBudget,
+) -> Result<bool, RunnerError> {
+    if effigy_containers::compose::resolve_compose_backend_for_repo(repo_root, policy)
+        == effigy_containers::compose::ComposeBackend::ColimaNerdctl
+    {
+        let command = effigy_containers::colima::colima_status_command(policy);
+        let args = command
+            .args
+            .into_iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+        let capture = budget
+            .run_command(
+                repo_root,
+                std::ffi::OsStr::new(&command.program),
+                &args,
+                None,
+                &[],
+                BoundedCommandPhase::RuntimeDiscovery,
+            )
+            .map_err(|failure| {
+                bounded_failure_error(policy, &policy.primary_service, budget, failure)
+            })?;
+        if !capture.status.success() {
+            return Ok(false);
+        }
+        return Ok(effigy_containers::colima::parse_colima_running(
+            &String::from_utf8_lossy(&capture.stdout),
+            &String::from_utf8_lossy(&capture.stderr),
+        ));
+    }
+
+    let args = [OsString::from("ps")];
+    let plan = effigy_runtime::container_manager::runtime_invocation_plan(
+        repo_root,
+        policy,
+        "docker",
+        &args,
+        ContainerAction::Status,
+        "runtime ps",
+    )
+    .map_err(|_| {
+        bounded_phase_error(
+            policy,
+            &policy.primary_service,
+            budget,
+            BoundedCommandPhase::RuntimeDiscovery,
+            "runtime_discovery_failed",
+            "bounded container command could not resolve runtime discovery",
+            None,
+        )
+    })?;
+    let capture = budget
+        .run_command(
+            &plan.repo_root,
+            plan.program.as_os_str(),
+            &plan.args,
+            None,
+            &[],
+            BoundedCommandPhase::RuntimeDiscovery,
+        )
+        .map_err(|failure| {
+            bounded_failure_error(policy, &policy.primary_service, budget, failure)
+        })?;
+    Ok(capture.status.success())
+}
+
+fn validate_running_container_runtime_match_bounded(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    budget: &mut BoundedCommandBudget,
+) -> Result<(), RunnerError> {
+    let args = [
+        OsString::from("ps"),
+        OsString::from("--format"),
+        OsString::from(DOCKER_PS_FORMAT),
+    ];
+    let plan = effigy_runtime::container_manager::runtime_invocation_plan(
+        repo_root,
+        policy,
+        "docker",
+        &args,
+        ContainerAction::Status,
+        "runtime ps",
+    )
+    .map_err(|_| {
+        bounded_phase_error(
+            policy,
+            &policy.primary_service,
+            budget,
+            BoundedCommandPhase::RuntimeDiscovery,
+            "runtime_discovery_failed",
+            "bounded container command could not resolve runtime inspection",
+            None,
+        )
+    })?;
+    let capture = budget
+        .run_command(
+            &plan.repo_root,
+            plan.program.as_os_str(),
+            &plan.args,
+            None,
+            &[],
+            BoundedCommandPhase::RuntimeDiscovery,
+        )
+        .map_err(|failure| {
+            bounded_failure_error(policy, &policy.primary_service, budget, failure)
+        })?;
+    if !capture.status.success() {
+        let stdout = String::from_utf8_lossy(&capture.stdout);
+        let stderr = String::from_utf8_lossy(&capture.stderr);
+        if runtime_probe_means_runtime_not_running(&stdout, &stderr) {
+            return Ok(());
+        }
+        return Err(bounded_phase_error(
+            policy,
+            &policy.primary_service,
+            budget,
+            BoundedCommandPhase::RuntimeDiscovery,
+            "runtime_discovery_failed",
+            "bounded container command could not inspect running container identities",
+            capture.status.code(),
+        ));
+    }
+    let rows = effigy_containers::exec::parse_running_compose_containers(&String::from_utf8_lossy(
+        &capture.stdout,
+    ))
+    .map_err(|_| {
+        bounded_phase_error(
+            policy,
+            &policy.primary_service,
+            budget,
+            BoundedCommandPhase::RuntimeDiscovery,
+            "runtime_discovery_failed",
+            "bounded container command received invalid runtime identity data",
+            None,
+        )
+    })?;
+    let rows = rows
+        .into_iter()
+        .filter(|row| row.project_name.as_deref() == Some(policy.project_name.as_str()))
+        .collect::<Vec<_>>();
+    if super::support::running_container_runtime_mismatch(repo_root, policy, &rows).is_some() {
+        return Err(bounded_phase_error(
+            policy,
+            &policy.primary_service,
+            budget,
+            BoundedCommandPhase::RuntimeDiscovery,
+            "runtime_identity_mismatch",
+            "bounded container command found a conflicting runtime identity",
+            None,
+        ));
+    }
+    Ok(())
+}
+
 pub(super) fn maybe_refresh_workspace_effigy_for_shell(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
@@ -46,6 +236,20 @@ pub(super) fn maybe_refresh_workspace_effigy_for_shell(
         return Ok(());
     }
     ensure_workspace_effigy_available_for_policy(repo_root, policy, None)
+}
+
+pub(super) fn maybe_refresh_workspace_effigy_for_shell_bounded(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    service: &str,
+    budget: &mut BoundedCommandBudget,
+) -> Result<(), RunnerError> {
+    if !service_requires_workspace_effigy_refresh(policy, service) {
+        return Ok(());
+    }
+    crate::runner::system_command::ensure_workspace_effigy_available_for_policy_bounded(
+        repo_root, policy, budget,
+    )
 }
 
 pub(super) fn service_requires_workspace_effigy_refresh(
