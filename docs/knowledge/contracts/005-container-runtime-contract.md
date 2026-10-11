@@ -24,6 +24,22 @@ launched through a TUI, a plain shell, or a one-shot bootstrap path.
 This contract exists to keep one explicit runtime guarantee across those
 surfaces.
 
+## Optional workspace mounts at creation
+
+The operator-authorized Acowtancy feedback on 2026-10-11 requests that optional
+workspace extra mounts be resolved for the actual container creation, after
+preceding preparation steps, with an applied-or-skipped diagnostic at that
+boundary. Configuration loading must not describe a mount as skipped by a
+container that has not yet been created. Required catalog-member mounts keep
+their strict validation; missing optional sibling paths remain optional.
+
+The current resolver checks optional source presence and prints a skip warning
+while loading policy. That observation does not prove the source was absent at
+creation, or whether an existing container has the mount. The requested
+correction must distinguish creation inputs from verified runtime mounts,
+preserve path and mount-boundary checks, and must not silently recreate a live
+container. This ruling changes no scheduler credential or admission boundary.
+
 ## Managed host listener routes
 
 `[[containers.<name>.host_processes]]` may opt a process into Effigy's
