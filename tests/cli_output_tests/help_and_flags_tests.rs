@@ -2,7 +2,7 @@ use serde_json::Value;
 use std::fs;
 use std::process::Command;
 
-use super::support::temp_workspace;
+use super::support::{temp_execution_workspace, temp_workspace};
 
 #[test]
 fn cli_help_supports_colorized_sections_when_forced() {
@@ -441,7 +441,7 @@ fn cli_help_command_and_direct_command_help_render_the_same_facts() {
 
 #[test]
 fn cli_manifest_selector_named_after_a_help_group_keeps_task_routing() {
-    let root = temp_workspace("help-group-selector-collision");
+    let root = temp_execution_workspace("help-group-selector-collision");
     fs::write(
         root.join("effigy.toml"),
         "[tasks.repo]\nrun = \"printf repo-task\"\n",
@@ -531,7 +531,7 @@ fn cli_general_help_renders_the_six_operator_groups() {
 
 #[test]
 fn cli_help_command_topic_defers_with_the_direct_command_when_a_selector_shadows_it() {
-    let root = temp_workspace("help-command-deferral");
+    let root = temp_execution_workspace("help-command-deferral");
     fs::write(
         root.join("effigy.toml"),
         "[tasks.docs]\nrun = \"printf docs-task\"\n",
@@ -664,7 +664,7 @@ fn cli_help_for_builtin_owned_help_emits_the_same_json_envelope() {
 /// than following it.
 #[test]
 fn cli_help_for_builtin_owned_help_refuses_to_run_a_shadowing_selector() {
-    let root = temp_workspace("help-builtin-owned-shadowed");
+    let root = temp_execution_workspace("help-builtin-owned-shadowed");
     fs::write(
         root.join("effigy.toml"),
         "[tasks.config]\nrun = \"printf CONFIG-TASK-RAN\"\n[tasks.scan]\nrun = \"printf SCAN-TASK-RAN\"\n",

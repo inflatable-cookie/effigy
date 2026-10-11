@@ -2,11 +2,11 @@ use serde_json::Value;
 use std::fs;
 use std::process::Command;
 
-use super::support::temp_workspace;
+use super::support::temp_execution_workspace;
 
 #[test]
 fn cli_task_args_after_delimiter_are_forwarded_instead_of_dropped() {
-    let root = temp_workspace("cli-task-args-after-delimiter");
+    let root = temp_execution_workspace("cli-task-args-after-delimiter");
     fs::write(
         root.join("effigy.toml"),
         "[tasks.\"test:unit\"]\nrun = \"printf 'args=%s' {args}\"\n",

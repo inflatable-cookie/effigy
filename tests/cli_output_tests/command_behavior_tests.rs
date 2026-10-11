@@ -13,9 +13,9 @@ use effigy_demo::{write_active_attempt_record, PersistedDemoActiveAttempt};
 use super::support::{
     attach_bare_remote, git_commit_all, git_stdout, init_git_repo, parse_stdout_json,
     run_cli_command, run_json_cli_command, run_json_cli_command_with_manifest,
-    run_json_task_success, temp_workspace, wait_for_path_exists, wait_for_positive_pid,
-    write_effigy_release_root_marker, write_fake_effigy_install_repo, write_release_changelog,
-    write_release_manifest,
+    run_json_task_success, temp_execution_workspace, temp_workspace, wait_for_path_exists,
+    wait_for_positive_pid, write_effigy_release_root_marker, write_fake_effigy_install_repo,
+    write_release_changelog, write_release_manifest,
 };
 
 static CLI_PROCESS_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
@@ -697,7 +697,7 @@ fn cli_demo_inspect_json_reports_latest_attempt_and_sources() {
 
 #[test]
 fn cli_demo_run_json_task_backed_writes_default_receipt_and_reports_success() {
-    let root = temp_workspace("demo-run-task-json");
+    let root = temp_execution_workspace("demo-run-task-json");
     fs::write(
         root.join("effigy.toml"),
         r#"
@@ -744,7 +744,7 @@ task = "demo:login-smoke"
 
 #[test]
 fn cli_demo_run_json_inline_run_sequence_reports_run_entrypoint() {
-    let root = temp_workspace("demo-run-inline-sequence-json");
+    let root = temp_execution_workspace("demo-run-inline-sequence-json");
     fs::write(
         root.join("effigy.toml"),
         r#"
@@ -788,7 +788,7 @@ run = [{ task = "prep" }, { run = "printf login-proof-ok" }]
 
 #[test]
 fn cli_demo_inspect_json_reports_bounded_recent_attempt_history() {
-    let root = temp_workspace("demo-inspect-history-json");
+    let root = temp_execution_workspace("demo-inspect-history-json");
     fs::write(
         root.join("effigy.toml"),
         r#"
@@ -846,7 +846,7 @@ task = "demo:login-smoke"
 
 #[test]
 fn cli_demo_history_json_reports_recent_attempts_with_limit() {
-    let root = temp_workspace("demo-history-json");
+    let root = temp_execution_workspace("demo-history-json");
     fs::write(
         root.join("effigy.toml"),
         r#"
@@ -906,7 +906,7 @@ task = "demo:login-smoke"
 
 #[test]
 fn cli_demo_history_json_can_drill_into_selected_attempt() {
-    let root = temp_workspace("demo-history-drilldown-json");
+    let root = temp_execution_workspace("demo-history-drilldown-json");
     fs::write(
         root.join("effigy.toml"),
         r#"

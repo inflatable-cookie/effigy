@@ -31,15 +31,7 @@ fn json(output: &Output) -> Value {
 }
 
 fn unique_temp_consumer(label: &str) -> PathBuf {
-    let root = std::env::temp_dir().join(format!(
-        "effigy-skill-{label}-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock")
-            .as_nanos()
-    ));
-    std::fs::create_dir_all(&root).expect("create temporary consumer");
+    let root = unique_temp_root(label);
     std::fs::write(
         root.join("effigy.toml"),
         "[catalog]\nalias = \"temp-consumer\"\n",
@@ -49,16 +41,7 @@ fn unique_temp_consumer(label: &str) -> PathBuf {
 }
 
 fn unique_temp_root(label: &str) -> PathBuf {
-    let root = std::env::temp_dir().join(format!(
-        "effigy-skill-{label}-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock")
-            .as_nanos()
-    ));
-    std::fs::create_dir_all(&root).expect("create temporary root");
-    root
+    super::execution_fixture_support::temp_workspace("effigy-skill", label)
 }
 
 #[test]

@@ -1326,13 +1326,17 @@ fn fixture_runner_test_binary(repo_root: &Path) -> PathBuf {
         "runner::tests::builtin_command_tests::planning_and_selection_tests::vitest_detection_tests::run_manifest_task_builtin_test_skips_vitest_when_only_a_transitive_binary_exists",
         "runner::tests::builtin_command_tests::scan_tests::dead_code::run_manifest_task_builtin_scan_dead_code_auto_refreshes_stale_index",
     ];
+    built_fixture_test_binary(repo_root, "effigy-", &required)
+}
+
+fn built_fixture_test_binary(repo_root: &Path, prefix: &str, required: &[&str]) -> PathBuf {
     let current = std::env::current_exe().expect("current integration test binary");
     let deps = current.parent().expect("test binaries directory");
     let mut matches = Vec::new();
     for entry in fs::read_dir(deps).expect("read test binaries directory") {
         let entry = entry.expect("test binary entry");
         let path = entry.path();
-        if path == current || !entry.file_name().to_string_lossy().starts_with("effigy-") {
+        if path == current || !entry.file_name().to_string_lossy().starts_with(prefix) {
             continue;
         }
         let metadata = entry.metadata().expect("test binary metadata");
@@ -1357,7 +1361,7 @@ fn fixture_runner_test_binary(repo_root: &Path) -> PathBuf {
     assert_eq!(
         matches.len(),
         1,
-        "expected exactly one already-built Effigy lib test binary"
+        "expected exactly one already-built {prefix} test binary"
     );
     let runner = fs::canonicalize(&matches[0]).expect("canonical fixture runner binary");
     assert!(
@@ -1421,6 +1425,87 @@ fn fixture_parent_runner_selector_succeeds_with_authenticated_parent_root() {
     assert!(
         fixture_roots.is_empty(),
         "test-owned fixture roots were removed after the run: {fixture_roots:?}"
+    );
+}
+
+#[test]
+#[ignore = "requires private Queue fixture; run test:qa:fixture-parent-isolation:cli"]
+fn binary_cli_fixtures_succeed_with_authenticated_parent_root() {
+    assert_reviewed_private_queue_checkout();
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let families = [
+        (
+            "bootstrap_cli_tests-",
+            "bootstrap_old_placement_refuses_all_three_binary_execution_paths",
+        ),
+        (
+            "env_schema_tests-",
+            "full_pipeline_rfc_style_fixture_resolves_realistic_contract",
+        ),
+        (
+            "secrets_local_dev_cli_tests-",
+            "secrets_old_placement_refuses_before_task_or_secret_output",
+        ),
+        (
+            "cli_output_tests-",
+            "fixture_parent_tests::cli_old_placement_refuses_selector_and_skill_execution",
+        ),
+    ];
+    let runners: Vec<_> = families
+        .iter()
+        .map(|(prefix, name)| built_fixture_test_binary(repo_root, prefix, &[*name]))
+        .collect();
+    let absent = Command::new("bash")
+        .args([
+            "-c",
+            "source \"$1\"; runner=$2; run_test effigy_absent_required_fixture",
+            "--",
+        ])
+        .arg(repo_root.join("tests/scripts/fixture-parent-test-driver.sh"))
+        .arg(&runners[0])
+        .output()
+        .expect("required-name refusal control");
+    assert_eq!(code(&absent), 2);
+    assert!(text(&absent.stderr).contains("required fixture test is absent"));
+    let server = Server::start(None);
+    let output = Command::new(EFFIGY)
+        .arg("test:qa:fixture-parent-isolation:cli-runner")
+        .args(&runners)
+        .current_dir(repo_root)
+        .env("NO_COLOR", "1")
+        .env("EFFIGY_HOST_RUN_ROOT", &server.state)
+        .env("EFFIGY_ADMISSION_CPU_UNITS", "1")
+        .env("EFFIGY_ADMISSION_MEMORY_MIB", "64")
+        .env("EFFIGY_ADMISSION_TIMEOUT_SECS", "5")
+        // Only this submission boundary isolates the outer QA authority;
+        // every named child test inherits the actual private scheduler parent.
+        .env_remove("HOST_RUN_TOKEN")
+        .env_remove("HOST_RUN_ID")
+        .env_remove("EFFIGY_INTERNAL_CONTAINER_HANDOFF")
+        .env_remove("EFFIGY_HOST_SCHEDULER")
+        .env_remove("EFFIGY_SCHEDULER_OVERRIDE")
+        .output()
+        .expect("public binary fixture selector through private Queue");
+    eprintln!("{}", text(&output.stderr));
+    println!("{}", text(&output.stdout));
+    assert_eq!(code(&output), 0, "{}", text(&output.stderr));
+    let runs = server.run_ids();
+    assert_eq!(
+        runs.len(),
+        1,
+        "all binary fixtures reuse one actual parent admission"
+    );
+    let settled = server.status(&runs[0]);
+    assert_eq!(settled["state"], "settled");
+    assert_eq!(settled["settlement"]["outcome"], "passed");
+    assert_eq!(settled["settlement"]["result"]["exitCode"], 0);
+    eprintln!(
+        "binary CLI private-parent receipt: {}",
+        json!({
+            "admissions": runs.len(), "run_id": runs[0], "state": settled["state"],
+            "outcome": settled["settlement"]["outcome"],
+            "exit_code": settled["settlement"]["result"]["exitCode"],
+        })
     );
 }
 

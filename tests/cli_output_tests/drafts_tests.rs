@@ -10,7 +10,7 @@ use std::process::Command;
 
 use serde_json::Value;
 
-use super::support::{parse_stdout_json, temp_workspace};
+use super::support::{parse_stdout_json, temp_execution_workspace, temp_workspace};
 
 fn run_effigy(root: &Path, args: &[&str]) -> std::process::Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_effigy"));
@@ -225,7 +225,7 @@ run = [{ draft = "provider-smoke" }]
 
 #[test]
 fn draft_references_published_and_explicit_drafts() {
-    let root = temp_workspace("drafts-composition");
+    let root = temp_execution_workspace("drafts-composition");
     write_manifest(
         &root,
         r#"

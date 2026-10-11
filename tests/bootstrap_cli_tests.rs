@@ -195,12 +195,12 @@ run = "sh ./scripts/start-b.sh"
     .expect("write array-start manifest");
     fs::write(
         worktree.join("scripts/start-a.sh"),
-        "#!/bin/sh\nset -eu\nprintf a > start-a.txt\n",
+        "#!/bin/sh\nset -eu\nprintf a > start-a.txt\nprintf a >> start-order.txt\n",
     )
     .expect("write start-a script");
     fs::write(
         worktree.join("scripts/start-b.sh"),
-        "#!/bin/sh\nset -eu\nprintf b > start-b.txt\n",
+        "#!/bin/sh\nset -eu\nprintf b > start-b.txt\nprintf b >> start-order.txt\n",
     )
     .expect("write start-b script");
     for name in ["start-a.sh", "start-b.sh"] {
@@ -237,12 +237,12 @@ run = "sh ./scripts/start-b.sh"
     .expect("write table-start manifest");
     fs::write(
         worktree.join("scripts/start-a.sh"),
-        "#!/bin/sh\nset -eu\nprintf a > start-a.txt\n",
+        "#!/bin/sh\nset -eu\nprintf a > start-a.txt\nprintf a >> start-order.txt\n",
     )
     .expect("write start-a script");
     fs::write(
         worktree.join("scripts/start-b.sh"),
-        "#!/bin/sh\nset -eu\nprintf b > start-b.txt\n",
+        "#!/bin/sh\nset -eu\nprintf b > start-b.txt\nprintf b >> start-order.txt\n",
     )
     .expect("write start-b script");
     for name in ["start-a.sh", "start-b.sh"] {
@@ -478,6 +478,10 @@ fn bootstrap_runs_array_start_tasks_in_declaration_order() {
 
     let destination = cwd.join("remote");
     assert_eq!(
+        fs::read_to_string(destination.join("start-order.txt")).expect("start order"),
+        "ab"
+    );
+    assert_eq!(
         fs::read_to_string(destination.join("start-a.txt")).expect("start-a marker"),
         "a"
     );
@@ -513,6 +517,10 @@ fn bootstrap_runs_table_form_start_entries() {
     );
 
     let destination = cwd.join("remote");
+    assert_eq!(
+        fs::read_to_string(destination.join("start-order.txt")).expect("start order"),
+        "ab"
+    );
     assert_eq!(
         fs::read_to_string(destination.join("start-a.txt")).expect("start-a marker"),
         "a"
@@ -550,4 +558,122 @@ fn bootstrap_reports_missing_bootstrap_contract_via_binary() {
     );
     assert_eq!(parsed["result"]["children"], serde_json::json!([]));
     assert_eq!(parsed["result"]["root"]["repo_state"], "cloned");
+}
+
+#[test]
+#[ignore = "requires inherited private parent; run test:qa:fixture-parent-isolation:cli"]
+fn bootstrap_old_placement_refuses_all_three_binary_execution_paths() {
+    assert!(
+        std::env::var_os("HOST_RUN_TOKEN").is_some(),
+        "private parent required"
+    );
+    let child = create_child_remote("old-child");
+    let cases = [
+        ("root-child-start", create_root_remote_with_bootstrap(&child),
+            "bootstrap child `child-app` run failed: invalid_parent_token: cwd is outside token root"),
+        ("array-start", create_root_remote_with_array_start(),
+            "bootstrap start task `bootstrap:start-a` failed: invalid_parent_token: cwd is outside token root"),
+        ("table-start", create_root_remote_with_table_start(),
+            "bootstrap start task `bootstrap:start-a` failed: invalid_parent_token: cwd is outside token root"),
+    ];
+    for (name, remote, expected) in cases {
+        // The original helper placed invocation cwd and its nested clones in
+        // OS temp. Reproduce that placement without changing parent authority.
+        let outside = tempfile::tempdir().expect("old OS-temp invocation cwd");
+        let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+            .args(["--json", "bootstrap"])
+            .arg(&remote)
+            .arg("--start")
+            .env("NO_COLOR", "1")
+            .current_dir(outside.path())
+            .output()
+            .expect("old placement binary bootstrap");
+        assert!(!output.status.success());
+        let report = parse_stdout_json(&output);
+        assert_eq!(report["ok"], false);
+        assert_eq!(report["error"]["message"], expected);
+        let destination = outside.path().join("remote");
+        assert!(
+            destination.join(".git").exists(),
+            "owned clone preparation did occur"
+        );
+        for marker in [
+            "root-setup.txt",
+            "child-app/child-setup.txt",
+            "start.txt",
+            "start-a.txt",
+            "start-b.txt",
+        ] {
+            assert!(
+                !destination.join(marker).exists(),
+                "task effect before refusal: {marker}"
+            );
+        }
+        eprintln!(
+            "old-placement {name}: report={report}; task markers absent; owned clone present"
+        );
+    }
+}
+
+#[test]
+fn bootstrap_custom_destination_and_no_start_keep_setup_semantics() {
+    let child = create_child_remote("custom-child");
+    let remote = create_root_remote_with_bootstrap(&child);
+    let cwd = temp_workspace("effigy-bootstrap-cli", "custom-destination");
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .args(["--json", "bootstrap"])
+        .arg(&remote)
+        .args(["--path", "custom", "--no-start"])
+        .env("NO_COLOR", "1")
+        .current_dir(&cwd)
+        .output()
+        .expect("custom destination bootstrap");
+    assert!(output.status.success(), "bootstrap failed: {output:?}");
+    let report = parse_stdout_json(&output);
+    assert_eq!(report["result"]["start"]["requested"], false);
+    assert_eq!(report["result"]["start"]["ran"], false);
+    let destination = cwd.join("custom");
+    assert!(destination.join("root-setup.txt").exists());
+    assert!(destination.join("child-app/child-setup.txt").exists());
+    assert!(!destination.join("start.txt").exists());
+    assert!(!cwd.join("remote").exists());
+}
+
+#[test]
+fn binary_fixture_owner_cleans_nested_git_roots_on_unwind() {
+    let parent_before = std::env::var_os("HOST_RUN_TOKEN");
+    let run_before = std::env::var_os("HOST_RUN_ID");
+    let foreign = tempfile::tempdir().expect("foreign sentinel owner");
+    fs::write(foreign.path().join("sentinel"), "untouched").expect("foreign sentinel");
+    let (send, recv) = std::sync::mpsc::channel();
+    let thread = std::thread::spawn(move || {
+        let child = create_child_remote("cleanup-child");
+        let root = create_root_remote_with_bootstrap(&child);
+        send.send(
+            root.ancestors()
+                .nth(2)
+                .expect("fixture owner")
+                .to_path_buf(),
+        )
+        .expect("send owner");
+        panic!("controlled fixture unwind");
+    });
+    let owner = recv.recv().expect("owned path");
+    assert!(thread.join().is_err(), "expected unwind");
+    assert!(
+        std::env::var_os("HOST_RUN_TOKEN") == parent_before,
+        "parent authority unchanged after unwind"
+    );
+    assert!(
+        std::env::var_os("HOST_RUN_ID") == run_before,
+        "run identity unchanged after unwind"
+    );
+    assert!(
+        !owner.exists(),
+        "exact owned root, including Git remotes, must be removed"
+    );
+    assert_eq!(
+        fs::read_to_string(foreign.path().join("sentinel")).expect("foreign sentinel survives"),
+        "untouched"
+    );
 }
