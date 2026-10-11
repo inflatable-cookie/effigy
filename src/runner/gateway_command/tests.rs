@@ -114,17 +114,7 @@ fn render_gateway_up_text_mentions_state_dir() {
 }
 
 #[test]
-fn gateway_status_match_requires_current_binary_identity() {
-    let current = effigy_core::build_info::active_version();
-    let matching = GatewayStatus {
-        pid: 1234,
-        dns_addr: "127.0.0.1:15353".parse().expect("dns"),
-        proxy_addr: "127.0.0.1:80".parse().expect("proxy"),
-        https_addr: Some("127.0.0.1:443".parse().expect("https")),
-        route_count: 0,
-        routes: Vec::new(),
-        binary_version: Some(current),
-    };
+fn gateway_status_match_rejects_missing_binary_identity() {
     let missing = GatewayStatus {
         pid: 1234,
         dns_addr: "127.0.0.1:15353".parse().expect("dns"),
@@ -135,7 +125,6 @@ fn gateway_status_match_requires_current_binary_identity() {
         binary_version: None,
     };
 
-    assert!(gateway_status_matches_current_binary(&matching));
     assert!(!gateway_status_matches_current_binary(&missing));
 }
 

@@ -35,7 +35,12 @@ run_test() {
 
 for test_name in \
   cli::version_dispatch::tests::build_version_payload_sets_schema_and_display \
+  cli::help_dispatch::tests::build_help_payload_sets_schema_and_topic \
   cli::output::envelope::tests::build_json_envelope_error_sets_contract_shape \
+  runner::gateway_command::tests::gateway_status_match_rejects_missing_binary_identity \
+  runner::system_command::workspace::tests::reused_stale_linux_artifact_preserves_existing_install_identity \
+  runner::system_command::workspace::tests::workspace_artifact_source_download_bypasses_discoverable_local_repo \
+  runner::system_command::workspace::tests::workspace_effigy_local_install_identity_tracks_anchor_metadata \
   runner::cache_tests::builtin::cache_builtin_inspect_and_invalidate_paths_are_available \
   runner::bootstrap_command::tests::run_bootstrap_with_cwd_starts_when_requested \
   runner::bootstrap_command::tests::run_bootstrap_with_cwd_stages_db_seed_before_root_run \
