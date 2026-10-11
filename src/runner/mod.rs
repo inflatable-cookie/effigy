@@ -32,6 +32,7 @@ mod graph_time_budget;
 mod host_container_lease;
 mod host_process;
 mod host_scheduler;
+mod host_transition_evidence;
 mod interactive_session;
 mod locking;
 mod managed_listener_readiness;

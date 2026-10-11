@@ -3008,3 +3008,312 @@ impl Drop for GatewayCleanup<'_> {
         }
     }
 }
+
+/// Controlled transitions through the public container CLI. A listener admin
+/// exits with a real code, its dependent records the unavailable predicate and
+/// relaunches with the successor's exact reserved assignments, and teardown
+/// records the shutdown cause. The receipt's secret control proves that spec
+/// environment outside the reserved allowlist is never written.
+#[test]
+fn managed_host_transitions_record_selected_causes_and_reserved_assignments() {
+    let fixture = tempfile::tempdir().expect("fresh managed transition fixture");
+    let effects = HostEffectSentinels::new(fixture.path());
+    let docker_dir = std::env::split_paths(&effects.env_path)
+        .next()
+        .expect("sentinel PATH directory");
+    let docker_log = fixture.path().join("docker-fixture.log");
+    write_fake_docker(&docker_dir.join("docker"));
+
+    let home = fixture.path().join("home");
+    fs::create_dir(&home).expect("fixture home");
+    let foreign_ca = fixture.path().join("foreign-ca");
+    fs::create_dir(&foreign_ca).expect("foreign CA sentinel");
+    let mut gateway_cleanup = GatewayCleanup::new(&effects, &foreign_ca);
+    let (private_gateway, _https_address) =
+        start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut gateway_cleanup);
+
+    let checkout = fixture.path().join("checkout");
+    fs::create_dir(&checkout).expect("transition checkout");
+    fs::write(
+        checkout.join("compose.yml"),
+        "services:\n  app:\n    image: fixture\n",
+    )
+    .expect("write fixture compose file");
+    fs::write(
+        checkout.join("effigy.toml"),
+        "[containers]\ndefault = \"web\"\n",
+    )
+    .expect("seed manifest before git commit");
+    git(&checkout, &["init", "--initial-branch=main"]);
+    git(&checkout, &["config", "user.name", "Transition Fixture"]);
+    git(
+        &checkout,
+        &["config", "user.email", "transition-fixture@example.invalid"],
+    );
+    git(&checkout, &["add", "compose.yml", "effigy.toml"]);
+    git(&checkout, &["commit", "-m", "fixture base"]);
+    let checkout = checkout
+        .canonicalize()
+        .expect("canonical transition checkout");
+
+    let app_control = fixture.path().join("transition-control-app");
+    let api_control = fixture.path().join("transition-control-api");
+    fs::create_dir(&app_control).expect("app control directory");
+    fs::create_dir(&api_control).expect("api control directory");
+    let child_binary = std::env::current_exe().expect("integration test binary");
+    let fixture_env = |control: &Path| {
+        format!(
+            "FIXTURE_BINARY = {}\nFIXTURE_BODY = \"transition\"\nFIXTURE_PREVIOUS_PORT_FILE = {}\nFIXTURE_RESTART_FILE = {}\nFIXTURE_PAUSED_FILE = {}\nFIXTURE_CONTINUE_FILE = {}\nFIXTURE_READINESS_REFUSED_FILE = {}\n",
+            toml_quote(&child_binary.display().to_string()),
+            toml_quote(&control.join("previous-port").display().to_string()),
+            toml_quote(&control.join("restart").display().to_string()),
+            toml_quote(&control.join("listener-paused").display().to_string()),
+            toml_quote(&control.join("continue-exit").display().to_string()),
+            toml_quote(&control.join("readiness-refused").display().to_string()),
+        )
+    };
+    let app_run =
+        "exec \"$FIXTURE_BINARY\" --ignored --exact managed_listener_fixture_child --nocapture";
+    let api_run = "printf 'internal=%s public=%s generation=%s\\n' \"$EFFIGY_MANAGED_HOST_APP_INTERNAL_URL\" \"$EFFIGY_MANAGED_HOST_APP_PUBLIC_URL\" \"$EFFIGY_MANAGED_HOST_APP_GENERATION\"; exec \"$FIXTURE_BINARY\" --ignored --exact managed_listener_fixture_child --nocapture";
+    let listener_block = |domain: &str| {
+        format!(
+            "\n[containers.web.host_processes.listener]\nbind = \"127.0.0.1:0\"\n\n[containers.web.host_processes.listener.readiness]\npath = \"/health\"\nstatus = 200\ntimeout_secs = 20\n\n[containers.web.host_processes.listener.route]\ndomain = {}\ntls = true\n",
+            toml_quote(domain)
+        )
+    };
+    let manifest = format!(
+        "[containers]\ndefault = \"web\"\n\n[containers.web]\ndriver = \"colima\"\nprofile = \"transitions\"\ncompose_file = \"compose.yml\"\nprimary_service = \"app\"\nworking_dir = \"/workspace\"\n\n[[containers.web.host_processes]]\nname = \"api\"\nrun = {}\ndepends_on = [\"app\"]\nrestart = \"always\"\nrestart_delay_ms = 100\n\n[containers.web.host_processes.env]\n{}{}\n[[containers.web.host_processes]]\nname = \"app\"\nrun = {}\nrestart = \"on-failure\"\nrestart_delay_ms = 100\n\n[containers.web.host_processes.env]\n{}FIXTURE_SECRET_TOKEN = \"secret-sentinel-value\"\n{}",
+        toml_quote(api_run),
+        fixture_env(&api_control),
+        listener_block("api.host.test"),
+        toml_quote(app_run),
+        fixture_env(&app_control),
+        listener_block("app.host.test"),
+    );
+    fs::write(checkout.join("effigy.toml"), manifest).expect("write transition manifest");
+
+    let cleanup = ManagedContainerCleanup {
+        checkouts: vec![checkout.clone()],
+        home: home.clone(),
+        private_gateway: private_gateway.clone(),
+        foreign_ca: foreign_ca.clone(),
+        effects_path: effects.env_path.clone(),
+        mkcert: effects.private_mkcert.clone(),
+        effect_log: effects.log.clone(),
+        mkcert_calls: effects.mkcert_calls.clone(),
+        docker_log: docker_log.clone(),
+    };
+    let up = parse_json_success(run_container_cli(
+        &checkout,
+        &cleanup,
+        &["up", "--detach", "--json"],
+    ));
+    let listeners = up["managed_host_listeners"]
+        .as_array()
+        .expect("managed listener results");
+    assert_eq!(listeners.len(), 2, "both listeners must reach readiness");
+    assert!(listeners
+        .iter()
+        .all(|listener| listener["status"] == "ready"));
+
+    let runtime = checkout.join(".effigy/runtime/host-processes/web/transitions");
+    let app_state_path = runtime.join("app.listener.json");
+    let api_state_path = runtime.join("api.listener.json");
+    let app_receipt_path = runtime.join("app.transitions.jsonl");
+    let api_receipt_path = runtime.join("api.transitions.jsonl");
+    let routes_path = private_gateway.join("routes.json");
+
+    let app_state1 = read_json_file(&app_state_path);
+    let app_gen1 = app_state1["generation"].as_str().unwrap().to_owned();
+    let api_state1 = read_json_file(&api_state_path);
+    let api_gen1 = api_state1["generation"].as_str().unwrap().to_owned();
+
+    // The dependent's first launch carries the admin's reserved assignments exactly once.
+    let api_receipts = read_transition_receipt(&api_receipt_path);
+    let launched = records_for(&api_receipts, "successor_launched", &api_gen1);
+    assert_eq!(
+        launched.len(),
+        1,
+        "one launch record per generation: {api_receipts:?}"
+    );
+    assert!(launched[0]["predecessor_generation"].is_null());
+    assert_eq!(
+        launched[0]["assignments"],
+        app_assignments(&app_state_path, &app_state1, &app_gen1)
+    );
+    let api_log = fs::read_to_string(runtime.join("api.log")).expect("api child log");
+    assert_eq!(
+        api_log.matches(&app_line(&app_state1, &app_gen1)).count(),
+        1,
+        "the dependent must receive the admin's values exactly once: {api_log}"
+    );
+
+    // Controlled exit: the admin's real exit code and the successor's launch are both recorded.
+    fs::write(app_control.join("restart"), "restart\n").expect("request admin restart");
+    wait_for_path_exists(
+        &app_control.join("listener-paused"),
+        Duration::from_secs(10),
+        "admin release before exit",
+    );
+    fs::write(app_control.join("continue-exit"), "continue\n").expect("allow admin exit");
+    let app_state2 = wait_for_listener_generation(
+        &app_state_path,
+        &routes_path,
+        "app.host.test",
+        &app_gen1,
+        Duration::from_secs(30),
+    );
+    let app_gen2 = app_state2["generation"].as_str().unwrap().to_owned();
+
+    let app_receipts = read_transition_receipt(&app_receipt_path);
+    let exits = records_for(&app_receipts, "child_exited", &app_gen1);
+    assert_eq!(
+        exits.len(),
+        1,
+        "one exit record per generation: {app_receipts:?}"
+    );
+    assert_eq!(exits[0]["exit"]["code"], 17);
+    assert!(exits[0]["exit"]["signal"].is_null());
+    assert_eq!(exits[0]["phase"], "published");
+    assert_eq!(exits[0]["child"]["pid"], app_state1["child_pid"]);
+    assert_eq!(exits[0]["child_group"], app_state1["child_pid"]);
+    assert_eq!(exits[0]["listener"]["pid"], app_state1["listener_pid"]);
+    let admin_successor = records_for(&app_receipts, "successor_launched", &app_gen2);
+    assert_eq!(admin_successor.len(), 1);
+    assert_eq!(
+        admin_successor[0]["predecessor_generation"],
+        app_gen1.as_str()
+    );
+    assert!(
+        exits[0]["sequence"].as_u64() < admin_successor[0]["sequence"].as_u64(),
+        "the selected exit must precede its successor"
+    );
+
+    // The dependent observes the admin's unavailability before it relaunches.
+    let api_receipts = read_transition_receipt(&api_receipt_path);
+    let unavailable = records_for(&api_receipts, "dependency_unavailable", &api_gen1);
+    assert_eq!(
+        unavailable.len(),
+        1,
+        "one dependency record: {api_receipts:?}"
+    );
+    // The first failed predicate depends on whether the admin's dying socket or
+    // its state rewrite is seen first. Either is the actual observation; the
+    // receipt must name one that can fail at that point.
+    let observed = unavailable[0]["observed_dependencies"]
+        .as_array()
+        .expect("observed dependency list");
+    assert_eq!(observed.len(), 1);
+    assert_eq!(observed[0]["name"], "app");
+    assert_eq!(observed[0]["status"], "unavailable");
+    let predicate = observed[0]["predicate"].as_str().expect("failed predicate");
+    assert!(
+        ["state_not_ready", "owner_unverified", "route_not_matching"].contains(&predicate),
+        "unexpected failed predicate {predicate}"
+    );
+    assert_eq!(unavailable[0]["phase"], "published");
+    assert_eq!(
+        unavailable[0]["assignments"],
+        app_assignments(&app_state_path, &app_state1, &app_gen1),
+        "the selected cause keeps the assignments the old generation launched with"
+    );
+
+    let api_state2 = wait_for_listener_generation(
+        &api_state_path,
+        &routes_path,
+        "api.host.test",
+        &api_gen1,
+        Duration::from_secs(40),
+    );
+    let api_gen2 = api_state2["generation"].as_str().unwrap().to_owned();
+    let api_receipts = read_transition_receipt(&api_receipt_path);
+    let api_successor = records_for(&api_receipts, "successor_launched", &api_gen2);
+    assert_eq!(
+        api_successor.len(),
+        1,
+        "one successor record: {api_receipts:?}"
+    );
+    assert_eq!(
+        api_successor[0]["predecessor_generation"],
+        api_gen1.as_str()
+    );
+    assert_eq!(
+        api_successor[0]["assignments"],
+        app_assignments(&app_state_path, &app_state2, &app_gen2),
+        "the successor must carry the admin's current values"
+    );
+    let api_log = fs::read_to_string(runtime.join("api.log")).expect("api child log");
+    assert_eq!(
+        api_log.matches(&app_line(&app_state2, &app_gen2)).count(),
+        1,
+        "the successor must receive the current values exactly once: {api_log}"
+    );
+
+    // Teardown records its cause for the current generations.
+    let down = run_container_cli(&checkout, &cleanup, &["down", "--json"]);
+    assert_success(down);
+    let api_receipts = read_transition_receipt(&api_receipt_path);
+    let api_shutdown = records_for(&api_receipts, "shutdown", &api_gen2);
+    assert_eq!(
+        api_shutdown.len(),
+        1,
+        "dependent shutdown: {api_receipts:?}"
+    );
+    assert_eq!(api_shutdown[0]["phase"], "published");
+    let app_receipts = read_transition_receipt(&app_receipt_path);
+    assert_eq!(records_for(&app_receipts, "shutdown", &app_gen2).len(), 1);
+
+    for receipt in [&app_receipt_path, &api_receipt_path] {
+        let raw = fs::read_to_string(receipt).expect("receipt readable after teardown");
+        assert!(
+            !raw.contains("secret-sentinel-value"),
+            "receipt recorded environment outside the reserved allowlist"
+        );
+        let sequences = read_transition_receipt(receipt)
+            .iter()
+            .map(|record| record["sequence"].as_u64().expect("sequence"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            sequences,
+            (1..=sequences.len() as u64).collect::<Vec<_>>(),
+            "receipt sequence must be contiguous with no gaps: {raw}"
+        );
+        assert!(read_transition_receipt(receipt)
+            .iter()
+            .all(|record| record["schema"] == "effigy.managed.host-transition-evidence.v1"));
+    }
+}
+
+fn read_transition_receipt(path: &Path) -> Vec<Value> {
+    fs::read_to_string(path)
+        .unwrap_or_default()
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str::<Value>(line).expect("receipt line is JSON"))
+        .collect()
+}
+
+fn records_for<'a>(records: &'a [Value], event: &str, generation: &str) -> Vec<&'a Value> {
+    records
+        .iter()
+        .filter(|record| record["event"] == event && record["generation"] == generation)
+        .collect()
+}
+
+fn app_assignments(state_path: &Path, state: &Value, generation: &str) -> Value {
+    serde_json::json!({
+        "EFFIGY_MANAGED_HOST_APP_INTERNAL_URL": state["internal_url"],
+        "EFFIGY_MANAGED_HOST_APP_PUBLIC_URL": state["public_url"],
+        "EFFIGY_MANAGED_HOST_APP_STATE_FILE": state_path.display().to_string(),
+        "EFFIGY_MANAGED_HOST_APP_GENERATION": generation,
+    })
+}
+
+/// The exact line the dependent's launch writes for these admin values.
+fn app_line(state: &Value, generation: &str) -> String {
+    format!(
+        "internal={} public={} generation={generation}\n",
+        state["internal_url"].as_str().unwrap(),
+        state["public_url"].as_str().unwrap()
+    )
+}
