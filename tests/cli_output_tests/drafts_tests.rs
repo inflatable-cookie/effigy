@@ -253,7 +253,7 @@ run = [{ task = "build" }, { draft = "base" }]
 
 #[test]
 fn unresolved_draft_reference_fails_before_side_effects() {
-    let root = temp_workspace("drafts-unresolved-ref");
+    let root = temp_execution_workspace("drafts-unresolved-ref");
     write_manifest(
         &root,
         r#"
@@ -273,7 +273,7 @@ run = [
     assert!(!output.status.success(), "unresolved draft should fail");
     assert!(
         String::from_utf8_lossy(&output.stderr).contains("missing-draft"),
-        "the unresolved reference must remain the refusal reason"
+        "the unresolved reference must remain the refusal reason: {output:?}"
     );
     assert!(
         !root.join("side-effect.txt").exists(),

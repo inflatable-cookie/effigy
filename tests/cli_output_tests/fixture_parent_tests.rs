@@ -66,6 +66,10 @@ run = "printf ran > task-marker"
 created = "2026-10-11"
 purpose = "Owned nested selector"
 run = [{ task = "probe" }]
+[drafts.unresolved]
+created = "2026-10-11"
+purpose = "Unresolved reference remains separate from parent refusal"
+run = [{ run = "touch side-effect.txt" }, { draft = "missing-draft" }]
 [distribution.package]
 name = "fixture"
 [distribution.preflight]
@@ -124,6 +128,7 @@ environment_policy = "all"
         vec!["tasks", "qa-group", "run", "proof"],
         vec!["state", "apply", "state.toml", "--yes"],
         vec!["draft", "composed"],
+        vec!["draft", "unresolved"],
     ] {
         let output = super::support::run_json_cli_command(root, &args);
         assert!(
@@ -148,6 +153,7 @@ environment_policy = "all"
             "{detail}"
         );
         assert!(!root.join("task-marker").exists());
+        assert!(!root.join("side-effect.txt").exists());
         eprintln!("old-placement declared repo {args:?}: report={report}; detail={detail}; task markers absent");
     }
     // Distribution preflight launches its task binary with --repo while
