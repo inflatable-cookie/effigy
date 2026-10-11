@@ -317,6 +317,41 @@ managed-child ownership.
 Existing container defaults and non-listener host-process behavior are
 unchanged; core does not select a framework or add a built-in dev verb.
 
+## Bounded finite container command ruling
+
+Tom's standing bounded hybrid-profile approval and deliberate owner coordination
+on 2026-10-11 authorize an opt-in, language-neutral finite container-command
+capability. Existing captured shell commands collect output before emission;
+finite streaming surfaces exist but do not expose a native caller deadline and
+independent stdout/stderr budgets. An external reader cap cannot bound an
+intermediate captured `Output`. This ruling specifies a required capability,
+not an available invocation or a retrospective consumer diagnosis.
+
+The caller must select the checkout, project/profile, service, user and working
+directory through the existing supported resolution. One absolute deadline
+covers discovery, preparation, spawn, eligible identity fallback and final
+draining. Independent hard stream budgets apply before collection; their
+accounting must remain bounded across any eligible fallback. Both streams drain
+fairly without unbounded buffers or reader joins. Overflow, truncation, read
+failure, incomplete output or deadline cannot report success or trigger fallback
+or retry. Existing command-exit distinctions and identity-fallback eligibility
+remain intact; unrelated interactive and default execution retain their
+semantics.
+
+Cancellation terminates and reaps only the exact owned host exec process group.
+Local client termination is not proof that a remote container command stopped.
+Remote cancellation and effects remain explicitly uncertain unless separately
+proved through a supported mechanism. No guessed remote PID, service kill,
+automatic repeat or cleanup authority follows from that uncertainty. Diagnostics
+must exclude raw output, commands, configuration and credentials; supported
+results are bounded and incomplete capture remains an error.
+
+Private generic production-path fixtures, independent review and existing CI
+must qualify the public spelling, result/error contract and platform limits.
+Coherent main assurance and exact-source/platform checksum provenance precede
+consumer admission. No consumer runtime attempt, binary replacement, release,
+default migration or scheduler authority is granted by this ruling.
+
 ## Runtime-backed execution surfaces
 
 The contract applies to any Effigy surface that:
