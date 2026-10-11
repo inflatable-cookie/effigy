@@ -1044,6 +1044,14 @@ defines request, plan, adapter, and report responsibilities. Pure decisions
 belong below the runner; host side effects and human prompts remain at its
 edge.
 
+Managed listener transition receipts live in
+`src/runner/host_transition_evidence.rs`. The listener supervisor in
+`src/runner/host_process.rs` writes them at the decisions it already makes:
+launch, child exit, shutdown, dependency unavailability, and dependency tuple
+change. The module owns the bounded, versioned file format and its reader.
+Receipts are observation only. They are not gateway registration, route
+authority or process ownership.
+
 ## Example Manifest Boundary
 
 ```toml

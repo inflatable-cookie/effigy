@@ -25,6 +25,13 @@ During v0.x, MINOR bumps may include breaking changes.
   scoped teardown. The adapter report and versioned state-file contracts are
   documented; Linux procfs and macOS libproc provide socket ownership checks,
   while unsupported platforms fail closed.
+- Managed listener supervisors write a bounded, versioned transition receipt
+  beside each listener state file. It records the selected reason a generation
+  exited, shut down, lost a dependency, or changed its dependency tuple, the
+  reserved dependency values each generation launched with, and the
+  predecessor generation. Receipts are observation only. They never authorize
+  signals, routes or cleanup, and missing receipts are not proof that nothing
+  changed. Listener state and the startup diagnostic keep their existing fields.
 - `effigy gateway setup-tls` and `gateway up` now accept an explicit
   `--private-state-root` for disposable gateway instances. Private mode keeps
   routes, listeners, certificates, CA state, and process identity inside the

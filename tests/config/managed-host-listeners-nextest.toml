@@ -2,3 +2,9 @@
 slow-timeout = { period = "45s", terminate-after = 1, grace-period = "2s" }
 leak-timeout = { period = "1s", result = "fail" }
 global-timeout = "600s"
+
+# The transition proof drives two listener restarts and a teardown through the
+# public CLI, so it needs more than the default slow period.
+[[profile.default.overrides]]
+filter = "test(managed_host_transitions_)"
+slow-timeout = { period = "120s", terminate-after = 1 }

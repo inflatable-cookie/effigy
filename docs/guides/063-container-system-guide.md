@@ -334,6 +334,17 @@ ownership, HTTP probe status and route. Unobserved phases show `not_reached` or
 and the top-level `status` remains the current state. The field list is in
 the managed host listener section of the container runtime contract.
 
+Each listener generation's selected transition is also recorded in
+`<name>.transitions.jsonl`, beside `<name>.listener.json`. Read it as an ordered
+history: one JSON object per line, with a contiguous `sequence`. Use
+`successor_launched` to see which reserved `EFFIGY_MANAGED_HOST_<NAME>_*` values
+a generation received. Use `child_exited`, `shutdown`,
+`dependency_unavailable` or `dependency_tuple_changed` to see why that
+generation was replaced. A `retention_limit` line means later transitions were
+not kept. A missing or incomplete receipt does not show that nothing changed.
+The receipt never authorizes a signal, route or cleanup. The format and bounds
+are in the managed host listener section of the container runtime contract.
+
 Two shapes are supported.
 Two shapes are supported.
 

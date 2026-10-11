@@ -15,7 +15,7 @@ use std::fs;
 use std::io::Read;
 use std::net::SocketAddr;
 use std::os::unix::io::AsRawFd;
-use std::os::unix::process::CommandExt;
+use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
 use std::sync::atomic::{AtomicI32, Ordering};
@@ -43,6 +43,11 @@ use nix::unistd::Pid;
 
 use super::error::RunnerError;
 
+use super::host_transition_evidence::{
+    reserved_assignments, DependencyPredicate, InspectionCategory, ObservedDependency,
+    ObservedStatus, TransitionContext, TransitionEvent, TransitionEvidenceWriter, TransitionExit,
+    TransitionPhase, TransitionProcess, TransitionRecord, TRANSITION_EVIDENCE_FILE_SUFFIX,
+};
 use super::managed_listener_readiness::{probe_http_readiness, HttpReadinessOutcome};
 
 const HOST_PROCESS_DIR: &str = ".effigy/runtime/host-processes";
@@ -707,6 +712,14 @@ fn host_process_state_path(dir: &Path, name: &str) -> PathBuf {
     dir.join(format!("{}.listener.json", sanitize(name)))
 }
 
+/// Transition receipt beside the listener state, one per process name.
+fn transition_evidence_path(dir: &Path, name: &str) -> PathBuf {
+    dir.join(format!(
+        "{}{TRANSITION_EVIDENCE_FILE_SUFFIX}",
+        sanitize(name)
+    ))
+}
+
 fn host_process_spec_path(dir: &Path, name: &str) -> PathBuf {
     dir.join(format!("{}.spec.json", sanitize(name)))
 }
@@ -926,14 +939,29 @@ fn wait_for_listener_state(
     }
 }
 
-fn dependency_states(
+/// Either every dependency proves readiness, or the first dependency to fail a
+/// predicate is named. Ordering matches the checks the supervisor always made.
+enum DependencyObservation {
+    Ready(Vec<HostListenerState>),
+    Unavailable(ObservedDependency),
+}
+
+fn dependency_observation(
     dependencies: &[HostProcessDependency],
-) -> Result<Option<Vec<HostListenerState>>, RunnerError> {
+) -> Result<DependencyObservation, RunnerError> {
     let mut states = Vec::with_capacity(dependencies.len());
     for dependency in dependencies {
+        let unavailable = |predicate| {
+            DependencyObservation::Unavailable(ObservedDependency::unavailable(
+                &dependency.name,
+                predicate,
+            ))
+        };
         let metadata = match fs::symlink_metadata(&dependency.state_file) {
             Ok(metadata) => metadata,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(unavailable(DependencyPredicate::StateFileMissing))
+            }
             Err(error) => {
                 return Err(RunnerError::task_invocation_failed_read(
                     &dependency.state_file,
@@ -955,10 +983,10 @@ fn dependency_states(
             )));
         }
         if state.status != "ready" {
-            return Ok(None);
+            return Ok(unavailable(DependencyPredicate::StateNotReady));
         }
         let Some(owner) = state.route_owner.as_ref() else {
-            return Ok(None);
+            return Ok(unavailable(DependencyPredicate::RouteOwnerMissing));
         };
         if owner.owner != dependency.owner
             || owner.runtime_generation != state.runtime_generation
@@ -981,14 +1009,23 @@ fn dependency_states(
             )));
         }
         if effigy_gateway::managed_listener::verify_managed_listener_owner(owner).is_err() {
-            return Ok(None);
+            return Ok(unavailable(DependencyPredicate::OwnerUnverified));
         }
         if !managed_route_matches(&dependency.route_table_file, &state, &dependency.owner)? {
-            return Ok(None);
+            return Ok(unavailable(DependencyPredicate::RouteNotMatching));
         }
         states.push(state);
     }
-    Ok(Some(states))
+    Ok(DependencyObservation::Ready(states))
+}
+
+fn dependency_states(
+    dependencies: &[HostProcessDependency],
+) -> Result<Option<Vec<HostListenerState>>, RunnerError> {
+    Ok(match dependency_observation(dependencies)? {
+        DependencyObservation::Ready(states) => Some(states),
+        DependencyObservation::Unavailable(_) => None,
+    })
 }
 
 fn managed_route_matches(
@@ -1066,8 +1103,86 @@ fn wait_for_dependency_environment(
 #[derive(Debug)]
 enum HostChildWait {
     Exited(std::process::ExitStatus),
-    DependencyChanged,
+    DependencyChanged(DependencyTransition),
     Shutdown,
+}
+
+/// A dependency change the supervisor acts on. Unavailability and a changed
+/// generation tuple stay distinct so the receipt can name the selected cause.
+#[derive(Debug)]
+enum DependencyTransition {
+    Unavailable(ObservedDependency),
+    TupleChanged(Vec<ObservedDependency>),
+}
+
+impl DependencyTransition {
+    fn event(&self) -> TransitionEvent {
+        match self {
+            Self::Unavailable(_) => TransitionEvent::DependencyUnavailable,
+            Self::TupleChanged(_) => TransitionEvent::DependencyTupleChanged,
+        }
+    }
+
+    fn observed(&self) -> Vec<ObservedDependency> {
+        match self {
+            Self::Unavailable(dependency) => vec![dependency.clone()],
+            Self::TupleChanged(observed) => observed.clone(),
+        }
+    }
+}
+
+/// A failed inspection keeps its bounded category next to the error the
+/// supervisor returns unchanged.
+#[derive(Debug)]
+struct HostChildInspection {
+    category: InspectionCategory,
+    /// Boxed so the `Err` side of the wait result stays small.
+    error: Box<RunnerError>,
+}
+
+fn observed_dependencies(
+    spec: &HostProcessRuntimeSpec,
+    states: &[HostListenerState],
+) -> Vec<ObservedDependency> {
+    spec.dependencies
+        .iter()
+        .zip(states)
+        .map(|(dependency, state)| ObservedDependency {
+            name: dependency.name.clone(),
+            status: ObservedStatus::Observed,
+            predicate: None,
+            runtime_generation: Some(state.runtime_generation.clone()),
+            generation: Some(state.generation.clone()),
+            address: state.address.clone(),
+        })
+        .collect()
+}
+
+/// The dependency transition that applies now, or `None` while the tuple the
+/// child was launched with still holds.
+fn dependency_transition(
+    spec: &HostProcessRuntimeSpec,
+    expected_dependencies: &[String],
+) -> Result<Option<DependencyTransition>, HostChildInspection> {
+    let states = match dependency_observation(&spec.dependencies) {
+        Ok(DependencyObservation::Ready(states)) => states,
+        Ok(DependencyObservation::Unavailable(dependency)) => {
+            return Ok(Some(DependencyTransition::Unavailable(dependency)))
+        }
+        Err(error) => {
+            return Err(HostChildInspection {
+                category: InspectionCategory::DependencyState,
+                error: Box::new(error),
+            })
+        }
+    };
+    let (_, current) = dependency_environment(spec, &states);
+    if current == expected_dependencies {
+        return Ok(None);
+    }
+    Ok(Some(DependencyTransition::TupleChanged(
+        observed_dependencies(spec, &states),
+    )))
 }
 
 fn wait_for_host_child(
@@ -1075,24 +1190,25 @@ fn wait_for_host_child(
     spec: &HostProcessRuntimeSpec,
     expected_dependencies: &[String],
     shutdown: &Arc<std::sync::atomic::AtomicBool>,
-) -> Result<HostChildWait, RunnerError> {
+) -> Result<HostChildWait, HostChildInspection> {
     loop {
-        if let Some(status) = child.try_wait().map_err(|error| {
-            RunnerError::task_invocation(format!(
-                "managed host child completion is uncertain; keeping its generation held: {error}"
-            ))
-        })? {
-            return Ok(HostChildWait::Exited(status));
+        match child.try_wait() {
+            Ok(Some(status)) => return Ok(HostChildWait::Exited(status)),
+            Ok(None) => {}
+            Err(error) => {
+                return Err(HostChildInspection {
+                    category: InspectionCategory::ChildCompletion,
+                    error: Box::new(RunnerError::task_invocation(format!(
+                        "managed host child completion is uncertain; keeping its generation held: {error}"
+                    ))),
+                })
+            }
         }
         if shutdown.load(Ordering::SeqCst) {
             return Ok(HostChildWait::Shutdown);
         }
-        let Some(states) = dependency_states(&spec.dependencies)? else {
-            return Ok(HostChildWait::DependencyChanged);
-        };
-        let (_, current) = dependency_environment(spec, &states);
-        if current != expected_dependencies {
-            return Ok(HostChildWait::DependencyChanged);
+        if let Some(transition) = dependency_transition(spec, expected_dependencies)? {
+            return Ok(HostChildWait::DependencyChanged(transition));
         }
         thread::sleep(Duration::from_millis(100));
     }
@@ -1262,7 +1378,7 @@ pub(in crate::runner) fn run_internal_host_process_supervise(
         let status =
             match wait_for_host_child(&mut child, &spec, &dependency_generations, &shutdown) {
                 Ok(HostChildWait::Exited(status)) => Ok(Some(status)),
-                Ok(HostChildWait::DependencyChanged) => {
+                Ok(HostChildWait::DependencyChanged(_)) => {
                     terminate_owned_child_group(&mut child, &root_identity, Duration::from_secs(2))
                         .map(|_| None)
                 }
@@ -1270,13 +1386,13 @@ pub(in crate::runner) fn run_internal_host_process_supervise(
                     terminate_owned_child_group(&mut child, &root_identity, Duration::from_secs(2))
                         .map(Some)
                 }
-                Err(error) => {
+                Err(inspection) => {
                     let _ = terminate_owned_child_group(
                         &mut child,
                         &root_identity,
                         Duration::from_secs(2),
                     );
-                    return Err(error);
+                    return Err(*inspection.error);
                 }
             };
         child_pid.store(0, Ordering::SeqCst);
@@ -1355,6 +1471,56 @@ impl Drop for ListenerReportCleanup {
     }
 }
 
+impl From<&HostProcessRecord> for TransitionProcess {
+    fn from(record: &HostProcessRecord) -> Self {
+        Self {
+            pid: record.pid,
+            boot_identity: record.boot_identity.clone(),
+            start_identity: record.start_identity.clone(),
+        }
+    }
+}
+
+impl From<&ChildProcessIdentity> for TransitionProcess {
+    fn from(child: &ChildProcessIdentity) -> Self {
+        Self {
+            pid: child.pid,
+            boot_identity: child.boot_identity.clone(),
+            start_identity: child.start_identity.clone(),
+        }
+    }
+}
+
+impl OwnedHostListener {
+    fn process(&self) -> TransitionProcess {
+        TransitionProcess {
+            pid: self.listener_pid,
+            boot_identity: self.listener_boot_identity.clone(),
+            start_identity: self.listener_start_identity.clone(),
+        }
+    }
+}
+
+/// One listener generation's receipt record with its reserved launch
+/// assignments. The caller sets the phase and any observed dependencies.
+fn generation_record(
+    evidence: &TransitionEvidenceWriter,
+    event: TransitionEvent,
+    generation: &str,
+    child: &ChildProcessIdentity,
+    listener: Option<&OwnedHostListener>,
+    launch_env: &BTreeMap<String, String>,
+) -> TransitionRecord {
+    let mut record = evidence.draft(event);
+    record.generation = Some(generation.to_owned());
+    record.child = Some(TransitionProcess::from(child));
+    // Children lead their own process group, so the group id is the child PID.
+    record.child_group = Some(child.pid);
+    record.listener = listener.map(OwnedHostListener::process);
+    record.assignments = reserved_assignments(launch_env);
+    record
+}
+
 fn supervise_managed_host_listener(
     args: &InternalHostProcessSuperviseArgs,
     spec: &HostProcessRuntimeSpec,
@@ -1372,6 +1538,16 @@ fn supervise_managed_host_listener(
         .ok_or_else(|| RunnerError::task_invocation("listener state path has no parent"))?;
     let log_path = args.log_file.clone();
     let mut outcome: Option<i32> = None;
+    let mut predecessor: Option<String> = None;
+    let mut evidence = TransitionEvidenceWriter::open(
+        transition_evidence_path(report_dir, &args.process_name),
+        log_path.clone(),
+        TransitionContext {
+            owner: spec.owner.clone(),
+            runtime_generation: spec.runtime_generation.clone(),
+            supervisor: TransitionProcess::from(supervisor),
+        },
+    );
 
     loop {
         if shutdown.load(Ordering::SeqCst) {
@@ -1492,6 +1668,16 @@ fn supervise_managed_host_listener(
             boot_identity: live.boot_identity.clone(),
             start_identity: live.start_identity.clone(),
         };
+        let mut launched = generation_record(
+            &evidence,
+            TransitionEvent::SuccessorLaunched,
+            &generation,
+            &root_identity,
+            None,
+            &dependency_env,
+        );
+        launched.predecessor_generation = predecessor.replace(generation.clone());
+        evidence.record(launched);
         write_listener_state(
             &spec.listener_state_file,
             listener_state(
@@ -1564,18 +1750,40 @@ fn supervise_managed_host_listener(
                 return Ok(());
             }
         };
-        let current_dependency_generations = match dependency_states(&spec.dependencies) {
-            Ok(states) => states.map(|states| dependency_environment(spec, &states).1),
-            Err(error) => {
+        let pre_publication = match dependency_transition(spec, &dependency_generations) {
+            Ok(transition) => transition,
+            Err(inspection) => {
+                let mut record = generation_record(
+                    &evidence,
+                    TransitionEvent::InspectionError,
+                    &generation,
+                    &root_identity,
+                    Some(&owned),
+                    &dependency_env,
+                );
+                record.phase = Some(TransitionPhase::PrePublication);
+                record.inspection_error = Some(inspection.category);
+                evidence.record(record);
                 terminate_owned_child_group(&mut child, &root_identity, Duration::from_secs(2))?;
                 child_pid.store(0, Ordering::SeqCst);
                 *child_identity
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
-                return Err(error);
+                return Err(*inspection.error);
             }
         };
-        if current_dependency_generations.as_deref() != Some(dependency_generations.as_slice()) {
+        if let Some(transition) = pre_publication {
+            let mut record = generation_record(
+                &evidence,
+                transition.event(),
+                &generation,
+                &root_identity,
+                Some(&owned),
+                &dependency_env,
+            );
+            record.phase = Some(TransitionPhase::PrePublication);
+            record.observed_dependencies = transition.observed();
+            evidence.record(record);
             terminate_owned_child_group(&mut child, &root_identity, Duration::from_secs(2))?;
             child_pid.store(0, Ordering::SeqCst);
             *child_identity
@@ -1797,7 +2005,19 @@ fn supervise_managed_host_listener(
         let child_wait =
             match wait_for_host_child(&mut child, spec, &dependency_generations, &shutdown) {
                 Ok(wait) => wait,
-                Err(error) => {
+                Err(inspection) => {
+                    let mut record = generation_record(
+                        &evidence,
+                        TransitionEvent::InspectionError,
+                        &generation,
+                        &root_identity,
+                        Some(&owned),
+                        &dependency_env,
+                    );
+                    record.phase = Some(TransitionPhase::Published);
+                    record.inspection_error = Some(inspection.category);
+                    evidence.record(record);
+                    let error = *inspection.error;
                     let _ = write_listener_state(
                         &spec.listener_state_file,
                         listener_state(
@@ -1829,9 +2049,50 @@ fn supervise_managed_host_listener(
                 }
             };
         let stopping = matches!(&child_wait, HostChildWait::Shutdown);
+        // The selected reason is recorded before any state, route or process
+        // effect so a readable unavailable state never precedes its receipt.
+        let mut selected = match &child_wait {
+            HostChildWait::Exited(status) => {
+                let mut record = generation_record(
+                    &evidence,
+                    TransitionEvent::ChildExited,
+                    &generation,
+                    &root_identity,
+                    Some(&owned),
+                    &dependency_env,
+                );
+                record.exit = Some(TransitionExit {
+                    code: status.code(),
+                    signal: status.signal(),
+                });
+                record
+            }
+            HostChildWait::DependencyChanged(transition) => {
+                let mut record = generation_record(
+                    &evidence,
+                    transition.event(),
+                    &generation,
+                    &root_identity,
+                    Some(&owned),
+                    &dependency_env,
+                );
+                record.observed_dependencies = transition.observed();
+                record
+            }
+            HostChildWait::Shutdown => generation_record(
+                &evidence,
+                TransitionEvent::Shutdown,
+                &generation,
+                &root_identity,
+                Some(&owned),
+                &dependency_env,
+            ),
+        };
+        selected.phase = Some(TransitionPhase::Published);
+        evidence.record(selected);
         let status = match child_wait {
             HostChildWait::Exited(status) => Some(status),
-            HostChildWait::DependencyChanged | HostChildWait::Shutdown => {
+            HostChildWait::DependencyChanged(_) | HostChildWait::Shutdown => {
                 write_listener_state(
                     &spec.listener_state_file,
                     listener_state(
@@ -3008,7 +3269,7 @@ fn open_log(path: &Path) -> Result<std::fs::File, RunnerError> {
         .map_err(|error| RunnerError::task_invocation_failed_write(path, error))
 }
 
-fn append_log_line(path: &Path, line: &str) {
+pub(in crate::runner) fn append_log_line(path: &Path, line: &str) {
     use std::os::unix::fs::OpenOptionsExt;
     if let Ok(mut f) = fs::OpenOptions::new()
         .create(true)
