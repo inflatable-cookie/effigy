@@ -236,8 +236,20 @@ run and the failure is logged.
 Readers take a snapshot. An absent receipt is not evidence that no transition
 happened. A symlink, non-regular file, or a file over the bound is refused. A
 blank line is skipped. A complete line that is malformed or has another schema
-is a gap. An unterminated final line is an incomplete tail. A sequence jump is
-a gap. A `retention_limit` marker means later transitions were not kept.
+is a gap. An unterminated final line is an incomplete tail. A sequence jump
+after the first accepted record is a gap. The current reader does not check
+that the first accepted sequence is 1; callers must check it independently and
+must not treat an empty gap list as complete evidence. A `retention_limit`
+marker means later transitions were not kept.
+
+The observation ruling requires this initial-sequence gap to be made visible,
+including failure of the first append followed by a successful append. Private
+production-path qualification must also exercise signal exit, ready dependency
+tuple change and inspection failure; an event variant or comparison-only test
+does not establish a controlled runtime observation. Inspection evidence must
+identify the failed dependency and missing/unreadable predicate without error
+text or secrets. Receipt creation durability must be explicit, with no change
+to lifecycle authority or restart policy on evidence failure.
 
 Only listener-backed managed children write receipts. A `host_processes` entry
 without a listener keeps its collapsed dependency restart path and writes no
