@@ -14,6 +14,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::io::Read;
 use std::net::SocketAddr;
+use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::io::AsRawFd;
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::{Path, PathBuf};
@@ -44,9 +45,10 @@ use nix::unistd::Pid;
 use super::error::RunnerError;
 
 use super::host_transition_evidence::{
-    reserved_assignments, DependencyPredicate, InspectionCategory, ObservedDependency,
-    ObservedStatus, TransitionContext, TransitionEvent, TransitionEvidenceWriter, TransitionExit,
-    TransitionPhase, TransitionProcess, TransitionRecord, TRANSITION_EVIDENCE_FILE_SUFFIX,
+    reserved_assignments, DependencyPredicate, DependencyTupleStatus, InspectionCategory,
+    ObservedDependency, ObservedStatus, TransitionContext, TransitionEvent,
+    TransitionEvidenceWriter, TransitionExit, TransitionPhase, TransitionProcess, TransitionRecord,
+    TRANSITION_EVIDENCE_FILE_SUFFIX,
 };
 use super::managed_listener_readiness::{probe_http_readiness, HttpReadinessOutcome};
 
@@ -946,9 +948,21 @@ enum DependencyObservation {
     Unavailable(ObservedDependency),
 }
 
+struct DependencyInspectionFailure {
+    name: String,
+    predicate: DependencyPredicate,
+    error: Box<RunnerError>,
+}
+
+impl DependencyInspectionFailure {
+    fn observation(&self) -> ObservedDependency {
+        ObservedDependency::unavailable(&self.name, self.predicate)
+    }
+}
+
 fn dependency_observation(
     dependencies: &[HostProcessDependency],
-) -> Result<DependencyObservation, RunnerError> {
+) -> Result<DependencyObservation, DependencyInspectionFailure> {
     let mut states = Vec::with_capacity(dependencies.len());
     for dependency in dependencies {
         let unavailable = |predicate| {
@@ -957,30 +971,87 @@ fn dependency_observation(
                 predicate,
             ))
         };
-        let metadata = match fs::symlink_metadata(&dependency.state_file) {
-            Ok(metadata) => metadata,
+        let inspection_failure = |predicate, error| DependencyInspectionFailure {
+            name: dependency.name.clone(),
+            predicate,
+            error: Box::new(error),
+        };
+        let file = match fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+            .open(&dependency.state_file)
+        {
+            Ok(file) => file,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(unavailable(DependencyPredicate::StateFileMissing))
+                return Ok(unavailable(DependencyPredicate::StateFileMissing));
+            }
+            Err(error) if error.raw_os_error() == Some(libc::ELOOP) => {
+                return Err(inspection_failure(
+                    DependencyPredicate::StateFileUnsafe,
+                    RunnerError::task_invocation(format!(
+                        "managed dependency state for `{}` is not a regular file",
+                        dependency.name
+                    )),
+                ));
             }
             Err(error) => {
-                return Err(RunnerError::task_invocation_failed_read(
-                    &dependency.state_file,
-                    error,
-                ))
+                return Err(inspection_failure(
+                    DependencyPredicate::StateFileUnreadable,
+                    RunnerError::task_invocation_failed_read(&dependency.state_file, error),
+                ));
             }
         };
-        if metadata.file_type().is_symlink() || !metadata.is_file() {
-            return Err(RunnerError::task_invocation(format!(
-                "managed dependency state for `{}` is not a regular file",
-                dependency.name
-            )));
+        let metadata = file.metadata().map_err(|error| {
+            inspection_failure(
+                DependencyPredicate::StateFileUnreadable,
+                RunnerError::task_invocation_failed_read(&dependency.state_file, error),
+            )
+        })?;
+        if !metadata.is_file() || metadata.len() > 1_048_576 {
+            return Err(inspection_failure(
+                DependencyPredicate::StateFileUnsafe,
+                RunnerError::task_invocation(format!(
+                    "managed dependency state for `{}` is not a bounded regular file",
+                    dependency.name
+                )),
+            ));
         }
-        let state: HostListenerState = read_private_json(&dependency.state_file)?;
+        let mut raw = Vec::with_capacity(metadata.len() as usize);
+        file.take(1_048_577)
+            .read_to_end(&mut raw)
+            .map_err(|error| {
+                inspection_failure(
+                    DependencyPredicate::StateFileUnreadable,
+                    RunnerError::task_invocation_failed_read(&dependency.state_file, error),
+                )
+            })?;
+        if raw.len() > 1_048_576 {
+            return Err(inspection_failure(
+                DependencyPredicate::StateFileUnsafe,
+                RunnerError::task_invocation(format!(
+                    "managed dependency state for `{}` is not a bounded regular file",
+                    dependency.name
+                )),
+            ));
+        }
+        let state: HostListenerState = serde_json::from_slice(&raw).map_err(|error| {
+            inspection_failure(
+                DependencyPredicate::StateSchemaInvalid,
+                RunnerError::task_invocation_failed_parse(&dependency.state_file, error),
+            )
+        })?;
         if state.schema != HOST_LISTENER_STATE_SCHEMA || state.owner != dependency.owner {
-            return Err(RunnerError::task_invocation(format!(
-                "managed dependency state for `{}` has an unsupported schema or owner",
-                dependency.name
-            )));
+            return Err(inspection_failure(
+                if state.schema != HOST_LISTENER_STATE_SCHEMA {
+                    DependencyPredicate::StateSchemaInvalid
+                } else {
+                    DependencyPredicate::StateIdentityMismatch
+                },
+                RunnerError::task_invocation(format!(
+                    "managed dependency state for `{}` has an unsupported schema or owner",
+                    dependency.name
+                )),
+            ));
         }
         if state.status != "ready" {
             return Ok(unavailable(DependencyPredicate::StateNotReady));
@@ -1003,15 +1074,23 @@ fn dependency_observation(
                     .as_str(),
                 )
         {
-            return Err(RunnerError::task_invocation(format!(
-                "managed dependency state for `{}` has inconsistent current addresses",
-                dependency.name
-            )));
+            return Err(inspection_failure(
+                DependencyPredicate::StateIdentityMismatch,
+                RunnerError::task_invocation(format!(
+                    "managed dependency state for `{}` has inconsistent current addresses",
+                    dependency.name
+                )),
+            ));
         }
         if effigy_gateway::managed_listener::verify_managed_listener_owner(owner).is_err() {
             return Ok(unavailable(DependencyPredicate::OwnerUnverified));
         }
-        if !managed_route_matches(&dependency.route_table_file, &state, &dependency.owner)? {
+        let route_matches =
+            managed_route_matches(&dependency.route_table_file, &state, &dependency.owner)
+                .map_err(|error| {
+                    inspection_failure(DependencyPredicate::RouteTableUnreadable, error)
+                })?;
+        if !route_matches {
             return Ok(unavailable(DependencyPredicate::RouteNotMatching));
         }
         states.push(state);
@@ -1022,10 +1101,11 @@ fn dependency_observation(
 fn dependency_states(
     dependencies: &[HostProcessDependency],
 ) -> Result<Option<Vec<HostListenerState>>, RunnerError> {
-    Ok(match dependency_observation(dependencies)? {
-        DependencyObservation::Ready(states) => Some(states),
-        DependencyObservation::Unavailable(_) => None,
-    })
+    match dependency_observation(dependencies) {
+        Ok(DependencyObservation::Ready(states)) => Ok(Some(states)),
+        Ok(DependencyObservation::Unavailable(_)) => Ok(None),
+        Err(failure) => Err(*failure.error),
+    }
 }
 
 fn managed_route_matches(
@@ -1136,6 +1216,7 @@ impl DependencyTransition {
 #[derive(Debug)]
 struct HostChildInspection {
     category: InspectionCategory,
+    observed_dependency: Option<ObservedDependency>,
     /// Boxed so the `Err` side of the wait result stays small.
     error: Box<RunnerError>,
 }
@@ -1150,6 +1231,7 @@ fn observed_dependencies(
         .map(|(dependency, state)| ObservedDependency {
             name: dependency.name.clone(),
             status: ObservedStatus::Observed,
+            tuple_status: Some(DependencyTupleStatus::Observed),
             predicate: None,
             runtime_generation: Some(state.runtime_generation.clone()),
             generation: Some(state.generation.clone()),
@@ -1169,10 +1251,11 @@ fn dependency_transition(
         Ok(DependencyObservation::Unavailable(dependency)) => {
             return Ok(Some(DependencyTransition::Unavailable(dependency)))
         }
-        Err(error) => {
+        Err(failure) => {
             return Err(HostChildInspection {
                 category: InspectionCategory::DependencyState,
-                error: Box::new(error),
+                observed_dependency: Some(failure.observation()),
+                error: failure.error,
             })
         }
     };
@@ -1191,6 +1274,16 @@ fn wait_for_host_child(
     expected_dependencies: &[String],
     shutdown: &Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<HostChildWait, HostChildInspection> {
+    wait_for_host_child_with(child, shutdown, || {
+        dependency_transition(spec, expected_dependencies)
+    })
+}
+
+fn wait_for_host_child_with(
+    child: &mut std::process::Child,
+    shutdown: &Arc<std::sync::atomic::AtomicBool>,
+    mut inspect_dependencies: impl FnMut() -> Result<Option<DependencyTransition>, HostChildInspection>,
+) -> Result<HostChildWait, HostChildInspection> {
     loop {
         match child.try_wait() {
             Ok(Some(status)) => return Ok(HostChildWait::Exited(status)),
@@ -1198,6 +1291,7 @@ fn wait_for_host_child(
             Err(error) => {
                 return Err(HostChildInspection {
                     category: InspectionCategory::ChildCompletion,
+                    observed_dependency: None,
                     error: Box::new(RunnerError::task_invocation(format!(
                         "managed host child completion is uncertain; keeping its generation held: {error}"
                     ))),
@@ -1207,7 +1301,7 @@ fn wait_for_host_child(
         if shutdown.load(Ordering::SeqCst) {
             return Ok(HostChildWait::Shutdown);
         }
-        if let Some(transition) = dependency_transition(spec, expected_dependencies)? {
+        if let Some(transition) = inspect_dependencies()? {
             return Ok(HostChildWait::DependencyChanged(transition));
         }
         thread::sleep(Duration::from_millis(100));
@@ -1521,6 +1615,76 @@ fn generation_record(
     record
 }
 
+fn inspection_transition_record(
+    evidence: &TransitionEvidenceWriter,
+    generation: &str,
+    child: &ChildProcessIdentity,
+    listener: Option<&OwnedHostListener>,
+    launch_env: &BTreeMap<String, String>,
+    phase: TransitionPhase,
+    inspection: &HostChildInspection,
+) -> TransitionRecord {
+    let mut record = generation_record(
+        evidence,
+        TransitionEvent::InspectionError,
+        generation,
+        child,
+        listener,
+        launch_env,
+    );
+    record.phase = Some(phase);
+    record.inspection_error = Some(inspection.category);
+    record.observed_dependencies = inspection.observed_dependency.clone().into_iter().collect();
+    record
+}
+
+fn selected_transition_record(
+    evidence: &TransitionEvidenceWriter,
+    wait: &HostChildWait,
+    generation: &str,
+    child: &ChildProcessIdentity,
+    listener: Option<&OwnedHostListener>,
+    launch_env: &BTreeMap<String, String>,
+) -> TransitionRecord {
+    match wait {
+        HostChildWait::Exited(status) => {
+            let mut record = generation_record(
+                evidence,
+                TransitionEvent::ChildExited,
+                generation,
+                child,
+                listener,
+                launch_env,
+            );
+            record.exit = Some(TransitionExit {
+                code: status.code(),
+                signal: status.signal(),
+            });
+            record
+        }
+        HostChildWait::DependencyChanged(transition) => {
+            let mut record = generation_record(
+                evidence,
+                transition.event(),
+                generation,
+                child,
+                listener,
+                launch_env,
+            );
+            record.observed_dependencies = transition.observed();
+            record
+        }
+        HostChildWait::Shutdown => generation_record(
+            evidence,
+            TransitionEvent::Shutdown,
+            generation,
+            child,
+            listener,
+            launch_env,
+        ),
+    }
+}
+
 fn supervise_managed_host_listener(
     args: &InternalHostProcessSuperviseArgs,
     spec: &HostProcessRuntimeSpec,
@@ -1753,16 +1917,15 @@ fn supervise_managed_host_listener(
         let pre_publication = match dependency_transition(spec, &dependency_generations) {
             Ok(transition) => transition,
             Err(inspection) => {
-                let mut record = generation_record(
+                let record = inspection_transition_record(
                     &evidence,
-                    TransitionEvent::InspectionError,
                     &generation,
                     &root_identity,
                     Some(&owned),
                     &dependency_env,
+                    TransitionPhase::PrePublication,
+                    &inspection,
                 );
-                record.phase = Some(TransitionPhase::PrePublication);
-                record.inspection_error = Some(inspection.category);
                 evidence.record(record);
                 terminate_owned_child_group(&mut child, &root_identity, Duration::from_secs(2))?;
                 child_pid.store(0, Ordering::SeqCst);
@@ -2006,16 +2169,15 @@ fn supervise_managed_host_listener(
             match wait_for_host_child(&mut child, spec, &dependency_generations, &shutdown) {
                 Ok(wait) => wait,
                 Err(inspection) => {
-                    let mut record = generation_record(
+                    let record = inspection_transition_record(
                         &evidence,
-                        TransitionEvent::InspectionError,
                         &generation,
                         &root_identity,
                         Some(&owned),
                         &dependency_env,
+                        TransitionPhase::Published,
+                        &inspection,
                     );
-                    record.phase = Some(TransitionPhase::Published);
-                    record.inspection_error = Some(inspection.category);
                     evidence.record(record);
                     let error = *inspection.error;
                     let _ = write_listener_state(
@@ -2051,43 +2213,14 @@ fn supervise_managed_host_listener(
         let stopping = matches!(&child_wait, HostChildWait::Shutdown);
         // The selected reason is recorded before any state, route or process
         // effect so a readable unavailable state never precedes its receipt.
-        let mut selected = match &child_wait {
-            HostChildWait::Exited(status) => {
-                let mut record = generation_record(
-                    &evidence,
-                    TransitionEvent::ChildExited,
-                    &generation,
-                    &root_identity,
-                    Some(&owned),
-                    &dependency_env,
-                );
-                record.exit = Some(TransitionExit {
-                    code: status.code(),
-                    signal: status.signal(),
-                });
-                record
-            }
-            HostChildWait::DependencyChanged(transition) => {
-                let mut record = generation_record(
-                    &evidence,
-                    transition.event(),
-                    &generation,
-                    &root_identity,
-                    Some(&owned),
-                    &dependency_env,
-                );
-                record.observed_dependencies = transition.observed();
-                record
-            }
-            HostChildWait::Shutdown => generation_record(
-                &evidence,
-                TransitionEvent::Shutdown,
-                &generation,
-                &root_identity,
-                Some(&owned),
-                &dependency_env,
-            ),
-        };
+        let mut selected = selected_transition_record(
+            &evidence,
+            &child_wait,
+            &generation,
+            &root_identity,
+            Some(&owned),
+            &dependency_env,
+        );
         selected.phase = Some(TransitionPhase::Published);
         evidence.record(selected);
         let status = match child_wait {
@@ -3368,6 +3501,18 @@ fn nix_signal_child_group_kill_after(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runner::host_transition_evidence::read_transition_evidence;
+
+    struct TestChild(std::process::Child);
+
+    impl Drop for TestChild {
+        fn drop(&mut self) {
+            if matches!(self.0.try_wait(), Ok(None)) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+    }
 
     #[test]
     fn sanitize_keeps_safe_chars() {
@@ -3564,5 +3709,334 @@ mod tests {
         };
         let result = stop_recorded_supervisor(Path::new("unused"), &record, Signal::SIGTERM, 1);
         assert!(matches!(result, Ok(false)));
+    }
+
+    #[test]
+    fn managed_host_transitions_production_wait_records_signal_tuple_and_inspection() {
+        let fixture = tempfile::tempdir().expect("fresh managed transition fixture");
+        let state_path = fixture.path().join("app.listener.json");
+        let routes_path = fixture.path().join("routes.json");
+        let old_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let new_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let old_address = old_listener.local_addr().unwrap();
+        let new_address = new_listener.local_addr().unwrap();
+        let new_address_text = new_address.to_string();
+        let identity = read_live_process_identity(std::process::id()).expect("test identity");
+        let listener_state = |generation: &str, domain: &str, address: SocketAddr| {
+            let owner = ManagedListenerRouteOwner {
+                owner: "fixture-app".to_owned(),
+                runtime_generation: "runtime-app-1".to_owned(),
+                generation: generation.to_owned(),
+                supervisor_pid: std::process::id(),
+                supervisor_boot_identity: identity.boot_identity.clone(),
+                supervisor_start_identity: identity.start_identity.clone(),
+                root_pid: std::process::id(),
+                root_boot_identity: identity.boot_identity.clone(),
+                root_start_identity: identity.start_identity.clone(),
+                listener_pid: std::process::id(),
+                listener_boot_identity: identity.boot_identity.clone(),
+                listener_start_identity: identity.start_identity.clone(),
+                address: address.to_string(),
+                route_tls: false,
+                availability_file: state_path.display().to_string(),
+            };
+            HostListenerState {
+                schema: HOST_LISTENER_STATE_SCHEMA.to_owned(),
+                owner: "fixture-app".to_owned(),
+                runtime_generation: "runtime-app-1".to_owned(),
+                generation: generation.to_owned(),
+                status: "ready".to_owned(),
+                address: Some(address.to_string()),
+                internal_url: Some(format!("http://{address}")),
+                public_url: Some(format!("http://{domain}")),
+                route_domain: Some(domain.to_owned()),
+                supervisor_pid: std::process::id(),
+                supervisor_boot_identity: identity.boot_identity.clone(),
+                supervisor_start_identity: identity.start_identity.clone(),
+                child_pid: Some(std::process::id()),
+                child_boot_identity: Some(identity.boot_identity.clone()),
+                child_start_identity: Some(identity.start_identity.clone()),
+                listener_pid: Some(std::process::id()),
+                listener_boot_identity: Some(identity.boot_identity.clone()),
+                listener_start_identity: Some(identity.start_identity.clone()),
+                route_owner: Some(owner),
+                diagnostic: None,
+            }
+        };
+        let old_state = listener_state("app-gen-1", "app-old.test", old_address);
+        let new_state = listener_state("app-gen-2", "app-new.test", new_address);
+        let route = |domain: &str, address: SocketAddr, owner: &ManagedListenerRouteOwner| {
+            serde_json::json!({
+                "domain": domain,
+                "target": address.to_string(),
+                "source": "container",
+                "project": fixture.path().display().to_string(),
+                "managed_listener": owner,
+                "tls": false,
+                "registered": "2026-10-11T00:00:00Z"
+            })
+        };
+        fs::write(
+            &routes_path,
+            serde_json::to_vec(&serde_json::json!({
+                "routes": {
+                    "app-old.test": route("app-old.test", old_address, old_state.route_owner.as_ref().unwrap()),
+                    "app-new.test": route("app-new.test", new_address, new_state.route_owner.as_ref().unwrap())
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        write_private_json(&state_path, &old_state).expect("write initial ready dependency");
+
+        let dependency = HostProcessDependency {
+            name: "app".to_owned(),
+            owner: "fixture-app".to_owned(),
+            state_file: state_path.clone(),
+            route_table_file: routes_path,
+        };
+        let spec = HostProcessRuntimeSpec {
+            schema: HOST_PROCESS_SPEC_SCHEMA.to_owned(),
+            project_path: fixture.path().display().to_string(),
+            runtime_generation: "runtime-api-1".to_owned(),
+            cwd: fixture.path().to_path_buf(),
+            env: BTreeMap::new(),
+            listener: None,
+            owner: "fixture-api".to_owned(),
+            dependencies: vec![dependency],
+            listener_state_file: fixture.path().join("api.listener.json"),
+            gateway_root: None,
+        };
+        let (launch_env, expected_dependencies) = dependency_environment(&spec, &[old_state]);
+        let supervisor = TransitionProcess {
+            pid: std::process::id(),
+            boot_identity: identity.boot_identity,
+            start_identity: identity.start_identity,
+        };
+        let mut evidence = TransitionEvidenceWriter::open(
+            fixture.path().join("api.transitions.jsonl"),
+            fixture.path().join("api.log"),
+            TransitionContext {
+                owner: spec.owner.clone(),
+                runtime_generation: spec.runtime_generation.clone(),
+                supervisor,
+            },
+        );
+        let shutdown = Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+        // A real owned child exits by signal. The production wait selection and
+        // receipt mapper preserve the observed signal separately from an exit code.
+        let mut signaled = TestChild(ProcessCommand::new("/bin/sleep").arg("60").spawn().unwrap());
+        let signal_identity =
+            read_live_process_identity(signaled.0.id()).expect("signal child identity");
+        kill(Pid::from_raw(signaled.0.id() as i32), Signal::SIGTERM).unwrap();
+        let signal_wait =
+            wait_for_host_child(&mut signaled.0, &spec, &expected_dependencies, &shutdown).unwrap();
+        let signal_child = ChildProcessIdentity {
+            pid: signaled.0.id(),
+            boot_identity: signal_identity.boot_identity,
+            start_identity: signal_identity.start_identity,
+        };
+        let mut signal_record = selected_transition_record(
+            &evidence,
+            &signal_wait,
+            "api-gen-signal",
+            &signal_child,
+            None,
+            &launch_env,
+        );
+        signal_record.phase = Some(TransitionPhase::Published);
+        evidence.record(signal_record);
+        let _ = signaled.0.wait();
+
+        // Both generations' exact loopback sockets and route entries are live.
+        // Replacing one atomic ready state file therefore changes the tuple with
+        // no unavailable observation or timing override.
+        let mut tuple_child =
+            TestChild(ProcessCommand::new("/bin/sleep").arg("60").spawn().unwrap());
+        let tuple_identity =
+            read_live_process_identity(tuple_child.0.id()).expect("tuple child identity");
+        let (observed_tx, observed_rx) = std::sync::mpsc::channel();
+        let (resume_tx, resume_rx) = std::sync::mpsc::channel();
+        let tuple_shutdown = shutdown.clone();
+        let tuple_spec = spec.clone();
+        let tuple_expected = expected_dependencies.clone();
+        let tuple_thread = thread::spawn(move || {
+            let mut first_observation = true;
+            let result = wait_for_host_child_with(&mut tuple_child.0, &tuple_shutdown, || {
+                let result = dependency_transition(&tuple_spec, &tuple_expected);
+                if first_observation && matches!(&result, Ok(None)) {
+                    first_observation = false;
+                    observed_tx
+                        .send(())
+                        .expect("report the first stable ready tuple");
+                    resume_rx
+                        .recv()
+                        .expect("resume after atomic tuple replacement");
+                }
+                result
+            });
+            (result, tuple_child)
+        });
+        observed_rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("first production dependency inspection is ready");
+        write_private_json(&state_path, &new_state).expect("replace with ready successor tuple");
+        resume_tx.send(()).expect("resume production wait loop");
+        let (tuple_result, tuple_child) = tuple_thread.join().expect("production wait thread");
+        let tuple_wait = tuple_result.expect("wait selects ready tuple change");
+        match &tuple_wait {
+            HostChildWait::DependencyChanged(DependencyTransition::TupleChanged(observed)) => {
+                assert_eq!(observed.len(), 1);
+                assert_eq!(observed[0].name, "app");
+                assert_eq!(observed[0].status, ObservedStatus::Observed);
+                assert_eq!(observed[0].generation.as_deref(), Some("app-gen-2"));
+                assert_eq!(
+                    observed[0].address.as_deref(),
+                    Some(new_address_text.as_str())
+                );
+            }
+            other => panic!("expected a ready-only tuple change, got {other:?}"),
+        }
+        let tuple_child_identity = ChildProcessIdentity {
+            pid: tuple_child.0.id(),
+            boot_identity: tuple_identity.boot_identity,
+            start_identity: tuple_identity.start_identity,
+        };
+        let mut tuple_record = selected_transition_record(
+            &evidence,
+            &tuple_wait,
+            "api-gen-tuple",
+            &tuple_child_identity,
+            None,
+            &launch_env,
+        );
+        tuple_record.phase = Some(TransitionPhase::Published);
+        evidence.record(tuple_record);
+        drop(tuple_child);
+
+        // A genuinely absent dependency file produces an explicit absent tuple
+        // marker while retaining the child's old launch assignments.
+        fs::remove_file(&state_path).expect("remove the owned dependency state");
+        let mut missing_child =
+            TestChild(ProcessCommand::new("/bin/sleep").arg("60").spawn().unwrap());
+        let missing_identity =
+            read_live_process_identity(missing_child.0.id()).expect("missing-case child identity");
+        let missing_wait = wait_for_host_child(
+            &mut missing_child.0,
+            &spec,
+            &expected_dependencies,
+            &shutdown,
+        )
+        .expect("missing dependency is a selected unavailable cause");
+        let missing_dependency = match &missing_wait {
+            HostChildWait::DependencyChanged(DependencyTransition::Unavailable(dependency)) => {
+                assert_eq!(dependency.name, "app");
+                assert_eq!(dependency.tuple_status, Some(DependencyTupleStatus::Absent));
+                assert_eq!(
+                    dependency.predicate,
+                    Some(DependencyPredicate::StateFileMissing)
+                );
+                true
+            }
+            other => panic!("expected a missing dependency cause, got {other:?}"),
+        };
+        assert!(missing_dependency);
+        let missing_child_identity = ChildProcessIdentity {
+            pid: missing_child.0.id(),
+            boot_identity: missing_identity.boot_identity,
+            start_identity: missing_identity.start_identity,
+        };
+        let mut missing_record = selected_transition_record(
+            &evidence,
+            &missing_wait,
+            "api-gen-missing",
+            &missing_child_identity,
+            None,
+            &launch_env,
+        );
+        missing_record.phase = Some(TransitionPhase::Published);
+        evidence.record(missing_record);
+        drop(missing_child);
+
+        // An unreadable declared state is recorded at the actual wait decision,
+        // with its dependency name and explicit tuple marker.
+        fs::write(&state_path, b"{not json").expect("make dependency state unreadable");
+        let mut inspection_child =
+            TestChild(ProcessCommand::new("/bin/sleep").arg("60").spawn().unwrap());
+        let inspection_identity =
+            read_live_process_identity(inspection_child.0.id()).expect("inspection child identity");
+        let inspection = wait_for_host_child(
+            &mut inspection_child.0,
+            &spec,
+            &expected_dependencies,
+            &shutdown,
+        )
+        .expect_err("malformed dependency state is an inspection error");
+        assert_eq!(inspection.category, InspectionCategory::DependencyState);
+        let inspection_child_identity = ChildProcessIdentity {
+            pid: inspection_child.0.id(),
+            boot_identity: inspection_identity.boot_identity,
+            start_identity: inspection_identity.start_identity,
+        };
+        let inspection_record = inspection_transition_record(
+            &evidence,
+            "api-gen-inspection",
+            &inspection_child_identity,
+            None,
+            &launch_env,
+            TransitionPhase::Published,
+            &inspection,
+        );
+        evidence.record(inspection_record);
+        drop(inspection_child);
+
+        let receipt = read_transition_evidence(&fixture.path().join("api.transitions.jsonl"))
+            .expect("read production-path evidence")
+            .expect("evidence receipt exists");
+        assert!(receipt.gaps.is_empty());
+        assert_eq!(receipt.records[0].event, TransitionEvent::ChildExited);
+        assert_eq!(receipt.records[0].exit.unwrap().signal, Some(libc::SIGTERM));
+        assert_eq!(
+            receipt.records[1].event,
+            TransitionEvent::DependencyTupleChanged
+        );
+        assert_eq!(
+            receipt.records[1].observed_dependencies[0]
+                .generation
+                .as_deref(),
+            Some("app-gen-2")
+        );
+        assert_eq!(receipt.records[1].assignments, launch_env);
+        assert_eq!(
+            receipt.records[2].event,
+            TransitionEvent::DependencyUnavailable
+        );
+        assert_eq!(
+            receipt.records[2].observed_dependencies[0].predicate,
+            Some(DependencyPredicate::StateFileMissing)
+        );
+        assert_eq!(
+            receipt.records[2].observed_dependencies[0].tuple_status,
+            Some(DependencyTupleStatus::Absent)
+        );
+        assert_eq!(receipt.records[2].assignments, launch_env);
+        assert_eq!(receipt.records[3].event, TransitionEvent::InspectionError);
+        assert_eq!(receipt.records[3].observed_dependencies[0].name, "app");
+        assert_eq!(
+            receipt.records[3].observed_dependencies[0].predicate,
+            Some(DependencyPredicate::StateSchemaInvalid)
+        );
+        assert_eq!(
+            receipt.records[3].observed_dependencies[0].tuple_status,
+            Some(DependencyTupleStatus::Unreadable)
+        );
+        assert!(!receipt.records.iter().any(|record| {
+            record.event == TransitionEvent::SuccessorLaunched
+                && matches!(
+                    record.generation.as_deref(),
+                    Some("api-gen-missing" | "api-gen-inspection")
+                )
+        }));
     }
 }

@@ -8,17 +8,20 @@
 //! signals, publication, cleanup or adoption, and a missing record never proves
 //! that no transition happened.
 //!
-//! Format `effigy.managed.host-transition-evidence.v1`: records carry a
-//! contiguous `sequence` starting at 1. Readers skip blank lines, count a
-//! newline-terminated line they cannot parse or whose schema is unknown as a
-//! gap, and report an unterminated final line as an incomplete tail. A failed
-//! append leaves a sequence gap. Retention is bounded by record count and bytes;
-//! the first record that would exceed a bound is replaced by one
-//! `retention_limit` marker, after which the supervisor writes nothing more.
+//! New records use `effigy.managed.host-transition-evidence.v2`. Readers also
+//! accept the historical v1 shape, which has no tuple-availability marker.
+//! Sequences start at 1; a missing first sequence, later gap, duplicate or
+//! regression is visible. Readers skip blank lines, count a newline-terminated
+//! line they cannot parse or whose schema is unknown as a gap, and report an
+//! unterminated final line as an incomplete tail. A failed append consumes a
+//! sequence; if no complete record is readable, the gap is visible. Retention
+//! is bounded by record count and bytes; the first
+//! record that would exceed a bound is replaced by one `retention_limit`
+//! marker, after which the supervisor writes nothing more.
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
@@ -29,7 +32,8 @@ use super::error::RunnerError;
 use super::host_process::append_log_line;
 
 pub(in crate::runner) const TRANSITION_EVIDENCE_SCHEMA: &str =
-    "effigy.managed.host-transition-evidence.v1";
+    "effigy.managed.host-transition-evidence.v2";
+const TRANSITION_EVIDENCE_SCHEMA_V1: &str = "effigy.managed.host-transition-evidence.v1";
 pub(in crate::runner) const TRANSITION_EVIDENCE_FILE_SUFFIX: &str = ".transitions.jsonl";
 const TRANSITION_EVIDENCE_MAX_RECORDS: usize = 512;
 const TRANSITION_EVIDENCE_MAX_BYTES: usize = 256 * 1024;
@@ -91,10 +95,15 @@ pub(in crate::runner) enum TransitionPhase {
 #[serde(rename_all = "snake_case")]
 pub(in crate::runner) enum DependencyPredicate {
     StateFileMissing,
+    StateFileUnreadable,
+    StateFileUnsafe,
+    StateSchemaInvalid,
+    StateIdentityMismatch,
     StateNotReady,
     RouteOwnerMissing,
     OwnerUnverified,
     RouteNotMatching,
+    RouteTableUnreadable,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -104,11 +113,25 @@ pub(in crate::runner) enum ObservedStatus {
     Unavailable,
 }
 
+/// Whether a dependency's generation tuple was available at the selected
+/// inspection boundary. `Absent` and `Unreadable` are explicit unknowns, not
+/// empty or inferred tuples.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(in crate::runner) enum DependencyTupleStatus {
+    Observed,
+    Unavailable,
+    Absent,
+    Unreadable,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(in crate::runner) struct ObservedDependency {
     pub(in crate::runner) name: String,
     pub(in crate::runner) status: ObservedStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in crate::runner) tuple_status: Option<DependencyTupleStatus>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(in crate::runner) predicate: Option<DependencyPredicate>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -124,6 +147,15 @@ impl ObservedDependency {
         Self {
             name: name.to_owned(),
             status: ObservedStatus::Unavailable,
+            tuple_status: Some(match predicate {
+                DependencyPredicate::StateFileMissing => DependencyTupleStatus::Absent,
+                DependencyPredicate::StateFileUnreadable
+                | DependencyPredicate::StateFileUnsafe
+                | DependencyPredicate::StateSchemaInvalid
+                | DependencyPredicate::StateIdentityMismatch
+                | DependencyPredicate::RouteTableUnreadable => DependencyTupleStatus::Unreadable,
+                _ => DependencyTupleStatus::Unavailable,
+            }),
             predicate: Some(predicate),
             runtime_generation: None,
             generation: None,
@@ -248,6 +280,7 @@ pub(in crate::runner) struct TransitionEvidenceWriter {
     needs_separator: bool,
     retention_limited: bool,
     disabled: bool,
+    directory_sync_pending: bool,
 }
 
 impl TransitionEvidenceWriter {
@@ -279,15 +312,27 @@ impl TransitionEvidenceWriter {
             needs_separator: false,
             retention_limited: false,
             disabled: false,
+            directory_sync_pending: false,
         };
         match read_transition_evidence(&writer.path) {
             Ok(None) => {}
             Ok(Some(receipt)) => {
-                writer.next_sequence = receipt.max_sequence + 1;
+                let Some(next_sequence) = receipt.max_sequence.checked_add(1) else {
+                    writer.disabled = true;
+                    append_log_line(
+                        &writer.log_path,
+                        "[effigy host-process] transition evidence sequence is exhausted; writes disabled for this run",
+                    );
+                    return writer;
+                };
+                writer.next_sequence = next_sequence;
                 writer.records = receipt.lines;
                 writer.bytes = receipt.bytes;
                 writer.needs_separator = receipt.incomplete_tail;
                 writer.retention_limited = receipt.truncated;
+                // A file created by an older writer may never have had its
+                // containing directory synced. Reconfirm it on the next append.
+                writer.directory_sync_pending = true;
             }
             Err(error) => {
                 writer.disabled = true;
@@ -342,8 +387,20 @@ impl TransitionEvidenceWriter {
         payload.push_str(line);
         payload.push('\n');
         let sequence = self.next_sequence;
-        self.next_sequence += 1;
-        match write_appended(&self.path, payload.as_bytes()) {
+        let Some(next_sequence) = sequence.checked_add(1) else {
+            self.disabled = true;
+            append_log_line(
+                &self.log_path,
+                "[effigy host-process] transition evidence sequence is exhausted; writes disabled for this run",
+            );
+            return;
+        };
+        self.next_sequence = next_sequence;
+        match write_appended(
+            &self.path,
+            payload.as_bytes(),
+            &mut self.directory_sync_pending,
+        ) {
             Ok(()) => {
                 self.records += 1;
                 self.bytes += payload.len();
@@ -352,11 +409,15 @@ impl TransitionEvidenceWriter {
             Err(error) => {
                 // A partial write may precede the next record; the separator
                 // isolates it, and the skipped sequence number keeps the gap visible.
+                // Count the full attempted payload toward bounds because an
+                // unsuccessful append may still have written any prefix.
+                self.records += 1;
+                self.bytes += payload.len();
                 self.needs_separator = true;
                 append_log_line(
                     &self.log_path,
                     &format!(
-                        "[effigy host-process] transition evidence record {sequence} was not written: {error}"
+                        "[effigy host-process] transition evidence record {sequence} was not confirmed durable: {error}"
                     ),
                 );
             }
@@ -364,15 +425,64 @@ impl TransitionEvidenceWriter {
     }
 }
 
-fn write_appended(path: &Path, payload: &[u8]) -> std::io::Result<()> {
-    let mut file = fs::OpenOptions::new()
-        .create(true)
+fn write_appended(
+    path: &Path,
+    payload: &[u8],
+    directory_sync_pending: &mut bool,
+) -> std::io::Result<()> {
+    write_appended_with_parent_sync(path, payload, directory_sync_pending, sync_parent_directory)
+}
+
+fn write_appended_with_parent_sync(
+    path: &Path,
+    payload: &[u8],
+    directory_sync_pending: &mut bool,
+    mut sync_parent: impl FnMut(&Path) -> std::io::Result<()>,
+) -> std::io::Result<()> {
+    let (mut file, created) = match fs::OpenOptions::new()
+        .create_new(true)
         .append(true)
         .mode(0o600)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(path)?;
-    file.write_all(payload)?;
-    file.sync_data()
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)
+    {
+        Ok(file) => (file, true),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => (
+            fs::OpenOptions::new()
+                .append(true)
+                .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+                .open(path)?,
+            false,
+        ),
+        Err(error) => return Err(error),
+    };
+    if created {
+        *directory_sync_pending = true;
+    }
+    let data_result = file.write_all(payload).and_then(|()| file.sync_all());
+    let directory_result = if *directory_sync_pending {
+        sync_parent(path)
+    } else {
+        Ok(())
+    };
+    if directory_result.is_ok() {
+        *directory_sync_pending = false;
+    }
+    data_result.and(directory_result)
+}
+
+fn sync_parent_directory(path: &Path) -> std::io::Result<()> {
+    let parent = path.parent().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "transition receipt has no containing directory",
+        )
+    })?;
+    fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW)
+        .open(parent)?
+        .sync_all()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -391,11 +501,11 @@ pub(in crate::runner) struct TransitionEvidenceReceipt {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::runner) enum TransitionGap {
-    /// A complete line that is not valid v1 JSON for this record.
+    /// A complete line that is not valid v1 or v2 JSON for this record.
     Malformed {
         line: usize,
     },
-    /// A complete line whose `schema` is not this format.
+    /// A complete line whose `schema` is unsupported by this reader.
     UnsupportedSchema {
         line: usize,
     },
@@ -411,20 +521,35 @@ pub(in crate::runner) enum TransitionGap {
 pub(in crate::runner) fn read_transition_evidence(
     path: &Path,
 ) -> Result<Option<TransitionEvidenceReceipt>, RunnerError> {
-    let metadata = match fs::symlink_metadata(path) {
-        Ok(metadata) => metadata,
+    let bound = (TRANSITION_EVIDENCE_MAX_BYTES + RETENTION_RESERVE_BYTES) as u64;
+    let file = match fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)
+    {
+        Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(RunnerError::task_invocation_failed_read(path, error)),
     };
-    let bound = (TRANSITION_EVIDENCE_MAX_BYTES + RETENTION_RESERVE_BYTES) as u64;
-    if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() > bound {
+    let metadata = file
+        .metadata()
+        .map_err(|error| RunnerError::task_invocation_failed_read(path, error))?;
+    if !metadata.is_file() || metadata.len() > bound {
         return Err(RunnerError::task_invocation(format!(
             "managed transition evidence {} is not a bounded regular file",
             path.display()
         )));
     }
-    let raw =
-        fs::read(path).map_err(|error| RunnerError::task_invocation_failed_read(path, error))?;
+    let mut raw = Vec::with_capacity(metadata.len() as usize);
+    file.take(bound + 1)
+        .read_to_end(&mut raw)
+        .map_err(|error| RunnerError::task_invocation_failed_read(path, error))?;
+    if raw.len() as u64 > bound {
+        return Err(RunnerError::task_invocation(format!(
+            "managed transition evidence {} is not a bounded regular file",
+            path.display()
+        )));
+    }
     Ok(Some(parse_transition_evidence(&raw)))
 }
 
@@ -440,7 +565,8 @@ pub(in crate::runner) fn parse_transition_evidence(raw: &[u8]) -> TransitionEvid
         bytes: raw.len(),
         max_sequence: 0,
     };
-    let mut expected: Option<u64> = None;
+    let mut expected = 1u64;
+    let mut sequence_exhausted = false;
     for (index, line) in segments.iter().enumerate() {
         let number = index + 1;
         if line.iter().all(u8::is_ascii_whitespace) {
@@ -450,27 +576,47 @@ pub(in crate::runner) fn parse_transition_evidence(raw: &[u8]) -> TransitionEvid
             receipt.gaps.push(TransitionGap::Malformed { line: number });
             continue;
         };
-        if value.get("schema").and_then(serde_json::Value::as_str)
-            != Some(TRANSITION_EVIDENCE_SCHEMA)
-        {
+        let schema = value.get("schema").and_then(serde_json::Value::as_str);
+        let is_v1 = schema == Some(TRANSITION_EVIDENCE_SCHEMA_V1);
+        let is_v2 = schema == Some(TRANSITION_EVIDENCE_SCHEMA);
+        if !is_v1 && !is_v2 {
             receipt
                 .gaps
                 .push(TransitionGap::UnsupportedSchema { line: number });
+            continue;
+        }
+        if is_v1 && has_v2_observation_shape(&value) {
+            receipt.gaps.push(TransitionGap::Malformed { line: number });
             continue;
         }
         let Ok(record) = serde_json::from_value::<TransitionRecord>(value) else {
             receipt.gaps.push(TransitionGap::Malformed { line: number });
             continue;
         };
-        if let Some(expected) = expected {
-            if record.sequence != expected {
-                receipt.gaps.push(TransitionGap::SequenceGap {
-                    expected,
-                    found: record.sequence,
-                });
+        if is_v2 && !valid_v2_observations(&record) {
+            receipt.gaps.push(TransitionGap::Malformed { line: number });
+            continue;
+        }
+        if sequence_exhausted {
+            receipt.gaps.push(TransitionGap::SequenceGap {
+                expected,
+                found: record.sequence,
+            });
+            continue;
+        }
+        if record.sequence != expected {
+            receipt.gaps.push(TransitionGap::SequenceGap {
+                expected,
+                found: record.sequence,
+            });
+            if record.sequence == 0 || record.sequence < expected {
+                continue;
             }
         }
-        expected = Some(record.sequence + 1);
+        match record.sequence.checked_add(1) {
+            Some(next) => expected = next,
+            None => sequence_exhausted = true,
+        }
         receipt.max_sequence = receipt.max_sequence.max(record.sequence);
         if record.event == TransitionEvent::RetentionLimit {
             receipt.truncated = true;
@@ -478,6 +624,144 @@ pub(in crate::runner) fn parse_transition_evidence(raw: &[u8]) -> TransitionEvid
         receipt.records.push(record);
     }
     receipt
+}
+
+fn has_v2_observation_shape(value: &serde_json::Value) -> bool {
+    value
+        .get("observed_dependencies")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|dependencies| {
+            dependencies.iter().any(|dependency| {
+                let Some(fields) = dependency.as_object() else {
+                    return false;
+                };
+                fields.contains_key("tuple_status")
+                    || matches!(
+                        fields.get("predicate").and_then(serde_json::Value::as_str),
+                        Some(
+                            "state_file_unreadable"
+                                | "state_file_unsafe"
+                                | "state_schema_invalid"
+                                | "state_identity_mismatch"
+                                | "route_table_unreadable"
+                        )
+                    )
+            })
+        })
+}
+
+fn valid_v2_observations(record: &TransitionRecord) -> bool {
+    let observations_valid = record.observed_dependencies.iter().all(|dependency| {
+        match (dependency.status, dependency.tuple_status) {
+            (ObservedStatus::Observed, Some(DependencyTupleStatus::Observed)) => {
+                dependency.predicate.is_none()
+                    && !dependency.name.trim().is_empty()
+                    && dependency
+                        .runtime_generation
+                        .as_deref()
+                        .is_some_and(|value| !value.trim().is_empty())
+                    && dependency
+                        .generation
+                        .as_deref()
+                        .is_some_and(|value| !value.trim().is_empty())
+                    && dependency
+                        .address
+                        .as_deref()
+                        .is_some_and(|value| !value.trim().is_empty())
+            }
+            (
+                ObservedStatus::Unavailable,
+                Some(
+                    DependencyTupleStatus::Unavailable
+                    | DependencyTupleStatus::Absent
+                    | DependencyTupleStatus::Unreadable,
+                ),
+            ) => {
+                let marker_matches = matches!(
+                    (dependency.tuple_status, dependency.predicate),
+                    (
+                        Some(DependencyTupleStatus::Absent),
+                        Some(DependencyPredicate::StateFileMissing),
+                    ) | (
+                        Some(DependencyTupleStatus::Unreadable),
+                        Some(
+                            DependencyPredicate::StateFileUnreadable
+                                | DependencyPredicate::StateFileUnsafe
+                                | DependencyPredicate::StateSchemaInvalid
+                                | DependencyPredicate::StateIdentityMismatch
+                                | DependencyPredicate::RouteTableUnreadable,
+                        ),
+                    ) | (
+                        Some(DependencyTupleStatus::Unavailable),
+                        Some(
+                            DependencyPredicate::StateNotReady
+                                | DependencyPredicate::RouteOwnerMissing
+                                | DependencyPredicate::OwnerUnverified
+                                | DependencyPredicate::RouteNotMatching,
+                        ),
+                    )
+                );
+                marker_matches
+                    && !dependency.name.trim().is_empty()
+                    && dependency.runtime_generation.is_none()
+                    && dependency.generation.is_none()
+                    && dependency.address.is_none()
+            }
+            _ => false,
+        }
+    });
+    if !observations_valid {
+        return false;
+    }
+    match record.event {
+        TransitionEvent::ChildExited => {
+            record.observed_dependencies.is_empty()
+                && record.inspection_error.is_none()
+                && record
+                    .exit
+                    .is_some_and(|exit| exit.code.is_some() != exit.signal.is_some())
+        }
+        TransitionEvent::DependencyUnavailable => {
+            record.exit.is_none()
+                && record.inspection_error.is_none()
+                && record.observed_dependencies.len() == 1
+                && record.observed_dependencies[0].status == ObservedStatus::Unavailable
+        }
+        TransitionEvent::DependencyTupleChanged => {
+            record.exit.is_none()
+                && record.inspection_error.is_none()
+                && !record.observed_dependencies.is_empty()
+                && record
+                    .observed_dependencies
+                    .iter()
+                    .all(|dependency| dependency.status == ObservedStatus::Observed)
+        }
+        TransitionEvent::InspectionError => {
+            record.exit.is_none()
+                && match record.inspection_error {
+                    Some(InspectionCategory::ChildCompletion) => {
+                        record.observed_dependencies.is_empty()
+                    }
+                    Some(InspectionCategory::DependencyState) => {
+                        record.observed_dependencies.len() == 1
+                            && record.observed_dependencies[0].status == ObservedStatus::Unavailable
+                            && matches!(
+                                record.observed_dependencies[0].tuple_status,
+                                Some(
+                                    DependencyTupleStatus::Unreadable
+                                        | DependencyTupleStatus::Absent
+                                )
+                            )
+                    }
+                    None => false,
+                }
+        }
+        _ => {
+            record.exit.is_none()
+                && record.observed_dependencies.is_empty()
+                && record.inspection_error.is_none()
+        }
+    }
 }
 
 #[cfg(test)]
@@ -668,6 +952,196 @@ mod tests {
     }
 
     #[test]
+    fn host_process_transition_evidence_failed_first_append_then_recovery_shows_initial_gap() {
+        let dir = fresh_receipt_dir();
+        let receipt_dir = dir.path().join("created-after-failure");
+        let path = receipt_dir.join("app.transitions.jsonl");
+        let log = dir.path().join("app.log");
+        let mut writer = TransitionEvidenceWriter::open(path.clone(), log.clone(), test_context());
+
+        writer.record(exit_record(&writer, "gen-lost"));
+        assert!(
+            !path.exists(),
+            "the first append must fail at the real writer"
+        );
+        fs::create_dir(&receipt_dir).expect("recover receipt directory");
+        writer.record(exit_record(&writer, "gen-recovered"));
+
+        let receipt = read_transition_evidence(&path)
+            .expect("read recovered receipt")
+            .expect("recovered receipt exists");
+        assert_eq!(receipt.records.len(), 1);
+        assert_eq!(receipt.records[0].sequence, 2);
+        assert_eq!(
+            receipt.records[0].generation.as_deref(),
+            Some("gen-recovered")
+        );
+        assert_eq!(
+            receipt.gaps,
+            vec![TransitionGap::SequenceGap {
+                expected: 1,
+                found: 2,
+            }]
+        );
+        let logged = fs::read_to_string(log).expect("failed append is logged");
+        assert!(
+            logged.contains("record 1 was not confirmed durable"),
+            "{logged}"
+        );
+    }
+
+    #[test]
+    fn host_process_transition_evidence_accepts_historical_v1_and_mixed_resume() {
+        let dir = fresh_receipt_dir();
+        let path = dir.path().join("app.transitions.jsonl");
+        let log = dir.path().join("app.log");
+        let mut v1 = exit_record(
+            &TransitionEvidenceWriter::open(path.clone(), log.clone(), test_context()),
+            "gen-v1",
+        );
+        v1.schema = TRANSITION_EVIDENCE_SCHEMA_V1.to_owned();
+        v1.sequence = 1;
+        let v1_line = serde_json::to_vec(&v1).expect("v1 record encoding");
+        fs::write(&path, [v1_line.as_slice(), b"\n"].concat()).expect("write historical v1");
+
+        let old = read_transition_evidence(&path)
+            .expect("read historical v1")
+            .expect("v1 receipt exists");
+        assert_eq!(old.records.len(), 1);
+        assert_eq!(old.records[0].schema, TRANSITION_EVIDENCE_SCHEMA_V1);
+        assert!(old.gaps.is_empty());
+
+        let mut writer = TransitionEvidenceWriter::open(path.clone(), log, test_context());
+        writer.record(exit_record(&writer, "gen-v2"));
+        let mixed = read_transition_evidence(&path)
+            .expect("read mixed receipt")
+            .expect("mixed receipt exists");
+        assert_eq!(mixed.records.len(), 2);
+        assert_eq!(mixed.records[0].schema, TRANSITION_EVIDENCE_SCHEMA_V1);
+        assert_eq!(mixed.records[1].schema, TRANSITION_EVIDENCE_SCHEMA);
+        assert_eq!(mixed.records[1].sequence, 2);
+        assert!(mixed.gaps.is_empty());
+    }
+
+    #[test]
+    fn host_process_transition_evidence_marks_invalid_sequence_values_and_order() {
+        let dir = fresh_receipt_dir();
+        let context = test_context();
+        let writer = TransitionEvidenceWriter::open(
+            dir.path().join("unused.transitions.jsonl"),
+            dir.path().join("unused.log"),
+            context,
+        );
+        let mut records = Vec::new();
+        for sequence in [0, 1, 1, 3, 2, 4] {
+            let mut record = exit_record(&writer, &format!("gen-{sequence}"));
+            record.sequence = sequence;
+            records.push(serde_json::to_vec(&record).unwrap());
+        }
+        let mut raw = Vec::new();
+        for record in &records {
+            raw.extend_from_slice(record);
+            raw.push(b'\n');
+        }
+        let receipt = parse_transition_evidence(&raw);
+        assert_eq!(
+            receipt.gaps,
+            vec![
+                TransitionGap::SequenceGap {
+                    expected: 1,
+                    found: 0,
+                },
+                TransitionGap::SequenceGap {
+                    expected: 2,
+                    found: 1,
+                },
+                TransitionGap::SequenceGap {
+                    expected: 2,
+                    found: 3,
+                },
+                TransitionGap::SequenceGap {
+                    expected: 4,
+                    found: 2,
+                },
+            ]
+        );
+        assert_eq!(
+            receipt
+                .records
+                .iter()
+                .map(|record| record.sequence)
+                .collect::<Vec<_>>(),
+            vec![1, 3, 4]
+        );
+        assert_eq!(receipt.max_sequence, 4);
+    }
+
+    #[test]
+    fn host_process_transition_evidence_rejects_partial_v2_and_mislabeled_v1_observations() {
+        let dir = fresh_receipt_dir();
+        let writer = TransitionEvidenceWriter::open(
+            dir.path().join("unused.transitions.jsonl"),
+            dir.path().join("unused.log"),
+            test_context(),
+        );
+        let mut record = writer.draft(TransitionEvent::DependencyTupleChanged);
+        record.sequence = 1;
+        record.observed_dependencies = vec![ObservedDependency {
+            name: "app".to_owned(),
+            status: ObservedStatus::Observed,
+            tuple_status: Some(DependencyTupleStatus::Observed),
+            predicate: None,
+            runtime_generation: Some("runtime-app".to_owned()),
+            generation: Some("app-gen-2".to_owned()),
+            address: Some("127.0.0.1:4000".to_owned()),
+        }];
+        let valid = serde_json::to_value(record).expect("valid v2 observation");
+
+        let mut partial = valid.clone();
+        partial["observed_dependencies"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("tuple_status");
+        let receipt = parse_transition_evidence(
+            &[serde_json::to_vec(&partial).unwrap(), b"\n".to_vec()].concat(),
+        );
+        assert_eq!(receipt.gaps, vec![TransitionGap::Malformed { line: 1 }]);
+        assert!(receipt.records.is_empty());
+
+        let mut mislabeled = valid;
+        mislabeled["schema"] = serde_json::Value::String(TRANSITION_EVIDENCE_SCHEMA_V1.to_owned());
+        let receipt = parse_transition_evidence(
+            &[serde_json::to_vec(&mislabeled).unwrap(), b"\n".to_vec()].concat(),
+        );
+        assert_eq!(receipt.gaps, vec![TransitionGap::Malformed { line: 1 }]);
+        assert!(receipt.records.is_empty());
+    }
+
+    #[test]
+    fn host_process_transition_evidence_creation_sync_retries_after_directory_error() {
+        let dir = fresh_receipt_dir();
+        let path = dir.path().join("app.transitions.jsonl");
+        let mut pending = false;
+        let mut sync_attempted = false;
+        let first = write_appended_with_parent_sync(&path, b"first\n", &mut pending, |_| {
+            sync_attempted = true;
+            Err(std::io::Error::other("controlled directory sync failure"))
+        });
+        assert!(first.is_err());
+        assert!(
+            sync_attempted,
+            "creation must sync its containing directory"
+        );
+        assert!(pending, "failed directory sync must remain pending");
+        assert_eq!(fs::read(&path).unwrap(), b"first\n");
+
+        write_appended(&path, b"second\n", &mut pending)
+            .expect("next append retries the pending directory sync");
+        assert!(!pending);
+        assert_eq!(fs::read(&path).unwrap(), b"first\nsecond\n");
+    }
+
+    #[test]
     fn host_process_transition_evidence_absent_and_symlink_receipts_fail_closed() {
         let dir = fresh_receipt_dir();
         let absent = dir.path().join("absent.transitions.jsonl");
@@ -695,7 +1169,7 @@ mod tests {
 
         assert!(!path.exists());
         let logged = fs::read_to_string(&log).expect("failure is logged");
-        assert!(logged.contains("was not written"), "{logged}");
+        assert!(logged.contains("not confirmed durable"), "{logged}");
     }
 
     #[test]
