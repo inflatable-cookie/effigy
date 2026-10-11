@@ -19,7 +19,10 @@ use crate::policy::project::{
 use crate::policy_support::resolve_compose_source;
 use crate::runtime::dns::{materialize_runtime_dns_override, runtime_route_domains};
 use crate::runtime::scope::{upsert as upsert_scope_record, ScopeRecord};
-use crate::workspace::{materialize_runtime_workspace_mount_rewrite, WorkspaceComposeRewrite};
+use crate::workspace::{
+    materialize_runtime_workspace_mount_rewrite, WorkspaceComposeRewrite,
+    WorkspaceExtraMountDecision,
+};
 use crate::{
     resolve_catalog_network_contract, DEFAULT_ATTACH_TIMEOUT_SECS, DEFAULT_COLIMA_PROFILE,
     DEFAULT_HEALTH_TIMEOUT_SECS,
@@ -142,6 +145,31 @@ pub fn load_container_policy_with_workspace(
     requested_name: Option<&str>,
     workspace_override: Option<&ManifestWorkspaceConfig>,
 ) -> Result<EffectiveContainerPolicy, ContainerPolicyError> {
+    load_container_policy_with_workspace_decisions(
+        repo_root,
+        requested_name,
+        workspace_override,
+        false,
+    )
+    .map(|(policy, _)| policy)
+}
+
+/// Resolve a fresh policy and optional extra-mount decisions for container up.
+/// Call after runtime and shared-service preparation, immediately before
+/// dispatching the primary Compose up command.
+pub fn load_container_policy_for_creation(
+    repo_root: &Path,
+    requested_name: Option<&str>,
+) -> Result<(EffectiveContainerPolicy, Vec<WorkspaceExtraMountDecision>), ContainerPolicyError> {
+    load_container_policy_with_workspace_decisions(repo_root, requested_name, None, true)
+}
+
+fn load_container_policy_with_workspace_decisions(
+    repo_root: &Path,
+    requested_name: Option<&str>,
+    workspace_override: Option<&ManifestWorkspaceConfig>,
+    record_optional_extra_mount_decisions: bool,
+) -> Result<(EffectiveContainerPolicy, Vec<WorkspaceExtraMountDecision>), ContainerPolicyError> {
     let manifest_path = repo_root.join(TASK_MANIFEST_FILE);
     let loaded = load_task_manifest_with_inspection(&manifest_path)?;
     let inferred_workspace =
@@ -176,6 +204,7 @@ pub fn load_container_policy_with_workspace(
         effective_manifest: &loaded.effective_manifest,
         workspace: inferred_workspace.as_ref(),
         library_mounts: &library_mounts,
+        record_optional_extra_mount_decisions,
     })
 }
 
@@ -208,7 +237,9 @@ pub fn load_all_container_policies(
                 effective_manifest: &loaded.effective_manifest,
                 workspace: workspace.as_ref(),
                 library_mounts: &library_mounts,
+                record_optional_extra_mount_decisions: false,
             })
+            .map(|(policy, _)| policy)
         })
         .collect::<Result<Vec<_>, _>>()?;
     policies.sort_by(|left, right| left.name.cmp(&right.name));
@@ -297,11 +328,12 @@ struct PolicyBuildContext<'a> {
     effective_manifest: &'a str,
     workspace: Option<&'a ManifestWorkspaceConfig>,
     library_mounts: &'a [effigy_manifest::LibraryMount],
+    record_optional_extra_mount_decisions: bool,
 }
 
 fn build_effective_policy(
     context: PolicyBuildContext<'_>,
-) -> Result<EffectiveContainerPolicy, ContainerPolicyError> {
+) -> Result<(EffectiveContainerPolicy, Vec<WorkspaceExtraMountDecision>), ContainerPolicyError> {
     let PolicyBuildContext {
         repo_root,
         bundle_root,
@@ -312,6 +344,7 @@ fn build_effective_policy(
         effective_manifest,
         workspace,
         library_mounts,
+        record_optional_extra_mount_decisions,
     } = context;
     let driver = config.driver.unwrap_or(ManifestContainerDriver::Colima);
     let profile = config
@@ -344,11 +377,12 @@ fn build_effective_policy(
             "container `{name}` must declare `primary_service`"
         ))
     })?;
+    let mut workspace_mount_decisions = Vec::new();
     if driver == ManifestContainerDriver::Colima {
         if let Some(workspace) = workspace {
             let working_dir =
                 resolve_container_exec_working_dir(repo_root, name, config, Some(workspace))?;
-            materialize_runtime_workspace_mount_rewrite(
+            workspace_mount_decisions = materialize_runtime_workspace_mount_rewrite(
                 WorkspaceComposeRewrite {
                     repo_root,
                     container_name: name,
@@ -359,6 +393,7 @@ fn build_effective_policy(
                     library_mounts,
                 },
                 &mut compose_files,
+                record_optional_extra_mount_decisions,
             )?;
         }
     }
@@ -470,7 +505,7 @@ fn build_effective_policy(
             .map(|entry| resolve_host_process(entry, runtime_host_key))
             .collect(),
     };
-    Ok(policy)
+    Ok((policy, workspace_mount_decisions))
 }
 
 fn resolve_host_process(

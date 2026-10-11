@@ -1,4 +1,5 @@
 use std::ffi::OsStr;
+use std::io;
 use std::path::{Path, PathBuf};
 
 use effigy_manifest::{
@@ -31,6 +32,7 @@ pub(crate) use host_integration::{
 use isolation::build_isolation_mounts;
 use library_mounts::build_library_mounts;
 
+#[derive(Clone, Copy)]
 pub(crate) struct WorkspaceComposeRewrite<'a> {
     pub(crate) repo_root: &'a Path,
     pub(crate) container_name: &'a str,
@@ -44,13 +46,18 @@ pub(crate) struct WorkspaceComposeRewrite<'a> {
 pub(crate) fn materialize_runtime_workspace_mount_rewrite(
     request: WorkspaceComposeRewrite<'_>,
     compose_files: &mut [PathBuf],
-) -> Result<(), ContainerPolicyError> {
+    record_optional_extra_mount_decisions: bool,
+) -> Result<Vec<WorkspaceExtraMountDecision>, ContainerPolicyError> {
     let Some(source_compose) = compose_files.first().cloned() else {
-        return Ok(());
+        return Ok(Vec::new());
     };
-    let rewritten = rewrite_workspace_mounts_for_direct_compose(request, &source_compose)?;
+    let (rewritten, decisions) = rewrite_workspace_mounts_for_direct_compose(
+        request,
+        &source_compose,
+        record_optional_extra_mount_decisions,
+    )?;
     compose_files[0] = rewritten;
-    Ok(())
+    Ok(decisions)
 }
 
 pub use ownership::{
@@ -72,15 +79,44 @@ pub(crate) struct RenderedWorkspaceMount {
     named_volume: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceExtraMountDecisionKind {
+    IncludedInComposeSpec,
+    SkippedSourceAbsent,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct WorkspaceExtraMountDecision {
+    pub source: String,
+    pub target: String,
+    pub decision: WorkspaceExtraMountDecisionKind,
+}
+
+struct ParsedWorkspaceExtraMount {
+    mount: Option<RenderedWorkspaceMount>,
+    decision: Option<WorkspaceExtraMountDecision>,
+}
+
 fn build_workspace_runtime_mounts(
-    repo_root: &Path,
-    container_name: &str,
-    config: &ManifestContainerConfig,
-    workspace: &ManifestWorkspaceConfig,
-    primary_service: &str,
-    working_dir: &Path,
-    library_mounts: &[LibraryMount],
-) -> Result<Vec<RenderedWorkspaceMount>, ContainerPolicyError> {
+    request: WorkspaceComposeRewrite<'_>,
+    record_optional_extra_mount_decisions: bool,
+) -> Result<
+    (
+        Vec<RenderedWorkspaceMount>,
+        Vec<WorkspaceExtraMountDecision>,
+    ),
+    ContainerPolicyError,
+> {
+    let WorkspaceComposeRewrite {
+        repo_root,
+        container_name,
+        config,
+        workspace,
+        working_dir,
+        primary_service,
+        library_mounts,
+    } = request;
     let workspace_root = working_dir.parent().ok_or_else(|| {
         ContainerPolicyError::TaskInvocation(format!(
             "container `{container_name}` workspace exec working dir `{}` must have a parent directory",
@@ -107,13 +143,17 @@ fn build_workspace_runtime_mounts(
     mounts.extend(build_worktree_git_mounts(&canonical_repo_root));
     let catalog_capabilities =
         load_workspace_catalog_capabilities(repo_root, config, primary_service)?;
+    let mut extra_mount_decisions = Vec::new();
     for mount in &workspace.mounts {
-        mounts.extend(parse_workspace_extra_mount(
-            repo_root,
-            container_name,
-            workspace_root,
-            mount,
-        )?);
+        let parsed = parse_workspace_extra_mount(repo_root, container_name, workspace_root, mount)?;
+        if let Some(mount) = parsed.mount {
+            mounts.push(mount);
+        }
+        if record_optional_extra_mount_decisions {
+            if let Some(decision) = parsed.decision {
+                extra_mount_decisions.push(decision);
+            }
+        }
     }
     mounts.extend(build_library_mounts(container_name, library_mounts)?);
     mounts.extend(build_isolation_mounts(
@@ -157,7 +197,7 @@ fn build_workspace_runtime_mounts(
     if let Some(mount) = build_host_mkcert_ca_mount(config, primary_service, catalog_capabilities) {
         mounts.push(mount);
     }
-    Ok(mounts)
+    Ok((mounts, extra_mount_decisions))
 }
 
 /// Expose the shared git directory behind a linked worktree checkout.
@@ -216,7 +256,7 @@ fn parse_workspace_extra_mount(
     container_name: &str,
     workspace_root: &Path,
     mount: &ManifestSystemMount,
-) -> Result<Option<RenderedWorkspaceMount>, ContainerPolicyError> {
+) -> Result<ParsedWorkspaceExtraMount, ContainerPolicyError> {
     match mount {
         ManifestSystemMount::Spec(raw) => {
             parse_legacy_workspace_extra_mount(repo_root, container_name, workspace_root, raw)
@@ -232,7 +272,7 @@ fn parse_legacy_workspace_extra_mount(
     container_name: &str,
     workspace_root: &Path,
     raw: &str,
-) -> Result<Option<RenderedWorkspaceMount>, ContainerPolicyError> {
+) -> Result<ParsedWorkspaceExtraMount, ContainerPolicyError> {
     let mut parts = raw.splitn(3, ':');
     let source_raw = parts.next().unwrap_or_default().trim();
     let target_raw = parts
@@ -254,15 +294,24 @@ fn parse_legacy_workspace_extra_mount(
     } else {
         repo_root.join(source_path)
     };
-    if !resolved_source.exists() {
-        warn_skipped_absent_mount(container_name, source_raw, &resolved_source);
-        return Ok(None);
-    }
-    let canonical_source = resolved_source.canonicalize().map_err(|error| {
-        ContainerPolicyError::TaskInvocation(format!(
-            "container `{container_name}` workspace extra mount source `{source_raw}` is invalid: {error}"
-        ))
-    })?;
+    let Some(canonical_source) = canonicalize_optional_workspace_source(
+        container_name,
+        source_raw,
+        &resolved_source,
+        Path::canonicalize,
+    )?
+    else {
+        return Ok(ParsedWorkspaceExtraMount {
+            mount: None,
+            decision: Some(WorkspaceExtraMountDecision {
+                source: resolved_source.display().to_string(),
+                target: target_raw.map(str::to_owned).unwrap_or_else(|| {
+                    default_workspace_mount_target(workspace_root, &resolved_source)
+                }),
+                decision: WorkspaceExtraMountDecisionKind::SkippedSourceAbsent,
+            }),
+        });
+    };
     let target = if let Some(target) = target_raw {
         target.to_owned()
     } else {
@@ -282,12 +331,19 @@ fn parse_legacy_workspace_extra_mount(
         rendered.push(':');
         rendered.push_str(options);
     }
-    Ok(Some(RenderedWorkspaceMount {
-        target,
-        rendered,
-        source: Some(canonical_source),
-        named_volume: None,
-    }))
+    Ok(ParsedWorkspaceExtraMount {
+        mount: Some(RenderedWorkspaceMount {
+            target: target.clone(),
+            rendered,
+            source: Some(canonical_source.clone()),
+            named_volume: None,
+        }),
+        decision: Some(WorkspaceExtraMountDecision {
+            source: canonical_source.display().to_string(),
+            target,
+            decision: WorkspaceExtraMountDecisionKind::IncludedInComposeSpec,
+        }),
+    })
 }
 
 fn parse_structured_workspace_extra_mount(
@@ -295,7 +351,7 @@ fn parse_structured_workspace_extra_mount(
     container_name: &str,
     workspace_root: &Path,
     mount: &ManifestSystemMountTable,
-) -> Result<Option<RenderedWorkspaceMount>, ContainerPolicyError> {
+) -> Result<ParsedWorkspaceExtraMount, ContainerPolicyError> {
     let source_raw = mount.source.as_deref().ok_or_else(|| {
         ContainerPolicyError::TaskInvocation(format!(
             "container `{container_name}` workspace mount member was not resolved"
@@ -308,15 +364,32 @@ fn parse_structured_workspace_extra_mount(
         repo_root.join(source_path)
     };
     let catalog_member = mount.catalog || mount.member.is_some();
-    if !catalog_member && !resolved_source.exists() {
-        warn_skipped_absent_mount(container_name, source_raw, &resolved_source);
-        return Ok(None);
-    }
-    let canonical_source = resolved_source.canonicalize().map_err(|error| {
-        ContainerPolicyError::TaskInvocation(format!(
-            "container `{container_name}` workspace extra mount source `{source_raw}` is invalid: {error}"
-        ))
-    })?;
+    let canonical_source = if catalog_member {
+        Some(resolved_source.canonicalize().map_err(|error| {
+            ContainerPolicyError::TaskInvocation(format!(
+                "container `{container_name}` workspace extra mount source `{source_raw}` is invalid: {error}"
+            ))
+        })?)
+    } else {
+        canonicalize_optional_workspace_source(
+            container_name,
+            source_raw,
+            &resolved_source,
+            Path::canonicalize,
+        )?
+    };
+    let Some(canonical_source) = canonical_source else {
+        return Ok(ParsedWorkspaceExtraMount {
+            mount: None,
+            decision: Some(WorkspaceExtraMountDecision {
+                source: resolved_source.display().to_string(),
+                target: mount.target.clone().unwrap_or_else(|| {
+                    default_workspace_mount_target(workspace_root, &resolved_source)
+                }),
+                decision: WorkspaceExtraMountDecisionKind::SkippedSourceAbsent,
+            }),
+        });
+    };
     let target = match mount.target.as_deref() {
         Some(target) => target.to_owned(),
         None => {
@@ -337,20 +410,104 @@ fn parse_structured_workspace_extra_mount(
         rendered.push(':');
         rendered.push_str(&mount.options.join(","));
     }
-    Ok(Some(RenderedWorkspaceMount {
-        target,
-        rendered,
-        source: Some(canonical_source),
-        named_volume: None,
-    }))
+    Ok(ParsedWorkspaceExtraMount {
+        mount: Some(RenderedWorkspaceMount {
+            target: target.clone(),
+            rendered,
+            source: Some(canonical_source.clone()),
+            named_volume: None,
+        }),
+        decision: (!catalog_member).then(|| WorkspaceExtraMountDecision {
+            source: canonical_source.display().to_string(),
+            target,
+            decision: WorkspaceExtraMountDecisionKind::IncludedInComposeSpec,
+        }),
+    })
 }
 
-/// Report a sibling mount that this machine does not have, then carry on.
-fn warn_skipped_absent_mount(container_name: &str, source_raw: &str, resolved_source: &Path) {
-    eprintln!(
-        "[warn] container `{container_name}` workspace extra mount `{source_raw}` is not present at {}; skipping it",
-        resolved_source.display()
-    );
+fn default_workspace_mount_target(workspace_root: &Path, source: &Path) -> String {
+    let basename = source.file_name().unwrap_or_default();
+    workspace_root.join(basename).display().to_string()
+}
+
+fn canonicalize_optional_workspace_source(
+    container_name: &str,
+    source_raw: &str,
+    resolved_source: &Path,
+    canonicalize: impl FnOnce(&Path) -> io::Result<PathBuf>,
+) -> Result<Option<PathBuf>, ContainerPolicyError> {
+    match std::fs::metadata(resolved_source) {
+        Ok(_) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(ContainerPolicyError::TaskInvocation(format!(
+                "container `{container_name}` workspace extra mount source `{source_raw}` is invalid: {error}"
+            )))
+        }
+    }
+    canonicalize(resolved_source)
+        .map(Some)
+        .map_err(|error| {
+            ContainerPolicyError::TaskInvocation(format!(
+                "container `{container_name}` workspace extra mount source `{source_raw}` is invalid: {error}"
+            ))
+        })
+}
+
+#[cfg(test)]
+mod optional_source_tests {
+    use super::canonicalize_optional_workspace_source;
+    use std::fs;
+    use std::path::Path;
+
+    fn temp_dir(label: &str) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "effigy-workspace-optional-source-{label}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&path).expect("mkdir temp dir");
+        path
+    }
+
+    #[test]
+    fn inaccessible_source_parent_is_an_error_not_an_absent_mount() {
+        let root = temp_dir("unreadable-parent");
+        let blocker = root.join("blocker");
+        fs::write(&blocker, "file").expect("write blocker");
+        let source = blocker.join("source");
+
+        let error = canonicalize_optional_workspace_source(
+            "web",
+            "blocker/source",
+            &source,
+            Path::canonicalize,
+        )
+        .expect_err("ENOTDIR must fail closed");
+
+        assert!(error
+            .to_string()
+            .contains("source `blocker/source` is invalid"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn source_removed_after_presence_check_is_an_error_not_a_skip() {
+        let root = temp_dir("raced-removal");
+        let source = root.join("source");
+        fs::create_dir(&source).expect("create source");
+
+        let error = canonicalize_optional_workspace_source("web", "source", &source, |path| {
+            fs::remove_dir(path)?;
+            path.canonicalize()
+        })
+        .expect_err("a source removed after metadata must fail closed");
+
+        assert!(error.to_string().contains("source `source` is invalid"));
+        let _ = fs::remove_dir_all(root);
+    }
 }
 
 #[cfg(test)]

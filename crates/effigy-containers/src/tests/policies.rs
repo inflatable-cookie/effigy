@@ -55,6 +55,294 @@ primary_service = "app"
 }
 
 #[test]
+fn creation_policy_resolves_direct_workspace_mounts_after_preparation() {
+    let root = temp_repo("workspace-mount-create-direct");
+    let absolute_source = root.join("absolute-extra");
+    fs::write(
+        root.join("effigy.toml"),
+        format!(
+            r#"
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "compose.yml"
+primary_service = "app"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
+working_dir = "/workspace-root/app"
+mounts = [
+  "late:/workspace-root/late:ro,cached",
+  {{ source = "{}", target = "/workspace-root/absolute-extra", options = ["ro"] }}
+]
+"#,
+            absolute_source.display()
+        ),
+    )
+    .expect("write manifest");
+    fs::write(
+        root.join("compose.yml"),
+        "services:\n  app:\n    image: alpine:latest\n",
+    )
+    .expect("write compose");
+
+    let initially_loaded = load_container_policy(&root, Some("web")).expect("initial policy");
+    let initial_compose =
+        fs::read_to_string(&initially_loaded.compose_files[0]).expect("initial workspace compose");
+    assert!(!initial_compose.contains("/workspace-root/late"));
+    assert!(!initial_compose.contains("/workspace-root/absolute-extra"));
+
+    fs::create_dir(root.join("late")).expect("preparation creates late source");
+    fs::create_dir(&absolute_source).expect("preparation creates absolute source");
+
+    let (creation_policy, decisions) =
+        load_container_policy_for_creation(&root, Some("web")).expect("creation policy");
+    let created_compose =
+        fs::read_to_string(&creation_policy.compose_files[0]).expect("creation workspace compose");
+    let canonical_late = root.join("late").canonicalize().expect("canonical late");
+    let canonical_absolute = absolute_source.canonicalize().expect("canonical absolute");
+
+    assert!(created_compose.contains(&format!(
+        "{}:/workspace-root/late:ro,cached",
+        canonical_late.display()
+    )));
+    assert!(created_compose.contains(&format!(
+        "{}:/workspace-root/absolute-extra:ro",
+        canonical_absolute.display()
+    )));
+    assert_eq!(decisions.len(), 2);
+    assert!(decisions.iter().all(|decision| {
+        decision.decision == WorkspaceExtraMountDecisionKind::IncludedInComposeSpec
+    }));
+    assert!(decisions.iter().any(|decision| {
+        decision.source == canonical_late.display().to_string()
+            && decision.target == "/workspace-root/late"
+    }));
+    assert!(decisions.iter().any(|decision| {
+        decision.source == canonical_absolute.display().to_string()
+            && decision.target == "/workspace-root/absolute-extra"
+    }));
+}
+
+#[test]
+fn creation_policy_skips_removed_optional_source_without_creating_it() {
+    let root = temp_repo("workspace-mount-create-removed");
+    let source = root.join("early");
+    fs::create_dir(&source).expect("create initial source");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "compose.yml"
+primary_service = "app"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
+working_dir = "/workspace-root/app"
+mounts = ["early:/workspace-root/early:ro"]
+"#,
+    )
+    .expect("write manifest");
+    fs::write(
+        root.join("compose.yml"),
+        "services:\n  app:\n    image: alpine:latest\n",
+    )
+    .expect("write compose");
+
+    let _initial = load_container_policy(&root, Some("web")).expect("initial policy");
+    fs::remove_dir_all(&source).expect("preparation removes source");
+
+    let (creation_policy, decisions) =
+        load_container_policy_for_creation(&root, Some("web")).expect("creation policy");
+    let created_compose =
+        fs::read_to_string(&creation_policy.compose_files[0]).expect("creation workspace compose");
+
+    assert!(
+        !source.exists(),
+        "resolver must not recreate the host source"
+    );
+    assert!(!created_compose.contains("/workspace-root/early"));
+    assert_eq!(decisions.len(), 1);
+    assert_eq!(
+        decisions[0].decision,
+        WorkspaceExtraMountDecisionKind::SkippedSourceAbsent
+    );
+    assert_eq!(decisions[0].source, source.display().to_string());
+    assert_eq!(decisions[0].target, "/workspace-root/early");
+}
+
+#[cfg(unix)]
+#[test]
+fn creation_policy_canonicalizes_optional_symlink_sources() {
+    use std::os::unix::fs::symlink;
+
+    let root = temp_repo("workspace-mount-create-symlink");
+    let real_source = root.join("actual-source");
+    let link_source = root.join("linked-source");
+    fs::create_dir(&real_source).expect("create source");
+    symlink(&real_source, &link_source).expect("create source symlink");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "compose.yml"
+primary_service = "app"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
+working_dir = "/workspace-root/app"
+mounts = ["linked-source:/workspace-root/linked:ro"]
+"#,
+    )
+    .expect("write manifest");
+    fs::write(
+        root.join("compose.yml"),
+        "services:\n  app:\n    image: alpine:latest\n",
+    )
+    .expect("write compose");
+
+    let (policy, decisions) =
+        load_container_policy_for_creation(&root, Some("web")).expect("creation policy");
+    let compose = fs::read_to_string(&policy.compose_files[0]).expect("read compose");
+    let canonical = real_source.canonicalize().expect("canonical source");
+
+    assert!(compose.contains(&format!(
+        "{}:/workspace-root/linked:ro",
+        canonical.display()
+    )));
+    assert!(!compose.contains(&format!(
+        "{}:/workspace-root/linked:ro",
+        link_source.display()
+    )));
+    assert_eq!(decisions.len(), 1);
+    assert_eq!(decisions[0].source, canonical.display().to_string());
+}
+
+#[test]
+fn creation_policy_refuses_unreadable_optional_source_instead_of_skipping() {
+    let root = temp_repo("workspace-mount-create-unreadable");
+    fs::write(root.join("blocked"), "not a directory").expect("write blocking file");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "compose.yml"
+primary_service = "app"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
+working_dir = "/workspace-root/app"
+mounts = ["blocked/source:/workspace-root/blocked:ro"]
+"#,
+    )
+    .expect("write manifest");
+    fs::write(
+        root.join("compose.yml"),
+        "services:\n  app:\n    image: alpine:latest\n",
+    )
+    .expect("write compose");
+
+    let error = load_container_policy_for_creation(&root, Some("web"))
+        .expect_err("ENOTDIR is not evidence that the optional source is absent");
+
+    assert!(error.to_string().contains("workspace extra mount source"));
+    assert!(!root.join("blocked/source").exists());
+}
+
+#[test]
+fn creation_policy_resolves_generated_workspace_mounts_after_preparation() {
+    with_temp_effigy_home("workspace-mount-create-generated", |_| {
+        let _lock = crate::test_env_lock();
+        let root = temp_repo("workspace-mount-create-generated");
+        fs::write(
+            root.join("effigy.toml"),
+            r#"
+[containers]
+default = "web"
+
+[containers.web]
+primary_service = "app"
+
+[containers.web.services.app]
+catalog = "php-fpm"
+version = "8.3"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
+working_dir = "/var/www/html"
+mounts = ["late:/var/www/late:ro"]
+"#,
+        )
+        .expect("write manifest");
+
+        let initial = load_container_policy(&root, Some("web")).expect("initial policy");
+        assert_eq!(initial.compose_source, EffectiveComposeSource::Generated);
+        fs::create_dir(root.join("late")).expect("preparation creates source");
+
+        let (creation_policy, decisions) =
+            load_container_policy_for_creation(&root, Some("web")).expect("creation policy");
+        let compose = fs::read_to_string(&creation_policy.compose_files[0])
+            .expect("creation workspace compose");
+        let canonical = root.join("late").canonicalize().expect("canonical source");
+        let backend = crate::ContainerManager::defaults();
+        let request = crate::ContainerManagerRequest::new(&root)
+            .backend_override(crate::BackendId::docker_compose());
+        let plan = backend
+            .compose_invocation_plan(
+                &request,
+                &crate::ContainerBackendDetection::new(false),
+                &creation_policy.profile,
+                &crate::compose::compose_up_args(&creation_policy),
+                crate::ContainerAction::Activate,
+                "docker compose up",
+            )
+            .expect("generated compose backend plan");
+        let captured_compose = plan
+            .args
+            .windows(2)
+            .find(|args| args[0] == "-f")
+            .map(|args| PathBuf::from(&args[1]))
+            .expect("backend plan captures generated compose file");
+
+        assert!(compose.contains(&format!("{}:/var/www/late:ro", canonical.display())));
+        assert_eq!(captured_compose, creation_policy.compose_files[0]);
+        assert!(fs::read_to_string(captured_compose)
+            .expect("read captured generated compose")
+            .contains(&format!("{}:/var/www/late:ro", canonical.display())));
+        assert_eq!(decisions.len(), 1);
+        assert_eq!(
+            decisions[0].decision,
+            WorkspaceExtraMountDecisionKind::IncludedInComposeSpec
+        );
+    });
+}
+
+#[test]
 fn load_container_policy_requires_default_when_name_omitted() {
     let root = temp_repo("sole-container");
     fs::write(

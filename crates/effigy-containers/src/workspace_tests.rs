@@ -34,10 +34,12 @@ mod structured_mount_tests {
 
         let legacy = parse_workspace_extra_mount(&repo_root, "dev", workspace_root, &legacy)
             .expect("legacy mount")
+            .mount
             .expect("legacy mount source present");
         let structured =
             parse_workspace_extra_mount(&repo_root, "dev", workspace_root, &structured)
                 .expect("structured mount")
+                .mount
                 .expect("structured mount source present");
 
         assert_eq!(structured.rendered, legacy.rendered);
@@ -61,6 +63,7 @@ mod structured_mount_tests {
         let rendered =
             parse_workspace_extra_mount(&repo_root, "dev", Path::new("/workspace-root"), &mount)
                 .expect("structured mount")
+                .mount
                 .expect("structured mount source present");
 
         assert_eq!(rendered.target, "/workspace-root/shared-tools");
@@ -87,6 +90,7 @@ mod structured_mount_tests {
         let rendered =
             parse_workspace_extra_mount(&repo_root, "dev", Path::new("/workspace-root"), &mount)
                 .expect("structured mount")
+                .mount
                 .expect("catalog mount source present");
 
         let isolation = build_isolation_mounts(
@@ -114,22 +118,29 @@ mod structured_mount_tests {
             catalog: false,
         });
 
-        assert!(parse_workspace_extra_mount(
+        let legacy =
+            parse_workspace_extra_mount(&repo_root, "dev", Path::new("/workspace-root"), &legacy)
+                .expect("legacy mount resolves");
+        assert!(legacy.mount.is_none());
+        assert_eq!(
+            legacy.decision.expect("legacy skip decision").decision,
+            WorkspaceExtraMountDecisionKind::SkippedSourceAbsent
+        );
+        let structured = parse_workspace_extra_mount(
             &repo_root,
             "dev",
             Path::new("/workspace-root"),
-            &legacy
+            &structured,
         )
-        .expect("legacy mount resolves")
-        .is_none());
-        assert!(parse_workspace_extra_mount(
-            &repo_root,
-            "dev",
-            Path::new("/workspace-root"),
-            &structured
-        )
-        .expect("structured mount resolves")
-        .is_none());
+        .expect("structured mount resolves");
+        assert!(structured.mount.is_none());
+        assert_eq!(
+            structured
+                .decision
+                .expect("structured skip decision")
+                .target,
+            "/workspace-root/book"
+        );
         let _ = fs::remove_dir_all(repo_root);
     }
 
@@ -146,7 +157,8 @@ mod structured_mount_tests {
 
         let error =
             parse_workspace_extra_mount(&repo_root, "dev", Path::new("/workspace-root"), &mount)
-                .expect_err("catalog member must exist");
+                .err()
+                .expect("catalog member must exist");
         assert!(error.to_string().contains("../book"));
         let _ = fs::remove_dir_all(repo_root);
     }

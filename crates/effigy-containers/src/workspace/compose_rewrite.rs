@@ -6,13 +6,14 @@ use effigy_core::runtime_dir::{ensure_effigy_ignored_in_git_root, git_local_excl
 
 use super::{
     build_workspace_runtime_environment, build_workspace_runtime_mounts, RenderedWorkspaceMount,
-    WorkspaceComposeRewrite,
+    WorkspaceComposeRewrite, WorkspaceExtraMountDecision,
 };
 
 pub(super) fn rewrite_workspace_mounts_for_direct_compose(
     request: WorkspaceComposeRewrite<'_>,
     source_compose: &Path,
-) -> Result<PathBuf, ContainerPolicyError> {
+    record_optional_extra_mount_decisions: bool,
+) -> Result<(PathBuf, Vec<WorkspaceExtraMountDecision>), ContainerPolicyError> {
     let WorkspaceComposeRewrite {
         repo_root,
         container_name,
@@ -45,14 +46,17 @@ pub(super) fn rewrite_workspace_mounts_for_direct_compose(
             source_compose.display()
         ))
     })?;
-    let injected_mounts = build_workspace_runtime_mounts(
-        repo_root,
-        container_name,
-        config,
-        workspace,
-        primary_service,
-        working_dir,
-        library_mounts,
+    let (injected_mounts, extra_mount_decisions) = build_workspace_runtime_mounts(
+        WorkspaceComposeRewrite {
+            repo_root,
+            container_name,
+            config,
+            workspace,
+            working_dir,
+            primary_service,
+            library_mounts,
+        },
+        record_optional_extra_mount_decisions,
     )?;
     inject_workspace_named_volumes(&mut parsed, &injected_mounts);
     let injected_env = build_workspace_runtime_environment(repo_root, config, primary_service)?;
@@ -109,7 +113,7 @@ pub(super) fn rewrite_workspace_mounts_for_direct_compose(
         path: rewrite_path.clone(),
         error,
     })?;
-    Ok(rewrite_path)
+    Ok((rewrite_path, extra_mount_decisions))
 }
 
 fn rewrite_workspace_service_volumes(

@@ -75,6 +75,10 @@ During v0.x, MINOR bumps may include breaking changes.
   0.14.x releases without changing the support floor.
 
 ### Fixed
+- Optional workspace mounts are now resolved after container preparation at
+  the Compose up boundary. The bounded decision report distinguishes the
+  submitted Compose spec from unverified runtime mount state, and missing
+  optional paths no longer produce misleading diagnostics during config loads.
 - `container retire` resolves its port registry through Effigy's home resolver
   instead of the caller's `HOME`, so unit fixtures can no longer release or
   rewrite a real `~/.effigy/ports.json`.

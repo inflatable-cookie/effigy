@@ -1,7 +1,7 @@
 # 005 - Container Runtime Contract
 
 Owner: Platform
-Last Updated: 2026-10-09
+Last Updated: 2026-10-11
 
 This contract defines the required runtime guarantees for container-backed
 task execution in Effigy.
@@ -28,17 +28,33 @@ surfaces.
 
 The operator-authorized Acowtancy feedback on 2026-10-11 requests that optional
 workspace extra mounts be resolved for the actual container creation, after
-preceding preparation steps, with an applied-or-skipped diagnostic at that
-boundary. Configuration loading must not describe a mount as skipped by a
-container that has not yet been created. Required catalog-member mounts keep
-their strict validation; missing optional sibling paths remain optional.
+preceding preparation steps, with an included-or-skipped decision diagnostic
+at that boundary. Configuration loading must not describe a mount as skipped
+by a container that has not yet been created. Required catalog-member mounts
+keep their strict validation; missing optional sibling paths remain optional.
 
-The current resolver checks optional source presence and prints a skip warning
-while loading policy. That observation does not prove the source was absent at
-creation, or whether an existing container has the mount. The requested
-correction must distinguish creation inputs from verified runtime mounts,
-preserve path and mount-boundary checks, and must not silently recreate a live
-container. This ruling changes no scheduler credential or admission boundary.
+`container up` re-resolves the workspace mount spec after runtime and shared
+service preparation, immediately before dispatching the primary Compose up.
+Legacy string and structured mount forms keep their existing source, target,
+and option meanings. Included sources are canonicalized through the existing
+mount rewrite and boundary checks. A missing optional source is omitted from
+that create spec; catalog members remain required. Policy, status, and doctor
+loads do not emit runtime skip diagnostics. They may render a snapshot, but
+that snapshot is not evidence about a later creation.
+
+For direct Compose, if the primary service is already running, Effigy keeps the
+loaded workspace mount spec for this `up`; it does not refresh that spec in a
+way that could recreate the running service just to apply an optional mount.
+No creation-time mount decision is reported for that existing service.
+
+The up diagnostic and detached JSON report describe only the Compose create
+spec decision and whether the Compose up command succeeded. They identify
+included or absent source/target pairs and report runtime mount verification as
+`not_performed`. Compose command success does not prove that a new container
+was created, that a running container was recreated, or that the runtime
+applied a mount. An unreadable source or one removed after the presence check
+fails closed. Effigy does not create missing host paths to satisfy an optional
+mount. This ruling changes no scheduler credential or admission boundary.
 
 ## Managed host listener routes
 
