@@ -346,6 +346,12 @@ names. Consumer apps still feed those names into public URLs, origins, cookies
 and selectors; see Queue lead `af3ab7c7-b631-4d4f-9da7-f2949ded82f3`
 for remaining consumer wiring.
 
+Managed listener transitions keep a separate bounded receipt beside listener
+state. The receipt records the supervisor's selected cause and launch
+assignments, but does not authorize route, process or cleanup effects. Contract
+005 owns its v2 schema, historical v1 reader behavior and incomplete-evidence
+limits.
+
 The route table at `~/.effigy/gateway/routes.json` maps domain names to
 upstream, DNS, TCP alias, TLS, source, and project facts. Writers replace it
 atomically. It carries an Effigy-managed marker and owner-only permissions.

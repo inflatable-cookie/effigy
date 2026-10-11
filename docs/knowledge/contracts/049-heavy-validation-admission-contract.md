@@ -77,6 +77,26 @@ imports are not silently included in this pinned rollout.
 
 ## Scheduler routing
 
+### Container execution boundary investigation
+
+The operator-authorized Acowtancy feedback on 2026-10-11 requests supported
+recovery for a Linux workspace invocation that failed with missing local
+host-run state. The Mac scheduler is currently reachable. That error does not
+establish that Mac state disappeared, or that allocation-only port reclaim
+caused it. Earlier container execution is not proof that every nested heavy
+selector has a supported route.
+
+Recovery work must first reproduce the actual selector and execution path
+with bounded private evidence. Prefer retaining selector resolution, parent
+validation and scheduling on the host, executing only the existing resolved
+container payload under the owned run. This is authority to diagnose and
+correct that execution boundary, not to delegate admission to Linux, forward
+parent credentials, trust a handoff environment flag, copy host state, add a
+second scheduler or change frozen protocol 010. If a supported correction
+requires new cross-kernel authentication authority, stop with the exact
+proposal. A stale reusable Linux artifact is a separate compatibility issue;
+an update alone is not a proved scheduler recovery.
+
 ### Caller-controlled validation recovery authority
 
 Tom selected "Extend the Effigy client (Recommended)" on 2026-10-08,

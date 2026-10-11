@@ -79,6 +79,11 @@ During v0.x, MINOR bumps may include breaking changes.
   the Compose up boundary. The bounded decision report distinguishes the
   submitted Compose spec from unverified runtime mount state, and missing
   optional paths no longer produce misleading diagnostics during config loads.
+- Managed listener transition receipts now expose a missing initial sequence,
+  preserve readable v1 history while new writers append v2 observations, and
+  sync the containing directory when creating the receipt. Dependency
+  inspection failures identify the declared dependency and bounded predicate
+  without recording raw errors or secrets.
 - `container retire` resolves its port registry through Effigy's home resolver
   instead of the caller's `HOME`, so unit fixtures can no longer release or
   rewrite a real `~/.effigy/ports.json`.
