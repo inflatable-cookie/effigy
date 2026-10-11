@@ -1138,11 +1138,19 @@ fn managed_host_listeners_bind_routes_propagate_restart_and_scope_teardown() {
         !delayed.status.success(),
         "a listener that never becomes ready must fail startup"
     );
-    let delayed_state = read_json_file(&listener_state_path(
-        primary_checkout,
-        primary_profile,
-        "app",
-    ));
+    let delayed_state_path = listener_state_path(primary_checkout, primary_profile, "app");
+    let delayed_deadline = Instant::now() + Duration::from_secs(5);
+    let delayed_state = loop {
+        let state = read_json_file(&delayed_state_path);
+        if state["status"] != "starting" {
+            break state;
+        }
+        assert!(
+            Instant::now() < delayed_deadline,
+            "timed out waiting for delayed listener startup to finish: {state}"
+        );
+        thread::sleep(Duration::from_millis(25));
+    };
     assert_eq!(delayed_state["status"], "failed");
     assert!(
         delayed_state["route_owner"].is_null(),
@@ -3280,7 +3288,7 @@ fn managed_host_transitions_record_selected_causes_and_reserved_assignments() {
         );
         assert!(read_transition_receipt(receipt)
             .iter()
-            .all(|record| record["schema"] == "effigy.managed.host-transition-evidence.v1"));
+            .all(|record| record["schema"] == "effigy.managed.host-transition-evidence.v2"));
     }
 }
 

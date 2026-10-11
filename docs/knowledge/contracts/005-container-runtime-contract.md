@@ -185,10 +185,13 @@ this ruling.
 #### Transition receipt contract
 
 Each managed listener supervisor appends to `<name>.transitions.jsonl`, in the
-same profile directory as `<name>.listener.json`. Format
-`effigy.managed.host-transition-evidence.v1`: one JSON object per line, with
-`sequence` contiguous from 1 and unknown fields rejected. Common fields are
-`event`, `owner`, `runtime_generation`, and `supervisor` (`pid`,
+same profile directory as `<name>.listener.json`. New records use
+`effigy.managed.host-transition-evidence.v2`: one JSON object
+per line, with `sequence` starting at 1 and unknown fields rejected. Readers
+also accept historical v1 records, which have no `tuple_status` marker. A
+receipt can contain v1 and v2 records when a supervisor resumes an old file;
+the writer continues the sequence and appends v2 without rewriting history.
+Common fields are `event`, `owner`, `runtime_generation`, and `supervisor` (`pid`,
 `boot_identity`, `start_identity`). Event fields are `generation` (the listener
 generation the record concerns), `predecessor_generation` (the most recent
 earlier generation this supervisor launched), `phase` (`pre_publication` or
@@ -206,14 +209,20 @@ route or process effects:
   dependency decision.
 - `shutdown`: the shutdown flag won the decision before child completion.
 - `dependency_unavailable`: the first failed predicate, in evaluation order,
-  is one of `state_file_missing`, `state_not_ready`, `route_owner_missing`,
+  is `state_file_missing`, `state_not_ready`, `route_owner_missing`,
   `owner_unverified`, or `route_not_matching`. The record names that dependency
   with status `unavailable`.
 - `dependency_tuple_changed`: every dependency was ready, but the generation
   tuple differs from launch. `observed_dependencies` lists each observed name,
-  runtime generation, generation, and address.
-- `inspection_error`: `child_completion` or `dependency_state`. It carries no
-  error text, environment, command, or response data.
+  runtime generation, generation, and address, with `tuple_status: observed`.
+- `inspection_error`: `child_completion` or `dependency_state`. A dependency
+  inspection failure names the declared dependency and records its bounded
+  predicate: `state_file_unreadable`, `state_file_unsafe`,
+  `state_schema_invalid`, `state_identity_mismatch`, or
+  `route_table_unreadable`. V2 `tuple_status` is `unreadable`; tuple values are
+  omitted because they were not observed. Child-completion errors have no
+  dependency observation. No error text, environment, command, or response data
+  is recorded.
 - `retention_limit`: a bound was reached. No later record is written by that
   supervisor.
 
@@ -223,33 +232,43 @@ copied from the values the child received. Spec environment, credentials and
 other keys are never recorded. Identity fields are correlation evidence. They
 never authorize signals, publication, cleanup or adoption.
 
+V2 dependency observations carry `tuple_status: observed` with all tuple
+fields, or an explicit `absent`, `unreadable`, or `unavailable` marker with no
+tuple fields. V1 records keep their original shape and carry no tuple marker.
+An older v1 `inspection_error: dependency_state` may have no dependency name or
+predicate, which the reader does not infer. It rejects a partial v2 observation
+rather than treating omitted tuple data as an empty tuple.
+
 Bounds are 512 records or 256 KiB per receipt, whichever comes first. A record
 that would cross a bound is replaced by one `retention_limit` marker and no
 further records follow. The receipt survives supervisor restarts for the same
-process name, and sequence numbers continue. Each append is followed by
-`sync_data`; the containing directory is not fsynced. Failed appends are logged
-to the process log and leave a sequence gap. Lifecycle, restart timing,
-readiness, route withdrawal and teardown do not change because of a receipt
+process name, and sequence numbers continue. A complete append syncs the file;
+when the receipt is created, Effigy also syncs its containing directory. A sync
+or write failure consumes a sequence and is logged as not confirmed durable. A
+complete record may still be visible after a sync failure; when no complete
+record is readable, the sequence gap is visible. Lifecycle, restart timing,
+readiness, route withdrawal and teardown do not change because of an evidence
 failure. If an existing receipt cannot be read, writes stop for that supervisor
 run and the failure is logged.
 
-Readers take a snapshot. An absent receipt is not evidence that no transition
-happened. A symlink, non-regular file, or a file over the bound is refused. A
-blank line is skipped. A complete line that is malformed or has another schema
-is a gap. An unterminated final line is an incomplete tail. A sequence jump
-after the first accepted record is a gap. The current reader does not check
-that the first accepted sequence is 1; callers must check it independently and
-must not treat an empty gap list as complete evidence. A `retention_limit`
-marker means later transitions were not kept.
+Readers take a bounded snapshot through a no-follow file open. An absent receipt
+is not evidence that no transition happened. A symlink, non-regular file, or a
+file over the bound is refused. A blank line is skipped. A complete line that
+is malformed or has another schema is a gap. An unterminated final line is an
+incomplete tail. Sequences are checked from 1: a missing first record, jump,
+zero, duplicate, or regression is visible; duplicate and regressed records are
+not accepted. An unsupported schema or malformed/partial observation is a gap.
+A `retention_limit` marker means later transitions were not kept.
 
-The observation ruling requires this initial-sequence gap to be made visible,
-including failure of the first append followed by a successful append. Private
-production-path qualification must also exercise signal exit, ready dependency
-tuple change and inspection failure; an event variant or comparison-only test
-does not establish a controlled runtime observation. Inspection evidence must
-identify the failed dependency and missing/unreadable predicate without error
-text or secrets. Receipt creation durability must be explicit, with no change
-to lifecycle authority or restart policy on evidence failure.
+The private production-path qualification drives signal exit, ready dependency
+tuple replacement without an unavailable observation, and dependency
+inspection failure with the failed name and bounded predicate. It also proves
+that a failed first append followed by a recovered second append reports the
+initial sequence gap. Receipt creation syncs the file and containing directory;
+failure remains evidence-only and does not change lifecycle authority or restart
+policy. Historical v1 records remain readable without inferred tuple details;
+a v1-only reader must treat v2 records as unsupported rather than reinterpret
+them as v1.
 
 Only listener-backed managed children write receipts. A `host_processes` entry
 without a listener keeps its collapsed dependency restart path and writes no

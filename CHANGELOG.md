@@ -75,6 +75,11 @@ During v0.x, MINOR bumps may include breaking changes.
   0.14.x releases without changing the support floor.
 
 ### Fixed
+- Managed listener transition receipts now expose a missing initial sequence,
+  preserve readable v1 history while new writers append v2 observations, and
+  sync the containing directory when creating the receipt. Dependency
+  inspection failures identify the declared dependency and bounded predicate
+  without recording raw errors or secrets.
 - `container retire` resolves its port registry through Effigy's home resolver
   instead of the caller's `HOME`, so unit fixtures can no longer release or
   rewrite a real `~/.effigy/ports.json`.
