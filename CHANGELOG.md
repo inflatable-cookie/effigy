@@ -7,6 +7,16 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- `effigy container ports status|reclaim` reports the generated-container port
+  registry: free 100-port range capacity before and after a plan, and a
+  `retain`, `hold` or `reclaim` decision with a reason for each entry. Status
+  and dry-run writes nothing. `reclaim --apply --expect-plan <DIGEST>` takes
+  the registry lock, recomputes the plan, refuses a changed digest, and removes
+  only entries whose project path is definitely missing and that no scope,
+  route, container in any state, or bound host port still references. Apply
+  backs up the pre-edit registry and reports its hashes. Incomplete inventory or
+  unreadable ownership stores hold every absent-path entry. Reclaim never
+  touches containers, volumes, data, routes or profiles.
 - Managed host processes can declare a loopback listener, HTTP readiness
   check, browser route and listener dependencies. Effigy verifies the actual
   process and socket owner before route publication, reports assigned
@@ -58,6 +68,9 @@ During v0.x, MINOR bumps may include breaking changes.
   0.14.x releases without changing the support floor.
 
 ### Fixed
+- `container retire` resolves its port registry through Effigy's home resolver
+  instead of the caller's `HOME`, so unit fixtures can no longer release or
+  rewrite a real `~/.effigy/ports.json`.
 - Managed host listener readiness no longer half-closes its one-shot HTTP
   request before reading. Ordinary HTTP/1 servers that drop a response after
   EOF are now probed correctly, and a status line split across writes is read

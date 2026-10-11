@@ -32,6 +32,12 @@ use serde::{Deserialize, Serialize};
 use crate::atomic_write;
 use crate::error::GatewayError;
 
+mod reclaim;
+
+pub use reclaim::{
+    edit_locked, sha256_hex, PortCapacity, PortRegistryEdit, PortRegistryEditOutcome,
+};
+
 /// Default port range start for auto-allocation.
 const DEFAULT_BASE: u16 = 8100;
 

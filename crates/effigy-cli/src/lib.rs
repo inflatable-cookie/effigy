@@ -1019,6 +1019,18 @@ pub enum ContainerSubcommand {
         scope: Option<String>,
         yes: bool,
     },
+    Ports {
+        subcommand: ContainerPortsSubcommand,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ContainerPortsSubcommand {
+    Status,
+    Reclaim {
+        apply: bool,
+        expect_plan: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

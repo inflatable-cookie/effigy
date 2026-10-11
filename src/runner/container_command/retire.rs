@@ -450,8 +450,7 @@ fn observe_routes(record: &ScopeRecord) -> Result<Vec<ObservedResource>, RunnerE
 }
 
 fn observe_ports(record: &ScopeRecord) -> Result<Vec<ObservedResource>, RunnerError> {
-    let Some(home) = std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".effigy"))
-    else {
+    let Some(home) = effigy_containers::effigy_home() else {
         return Ok(Vec::new());
     };
     let path = home.join("ports.json");
@@ -664,8 +663,7 @@ fn delete_routes_and_owned_certs(record: &ScopeRecord) -> Result<bool, RunnerErr
 }
 
 fn delete_ports(record: &ScopeRecord) -> Result<bool, RunnerError> {
-    let Some(home) = std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".effigy"))
-    else {
+    let Some(home) = effigy_containers::effigy_home() else {
         return Ok(true);
     };
     let path = home.join("ports.json");
@@ -736,6 +734,30 @@ fn observation_cwd(record: &ScopeRecord) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retirement_releases_only_the_scope_port_allocation_in_the_isolated_home() {
+        let temp = tempfile::tempdir().expect("temporary fixture root");
+        let home = temp.path().join("home").join(".effigy");
+        std::fs::create_dir_all(&home).expect("isolated effigy home");
+        let owned = "app-dev-wt-aaaaaaaaaaaa";
+        let kept = "app-dev-wt-bbbbbbbbbbbb";
+        let registry = format!(
+            "{{\"allocations\": {{\"{owned}\": {{\"base\": 8100, \"range\": 100, \"project\": \"/tmp/missing-worker\"}}, \"{kept}\": {{\"base\": 8200, \"range\": 100, \"project\": \"/tmp/other\"}}}}}}"
+        );
+        std::fs::write(home.join("ports.json"), registry).expect("isolated registry");
+
+        effigy_containers::with_test_effigy_home(&home, || {
+            delete_ports(&sample_record()).expect("scope port release");
+        });
+
+        let after = PortRegistry::load(&home.join("ports.json")).expect("registry after release");
+        assert!(
+            after.get(owned).is_none(),
+            "scope allocation should be released"
+        );
+        assert!(after.get(kept).is_some(), "other allocations must survive");
+    }
 
     #[test]
     fn retire_of_unactivated_checkout_does_not_create_scope_or_probe_profile() {

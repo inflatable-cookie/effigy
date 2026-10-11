@@ -33,6 +33,7 @@ mod data;
 mod gateway_registration;
 mod hosts;
 mod lifecycle;
+mod ports;
 mod profile;
 mod retire;
 mod scope;
@@ -172,6 +173,9 @@ pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, Ru
         ),
         ContainerSubcommand::Scope => {
             scope::run_container_scope(args.repo_override.clone(), args.output_json)
+        }
+        ContainerSubcommand::Ports { subcommand } => {
+            ports::run_container_ports(&subcommand, args.output_json)
         }
         ContainerSubcommand::Retire { name, scope, yes } => retire::run_container_retire(
             args.repo_override.clone(),

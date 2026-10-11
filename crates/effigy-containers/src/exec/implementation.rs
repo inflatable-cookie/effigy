@@ -553,6 +553,58 @@ fn collect_running_compose_container_inventory(
     inventory
 }
 
+/// Inventory every Compose container in every state (running, created,
+/// exited, paused) across participating runtimes.
+///
+/// Stopped Colima profiles fail the inventory instead of being skipped: their
+/// created or stopped containers cannot be seen without starting the VM, so an
+/// ownership proof that depends on them must stay incomplete.
+pub fn discover_compose_containers_all_states() -> RunningComposeContainerInventory {
+    collect_running_compose_container_inventory(
+        docker_runtime_participation(),
+        list_all_compose_containers_for_docker,
+        colima_runtime_participation(),
+        super::colima_runtime::colima_profiles_for_complete_inventory,
+        list_all_compose_containers_for_profile,
+    )
+}
+
+fn list_all_compose_containers_for_docker(
+) -> Result<Vec<RunningComposeContainer>, ContainerExecError> {
+    let output = run_runtime_command_capture_for_backend(
+        Path::new("."),
+        BackendId::docker_compose(),
+        &[
+            OsString::from("ps"),
+            OsString::from("--all"),
+            OsString::from("--format"),
+            OsString::from(DOCKER_PS_FORMAT),
+        ],
+        "runtime ps --all",
+    )?;
+
+    parse_running_compose_containers(&String::from_utf8_lossy(&output.stdout))
+}
+
+fn list_all_compose_containers_for_profile(
+    profile: &str,
+) -> Result<Vec<RunningComposeContainer>, ContainerExecError> {
+    let output = run_runtime_command_capture_for_backend_profile(
+        Path::new("."),
+        BackendId::colima_nerdctl(),
+        profile,
+        &[
+            OsString::from("ps"),
+            OsString::from("--all"),
+            OsString::from("--format"),
+            OsString::from(DOCKER_PS_FORMAT),
+        ],
+        "runtime ps --all",
+    )?;
+
+    parse_running_compose_containers(&String::from_utf8_lossy(&output.stdout))
+}
+
 pub fn infer_host_working_dir_for_container(
     profile: &str,
     container_name: &str,
