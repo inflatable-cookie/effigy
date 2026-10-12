@@ -533,7 +533,9 @@
 # Original cold whole-CLI fixture and direct inventory fixture run as separate
 # nextest calls; both keep their existing 800 ms deadline origin.
 "test:doctor:git-timeout-proof" = [
-  { id = "cold-cli-git-timeout-proof", run = "cargo nextest run -p effigy --test cli_output_tests --profile doctor-process --filter-expr 'test(cli_deep_doctor_timeout_terminates_git_identity_tree)' --no-capture --max-fail 1:immediate --no-tests fail", timeout_ms = 120000 },
+  { id = "cold-cli-git-timeout-proof", run = "cargo nextest run -p effigy --test cli_output_tests --profile doctor-process --filter-expr 'test(cli_deep_doctor_timeout_terminates_git_identity_tree)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 120000 },
+  { id = "serial-observer-readiness-counterexample", run = "cargo nextest run -p effigy --test cli_output_tests --profile doctor-process --filter-expr 'test(doctor_git_cli_serial_observer_counterexample)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 120000 },
+  { id = "late-descendant-readiness-control", run = "cargo nextest run -p effigy --test cli_output_tests --profile doctor-process --filter-expr 'test(doctor_git_cli_deliberately_late_descendant)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 120000 },
   { id = "inventory-git-timeout-proof", run = "cargo nextest run -p effigy-scan --lib --profile doctor-process --filter-expr 'test(doctor_git_timeout_process_group_evidence)' --no-capture --max-fail 1:immediate --no-tests fail", timeout_ms = 120000 },
 ]
 "check:doctor:git-timeout-proof" = [
