@@ -147,14 +147,31 @@ pub(in crate::runner) fn read_local_dev_upgrade_passphrase(
 }
 
 pub(in crate::runner) fn apply_secret_passphrase_to_child(command: &mut Command) {
+    for (key, value) in secret_passphrase_child_env() {
+        command.env(key, value);
+    }
+}
+
+pub(in crate::runner) fn secret_passphrase_child_env() -> Vec<(OsString, OsString)> {
+    let mut env = Vec::new();
     if let Ok(value) = std::env::var(TEST_SECRET_PASSPHRASE_ENV) {
-        command.env(TEST_SECRET_PASSPHRASE_ENV, value);
+        env.push((
+            OsString::from(TEST_SECRET_PASSPHRASE_ENV),
+            OsString::from(value),
+        ));
     }
     if let Some(secret) = cached_secret_passphrase() {
-        command.env(INTERNAL_SECRET_PASSPHRASE_ENV, secret.expose());
+        env.push((
+            OsString::from(INTERNAL_SECRET_PASSPHRASE_ENV),
+            OsString::from(secret.expose()),
+        ));
     } else if let Ok(value) = std::env::var(INTERNAL_SECRET_PASSPHRASE_ENV) {
-        command.env(INTERNAL_SECRET_PASSPHRASE_ENV, value);
+        env.push((
+            OsString::from(INTERNAL_SECRET_PASSPHRASE_ENV),
+            OsString::from(value),
+        ));
     }
+    env
 }
 
 pub(in crate::runner) fn inject_secret_passphrase_into_internal_command(command: String) -> String {

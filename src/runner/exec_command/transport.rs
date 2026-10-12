@@ -23,8 +23,10 @@ use effigy_containers::{
 use effigy_env::secret::SecretString;
 use effigy_exec::detection::{build_capabilities_from_results, standard_probe_spec, ProbeResult};
 
+use crate::runner::container_command::{bounded_failure_error, bounded_phase_error};
 use crate::runner::container_runtime::CONTAINER_HANDOFF_ENV_ASSIGNMENT;
 use crate::runner::error::RunnerError;
+use crate::runner::exec_command::{BoundedCommandBudget, BoundedCommandPhase};
 
 mod colima;
 
@@ -265,6 +267,105 @@ pub(in crate::runner) fn copy_file_into_service(
             stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
             stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
         });
+    }
+    Ok(())
+}
+
+pub(in crate::runner) fn copy_file_into_service_bounded(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    service: &str,
+    host_source: &Path,
+    container_dest: &str,
+    budget: &mut BoundedCommandBudget,
+) -> Result<(), RunnerError> {
+    let id_args = compose_args(policy, ["ps", "-q", service]);
+    let id_plan = effigy_runtime::container_manager::compose_invocation_plan_from_args(
+        repo_root,
+        policy,
+        id_args,
+        effigy_containers::ContainerAction::Status,
+        "runtime ps",
+    )
+    .map_err(|_| {
+        bounded_phase_error(
+            policy,
+            service,
+            budget,
+            BoundedCommandPhase::WorkspacePreparation,
+            "workspace_preparation_failed",
+            "bounded container command could not resolve workspace service identity",
+            None,
+        )
+    })?;
+    let id_capture = budget
+        .run_plan(&id_plan, BoundedCommandPhase::WorkspacePreparation)
+        .map_err(|failure| bounded_failure_error(policy, service, budget, failure))?;
+    if !id_capture.status.success() {
+        return Err(bounded_phase_error(
+            policy,
+            service,
+            budget,
+            BoundedCommandPhase::WorkspacePreparation,
+            "workspace_preparation_failed",
+            "bounded container command could not resolve workspace service identity",
+            id_capture.status.code(),
+        ));
+    }
+    let id_output = String::from_utf8_lossy(&id_capture.stdout);
+    let container_id = id_output
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .ok_or_else(|| {
+            bounded_phase_error(
+                policy,
+                service,
+                budget,
+                BoundedCommandPhase::WorkspacePreparation,
+                "workspace_preparation_failed",
+                "bounded container command could not resolve workspace service identity",
+                None,
+            )
+        })?
+        .to_owned();
+    let copy_args = [
+        OsString::from("cp"),
+        host_source.as_os_str().to_os_string(),
+        OsString::from(format!("{container_id}:{container_dest}")),
+    ];
+    let (program, args) = copy_file_into_service_invocation(repo_root, policy, &copy_args)
+        .map_err(|_| {
+            bounded_phase_error(
+                policy,
+                service,
+                budget,
+                BoundedCommandPhase::WorkspacePreparation,
+                "workspace_preparation_failed",
+                "bounded container command could not resolve workspace artifact copy",
+                None,
+            )
+        })?;
+    let copy_capture = budget
+        .run_command(
+            repo_root,
+            program.as_os_str(),
+            &args,
+            None,
+            &[],
+            BoundedCommandPhase::WorkspacePreparation,
+        )
+        .map_err(|failure| bounded_failure_error(policy, service, budget, failure))?;
+    if !copy_capture.status.success() {
+        return Err(bounded_phase_error(
+            policy,
+            service,
+            budget,
+            BoundedCommandPhase::WorkspacePreparation,
+            "workspace_preparation_failed",
+            "bounded container command could not copy the workspace artifact",
+            copy_capture.status.code(),
+        ));
     }
     Ok(())
 }

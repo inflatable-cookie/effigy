@@ -87,17 +87,23 @@ pub(in crate::runner) fn validate_running_container_runtime_match(
 fn exec_error_means_runtime_not_running(error: &ContainerExecError) -> bool {
     match error {
         ContainerExecError::Failure { stderr, .. } => {
-            stderr.contains("level=fatal msg=\"colima is not running\"")
-                || (stderr.contains("level=fatal msg=\"colima [profile=")
-                    && stderr.contains("] is not running\""))
-                || stderr.contains("Cannot connect to the Docker daemon")
-                || stderr.contains("daemon is not running")
+            runtime_probe_means_runtime_not_running("", stderr)
         }
         ContainerExecError::Launch { .. } => false,
     }
 }
 
-fn running_container_runtime_mismatch(
+pub(super) fn runtime_probe_means_runtime_not_running(stdout: &str, stderr: &str) -> bool {
+    stderr.contains("level=fatal msg=\"colima is not running\"")
+        || (stderr.contains("level=fatal msg=\"colima [profile=")
+            && stderr.contains("] is not running\""))
+        || stderr.contains("Cannot connect to the Docker daemon")
+        || stderr.contains("daemon is not running")
+        || stdout.contains("Cannot connect to the Docker daemon")
+        || stdout.contains("daemon is not running")
+}
+
+pub(super) fn running_container_runtime_mismatch(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     rows: &[RunningComposeContainer],

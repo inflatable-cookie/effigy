@@ -872,7 +872,9 @@ fn run_git_bounded(
 #[derive(Clone)]
 struct DoctorGitTestConfig {
     program: PathBuf,
-    real_git: PathBuf,
+    fixture_root: PathBuf,
+    index_response: PathBuf,
+    slow_index: bool,
     fixture_executable: PathBuf,
     source_events: PathBuf,
     fixture_events: PathBuf,
@@ -901,7 +903,12 @@ fn doctor_git_command() -> Command {
     if let Some(config) = doctor_git_test_config() {
         let mut command = Command::new(config.program);
         command
-            .env("EFFIGY_TEST_DOCTOR_REAL_GIT", config.real_git)
+            .env("EFFIGY_TEST_DOCTOR_GIT_ROOT", config.fixture_root)
+            .env("EFFIGY_TEST_DOCTOR_GIT_INDEX", config.index_response)
+            .env(
+                "EFFIGY_TEST_DOCTOR_GIT_SLOW_INDEX",
+                if config.slow_index { "1" } else { "0" },
+            )
             .env("EFFIGY_TEST_DOCTOR_FIXTURE_EXE", config.fixture_executable)
             .env("EFFIGY_TEST_DOCTOR_GIT_INVOCATION", config.invocation)
             .env(
@@ -1834,6 +1841,17 @@ mod tests {
     #[cfg(all(unix, debug_assertions))]
     #[test]
     fn doctor_git_timeout_process_group_evidence() {
+        doctor_git_inventory_fixture_proof(false);
+    }
+
+    #[cfg(all(unix, debug_assertions))]
+    #[test]
+    fn doctor_git_timeout_before_status_is_incomplete_evidence() {
+        doctor_git_inventory_fixture_proof(true);
+    }
+
+    #[cfg(all(unix, debug_assertions))]
+    fn doctor_git_inventory_fixture_proof(slow_index: bool) {
         let temp = tempfile::tempdir().expect("tempdir");
         let root = temp.path();
         std::fs::create_dir_all(root.join("src")).expect("source directory");
@@ -1841,6 +1859,33 @@ mod tests {
         let real_git = path_binary("git");
         run_git(&real_git, root, &["init", "--quiet"]);
         run_git(&real_git, root, &["add", "--", "."]);
+
+        // Materialize the real index as fixture data before the measured
+        // inventory call. This does not run doctor or populate a scan cache.
+        // The bounded production ls-files capture still executes and parses
+        // this response; only its unrelated real-Git startup is isolated.
+        let prepared = run_git_bounded(
+            &[
+                "-C",
+                &root.display().to_string(),
+                "ls-files",
+                "--stage",
+                "-z",
+                "--",
+                ".",
+            ],
+            Some(Instant::now() + std::time::Duration::from_secs(10)),
+        )
+        .expect("prepare bounded private Git index")
+        .expect("Git index response");
+        assert!(prepared.status.success());
+        assert!(prepared.stdout.ends_with(b"\tsrc/lib.rs\0"));
+        assert!(
+            prepared.stdout.len() < 4096,
+            "unexpected fixture index size"
+        );
+        let index_response = root.join("prepared-index");
+        std::fs::write(&index_response, prepared.stdout).expect("write private index response");
 
         let shim = root.join("git-timeout-shim");
         write_doctor_git_timeout_shim(&shim);
@@ -1859,7 +1904,9 @@ mod tests {
         let mut sibling = DoctorProcessSibling::spawn();
         let _config = DoctorGitTestConfigGuard::install(DoctorGitTestConfig {
             program: shim,
-            real_git,
+            fixture_root: root.to_path_buf(),
+            index_response,
+            slow_index,
             fixture_executable: std::env::current_exe().expect("test executable"),
             source_events: source_events.clone(),
             fixture_events: child_events.clone(),
@@ -1882,6 +1929,55 @@ mod tests {
             !cache_paths(root, "root", root).directory.exists(),
             "a timed-out scan published partial cache state"
         );
+
+        if slow_index {
+            let source =
+                std::fs::read_to_string(&source_events).expect("slow-prelude source receipt");
+            let events = source
+                .lines()
+                .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("source event"))
+                .collect::<Vec<_>>();
+            let leaders = events
+                .iter()
+                .filter(|event| event["event"] == "leader_spawned")
+                .collect::<Vec<_>>();
+            assert_eq!(
+                leaders.len(),
+                1,
+                "porcelain must not spawn after prelude timeout"
+            );
+            let leader = leaders[0]["details"]["pid"]
+                .as_u64()
+                .expect("owned prelude PID");
+            assert_eq!(leaders[0]["details"]["args"][2], "ls-files");
+            let term = events
+                .iter()
+                .find(|event| event["event"] == "signal" && event["details"]["signal"] == "TERM")
+                .expect("real prelude timeout TERM");
+            assert_eq!(
+                term["details"]["target"].as_i64(),
+                Some(-i64::try_from(leader).unwrap())
+            );
+            assert_eq!(term["deadline_remaining_ns"], 0);
+            assert_eq!(term["details"]["ready_at_signal"], false);
+            assert!(events.iter().any(|event| event["event"] == "leader_reaped"
+                && event["details"]["pid"].as_u64() == Some(leader)));
+            assert!(!child_events.exists() && !initial_ready.exists() && !late_ready.exists());
+            assert!(!initial_marker.exists() && !late_marker.exists());
+            let shell =
+                std::fs::read_to_string(&shell_events).expect("slow-prelude fixture receipt");
+            assert!(shell.contains("event=index_readiness_deliberately_held "));
+            assert!(!shell.contains("event=shim_entered "));
+            sibling.assert_survived();
+            assert_ne!(
+                sibling.pgid,
+                i32::try_from(leader).expect("prelude PID fits process API")
+            );
+            // Incomplete pre-target evidence is a negative control, not the
+            // ready initial/late-descendant termination proof below.
+            drop(fixture_guard);
+            return;
+        }
 
         let target = assert_doctor_git_process_evidence(
             &source_events,
@@ -2098,6 +2194,18 @@ record_phase() {
   fi
   printf 'event=%s pid=%s ppid=%s child_pid=%s shell_elapsed_seconds=%s\n' "$1" "$$" "${PPID:-unknown}" "${2:-none}" "$shell_elapsed_seconds" >> "$EFFIGY_TEST_DOCTOR_GIT_SHELL_EVENTS"
 }
+[ "$1" = "-C" ] && [ "$2" = "$EFFIGY_TEST_DOCTOR_GIT_ROOT" ] || exit 2
+if [ "$3" = "ls-files" ]; then
+  [ "$#" -eq 7 ] && [ "$4" = "--stage" ] && [ "$5" = "-z" ] && [ "$6" = "--" ] && [ "$7" = "." ] || exit 2
+  if [ "$EFFIGY_TEST_DOCTOR_GIT_SLOW_INDEX" = "1" ]; then
+    record_phase index_readiness_deliberately_held
+    sleep 2
+  else
+    record_phase prepared_index_reply
+  fi
+  exec /bin/cat "$EFFIGY_TEST_DOCTOR_GIT_INDEX"
+fi
+[ "$3" = "status" ] && [ "$#" -eq 8 ] && [ "$4" = "--porcelain=v1" ] && [ "$5" = "-z" ] && [ "$6" = "--untracked-files=all" ] && [ "$7" = "--" ] && [ "$8" = "." ] || exit 2
 case " $* " in
   *" status --porcelain=v1 "*)
     record_phase shim_entered
@@ -2112,7 +2220,7 @@ case " $* " in
     while :; do :; done
     ;;
 esac
-exec "$EFFIGY_TEST_DOCTOR_REAL_GIT" "$@"
+exit 2
 "##;
         std::fs::write(path, script).expect("write process-group Git shim");
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))

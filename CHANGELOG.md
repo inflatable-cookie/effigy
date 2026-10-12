@@ -9,17 +9,24 @@ During v0.x, MINOR bumps may include breaking changes.
 ### Added
 - `effigy container <NAME> shell --command <CMD> --bounded --deadline-ms <MS>
   --stdout-limit-bytes <N> --stderr-limit-bytes <N> [--json]` is an explicit
-  opt-in finite container-command surface. One absolute deadline covers
-  discovery, preparation, the eligible missing-workspace-user fallback and the
-  final drain; independent stdout/stderr budgets are enforced while reading and
-  accounted cumulatively across the fallback. Overflow, read failure,
+  opt-in finite container-command surface. One absolute deadline governs
+  bounded process captures and artifact requests from runtime discovery and
+  primary workspace preparation through the user command, eligible fallback
+  and final draining. Independent
+  stdout/stderr budgets are enforced while reading and accounted cumulatively
+  across preparation and fallback; returned command bytes remain command-only.
+  JSON adds preparation capture counts and retained totals to schema v1.
+  Overflow, read failure,
   incomplete output and deadline refuse even when the client exits `0`, never
   report a retained prefix as success and never trigger a fallback or repeat.
   Both streams drain concurrently, and only the exact owned client process
   group is terminated and reaped on refusal. `--json` emits the versioned
   `effigy.container.bounded-exec.v1` payload with bounded bytes and counts;
-  refusal payloads carry only a safe reason, stream, limit and counts. Inner
-  nonzero exit stays distinct from bounds/deadline reasons. Remote container
+  refusal payloads carry safe reason, phase, stream, limit and counts. Launch
+  failures redact configured container/service names and exclude argv, command,
+  output, credentials and host error payloads on human and JSON surfaces. Inner
+  nonzero exit stays distinct from bounds/deadline reasons; human mode emits
+  retained command output only after a successful inner exit. Remote container
   cancellation remains explicitly unverified. The default command shell keeps
   its existing unbounded behavior.
 - `effigy container ports status|reclaim` reports the generated-container port
