@@ -103,6 +103,10 @@ During v0.x, MINOR bumps may include breaking changes.
   0.14.x releases without changing the support floor.
 
 ### Fixed
+- Managed host listeners preserve readiness failures and phase diagnostics
+  through rollback and teardown. Supervisors settle surviving owned descendants
+  before reaping an owned child leader during cleanup, and retain unavailable
+  state when cleanup cannot be proved.
 - Replace the archived YAML parser dependency with the maintained YAML organization compatibility backend.
 - JSON contract fixtures preserve authenticated QA-parent roots for nested skill
   and group execution, keep literal path arguments intact, and clean up their

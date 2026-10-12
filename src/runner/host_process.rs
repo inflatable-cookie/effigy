@@ -40,6 +40,8 @@ use effigy_gateway::registration::{
 };
 use effigy_gateway::routes::{ManagedListenerRouteOwner, RouteTable};
 use nix::sys::signal::{kill, Signal};
+#[cfg(test)]
+use nix::unistd::getpgid;
 use nix::unistd::Pid;
 
 use super::error::RunnerError;
@@ -1269,7 +1271,7 @@ fn dependency_transition(
 }
 
 fn wait_for_host_child(
-    child: &mut std::process::Child,
+    child: &mut OwnedHostChild,
     spec: &HostProcessRuntimeSpec,
     expected_dependencies: &[String],
     shutdown: &Arc<std::sync::atomic::AtomicBool>,
@@ -1280,7 +1282,7 @@ fn wait_for_host_child(
 }
 
 fn wait_for_host_child_with(
-    child: &mut std::process::Child,
+    child: &mut OwnedHostChild,
     shutdown: &Arc<std::sync::atomic::AtomicBool>,
     mut inspect_dependencies: impl FnMut() -> Result<Option<DependencyTransition>, HostChildInspection>,
 ) -> Result<HostChildWait, HostChildInspection> {
@@ -1389,6 +1391,22 @@ pub(in crate::runner) fn run_internal_host_process_supervise(
         );
         if result.is_ok() {
             let _ = fs::remove_file(&args.pid_file);
+        } else {
+            if let Err(error) = &result {
+                let detail = error.to_string().chars().take(1024).collect::<String>();
+                append_log_line(
+                    &args.log_file,
+                    &format!("[effigy host-process] supervisor generation held: {detail}"),
+                );
+            }
+            if let Err(error) = hold_starting_listener(&spec, &supervisor_record) {
+                append_log_line(
+                    &args.log_file,
+                    &format!(
+                        "[effigy host-process] cannot retain unavailable listener state: {error}"
+                    ),
+                );
+            }
         }
         return result.map(|()| String::new());
     }
@@ -1429,7 +1447,7 @@ pub(in crate::runner) fn run_internal_host_process_supervise(
         }
         configure_child_process_group(&mut command);
         let mut child = match command.spawn() {
-            Ok(child) => child,
+            Ok(child) => OwnedHostChild::new(child),
             Err(error) => {
                 append_log_line(
                     &log_path,
@@ -1458,6 +1476,7 @@ pub(in crate::runner) fn run_internal_host_process_supervise(
             boot_identity: live_identity.boot_identity,
             start_identity: live_identity.start_identity,
         };
+        child.identity = Some(root_identity.clone());
         *child_identity
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(root_identity.clone());
@@ -1495,6 +1514,15 @@ pub(in crate::runner) fn run_internal_host_process_supervise(
                 *child_identity
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+                let members =
+                    effigy_process::process_group_member_ids(pid as u32).map_err(|error| {
+                        RunnerError::task_invocation(format!(
+                            "exited host child group is uncertain; retaining generation: {error}"
+                        ))
+                    })?;
+                if !members.is_empty() {
+                    return Err(RunnerError::task_invocation("host child exited with surviving group members; refusing to restart an unverified generation"));
+                }
                 let code = status.code().unwrap_or(-1);
                 last_outcome = Some(code);
                 append_log_line(
@@ -1784,7 +1812,7 @@ fn supervise_managed_host_listener(
         }
         configure_child_process_group(&mut command);
         let mut child = match command.spawn() {
-            Ok(child) => child,
+            Ok(child) => OwnedHostChild::new(child),
             Err(error) => {
                 write_listener_state(
                     &spec.listener_state_file,
@@ -1812,8 +1840,6 @@ fn supervise_managed_host_listener(
         let live = match read_live_process_identity(pid) {
             Ok(identity) => identity,
             Err(error) => {
-                let _ = child.kill();
-                let _ = child.wait();
                 return Err(RunnerError::task_invocation(format!(
                     "cannot record managed listener child identity: {error}"
                 )));
@@ -1832,6 +1858,7 @@ fn supervise_managed_host_listener(
             boot_identity: live.boot_identity.clone(),
             start_identity: live.start_identity.clone(),
         };
+        child.identity = Some(root_identity.clone());
         let mut launched = generation_record(
             &evidence,
             TransitionEvent::SuccessorLaunched,
@@ -1880,6 +1907,25 @@ fn supervise_managed_host_listener(
         ) {
             Ok(owned) => owned,
             Err(error) => {
+                let terminal_status = error.status();
+                write_listener_state(
+                    &spec.listener_state_file,
+                    with_diagnostic(
+                        listener_state(
+                            spec,
+                            supervisor,
+                            "unavailable",
+                            Some(&generation),
+                            None,
+                            None,
+                            None,
+                            Some(&root_identity),
+                            None,
+                            None,
+                        ),
+                        &diagnostic,
+                    ),
+                )?;
                 terminate_owned_child_group(&mut child, &root_identity, Duration::from_secs(2))?;
                 child_pid.store(0, Ordering::SeqCst);
                 *child_identity
@@ -1895,11 +1941,7 @@ fn supervise_managed_host_listener(
                         listener_state(
                             spec,
                             supervisor,
-                            if shutdown.load(Ordering::SeqCst) {
-                                "stopped"
-                            } else {
-                                "failed"
-                            },
+                            terminal_status,
                             Some(&generation),
                             None,
                             None,
@@ -2606,10 +2648,41 @@ fn observe_ownership<T>(
     result.inspect_err(|_| diagnostic.ownership = observation)
 }
 
+enum ListenerStartupFailure {
+    Stopped,
+    Failed(RunnerError),
+}
+
+impl ListenerStartupFailure {
+    fn status(&self) -> &'static str {
+        match self {
+            Self::Stopped => "stopped",
+            Self::Failed(_) => "failed",
+        }
+    }
+}
+
+impl From<RunnerError> for ListenerStartupFailure {
+    fn from(error: RunnerError) -> Self {
+        Self::Failed(error)
+    }
+}
+
+impl std::fmt::Display for ListenerStartupFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Stopped => {
+                formatter.write_str("managed listener startup was stopped before readiness")
+            }
+            Self::Failed(error) => error.fmt(formatter),
+        }
+    }
+}
+
 fn wait_for_owned_listener(
     wait: OwnedHostListenerWait<'_>,
     diagnostic: &mut HostListenerDiagnostic,
-) -> Result<OwnedHostListener, RunnerError> {
+) -> Result<OwnedHostListener, ListenerStartupFailure> {
     let OwnedHostListenerWait {
         supervisor,
         root_pid,
@@ -2627,9 +2700,7 @@ fn wait_for_owned_listener(
     })?;
     loop {
         if shutdown.load(Ordering::SeqCst) {
-            return Err(RunnerError::task_invocation(
-                "managed listener startup was stopped before readiness",
-            ));
+            return Err(ListenerStartupFailure::Stopped);
         }
         observe_identity(
             diagnostic,
@@ -2647,7 +2718,8 @@ fn wait_for_owned_listener(
             diagnostic.ownership = OwnershipObservation::AncestryChanged;
             return Err(RunnerError::task_invocation(
                 "managed host child is no longer beneath its recorded supervisor",
-            ));
+            )
+            .into());
         }
         let metadata = match fs::symlink_metadata(report_path) {
             Ok(metadata) => metadata,
@@ -2658,7 +2730,7 @@ fn wait_for_owned_listener(
                     ReportObservation::Unreadable
                 };
                 if Instant::now() >= deadline {
-                    return Err(listener_readiness_timeout(timeout));
+                    return Err(listener_readiness_timeout(timeout).into());
                 }
                 thread::sleep(Duration::from_millis(50));
                 continue;
@@ -2668,20 +2740,22 @@ fn wait_for_owned_listener(
             diagnostic.report = ReportObservation::Unsafe;
             return Err(RunnerError::task_invocation(
                 "managed listener report is not a small regular file",
-            ));
+            )
+            .into());
         }
         let report: HostListenerReport = match read_private_json(report_path) {
             Ok(report) => report,
             Err(error) => {
                 diagnostic.report = ReportObservation::Unreadable;
-                return Err(error);
+                return Err(error.into());
             }
         };
         if report.schema != HOST_LISTENER_REPORT_SCHEMA || report.generation != generation {
             diagnostic.report = ReportObservation::SchemaOrGenerationMismatch;
             return Err(RunnerError::task_invocation(
                 "managed listener report has an unsupported schema or stale generation",
-            ));
+            )
+            .into());
         }
         let address = match report.address.parse::<SocketAddr>() {
             Ok(address) => address,
@@ -2689,7 +2763,8 @@ fn wait_for_owned_listener(
                 diagnostic.report = ReportObservation::InvalidAddress;
                 return Err(RunnerError::task_invocation(
                     "managed listener report address is not a socket address",
-                ));
+                )
+                .into());
             }
         };
         diagnostic.claimed_address = Some(address);
@@ -2701,7 +2776,8 @@ fn wait_for_owned_listener(
             diagnostic.report = ReportObservation::BindMismatch;
             return Err(RunnerError::task_invocation(
                 "managed listener report does not match its declared loopback bind preference",
-            ));
+            )
+            .into());
         }
         diagnostic.report = ReportObservation::Accepted;
         let mut candidates = vec![root_pid];
@@ -2731,7 +2807,8 @@ fn wait_for_owned_listener(
                     diagnostic.ownership = OwnershipObservation::IdentityUnavailable;
                     return Err(RunnerError::task_invocation(format!(
                         "managed listener process identity is unavailable for PID {pid}: {error}"
-                    )));
+                    ))
+                    .into());
                 }
             };
             let endpoints = match process_listening_endpoints(pid) {
@@ -2740,7 +2817,8 @@ fn wait_for_owned_listener(
                     diagnostic.ownership = OwnershipObservation::SocketInspectionFailed;
                     return Err(RunnerError::task_invocation(format!(
                         "cannot inspect listener sockets for PID {pid}: {error}"
-                    )));
+                    ))
+                    .into());
                 }
             };
             if endpoints.contains(&GatewayEndpoint {
@@ -2751,7 +2829,8 @@ fn wait_for_owned_listener(
                     diagnostic.ownership = OwnershipObservation::ListenerOutsideGeneration;
                     return Err(RunnerError::task_invocation(
                         "managed listener process is outside its recorded child generation",
-                    ));
+                    )
+                    .into());
                 }
                 observe_identity(
                     diagnostic,
@@ -2765,7 +2844,8 @@ fn wait_for_owned_listener(
                         diagnostic.ownership = OwnershipObservation::IdentityUnavailable;
                         return Err(RunnerError::task_invocation(format!(
                             "managed listener owner identity changed during discovery: {error}"
-                        )));
+                        ))
+                        .into());
                     }
                 };
                 if current.boot_identity != identity.boot_identity
@@ -2774,7 +2854,8 @@ fn wait_for_owned_listener(
                     diagnostic.ownership = OwnershipObservation::IdentityChanged;
                     return Err(RunnerError::task_invocation(
                         "managed listener owner PID was reused during discovery",
-                    ));
+                    )
+                    .into());
                 }
                 observe_ownership(
                     diagnostic,
@@ -2824,13 +2905,14 @@ fn wait_for_owned_listener(
                     diagnostic.ownership = OwnershipObservation::AncestryChanged;
                     return Err(RunnerError::task_invocation(
                         "managed host child ancestry changed during readiness",
-                    ));
+                    )
+                    .into());
                 }
                 return Ok(found);
             }
         }
         if Instant::now() >= deadline {
-            return Err(listener_readiness_timeout(timeout));
+            return Err(listener_readiness_timeout(timeout).into());
         }
         thread::sleep(Duration::from_millis(50));
     }
@@ -3040,56 +3122,269 @@ fn process_identity_is_absent(error: &std::io::Error) -> bool {
     error.kind() == std::io::ErrorKind::NotFound || error.raw_os_error() == Some(libc::ESRCH)
 }
 
+/// One child group created by the checked spawn path. This retains the
+/// unreaped Child capability across fallible startup/state/route operations.
+struct OwnedHostChild {
+    child: std::process::Child,
+    identity: Option<ChildProcessIdentity>,
+    reaped: bool,
+    stop_attempted: bool,
+}
+
+impl OwnedHostChild {
+    fn new(child: std::process::Child) -> Self {
+        Self {
+            child,
+            identity: None,
+            reaped: false,
+            stop_attempted: false,
+        }
+    }
+
+    fn id(&self) -> u32 {
+        self.child.id()
+    }
+
+    fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
+        let status = self.child.try_wait()?;
+        self.reaped |= status.is_some();
+        Ok(status)
+    }
+
+    fn stop(&mut self, grace: Duration) -> Result<std::process::ExitStatus, RunnerError> {
+        self.stop_attempted = true;
+        if self.reaped {
+            return Err(RunnerError::task_invocation(
+                "managed child was already reaped; leaving generation held",
+            ));
+        }
+        // The private spawn path created this group and this Child has never
+        // been reaped. Its PID cannot be reused while we signal descendants.
+        let mut deadline = Instant::now() + grace.max(Duration::from_millis(100));
+        if let Some(status) = self.reap_quiescent_group(deadline)? {
+            return Ok(status);
+        }
+        if let Err(error) = self.signal(Signal::SIGTERM) {
+            // On macOS a zombie-only group can reject signaling with EPERM.
+            // A race to quiescence is success only after positive observation
+            // and the actual owned reap; never ignore a permission failure.
+            if let Ok(Some(status)) = self.reap_quiescent_group(deadline) {
+                return Ok(status);
+            }
+            return Err(error);
+        }
+        let mut forced = false;
+        loop {
+            if Instant::now() >= deadline {
+                if forced {
+                    return Err(RunnerError::task_invocation("managed host child group did not exit after force-stop; leaving generation held"));
+                }
+                deadline = Instant::now() + Duration::from_secs(2);
+                if let Err(error) = self.signal(Signal::SIGKILL) {
+                    if let Ok(Some(status)) = self.reap_quiescent_group(deadline) {
+                        return Ok(status);
+                    }
+                    return Err(error);
+                }
+                forced = true;
+            }
+            match self.reap_quiescent_group(deadline) {
+                Ok(Some(status)) => return Ok(status),
+                Ok(None) => {}
+                Err(_) if Instant::now() >= deadline => continue,
+                Err(error) => return Err(error),
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    fn reap_quiescent_group(
+        &mut self,
+        deadline: Instant,
+    ) -> Result<Option<std::process::ExitStatus>, RunnerError> {
+        if !observe_owned_child_exit(self.id(), deadline)? {
+            return Ok(None);
+        }
+        // Observe exit first, then members: the exited root cannot fork
+        // between this snapshot and its reap. Any other member holds it.
+        let members = observe_owned_group_members(self.id(), deadline)?;
+        if members.iter().any(|pid| *pid != self.id()) {
+            return Ok(None);
+        }
+        let status = self.child.wait().map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "managed host child reap failed; leaving generation held: {error}"
+            ))
+        })?;
+        self.reaped = true;
+        Ok(Some(status))
+    }
+
+    fn signal(&self, signal: Signal) -> Result<(), RunnerError> {
+        match kill(Pid::from_raw(-(self.id() as i32)), signal) {
+            Ok(()) | Err(nix::errno::Errno::ESRCH) => Ok(()),
+            Err(error) => Err(RunnerError::task_invocation(format!(
+                "cannot signal directly owned child group: {error}"
+            ))),
+        }
+    }
+}
+
+impl Drop for OwnedHostChild {
+    fn drop(&mut self) {
+        if !self.reaped
+            && (self.stop_attempted || self.stop(Duration::from_secs(2)).is_err())
+            && !self.reaped
+        {
+            // An uncertain observation cannot authorize a reap. The retained
+            // Child still authorizes one final KILL of its created group; no
+            // wait, signal or guessed recovery occurs after a reap.
+            let _ = self.signal(Signal::SIGKILL);
+        }
+    }
+}
+
+/// A small bounded observation from the system process table. In particular,
+/// macOS proc_pidinfo cannot read a zombie's start identity. This does not
+/// authorize any signal or supply an exit code; the owned Child does both.
+fn observe_owned_child_exit(pid: u32, deadline: Instant) -> Result<bool, RunnerError> {
+    use super::exec_command::{BoundedCommandBudget, BoundedCommandPhase};
+    let mut budget = BoundedCommandBudget::new(
+        deadline.min(Instant::now() + Duration::from_millis(500)),
+        64,
+        128,
+    );
+    let capture = budget
+        .run_command(
+            Path::new("/"),
+            std::ffi::OsStr::new("/bin/ps"),
+            &[
+                "-p".into(),
+                pid.to_string().into(),
+                "-o".into(),
+                "stat=".into(),
+            ],
+            None,
+            &[],
+            BoundedCommandPhase::CommandExecution,
+        )
+        .map_err(|failure| {
+            RunnerError::task_invocation(format!(
+                "owned child exit observation failed: {:?}",
+                failure.failure
+            ))
+        })?;
+    if !capture.status.success() {
+        return Err(RunnerError::task_invocation(
+            "owned child exit observation was unavailable",
+        ));
+    }
+    let text = std::str::from_utf8(&capture.stdout)
+        .map_err(|_| RunnerError::task_invocation("owned child exit observation was malformed"))?;
+    let mut rows = text.split_whitespace();
+    let state = rows
+        .next()
+        .and_then(|value| value.as_bytes().first())
+        .copied();
+    if rows.next().is_some()
+        || !matches!(
+            state,
+            Some(b'I' | b'R' | b'S' | b'T' | b'U' | b'D' | b'W' | b'Z' | b'X')
+        )
+    {
+        return Err(RunnerError::task_invocation(
+            "owned child exit observation was malformed",
+        ));
+    }
+    Ok(matches!(state, Some(b'Z' | b'X')))
+}
+
+/// Finite PID/group-only inventory: never retain arguments or command output.
+fn observe_owned_group_members(pid: u32, deadline: Instant) -> Result<Vec<u32>, RunnerError> {
+    use super::exec_command::{BoundedCommandBudget, BoundedCommandPhase};
+    let mut budget = BoundedCommandBudget::new(
+        deadline.min(Instant::now() + Duration::from_millis(500)),
+        1_048_576,
+        128,
+    );
+    let capture = budget
+        .run_command(
+            Path::new("/"),
+            std::ffi::OsStr::new("/bin/ps"),
+            &["-Ao".into(), "pid=,pgid=".into()],
+            None,
+            &[],
+            BoundedCommandPhase::CommandExecution,
+        )
+        .map_err(|failure| {
+            RunnerError::task_invocation(format!(
+                "owned group observation failed: {:?}",
+                failure.failure
+            ))
+        })?;
+    if !capture.status.success() {
+        return Err(RunnerError::task_invocation(
+            "owned group observation was unavailable",
+        ));
+    }
+    let text = std::str::from_utf8(&capture.stdout)
+        .map_err(|_| RunnerError::task_invocation("owned group observation was malformed"))?;
+    let mut members = Vec::new();
+    for row in text.lines() {
+        let mut fields = row.split_whitespace();
+        let member = fields.next().and_then(|value| value.parse::<u32>().ok());
+        let group = fields.next().and_then(|value| value.parse::<u32>().ok());
+        match (member, group, fields.next()) {
+            (Some(member), Some(group), None) if member > 0 && member <= i32::MAX as u32 => {
+                if group == pid {
+                    members.push(member);
+                }
+            }
+            _ => {
+                return Err(RunnerError::task_invocation(
+                    "owned group observation was malformed",
+                ))
+            }
+        }
+    }
+    Ok(members)
+}
+
 fn terminate_owned_child_group(
-    child: &mut std::process::Child,
+    child: &mut OwnedHostChild,
     identity: &ChildProcessIdentity,
     grace: Duration,
 ) -> Result<std::process::ExitStatus, RunnerError> {
-    let mut status = child.try_wait().map_err(|error| {
-        RunnerError::task_invocation(format!(
-            "managed host child completion is uncertain; leaving generation held: {error}"
-        ))
-    })?;
-    if status.is_none() {
-        signal_owned_child_group(
-            identity.pid,
-            &identity.boot_identity,
-            &identity.start_identity,
-            Signal::SIGTERM,
-        )?;
+    if child.id() != identity.pid || child.identity.as_ref() != Some(identity) {
+        return Err(RunnerError::task_invocation(
+            "owned child generation does not match; leaving generation held",
+        ));
     }
-    let mut deadline = Instant::now() + grace.max(Duration::from_millis(100));
-    let mut forced = false;
-    loop {
-        if status.is_none() {
-            status = child.try_wait().map_err(|error| {
-                RunnerError::task_invocation(format!(
-                    "managed host child wait became uncertain; leaving generation held: {error}"
-                ))
-            })?;
-        }
-        let members = effigy_process::process_group_member_ids(identity.pid).map_err(|error| {
-            RunnerError::task_invocation(format!(
-                "managed host child process group is uncertain; leaving generation held: {error}"
-            ))
-        })?;
-        if members.is_empty() {
-            if let Some(status) = status.take() {
-                return Ok(status);
-            }
-        }
-        if Instant::now() >= deadline {
-            if forced {
-                return Err(RunnerError::task_invocation(
-                    "managed host child group did not exit after force-stop; leaving generation held",
-                ));
-            }
-            signal_owned_child_generation(identity, Signal::SIGKILL)?;
-            forced = true;
-            deadline = Instant::now() + Duration::from_secs(2);
-        }
-        thread::sleep(Duration::from_millis(50));
+    child.stop(grace)
+}
+
+/// A failed supervisor retains its exact generation for recovery, but a
+/// starting record must not imply that startup is still progressing.
+fn hold_starting_listener(
+    spec: &HostProcessRuntimeSpec,
+    supervisor: &HostProcessRecord,
+) -> Result<(), RunnerError> {
+    let mut state: HostListenerState = read_private_json(&spec.listener_state_file)?;
+    if state.schema == HOST_LISTENER_STATE_SCHEMA
+        && state.status == "starting"
+        && state.owner == spec.owner
+        && state.runtime_generation == spec.runtime_generation
+        && state.supervisor_pid == supervisor.pid
+        && state.supervisor_boot_identity == supervisor.boot_identity
+        && state.supervisor_start_identity == supervisor.start_identity
+    {
+        state.status = "unavailable".to_owned();
+        state.address = None;
+        state.internal_url = None;
+        state.public_url = None;
+        write_listener_state(&spec.listener_state_file, state)?;
     }
+    Ok(())
 }
 
 pub(in crate::runner) fn run_internal_host_process_stop(
@@ -3218,7 +3513,12 @@ fn cleanup_stopped_listener_routes(
         }
     }
     if let Some(mut state) = state {
-        state.status = "stopped".to_owned();
+        state.status = if state.status == "failed" {
+            "failed"
+        } else {
+            "stopped"
+        }
+        .to_owned();
         state.address = None;
         state.internal_url = None;
         state.public_url = None;
@@ -3503,15 +3803,368 @@ mod tests {
     use super::*;
     use crate::runner::host_transition_evidence::read_transition_evidence;
 
-    struct TestChild(std::process::Child);
+    struct TestChild(OwnedHostChild);
 
-    impl Drop for TestChild {
-        fn drop(&mut self) {
-            if matches!(self.0.try_wait(), Ok(None)) {
-                let _ = self.0.kill();
-                let _ = self.0.wait();
+    impl TestChild {
+        fn sleep() -> Self {
+            let mut command = ProcessCommand::new("/bin/sleep");
+            command.arg("60");
+            configure_child_process_group(&mut command);
+            Self(OwnedHostChild::new(command.spawn().unwrap()))
+        }
+    }
+
+    struct OwnedGroupFixture {
+        child: OwnedHostChild,
+        identity: ChildProcessIdentity,
+        descendant: ChildProcessIdentity,
+        root_reaped: bool,
+        settled: bool,
+        _root: tempfile::TempDir,
+    }
+
+    impl OwnedGroupFixture {
+        fn new(ignore_term: bool) -> Self {
+            let root = tempfile::tempdir().unwrap();
+            let ready = root.path().join("ready");
+            let release = root.path().join("release");
+            let mut command = ProcessCommand::new("/bin/sh");
+            command.args(["-c", r#"
+                /bin/sh -c 'if [ "$1" = yes ]; then trap "" TERM; fi; printf "%s" "$$" > "$2"; exec /bin/sleep 60' fixture "$1" "$2" &
+                while [ ! -f "$3" ]; do /bin/sleep 0.01; done
+                exit 7
+            "#, "fixture", if ignore_term { "yes" } else { "no" }]);
+            command.arg(&ready).arg(&release);
+            configure_child_process_group(&mut command);
+            let mut child = OwnedHostChild::new(command.spawn().unwrap());
+            let live = read_live_process_identity(child.id()).unwrap();
+            let identity = ChildProcessIdentity {
+                pid: child.id(),
+                boot_identity: live.boot_identity,
+                start_identity: live.start_identity,
+            };
+            child.identity = Some(identity.clone());
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let descendant_pid = loop {
+                if let Ok(text) = fs::read_to_string(&ready) {
+                    if let Ok(pid) = text.parse::<u32>() {
+                        break pid;
+                    }
+                }
+                assert!(Instant::now() < deadline, "owned descendant did not start");
+                thread::sleep(Duration::from_millis(10));
+            };
+            let live = read_live_process_identity(descendant_pid).unwrap();
+            let descendant = ChildProcessIdentity {
+                pid: descendant_pid,
+                boot_identity: live.boot_identity,
+                start_identity: live.start_identity,
+            };
+            fs::write(release, b"exit").unwrap();
+            while !observe_owned_child_exit(child.id(), deadline).unwrap() {
+                assert!(Instant::now() < deadline, "owned root did not exit");
+                thread::sleep(Duration::from_millis(10));
+            }
+            Self {
+                child,
+                identity,
+                descendant,
+                root_reaped: false,
+                settled: false,
+                _root: root,
             }
         }
+    }
+
+    impl Drop for OwnedGroupFixture {
+        fn drop(&mut self) {
+            if self.settled {
+                return;
+            }
+            // The negative control intentionally reaps its root. Its fresh,
+            // exact descendant then keeps the created group reserved; it is
+            // never used as recovery authority by production.
+            if !self.root_reaped {
+                if self.child.stop(Duration::from_millis(100)).is_ok() {
+                    self.settled = true;
+                    self.root_reaped = true;
+                }
+                return;
+            }
+            let owner = &self.descendant;
+            if checked_child_identity(owner.pid, &owner.boot_identity, &owner.start_identity)
+                .is_ok()
+                && getpgid(Some(Pid::from_raw(owner.pid as i32)))
+                    .is_ok_and(|group| group.as_raw() == self.identity.pid as i32)
+            {
+                let _ = kill(Pid::from_raw(-(self.identity.pid as i32)), Signal::SIGKILL);
+            }
+            let deadline = Instant::now() + Duration::from_secs(2);
+            loop {
+                let root_done = self.root_reaped || matches!(self.child.try_wait(), Ok(Some(_)));
+                self.root_reaped = root_done;
+                if root_done
+                    && effigy_process::process_group_member_ids(self.identity.pid)
+                        .is_ok_and(|members| members.is_empty())
+                {
+                    break;
+                }
+                if Instant::now() >= deadline {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+        }
+    }
+
+    #[test]
+    fn host_process_owned_group_retains_unreaped_root_through_descendant_settlement() {
+        let mut foreign = TestChild::sleep();
+        let foreign_identity = read_live_process_identity(foreign.0.id()).unwrap();
+        // Counterexample: the former initial try_wait loses leader authority.
+        let mut old = OwnedGroupFixture::new(true);
+        assert_eq!(old.child.try_wait().unwrap().unwrap().code(), Some(7));
+        old.root_reaped = true;
+        assert!(effigy_process::process_group_member_ids(old.identity.pid)
+            .unwrap()
+            .contains(&old.descendant.pid));
+        let refusal = signal_owned_child_generation(&old.identity, Signal::SIGKILL).unwrap_err();
+        assert!(refusal
+            .to_string()
+            .contains("refusing to signal an unverified group"));
+        assert!(checked_child_identity(
+            old.descendant.pid,
+            &old.descendant.boot_identity,
+            &old.descendant.start_identity
+        )
+        .is_ok());
+        drop(old);
+
+        for ignore_term in [false, true] {
+            let mut owned = OwnedGroupFixture::new(ignore_term);
+            // The bounded observation leaves the root PID/group reserved until reap.
+            assert!(observe_owned_child_exit(
+                owned.identity.pid,
+                Instant::now() + Duration::from_secs(1)
+            )
+            .unwrap());
+            assert!(!owned.child.reaped);
+            assert!(observe_owned_group_members(
+                owned.identity.pid,
+                Instant::now() + Duration::from_secs(1)
+            )
+            .unwrap()
+            .contains(&owned.descendant.pid));
+            let status = terminate_owned_child_group(
+                &mut owned.child,
+                &owned.identity,
+                Duration::from_millis(100),
+            )
+            .unwrap();
+            owned.root_reaped = true;
+            owned.settled = true;
+            assert_eq!(
+                status.code(),
+                Some(7),
+                "return the actual natural exit, not cleanup's signal"
+            );
+            assert!(effigy_process::process_group_member_ids(owned.identity.pid)
+                .unwrap()
+                .is_empty());
+        }
+        assert!(foreign.0.try_wait().unwrap().is_none());
+        assert!(checked_child_identity(
+            foreign.0.id(),
+            &foreign_identity.boot_identity,
+            &foreign_identity.start_identity
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn host_process_owned_zombie_only_group_is_reaped_before_signaling() {
+        let root = tempfile::tempdir().unwrap();
+        let release = root.path().join("release");
+        let mut command = ProcessCommand::new("/bin/sh");
+        command
+            .args([
+                "-c",
+                r#"while [ ! -f "$1" ]; do /bin/sleep 0.01; done; exit 7"#,
+                "fixture",
+            ])
+            .arg(&release);
+        configure_child_process_group(&mut command);
+        let mut child = OwnedHostChild::new(command.spawn().unwrap());
+        fs::write(release, b"exit").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !observe_owned_child_exit(child.id(), deadline).unwrap() {
+            assert!(Instant::now() < deadline, "owned root did not exit");
+            thread::sleep(Duration::from_millis(10));
+        }
+        let pid = child.id();
+        let status = child.stop(Duration::from_secs(2)).unwrap();
+        assert_eq!(status.code(), Some(7));
+        assert!(child.reaped);
+        assert!(
+            observe_owned_group_members(pid, Instant::now() + Duration::from_secs(1))
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn host_process_owned_child_guard_cleans_unwind_before_identity_recording() {
+        let root = tempfile::tempdir().unwrap();
+        let ready = root.path().join("ready");
+        let mut command = ProcessCommand::new("/bin/sh");
+        command
+            .args([
+                "-c",
+                r#"
+            /bin/sh -c 'trap "" TERM; printf "%s" "$$" > "$1"; exec /bin/sleep 60' fixture "$1" &
+            wait
+        "#,
+                "fixture",
+            ])
+            .arg(&ready);
+        configure_child_process_group(&mut command);
+        let child = OwnedHostChild::new(command.spawn().unwrap());
+        let pid = child.id();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if fs::read_to_string(&ready).is_ok_and(|text| text.parse::<u32>().is_ok()) {
+                break;
+            }
+            assert!(Instant::now() < deadline, "guard descendant did not start");
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(child.identity.is_none());
+        let unwind = std::panic::catch_unwind(move || {
+            let _owned = child;
+            panic!("controlled failure before identity/state publication");
+        });
+        assert!(unwind.is_err());
+        assert!(
+            observe_owned_group_members(pid, Instant::now() + Duration::from_secs(1))
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn host_process_generic_cleanup_preserves_failed_diagnostic_and_successor_state() {
+        let root = tempfile::tempdir().unwrap();
+        let pid_file = root.path().join("app.pid");
+        let state_file = root.path().join("app.listener.json");
+        let live = read_live_process_identity(std::process::id()).unwrap();
+        let record = HostProcessRecord {
+            schema: HOST_PROCESS_RECORD_SCHEMA.to_owned(),
+            pid: std::process::id(),
+            boot_identity: live.boot_identity,
+            start_identity: live.start_identity,
+        };
+        let spec = HostProcessRuntimeSpec {
+            schema: HOST_PROCESS_SPEC_SCHEMA.to_owned(),
+            project_path: root.path().display().to_string(),
+            runtime_generation: "runtime".to_owned(),
+            cwd: root.path().to_path_buf(),
+            env: BTreeMap::new(),
+            owner: "main|web|dev|app".to_owned(),
+            dependencies: Vec::new(),
+            listener_state_file: state_file.clone(),
+            gateway_root: Some(root.path().join("gateway")),
+            listener: Some(EffectiveManagedHostListener {
+                bind: "127.0.0.1:0".to_owned(),
+                readiness_path: "/ready".to_owned(),
+                readiness_status: 200,
+                readiness_timeout_secs: 1,
+                declared_route_domain: "app.test".to_owned(),
+                route_domain: "app.test".to_owned(),
+                route_tls: false,
+            }),
+        };
+        write_private_json(&pid_file.with_extension("spec.json"), &spec).unwrap();
+        let mut state: HostListenerState =
+            serde_json::from_value(legacy_listener_state_json("failed")).unwrap();
+        state.supervisor_pid = record.pid;
+        state.supervisor_boot_identity = record.boot_identity.clone();
+        state.supervisor_start_identity = record.start_identity.clone();
+        state.diagnostic = Some(HostListenerDiagnostic {
+            http_status: Some(503),
+            http_probe: Some(HttpReadinessOutcome::StatusMismatch),
+            ..HostListenerDiagnostic::default()
+        });
+        write_listener_state(&state_file, state.clone()).unwrap();
+        cleanup_stopped_listener_routes(&pid_file, &record).unwrap();
+        let after: HostListenerState = read_private_json(&state_file).unwrap();
+        assert_eq!(after.status, "failed");
+        assert_eq!(after.diagnostic, state.diagnostic);
+        assert!(after.child_pid.is_none() && after.route_owner.is_none());
+
+        state.status = "starting".to_owned();
+        state.runtime_generation = "successor-runtime".to_owned();
+        write_listener_state(&state_file, state).unwrap();
+        let before = fs::read(&state_file).unwrap();
+        hold_starting_listener(&spec, &record).unwrap();
+        cleanup_stopped_listener_routes(&pid_file, &record).unwrap();
+        assert_eq!(
+            fs::read(&state_file).unwrap(),
+            before,
+            "an old cleanup cannot rewrite successor state"
+        );
+    }
+
+    #[test]
+    fn host_process_startup_failure_keeps_selected_cause_across_later_shutdown() {
+        let mut child = TestChild::sleep();
+        let live = read_live_process_identity(child.0.id()).unwrap();
+        let supervisor_live = read_live_process_identity(std::process::id()).unwrap();
+        let supervisor = HostProcessRecord {
+            schema: HOST_PROCESS_RECORD_SCHEMA.to_owned(),
+            pid: std::process::id(),
+            boot_identity: supervisor_live.boot_identity,
+            start_identity: supervisor_live.start_identity,
+        };
+        let config = EffectiveManagedHostListener {
+            bind: "127.0.0.1:0".to_owned(),
+            readiness_path: "/ready".to_owned(),
+            readiness_status: 200,
+            readiness_timeout_secs: 1,
+            declared_route_domain: "fixture.test".to_owned(),
+            route_domain: "fixture.test".to_owned(),
+            route_tls: false,
+        };
+        let fixture = tempfile::tempdir().unwrap();
+        let report = fixture.path().join("report.json");
+        fs::write(&report, b"not json").unwrap();
+        let shutdown = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut diagnostic = HostListenerDiagnostic::default();
+        let wait = || OwnedHostListenerWait {
+            supervisor: &supervisor,
+            root_pid: child.0.id(),
+            root_boot_identity: &live.boot_identity,
+            root_start_identity: &live.start_identity,
+            report_path: &report,
+            generation: "fixture-generation",
+            config: &config,
+            shutdown: &shutdown,
+        };
+        let failure = match wait_for_owned_listener(wait(), &mut diagnostic) {
+            Err(failure) => failure,
+            Ok(_) => panic!("invalid report must fail"),
+        };
+        shutdown.store(true, Ordering::SeqCst);
+        assert_eq!(
+            failure.status(),
+            "failed",
+            "rollback cannot reclassify the selected report failure"
+        );
+        let stopped = match wait_for_owned_listener(wait(), &mut diagnostic) {
+            Err(failure) => failure,
+            Ok(_) => panic!("stop must precede readiness"),
+        };
+        assert_eq!(stopped.status(), "stopped");
+        assert!(child.0.try_wait().unwrap().is_none());
     }
 
     #[test]
@@ -3826,7 +4479,7 @@ mod tests {
 
         // A real owned child exits by signal. The production wait selection and
         // receipt mapper preserve the observed signal separately from an exit code.
-        let mut signaled = TestChild(ProcessCommand::new("/bin/sleep").arg("60").spawn().unwrap());
+        let mut signaled = TestChild::sleep();
         let signal_identity =
             read_live_process_identity(signaled.0.id()).expect("signal child identity");
         kill(Pid::from_raw(signaled.0.id() as i32), Signal::SIGTERM).unwrap();
@@ -3847,13 +4500,12 @@ mod tests {
         );
         signal_record.phase = Some(TransitionPhase::Published);
         evidence.record(signal_record);
-        let _ = signaled.0.wait();
+        let _ = signaled.0.try_wait();
 
         // Both generations' exact loopback sockets and route entries are live.
         // Replacing one atomic ready state file therefore changes the tuple with
         // no unavailable observation or timing override.
-        let mut tuple_child =
-            TestChild(ProcessCommand::new("/bin/sleep").arg("60").spawn().unwrap());
+        let mut tuple_child = TestChild::sleep();
         let tuple_identity =
             read_live_process_identity(tuple_child.0.id()).expect("tuple child identity");
         let (observed_tx, observed_rx) = std::sync::mpsc::channel();
@@ -3918,8 +4570,7 @@ mod tests {
         // A genuinely absent dependency file produces an explicit absent tuple
         // marker while retaining the child's old launch assignments.
         fs::remove_file(&state_path).expect("remove the owned dependency state");
-        let mut missing_child =
-            TestChild(ProcessCommand::new("/bin/sleep").arg("60").spawn().unwrap());
+        let mut missing_child = TestChild::sleep();
         let missing_identity =
             read_live_process_identity(missing_child.0.id()).expect("missing-case child identity");
         let missing_wait = wait_for_host_child(
@@ -3962,8 +4613,7 @@ mod tests {
         // An unreadable declared state is recorded at the actual wait decision,
         // with its dependency name and explicit tuple marker.
         fs::write(&state_path, b"{not json").expect("make dependency state unreadable");
-        let mut inspection_child =
-            TestChild(ProcessCommand::new("/bin/sleep").arg("60").spawn().unwrap());
+        let mut inspection_child = TestChild::sleep();
         let inspection_identity =
             read_live_process_identity(inspection_child.0.id()).expect("inspection child identity");
         let inspection = wait_for_host_child(
