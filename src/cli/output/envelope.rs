@@ -16,6 +16,16 @@ pub fn emit_json_envelope_success_value(kind: &str, name: &str, result: serde_js
     print_json_payload(&payload);
 }
 
+pub(crate) fn emit_json_envelope_success_with_binary(
+    kind: &str,
+    name: &str,
+    result: serde_json::Value,
+    binary: serde_json::Value,
+) {
+    let payload = build_json_envelope_success_with_binary(kind, name, result, binary);
+    print_json_payload(&payload);
+}
+
 pub fn emit_json_envelope_error(
     exit_code: i32,
     kind: &str,
@@ -34,11 +44,20 @@ pub fn build_json_envelope_success(
     name: &str,
     result: serde_json::Value,
 ) -> serde_json::Value {
+    build_json_envelope_success_with_binary(kind, name, result, build_binary_metadata())
+}
+
+fn build_json_envelope_success_with_binary(
+    kind: &str,
+    name: &str,
+    result: serde_json::Value,
+    binary: serde_json::Value,
+) -> serde_json::Value {
     json!({
         "schema": "effigy.command.v1",
         "schema_version": 1,
         "ok": true,
-        "binary": build_binary_metadata(),
+        "binary": binary,
         "command": {
             "kind": kind,
             "name": name,

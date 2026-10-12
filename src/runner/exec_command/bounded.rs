@@ -139,6 +139,14 @@ pub(in crate::runner) struct BoundedStreamLimit {
     pub(in crate::runner) stderr_bytes: u64,
 }
 
+// Opt-in, thread-local recording for the full public-entry proof. This records
+// the actual limit passed to the production reader, without replacing clocks,
+// warming phases or changing release-build behavior.
+#[cfg(test)]
+std::thread_local! {
+    static CAPTURE_LIMIT_TRACE: std::cell::RefCell<Option<Vec<(BoundedCommandPhase, BoundedStreamLimit)>>> = const { std::cell::RefCell::new(None) };
+}
+
 /// Cumulative retention budget for one bounded container operation.
 ///
 /// A single absolute deadline and a single pair of stream budgets live here.
@@ -159,6 +167,26 @@ pub(in crate::runner) struct BoundedCommandBudget {
 }
 
 impl BoundedCommandBudget {
+    #[cfg(test)]
+    pub(in crate::runner) fn with_capture_limit_trace<T>(
+        run: impl FnOnce() -> T,
+    ) -> (T, Vec<(BoundedCommandPhase, BoundedStreamLimit)>) {
+        struct RestoreTrace;
+        impl Drop for RestoreTrace {
+            fn drop(&mut self) {
+                CAPTURE_LIMIT_TRACE.with(|trace| *trace.borrow_mut() = None);
+            }
+        }
+        CAPTURE_LIMIT_TRACE.with(|trace| {
+            assert!(trace.borrow().is_none(), "nested capture proof");
+            *trace.borrow_mut() = Some(Vec::new());
+        });
+        let _restore = RestoreTrace;
+        let result = run();
+        let trace = CAPTURE_LIMIT_TRACE.with(|trace| trace.borrow_mut().take().unwrap());
+        (result, trace)
+    }
+
     pub(in crate::runner) fn new(deadline: Instant, stdout_bytes: u64, stderr_bytes: u64) -> Self {
         Self {
             deadline,
@@ -247,19 +275,19 @@ impl BoundedCommandBudget {
                 self.preparation_captures += 1
             }
         }
-        let capture = run_command_capture_bounded(
-            repo_root,
-            program,
-            args,
-            stdin_file,
-            env,
-            BoundedStreamLimit {
-                deadline: self.deadline,
-                stdout_bytes: self.stdout_remaining,
-                stderr_bytes: self.stderr_remaining,
-            },
-        )
-        .map_err(|failure| BoundedScopedCaptureFailure { phase, failure })?;
+        let limit = BoundedStreamLimit {
+            deadline: self.deadline,
+            stdout_bytes: self.stdout_remaining,
+            stderr_bytes: self.stderr_remaining,
+        };
+        #[cfg(test)]
+        CAPTURE_LIMIT_TRACE.with(|trace| {
+            if let Some(trace) = trace.borrow_mut().as_mut() {
+                trace.push((phase, limit));
+            }
+        });
+        let capture = run_command_capture_bounded(repo_root, program, args, stdin_file, env, limit)
+            .map_err(|failure| BoundedScopedCaptureFailure { phase, failure })?;
         let stdout_bytes = capture.stdout.len() as u64;
         let stderr_bytes = capture.stderr.len() as u64;
         self.stdout_remaining = self.stdout_remaining.saturating_sub(stdout_bytes);
@@ -439,7 +467,15 @@ pub(in crate::runner) fn run_command_capture_bounded(
             }
         }
 
-        if exit_status.is_none() {
+        // Keep the leader unreaped while an inherited pipe writer can remain.
+        // Its PID/group therefore cannot be reused before owned cancellation.
+        let streams_complete = matches!(stdout_outcome, Some(StreamOutcome::Complete(_)))
+            && matches!(stderr_outcome, Some(StreamOutcome::Complete(_)));
+        if Instant::now() >= limit.deadline {
+            terminate_owned_group(&mut child);
+            return Err(BoundedCaptureFailure::Deadline);
+        }
+        if exit_status.is_none() && streams_complete {
             match child.try_wait() {
                 Ok(status) => exit_status = status,
                 Err(_) => {
@@ -471,7 +507,7 @@ pub(in crate::runner) fn run_command_capture_bounded(
                 });
             }
         }
-        if failure.is_none() && !channel_open {
+        if failure.is_none() && !channel_open && !streams_complete {
             // Both readers ended; whichever stream never reported a complete
             // outcome is incomplete.
             failure = Some(BoundedCaptureFailure::IncompleteOutput {
@@ -487,10 +523,6 @@ pub(in crate::runner) fn run_command_capture_bounded(
             return Err(failure);
         }
 
-        if Instant::now() >= limit.deadline {
-            terminate_owned_group(&mut child);
-            return Err(BoundedCaptureFailure::Deadline);
-        }
         thread::sleep(BOUNDED_POLL_INTERVAL);
     }
 }
@@ -527,14 +559,23 @@ fn outcome_failure(
 /// SIGTERM then SIGKILL the exact owned group with a fixed bounded grace, and
 /// reap the direct child. Runs whether or not the direct child already exited,
 /// so an inherited pipe writer inside the group cannot outlive the command.
-fn terminate_owned_group(child: &mut Child) {
-    effigy_process::terminate_process_tree(child.id(), false);
-    let grace = Instant::now() + BOUNDED_TERM_GRACE;
-    while Instant::now() < grace {
-        let _ = child.try_wait();
-        thread::sleep(BOUNDED_POLL_INTERVAL);
-    }
-    effigy_process::terminate_process_tree(child.id(), true);
+pub(super) fn terminate_owned_group(child: &mut Child) {
+    #[cfg(unix)]
+    let group = {
+        // Both callers create this group before exec and retain its unreaped
+        // leader. No process-table command, inferred group or reusable PID is
+        // needed to signal it. Never use killpg's platform-specific 0/1 forms.
+        let pid = i32::try_from(child.id()).expect("Unix child PID fits pid_t");
+        assert!(pid > 1, "owned capture leader cannot be PID 0 or 1");
+        let group = nix::unistd::Pid::from_raw(pid);
+        let _ = nix::sys::signal::killpg(group, nix::sys::signal::Signal::SIGTERM);
+        group
+    };
+    // Do not reap the leader between TERM and KILL: even a zombie reserves
+    // the PID/group while descendants may still hold inherited pipes open.
+    thread::sleep(BOUNDED_TERM_GRACE);
+    #[cfg(unix)]
+    let _ = nix::sys::signal::killpg(group, nix::sys::signal::Signal::SIGKILL);
     let _ = child.kill();
     let _ = child.wait();
 }
@@ -805,6 +846,64 @@ mod tests {
         assert_eq!(capture.status.code(), Some(3));
         assert_eq!(capture.stdout, b"out");
         assert_eq!(capture.stderr, b"err");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn closed_streams_still_wait_for_exit_or_deadline() {
+        let (_dir, program, args) = test_command("exec 1>&- 2>&-; exec /bin/sleep 30");
+        let error = run_command_capture_bounded(
+            Path::new("."),
+            &program,
+            &args,
+            None,
+            &[],
+            stream_limit(Instant::now() + Duration::from_millis(300), 64, 64),
+        )
+        .expect_err("EOF alone must not count as process completion");
+        assert!(
+            matches!(error, BoundedCaptureFailure::Deadline),
+            "{error:?}"
+        );
+
+        let (_dir, program, args) = test_command("exec 1>&- 2>&-; /bin/sleep 0.05; exit 7");
+        let capture = run_command_capture_bounded(
+            Path::new("."),
+            &program,
+            &args,
+            None,
+            &[],
+            stream_limit(Instant::now() + Duration::from_secs(30), 64, 64),
+        )
+        .expect("closed streams must preserve a later inner exit");
+        assert_eq!(capture.status.code(), Some(7));
+        assert!(capture.stdout.is_empty() && capture.stderr.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn inherited_writer_is_terminated_after_its_leader_exits() {
+        let dir = tempfile::tempdir().expect("owned writer fixture");
+        let marker = dir.path().join("writer-survived");
+        // A writer that survives cancellation would create this marker, then
+        // close its pipes. No guessed PID is used for cleanup or the assertion.
+        let script = format!(
+            "(/bin/sleep 2; printf survived > '{}') & exit 0",
+            marker.display()
+        );
+        let (_script_owner, program, args) = test_command(&script);
+        let error = run_command_capture_bounded(
+            dir.path(),
+            &program,
+            &args,
+            None,
+            &[],
+            stream_limit(Instant::now() + Duration::from_millis(300), 64, 64),
+        )
+        .expect_err("inherited pipe must expire");
+        assert!(matches!(error, BoundedCaptureFailure::Deadline));
+        thread::sleep(Duration::from_secs(2));
+        assert!(!marker.exists(), "writer survived owned group cancellation");
     }
 
     #[cfg(unix)]

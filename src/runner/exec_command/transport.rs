@@ -543,59 +543,63 @@ pub(in crate::runner) fn run_command_capture_until(
             command: command_label.clone(),
             error,
         })?;
-    let mut stdout = child.stdout.take().ok_or_else(|| {
-        RunnerError::task_invocation(format!("{command_label} stdout unavailable"))
-    })?;
-    let mut stderr = child.stderr.take().ok_or_else(|| {
-        RunnerError::task_invocation(format!("{command_label} stderr unavailable"))
-    })?;
+    let Some(mut stdout) = child.stdout.take() else {
+        super::bounded::terminate_owned_group(&mut child);
+        return Err(RunnerError::task_invocation(format!(
+            "{command_label} stdout unavailable"
+        )));
+    };
+    let Some(mut stderr) = child.stderr.take() else {
+        super::bounded::terminate_owned_group(&mut child);
+        return Err(RunnerError::task_invocation(format!(
+            "{command_label} stderr unavailable"
+        )));
+    };
     let stdout_reader = thread::spawn(move || {
         let mut bytes = Vec::new();
-        let _ = stdout.read_to_end(&mut bytes);
-        bytes
+        stdout.read_to_end(&mut bytes).map(|_| bytes)
     });
     let stderr_reader = thread::spawn(move || {
         let mut bytes = Vec::new();
-        let _ = stderr.read_to_end(&mut bytes);
-        bytes
+        stderr.read_to_end(&mut bytes).map(|_| bytes)
     });
     loop {
-        if let Some(status) = child
-            .try_wait()
-            .map_err(|error| RunnerError::TaskCommandLaunch {
-                command: command_label.clone(),
-                error,
-            })?
-        {
-            let stdout = stdout_reader.join().unwrap_or_default();
-            let stderr = stderr_reader.join().unwrap_or_default();
-            return Ok(Output {
-                status,
-                stdout,
-                stderr,
-            });
-        }
         if Instant::now() >= deadline {
-            effigy_process::terminate_process_tree(child.id(), false);
-            let grace_deadline = Instant::now() + Duration::from_millis(500);
-            loop {
-                if child.try_wait().ok().flatten().is_some() {
-                    break;
-                }
-                if Instant::now() >= grace_deadline {
-                    effigy_process::terminate_process_tree(child.id(), true);
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    break;
-                }
-                thread::sleep(Duration::from_millis(10));
-            }
-            let _ = stdout_reader.join();
-            let _ = stderr_reader.join();
+            super::bounded::terminate_owned_group(&mut child);
+            // An escaped, unowned writer must not defeat the caller deadline.
+            // Drop unfinished handles; never join a reader without observing EOF.
             return Err(RunnerError::task_invocation(format!(
                 "{command_label} timed out"
             )));
         }
+        if stdout_reader.is_finished() && stderr_reader.is_finished() {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    let stdout = stdout_reader.join().ok().and_then(Result::ok);
+                    let stderr = stderr_reader.join().ok().and_then(Result::ok);
+                    let (Some(stdout), Some(stderr)) = (stdout, stderr) else {
+                        return Err(RunnerError::task_invocation(format!(
+                            "{command_label} output unavailable"
+                        )));
+                    };
+                    return Ok(Output {
+                        status,
+                        stdout,
+                        stderr,
+                    });
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    super::bounded::terminate_owned_group(&mut child);
+                    return Err(RunnerError::TaskCommandLaunch {
+                        command: command_label,
+                        error,
+                    });
+                }
+            }
+        }
+        // Retain the leader until both readers finish. A reaped leader cannot
+        // anchor cancellation of an inherited writer's original process group.
         thread::sleep(Duration::from_millis(10));
     }
 }
@@ -722,5 +726,29 @@ mod capture_deadline_tests {
             started.elapsed() < Duration::from_secs(5),
             "deadline must kill the child instead of waiting out sleep 30"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn legacy_deadline_bounds_inherited_writer_final_drain() {
+        let temp = tempfile::tempdir().expect("owned legacy drain fixture");
+        let marker = temp.path().join("writer-survived");
+        let script = format!(
+            "(/bin/sleep 2; printf survived > '{}') & exit 0",
+            marker.display()
+        );
+        let started = Instant::now();
+        let error = run_command_capture_until(
+            temp.path(),
+            OsStr::new("/bin/sh"),
+            &[OsString::from("-c"), OsString::from(script)],
+            None,
+            Some(Instant::now() + Duration::from_millis(300)),
+        )
+        .expect_err("deadline covers final drain after leader exit");
+        assert!(error.to_string().contains("timed out"));
+        assert!(started.elapsed() < Duration::from_secs(2));
+        thread::sleep(Duration::from_secs(2));
+        assert!(!marker.exists(), "legacy writer survived cancellation");
     }
 }

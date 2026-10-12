@@ -103,6 +103,12 @@ During v0.x, MINOR bumps may include breaking changes.
   0.14.x releases without changing the support floor.
 
 ### Fixed
+
+- Keep JSON version identity consistent within one response while a local
+  checkout changes.
+- Bound final output draining after a client exits, and retain the owned
+  process-group leader until cancellation finishes so inherited writers are
+  terminated and the direct child is reaped.
 - Optional workspace mounts are now resolved after container preparation at
   the Compose up boundary. The bounded decision report distinguishes the
   submitted Compose spec from unverified runtime mount state, and missing

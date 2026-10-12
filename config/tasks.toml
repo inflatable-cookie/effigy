@@ -10,6 +10,7 @@
 
 # Common local commands
 "fmt:check" = "cargo fmt --all -- --check"
+"fmt:apply" = "cargo fmt --all"
 "build:release" = "cargo build --release --bin effigy"
 
 # Managed TUI startup must render and remain cancellable while ordered child
@@ -697,6 +698,33 @@
 "test:qa:fixture-help-identity" = [
   { id = "owned-help-identity-counterexample", run = "cargo nextest run -p effigy --test cli_output_tests --filter-expr 'test(cli_help_parity_is_stable_across_owned_checkout_identity_changes)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 120000 },
   { id = "help-and-version-caller-family", run = "cargo nextest run -p effigy --test cli_output_tests --filter-expr 'test(help_and_flags_tests::) & !test(cli_help_parity_is_stable_across_owned_checkout_identity_changes)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 120000 },
+]
+# One coherent audit matrix. Each constituent owns a distinct family; the
+# private-parent selector owns both identity counterexamples, so help excludes
+# those two cases here. No full QA or live runtime is part of this matrix.
+"test:audit:assurance-boundary" = [
+  { task = "check:audit:assurance-membership" },
+  { task = "test:container:bounded-exec" },
+  { task = "test:audit:assurance-boundary:compatibility" },
+]
+# Caller-family half of the matrix, also usable after capture checks settle.
+# Requires EFFIGY_HOST_RUN_PRIVATE_SERVER pointing to the reviewed private
+# Queue fixture checkout; fixture-parent-isolation refuses a missing path.
+"test:audit:assurance-boundary:compatibility" = [
+  { task = "test:qa:fixture-parent-isolation" },
+  { task = "test:doctor:git-timeout-proof" },
+  { id = "help-and-version-remaining-cases", run = "cargo nextest run -p effigy --test cli_output_tests --filter-expr 'test(help_and_flags_tests::) & !test(cli_help_parity_is_stable_across_owned_checkout_identity_changes) & !test(cli_version_json_uses_one_identity_snapshot_during_checkout_change)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 120000 },
+  { id = "metadata-and-process-caller-tests", run = "cargo nextest run -p effigy-core -p effigy-process -p effigy-host-run -p effigy --lib --filterset 'package(effigy-core) | package(effigy-process) | package(effigy-host-run) | test(cli::output::) | test(cli::version_dispatch::) | test(capture_deadline_tests::)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
+]
+"check:audit:assurance-membership" = [
+  { id = "capture-and-public-required-cases", run = "bash tests/scripts/assurance-boundary-tests.sh", timeout_ms = 600000 },
+]
+"check:audit:assurance-boundary" = [
+  { task = "fmt:check" },
+  { id = "assurance-compile", run = "cargo check -p effigy -p effigy-core -p effigy-process -p effigy-host-run -p effigy-scan -p effigy-codegraph -p effigy-bootstrap -p effigy-cli --all-targets --profile test", timeout_ms = 600000 },
+]
+"lint:audit:assurance-boundary" = [
+  { id = "assurance-strict-clippy", run = "cargo clippy -p effigy -p effigy-core -p effigy-process -p effigy-host-run -p effigy-scan -p effigy-codegraph -p effigy-bootstrap -p effigy-cli --all-targets -- -D warnings", timeout_ms = 600000 },
 ]
 "check:qa:fixture-parent-isolation:cli" = "cargo check -p effigy --test bootstrap_cli_tests --test env_schema_tests --test secrets_local_dev_cli_tests --test cli_output_tests --test host_scheduler_integration"
 "check:qa:fixture-parent-isolation" = "cargo clippy -p effigy -p effigy-bootstrap --all-targets -- -D warnings"
