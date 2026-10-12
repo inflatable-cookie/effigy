@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import selectors
 import signal
@@ -178,6 +179,7 @@ test -z "$(nerdctl ps -aq --filter name="$name")"
 test -z "$(nerdctl ps -aq --filter name="$sentinel")"
 sid=$(nerdctl run -d --name "$sentinel" --label io.effigy.fixture.owner=dfefc279 --entrypoint /bin/sh "$image" -c 'sleep 600')
 cid=$(nerdctl run -d --name "$name" --label io.effigy.fixture.owner=dfefc279 --env-file "$work/env" -p 127.0.0.1:9000:9000 -v "$work/data:/data" "$image")
+printf '{"ownedServerId":"%s","ownedSentinelId":"%s"}\n' "$cid" "$sid"
 printf '%s\n' "$cid" > "$work/server-id"
 printf '%s\n' "$sid" > "$work/sentinel-id"
 ready=0
@@ -189,9 +191,12 @@ test "$ready" = 1
 mark identity-shell-health
 nerdctl exec "$cid" minio --version > "$work/server-version"
 grep -q 'RELEASE.2025-09-07T16-13-09Z' "$work/server-version"
+grep -q '07c3a429bfed433e49018cb0f78a52145d4bedeb' "$work/server-version"
 nerdctl exec "$cid" mc --version > "$work/client-version"
 grep -q '2026-09-16' "$work/client-version"
+grep -q 'e952aa78f10a2b77dd525a2b7e3143bcda0cd377' "$work/client-version"
 nerdctl exec "$cid" /bin/sh -c 'test -x /usr/local/bin/minio && test -x /usr/local/bin/mc && test -d /data'
+nerdctl exec "$cid" mc ready local > "$work/packaged-health-result"
 mc() { nerdctl exec --env MC_CONFIG_DIR=/tmp/effigy-private-mc "$cid" mc "$@"; }
 mc alias set local http://127.0.0.1:9000 "$username" "$password" > "$work/alias-result"
 mc ready local > "$work/ready-result"
@@ -216,7 +221,7 @@ cat > "$work/cors.xml" <<'XML'
 XML
 nerdctl cp "$work/cors.xml" "$cid:/tmp/cors.xml"
 if mc --json cors set local/effigy-private-fixture /tmp/cors.xml > "$work/bucket-cors-refusal" 2>&1; then exit 61; fi
-grep -Eq 'NotImplemented|not implemented|not supported' "$work/bucket-cors-refusal"
+grep -Eq 'NotImplemented|functionality that is not implemented' "$work/bucket-cors-refusal"
 mark restart-persistence
 nerdctl stop --time 10 "$cid" > "$work/stop-result"
 nerdctl start "$cid" > "$work/start-result"
@@ -296,11 +301,19 @@ def run(receipt_path, root):
                            "bucket-cors-negative", "restart-persistence", "delete-failed-start", "owned-cleanup-sentinel", "preflight"}
                 result["guestPhases"] = [r["phase"] for r in records if set(r) == {"phase"} and r["phase"] in allowed]
                 for record in records:
+                    if set(record) == {"ownedServerId", "ownedSentinelId"}:
+                        if any(not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value) for value in record.values()):
+                            raise Refusal("native resource identities unavailable")
+                        if record["ownedServerId"] == record["ownedSentinelId"]:
+                            raise Refusal("native resource identities are not distinct")
+                        result["ownedGuestContainers"] = record
                     if set(record) == {"failedStep", "exit"} and record["failedStep"] in allowed and isinstance(record["exit"], int):
                         result["guestFailure"] = record
             except (ValueError, TypeError):
                 raise Refusal("native structured observations unavailable; output withheld") from None
             require(code, "native exact-release capability proof")
+            if "ownedGuestContainers" not in result:
+                raise Refusal("native proof lacks exact owned guest container identities")
             observations = records[-1]
             expected = {"serverRelease": "RELEASE.2025-09-07T16-13-09Z", "clientPublisher": "PGSTY",
                         "clientRelease": "RELEASE.2026-09-16T00-00-00Z", "readiness": True,
