@@ -6,7 +6,11 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::runner::command_context::current_working_dir;
-use crate::runner::exec_command::copy_file_into_service;
+use crate::runner::container_command::{bounded_failure_error, bounded_phase_error};
+use crate::runner::exec_command::{
+    copy_file_into_service, copy_file_into_service_bounded, BoundedCapture, BoundedCaptureFailure,
+    BoundedCommandBudget, BoundedCommandPhase, BoundedScopedCaptureFailure,
+};
 
 use super::{workspace, RunnerError};
 
@@ -323,6 +327,103 @@ pub(super) fn ensure_workspace_effigy_available_for_policy(
     Ok(())
 }
 
+pub(super) fn ensure_workspace_effigy_available_for_policy_bounded(
+    workspace_repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    budget: &mut BoundedCommandBudget,
+) -> Result<(), RunnerError> {
+    let expected_install_identity =
+        expected_workspace_effigy_install_identity(workspace_repo_root)?;
+    if let Some(expected_identity) = expected_install_identity.as_deref() {
+        let installed_identity = probe_installed_workspace_effigy_active_version_bounded(
+            workspace_repo_root,
+            policy,
+            budget,
+        )?;
+        if workspace_effigy_install_is_current(installed_identity.as_deref(), expected_identity) {
+            return Ok(());
+        }
+    }
+
+    let target = probe_workspace_linux_target_bounded(workspace_repo_root, policy, budget)?;
+    let artifact = ensure_linux_workspace_effigy_artifact_bounded(
+        workspace_repo_root,
+        target,
+        policy,
+        budget,
+    )?;
+    let active_version_source = workspace_effigy_active_version_file(&artifact);
+    let active_version = read_trimmed_workspace_effigy_active_version(&active_version_source)?;
+    let install_identity_source = workspace_effigy_install_identity_file(&artifact);
+    let install_identity = read_trimmed_workspace_effigy_active_version(&install_identity_source)?;
+    let staging_path = render_workspace_effigy_staging_path();
+    let active_version_staging_path = format!("{staging_path}.active-version");
+    let install_identity_staging_path = format!("{staging_path}.install-identity");
+    let mut progress = workspace::WorkspaceTransientProgressReporter::new(
+        false,
+        "installing linux effigy into workspace container",
+        false,
+    );
+    let copy_result = copy_file_into_service_bounded(
+        workspace_repo_root,
+        policy,
+        policy.primary_service.as_str(),
+        &artifact,
+        &staging_path,
+        budget,
+    );
+    if let Err(error) = copy_result {
+        progress.finish(false);
+        return Err(error);
+    }
+    if active_version.is_some() {
+        let copy_result = copy_file_into_service_bounded(
+            workspace_repo_root,
+            policy,
+            policy.primary_service.as_str(),
+            &active_version_source,
+            &active_version_staging_path,
+            budget,
+        );
+        if let Err(error) = copy_result {
+            progress.finish(false);
+            return Err(error);
+        }
+    }
+    if install_identity.is_some() {
+        let copy_result = copy_file_into_service_bounded(
+            workspace_repo_root,
+            policy,
+            policy.primary_service.as_str(),
+            &install_identity_source,
+            &install_identity_staging_path,
+            budget,
+        );
+        if let Err(error) = copy_result {
+            progress.finish(false);
+            return Err(error);
+        }
+    }
+    let install_result = run_workspace_effigy_install_bounded(
+        workspace_repo_root,
+        policy,
+        &staging_path,
+        active_version
+            .as_ref()
+            .map(|_| active_version_staging_path.as_str()),
+        install_identity
+            .as_ref()
+            .map(|_| install_identity_staging_path.as_str()),
+        budget,
+    );
+    if let Err(error) = install_result {
+        progress.finish(false);
+        return Err(error);
+    }
+    progress.finish(true);
+    Ok(())
+}
+
 pub(super) fn read_trimmed_workspace_effigy_active_version(
     path: &Path,
 ) -> Result<Option<String>, RunnerError> {
@@ -372,6 +473,59 @@ pub(super) fn probe_installed_workspace_effigy_active_version(
     Ok(Some(trimmed))
 }
 
+fn run_workspace_compose_capture_bounded(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    args: Vec<OsString>,
+    budget: &mut BoundedCommandBudget,
+) -> Result<BoundedCapture, RunnerError> {
+    let plan = effigy_runtime::container_manager::compose_invocation_plan_from_args(
+        repo_root,
+        policy,
+        args,
+        effigy_containers::ContainerAction::Exec,
+        "workspace preparation",
+    )
+    .map_err(|_| {
+        bounded_phase_error(
+            policy,
+            policy.primary_service.as_str(),
+            budget,
+            BoundedCommandPhase::WorkspacePreparation,
+            "workspace_preparation_failed",
+            "bounded container command could not resolve workspace preparation",
+            None,
+        )
+    })?;
+    budget
+        .run_plan(&plan, BoundedCommandPhase::WorkspacePreparation)
+        .map_err(|failure| {
+            bounded_failure_error(policy, policy.primary_service.as_str(), budget, failure)
+        })
+}
+
+fn probe_installed_workspace_effigy_active_version_bounded(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    budget: &mut BoundedCommandBudget,
+) -> Result<Option<String>, RunnerError> {
+    let mut args = effigy_containers::compose::compose_args(
+        policy,
+        ["exec", "-T", policy.primary_service.as_str(), "sh", "-lc"],
+    );
+    args.push(OsString::from(format!(
+        "cat {} 2>/dev/null || cat {} 2>/dev/null || true",
+        shell_quote(CONTAINER_WORKSPACE_EFFIGY_INSTALL_IDENTITY_PATH),
+        shell_quote(CONTAINER_WORKSPACE_EFFIGY_ACTIVE_VERSION_PATH)
+    )));
+    let output = run_workspace_compose_capture_bounded(repo_root, policy, args, budget)?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    let trimmed = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    Ok((!trimmed.is_empty()).then_some(trimmed))
+}
+
 pub(super) fn workspace_effigy_install_is_current(
     installed_version: Option<&str>,
     expected_version: &str,
@@ -418,6 +572,39 @@ pub(super) fn run_workspace_effigy_install(
         ),
         None => format!("failed to install effigy into workspace service `{service}`"),
     }))
+}
+
+fn run_workspace_effigy_install_bounded(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    staging_path: &str,
+    active_version_staging_path: Option<&str>,
+    install_identity_staging_path: Option<&str>,
+    budget: &mut BoundedCommandBudget,
+) -> Result<(), RunnerError> {
+    let service = policy.primary_service.as_str();
+    let mut args = effigy_containers::compose::compose_args(
+        policy,
+        ["exec", "-T", "-u", "0", service, "sh", "-lc"],
+    );
+    args.push(OsString::from(render_workspace_effigy_install_command(
+        staging_path,
+        active_version_staging_path,
+        install_identity_staging_path,
+    )));
+    let output = run_workspace_compose_capture_bounded(repo_root, policy, args, budget)?;
+    if output.status.success() {
+        return Ok(());
+    }
+    Err(bounded_phase_error(
+        policy,
+        service,
+        budget,
+        BoundedCommandPhase::WorkspacePreparation,
+        "workspace_preparation_failed",
+        "bounded container command could not install Effigy into the workspace service",
+        output.status.code(),
+    ))
 }
 
 pub(super) fn render_workspace_effigy_install_command(
@@ -495,6 +682,42 @@ pub(super) fn probe_workspace_linux_target(
     })
 }
 
+fn probe_workspace_linux_target_bounded(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    budget: &mut BoundedCommandBudget,
+) -> Result<LinuxWorkspaceTarget, RunnerError> {
+    let mut args = effigy_containers::compose::compose_args(
+        policy,
+        ["exec", "-T", policy.primary_service.as_str(), "sh", "-lc"],
+    );
+    args.push(OsString::from("uname -m"));
+    let output = run_workspace_compose_capture_bounded(repo_root, policy, args, budget)?;
+    if !output.status.success() {
+        return Err(bounded_phase_error(
+            policy,
+            policy.primary_service.as_str(),
+            budget,
+            BoundedCommandPhase::WorkspacePreparation,
+            "workspace_preparation_failed",
+            "bounded container command could not inspect the workspace architecture",
+            output.status.code(),
+        ));
+    }
+    let machine = String::from_utf8_lossy(&output.stdout);
+    LinuxWorkspaceTarget::from_machine(machine.trim()).ok_or_else(|| {
+        bounded_phase_error(
+            policy,
+            policy.primary_service.as_str(),
+            budget,
+            BoundedCommandPhase::WorkspacePreparation,
+            "workspace_preparation_failed",
+            "bounded container command received an unsupported workspace architecture",
+            None,
+        )
+    })
+}
+
 pub(super) fn ensure_linux_workspace_effigy_artifact(
     workspace_repo_root: &Path,
     target: LinuxWorkspaceTarget,
@@ -516,6 +739,132 @@ pub(super) fn ensure_linux_workspace_effigy_artifact(
     }
 
     ensure_downloaded_linux_workspace_effigy_artifact(target)
+}
+
+fn ensure_linux_workspace_effigy_artifact_bounded(
+    workspace_repo_root: &Path,
+    target: LinuxWorkspaceTarget,
+    policy: &EffectiveContainerPolicy,
+    budget: &mut BoundedCommandBudget,
+) -> Result<PathBuf, RunnerError> {
+    let host_binary = std::env::current_exe().map_err(RunnerError::Cwd)?;
+    match configured_linux_workspace_artifact_source()? {
+        LinuxWorkspaceArtifactSource::Download => {
+            return ensure_downloaded_linux_workspace_effigy_artifact_bounded(
+                target, policy, budget,
+            );
+        }
+        LinuxWorkspaceArtifactSource::Local | LinuxWorkspaceArtifactSource::Auto => {}
+    }
+    if let Some(effigy_repo_root) = resolve_local_effigy_repo_root(workspace_repo_root)? {
+        persist_effigy_source_repo_root(&effigy_repo_root)?;
+        return ensure_local_linux_workspace_effigy_artifact_bounded(
+            &host_binary,
+            &effigy_repo_root,
+            target,
+            policy,
+            budget,
+        );
+    }
+    ensure_downloaded_linux_workspace_effigy_artifact_bounded(target, policy, budget)
+}
+
+fn ensure_local_linux_workspace_effigy_artifact_bounded(
+    host_binary: &Path,
+    effigy_repo_root: &Path,
+    target: LinuxWorkspaceTarget,
+    policy: &EffectiveContainerPolicy,
+    budget: &mut BoundedCommandBudget,
+) -> Result<PathBuf, RunnerError> {
+    let artifact_path = effigy_repo_root.join(target.artifact_relative_path());
+    let freshness_anchor =
+        resolve_local_workspace_effigy_freshness_anchor(host_binary, effigy_repo_root);
+    let install_identity = workspace_effigy_local_install_identity(&freshness_anchor)?;
+    let needs_refresh =
+        linux_workspace_effigy_artifact_needs_refresh(&freshness_anchor, &artifact_path, target);
+
+    if needs_refresh {
+        if linux_workspace_effigy_artifact_is_reusable(&artifact_path, target) {
+            workspace::emit_workspace_info(
+                &format!(
+                    "reusing existing linux effigy artifact at `{}`",
+                    artifact_path.display()
+                ),
+                false,
+            );
+            return finalize_reused_linux_workspace_effigy_artifact(&artifact_path);
+        }
+        if wait_for_in_progress_linux_workspace_artifact_build_bounded(
+            effigy_repo_root,
+            &freshness_anchor,
+            &artifact_path,
+            target,
+            policy,
+            budget,
+        )? {
+            ensure_workspace_effigy_active_version_file(
+                &artifact_path,
+                &effigy_core::build_info::active_version(),
+            )?;
+            ensure_workspace_effigy_install_identity_file(&artifact_path, &install_identity)?;
+            return Ok(artifact_path);
+        }
+        workspace::emit_workspace_info(
+            "building linux effigy artifact for workspace container access",
+            false,
+        );
+        let built = run_linux_workspace_effigy_artifact_build_bounded(
+            host_binary,
+            effigy_repo_root,
+            target,
+            policy,
+            budget,
+        )?;
+        if !built {
+            if wait_for_in_progress_linux_workspace_artifact_build_bounded(
+                effigy_repo_root,
+                &freshness_anchor,
+                &artifact_path,
+                target,
+                policy,
+                budget,
+            )? {
+                ensure_workspace_effigy_active_version_file(
+                    &artifact_path,
+                    &effigy_core::build_info::active_version(),
+                )?;
+                ensure_workspace_effigy_install_identity_file(&artifact_path, &install_identity)?;
+                return Ok(artifact_path);
+            }
+            return Err(bounded_phase_error(
+                policy,
+                policy.primary_service.as_str(),
+                budget,
+                BoundedCommandPhase::WorkspacePreparation,
+                "workspace_preparation_failed",
+                "bounded container command could not build the workspace artifact",
+                None,
+            ));
+        }
+    }
+
+    if !artifact_path.is_file() {
+        return Err(bounded_phase_error(
+            policy,
+            policy.primary_service.as_str(),
+            budget,
+            BoundedCommandPhase::WorkspacePreparation,
+            "workspace_preparation_failed",
+            "bounded container command could not prepare the workspace artifact",
+            None,
+        ));
+    }
+    ensure_workspace_effigy_active_version_file(
+        &artifact_path,
+        &effigy_core::build_info::active_version(),
+    )?;
+    ensure_workspace_effigy_install_identity_file(&artifact_path, &install_identity)?;
+    Ok(artifact_path)
 }
 
 pub(super) fn resolve_local_effigy_repo_root(
@@ -803,6 +1152,56 @@ pub(super) fn wait_for_in_progress_linux_workspace_artifact_build(
     }
 }
 
+fn wait_for_in_progress_linux_workspace_artifact_build_bounded(
+    effigy_repo_root: &Path,
+    freshness_anchor: &Path,
+    artifact_path: &Path,
+    target: LinuxWorkspaceTarget,
+    policy: &EffectiveContainerPolicy,
+    budget: &mut BoundedCommandBudget,
+) -> Result<bool, RunnerError> {
+    let lock_path = linux_workspace_artifact_lock_path(effigy_repo_root);
+    if !lock_path.exists() {
+        return Ok(false);
+    }
+    let wait_deadline = std::time::Instant::now() + LINUX_WORKSPACE_ARTIFACT_LOCK_WAIT_TIMEOUT;
+    loop {
+        let Some(remaining) = budget.remaining_time() else {
+            return Err(bounded_failure_error(
+                policy,
+                policy.primary_service.as_str(),
+                budget,
+                BoundedScopedCaptureFailure {
+                    phase: BoundedCommandPhase::WorkspacePreparation,
+                    failure: BoundedCaptureFailure::Deadline,
+                },
+            ));
+        };
+        if !linux_workspace_effigy_artifact_needs_refresh(freshness_anchor, artifact_path, target) {
+            return Ok(true);
+        }
+        if std::time::Instant::now() >= wait_deadline {
+            return Err(bounded_phase_error(
+                policy,
+                policy.primary_service.as_str(),
+                budget,
+                BoundedCommandPhase::WorkspacePreparation,
+                "workspace_preparation_timeout",
+                "bounded container command timed out waiting for workspace artifact preparation",
+                None,
+            ));
+        }
+        if !lock_path.exists() {
+            return Ok(!linux_workspace_effigy_artifact_needs_refresh(
+                freshness_anchor,
+                artifact_path,
+                target,
+            ));
+        }
+        std::thread::sleep(remaining.min(LINUX_WORKSPACE_ARTIFACT_LOCK_WAIT_POLL_INTERVAL));
+    }
+}
+
 pub(super) fn resolve_local_workspace_effigy_freshness_anchor(
     host_binary: &Path,
     effigy_repo_root: &Path,
@@ -862,6 +1261,59 @@ pub(super) fn ensure_downloaded_linux_workspace_effigy_artifact(
         false,
     );
     download_linux_workspace_effigy_release(&url, &cache_path)?;
+    ensure_workspace_effigy_active_version_file(
+        &cache_path,
+        &effigy_core::build_info::active_version(),
+    )?;
+    ensure_workspace_effigy_install_identity_file(&cache_path, &install_identity)?;
+    Ok(cache_path)
+}
+
+fn ensure_downloaded_linux_workspace_effigy_artifact_bounded(
+    target: LinuxWorkspaceTarget,
+    policy: &EffectiveContainerPolicy,
+    budget: &mut BoundedCommandBudget,
+) -> Result<PathBuf, RunnerError> {
+    let cache_path = linux_workspace_effigy_cache_path(target)?;
+    let install_identity = workspace_effigy_release_install_identity();
+    if cache_path.is_file() {
+        ensure_workspace_effigy_active_version_file(
+            &cache_path,
+            &effigy_core::build_info::active_version(),
+        )?;
+        ensure_workspace_effigy_install_identity_file(&cache_path, &install_identity)?;
+        return Ok(cache_path);
+    }
+
+    let parent = cache_path.parent().ok_or_else(|| {
+        bounded_phase_error(
+            policy,
+            policy.primary_service.as_str(),
+            budget,
+            BoundedCommandPhase::WorkspacePreparation,
+            "workspace_preparation_failed",
+            "bounded container command could not prepare the workspace artifact cache",
+            None,
+        )
+    })?;
+    std::fs::create_dir_all(parent).map_err(|_| {
+        bounded_phase_error(
+            policy,
+            policy.primary_service.as_str(),
+            budget,
+            BoundedCommandPhase::WorkspacePreparation,
+            "workspace_preparation_failed",
+            "bounded container command could not prepare the workspace artifact cache",
+            None,
+        )
+    })?;
+
+    let url = linux_workspace_effigy_release_url(target);
+    workspace::emit_workspace_info(
+        "downloading linux effigy release artifact for workspace preparation",
+        false,
+    );
+    download_linux_workspace_effigy_release_bounded(&url, &cache_path, policy, budget)?;
     ensure_workspace_effigy_active_version_file(
         &cache_path,
         &effigy_core::build_info::active_version(),
@@ -1044,6 +1496,162 @@ pub(super) fn download_linux_workspace_effigy_release(
     Ok(())
 }
 
+fn download_linux_workspace_effigy_release_bounded(
+    url: &str,
+    dest: &Path,
+    policy: &EffectiveContainerPolicy,
+    budget: &mut BoundedCommandBudget,
+) -> Result<(), RunnerError> {
+    let client = reqwest::blocking::Client::builder().build().map_err(|_| {
+        bounded_phase_error(
+            policy,
+            policy.primary_service.as_str(),
+            budget,
+            BoundedCommandPhase::WorkspacePreparation,
+            "workspace_preparation_failed",
+            "bounded container command could not initialize workspace artifact download",
+            None,
+        )
+    })?;
+    let timeout = budget.remaining_time().ok_or_else(|| {
+        bounded_failure_error(
+            policy,
+            policy.primary_service.as_str(),
+            budget,
+            BoundedScopedCaptureFailure {
+                phase: BoundedCommandPhase::WorkspacePreparation,
+                failure: BoundedCaptureFailure::Deadline,
+            },
+        )
+    })?;
+    let response = client
+        .get(url)
+        .timeout(timeout)
+        .send()
+        .and_then(|response| response.error_for_status())
+        .map_err(|_| {
+            if budget.remaining_time().is_none() {
+                bounded_failure_error(
+                    policy,
+                    policy.primary_service.as_str(),
+                    budget,
+                    BoundedScopedCaptureFailure {
+                        phase: BoundedCommandPhase::WorkspacePreparation,
+                        failure: BoundedCaptureFailure::Deadline,
+                    },
+                )
+            } else {
+                bounded_phase_error(
+                    policy,
+                    policy.primary_service.as_str(),
+                    budget,
+                    BoundedCommandPhase::WorkspacePreparation,
+                    "workspace_preparation_failed",
+                    "bounded container command could not download the workspace artifact",
+                    None,
+                )
+            }
+        })?;
+    if budget.remaining_time().is_none() {
+        return Err(bounded_failure_error(
+            policy,
+            policy.primary_service.as_str(),
+            budget,
+            BoundedScopedCaptureFailure {
+                phase: BoundedCommandPhase::WorkspacePreparation,
+                failure: BoundedCaptureFailure::Deadline,
+            },
+        ));
+    }
+    let bytes = response.bytes().map_err(|_| {
+        if budget.remaining_time().is_none() {
+            bounded_failure_error(
+                policy,
+                policy.primary_service.as_str(),
+                budget,
+                BoundedScopedCaptureFailure {
+                    phase: BoundedCommandPhase::WorkspacePreparation,
+                    failure: BoundedCaptureFailure::Deadline,
+                },
+            )
+        } else {
+            bounded_phase_error(
+                policy,
+                policy.primary_service.as_str(),
+                budget,
+                BoundedCommandPhase::WorkspacePreparation,
+                "workspace_preparation_failed",
+                "bounded container command could not read the workspace artifact",
+                None,
+            )
+        }
+    })?;
+    if budget.remaining_time().is_none() {
+        return Err(bounded_failure_error(
+            policy,
+            policy.primary_service.as_str(),
+            budget,
+            BoundedScopedCaptureFailure {
+                phase: BoundedCommandPhase::WorkspacePreparation,
+                failure: BoundedCaptureFailure::Deadline,
+            },
+        ));
+    }
+    let tmp_path = dest.with_extension("tmp");
+    std::fs::write(&tmp_path, &bytes).map_err(|_| {
+        bounded_phase_error(
+            policy,
+            policy.primary_service.as_str(),
+            budget,
+            BoundedCommandPhase::WorkspacePreparation,
+            "workspace_preparation_failed",
+            "bounded container command could not save the workspace artifact",
+            None,
+        )
+    })?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = std::fs::metadata(&tmp_path)
+            .map_err(|_| {
+                bounded_phase_error(
+                    policy,
+                    policy.primary_service.as_str(),
+                    budget,
+                    BoundedCommandPhase::WorkspacePreparation,
+                    "workspace_preparation_failed",
+                    "bounded container command could not set workspace artifact permissions",
+                    None,
+                )
+            })?
+            .permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&tmp_path, permissions).map_err(|_| {
+            bounded_phase_error(
+                policy,
+                policy.primary_service.as_str(),
+                budget,
+                BoundedCommandPhase::WorkspacePreparation,
+                "workspace_preparation_failed",
+                "bounded container command could not set workspace artifact permissions",
+                None,
+            )
+        })?;
+    }
+    std::fs::rename(&tmp_path, dest).map_err(|_| {
+        bounded_phase_error(
+            policy,
+            policy.primary_service.as_str(),
+            budget,
+            BoundedCommandPhase::WorkspacePreparation,
+            "workspace_preparation_failed",
+            "bounded container command could not publish the workspace artifact",
+            None,
+        )
+    })?;
+    Ok(())
+}
+
 pub(super) fn linux_workspace_effigy_artifact_needs_refresh(
     host_binary: &Path,
     artifact_path: &Path,
@@ -1105,4 +1713,32 @@ pub(super) fn run_linux_workspace_effigy_artifact_build(
         effigy_repo_root.display(),
         status
     )))
+}
+
+fn run_linux_workspace_effigy_artifact_build_bounded(
+    host_binary: &Path,
+    effigy_repo_root: &Path,
+    target: LinuxWorkspaceTarget,
+    policy: &EffectiveContainerPolicy,
+    budget: &mut BoundedCommandBudget,
+) -> Result<bool, RunnerError> {
+    let args = [OsString::from("workspace:linux:artifact")];
+    let mut env = crate::runner::secret_session::secret_passphrase_child_env();
+    env.push((
+        OsString::from("EFFIGY_LINUX_RELEASE_TRIPLE"),
+        OsString::from(target.release_triple()),
+    ));
+    let output = budget
+        .run_command(
+            effigy_repo_root,
+            host_binary.as_os_str(),
+            &args,
+            None,
+            &env,
+            BoundedCommandPhase::WorkspacePreparation,
+        )
+        .map_err(|failure| {
+            bounded_failure_error(policy, policy.primary_service.as_str(), budget, failure)
+        })?;
+    Ok(output.status.success())
 }

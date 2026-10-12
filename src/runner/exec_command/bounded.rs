@@ -103,10 +103,35 @@ pub(in crate::runner) enum BoundedCaptureFailure {
     /// The reader finished without a complete outcome for a stream.
     IncompleteOutput { stream: BoundedStream },
     /// The command could not be launched at all.
-    Launch { label: String, error: String },
+    Launch,
 }
 
-/// One attempt's absolute deadline and per-stream remaining budgets.
+/// Operation phase for a subprocess captured by one bounded container shell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::runner) enum BoundedCommandPhase {
+    RuntimeDiscovery,
+    WorkspacePreparation,
+    CommandExecution,
+}
+
+impl BoundedCommandPhase {
+    pub(in crate::runner) fn label(self) -> &'static str {
+        match self {
+            Self::RuntimeDiscovery => "runtime_discovery",
+            Self::WorkspacePreparation => "workspace_preparation",
+            Self::CommandExecution => "command_execution",
+        }
+    }
+}
+
+/// A bounded capture failure tagged with the operation phase that launched it.
+#[derive(Debug)]
+pub(in crate::runner) struct BoundedScopedCaptureFailure {
+    pub(in crate::runner) phase: BoundedCommandPhase,
+    pub(in crate::runner) failure: BoundedCaptureFailure,
+}
+
+/// One bounded operation's absolute deadline and per-stream remaining budgets.
 #[derive(Debug, Clone, Copy)]
 pub(in crate::runner) struct BoundedStreamLimit {
     pub(in crate::runner) deadline: Instant,
@@ -128,6 +153,9 @@ pub(in crate::runner) struct BoundedCommandBudget {
     stdout_retained: u64,
     stderr_retained: u64,
     attempts: u32,
+    preparation_captures: u32,
+    preparation_stdout_retained: u64,
+    preparation_stderr_retained: u64,
 }
 
 impl BoundedCommandBudget {
@@ -139,6 +167,9 @@ impl BoundedCommandBudget {
             stdout_retained: 0,
             stderr_retained: 0,
             attempts: 0,
+            preparation_captures: 0,
+            preparation_stdout_retained: 0,
+            preparation_stderr_retained: 0,
         }
     }
 
@@ -154,40 +185,91 @@ impl BoundedCommandBudget {
         self.attempts
     }
 
+    pub(in crate::runner) fn preparation_captures(&self) -> u32 {
+        self.preparation_captures
+    }
+
+    pub(in crate::runner) fn preparation_stdout_retained(&self) -> u64 {
+        self.preparation_stdout_retained
+    }
+
+    pub(in crate::runner) fn preparation_stderr_retained(&self) -> u64 {
+        self.preparation_stderr_retained
+    }
+
+    pub(in crate::runner) fn remaining_time(&self) -> Option<Duration> {
+        let remaining = self.deadline.saturating_duration_since(Instant::now());
+        (!remaining.is_zero()).then_some(remaining)
+    }
+
     /// Run one resolved compose plan within the remaining budget and account
-    /// its retained bytes cumulatively.
+    /// its retained bytes cumulatively for the selected phase.
     ///
-    /// The plan program and argv are executed exactly as resolved. The bounded
-    /// opt-in path deliberately does not take the Colima direct-exec branch:
-    /// that branch performs a preparatory `compose ps` capture, while here
-    /// every command-output path in the operation is this bounded reader.
+    /// The plan program and argv are executed exactly as resolved. In
+    /// particular, the bounded command path does not use Colima's legacy
+    /// direct-exec resolver; bounded preparation captures are explicit calls
+    /// through this same budgeted reader.
     pub(in crate::runner) fn run_plan(
         &mut self,
         plan: &ContainerComposeInvocationPlan,
-    ) -> Result<BoundedCapture, BoundedCaptureFailure> {
-        // An expired deadline refuses before any spawn, so it is not counted as
-        // an attempt.
-        if Instant::now() >= self.deadline {
-            return Err(BoundedCaptureFailure::Deadline);
-        }
-        self.attempts += 1;
-        let capture = run_command_capture_bounded(
+        phase: BoundedCommandPhase,
+    ) -> Result<BoundedCapture, BoundedScopedCaptureFailure> {
+        self.run_command(
             &plan.repo_root,
             plan.program.as_os_str(),
             &plan.args,
             None,
+            &[],
+            phase,
+        )
+    }
+
+    pub(in crate::runner) fn run_command(
+        &mut self,
+        repo_root: &Path,
+        program: &OsStr,
+        args: &[OsString],
+        stdin_file: Option<&Path>,
+        env: &[(OsString, OsString)],
+        phase: BoundedCommandPhase,
+    ) -> Result<BoundedCapture, BoundedScopedCaptureFailure> {
+        // An expired deadline refuses before any spawn, so it is not counted as
+        // an attempt.
+        if Instant::now() >= self.deadline {
+            return Err(BoundedScopedCaptureFailure {
+                phase,
+                failure: BoundedCaptureFailure::Deadline,
+            });
+        }
+        match phase {
+            BoundedCommandPhase::CommandExecution => self.attempts += 1,
+            BoundedCommandPhase::RuntimeDiscovery | BoundedCommandPhase::WorkspacePreparation => {
+                self.preparation_captures += 1
+            }
+        }
+        let capture = run_command_capture_bounded(
+            repo_root,
+            program,
+            args,
+            stdin_file,
+            env,
             BoundedStreamLimit {
                 deadline: self.deadline,
                 stdout_bytes: self.stdout_remaining,
                 stderr_bytes: self.stderr_remaining,
             },
-        )?;
+        )
+        .map_err(|failure| BoundedScopedCaptureFailure { phase, failure })?;
         let stdout_bytes = capture.stdout.len() as u64;
         let stderr_bytes = capture.stderr.len() as u64;
         self.stdout_remaining = self.stdout_remaining.saturating_sub(stdout_bytes);
         self.stderr_remaining = self.stderr_remaining.saturating_sub(stderr_bytes);
         self.stdout_retained += stdout_bytes;
         self.stderr_retained += stderr_bytes;
+        if phase != BoundedCommandPhase::CommandExecution {
+            self.preparation_stdout_retained += stdout_bytes;
+            self.preparation_stderr_retained += stderr_bytes;
+        }
         Ok(capture)
     }
 }
@@ -267,27 +349,22 @@ pub(in crate::runner) fn run_command_capture_bounded(
     program: &OsStr,
     args: &[OsString],
     stdin_file: Option<&Path>,
+    env: &[(OsString, OsString)],
     limit: BoundedStreamLimit,
 ) -> Result<BoundedCapture, BoundedCaptureFailure> {
     let resolved_program = resolve_host_program(program);
-    let label = format!(
-        "{} {}",
-        resolved_program.to_string_lossy(),
-        render_args(args)
-    );
     if Instant::now() >= limit.deadline {
         return Err(BoundedCaptureFailure::Deadline);
     }
 
     let mut command = ProcessCommand::new(&resolved_program);
     command.current_dir(repo_root).args(args);
+    for (key, value) in env {
+        command.env(key, value);
+    }
     match stdin_file {
         Some(path) => {
-            let file =
-                std::fs::File::open(path).map_err(|error| BoundedCaptureFailure::Launch {
-                    label: label.clone(),
-                    error: error.to_string(),
-                })?;
+            let file = std::fs::File::open(path).map_err(|_| BoundedCaptureFailure::Launch)?;
             command.stdin(Stdio::from(file));
         }
         None => {
@@ -307,27 +384,16 @@ pub(in crate::runner) fn run_command_capture_bounded(
                 .map_err(std::io::Error::from)
         });
     }
-    let mut child = command
-        .spawn()
-        .map_err(|error| BoundedCaptureFailure::Launch {
-            label: label.clone(),
-            error: error.to_string(),
-        })?;
+    let mut child = command.spawn().map_err(|_| BoundedCaptureFailure::Launch)?;
 
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| BoundedCaptureFailure::Launch {
-            label: label.clone(),
-            error: "stdout pipe unavailable".to_owned(),
-        })?;
-    let stderr = child
-        .stderr
-        .take()
-        .ok_or_else(|| BoundedCaptureFailure::Launch {
-            label: label.clone(),
-            error: "stderr pipe unavailable".to_owned(),
-        })?;
+    let Some(stdout) = child.stdout.take() else {
+        terminate_owned_group(&mut child);
+        return Err(BoundedCaptureFailure::Launch);
+    };
+    let Some(stderr) = child.stderr.take() else {
+        terminate_owned_group(&mut child);
+        return Err(BoundedCaptureFailure::Launch);
+    };
 
     let stdout_overflow = Arc::new(AtomicBool::new(false));
     let stderr_overflow = Arc::new(AtomicBool::new(false));
@@ -374,12 +440,13 @@ pub(in crate::runner) fn run_command_capture_bounded(
         }
 
         if exit_status.is_none() {
-            exit_status = child
-                .try_wait()
-                .map_err(|error| BoundedCaptureFailure::Launch {
-                    label: label.clone(),
-                    error: error.to_string(),
-                })?;
+            match child.try_wait() {
+                Ok(status) => exit_status = status,
+                Err(_) => {
+                    terminate_owned_group(&mut child);
+                    return Err(BoundedCaptureFailure::Launch);
+                }
+            }
         }
 
         // A harvested overflow or read failure is final regardless of whether
@@ -470,13 +537,6 @@ fn terminate_owned_group(child: &mut Child) {
     effigy_process::terminate_process_tree(child.id(), true);
     let _ = child.kill();
     let _ = child.wait();
-}
-
-fn render_args(args: &[OsString]) -> String {
-    args.iter()
-        .map(|arg| arg.to_string_lossy().into_owned())
-        .collect::<Vec<_>>()
-        .join(" ")
 }
 
 #[cfg(test)]
@@ -582,6 +642,7 @@ mod tests {
             &program,
             &args,
             None,
+            &[],
             stream_limit(deadline, 4, 4),
         )
         .expect("exact boundary must succeed");
@@ -594,6 +655,7 @@ mod tests {
             &program,
             &args,
             None,
+            &[],
             stream_limit(Instant::now() + Duration::from_secs(30), 4, 4),
         )
         .expect_err("one byte over must refuse");
@@ -618,6 +680,7 @@ mod tests {
             &program,
             &args,
             None,
+            &[],
             stream_limit(Instant::now() + Duration::from_secs(30), 8, 8),
         )
         .expect_err("flood must refuse");
@@ -637,6 +700,7 @@ mod tests {
             &program,
             &args,
             None,
+            &[],
             stream_limit(Instant::now() + Duration::from_secs(30), 4, 16),
         )
         .expect_err("asymmetric flood must refuse");
@@ -658,6 +722,7 @@ mod tests {
             OsStr::new("/definitely-not-a-binary-effigy-bounded-probe"),
             &[],
             None,
+            &[],
             stream_limit(
                 Instant::now()
                     .checked_sub(Duration::from_secs(1))
@@ -686,6 +751,7 @@ mod tests {
             &program,
             &args,
             None,
+            &[],
             stream_limit(Instant::now() + Duration::from_millis(300), 64, 64),
         )
         .expect_err("slow command must hit the deadline");
@@ -715,6 +781,7 @@ mod tests {
             &program,
             &args,
             None,
+            &[],
             stream_limit(Instant::now() + Duration::from_millis(400), 64, 64),
         )
         .expect_err("an inherited writer must not defeat the deadline");
@@ -731,6 +798,7 @@ mod tests {
             &program,
             &args,
             None,
+            &[],
             stream_limit(Instant::now() + Duration::from_secs(30), 64, 64),
         )
         .expect("capture within budget");
@@ -747,18 +815,23 @@ mod tests {
         let (_dir, program, args) = test_command("printf 'abc'");
         let mut budget = BoundedCommandBudget::new(Instant::now() + Duration::from_secs(30), 4, 4);
         let plan = plan_for(Path::new("."), &program, &args);
-        budget.run_plan(&plan).expect("first attempt");
+        budget
+            .run_plan(&plan, BoundedCommandPhase::CommandExecution)
+            .expect("first attempt");
         assert_eq!(budget.stdout_retained(), 3);
         let (_dir2, program2, args2) = test_command("printf 'de'");
         let plan2 = plan_for(Path::new("."), &program2, &args2);
         let error = budget
-            .run_plan(&plan2)
+            .run_plan(&plan2, BoundedCommandPhase::CommandExecution)
             .expect_err("second attempt must respect the remaining budget");
         assert!(matches!(
             error,
-            BoundedCaptureFailure::Overflow {
-                stream: BoundedStream::Stdout,
-                limit_bytes: 1,
+            BoundedScopedCaptureFailure {
+                failure: BoundedCaptureFailure::Overflow {
+                    stream: BoundedStream::Stdout,
+                    limit_bytes: 1,
+                    ..
+                },
                 ..
             }
         ));

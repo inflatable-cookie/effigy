@@ -366,22 +366,41 @@ the default command shell keeps its existing unbounded behavior.
 
 While the bounded option is present, the operation enforces one absolute
 deadline created before discovery and one cumulative stdout/stderr retention
-budget. The deadline is checked at every phase boundary — before discovery,
-after discovery, after preparation and before every client spawn, and
-throughout the final drain — so a phase that returns after it refuses without
-spawning. The shared session/runtime resolution and workspace-effigy
-preparation that precede the capture are existing steps and are not interrupted
-mid-capture; they run only before the bounded capture, and their deadline
-decision is the refusal before spawn. Both streams drain concurrently into
-bounded buffers; a stream that
-produces more than its remaining budget is an error even when the client exits
-`0`, and the retained prefix is never reported as success. The eligible
-existing missing-workspace-user fallback draws from the same remaining budget,
-so a second attempt cannot reset the hard total. Overflow, read failure,
-incomplete output and deadline refuse before any fallback or repeat. The client
-is launched into an exactly owned process group; on refusal Effigy terminates
-and reaps only that group with a fixed bounded SIGTERM-to-SIGKILL grace that
-does not rebase the command deadline.
+budget. Runtime liveness and identity discovery, primary workspace Effigy
+identity/architecture probes, artifact build or download, service copies and
+install captures all use the same bounded reader and consume that same budget.
+Their network request and process execution use the remaining absolute
+deadline; the deadline is checked before each spawn/request, through process
+draining and at phase boundaries. A phase that returns after expiry refuses
+without starting the next phase or user command. Local manifest and artifact
+selection checks are synchronous and have no command-output capture. Local
+filesystem calls cannot be interrupted mid-call; the shared deadline is checked
+before the next external operation and at phase boundaries.
+
+Workspace identity refresh keeps the existing primary-service repair selection,
+but the bounded runtime may refuse a repair that the plain shell would have
+more time to complete. The repair uses the operation's remaining deadline and
+budgets; bounded refusal does not fall back to unbounded shell preparation or
+launch the requested command.
+
+Both streams drain concurrently into bounded buffers; a stream that produces
+more than its remaining budget is an error even when the client exits `0`, and
+the retained prefix is never reported as success. Preparation captures and
+the eligible existing missing-workspace-user fallback draw from the same
+remaining per-stream budgets, so neither preparation nor a second attempt can
+reset the hard total. Preparation bytes count toward the whole-operation
+`retained` totals, but returned `stdout`, `stderr`, `stdout_bytes` and
+`stderr_bytes` contain only the completed user command capture. JSON success
+and failure payloads add `preparation.captures` and
+`preparation.retained.{stdout_bytes,stderr_bytes}`; failures identify their
+stable `phase` and the `owned_host_client_group` termination scope. These are
+additive fields in schema v1; existing command-output fields retain their
+command-only meaning. Preparation retained counts are bounded subprocess
+stdout/stderr, not downloaded artifact bytes. Overflow, read failure, incomplete output and deadline
+refuse before any fallback or repeat. The client is launched into an exactly
+owned process group; on refusal Effigy terminates and reaps only that group
+with a fixed bounded SIGTERM-to-SIGKILL grace that does not rebase the command
+deadline.
 
 Selection stays on the existing supported resolution: checkout, named
 profile, service and working directory resolve exactly as the plain command
@@ -391,20 +410,28 @@ with a nonzero client status is an `inner_command_failed` result carrying the
 inner code, distinct from the bounds/deadline reasons. Credentials are excluded
 by the shared secret-env rules; neither a bounds failure nor an inner failure
 dumps raw command output, arguments or configuration into diagnostics.
+Human mode emits retained command stdout/stderr only after a successful inner
+exit; a nonzero exit returns safe failure details without writing captured
+bytes.
 
 `--json` is accepted only because the bounded mode is non-interactive. It emits
 the versioned `effigy.container.bounded-exec.v1` payload with `ok`, status,
-bounded captured bytes and byte counts, the declared limits, retained totals,
-the attempt count, the workspace-user-fallback flag and a
-`remote_cancellation: "unverified"` fact. Failure payloads carry only a reason,
-stream name, limit and safe counts. Terminating the owned host client group is
-not proof that a remote container process stopped: remote cancellation stays
-explicitly unverified, and no remote PID is guessed, no service or sibling is
-stopped, and an uncertain command is never automatically repeated. The bounded
-path runs the resolved compose invocation directly and performs no preparatory
-container-id capture, so every command-output path in the operation is the same
-bounded reader. The shared session/runtime resolution that precedes it is
-unchanged and is not part of the bounded capture.
+bounded command bytes and counts, the declared limits, whole-operation retained
+totals, preparation capture accounting, the attempt count, the workspace-user
+fallback flag and a `remote_cancellation: "unverified"` fact. Failure payloads
+carry a stable reason, phase, stream name when applicable, limit and safe
+counts. A launch failure is sanitized at capture construction and rendering:
+human and JSON diagnostics exclude raw argv, command strings, configured
+container/service names, output, credentials and host error payloads. The v1
+failure payload keeps its `container` and `service` keys and uses the literal
+`[redacted]` for launch failures. Other bounded diagnostics also never echo
+captured command output or credentials.
+Terminating the owned host client group is not proof that a remote container
+process stopped: remote cancellation stays explicitly unverified, and no remote
+PID is guessed, no service or sibling is stopped, and an uncertain command is
+never automatically repeated. The bounded path uses the selected Docker or
+Colima runtime invocation and bounds each preparatory capture as well as the
+user command and eligible fallback. The plain command shell remains unchanged.
 
 ## Runtime-backed execution surfaces
 

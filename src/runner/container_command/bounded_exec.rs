@@ -36,11 +36,12 @@ use effigy_runtime::shell::{
 };
 
 use super::shell_prep::{
-    maybe_refresh_workspace_effigy_for_shell, resolve_container_shell_session,
+    maybe_refresh_workspace_effigy_for_shell_bounded, resolve_container_shell_session_bounded,
 };
 use super::RunnerError;
 use crate::runner::exec_command::{
-    BoundedCapture, BoundedCaptureFailure, BoundedCommandBudget, BoundedStream,
+    BoundedCapture, BoundedCaptureFailure, BoundedCommandBudget, BoundedCommandPhase,
+    BoundedScopedCaptureFailure, BoundedStream,
 };
 
 pub(in crate::runner) const BOUNDED_EXEC_SCHEMA: &str = "effigy.container.bounded-exec.v1";
@@ -58,28 +59,61 @@ pub(in crate::runner) fn run_container_shell_bounded(
 ) -> Result<String, RunnerError> {
     limits.validate().map_err(RunnerError::task_invocation)?;
     let deadline = Instant::now() + Duration::from_millis(limits.deadline_ms);
+    run_container_shell_bounded_with_deadline(
+        repo_root,
+        name,
+        service,
+        command,
+        limits,
+        output_json,
+        deadline,
+    )
+}
+
+fn run_container_shell_bounded_with_deadline(
+    repo_root: &Path,
+    name: Option<&str>,
+    service: Option<&str>,
+    command: &str,
+    limits: BoundedExecLimits,
+    output_json: bool,
+    deadline: Instant,
+) -> Result<String, RunnerError> {
+    let mut budget = BoundedCommandBudget::new(
+        deadline,
+        limits.stdout_limit_bytes,
+        limits.stderr_limit_bytes,
+    );
     if Instant::now() >= deadline {
-        return Err(deadline_refusal(None, &limits, 0));
+        return Err(deadline_refusal(
+            None,
+            &limits,
+            &budget,
+            BoundedCommandPhase::RuntimeDiscovery,
+        ));
     }
 
-    let (policy, service, working_dir) = resolve_container_shell_session(repo_root, name, service)?;
+    let (policy, service, working_dir) =
+        resolve_container_shell_session_bounded(repo_root, name, service, &mut budget)?;
     if Instant::now() >= deadline {
         return Err(deadline_refusal(
             Some((&policy, service.as_str())),
             &limits,
-            0,
+            &budget,
+            BoundedCommandPhase::RuntimeDiscovery,
         ));
     }
-    maybe_refresh_workspace_effigy_for_shell(repo_root, &policy, &service)?;
+    maybe_refresh_workspace_effigy_for_shell_bounded(repo_root, &policy, &service, &mut budget)?;
     if Instant::now() >= deadline {
         return Err(deadline_refusal(
             Some((&policy, service.as_str())),
             &limits,
-            0,
+            &budget,
+            BoundedCommandPhase::WorkspacePreparation,
         ));
     }
 
-    run_bounded_command_with_deadline(
+    run_bounded_command_with_budget(
         BoundedCommandRequest {
             repo_root,
             policy: &policy,
@@ -87,9 +121,9 @@ pub(in crate::runner) fn run_container_shell_bounded(
             working_dir: working_dir.as_deref(),
             command,
             output_json,
-            deadline,
         },
         &limits,
+        budget,
     )
 }
 
@@ -101,7 +135,6 @@ pub(in crate::runner) struct BoundedCommandRequest<'a> {
     pub working_dir: Option<&'a Path>,
     pub command: &'a str,
     pub output_json: bool,
-    pub deadline: Instant,
 }
 
 /// The production bounded command path after session resolution.
@@ -110,9 +143,24 @@ pub(in crate::runner) struct BoundedCommandRequest<'a> {
 /// drive the real plan construction, real spawned client, real bounded reader
 /// and real workspace-user fallback without a live container runtime. It still
 /// uses the one deadline created before discovery.
+#[cfg(test)]
 pub(in crate::runner) fn run_bounded_command_with_deadline(
     request: BoundedCommandRequest<'_>,
     limits: &BoundedExecLimits,
+    deadline: Instant,
+) -> Result<String, RunnerError> {
+    let budget = BoundedCommandBudget::new(
+        deadline,
+        limits.stdout_limit_bytes,
+        limits.stderr_limit_bytes,
+    );
+    run_bounded_command_with_budget(request, limits, budget)
+}
+
+fn run_bounded_command_with_budget(
+    request: BoundedCommandRequest<'_>,
+    limits: &BoundedExecLimits,
+    mut budget: BoundedCommandBudget,
 ) -> Result<String, RunnerError> {
     let BoundedCommandRequest {
         repo_root,
@@ -121,13 +169,7 @@ pub(in crate::runner) fn run_bounded_command_with_deadline(
         working_dir,
         command,
         output_json,
-        deadline,
     } = request;
-    let mut budget = BoundedCommandBudget::new(
-        deadline,
-        limits.stdout_limit_bytes,
-        limits.stderr_limit_bytes,
-    );
     let optimistic = optimistic_workspace_identity(policy, service);
     let first = run_attempt(
         repo_root,
@@ -160,7 +202,7 @@ pub(in crate::runner) fn run_bounded_command_with_deadline(
         first
     };
 
-    if !output_json {
+    if !output_json && capture.status.success() {
         emit_captured_output(&capture)?;
     }
     let render = BoundedRenderContext {
@@ -193,7 +235,7 @@ fn run_attempt(
     )
     .map_err(RunnerError::from)?;
     budget
-        .run_plan(&plan)
+        .run_plan(&plan, BoundedCommandPhase::CommandExecution)
         .map_err(|failure| bounded_failure_error(policy, service, budget, failure))
 }
 
@@ -305,6 +347,13 @@ impl BoundedRenderContext<'_> {
                 "stdout_bytes": self.budget.stdout_retained(),
                 "stderr_bytes": self.budget.stderr_retained(),
             },
+            "preparation": {
+                "captures": self.budget.preparation_captures(),
+                "retained": {
+                    "stdout_bytes": self.budget.preparation_stdout_retained(),
+                    "stderr_bytes": self.budget.preparation_stderr_retained(),
+                },
+            },
             "attempts": self.budget.attempts(),
             "workspace_user_fallback": self.workspace_user_fallback,
             "remote_cancellation": "unverified",
@@ -341,7 +390,8 @@ impl BoundedRenderContext<'_> {
 fn deadline_refusal(
     identity: Option<(&EffectiveContainerPolicy, &str)>,
     limits: &BoundedExecLimits,
-    attempts: u32,
+    budget: &BoundedCommandBudget,
+    phase: BoundedCommandPhase,
 ) -> RunnerError {
     let (container, service) = identity
         .map(|(policy, service)| {
@@ -354,8 +404,9 @@ fn deadline_refusal(
     RunnerError::BoundedExecFailure {
         code: 1,
         message: format!(
-            "bounded container command exceeded its {}ms deadline before execution",
-            limits.deadline_ms
+            "bounded container command exceeded its {}ms deadline during {}",
+            limits.deadline_ms,
+            phase.label()
         ),
         json_details: serde_json::json!({
             "schema": BOUNDED_EXEC_SCHEMA,
@@ -364,13 +415,25 @@ fn deadline_refusal(
             "container": container,
             "service": service,
             "failure": "deadline",
+            "phase": phase.label(),
+            "termination_scope": "owned_host_client_group",
             "limits": {
                 "deadline_ms": limits.deadline_ms,
                 "stdout_limit_bytes": limits.stdout_limit_bytes,
                 "stderr_limit_bytes": limits.stderr_limit_bytes,
             },
-            "retained": { "stdout_bytes": 0, "stderr_bytes": 0 },
-            "attempts": attempts,
+            "retained": {
+                "stdout_bytes": budget.stdout_retained(),
+                "stderr_bytes": budget.stderr_retained(),
+            },
+            "attempts": budget.attempts(),
+            "preparation": {
+                "captures": budget.preparation_captures(),
+                "retained": {
+                    "stdout_bytes": budget.preparation_stdout_retained(),
+                    "stderr_bytes": budget.preparation_stderr_retained(),
+                },
+            },
             "workspace_user_fallback": false,
             "remote_cancellation": "unverified",
         })
@@ -378,12 +441,13 @@ fn deadline_refusal(
     }
 }
 
-fn bounded_failure_error(
+pub(in crate::runner) fn bounded_failure_error(
     policy: &EffectiveContainerPolicy,
     service: &str,
     budget: &BoundedCommandBudget,
-    failure: BoundedCaptureFailure,
+    failure: BoundedScopedCaptureFailure,
 ) -> RunnerError {
+    let BoundedScopedCaptureFailure { phase, failure } = failure;
     let (failure_kind, stream, limit_bytes, retained_bytes) = match &failure {
         BoundedCaptureFailure::Deadline => ("deadline", None, None, None),
         BoundedCaptureFailure::Overflow {
@@ -406,52 +470,107 @@ fn bounded_failure_error(
         BoundedCaptureFailure::IncompleteOutput { stream } => {
             ("incomplete_output", Some(stream.label()), None, None)
         }
-        BoundedCaptureFailure::Launch { .. } => ("launch_failed", None, None, None),
+        BoundedCaptureFailure::Launch => ("launch_failed", None, None, None),
     };
     let message = match &failure {
-        BoundedCaptureFailure::Deadline => {
-            "bounded container command exceeded its deadline while running".to_owned()
-        }
+        BoundedCaptureFailure::Deadline => format!(
+            "bounded container command exceeded its deadline during {}",
+            phase.label()
+        ),
         BoundedCaptureFailure::Overflow { stream, .. } => format!(
-            "bounded container command exceeded its {} budget for container `{}` service `{service}`",
-            stream.label(),
-            policy.name
+            "bounded container command exceeded its {} budget during {} for container `{}` service `{service}`",
+            stream.label(), phase.label(), policy.name
         ),
         BoundedCaptureFailure::ReadFailure { stream } => format!(
-            "bounded container command could not read {} for container `{}` service `{service}`",
-            stream.label(),
-            policy.name
+            "bounded container command could not read {} during {} for container `{}` service `{service}`",
+            stream.label(), phase.label(), policy.name
         ),
         BoundedCaptureFailure::IncompleteOutput { stream } => format!(
-            "bounded container command produced incomplete {} for container `{}` service `{service}`",
-            stream.label(),
-            policy.name
+            "bounded container command produced incomplete {} during {} for container `{}` service `{service}`",
+            stream.label(), phase.label(), policy.name
         ),
-        BoundedCaptureFailure::Launch { label, error } => {
-            format!("bounded container command failed to launch `{label}`: {error}")
-        }
+        BoundedCaptureFailure::Launch => format!(
+            "bounded container command could not launch a host client during {}",
+            phase.label()
+        ),
     };
+    let mut details = serde_json::json!({
+        "schema": BOUNDED_EXEC_SCHEMA,
+        "schema_version": 1,
+        "ok": false,
+        "container": policy.name,
+        "service": service,
+        "failure": failure_kind,
+        "phase": phase.label(),
+        "termination_scope": "owned_host_client_group",
+        "stream": stream,
+        "limit_bytes": limit_bytes,
+        "retained": {
+            "stdout_bytes": budget.stdout_retained(),
+            "stderr_bytes": budget.stderr_retained(),
+            "failed_stream_bytes": retained_bytes,
+        },
+        "attempts": budget.attempts(),
+        "preparation": {
+            "captures": budget.preparation_captures(),
+            "retained": {
+                "stdout_bytes": budget.preparation_stdout_retained(),
+                "stderr_bytes": budget.preparation_stderr_retained(),
+            },
+        },
+        "workspace_user_fallback": budget.attempts() > 1,
+        "remote_cancellation": "unverified",
+    });
+    if matches!(failure, BoundedCaptureFailure::Launch) {
+        details["container"] = serde_json::Value::from("[redacted]");
+        details["service"] = serde_json::Value::from("[redacted]");
+    }
     RunnerError::BoundedExecFailure {
         code: 1,
         message,
-        json_details: serde_json::json!({
-            "schema": BOUNDED_EXEC_SCHEMA,
-            "schema_version": 1,
-            "ok": false,
-            "container": policy.name,
-            "service": service,
-            "failure": failure_kind,
-            "stream": stream,
-            "limit_bytes": limit_bytes,
+        json_details: details.to_string(),
+    }
+}
+
+pub(in crate::runner) fn bounded_phase_error(
+    policy: &EffectiveContainerPolicy,
+    service: &str,
+    budget: &BoundedCommandBudget,
+    phase: BoundedCommandPhase,
+    failure: &'static str,
+    message: &'static str,
+    exit_code: Option<i32>,
+) -> RunnerError {
+    let mut details = serde_json::json!({
+        "schema": BOUNDED_EXEC_SCHEMA,
+        "schema_version": 1,
+        "ok": false,
+        "container": policy.name,
+        "service": service,
+        "failure": failure,
+        "phase": phase.label(),
+        "termination_scope": "owned_host_client_group",
+        "retained": {
+            "stdout_bytes": budget.stdout_retained(),
+            "stderr_bytes": budget.stderr_retained(),
+        },
+        "attempts": budget.attempts(),
+        "preparation": {
+            "captures": budget.preparation_captures(),
             "retained": {
-                "stdout_bytes": budget.stdout_retained(),
-                "stderr_bytes": budget.stderr_retained(),
-                "failed_stream_bytes": retained_bytes,
+                "stdout_bytes": budget.preparation_stdout_retained(),
+                "stderr_bytes": budget.preparation_stderr_retained(),
             },
-            "attempts": budget.attempts(),
-            "workspace_user_fallback": budget.attempts() > 1,
-            "remote_cancellation": "unverified",
-        })
-        .to_string(),
+        },
+        "workspace_user_fallback": budget.attempts() > 1,
+        "remote_cancellation": "unverified",
+    });
+    if let Some(exit_code) = exit_code {
+        details["phase_exit_code"] = serde_json::Value::from(exit_code);
+    }
+    RunnerError::BoundedExecFailure {
+        code: 1,
+        message: message.to_owned(),
+        json_details: details.to_string(),
     }
 }
