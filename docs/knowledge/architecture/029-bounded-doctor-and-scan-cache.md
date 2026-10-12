@@ -138,6 +138,23 @@ warning-only success.
 
 ## Reporting
 
+The repository's seven cold doctor process fixtures reserve all configured
+test slots in the default nextest profile. The focused `doctor-process`
+profile inherits that reservation. These proofs require the intended phase
+and child readiness inside their original 800 ms or 1,000 ms deadline; running
+them alongside other process-heavy tests can exhaust the budget before that
+proof begins. The reservation changes runner scheduling, not production
+deadlines, readiness assertions, retries or selection. Unrelated tests remain
+parallel. It does not guarantee scheduling against arbitrary external host
+load. `test:doctor:cold-scheduling` covers both native profile inheritance and
+the actual captured default-profile proof family.
+
+Nextest's terminal status includes failed, slow, skipped and leaky identities;
+ordinary passing-case chatter is suppressed. This keeps diagnostic identities
+near the retained QA tail without changing test results or the leak policy.
+The retained step logs still have a size limit and are not a complete-stream
+guarantee. Historical discarded identities cannot be reconstructed from it.
+
 Text and JSON report the selected mode and scopes, effective budget, total
 duration, completeness, and each check's duration and state:
 
