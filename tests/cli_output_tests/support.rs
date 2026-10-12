@@ -16,6 +16,14 @@ pub(super) fn temp_workspace(name: &str) -> PathBuf {
     root
 }
 
+// Use only when the real binary's invocation cwd enters task execution.
+// Discovery and explicit --repo fixtures retain their separate OS-temp roots.
+pub(super) fn temp_execution_workspace(name: &str) -> PathBuf {
+    let root = super::execution_fixture_support::temp_workspace("effigy-cli", name);
+    fs::write(root.join("package.json"), "{}\n").expect("write package marker");
+    root
+}
+
 pub(super) fn write_effigy_release_root_marker(root: &Path) {
     fs::write(
         root.join("Cargo.toml"),

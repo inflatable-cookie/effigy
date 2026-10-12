@@ -10,7 +10,7 @@ use std::process::Command;
 
 use serde_json::Value;
 
-use super::support::{parse_stdout_json, temp_workspace};
+use super::support::{parse_stdout_json, temp_execution_workspace, temp_workspace};
 
 fn run_effigy(root: &Path, args: &[&str]) -> std::process::Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_effigy"));
@@ -94,7 +94,7 @@ fn drafts_inventory_reports_lifecycle_and_composed_source() {
 
 #[test]
 fn draft_runs_through_canonical_pipeline_and_names_surface() {
-    let root = temp_workspace("drafts-execution");
+    let root = temp_execution_workspace("drafts-execution");
     write_manifest(&root, SURFACE_MANIFEST);
 
     let output = run_effigy(&root, &["draft", "provider-smoke"]);
@@ -140,7 +140,7 @@ fn flat_invocation_never_falls_through_to_a_draft() {
 
 #[test]
 fn draft_reuses_canonical_lock_and_cache_policy() {
-    let root = temp_workspace("drafts-lock-cache");
+    let root = temp_execution_workspace("drafts-lock-cache");
     write_manifest(
         &root,
         r#"
@@ -167,7 +167,7 @@ cache = { enabled = true, inputs = ["input.txt"], outputs = ["out/result.txt"] }
 
 #[test]
 fn draft_status_does_not_leak_into_published_status_inventory() {
-    let root = temp_workspace("drafts-status-isolation");
+    let root = temp_execution_workspace("drafts-status-isolation");
     write_manifest(
         &root,
         r#"
@@ -225,7 +225,7 @@ run = [{ draft = "provider-smoke" }]
 
 #[test]
 fn draft_references_published_and_explicit_drafts() {
-    let root = temp_workspace("drafts-composition");
+    let root = temp_execution_workspace("drafts-composition");
     write_manifest(
         &root,
         r#"
@@ -253,7 +253,7 @@ run = [{ task = "build" }, { draft = "base" }]
 
 #[test]
 fn unresolved_draft_reference_fails_before_side_effects() {
-    let root = temp_workspace("drafts-unresolved-ref");
+    let root = temp_execution_workspace("drafts-unresolved-ref");
     write_manifest(
         &root,
         r#"
@@ -271,6 +271,10 @@ run = [
     // shell step in the same sequence must not have run.
     let output = run_effigy(&root, &["draft", "provider-smoke"]);
     assert!(!output.status.success(), "unresolved draft should fail");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("missing-draft"),
+        "the unresolved reference must remain the refusal reason: {output:?}"
+    );
     assert!(
         !root.join("side-effect.txt").exists(),
         "draft reference failure ran a side effect"
@@ -301,7 +305,7 @@ run = "printf draft"
 
 #[test]
 fn expired_draft_is_still_runnable() {
-    let root = temp_workspace("drafts-expired-runnable");
+    let root = temp_execution_workspace("drafts-expired-runnable");
     write_manifest(
         &root,
         r#"

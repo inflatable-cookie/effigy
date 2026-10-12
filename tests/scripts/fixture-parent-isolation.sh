@@ -32,7 +32,16 @@ cargo nextest run \
   --user-config-file none \
   -p effigy \
   --lib \
+  --test bootstrap_cli_tests \
+  --test env_schema_tests \
+  --test secrets_local_dev_cli_tests \
+  --test cli_output_tests \
   --no-run
+
+filter='test(fixture_parent_runner_selector_succeeds_with_authenticated_parent_root) | test(binary_cli_fixtures_succeed_with_authenticated_parent_root) | test(forged_expired_and_outside_root_tokens_exit_77_and_never_queue) | test(admitted_container_selector_stays_on_host_and_executes_its_resolved_payload)'
+if [[ "${1:-}" == cli ]]; then
+  filter='test(binary_cli_fixtures_succeed_with_authenticated_parent_root)'
+fi
 
 EFFIGY_REQUIRE_HOST_RUN_PRIVATE_SERVER=1 \
   cargo nextest run \
@@ -41,7 +50,7 @@ EFFIGY_REQUIRE_HOST_RUN_PRIVATE_SERVER=1 \
     -p effigy \
     --test host_scheduler_integration \
     --run-ignored only \
-    --filterset 'test(fixture_parent_runner_selector_succeeds_with_authenticated_parent_root) | test(forged_expired_and_outside_root_tokens_exit_77_and_never_queue) | test(admitted_container_selector_stays_on_host_and_executes_its_resolved_payload)' \
+    --filterset "$filter" \
     --no-capture \
     --max-fail 1:immediate \
     --retries 0 \

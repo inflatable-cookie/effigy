@@ -2,12 +2,12 @@ use serde_json::Value;
 use std::fs;
 use std::process::Command;
 
-use super::support::temp_workspace;
+use super::support::{temp_execution_workspace, temp_workspace};
 
 #[test]
 fn cli_task_passthrough_after_delimiter_does_not_switch_repo() {
-    let home = temp_workspace("cli-passthrough-home");
-    let other = temp_workspace("cli-passthrough-other");
+    let home = temp_execution_workspace("cli-passthrough-home");
+    let other = temp_execution_workspace("cli-passthrough-other");
     fs::write(
         home.join("effigy.toml"),
         "[tasks.echo]\nrun = \"printf 'root=%s args=%s' {repo} {args}\"\n",
@@ -58,8 +58,8 @@ fn cli_task_passthrough_after_delimiter_does_not_switch_repo() {
 
 #[test]
 fn cli_leading_repo_still_switches_catalog() {
-    let home = temp_workspace("cli-leading-repo-home");
-    let other = temp_workspace("cli-leading-repo-other");
+    let home = temp_execution_workspace("cli-leading-repo-home");
+    let other = temp_execution_workspace("cli-leading-repo-other");
     fs::write(
         home.join("effigy.toml"),
         "[tasks.echo]\nrun = \"printf home\"\n",

@@ -1,7 +1,7 @@
 use std::fs;
 use std::process::Command;
 
-use super::support::{parse_stdout_json, temp_workspace};
+use super::support::{parse_stdout_json, temp_execution_workspace, temp_workspace};
 
 #[test]
 fn cli_state_plan_json_reports_lineage() {
@@ -524,7 +524,7 @@ fn cli_state_apply_yes_rejects_ambiguous_sql_target_before_tasks() {
 
 #[test]
 fn cli_state_apply_yes_imports_sql_layer_through_db_seed_task() {
-    let root = temp_workspace("state-apply-sql-import");
+    let root = temp_execution_workspace("state-apply-sql-import");
     fs::create_dir_all(root.join("seed")).expect("create seed dir");
     fs::write(root.join("seed/static.sql"), "select 1;\n").expect("write sql seed");
     fs::write(
@@ -646,7 +646,7 @@ fn cli_state_capture_json_reports_plan_only_capture() {
 
 #[test]
 fn cli_state_capture_uses_named_profile_from_stack_config() {
-    let root = temp_workspace("state-capture-profile");
+    let root = temp_execution_workspace("state-capture-profile");
     fs::write(
         root.join("effigy.toml"),
         manifest_state_named_profile_fixture(),
@@ -683,7 +683,7 @@ fn cli_state_capture_uses_named_profile_from_stack_config() {
 
 #[test]
 fn cli_state_capture_set_runs_named_profiles_with_shared_key() {
-    let root = temp_workspace("state-capture-set");
+    let root = temp_execution_workspace("state-capture-set");
     fs::write(
         root.join("effigy.toml"),
         manifest_state_named_profile_fixture(),
@@ -747,7 +747,7 @@ fn cli_state_capture_set_runs_named_profiles_with_shared_key() {
 
 #[test]
 fn cli_state_capture_uses_named_profile_from_single_default_stack() {
-    let root = temp_workspace("state-capture-profile-single-stack");
+    let root = temp_execution_workspace("state-capture-profile-single-stack");
     fs::write(
         root.join("effigy.toml"),
         manifest_state_named_profile_fixture().replace("default = \"uat\"\n", ""),
@@ -903,7 +903,7 @@ fn cli_state_capture_yes_requires_source() {
 
 #[test]
 fn cli_state_capture_yes_runs_task_before_staging() {
-    let root = temp_workspace("state-capture-task-before-stage");
+    let root = temp_execution_workspace("state-capture-task-before-stage");
     fs::write(
         root.join("effigy.toml"),
         manifest_state_capture_task_fixture(),
@@ -983,7 +983,7 @@ fn cli_state_capture_yes_runs_task_before_staging() {
 
 #[test]
 fn cli_state_capture_named_profile_accepts_inline_rhai_task() {
-    let root = temp_workspace("state-capture-inline-rhai-task");
+    let root = temp_execution_workspace("state-capture-inline-rhai-task");
     fs::create_dir_all(root.join("scripts")).expect("mkdir scripts");
     fs::write(
         root.join("scripts/capture.rhai"),
@@ -1031,7 +1031,7 @@ fn cli_state_capture_named_profile_accepts_inline_rhai_task() {
 
 #[test]
 fn cli_state_capture_task_failure_prevents_staging() {
-    let root = temp_workspace("state-capture-task-failure");
+    let root = temp_execution_workspace("state-capture-task-failure");
     fs::write(
         root.join("effigy.toml"),
         manifest_state_capture_task_fixture(),
@@ -1081,7 +1081,7 @@ fn cli_state_capture_task_failure_prevents_staging() {
 
 #[test]
 fn cli_state_apply_yes_executes_task_layers_in_order() {
-    let root = temp_workspace("state-apply-yes");
+    let root = temp_execution_workspace("state-apply-yes");
     fs::write(root.join("effigy.toml"), manifest_state_apply_fixture())
         .expect("write effigy manifest");
     fs::write(root.join("legacy.sql"), "select 1;\n").expect("write legacy artifact");

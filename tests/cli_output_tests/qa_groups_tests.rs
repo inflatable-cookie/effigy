@@ -15,7 +15,7 @@ use effigy_secrets::{
 };
 use serde_json::Value;
 
-use super::support::{parse_stdout_json, temp_workspace};
+use super::support::{parse_stdout_json, temp_execution_workspace, temp_workspace};
 
 fn run_effigy(root: &Path, args: &[&str]) -> std::process::Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_effigy"));
@@ -74,7 +74,7 @@ fn assert_json_stdout(
 }
 
 fn private_qa_json_workspace(name: &str) -> PathBuf {
-    let root = temp_workspace(name);
+    let root = temp_execution_workspace(name);
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -392,7 +392,7 @@ run = "echo member-failed >&2; exit 7"
 
 #[test]
 fn qa_group_selector_never_falls_through_to_same_named_task_or_draft() {
-    let root = temp_workspace("qa-groups-no-fallback");
+    let root = temp_execution_workspace("qa-groups-no-fallback");
     write_manifest(
         &root,
         r#"
@@ -472,7 +472,7 @@ run = "echo draft"
 
 #[test]
 fn qa_group_run_passes_all_members_and_records_the_ledger() {
-    let root = temp_workspace("qa-groups-run-pass");
+    let root = temp_execution_workspace("qa-groups-run-pass");
     write_manifest(&root, GROUP_MANIFEST);
 
     let payload = run_effigy_json(&root, &["tasks", "qa-group", "run", "cli"]);
@@ -515,7 +515,7 @@ fn qa_group_run_passes_all_members_and_records_the_ledger() {
 
 #[test]
 fn qa_group_scope_comparison_blocks_on_gaps_and_unmatched_tokens() {
-    let root = temp_workspace("qa-groups-scope");
+    let root = temp_execution_workspace("qa-groups-scope");
     write_manifest(&root, GROUP_MANIFEST);
 
     // Required policy with no scope: needs_planner, no run created.
@@ -588,7 +588,7 @@ fn qa_group_scope_comparison_blocks_on_gaps_and_unmatched_tokens() {
 
 #[test]
 fn qa_group_failure_marks_later_members_not_started_and_fails() {
-    let root = temp_workspace("qa-groups-run-fail");
+    let root = temp_execution_workspace("qa-groups-run-fail");
     write_manifest(&root, GROUP_MANIFEST);
 
     let output = run_effigy(&root, &["tasks", "qa-group", "run", "failing"]);
@@ -624,7 +624,7 @@ fn qa_group_failure_marks_later_members_not_started_and_fails() {
 
 #[test]
 fn temporary_groups_require_explicit_files_and_stay_inside_the_repository() {
-    let root = temp_workspace("qa-groups-temp");
+    let root = temp_execution_workspace("qa-groups-temp");
     write_manifest(&root, GROUP_MANIFEST);
     let file = temp_group_file(&root, "binding-check", "ok", "published");
     let relative = file
@@ -670,10 +670,8 @@ fn temporary_groups_require_explicit_files_and_stay_inside_the_repository() {
     // Symlink escape is rejected.
     #[cfg(unix)]
     {
-        let outside = root
-            .parent()
-            .unwrap()
-            .join(format!("effigy-qa-escape-{}.toml", std::process::id()));
+        let outside_owner = tempfile::tempdir().expect("owned foreign group fixture");
+        let outside = outside_owner.path().join("escape.toml");
         fs::write(&outside, "[qa_group]\nname = \"binding-check\"\n").expect("write outside");
         #[allow(unused_must_use)]
         {
@@ -722,7 +720,7 @@ fn temporary_groups_require_explicit_files_and_stay_inside_the_repository() {
 
 #[test]
 fn temporary_groups_may_name_draft_members_while_maintained_reject_them() {
-    let root = temp_workspace("qa-groups-draft-members");
+    let root = temp_execution_workspace("qa-groups-draft-members");
 
     // Maintained groups resolve published tasks only; the grammar rejects a
     // draft member at parse time.
@@ -871,7 +869,7 @@ run = "echo nested-ok"
 
 #[test]
 fn member_exit_codes_are_recorded_honestly_including_cancellation() {
-    let root = temp_workspace("qa-groups-exit-codes");
+    let root = temp_execution_workspace("qa-groups-exit-codes");
     write_manifest(
         &root,
         r#"
@@ -951,7 +949,7 @@ fn read_run_record(run_dir: &Path) -> Value {
 
 #[test]
 fn over_budget_pass_preserves_the_check_outcome() {
-    let root = temp_workspace("qa-groups-over-budget");
+    let root = temp_execution_workspace("qa-groups-over-budget");
     write_manifest(
         &root,
         r#"
@@ -1008,7 +1006,7 @@ run = "sleep 0.4"
 
 #[test]
 fn member_logs_inherit_pipeline_secret_redaction() {
-    let root = temp_workspace("qa-groups-secret-logs");
+    let root = temp_execution_workspace("qa-groups-secret-logs");
     write_manifest(
         &root,
         r#"
@@ -1138,7 +1136,7 @@ run = "echo ok"
 
 #[test]
 fn expired_temporary_group_warns_but_still_runs() {
-    let root = temp_workspace("qa-groups-expired");
+    let root = temp_execution_workspace("qa-groups-expired");
     write_manifest(&root, GROUP_MANIFEST);
     let path = root.join("config/qa-groups");
     fs::create_dir_all(&path).expect("mkdir");

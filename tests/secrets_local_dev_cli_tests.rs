@@ -1,3 +1,5 @@
+mod support;
+
 use std::fs;
 use std::process::{Command, Stdio};
 
@@ -8,12 +10,12 @@ use effigy_secrets::{
 
 #[test]
 fn dev_uses_local_unlock_but_direct_get_still_requires_passphrase() {
-    let root = tempfile::tempdir().expect("tempdir");
-    write_fixture(root.path(), true);
+    let root = support::temp_workspace("effigy-secrets-cli", "execution");
+    write_fixture(&root, true);
 
     let dev = Command::new(env!("CARGO_BIN_EXE_effigy"))
         .arg("dev")
-        .current_dir(root.path())
+        .current_dir(&root)
         .stdin(Stdio::null())
         .output()
         .expect("run dev");
@@ -25,7 +27,7 @@ fn dev_uses_local_unlock_but_direct_get_still_requires_passphrase() {
 
     let direct_get = Command::new(env!("CARGO_BIN_EXE_effigy"))
         .args(["secrets", "get", "api_token"])
-        .current_dir(root.path())
+        .current_dir(&root)
         .stdin(Stdio::null())
         .output()
         .expect("run direct get");
@@ -39,7 +41,7 @@ fn dev_uses_local_unlock_but_direct_get_still_requires_passphrase() {
 
     let other_task = Command::new(env!("CARGO_BIN_EXE_effigy"))
         .arg("serve")
-        .current_dir(root.path())
+        .current_dir(&root)
         .stdin(Stdio::null())
         .output()
         .expect("run non-dev task");
@@ -50,12 +52,12 @@ fn dev_uses_local_unlock_but_direct_get_still_requires_passphrase() {
 
 #[test]
 fn first_dev_unlock_upgrades_a_legacy_vault() {
-    let root = tempfile::tempdir().expect("tempdir");
-    let vault_path = write_fixture(root.path(), false);
+    let root = support::temp_workspace("effigy-secrets-cli", "execution");
+    let vault_path = write_fixture(&root, false);
 
     let upgrade = Command::new(env!("CARGO_BIN_EXE_effigy"))
         .arg("dev")
-        .current_dir(root.path())
+        .current_dir(&root)
         .env("EFFIGY_TEST_SECRETS_PASSPHRASE", "vault-passphrase")
         .stdin(Stdio::null())
         .output()
@@ -69,7 +71,7 @@ fn first_dev_unlock_upgrades_a_legacy_vault() {
 
     let unattended = Command::new(env!("CARGO_BIN_EXE_effigy"))
         .arg("dev")
-        .current_dir(root.path())
+        .current_dir(&root)
         .env_remove("EFFIGY_TEST_SECRETS_PASSPHRASE")
         .env_remove("EFFIGY_INTERNAL_SECRET_PASSPHRASE")
         .stdin(Stdio::null())
@@ -84,11 +86,11 @@ fn first_dev_unlock_upgrades_a_legacy_vault() {
 
 #[test]
 fn manual_unlock_allows_commands_and_tasks_then_lock_revokes_access() {
-    let root = tempfile::tempdir().expect("tempdir");
-    let vault_path = write_fixture(root.path(), false);
+    let root = support::temp_workspace("effigy-secrets-cli", "execution");
+    let vault_path = write_fixture(&root, false);
     let unlock = Command::new(env!("CARGO_BIN_EXE_effigy"))
         .args(["secrets", "unlock", "--json"])
-        .current_dir(root.path())
+        .current_dir(&root)
         .env("EFFIGY_TEST_SECRETS_PASSPHRASE", "vault-passphrase")
         .stdin(Stdio::null())
         .output()
@@ -122,7 +124,7 @@ fn manual_unlock_allows_commands_and_tasks_then_lock_revokes_access() {
     for args in [vec!["secrets", "get", "api_token"], vec!["serve"]] {
         let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
             .args(&args)
-            .current_dir(root.path())
+            .current_dir(&root)
             .env_remove("EFFIGY_TEST_SECRETS_PASSPHRASE")
             .env_remove("EFFIGY_INTERNAL_SECRET_PASSPHRASE")
             .stdin(Stdio::null())
@@ -138,7 +140,7 @@ fn manual_unlock_allows_commands_and_tasks_then_lock_revokes_access() {
 
     let set = Command::new(env!("CARGO_BIN_EXE_effigy"))
         .args(["secrets", "set", "api_token"])
-        .current_dir(root.path())
+        .current_dir(&root)
         .env("EFFIGY_TEST_SECRETS_VALUE", "tok_updated")
         .env_remove("EFFIGY_TEST_SECRETS_PASSPHRASE")
         .env_remove("EFFIGY_INTERNAL_SECRET_PASSPHRASE")
@@ -153,7 +155,7 @@ fn manual_unlock_allows_commands_and_tasks_then_lock_revokes_access() {
 
     let doctor = Command::new(env!("CARGO_BIN_EXE_effigy"))
         .args(["secrets", "doctor", "--json"])
-        .current_dir(root.path())
+        .current_dir(&root)
         .env_remove("EFFIGY_TEST_SECRETS_PASSPHRASE")
         .env_remove("EFFIGY_INTERNAL_SECRET_PASSPHRASE")
         .stdin(Stdio::null())
@@ -169,7 +171,7 @@ fn manual_unlock_allows_commands_and_tasks_then_lock_revokes_access() {
 
     let changed = Command::new(env!("CARGO_BIN_EXE_effigy"))
         .args(["secrets", "change-passphrase"])
-        .current_dir(root.path())
+        .current_dir(&root)
         .env("EFFIGY_TEST_SECRETS_NEW_PASSPHRASE", "new-passphrase")
         .env_remove("EFFIGY_TEST_SECRETS_PASSPHRASE")
         .env_remove("EFFIGY_INTERNAL_SECRET_PASSPHRASE")
@@ -183,7 +185,7 @@ fn manual_unlock_allows_commands_and_tasks_then_lock_revokes_access() {
     );
     let get = Command::new(env!("CARGO_BIN_EXE_effigy"))
         .args(["secrets", "get", "api_token"])
-        .current_dir(root.path())
+        .current_dir(&root)
         .env_remove("EFFIGY_TEST_SECRETS_PASSPHRASE")
         .env_remove("EFFIGY_INTERNAL_SECRET_PASSPHRASE")
         .stdin(Stdio::null())
@@ -198,7 +200,7 @@ fn manual_unlock_allows_commands_and_tasks_then_lock_revokes_access() {
 
     let lock = Command::new(env!("CARGO_BIN_EXE_effigy"))
         .args(["secrets", "lock"])
-        .current_dir(root.path())
+        .current_dir(&root)
         .stdin(Stdio::null())
         .output()
         .expect("lock vault");
@@ -216,7 +218,7 @@ fn manual_unlock_allows_commands_and_tasks_then_lock_revokes_access() {
     ] {
         let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
             .args(&args)
-            .current_dir(root.path())
+            .current_dir(&root)
             .env_remove("EFFIGY_TEST_SECRETS_PASSPHRASE")
             .env_remove("EFFIGY_INTERNAL_SECRET_PASSPHRASE")
             .stdin(Stdio::null())
@@ -284,4 +286,31 @@ run = "printf %s \"$API_TOKEN\""
         }
     }
     vault_path
+}
+
+#[test]
+#[ignore = "requires inherited private parent; run test:qa:fixture-parent-isolation:cli"]
+fn secrets_old_placement_refuses_before_task_or_secret_output() {
+    assert!(
+        std::env::var_os("HOST_RUN_TOKEN").is_some(),
+        "private parent required"
+    );
+    let outside = tempfile::tempdir().expect("old OS-temp secret fixture");
+    write_fixture(outside.path(), true);
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .args(["--json", "dev"])
+        .current_dir(outside.path())
+        .stdin(Stdio::null())
+        .output()
+        .expect("old placement dev");
+    assert_eq!(output.status.code(), Some(77));
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).expect("refusal JSON");
+    assert_eq!(
+        report["error"]["message"],
+        "invalid_parent_token: cwd is outside token root"
+    );
+    for bytes in [&output.stdout, &output.stderr] {
+        assert!(!String::from_utf8_lossy(bytes).contains("tok_local_dev"));
+    }
+    eprintln!("old-placement secrets dev: report={report}; secret output absent");
 }

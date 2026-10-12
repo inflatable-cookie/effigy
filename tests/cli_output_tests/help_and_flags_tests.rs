@@ -2,7 +2,10 @@ use serde_json::Value;
 use std::fs;
 use std::process::Command;
 
-use super::support::temp_workspace;
+use super::support::{
+    git_commit_all, git_stdout, init_git_repo, temp_execution_workspace, temp_workspace,
+    write_effigy_release_root_marker,
+};
 
 #[test]
 fn cli_help_supports_colorized_sections_when_forced() {
@@ -25,15 +28,13 @@ fn cli_version_prints_single_line_version() {
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
         .arg("--version")
         .env("NO_COLOR", "1")
+        .env("EFFIGY_ACTIVE_VERSION", env!("CARGO_PKG_VERSION"))
         .output()
         .expect("run effigy");
 
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
-    assert_eq!(
-        stdout,
-        format!("effigy {}\n", effigy_core::build_info::display_version())
-    );
+    assert_eq!(stdout, format!("effigy v{}\n", env!("CARGO_PKG_VERSION")));
 }
 
 #[test]
@@ -42,6 +43,7 @@ fn cli_version_json_mode_emits_machine_readable_payload() {
         .arg("--json")
         .arg("--version")
         .env("NO_COLOR", "1")
+        .env("EFFIGY_ACTIVE_VERSION", env!("CARGO_PKG_VERSION"))
         .output()
         .expect("run effigy");
 
@@ -56,7 +58,7 @@ fn cli_version_json_mode_emits_machine_readable_payload() {
     assert_eq!(parsed["result"]["version"], env!("CARGO_PKG_VERSION"));
     assert_eq!(
         parsed["result"]["active_version"],
-        effigy_core::build_info::active_version()
+        env!("CARGO_PKG_VERSION")
     );
     assert_eq!(parsed["result"]["binary"]["name"], "effigy");
     assert_eq!(
@@ -65,15 +67,15 @@ fn cli_version_json_mode_emits_machine_readable_payload() {
     );
     assert_eq!(
         parsed["result"]["binary"]["active_version"],
-        effigy_core::build_info::active_version()
+        env!("CARGO_PKG_VERSION")
     );
     assert_eq!(
         parsed["result"]["binary"]["display_version"],
-        effigy_core::build_info::display_version()
+        format!("v{}", env!("CARGO_PKG_VERSION"))
     );
     assert_eq!(
         parsed["result"]["display"],
-        format!("effigy {}", effigy_core::build_info::display_version())
+        format!("effigy v{}", env!("CARGO_PKG_VERSION"))
     );
 }
 
@@ -376,16 +378,30 @@ fn cli_repo_pulse_prints_migration_guidance() {
     assert!(stderr.contains("effigy doctor"));
 }
 
-fn run_help_cli(root: &std::path::Path, args: &[&str]) -> std::process::Output {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_effigy"));
-    for arg in args {
-        command.arg(arg);
-    }
+fn help_cli_command(
+    executable: &std::path::Path,
+    root: &std::path::Path,
+    args: &[&str],
+) -> Command {
+    let mut command = Command::new(executable);
+    // Help parity compares complete output. Its version input must not sample
+    // another test's mutable executable checkout between separate CLI calls.
     command
+        .args(args)
         .current_dir(root)
         .env("NO_COLOR", "1")
-        .output()
-        .expect("run effigy")
+        .env("EFFIGY_ACTIVE_VERSION", env!("CARGO_PKG_VERSION"));
+    command
+}
+
+fn run_help_cli(root: &std::path::Path, args: &[&str]) -> std::process::Output {
+    help_cli_command(
+        std::path::Path::new(env!("CARGO_BIN_EXE_effigy")),
+        root,
+        args,
+    )
+    .output()
+    .expect("run effigy")
 }
 
 #[test]
@@ -440,8 +456,92 @@ fn cli_help_command_and_direct_command_help_render_the_same_facts() {
 }
 
 #[test]
+fn cli_help_parity_is_stable_across_owned_checkout_identity_changes() {
+    let owner = tempfile::tempdir().expect("owned version fixture");
+    let root = owner.path();
+    write_effigy_release_root_marker(root);
+    fs::write(root.join(".gitignore"), "/target/\n").expect("ignore copied binary");
+    init_git_repo(root);
+    git_commit_all(root, "private version fixture");
+    let binary = root.join("target/debug/effigy");
+    fs::create_dir_all(binary.parent().expect("binary parent")).expect("binary directory");
+    fs::copy(env!("CARGO_BIN_EXE_effigy"), &binary).expect("copy actual CLI binary");
+    assert_eq!(git_stdout(root, &["status", "--porcelain"]), "");
+
+    let clean_version = format!(
+        "v{}+local.{}",
+        env!("CARGO_PKG_VERSION"),
+        git_stdout(root, &["rev-parse", "--short=7", "HEAD"])
+    );
+    let unpinned = |args: &[&str]| {
+        let output = help_cli_command(&binary, root, args)
+            .env_remove("EFFIGY_ACTIVE_VERSION")
+            .output()
+            .expect("real default identity CLI");
+        assert!(output.status.success(), "{output:?}");
+        String::from_utf8(output.stdout).expect("UTF-8 CLI output")
+    };
+    assert_eq!(
+        unpinned(&["--version"]),
+        format!("effigy {clean_version}\n")
+    );
+    let clean_json: Value =
+        serde_json::from_str(&unpinned(&["--json", "--version"])).expect("default version JSON");
+    assert_eq!(clean_json["result"]["active_version"], clean_version);
+    assert_eq!(
+        clean_json["result"]["binary"]["display_version"],
+        clean_version
+    );
+    let clean_help = unpinned(&["help", "docs"]);
+    assert!(clean_help.contains(&clean_version));
+    let stable_help = help_cli_command(&binary, root, &["help", "docs"])
+        .output()
+        .expect("pinned clean help");
+    assert!(stable_help.status.success(), "{stable_help:?}");
+
+    fs::write(root.join("untracked-fixture"), "owned change\n").expect("dirty private checkout");
+    assert_eq!(
+        unpinned(&["--version"]),
+        format!("effigy {clean_version}.dirty\n")
+    );
+    let dirty_json: Value = serde_json::from_str(&unpinned(&["--json", "--version"]))
+        .expect("default dirty version JSON");
+    assert_eq!(
+        dirty_json["result"]["active_version"],
+        format!("{clean_version}.dirty")
+    );
+    assert_eq!(
+        dirty_json["result"]["binary"]["display_version"],
+        format!("{clean_version}.dirty")
+    );
+    let dirty_help = unpinned(&["docs", "--help"]);
+    assert!(dirty_help.contains(&format!("{clean_version}.dirty")));
+    assert_ne!(
+        clean_help, dirty_help,
+        "default identity must expose the change"
+    );
+    let help_facts = |text: &str| {
+        text.split_once("\ndocs Help\n")
+            .expect("substantive docs help")
+            .1
+            .to_owned()
+    };
+    assert_eq!(help_facts(&clean_help), help_facts(&dirty_help));
+
+    let stable_direct = help_cli_command(&binary, root, &["docs", "--help"])
+        .output()
+        .expect("pinned dirty help");
+    assert!(stable_direct.status.success(), "{stable_direct:?}");
+    assert_eq!(stable_help.stdout, stable_direct.stdout);
+    eprintln!(
+        "owned identity counterexample: {clean_version} -> {clean_version}.dirty; \
+         default help facts match, default output differs, pinned output matches exactly"
+    );
+}
+
+#[test]
 fn cli_manifest_selector_named_after_a_help_group_keeps_task_routing() {
-    let root = temp_workspace("help-group-selector-collision");
+    let root = temp_execution_workspace("help-group-selector-collision");
     fs::write(
         root.join("effigy.toml"),
         "[tasks.repo]\nrun = \"printf repo-task\"\n",
@@ -531,7 +631,7 @@ fn cli_general_help_renders_the_six_operator_groups() {
 
 #[test]
 fn cli_help_command_topic_defers_with_the_direct_command_when_a_selector_shadows_it() {
-    let root = temp_workspace("help-command-deferral");
+    let root = temp_execution_workspace("help-command-deferral");
     fs::write(
         root.join("effigy.toml"),
         "[tasks.docs]\nrun = \"printf docs-task\"\n",
@@ -664,7 +764,7 @@ fn cli_help_for_builtin_owned_help_emits_the_same_json_envelope() {
 /// than following it.
 #[test]
 fn cli_help_for_builtin_owned_help_refuses_to_run_a_shadowing_selector() {
-    let root = temp_workspace("help-builtin-owned-shadowed");
+    let root = temp_execution_workspace("help-builtin-owned-shadowed");
     fs::write(
         root.join("effigy.toml"),
         "[tasks.config]\nrun = \"printf CONFIG-TASK-RAN\"\n[tasks.scan]\nrun = \"printf SCAN-TASK-RAN\"\n",

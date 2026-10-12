@@ -2,7 +2,9 @@ use serde_json::Value;
 use std::fs;
 use std::process::Command;
 
-use super::support::{run_cli_command, run_json_cli_command, temp_workspace};
+use super::support::{
+    run_cli_command, run_json_cli_command, temp_execution_workspace, temp_workspace,
+};
 
 #[test]
 fn cli_path_task_stdout_excludes_presentation_banner() {
@@ -127,7 +129,7 @@ fn cli_json_selector_without_plan_still_executes() {
 
 #[test]
 fn cli_plan_after_passthrough_delimiter_still_executes() {
-    let root = temp_workspace("cli-plan-after-delimiter");
+    let root = temp_execution_workspace("cli-plan-after-delimiter");
     let marker = root.join("delimiter-should-run.out");
     fs::write(
         root.join("effigy.toml"),

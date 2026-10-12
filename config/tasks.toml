@@ -685,6 +685,20 @@
 "test:qa:fixture-parent-isolation" = [
   { id = "fixture-parent-scheduled-regression-and-controls", run = "bash tests/scripts/fixture-parent-isolation.sh", timeout_ms = 600000 },
 ]
+"test:qa:fixture-parent-isolation:cli" = [
+  { id = "binary-cli-private-parent", run = "bash tests/scripts/fixture-parent-isolation.sh cli", timeout_ms = 600000 },
+]
+"test:qa:fixture-parent-isolation:cli-runner".admission = "heavy"
+"test:qa:fixture-parent-isolation:cli-runner".run = [
+  { id = "binary-cli-fixture-tests", run = "bash tests/scripts/fixture-parent-cli-tests.sh {args}", timeout_ms = 600000 },
+]
+# Required private clean/dirty identity counterexample, then the complete help
+# caller family without repeating the new case in the same selector.
+"test:qa:fixture-help-identity" = [
+  { id = "owned-help-identity-counterexample", run = "cargo nextest run -p effigy --test cli_output_tests --filter-expr 'test(cli_help_parity_is_stable_across_owned_checkout_identity_changes)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 120000 },
+  { id = "help-and-version-caller-family", run = "cargo nextest run -p effigy --test cli_output_tests --filter-expr 'test(help_and_flags_tests::) & !test(cli_help_parity_is_stable_across_owned_checkout_identity_changes)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 120000 },
+]
+"check:qa:fixture-parent-isolation:cli" = "cargo check -p effigy --test bootstrap_cli_tests --test env_schema_tests --test secrets_local_dev_cli_tests --test cli_output_tests --test host_scheduler_integration"
 "check:qa:fixture-parent-isolation" = "cargo clippy -p effigy -p effigy-bootstrap --all-targets -- -D warnings"
 # This heavy child is launched only by the controlled private-parent test.
 # It uses the already-built unit test executable, avoiding a nested Cargo
