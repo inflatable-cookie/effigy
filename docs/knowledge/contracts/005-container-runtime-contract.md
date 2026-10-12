@@ -1238,3 +1238,31 @@ readable and writable, with `501:20` ownership and mode 0755. The legacy route
 returned HTTP 200. This proves the reported launch failure is resolved on the
 existing running stack; it is not a fresh-stack bootstrap claim. No mount
 restructuring, manual chown/chmod, reseed, stack restart or VM restart occurred.
+
+## Private legacy MinIO fixture distribution — 2026-10-12
+
+Tom's recorded ruling is: "Authorize separately bounded private fixture-only
+package qualification; no shared catalog/default change or publication."
+The ruling selects direction; a checked, approved bounded brief must precede
+package construction or runtime qualification.
+
+The shipped MinIO catalog remains unchanged. A private fixture package must
+identify the exact upstream server release and verify its downloaded bytes,
+plus independently pinned base and client identities. It must preserve the
+catalog's server command, environment contract, ports, persistent `/data`,
+`/bin/sh` target and `mc ready local` health contract. Record packaging and
+client differences explicitly; a new private image is not the unavailable
+upstream image, and Silo must not be substituted under the MinIO identity.
+
+Artifact inspection and checksums establish package identity, not service
+readiness or consumer parity. Qualification must separately prove the native
+Linux server/client behavior, bootstrap, storage operations and owned cleanup.
+Any unavailable runtime or incomplete ownership proof remains an explicit
+boundary. Consumer profile acceptance and its attempt allowance remain with
+the bundle owner; package work does not start or retry that profile.
+
+This scope excludes shared catalog adoption, default migration, publication,
+release or tag changes, global installation, existing data or volume changes,
+and effects on live consumers, gateway settings or VM lifecycle. Private
+qualification cannot establish remote cancellation or unrelated Linux Effigy
+artifact freshness.
