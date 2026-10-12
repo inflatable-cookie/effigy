@@ -1,11 +1,18 @@
-use crate::{build_binary_metadata, emit_json_envelope_success_value, CliExecutionContext};
+use crate::cli::output::emit_json_envelope_success_with_binary;
+use crate::{build_binary_metadata, CliExecutionContext};
 use effigy_ui::{PlainRenderer, Renderer};
 use serde_json::json;
 
 pub fn run_version_command(context: &CliExecutionContext<'_>) {
-    let payload = build_version_payload();
+    let binary = build_binary_metadata();
+    let payload = build_version_payload_with_binary(binary.clone());
     if context.emit_json_envelope {
-        emit_json_envelope_success_value(context.command_kind, context.command_name, payload);
+        emit_json_envelope_success_with_binary(
+            context.command_kind,
+            context.command_name,
+            payload,
+            binary,
+        );
         return;
     }
 
@@ -14,7 +21,10 @@ pub fn run_version_command(context: &CliExecutionContext<'_>) {
 }
 
 pub fn build_version_payload() -> serde_json::Value {
-    let binary = build_binary_metadata();
+    build_version_payload_with_binary(build_binary_metadata())
+}
+
+fn build_version_payload_with_binary(binary: serde_json::Value) -> serde_json::Value {
     let version = binary["version"].as_str().unwrap_or_default();
     let active_version = binary["active_version"].as_str().unwrap_or_default();
     let display = format!(

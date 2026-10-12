@@ -16,7 +16,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -100,19 +100,13 @@ exit 0
 const PUBLIC_FAKE_BACKEND: &str = r#"#!/bin/sh
 args="$*"
 case "$FAKE_BOUNDED_MODE:$args" in
-    runtime-hang:*ps*)
+    runtime-hang:*ps*|launch-blocked-discovery:*ps*)
         printf '%s\n' "$$" > "$FAKE_BOUNDED_PID_FILE"
         exec /bin/sleep 30
         ;;
     runtime-mismatch:*ps*)
         printf 'demo-web-old-1\tUp\t\tstale-project\t%s\tapp\tfalse\n' "$FAKE_BOUNDED_REPO"
         exit 0
-        ;;
-    phase-continuity:*ps*)
-        if [ ! -e "$FAKE_BOUNDED_DELAY_MARKER" ]; then
-            : > "$FAKE_BOUNDED_DELAY_MARKER"
-            exec /bin/sleep 1.4
-        fi
         ;;
     runtime-flood:*ps*)
         i=0
@@ -150,7 +144,7 @@ case "$args" in
         exit 0
         ;;
     *"uname -m"*)
-        if [ "$FAKE_BOUNDED_MODE" = "phase-continuity" ] || [ "$FAKE_BOUNDED_MODE" = "workspace-hang" ]; then
+        if [ "$FAKE_BOUNDED_MODE" = "workspace-hang" ]; then
             printf '%s\n' "$$" > "$FAKE_BOUNDED_PID_FILE"
             exec /bin/sleep 30
         fi
@@ -348,42 +342,47 @@ fn run_json(
 
 #[cfg(unix)]
 struct ProcessTreeCleanup {
-    pid: u32,
+    child: Child,
     active: bool,
-}
-
-#[cfg(unix)]
-impl ProcessTreeCleanup {
-    fn new(pid: u32) -> Self {
-        Self { pid, active: true }
-    }
-
-    fn disarm(&mut self) {
-        self.active = false;
-    }
 }
 
 #[cfg(unix)]
 impl Drop for ProcessTreeCleanup {
     fn drop(&mut self) {
         if self.active {
-            effigy_process::terminate_process_tree(self.pid, true);
+            // Child remains unreaped while this exact tree is signaled. Never
+            // recover signal authority from a PID in a stale fixture file.
+            effigy_process::terminate_process_tree(self.child.id(), true);
+            let _ = self.child.wait();
         }
     }
 }
 
 #[cfg(unix)]
-struct RecordedClientCleanup(PathBuf);
-
-#[cfg(unix)]
-impl Drop for RecordedClientCleanup {
-    fn drop(&mut self) {
-        if let Ok(raw) = fs::read_to_string(&self.0) {
-            if let Ok(pid) = raw.trim().parse::<u32>() {
-                effigy_process::terminate_process_tree(pid, true);
-            }
+#[test]
+fn public_child_guard_reaps_on_unwind_and_preserves_foreign_child() {
+    use std::os::unix::process::CommandExt;
+    let spawn = || {
+        let mut command = Command::new("/bin/sleep");
+        command.arg("30").process_group(0);
+        ProcessTreeCleanup {
+            child: command.spawn().expect("owned guard child"),
+            active: true,
         }
-    }
+    };
+    let mut foreign = spawn();
+    let owned = spawn();
+    let owned_pid = owned.child.id();
+    let result = std::panic::catch_unwind(move || {
+        let _owned = owned;
+        panic!("controlled assertion failure");
+    });
+    assert!(result.is_err());
+    assert!(
+        !effigy_process::process_is_running(owned_pid),
+        "guard must kill and reap"
+    );
+    assert!(foreign.child.try_wait().expect("foreign wait").is_none());
 }
 
 #[cfg(unix)]
@@ -397,7 +396,6 @@ struct GuardedPublicCase<'a> {
 
 #[cfg(unix)]
 struct GuardedPublicOutcome {
-    elapsed: Duration,
     stdout: Vec<u8>,
     stderr: Vec<u8>,
 }
@@ -420,13 +418,11 @@ fn run_guarded_public_case(
     } = case;
     let pid_file = dir.path().join("fake-client-pid");
     let home = dir.path().join("home");
-    let delay_marker = dir.path().join(format!("runtime-delay-{mode}"));
     let final_marker = dir.path().join(format!("final-command-ran-{mode}"));
     let child_stdout_path = dir.path().join(format!("public-child-{mode}.stdout"));
     let child_stderr_path = dir.path().join(format!("public-child-{mode}.stderr"));
     let child_stdout = fs::File::create(&child_stdout_path).expect("create child stdout capture");
     let child_stderr = fs::File::create(&child_stderr_path).expect("create child stderr capture");
-    let _client_cleanup = RecordedClientCleanup(pid_file.clone());
     let test_name = std::thread::current()
         .name()
         .expect("parent test name")
@@ -434,11 +430,22 @@ fn run_guarded_public_case(
         .map(|(module, _)| format!("{module}::guarded_public_entry_child"))
         .expect("parent test is module-qualified");
     let current_exe = std::env::current_exe().expect("test executable path");
+    let listed = Command::new(&current_exe)
+        .args(["--list", "--exact", &test_name])
+        .output()
+        .expect("list required public child");
+    assert!(listed.status.success());
+    assert!(
+        String::from_utf8_lossy(&listed.stdout)
+            .lines()
+            .any(|line| line == format!("{test_name}: test")),
+        "required public child is absent: {test_name}"
+    );
     let path = bin_dir.display().to_string();
     let mut command = Command::new(current_exe);
     command
         .arg("--exact")
-        .arg(test_name)
+        .arg(&test_name)
         .arg("--nocapture")
         .arg("--test-threads=1")
         .env("EFFIGY_BOUNDED_PUBLIC_CHILD", "1")
@@ -447,7 +454,6 @@ fn run_guarded_public_case(
         .env("FAKE_BOUNDED_REPO", repo_root)
         .env("FAKE_BOUNDED_IDENTITY", identity)
         .env("FAKE_BOUNDED_PID_FILE", &pid_file)
-        .env("FAKE_BOUNDED_DELAY_MARKER", &delay_marker)
         .env("FAKE_BOUNDED_FINAL_MARKER", &final_marker)
         .env("FAKE_BOUNDED_STDOUT_LIMIT", stdout_limit.to_string())
         .env("FAKE_BOUNDED_DEADLINE_MS", deadline_ms.to_string())
@@ -459,12 +465,15 @@ fn run_guarded_public_case(
         .stdout(Stdio::from(child_stdout))
         .stderr(Stdio::from(child_stderr));
     command.process_group(0);
-    let mut child = command.spawn().expect("spawn guarded public-path test");
-    let mut cleanup = ProcessTreeCleanup::new(child.id());
+    let child = command.spawn().expect("spawn guarded public-path test");
+    let mut cleanup = ProcessTreeCleanup {
+        child,
+        active: true,
+    };
     let started = Instant::now();
     loop {
-        if let Some(status) = child.try_wait().expect("poll public-path test") {
-            cleanup.disarm();
+        if let Some(status) = cleanup.child.try_wait().expect("poll public-path test") {
+            cleanup.active = false;
             if status.success() {
                 let _ = fs::remove_file(&pid_file);
             }
@@ -476,16 +485,12 @@ fn run_guarded_public_case(
                 String::from_utf8_lossy(&stdout),
                 String::from_utf8_lossy(&stderr)
             );
-            return GuardedPublicOutcome {
-                elapsed: started.elapsed(),
-                stdout,
-                stderr,
-            };
+            return GuardedPublicOutcome { stdout, stderr };
         }
         if started.elapsed() >= Duration::from_secs(12) {
-            effigy_process::terminate_process_tree(child.id(), true);
-            let _ = child.wait();
-            cleanup.disarm();
+            effigy_process::terminate_process_tree(cleanup.child.id(), true);
+            let _ = cleanup.child.wait();
+            cleanup.active = false;
             panic!("public-path child exceeded the independent 12s harness guard for {mode}");
         }
         thread::sleep(Duration::from_millis(10));
@@ -528,16 +533,29 @@ fn guarded_public_entry_child() {
     } else {
         "main-command"
     };
-    let result = run_container(ContainerArgs {
-        subcommand: ContainerSubcommand::Shell {
-            name: Some("web".to_owned()),
-            service: None,
-            command: Some(command.to_owned()),
-            bounded: Some(limits),
-        },
-        repo_override: Some(repo_root),
-        output_json: mode != "inner-nonzero-secret",
-    });
+    let (result, trace) =
+        crate::runner::exec_command::BoundedCommandBudget::with_capture_limit_trace(|| {
+            run_container(ContainerArgs {
+                subcommand: ContainerSubcommand::Shell {
+                    name: Some("web".to_owned()),
+                    service: None,
+                    command: Some(command.to_owned()),
+                    bounded: Some(limits),
+                },
+                repo_override: Some(repo_root),
+                output_json: mode != "inner-nonzero-secret",
+            })
+        });
+    assert!(!trace.is_empty(), "public proof must reach a real capture");
+    let deadline = trace[0].1.deadline;
+    for pair in trace.windows(2) {
+        assert_eq!(
+            pair[1].1.deadline, deadline,
+            "phase reset the absolute deadline"
+        );
+        assert!(pair[1].1.stdout_bytes <= pair[0].1.stdout_bytes);
+        assert!(pair[1].1.stderr_bytes <= pair[0].1.stderr_bytes);
+    }
 
     match mode.as_str() {
         "valid-identity" | "valid-colima" => {
@@ -570,6 +588,16 @@ fn guarded_public_entry_child() {
                 final_marker.exists(),
                 "bounded command should execute after preparation"
             );
+            let final_limit = &trace.last().expect("command capture").1;
+            assert_eq!(final_limit.stdout_bytes, stdout_limit - preparation_stdout);
+            assert_eq!(
+                trace.len() as u64,
+                value["preparation"]["captures"].as_u64().unwrap() + 1
+            );
+            assert!(trace
+                .iter()
+                .any(|(phase, _)| phase.label() == "workspace_preparation"));
+            assert_eq!(trace.last().unwrap().0.label(), "command_execution");
         }
         "runtime-mismatch" => {
             let error = result.expect_err("stale runtime identity must refuse");
@@ -586,11 +614,13 @@ fn guarded_public_entry_child() {
             assert_eq!(details["preparation"]["captures"], 4);
             assert!(!final_marker.exists());
         }
-        "phase-continuity" => {
-            let error = result.expect_err("workspace phase must share the discovery deadline");
+        "launch-blocked-discovery" => {
+            let error =
+                result.expect_err("a blocked discovery cannot prove a later launch failure");
             let details = failure_details(&error);
             assert_eq!(details["failure"], "deadline");
-            assert_eq!(details["phase"], "workspace_preparation");
+            assert_eq!(details["phase"], "runtime_discovery");
+            assert_eq!(details["attempts"], 0);
             assert!(!final_marker.exists());
         }
         "fallback-budget" => {
@@ -672,7 +702,6 @@ fn public_entry_bounds_discovery_preparation_and_fallback_on_the_full_path() {
     let (dir, bin_dir, repo) = public_fixture("public-path", true);
     let version = effigy_core::build_info::package_version();
     let identity = format!("release:v{version}");
-    let stale_identity = "release:vstale";
     let _valid_docker = run_guarded_public_case(
         &dir,
         &bin_dir,
@@ -702,104 +731,113 @@ fn public_entry_bounds_discovery_preparation_and_fallback_on_the_full_path() {
             stdout_limit: 256,
         },
     );
-    let continuity = run_guarded_public_case(
-        &dir,
-        &bin_dir,
-        &repo,
-        GuardedPublicCase {
-            mode: "phase-continuity",
-            backend: "docker",
-            identity: stale_identity,
-            deadline_ms: 2_000,
-            stdout_limit: 8_192,
-        },
+}
+
+#[cfg(unix)]
+fn public_failure_case(mode: &str) -> GuardedPublicOutcome {
+    let (dir, bin_dir, repo) = public_fixture(mode, true);
+    let identity = format!("release:v{}", effigy_core::build_info::package_version());
+    let stale = matches!(
+        mode,
+        "identity-invalid" | "workspace-hang" | "workspace-flood" | "remove-before-command"
     );
-    assert!(
-        continuity.elapsed < Duration::from_millis(3200),
-        "phase-continuity reset the deadline across discovery: {:?}",
-        continuity.elapsed
-    );
-    let fallback_stdout_limit = format!(
+    let fallback_limit = format!(
         "demo-web-app-1\tUp\t\tdemo-web\t{}\tapp\tfalse\n",
         repo.display()
     )
     .len() as u64
         + identity.len() as u64
-        + "aaa".len() as u64
+        + 3
         + 80;
-    for (mode, backend) in [
-        ("runtime-hang", "docker"),
-        ("runtime-flood", "docker"),
-        ("runtime-mismatch", "docker"),
-        ("identity-invalid", "docker"),
-        ("workspace-hang", "docker"),
-        ("workspace-flood", "docker"),
-        ("fallback-budget", "docker"),
-    ] {
-        let _outcome = run_guarded_public_case(
-            &dir,
-            &bin_dir,
-            &repo,
-            GuardedPublicCase {
-                mode,
-                backend,
-                identity: if matches!(
-                    mode,
-                    "identity-invalid" | "workspace-hang" | "workspace-flood"
-                ) {
-                    stale_identity
-                } else {
-                    &identity
-                },
-                deadline_ms: 2_000,
-                stdout_limit: match mode {
-                    "fallback-budget" => fallback_stdout_limit,
-                    "runtime-mismatch" | "identity-invalid" | "workspace-hang" => 512,
-                    "workspace-flood" => 512,
-                    _ => 64,
-                },
-            },
-        );
-    }
-
-    let (launch_dir, launch_bin, launch_repo) = public_fixture("launch-secret", true);
-    let _launch = run_guarded_public_case(
-        &launch_dir,
-        &launch_bin,
-        &launch_repo,
-        GuardedPublicCase {
-            mode: "remove-before-command",
-            backend: "docker",
-            identity: stale_identity,
-            deadline_ms: 2_000,
-            stdout_limit: 256,
-        },
-    );
-    let human_nonzero = run_guarded_public_case(
+    run_guarded_public_case(
         &dir,
         &bin_dir,
         &repo,
         GuardedPublicCase {
-            mode: "inner-nonzero-secret",
+            mode,
             backend: "docker",
-            identity: &identity,
-            deadline_ms: 2_000,
-            stdout_limit: 512,
+            identity: if stale { "release:vstale" } else { &identity },
+            // Semantic proofs require their target phase, rather than racing a
+            // cold2s discovery budget. The independent12s guard remains fixed.
+            deadline_ms: if matches!(mode, "runtime-hang" | "launch-blocked-discovery") {
+                2_000
+            } else {
+                8_000
+            },
+            stdout_limit: match mode {
+                "fallback-budget" => fallback_limit,
+                "runtime-flood" => 64,
+                "valid-identity" | "remove-before-command" => 256,
+                _ => 512,
+            },
         },
-    );
+    )
+}
+
+#[cfg(unix)]
+macro_rules! public_failure_test {
+    ($name:ident, $mode:literal) => {
+        #[test]
+        fn $name() {
+            let _outcome = public_failure_case($mode);
+        }
+    };
+}
+
+#[cfg(unix)]
+public_failure_test!(
+    public_runtime_deadline_refuses_before_command,
+    "runtime-hang"
+);
+#[cfg(unix)]
+public_failure_test!(public_runtime_flood_refuses_before_command, "runtime-flood");
+#[cfg(unix)]
+public_failure_test!(
+    public_runtime_identity_mismatch_refuses_before_command,
+    "runtime-mismatch"
+);
+#[cfg(unix)]
+public_failure_test!(
+    public_workspace_identity_invalid_requires_refresh,
+    "identity-invalid"
+);
+#[cfg(unix)]
+public_failure_test!(
+    public_workspace_deadline_refuses_before_command,
+    "workspace-hang"
+);
+#[cfg(unix)]
+public_failure_test!(
+    public_workspace_flood_refuses_before_command,
+    "workspace-flood"
+);
+#[cfg(unix)]
+public_failure_test!(
+    public_fallback_draws_from_the_same_cumulative_budget,
+    "fallback-budget"
+);
+#[cfg(unix)]
+public_failure_test!(
+    public_launch_failure_redacts_human_and_json_diagnostics,
+    "remove-before-command"
+);
+#[cfg(unix)]
+public_failure_test!(
+    public_earlier_deadline_is_incomplete_launch_evidence,
+    "launch-blocked-discovery"
+);
+
+#[cfg(unix)]
+#[test]
+fn public_nonzero_inner_failure_emits_no_captured_secrets() {
+    let outcome = public_failure_case("inner-nonzero-secret");
     for marker in [
         "SECRET_ARG_MARKER_142",
         "SECRET_STDOUT_MARKER_142",
         "SECRET_STDERR_MARKER_142",
     ] {
-        assert!(
-            !String::from_utf8_lossy(&human_nonzero.stdout).contains(marker),
-            "human mode wrote captured stdout marker {marker}"
-        );
-        assert!(
-            !String::from_utf8_lossy(&human_nonzero.stderr).contains(marker),
-            "human mode wrote captured stderr marker {marker}"
-        );
+        assert!(!String::from_utf8_lossy(&outcome.stdout).contains(marker));
+        assert!(!String::from_utf8_lossy(&outcome.stderr).contains(marker));
     }
 }
 

@@ -572,6 +572,83 @@ fn cli_manifest_selector_named_after_a_help_group_keeps_task_routing() {
     assert!(help_stdout.contains("effigy graph"), "got: {help_stdout}");
 }
 
+#[cfg(unix)]
+#[test]
+fn cli_version_json_uses_one_identity_snapshot_during_checkout_change() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let owner = tempfile::tempdir().expect("owned identity race fixture");
+    let root = owner.path();
+    write_effigy_release_root_marker(root);
+    fs::write(root.join(".gitignore"), "/target/\n").expect("ignore private binary and shim");
+    init_git_repo(root);
+    git_commit_all(root, "identity snapshot fixture");
+    let expected = format!(
+        "v{}+local.{}",
+        env!("CARGO_PKG_VERSION"),
+        git_stdout(root, &["rev-parse", "--short=7", "HEAD"])
+    );
+    let target = root.join("target");
+    let binary = target.join("debug/effigy");
+    let shim_dir = target.join("identity-bin");
+    fs::create_dir_all(binary.parent().unwrap()).expect("binary directory");
+    fs::create_dir_all(&shim_dir).expect("shim directory");
+    fs::copy(env!("CARGO_BIN_EXE_effigy"), &binary).expect("copy actual CLI");
+    // Real Git answers the first status query, then this process writes its
+    // own untracked file. A second identity sample sees .dirty deterministically.
+    let shim = shim_dir.join("git");
+    fs::write(
+        &shim,
+        r#"#!/bin/sh
+/usr/bin/git "$@"
+result=$?
+if [ "$result" = 0 ] && [ "$1" = status ]; then
+    printf observed >> target/identity-status-count
+    : > untracked-identity-change
+fi
+exit "$result"
+"#,
+    )
+    .expect("identity shim");
+    fs::set_permissions(&shim, fs::Permissions::from_mode(0o755)).expect("executable shim");
+    let mut path = vec![shim_dir];
+    path.extend(std::env::split_paths(
+        &std::env::var_os("PATH").expect("host PATH"),
+    ));
+    let output = help_cli_command(&binary, root, &["--json", "--version"])
+        .env_remove("EFFIGY_ACTIVE_VERSION")
+        .env("PATH", std::env::join_paths(path).expect("private PATH"))
+        .output()
+        .expect("actual JSON version command");
+    assert!(output.status.success(), "{output:?}");
+    let value: Value = serde_json::from_slice(&output.stdout).expect("version JSON");
+    assert!(
+        root.join("untracked-identity-change").exists(),
+        "race control never ran"
+    );
+    assert_eq!(
+        fs::read_to_string(target.join("identity-status-count")).unwrap(),
+        "observed",
+        "one response must inspect identity exactly once"
+    );
+    assert_eq!(value["binary"], value["result"]["binary"]);
+    assert_eq!(value["binary"]["active_version"], expected);
+    assert_eq!(value["binary"]["display_version"], expected);
+    assert_eq!(value["result"]["active_version"], expected);
+    assert_eq!(value["result"]["display"], format!("effigy {expected}"));
+    // The next public command still observes dirty identity; no global cache
+    // or pinned fixture override hides the default behavior.
+    let dirty = help_cli_command(&binary, root, &["--version"])
+        .env_remove("EFFIGY_ACTIVE_VERSION")
+        .output()
+        .expect("dirty version command");
+    assert!(dirty.status.success());
+    assert_eq!(
+        String::from_utf8(dirty.stdout).unwrap(),
+        format!("effigy {expected}.dirty\n")
+    );
+}
+
 #[test]
 fn cli_unknown_help_topic_fails_with_valid_group_and_command_guidance() {
     let root = temp_workspace("help-unknown-topic");

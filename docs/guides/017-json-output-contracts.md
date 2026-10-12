@@ -475,6 +475,10 @@ Rule of thumb:
 - `binary.version` is the shipped semver; `binary.active_version` and
   `binary.display_version` can include local build identity such as
   `+local.<hash>`.
+- Each binary metadata object samples active identity once and derives its
+  display form from that observation. The version command shares that same
+  snapshot between its result and outer envelope. A later command may observe
+  a changed checkout; identity is not cached across commands.
 - New optional fields may be added in `v1` without removing existing keys.
 - Release gate JSON (`effigy.release.gates.v1`, `effigy.release.status.v1`,
   `effigy.release.prepare.v1`, and the matching plan/simulate payloads) may
