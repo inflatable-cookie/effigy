@@ -374,6 +374,20 @@ listener by default.
 
 ### `minio`
 
+The separately approved private fixture packaging route does not change this
+catalog or qualify its unavailable original image distribution. It pins the
+exact MinIO server release with a separately identified PGSTY client and neutral
+base. Artifact construction is not native qualification. One first independent
+reviewer owns the approved fresh-profile proof; existing profiles and consumer
+resources are never adopted. See the
+[private fixture contract](../knowledge/contracts/005-container-runtime-contract.md#private-legacy-minio-fixture-distribution--2026-10-12).
+
+For this exact server, bucket-CORS updates are unsupported. Global HTTP CORS is
+a separate capability. The private proof records both positive global-CORS
+behavior and the expected bucket-CORS refusal; it does not claim the unchanged
+legacy bootstrap helper succeeds. A qualified private URI still needs an
+explicit fixture-only consumer amendment before use.
+
 Local S3-compatible object storage and console.
 
 - Image: `minio/minio:RELEASE.2025-09-07T16-13-09Z` (override via

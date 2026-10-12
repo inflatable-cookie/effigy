@@ -7,6 +7,11 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- Private MinIO fixture packaging and qualification selectors pin the exact
+  upstream Linux arm64 server, a separately identified maintained client and
+  neutral base. Artifact-only checks and offline ownership controls precede
+  one explicitly approved independent native proof. The shipped catalog and
+  defaults remain unchanged; bucket-CORS refusal is an explicit capability limit.
 - `effigy container <NAME> shell --command <CMD> --bounded --deadline-ms <MS>
   --stdout-limit-bytes <N> --stderr-limit-bytes <N> [--json]` is an explicit
   opt-in finite container-command surface. One absolute deadline governs

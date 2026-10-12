@@ -1241,6 +1241,47 @@ restructuring, manual chown/chmod, reseed, stack restart or VM restart occurred.
 
 ## Private legacy MinIO fixture distribution — 2026-10-12
 
+The separately owned lead `dfefc279-8f98-4987-8e40-150877d95706` stages
+artifact-only author checks and one native batch by the genuine first Queue
+reviewer. `proof:catalog:minio-fixture:artifact` constructs or verifies a private
+Linux arm64 OCI archive from digest-pinned public server/client assets and a
+neutral Ubuntu layer. It never uses a Docker builder or publishes an image.
+`test:catalog:minio-fixture` covers offline archive/provenance, deadline, secrecy
+and ownership refusals. `proof:catalog:minio-fixture` owns the separately
+approved new profile only; a reused profile or attempt directory refuses before
+startup. No author-native pass or independent-review approval is claimed merely
+by constructing the archive.
+
+The genuine server is MinIO `RELEASE.2025-09-07T16-13-09Z`, source
+`07c3a429bfed433e49018cb0f78a52145d4bedeb`. The maintained client is explicitly
+PGSTY `RELEASE.2026-09-16T00-00-00Z`, source
+`e952aa78f10a2b77dd525a2b7e3143bcda0cd377`; it is not upstream MinIO Client.
+Native compatibility must be proved. This private assembly is not the original
+DockerHub image. Publisher checksums and immutable input digests do not imply
+local signature verification, an SBOM audit or public TLS trust-store parity.
+
+The exact MinIO server rejects bucket-CORS updates as `NotImplemented`.
+Global HTTP CORS is a distinct supported capability and needs positive native
+HTTP evidence. The #005 owner inspected its unchanged d0 legacy qualifier:
+default Rust/Bun build, genuine default service start/status, catalog/ports and
+scoped cleanup are its legacy parity gates. That qualifier does not invoke
+`bootstrap-minio.rhai` or require `mc cors set` success. Positive storage/CORS
+bootstrap acceptance belongs to the changed opt-in Silo path. Package proof
+therefore records the expected bucket-CORS negative without claiming the legacy
+helper works or that browser CORS is unavailable. Package qualification still
+requires the bundle owner's explicit same-task fixture-only URI/helper amendment;
+it does not restore the unchanged DockerHub distribution or certify a full profile.
+
+The native helper uses private Colima/Lima/cache/Docker control roots, stdin
+artifact transfer and guest-only credentials. It collects bounded command
+output, withholds raw diagnostics and does not persist credentials in image
+layers or proof output. Startup, cumulative proof and cumulative teardown clocks
+are 300/600/120 seconds respectively; host-child cancellation/reap has a separate
+two-second grace. Host child cancellation is not remote VM cancellation. A
+missing or changed profile/config/root identity keeps teardown held. Synchronous
+filesystem calls and external system load are not hard real-time guarantees.
+One native attempt remains spent even on refusal; there is no automatic retry.
+
 Tom's recorded ruling is: "Authorize separately bounded private fixture-only
 package qualification; no shared catalog/default change or publication."
 The ruling selects direction; a checked, approved bounded brief must precede

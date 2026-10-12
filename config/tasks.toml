@@ -2,6 +2,14 @@
 # Aggregator tasks below call the built-in through task refs.
 
 [tasks]
+# Separately authorized private fixture. Artifact and offline selectors never
+# start a VM. The genuine first reviewer owns ONE native batch, not the author.
+"proof:catalog:minio-fixture:artifact".admission = "heavy"
+"proof:catalog:minio-fixture:artifact".run = "python3 -B scripts/qualification/minio_fixture_package.py {args}"
+"proof:catalog:minio-fixture".admission = "heavy"
+"proof:catalog:minio-fixture".run = "python3 -B scripts/qualification/minio_fixture_native.py {args}"
+"test:catalog:minio-fixture" = "python3 -B tests/scripts/minio-fixture-controls.py"
+"check:catalog:minio-fixture" = "python3 -B scripts/qualification/minio_fixture_check.py"
 # Contributor setup
 "bootstrap:local" = [
   { rhai = "scripts/build-local-bin.rhai" },
