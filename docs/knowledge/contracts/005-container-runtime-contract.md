@@ -1,7 +1,7 @@
 # 005 - Container Runtime Contract
 
 Owner: Platform
-Last Updated: 2026-10-11
+Last Updated: 2026-10-12
 
 This contract defines the required runtime guarantees for container-backed
 task execution in Effigy.
@@ -23,6 +23,36 @@ launched through a TUI, a plain shell, or a one-shot bootstrap path.
 
 This contract exists to keep one explicit runtime guarantee across those
 surfaces.
+
+## Catalog paths in standard commands
+
+For a standard string `run` command, `{repo}` and `{project}` identify the
+selected catalog root in the command's execution filesystem. A host task uses
+the host catalog path. A host-dispatched container command maps that catalog
+through the owning runtime's host root and container working directory,
+including the relative catalog suffix. Both aliases and plain task environment
+values are rendered with that mapped root before shell quoting and transport.
+The same contained `CwdMapper` boundary governs raw exec working directories;
+an unmapped catalog path refuses rather than sending a host path into the
+container. A catalog that owns its own system uses that system's namespace.
+
+Human and JSON selector plans render the command with this runtime path. The
+plan's catalog and `cwd` fields remain host-side selection evidence; they are
+not an assertion that a host directory exists inside the container. Task
+schema and env-file discovery, cache inputs, configuration and scheduler
+control paths remain host-rooted. Literal command text, user arguments,
+secret values and bundle/skill source paths are not rewritten by replacing a
+host-path substring. This contract does not promise that a selected service
+has mounted a path merely because a command was mapped successfully.
+
+An invocation already running inside a container handoff uses its locally
+resolved catalog path. Legacy handoffs retain their selector and original env
+metadata for that inner resolution. Mixed container sequences retain their
+existing handoff route; host-owned aggregate task references resolve each
+standard leaf independently. This change does not enable inline standard
+routing, alter managed command mapping or interpret builtin `exec` raw argv as
+manifest placeholders. It transfers no scheduler credentials into a container
+and establishes no real Linux or remote cancellation proof.
 
 ## Optional workspace mounts at creation
 

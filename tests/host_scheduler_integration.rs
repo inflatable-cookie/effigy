@@ -919,6 +919,7 @@ payload=no
 locked_payload=no
 for arg in "$@"; do
   case "$arg" in
+    *runtime-path-proof*) payload=yes ;;
     *payload.out*) payload=yes; locked_payload=yes ;;
     *container-stdout*) payload=yes ;;
   esac
@@ -1334,6 +1335,123 @@ fn admitted_container_selector_stays_on_host_and_executes_its_resolved_payload()
         server.run_ids().len(),
         1,
         "nested capture reused parent admission"
+    );
+}
+
+#[test]
+#[ignore = "requires the private Queue fixture; run test:exec:runtime-paths"]
+fn admitted_container_command_paths_follow_runtime_without_rewriting_arguments() {
+    let manifest = format!(
+        "{}\n{}",
+        CONTAINER_ADMISSION_MANIFEST,
+        r#"[catalog.members]
+leaf = "catalog with 'quote"
+[tasks.runtime-path]
+run_in = "container"
+run = "printf '%s\\n' {repo} {project} \"$ROOT_ENV\" \"$ALIAS_ENV\" {args} # runtime-path-proof"
+env = { ROOT_ENV = "{repo}/data", ALIAS_ENV = "{project}" }
+[tasks.local-path]
+run_in = "host"
+run = "printf '%s\\n' {repo} {project} \"$ROOT_ENV\" {args}"
+env = { ROOT_ENV = "{repo}/data" }
+[tasks.path-parent]
+admission = "heavy"
+run_in = "host"
+run = "{EFFIGY} runtime-path \"$WORKSPACE_ROOT/literal with 'quote\" > root-path.out && {EFFIGY} leaf/check \"$WORKSPACE_ROOT/literal with 'quote\" > nested-path.out && {EFFIGY} --json leaf/check \"$WORKSPACE_ROOT/literal with 'quote\" > nested-path.json && {EFFIGY} --json leaf/check --plan > nested-plan.json && {EFFIGY} leaf/check --plan > nested-plan.txt && {EFFIGY} local-path \"$WORKSPACE_ROOT/literal with 'quote\" > local-path.out"
+env = { EFFIGY_COMPOSE_BACKEND = "docker", FAKE_EFFIGY_BIN = "{EFFIGY}", WORKSPACE_ROOT = "{project}", BACKEND_LOG = "{project}/backend.log", PATH = "{project}/fake-bin:/usr/bin:/bin:/usr/sbin:/sbin" }
+"#
+    );
+    let ws = Workspace::new(&manifest);
+    fs::create_dir_all(ws.file("catalog with 'quote")).expect("nested catalog");
+    fs::write(
+        ws.file("catalog with 'quote/effigy.toml"),
+        r#"[catalog]
+alias = "leaf"
+[task_defaults]
+run_in = "container"
+[tasks.check]
+run = "printf '%s\\n' {repo} {project} \"$ROOT_ENV\" \"$ALIAS_ENV\" {args} # runtime-path-proof"
+env = { ROOT_ENV = "{repo}/data", ALIAS_ENV = "{project}" }
+"#,
+    )
+    .expect("nested manifest");
+    fs::write(
+        ws.file("compose.yml"),
+        "services:\n  app:\n    image: private\n",
+    )
+    .expect("compose fixture");
+    let bin = install_fake_container_backend(&ws);
+    let server = Server::start(None);
+    let output = ws
+        .command(Some(&server.state), &["path-parent"])
+        .env(
+            "PATH",
+            format!("{}:/usr/bin:/bin:/usr/sbin:/sbin", bin.display()),
+        )
+        .output()
+        .expect("actual public host-admitted path proof");
+    assert_eq!(code(&output), 0, "{}", text(&output.stderr));
+    let host_root = fs::canonicalize(ws.root()).expect("canonical root");
+    let literal = format!("{}/literal with 'quote", host_root.display());
+    let root = fs::read_to_string(ws.file("root-path.out")).expect("root output");
+    assert_eq!(
+        root.lines().collect::<Vec<_>>(),
+        [
+            "/workspace",
+            "/workspace",
+            "/workspace/data",
+            "/workspace",
+            &literal
+        ]
+    );
+    let nested = fs::read_to_string(ws.file("nested-path.out")).expect("nested output");
+    assert_eq!(
+        nested.lines().collect::<Vec<_>>(),
+        [
+            "/workspace/catalog with 'quote",
+            "/workspace/catalog with 'quote",
+            "/workspace/catalog with 'quote/data",
+            "/workspace/catalog with 'quote",
+            &literal
+        ]
+    );
+    let captured: Value = serde_json::from_str(
+        &fs::read_to_string(ws.file("nested-path.json")).expect("JSON output"),
+    )
+    .expect("JSON payload");
+    assert_eq!(captured["result"]["stdout"], nested);
+    let plan: Value =
+        serde_json::from_str(&fs::read_to_string(ws.file("nested-plan.json")).expect("JSON plan"))
+            .expect("JSON plan payload");
+    assert_eq!(plan["result"]["runtime"]["target"], "container");
+    assert_eq!(plan["result"]["executed"], false);
+    let planned = plan["result"]["command"].as_str().expect("planned command");
+    assert!(planned.contains("/workspace/catalog with"), "{planned}");
+    assert!(
+        !planned.contains(&ws.root().display().to_string()),
+        "{planned}"
+    );
+    let human_plan = fs::read_to_string(ws.file("nested-plan.txt")).expect("human plan");
+    assert!(human_plan.contains("/workspace/catalog with"));
+    let host = fs::read_to_string(ws.file("local-path.out")).expect("host output");
+    assert_eq!(
+        host.lines().collect::<Vec<_>>(),
+        [
+            host_root.to_str().expect("host root"),
+            host_root.to_str().expect("host root"),
+            &format!("{}/data", host_root.display()),
+            &literal
+        ]
+    );
+    let backend = fs::read_to_string(ws.file("backend.log")).expect("backend argv");
+    assert!(backend.contains("-w /workspace/catalog with 'quote app sh -lc"));
+    assert!(!backend.contains("/usr/local/bin/effigy"));
+    assert!(!backend.contains("HOST_RUN_TOKEN="));
+    assert!(!backend.contains("HOST_RUN_ID="));
+    assert_eq!(
+        server.run_ids().len(),
+        1,
+        "one authenticated parent admission"
     );
 }
 

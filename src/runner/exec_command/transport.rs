@@ -51,7 +51,11 @@ pub(super) fn build_routed_task_exec_args(
     mapped_cwd: &str,
 ) -> Vec<OsString> {
     let mut args = vec![OsString::from("exec"), OsString::from("-T")];
-    append_task_exec_env(&mut args, task_env);
+    let runtime_root = match strategy {
+        effigy_exec::ExecStrategy::RawExec { working_dir, .. } => Some(working_dir.as_str()),
+        effigy_exec::ExecStrategy::Handoff { .. } => None,
+    };
+    append_task_exec_env(&mut args, task_env, runtime_root);
     append_exec_env(&mut args, secret_env);
     append_color_exec_env(&mut args, false);
     if let Some((user, home)) = workspace_identity {
@@ -87,7 +91,11 @@ pub(super) fn build_routed_task_exec_args(
     args
 }
 
-fn append_task_exec_env(args: &mut Vec<OsString>, task_env: Option<&BTreeMap<String, String>>) {
+fn append_task_exec_env(
+    args: &mut Vec<OsString>,
+    task_env: Option<&BTreeMap<String, String>>,
+    runtime_root: Option<&str>,
+) {
     let Some(task_env) = task_env else {
         return;
     };
@@ -95,6 +103,10 @@ fn append_task_exec_env(args: &mut Vec<OsString>, task_env: Option<&BTreeMap<Str
         if crate::runner::host_scheduler::is_scheduler_owned_env(key) {
             continue;
         }
+        let value = runtime_root.map_or_else(
+            || value.clone(),
+            |root| value.replace("{repo}", root).replace("{project}", root),
+        );
         args.push(OsString::from("-e"));
         args.push(OsString::from(format!("{key}={value}")));
     }

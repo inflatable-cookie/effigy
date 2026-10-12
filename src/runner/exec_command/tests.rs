@@ -94,6 +94,44 @@ fn test_policy() -> effigy_containers::EffectiveContainerPolicy {
 }
 
 #[test]
+fn routed_task_runtime_env_maps_aliases_only_for_raw_payloads() {
+    let env = std::collections::BTreeMap::from([
+        ("ROOT".to_owned(), "{repo}/data".to_owned()),
+        ("ALIAS".to_owned(), "{project}".to_owned()),
+        ("LITERAL".to_owned(), "/literal/host/path".to_owned()),
+        ("HOST_RUN_TOKEN".to_owned(), "never-forward".to_owned()),
+    ]);
+    let raw = effigy_exec::ExecStrategy::RawExec {
+        working_dir: "/workspace/leaf with 'quote".to_owned(),
+        command: vec!["printf".to_owned(), "/literal/host/path".to_owned()],
+    };
+    let args = build_routed_task_exec_args(
+        &raw,
+        Some(&env),
+        None,
+        None,
+        "secondary",
+        "/workspace/leaf with 'quote",
+    );
+    assert!(args.contains(&OsString::from("ROOT=/workspace/leaf with 'quote/data")));
+    assert!(args.contains(&OsString::from("ALIAS=/workspace/leaf with 'quote")));
+    assert!(args.contains(&OsString::from("LITERAL=/literal/host/path")));
+    assert!(!args
+        .iter()
+        .any(|arg| arg.to_string_lossy().contains("never-forward")));
+    assert_eq!(args.last(), Some(&OsString::from("/literal/host/path")));
+
+    let handoff = effigy_exec::ExecStrategy::Handoff {
+        args: vec!["check".to_owned()],
+    };
+    let args =
+        build_routed_task_exec_args(&handoff, Some(&env), None, None, "app", "/workspace/leaf");
+    assert!(args.contains(&OsString::from("ROOT={repo}/data")));
+    assert!(args.contains(&OsString::from("ALIAS={project}")));
+    assert!(args.contains(&OsString::from("/usr/local/bin/effigy")));
+}
+
+#[test]
 fn resolve_exec_working_dir_prefers_exec_config() {
     let config = ManifestContainerConfig {
         share_runtime_identity: false,

@@ -164,6 +164,11 @@ Definition:
 
 Notes:
 - `{project}` and `{repo}` both resolve to the selected catalog root path.
+- In standard string commands and their task env values, this is the path in
+  the selected execution filesystem. Host-dispatched container commands map
+  the catalog root with the same contained workspace mapping as raw exec CWD.
+  Host tasks, host-side configuration lookup and literal user arguments retain
+  their existing paths; mixed container sequences keep their handoff route.
 
 ## Lock Scope
 

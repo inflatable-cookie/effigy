@@ -103,6 +103,11 @@ During v0.x, MINOR bumps may include breaking changes.
   0.14.x releases without changing the support floor.
 
 ### Fixed
+- Standard container task commands now render `{repo}` and `{project}` with
+  the container-mapped catalog root when invoked by a host aggregate. Task env
+  aliases and selector plans use the same runtime path; nested catalogs keep
+  their relative suffix. Host configuration lookup, literal paths, arguments,
+  scheduler admission and existing sequence/managed routes are preserved.
 - Managed host listeners preserve readiness failures and phase diagnostics
   through rollback and teardown. Supervisors settle surviving owned descendants
   before reaping an owned child leader during cleanup, and retain unavailable

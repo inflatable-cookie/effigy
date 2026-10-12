@@ -733,6 +733,31 @@
 "test:exec:container-admission" = [
   { id = "container-selector-host-admission", run = "EFFIGY_REQUIRE_HOST_RUN_PRIVATE_SERVER=1 cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test host_scheduler_integration --run-ignored only --filterset 'test(admitted_container_selector_stays_on_host_and_executes_its_resolved_payload)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
 ]
+# Runtime-relative catalog aliases are exercised through the public binary and
+# one authenticated private parent. No real container or Linux artifact is used.
+"test:exec:runtime-paths" = [
+  { task = "test:exec:runtime-paths:cwd" },
+  { task = "test:exec:runtime-paths:renderer" },
+  { task = "test:exec:runtime-paths:transport" },
+  { task = "test:exec:runtime-paths:public" },
+]
+"test:exec:runtime-paths:cwd" = [
+  { id = "runtime-cwd-containment", run = "cargo test -p effigy-exec --lib cwd::tests -- --nocapture", timeout_ms = 600000 },
+]
+"test:exec:runtime-paths:renderer" = [
+  { id = "runtime-path-rendering", run = "cargo test -p effigy --lib container_command_root -- --nocapture", timeout_ms = 600000 },
+]
+"test:exec:runtime-paths:transport" = [
+  { id = "runtime-env-transport", run = "cargo test -p effigy --lib exec_command::tests -- --nocapture", timeout_ms = 600000 },
+]
+"test:exec:runtime-paths:public" = [
+  { id = "runtime-path-public-private-parent", run = "EFFIGY_REQUIRE_HOST_RUN_PRIVATE_SERVER=1 cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test host_scheduler_integration --run-ignored only --filterset 'test(admitted_container_command_paths_follow_runtime_without_rewriting_arguments)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
+]
+"format:exec:runtime-paths" = "rustfmt --edition 2021 --config skip_children=true src/runner/execute/pipeline/command.rs src/runner/exec_command/transport.rs src/runner/exec_command/tests.rs tests/host_scheduler_integration.rs"
+"check:exec:runtime-paths" = [
+  { id = "runtime-path-compile", run = "cargo check -p effigy --all-targets --profile test", timeout_ms = 600000 },
+  { id = "runtime-path-clippy", run = "cargo clippy -p effigy --all-targets -- -D warnings", timeout_ms = 600000 },
+]
 "test:qa:fixture-parent-isolation" = [
   { id = "fixture-parent-scheduled-regression-and-controls", run = "bash tests/scripts/fixture-parent-isolation.sh", timeout_ms = 600000 },
 ]
