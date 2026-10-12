@@ -581,6 +581,14 @@
   { id = "graph-scan-test-clippy", run = "cargo clippy -p effigy-codegraph -p effigy-scan --tests -- -D warnings", timeout_ms = 600000 },
   { id = "cli-test-clippy", run = "cargo clippy -p effigy --test cli_output_tests -- -D warnings", timeout_ms = 600000 },
 ]
+# Exercise the milestone's captured/concurrent runner shape, rather than the
+# serial --no-capture shape used for detailed process receipts above.
+"test:doctor:cold-scheduling" = [
+  { task = "test:doctor:scheduling-controls" },
+  { id = "cold-cli-family-default-profile", run = "cargo nextest run -p effigy --test cli_output_tests --user-config-file none --filterset 'test(cli_deep_doctor_timeout_terminates_) | test(cli_fast_doctor_timeout_terminates_cargo_metadata_tree) | test(doctor_git_cli_serial_observer_counterexample) | test(doctor_git_cli_deliberately_late_descendant)' --no-fail-fast --retries 0 --no-tests fail -j 4", timeout_ms = 120000 },
+  { id = "cold-inventory-family-default-profile", run = "cargo nextest run -p effigy-scan --lib --user-config-file none --filterset 'test(doctor_git_timeout_process_group_evidence) | test(doctor_git_timeout_before_status_is_incomplete_evidence)' --no-fail-fast --retries 0 --no-tests fail -j 4", timeout_ms = 120000 },
+]
+"test:doctor:scheduling-controls" = { run = "python3 tests/scripts/doctor-fixture-scheduling.py", timeout_ms = 180000 }
 
 # Rhai storage retirement (contract 043): negative proofs that the removed
 # surface stays absent and neighbouring modules still work.
