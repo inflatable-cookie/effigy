@@ -31,6 +31,48 @@ const SERVER_ENV: &str = "EFFIGY_HOST_RUN_PRIVATE_SERVER";
 const REQUIRE_SERVER_ENV: &str = "EFFIGY_REQUIRE_HOST_RUN_PRIVATE_SERVER";
 const REPO_TASKS: &str = include_str!("../config/tasks.toml");
 
+// A failed authority handshake must also reap the exact server we launched.
+struct ServerStartupChild(Option<Child>);
+
+impl Drop for ServerStartupChild {
+    fn drop(&mut self) {
+        if let Some(child) = self.0.as_mut() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
+#[test]
+fn private_server_startup_guard_reaps_on_unwind_and_preserves_foreign_child() {
+    let mut foreign = Command::new("/bin/sleep")
+        .arg("30")
+        .spawn()
+        .expect("foreign child");
+    let mut recorded_pid = None;
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let child = Command::new("/bin/sleep")
+            .arg("30")
+            .spawn()
+            .expect("startup child");
+        recorded_pid = Some(child.id());
+        let _guard = ServerStartupChild(Some(child));
+        panic!("controlled failed authority handshake");
+    }));
+    assert!(result.is_err());
+    assert!(foreign.try_wait().expect("foreign status").is_none());
+    let reaped = nix::sys::wait::waitpid(
+        nix::unistd::Pid::from_raw(recorded_pid.expect("pid") as i32),
+        None,
+    );
+    let _ = foreign.kill();
+    let _ = foreign.wait();
+    assert_eq!(
+        reaped.expect_err("startup child reaped"),
+        nix::errno::Errno::ECHILD
+    );
+}
+
 struct Server {
     _dir: tempfile::TempDir,
     state: PathBuf,
@@ -71,16 +113,31 @@ impl Server {
     /// Start the private server, optionally with a shortened output retention
     /// (a copy of the pinned script that only adds `outputRetentionMs`).
     fn start(retention_ms: Option<u64>) -> Self {
+        Self::start_with_canonical_home(retention_ms, false)
+    }
+
+    fn start_with_canonical_home(retention_ms: Option<u64>, canonical_home: bool) -> Self {
         let queue = std::env::var_os(SERVER_ENV)
             .map(PathBuf::from)
             .unwrap_or_else(|| panic!("{SERVER_ENV} must name an isolated Queue checkout"));
         let queue = fs::canonicalize(queue).expect("canonical private Queue checkout");
-        let dir = tempfile::Builder::new()
-            .prefix("hr")
-            .tempdir()
-            .expect("server tempdir");
-        let state = dir.path().join("s");
+        let mut builder = tempfile::Builder::new();
+        builder.prefix("hr");
+        // The canonical suffix must still fit macOS's Unix-socket path bound.
+        // This TempDir remains the sole owner of its private home and state.
+        let dir = if canonical_home {
+            builder.tempdir_in("/tmp")
+        } else {
+            builder.tempdir()
+        }
+        .expect("server tempdir");
+        let state = if canonical_home {
+            dir.path().join(".local/state/host-run")
+        } else {
+            dir.path().join("s")
+        };
         fs::DirBuilder::new()
+            .recursive(true)
             .mode(0o700)
             .create(&state)
             .expect("state dir");
@@ -116,17 +173,23 @@ impl Server {
                 path
             }
         };
-        let mut child = Command::new("node")
+        let mut command = Command::new("node");
+        command
             .current_dir(&queue)
             .args(["--import", "tsx"])
             .arg(&script)
             .arg("--state-dir")
             .arg(&state)
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("spawn private server");
-        let stdout = child.stdout.take().expect("server stdout");
+            .stderr(Stdio::inherit());
+        let mut startup = ServerStartupChild(Some(command.spawn().expect("spawn private server")));
+        let stdout = startup
+            .0
+            .as_mut()
+            .expect("startup child")
+            .stdout
+            .take()
+            .expect("server stdout");
         let (sender, receiver) = mpsc::channel();
         std::thread::spawn(move || {
             let mut line = String::new();
@@ -138,6 +201,7 @@ impl Server {
             .expect("server authority line");
         let authority: Value = serde_json::from_str(line.trim()).expect("authority JSON");
         assert_eq!(authority["format"], "host.run.authority");
+        let child = startup.0.take().expect("authenticated server child");
         eprintln!(
             "private server pid {}, state {}",
             child.id(),
@@ -1507,6 +1571,54 @@ fn binary_cli_fixtures_succeed_with_authenticated_parent_root() {
             "exit_code": settled["settlement"]["result"]["exitCode"],
         })
     );
+}
+
+#[test]
+#[ignore = "requires private Queue fixture; run test:audit:fixture-family"]
+fn complete_cli_fixture_family_succeeds_with_authenticated_parent_root() {
+    assert_reviewed_private_queue_checkout();
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let server = Server::start_with_canonical_home(None, true);
+    let full_log = server._dir.path().join("cli-family.log");
+    let output = Command::new(EFFIGY)
+        .arg("test:audit:fixture-family:runner")
+        .arg(&full_log)
+        .arg(server._dir.path())
+        .current_dir(repo_root)
+        .env("NO_COLOR", "1")
+        .env("EFFIGY_HOST_RUN_ROOT", &server.state)
+        .env("EFFIGY_ADMISSION_CPU_UNITS", "1")
+        .env("EFFIGY_ADMISSION_MEMORY_MIB", "64")
+        .env("EFFIGY_ADMISSION_TIMEOUT_SECS", "5")
+        // Isolate only this submission boundary. All cases retain the real
+        // private parent's token, selected-root predicate and trusted endpoint.
+        .env_remove("HOST_RUN_TOKEN")
+        .env_remove("HOST_RUN_ID")
+        .env_remove("EFFIGY_INTERNAL_CONTAINER_HANDOFF")
+        .env_remove("EFFIGY_HOST_SCHEDULER")
+        .env_remove("EFFIGY_SCHEDULER_OVERRIDE")
+        .output()
+        .expect("complete CLI family under private parent");
+    let retained = fs::read(&full_log).expect("complete CLI diagnostic stream");
+    let evidence_dir = repo_root.join(".effigy/reports/fixture-family");
+    fs::create_dir_all(&evidence_dir).expect("native fixture evidence directory");
+    let retained_path = evidence_dir.join(format!("cli-family-{}.log", std::process::id()));
+    fs::write(&retained_path, &retained).expect("retain full native diagnostics");
+    eprintln!(
+        "full CLI family diagnostics: {} ({} bytes)",
+        retained_path.display(),
+        retained.len()
+    );
+    eprintln!("{}", text(&output.stderr));
+    println!("{}", text(&output.stdout));
+    let runs = server.run_ids();
+    assert_eq!(runs.len(), 1, "one actual admission covers all CLI cases");
+    let settled = server.status(&runs[0]);
+    assert_eq!(settled["state"], "settled");
+    eprintln!("complete CLI private-parent receipt: {}", settled);
+    assert_eq!(code(&output), 0, "{}", text(&output.stderr));
+    assert_eq!(settled["settlement"]["outcome"], "passed");
+    assert_eq!(settled["settlement"]["result"]["exitCode"], 0);
 }
 
 #[test]

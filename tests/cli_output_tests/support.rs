@@ -5,6 +5,160 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 
+/// An exact child handle owns unwind cleanup; PID files never grant authority.
+pub(super) struct OwnedCliChild {
+    child: std::process::Child,
+    reaped: bool,
+    deadline: Instant,
+}
+
+pub(super) trait FixtureCommandExt {
+    fn spawn_owned(&mut self) -> std::io::Result<OwnedCliChild>;
+}
+
+impl FixtureCommandExt for Command {
+    fn spawn_owned(&mut self) -> std::io::Result<OwnedCliChild> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            self.process_group(0);
+        }
+        let deadline = Instant::now() + Duration::from_secs(180);
+        self.spawn().map(|child| OwnedCliChild {
+            child,
+            reaped: false,
+            deadline,
+        })
+    }
+}
+
+impl std::ops::Deref for OwnedCliChild {
+    type Target = std::process::Child;
+    fn deref(&self) -> &Self::Target {
+        &self.child
+    }
+}
+
+impl std::ops::DerefMut for OwnedCliChild {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.child
+    }
+}
+
+impl OwnedCliChild {
+    pub(super) fn deadline(&self) -> Instant {
+        self.deadline
+    }
+
+    pub(super) fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
+        let status = self.child.try_wait()?;
+        self.reaped |= status.is_some();
+        Ok(status)
+    }
+
+    pub(super) fn wait(&mut self) -> std::io::Result<std::process::ExitStatus> {
+        let status = self.child.wait()?;
+        self.reaped = true;
+        Ok(status)
+    }
+
+    pub(super) fn terminate_and_wait(&mut self) -> std::io::Result<std::process::ExitStatus> {
+        if !self.reaped {
+            #[cfg(unix)]
+            {
+                use nix::{
+                    sys::signal::{killpg, Signal},
+                    unistd::Pid,
+                };
+                // This child established the group and still anchors its generation.
+                let group = Pid::from_raw(self.child.id() as i32);
+                let _ = killpg(group, Signal::SIGTERM);
+                std::thread::sleep(Duration::from_millis(100));
+                let _ = killpg(group, Signal::SIGKILL);
+            }
+            #[cfg(not(unix))]
+            let _ = self.child.kill();
+        }
+        self.wait()
+    }
+
+    pub(super) fn wait_with_output(mut self) -> std::io::Result<Output> {
+        use std::io::Read;
+        fn reader<R: Read + Send + 'static>(
+            stream: Option<R>,
+        ) -> std::thread::JoinHandle<std::io::Result<Vec<u8>>> {
+            std::thread::spawn(move || {
+                let mut bytes = Vec::new();
+                if let Some(mut stream) = stream {
+                    stream.read_to_end(&mut bytes)?;
+                }
+                Ok(bytes)
+            })
+        }
+        drop(self.child.stdin.take());
+        let stdout = reader(self.child.stdout.take());
+        let stderr = reader(self.child.stderr.take());
+        let deadline = self.deadline;
+        loop {
+            if Instant::now() >= deadline {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "owned fixture output did not settle",
+                ));
+            }
+            if stdout.is_finished() && stderr.is_finished() {
+                if let Some(status) = self.try_wait()? {
+                    let join = |reader: std::thread::JoinHandle<std::io::Result<Vec<u8>>>| {
+                        reader
+                            .join()
+                            .map_err(|_| std::io::Error::other("fixture reader panicked"))?
+                    };
+                    return Ok(Output {
+                        status,
+                        stdout: join(stdout)?,
+                        stderr: join(stderr)?,
+                    });
+                }
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+}
+
+impl Drop for OwnedCliChild {
+    fn drop(&mut self) {
+        if !self.reaped {
+            let _ = self.terminate_and_wait();
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn owned_cli_guard_reaps_on_unwind_and_preserves_foreign_child() {
+    let mut foreign = Command::new("/bin/sleep")
+        .arg("30")
+        .spawn_owned()
+        .expect("foreign child");
+    let mut owned_pid = None;
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let child = Command::new("/bin/sleep")
+            .arg("30")
+            .spawn_owned()
+            .expect("owned child");
+        owned_pid = Some(child.id());
+        panic!("controlled fixture unwind");
+    }));
+    assert!(result.is_err());
+    assert_eq!(foreign.try_wait().expect("foreign poll"), None);
+    let error = nix::sys::wait::waitpid(
+        nix::unistd::Pid::from_raw(owned_pid.expect("pid") as i32),
+        None,
+    )
+    .expect_err("guard must reap its child");
+    assert_eq!(error, nix::errno::Errno::ECHILD);
+}
+
 pub(super) fn temp_workspace(name: &str) -> PathBuf {
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -22,6 +176,17 @@ pub(super) fn temp_execution_workspace(name: &str) -> PathBuf {
     let root = super::execution_fixture_support::temp_workspace("effigy-cli", name);
     fs::write(root.join("package.json"), "{}\n").expect("write package marker");
     root
+}
+
+// HOME isolation must not redirect inherited parent verification to an empty
+// private home. Use the actual state location, without copying credentials.
+pub(super) fn scheduler_state_root() -> PathBuf {
+    std::env::var_os("EFFIGY_HOST_RUN_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(std::env::var_os("HOME").expect("original HOME"))
+                .join(".local/state/host-run")
+        })
 }
 
 pub(super) fn write_effigy_release_root_marker(root: &Path) {

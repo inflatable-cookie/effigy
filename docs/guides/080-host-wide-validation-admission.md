@@ -88,6 +88,26 @@ acknowledged. A removed fact is `true` only after observed successful teardown,
 observed. Other host-container leases and their reapers are independent and
 remain unchanged.
 
+## Private binary fixtures
+
+A command that launches a nested task from its selected repository needs that
+execution root inside its authenticated parent root. Changing only `--repo`
+does not establish parent authority. Discovery-only fixtures may use a separate
+root; negative fixtures deliberately retain outside roots and must refuse
+before task effects.
+
+A fixture that isolates `HOME` must preserve the actual inherited
+`EFFIGY_HOST_RUN_ROOT`, or resolve its original canonical state path before
+changing `HOME`. An empty fixture home has no trusted scheduler state. Copying
+credentials, stripping the parent token or adding an override is not an
+admission repair.
+
+The maintained `test:audit:fixture-family` selector exercises the complete CLI
+integration binary, including ignored private-parent controls, against one
+private authenticated parent. It treats inherited-output leaks as failures and
+retains a full native diagnostic stream separately from the scheduler's output
+tail. A passing family run qualifies that family, not the full repository QA.
+
 ## Caller-controlled request recovery
 
 A caller that may restart or lose the submit reply can choose a stable UUID

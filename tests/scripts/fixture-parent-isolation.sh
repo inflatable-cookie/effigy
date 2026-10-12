@@ -38,9 +38,13 @@ cargo nextest run \
   --test cli_output_tests \
   --no-run
 
-filter='test(fixture_parent_runner_selector_succeeds_with_authenticated_parent_root) | test(binary_cli_fixtures_succeed_with_authenticated_parent_root) | test(forged_expired_and_outside_root_tokens_exit_77_and_never_queue) | test(admitted_container_selector_stays_on_host_and_executes_its_resolved_payload)'
+filter='test(fixture_parent_runner_selector_succeeds_with_authenticated_parent_root) | test(binary_cli_fixtures_succeed_with_authenticated_parent_root) | test(forged_expired_and_outside_root_tokens_exit_77_and_never_queue) | test(admitted_container_selector_stays_on_host_and_executes_its_resolved_payload) | test(complete_cli_fixture_family_succeeds_with_authenticated_parent_root)'
 if [[ "${1:-}" == cli ]]; then
-  filter='test(binary_cli_fixtures_succeed_with_authenticated_parent_root)'
+  filter='test(binary_cli_fixtures_succeed_with_authenticated_parent_root) | test(complete_cli_fixture_family_succeeds_with_authenticated_parent_root)'
+elif [[ "${1:-}" == all-cli ]]; then
+  filter='test(complete_cli_fixture_family_succeeds_with_authenticated_parent_root)'
+elif [[ "${1:-}" == non-cli ]]; then
+  filter='test(fixture_parent_runner_selector_succeeds_with_authenticated_parent_root) | test(binary_cli_fixtures_succeed_with_authenticated_parent_root) | test(forged_expired_and_outside_root_tokens_exit_77_and_never_queue) | test(admitted_container_selector_stays_on_host_and_executes_its_resolved_payload)'
 fi
 
 EFFIGY_REQUIRE_HOST_RUN_PRIVATE_SERVER=1 \

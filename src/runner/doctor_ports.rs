@@ -8,20 +8,9 @@
 //! the doctor layer only speaks its own error type.
 
 use std::ffi::{OsStr, OsString};
-#[cfg(not(test))]
-use std::io::Read;
-#[cfg(all(unix, not(test)))]
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-#[cfg(not(test))]
-use std::process::Stdio;
-#[cfg(not(test))]
-use std::thread;
 use std::time::{Duration, Instant};
-
-#[cfg(all(unix, not(test)))]
-use nix::unistd::{setpgid, Pid};
 
 use effigy_cli::TaskInvocation;
 use effigy_containers::{
@@ -41,6 +30,8 @@ use effigy_tasks::TaskSelector;
 
 use crate::runner::deferral;
 use crate::runner::error::RunnerError;
+#[cfg(not(test))]
+use crate::runner::exec_command::{capture_command_until, CommandCaptureError};
 use crate::runner::exec_command::{run_command_capture_until, run_compose_exec_plan_with_deadline};
 use crate::runner::execute::api;
 use crate::runner::system_command::is_primary_service_running_with_deadline;
@@ -124,78 +115,24 @@ fn run_manifest_task_subprocess_bounded(
             phase: "health_task".to_owned(),
         });
     }
+    let deadline = Instant::now() + budget;
     let executable = std::env::current_exe().map_err(|error| {
         DoctorError::task_invocation(format!("failed to resolve Effigy executable: {error}"))
     })?;
-    let mut command = Command::new(executable);
-    command
-        .arg(&invocation.name)
-        .args(&invocation.args)
-        .current_dir(cwd)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    #[cfg(unix)]
-    // SAFETY: `pre_exec` runs this closure in the forked child before `exec`,
-    // where only async-signal-safe work is allowed. The closure calls
-    // `setpgid`, which is async-signal-safe, to place the not-yet-exec'd child
-    // in a new process group whose id is the child's own pid. The error path
-    // converts `nix::Error` (= `Errno`) with the allocation-free
-    // `io::Error::from` impl. That group is exactly what
-    // `effigy_process::terminate_process_tree(child.id())` targets on timeout
-    // (`kill(-pgid, ...)`), so the bounded kill path owns the whole tree.
-    unsafe {
-        command
-            .pre_exec(|| setpgid(Pid::from_raw(0), Pid::from_raw(0)).map_err(std::io::Error::from));
-    }
-    let mut child = command.spawn().map_err(|error| {
-        DoctorError::task_invocation(format!("failed to start bounded health task: {error}"))
-    })?;
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| DoctorError::task_invocation("health task stdout was unavailable"))?;
-    let stderr = child
-        .stderr
-        .take()
-        .ok_or_else(|| DoctorError::task_invocation("health task stderr was unavailable"))?;
-    let stdout_reader = thread::spawn(move || read_process_stream(stdout));
-    let stderr_reader = thread::spawn(move || read_process_stream(stderr));
-    let deadline = Instant::now() + budget;
-    let status = loop {
-        if let Some(status) = child.try_wait().map_err(|error| {
-            DoctorError::task_invocation(format!("failed to poll bounded health task: {error}"))
-        })? {
-            break status;
-        }
-        if Instant::now() >= deadline {
-            effigy_process::terminate_process_tree(child.id(), false);
-            let grace_deadline = Instant::now() + Duration::from_millis(500);
-            loop {
-                if child.try_wait().ok().flatten().is_some() {
-                    break;
-                }
-                if Instant::now() >= grace_deadline {
-                    effigy_process::terminate_process_tree(child.id(), true);
-                    let _ = child.wait();
-                    break;
-                }
-                thread::sleep(Duration::from_millis(10));
-            }
-            let _ = stdout_reader.join();
-            let _ = stderr_reader.join();
-            return Err(DoctorError::BudgetExhausted {
+    let args: Vec<OsString> = std::iter::once(&invocation.name)
+        .chain(&invocation.args)
+        .map(OsString::from)
+        .collect();
+    let output = capture_command_until(cwd, executable.as_os_str(), &args, None, Some(deadline))
+        .map_err(|error| match error {
+            CommandCaptureError::Deadline { .. } => DoctorError::BudgetExhausted {
                 phase: "health_task".to_owned(),
-            });
-        }
-        thread::sleep(Duration::from_millis(10));
-    };
-    let stdout = stdout_reader
-        .join()
-        .map_err(|_| DoctorError::task_invocation("health task stdout reader panicked"))??;
-    let stderr = stderr_reader
-        .join()
-        .map_err(|_| DoctorError::task_invocation("health task stderr reader panicked"))??;
+            },
+            CommandCaptureError::Runner(error) => runner_to_doctor(error),
+        })?;
+    let status = output.status;
+    let stdout = output.stdout;
+    let stderr = output.stderr;
     let stdout = String::from_utf8_lossy(&stdout).into_owned();
     if status.success() {
         return Ok(stdout);
@@ -214,15 +151,6 @@ fn run_manifest_task_subprocess_bounded(
             }
         )))
     }
-}
-
-#[cfg(not(test))]
-fn read_process_stream(mut stream: impl Read) -> Result<Vec<u8>, DoctorError> {
-    let mut bytes = Vec::new();
-    stream.read_to_end(&mut bytes).map_err(|error| {
-        DoctorError::task_invocation(format!("failed to read bounded health output: {error}"))
-    })?;
-    Ok(bytes)
 }
 
 fn runner_to_doctor(error: RunnerError) -> DoctorError {

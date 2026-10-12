@@ -1,3 +1,4 @@
+use super::support::FixtureCommandExt;
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
@@ -26,7 +27,7 @@ fn cli_graph_watch_json_streams_started_and_refresh_events() {
         .env("NO_COLOR", "1")
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
-        .spawn()
+        .spawn_owned()
         .expect("spawn graph watch");
 
     let stdout = child.stdout.take().expect("watch stdout");
