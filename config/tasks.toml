@@ -13,6 +13,24 @@
 "fmt:apply" = "cargo fmt --all"
 "build:release" = "cargo build --release --bin effigy"
 
+# All maintained JSON contract rows and their authority/ownership controls.
+"test:audit:contracts" = [
+  "cargo test -p effigy-contracts --lib -- --nocapture",
+  "cargo test --test cli_output_tests cli_contracts_ -- --nocapture",
+  { task = "test:audit:contracts:parent" },
+]
+"test:audit:contracts:parent" = [
+  { id = "contract-private-parent", run = "bash tests/scripts/fixture-parent-isolation.sh contracts", timeout_ms = 600000 },
+]
+"test:audit:contracts:runner".admission = "heavy"
+"test:audit:contracts:runner".run = "python3 tests/scripts/contract-fixture-checks.py ./target/debug/effigy {args}"
+"check:audit:contracts" = [
+  { task = "fmt:check" },
+  "cargo check -p effigy-contracts -p effigy --all-targets --profile test",
+]
+"lint:audit:contracts" = "cargo clippy -p effigy-contracts -p effigy --all-targets -- -D warnings"
+"fmt:audit:contracts" = "rustfmt --edition 2021 crates/effigy-contracts/src/lib.rs crates/effigy-contracts/src/tests.rs tests/host_scheduler_integration.rs"
+
 # Managed TUI startup must render and remain cancellable while ordered child
 # startup delays are still pending. The PTY test follows the production path.
 "test:tui:startup-visibility" = [

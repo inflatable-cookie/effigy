@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::{Mutex, OnceLock};
 
 use effigy_cli::{ContractsCheckMode, ContractsSelectionPrintMode};
 use serde_json::{json, Value};
@@ -371,6 +370,7 @@ pub fn run_prepared_check_json(
         skipped: 0,
         failures: Vec::new(),
     };
+    let mut fixtures = ContractFixtures::new(repo_root);
 
     for row in &prepared.selected_rows {
         if prepared.mode == ContractsCheckMode::Fast && is_heavy_json_contract_schema(&row.schema) {
@@ -388,7 +388,7 @@ pub fn run_prepared_check_json(
             );
         }
         report.checks += 1;
-        match run_contract_row(repo_root, row) {
+        match run_contract_row(repo_root, row, &mut fixtures) {
             Ok(()) => {
                 if emit_progress {
                     println!("  [ok] schema and required keys validated");
@@ -596,25 +596,20 @@ fn select_contract_rows(
         .collect())
 }
 
-fn run_contract_row(repo_root: &Path, row: &ContractRow) -> Result<(), CheckFailure> {
-    let command = expand_contract_fixture_tokens(&row.command).map_err(|reason| CheckFailure {
-        schema: row.schema.clone(),
-        command: row.command.clone(),
-        reason,
-    })?;
-    let args = split_shell_like_args(&command).map_err(|reason| CheckFailure {
-        schema: row.schema.clone(),
-        command: row.command.clone(),
-        reason,
-    })?;
-
-    let Some(args) = args.strip_prefix(&["effigy".to_owned()]) else {
-        return Err(CheckFailure {
+fn run_contract_row(
+    repo_root: &Path,
+    row: &ContractRow,
+    fixtures: &mut ContractFixtures,
+) -> Result<(), CheckFailure> {
+    let args =
+        expand_contract_fixture_tokens(&row.command, fixtures).map_err(|reason| CheckFailure {
             schema: row.schema.clone(),
             command: row.command.clone(),
-            reason: "index command must start with `effigy`".to_owned(),
-        });
-    };
+            reason,
+        })?;
+
+    // Expansion validated the program before creating any fixture.
+    let args = &args[1..];
     let executable = resolve_effigy_executable().map_err(|reason| CheckFailure {
         schema: row.schema.clone(),
         command: row.command.clone(),
@@ -788,69 +783,169 @@ fn is_heavy_json_contract_schema(schema: &str) -> bool {
     schema == "effigy.test.results.v1"
 }
 
-fn expand_contract_fixture_tokens(command: &str) -> Result<String, String> {
-    let mut expanded = command.replace("<name>", "test");
-    if expanded.contains("<fixture_qa_groups>") || expanded.contains("<fixture_qa_groups_run_id>") {
-        let (fixture, run_id) = ensure_qa_groups_contract_fixture()?;
-        expanded = expanded.replace("<fixture_qa_groups>", fixture.to_string_lossy().as_ref());
-        expanded = expanded.replace("<fixture_qa_groups_run_id>", &run_id);
+fn expand_contract_fixture_tokens(
+    command: &str,
+    fixtures: &mut ContractFixtures,
+) -> Result<Vec<String>, String> {
+    // Parse the indexed command before allocating fixtures. Substitute values
+    // into existing arguments so spaces and quotes in paths stay literal.
+    let mut args = split_shell_like_args(&command.replace("<name>", "test"))?;
+    if args.first().map(String::as_str) != Some("effigy") {
+        return Err("index command must start with `effigy`".to_owned());
     }
-    if expanded.contains("<fixture_skill_source>") || expanded.contains("<fixture_skill_consumer>")
+    if args.iter().any(|arg| arg.contains("<fixture_qa_groups>"))
+        || args
+            .iter()
+            .any(|arg| arg.contains("<fixture_qa_groups_run_id>"))
     {
-        let (source, consumer) = create_skill_contract_fixtures()?;
-        expanded = expanded.replace("<fixture_skill_source>", source.to_string_lossy().as_ref());
-        expanded = expanded.replace(
+        let (fixture, run_id) = ensure_qa_groups_contract_fixture(fixtures)?;
+        replace_contract_token(&mut args, "<fixture_qa_groups>", &fixture.to_string_lossy());
+        replace_contract_token(&mut args, "<fixture_qa_groups_run_id>", &run_id);
+    }
+    if args
+        .iter()
+        .any(|arg| arg.contains("<fixture_skill_source>"))
+        || args
+            .iter()
+            .any(|arg| arg.contains("<fixture_skill_consumer>"))
+    {
+        let (source, consumer) = create_skill_contract_fixtures(fixtures)?;
+        replace_contract_token(
+            &mut args,
+            "<fixture_skill_source>",
+            &source.to_string_lossy(),
+        );
+        replace_contract_token(
+            &mut args,
             "<fixture_skill_consumer>",
-            consumer.to_string_lossy().as_ref(),
+            &consumer.to_string_lossy(),
         );
     }
-    if expanded.contains("<fixture_deps_consumer>") || expanded.contains("<fixture_deps_library>") {
-        let (consumer, library) = create_deps_contract_fixtures()?;
-        expanded = expanded.replace(
+    if args
+        .iter()
+        .any(|arg| arg.contains("<fixture_deps_consumer>"))
+        || args
+            .iter()
+            .any(|arg| arg.contains("<fixture_deps_library>"))
+    {
+        let (consumer, library) = create_deps_contract_fixtures(fixtures)?;
+        replace_contract_token(
+            &mut args,
             "<fixture_deps_consumer>",
-            consumer.to_string_lossy().as_ref(),
+            &consumer.to_string_lossy(),
         );
-        expanded = expanded.replace("<fixture_deps_library>", library.to_string_lossy().as_ref());
+        replace_contract_token(
+            &mut args,
+            "<fixture_deps_library>",
+            &library.to_string_lossy(),
+        );
     }
-    if expanded.contains("<fixture_docs_context>") {
-        let fixture = create_docs_context_fixture()?;
-        expanded = expanded.replace("<fixture_docs_context>", fixture.to_string_lossy().as_ref());
+    if args
+        .iter()
+        .any(|arg| arg.contains("<fixture_docs_context>"))
+    {
+        let fixture = create_docs_context_fixture(fixtures)?;
+        replace_contract_token(
+            &mut args,
+            "<fixture_docs_context>",
+            &fixture.to_string_lossy(),
+        );
     }
-    if expanded.contains("<fixture_task_success>") {
-        let fixture = create_contract_fixture("[tasks.build]\nrun = \"printf build-ok\"\n")
-            .map_err(|error| error.to_string())?;
-        expanded = expanded.replace("<fixture_task_success>", fixture.to_string_lossy().as_ref());
+    if args
+        .iter()
+        .any(|arg| arg.contains("<fixture_task_success>"))
+    {
+        let fixture =
+            create_contract_fixture(fixtures, "[tasks.build]\nrun = \"printf build-ok\"\n")
+                .map_err(|error| error.to_string())?;
+        replace_contract_token(
+            &mut args,
+            "<fixture_task_success>",
+            &fixture.to_string_lossy(),
+        );
     }
-    if expanded.contains("<fixture_task_failure>") {
+    if args
+        .iter()
+        .any(|arg| arg.contains("<fixture_task_failure>"))
+    {
         let fixture = create_contract_fixture(
+            fixtures,
             "[tasks.fail]\nrun = \"sh -lc 'printf fail-out; printf fail-err >&2; exit 9'\"\n",
         )
         .map_err(|error| error.to_string())?;
-        expanded = expanded.replace("<fixture_task_failure>", fixture.to_string_lossy().as_ref());
+        replace_contract_token(
+            &mut args,
+            "<fixture_task_failure>",
+            &fixture.to_string_lossy(),
+        );
     }
-    Ok(expanded)
+    Ok(args)
 }
 
-/// Cached QA-group contract fixture: one private temp repository with a
-/// maintained two-member group plus one genuine successful run record the
-/// status probe can read. Created at most once per checker process.
-static QA_GROUPS_CONTRACT_FIXTURE: OnceLock<Mutex<Option<(PathBuf, String)>>> = OnceLock::new();
+fn replace_contract_token(args: &mut [String], token: &str, value: &str) {
+    for arg in args {
+        *arg = arg.replace(token, value);
+    }
+}
+
+enum FixturePlacement {
+    Execution,
+    External,
+}
+
+/// Keep every generated repository alive through its checks and remove only
+/// these owned directories on return or unwind. No cache crosses invocations.
+struct ContractFixtures {
+    execution_root: PathBuf,
+    directories: Vec<tempfile::TempDir>,
+    qa_group: Option<Result<(PathBuf, String), String>>,
+}
+
+impl ContractFixtures {
+    fn new(repo_root: &Path) -> Self {
+        Self {
+            execution_root: repo_root.join(".effigy/tmp/contract-fixtures"),
+            directories: Vec::new(),
+            qa_group: None,
+        }
+    }
+
+    fn directory(&mut self, prefix: &str, placement: FixturePlacement) -> std::io::Result<PathBuf> {
+        let mut builder = tempfile::Builder::new();
+        builder.prefix(prefix);
+        let directory = match placement {
+            FixturePlacement::Execution => {
+                std::fs::create_dir_all(&self.execution_root)?;
+                builder.tempdir_in(&self.execution_root)?
+            }
+            FixturePlacement::External => builder.tempdir()?,
+        };
+        let path = directory.path().to_path_buf();
+        self.directories.push(directory);
+        Ok(path)
+    }
+}
 
 /// Create (or reuse) the QA-group contract fixture.
 ///
-/// The fixture is a fresh private temp root in `std::env::temp_dir()` (the
-/// established contract-fixture convention; nothing is written to the real
-/// checkout). Setup executes the group once through the resolved Effigy
-/// binary so the status probe reads a genuine finalized successful run
-/// record rather than a fabricated file.
-fn ensure_qa_groups_contract_fixture() -> Result<(PathBuf, String), String> {
-    let cache = QA_GROUPS_CONTRACT_FIXTURE.get_or_init(|| Mutex::new(None));
-    let mut cached = cache.lock().map_err(|error| error.to_string())?;
-    if let Some((fixture, run_id)) = cached.as_ref() {
-        return Ok((fixture.clone(), run_id.clone()));
+/// Nested member execution uses the checkout's inherited authenticated parent.
+/// Setup runs once per invocation; status reads its genuine finalized record.
+/// A setup refusal is cached too, so later schema rows do not repeat it.
+fn ensure_qa_groups_contract_fixture(
+    fixtures: &mut ContractFixtures,
+) -> Result<(PathBuf, String), String> {
+    if let Some(cached) = &fixtures.qa_group {
+        return cached.clone();
     }
+    let result = build_qa_groups_contract_fixture(fixtures);
+    fixtures.qa_group = Some(result.clone());
+    result
+}
 
-    let fixture = create_qa_groups_contract_fixture_dir()?;
+fn build_qa_groups_contract_fixture(
+    fixtures: &mut ContractFixtures,
+) -> Result<(PathBuf, String), String> {
+    let fixture = create_qa_groups_contract_fixture_dir(fixtures)?;
     let executable = resolve_effigy_executable()?;
     let output = Command::new(executable)
         .args([
@@ -867,12 +962,12 @@ fn ensure_qa_groups_contract_fixture() -> Result<(PathBuf, String), String> {
         .map_err(|error| format!("failed to execute fixture group run: {error}"))?;
     if !output.status.success() {
         return Err(format!(
-            "fixture group run failed unexpectedly (status={}); stderr: {}",
+            "fixture group run failed unexpectedly (status={}); category: {}",
             output
                 .status
                 .code()
                 .map_or("signal".to_owned(), |code| code.to_string()),
-            String::from_utf8_lossy(&output.stderr)
+            fixture_group_refusal_category(&output.stdout).unwrap_or("unavailable")
         ));
     }
 
@@ -895,21 +990,38 @@ fn ensure_qa_groups_contract_fixture() -> Result<(PathBuf, String), String> {
         .ok_or_else(|| "fixture run directory is not valid UTF-8".to_owned())?
         .to_owned();
 
-    *cached = Some((fixture.clone(), run_id.clone()));
     Ok((fixture, run_id))
+}
+
+fn fixture_group_refusal_category(stdout: &[u8]) -> Option<&'static str> {
+    let payload: Value = serde_json::from_slice(stdout).ok()?;
+    let report = payload
+        .get("result")
+        .filter(|value| !value.is_null())
+        .or_else(|| payload.get("error")?.get("details"))?;
+    for member in report.get("members")?.as_array()? {
+        let summary = member
+            .get("summary")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if summary.starts_with("runner error: invalid_parent_token:") {
+            return Some("invalid_parent_token");
+        }
+        if summary.starts_with("runner error: scheduler_unreachable:") {
+            return Some("scheduler_unreachable");
+        }
+    }
+    None
 }
 
 const QA_GROUPS_CONTRACT_FIXTURE_GROUP: &str = "release-probe";
 
-fn create_qa_groups_contract_fixture_dir() -> Result<PathBuf, String> {
-    let fixture = std::env::temp_dir().join(format!(
-        "effigy-qa-groups-contract-fixture-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|error| error.to_string())?
-            .as_nanos()
-    ));
-    std::fs::create_dir_all(&fixture).map_err(|error| error.to_string())?;
+fn create_qa_groups_contract_fixture_dir(
+    fixtures: &mut ContractFixtures,
+) -> Result<PathBuf, String> {
+    let fixture = fixtures
+        .directory("qa-groups-", FixturePlacement::Execution)
+        .map_err(|error| error.to_string())?;
     std::fs::write(fixture.join("package.json"), "{}\n").map_err(|error| error.to_string())?;
     std::fs::write(
         fixture.join("effigy.toml"),
@@ -919,9 +1031,7 @@ fn create_qa_groups_contract_fixture_dir() -> Result<PathBuf, String> {
     Ok(fixture)
 }
 
-/// Host-only, admission-free fixture group: two deterministic printf members
-/// with an advisory scope policy, so the checker never touches containers or
-/// the host-wide heavy gate.
+/// Host-only light printf members; inherited parent verification still applies.
 const QA_GROUPS_CONTRACT_FIXTURE_MANIFEST: &str = concat!(
     "[catalog]\nalias = \"qa-groups-contract\"\n\n",
     "[tasks.probe-ok]\nrun = \"printf probe-ok\"\nrun_in = \"host\"\n\n",
@@ -938,14 +1048,12 @@ const QA_GROUPS_CONTRACT_FIXTURE_MANIFEST: &str = concat!(
     "]\n",
 );
 
-fn create_skill_contract_fixtures() -> Result<(PathBuf, PathBuf), String> {
-    let fixture_root = std::env::temp_dir().join(format!(
-        "effigy-skill-contract-fixture-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|error| error.to_string())?
-            .as_nanos()
-    ));
+fn create_skill_contract_fixtures(
+    fixtures: &mut ContractFixtures,
+) -> Result<(PathBuf, PathBuf), String> {
+    let fixture_root = fixtures
+        .directory("skill-", FixturePlacement::Execution)
+        .map_err(|error| error.to_string())?;
     let source = fixture_root.join("source");
     let consumer = fixture_root.join("consumer");
     std::fs::create_dir_all(&source).map_err(|error| error.to_string())?;
@@ -967,14 +1075,10 @@ fn create_skill_contract_fixtures() -> Result<(PathBuf, PathBuf), String> {
 /// A small repository-owned documentation profile, so the retrieval contract is
 /// exercised against configured kinds, fields, and relations rather than only
 /// baseline Markdown.
-fn create_docs_context_fixture() -> Result<PathBuf, String> {
-    let root = std::env::temp_dir().join(format!(
-        "effigy-docs-context-fixture-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|error| error.to_string())?
-            .as_nanos()
-    ));
+fn create_docs_context_fixture(fixtures: &mut ContractFixtures) -> Result<PathBuf, String> {
+    let root = fixtures
+        .directory("effigy-docs-context-", FixturePlacement::External)
+        .map_err(|error| error.to_string())?;
     std::fs::create_dir_all(root.join("handbook/playbooks")).map_err(|error| error.to_string())?;
     std::fs::write(
         root.join("handbook/playbooks/setup.md"),
@@ -1001,14 +1105,12 @@ fn create_docs_context_fixture() -> Result<PathBuf, String> {
     Ok(root)
 }
 
-fn create_deps_contract_fixtures() -> Result<(PathBuf, PathBuf), String> {
-    let fixture_root = std::env::temp_dir().join(format!(
-        "effigy-deps-contract-fixture-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|error| error.to_string())?
-            .as_nanos()
-    ));
+fn create_deps_contract_fixtures(
+    fixtures: &mut ContractFixtures,
+) -> Result<(PathBuf, PathBuf), String> {
+    let fixture_root = fixtures
+        .directory("effigy-deps-contract-", FixturePlacement::External)
+        .map_err(|error| error.to_string())?;
     let consumer = fixture_root.join("consumer");
     let library = fixture_root.join("library");
     std::fs::create_dir_all(library.join("src")).map_err(|error| error.to_string())?;
@@ -1091,15 +1193,11 @@ fn run_fixture_command(cwd: &Path, program: &str, args: &[&str]) -> Result<(), S
     }
 }
 
-fn create_contract_fixture(manifest: &str) -> Result<PathBuf, std::io::Error> {
-    let fixture_dir = std::env::temp_dir().join(format!(
-        "effigy-contract-fixture-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("time")
-            .as_nanos()
-    ));
-    std::fs::create_dir_all(&fixture_dir)?;
+fn create_contract_fixture(
+    fixtures: &mut ContractFixtures,
+    manifest: &str,
+) -> Result<PathBuf, std::io::Error> {
+    let fixture_dir = fixtures.directory("effigy-contract-", FixturePlacement::External)?;
     std::fs::write(fixture_dir.join("package.json"), "{}\n")?;
     std::fs::write(fixture_dir.join("effigy.toml"), manifest)?;
     Ok(fixture_dir)

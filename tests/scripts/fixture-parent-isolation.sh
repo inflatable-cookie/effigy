@@ -27,6 +27,7 @@ export TMPDIR="$fixture_root"
 # Build the lib executable without running it: the private admitted runner
 # first reproduces old outside-root state placement, then exercises every
 # selected fixture under the corrected authenticated checkout root.
+if [[ "${1:-}" != contracts ]]; then
 cargo nextest run \
   --config-file tests/config/gateway-nextest.toml \
   --user-config-file none \
@@ -37,9 +38,12 @@ cargo nextest run \
   --test secrets_local_dev_cli_tests \
   --test cli_output_tests \
   --no-run
+fi
 
 filter='test(fixture_parent_runner_selector_succeeds_with_authenticated_parent_root) | test(binary_cli_fixtures_succeed_with_authenticated_parent_root) | test(forged_expired_and_outside_root_tokens_exit_77_and_never_queue) | test(admitted_container_selector_stays_on_host_and_executes_its_resolved_payload) | test(complete_cli_fixture_family_succeeds_with_authenticated_parent_root)'
-if [[ "${1:-}" == cli ]]; then
+if [[ "${1:-}" == contracts ]]; then
+  filter='test(complete_contract_fixture_family_succeeds_with_authenticated_parent_root) | test(full_contract_fixture_family_succeeds_with_authenticated_parent_root) | test(forged_expired_and_outside_root_tokens_exit_77_and_never_queue)'
+elif [[ "${1:-}" == cli ]]; then
   filter='test(binary_cli_fixtures_succeed_with_authenticated_parent_root) | test(complete_cli_fixture_family_succeeds_with_authenticated_parent_root)'
 elif [[ "${1:-}" == all-cli ]]; then
   filter='test(complete_cli_fixture_family_succeeds_with_authenticated_parent_root)'

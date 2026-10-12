@@ -103,6 +103,9 @@ During v0.x, MINOR bumps may include breaking changes.
   0.14.x releases without changing the support floor.
 
 ### Fixed
+- JSON contract fixtures preserve authenticated QA-parent roots for nested skill
+  and group execution, keep literal path arguments intact, and clean up their
+  generated repositories at the end of each checker invocation.
 - Doctor health subprocess capture now supervises exit and inherited output
   against the same deadline, retaining its owned process group until final
   drain or cancellation instead of joining readers after an early reap.
