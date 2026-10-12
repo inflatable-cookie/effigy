@@ -110,9 +110,26 @@ class Controls(unittest.TestCase):
         self.assertLess(time.monotonic() - started, 3)
 
     def test_flood_is_bounded_and_secrets_not_in_error(self):
+        native.JOURNAL.clear()
         with patch.object(native, "MAX_OUTPUT", 1024), self.assertRaises(package.Refusal) as captured:
             native.bounded([sys.executable, "-c", "import os; os.write(2, b'private-credential'*1000)"], dict(os.environ), time.monotonic() + 3)
         self.assertNotIn("private-credential", str(captured.exception))
+        self.assertTrue(native.JOURNAL[-1]["reaped"])
+
+    def test_zombie_only_permission_refusal_needs_positive_reap(self):
+        native.JOURNAL.clear()
+        with patch.object(native, "MAX_OUTPUT", 1024), patch.object(native.os, "killpg", side_effect=PermissionError), self.assertRaises(package.Refusal):
+            native.bounded([sys.executable, "-c", "import os; os.write(2,b'x'*2048)"], dict(os.environ), time.monotonic() + 3)
+        self.assertTrue(native.JOURNAL[-1]["reaped"])
+        self.assertTrue(native.JOURNAL[-1]["signalRefusalResolvedByExactQuiescence"])
+
+    def test_unreaped_root_is_retained_until_owned_descendant_settles(self):
+        native.JOURNAL.clear()
+        program = "import os,time; descendant=os.fork();\nif descendant==0:\n os.close(1); os.close(2); time.sleep(30); os._exit(0)\nos.write(2,b'x'*2048); os._exit(0)"
+        with patch.object(native, "MAX_OUTPUT", 1024), self.assertRaises(package.Refusal):
+            native.bounded([sys.executable, "-c", program], dict(os.environ), time.monotonic() + 3)
+        self.assertTrue(native.JOURNAL[-1]["reaped"])
+        self.assertFalse(native.HELD_CHILDREN)
 
     def test_stderr_is_counted_but_not_mixed_into_observations(self):
         code, body = native.bounded([sys.executable, "-c", "import sys; print('{}'); print('private-secret',file=sys.stderr)"], dict(os.environ), time.monotonic() + 3)

@@ -1278,7 +1278,13 @@ output, withholds raw diagnostics and does not persist credentials in image
 layers or proof output. Startup, cumulative proof and cumulative teardown clocks
 are 300/600/120 seconds respectively; host-child cancellation/reap has a separate
 two-second grace. Host child cancellation is not remote VM cancellation. A
-missing or changed profile/config/root identity keeps teardown held. Synchronous
+zombie-only macOS group signal refusal is resolved only by positive root-exit
+and whole-group completion evidence followed by the actual owned reap. The
+fixed bounded system process-table probe supplies completion evidence only,
+never signal authority. Live or unknown descendants retain the unreaped child;
+uncertain host settlement holds VM teardown. Offline controls exercise both
+the real exited-root race and an owned descendant that outlives its root.
+A missing or changed profile/config/root identity keeps teardown held. Synchronous
 filesystem calls and external system load are not hard real-time guarantees.
 One native attempt remains spent even on refusal; there is no automatic retry.
 

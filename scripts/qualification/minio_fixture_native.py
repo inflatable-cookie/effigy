@@ -21,7 +21,74 @@ START_FLAGS = ["--runtime", "containerd", "--arch", "aarch64", "--vm-type", "vz"
                "--template=false", "--kubernetes=false", "--binfmt=false", "--vz-rosetta=false",
                "--network-address=false", "--network-host-addresses=false", "--port-forwarder", "none"]
 MAX_OUTPUT = 1048576
+MAX_PROBE_OUTPUT = 1048576
 JOURNAL = []
+HELD_CHILDREN = []
+
+
+def owned_group_quiescent(child, deadline):
+    """Completion evidence only; the unreaped Child is the signal authority.
+
+    The fixed system ps command has no child-producing operation. Its output is
+    drained with the same byte bound; the probe cannot authorize other signals.
+    """
+    probe = subprocess.Popen(["/bin/ps", "-axo", "pid=,pgid=,stat="],
+                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                             stderr=subprocess.DEVNULL, start_new_session=True)
+    data = bytearray()
+    reader = selectors.DefaultSelector()
+    os.set_blocking(probe.stdout.fileno(), False)
+    reader.register(probe.stdout, selectors.EVENT_READ)
+    try:
+        while reader.get_map():
+            if time.monotonic() >= deadline:
+                raise Refusal("owned group completion observation deadline")
+            for key, _ in reader.select(min(0.05, max(0, deadline - time.monotonic()))):
+                chunk = os.read(key.fileobj.fileno(), 65536)
+                if not chunk:
+                    reader.unregister(key.fileobj)
+                elif len(data) + len(chunk) > MAX_PROBE_OUTPUT:
+                    raise Refusal("owned group completion observation overflow")
+                else:
+                    data.extend(chunk)
+        try:
+            code = probe.wait(timeout=max(0.001, deadline - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            raise Refusal("owned group completion observer exit deadline") from None
+        require(code, "owned group completion observation")
+        rows = []
+        for line in data.splitlines():
+            fields = line.split()
+            if len(fields) != 3 or not fields[0].isdigit() or not fields[1].isdigit():
+                raise Refusal("owned group completion observation malformed")
+            rows.append((int(fields[0]), int(fields[1]), fields[2]))
+        root = [row for row in rows if row[0] == child.pid]
+        members = [row for row in rows if row[1] == child.pid]
+        # The exited root cannot fork. No other member may remain at its reap.
+        return (len(root) == 1 and root[0][1] == child.pid and root[0][2].startswith(b"Z")
+                and len(members) == 1 and members[0][0] == child.pid)
+    finally:
+        reader.close()
+        probe.stdout.close()
+        if probe.returncode is None:
+            # Only the directly owned, fixed non-forking OS probe; never a
+            # PID/status-derived target or a second signal to the main group.
+            try:
+                os.kill(probe.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+            try:
+                probe.wait(timeout=min(0.2, max(0, deadline - time.monotonic())))
+            except subprocess.TimeoutExpired:
+                HELD_CHILDREN.append(probe)
+
+
+def reap_owned_group(child, deadline):
+    while time.monotonic() < deadline:
+        if owned_group_quiescent(child, min(deadline, time.monotonic() + 0.5)):
+            return child.wait(timeout=max(0, deadline - time.monotonic()))
+        time.sleep(min(0.02, max(0, deadline - time.monotonic())))
+    raise Refusal("owned host group settlement unresolved; child retained")
 
 
 def bounded(argv, env, deadline, input_file=None):
@@ -69,21 +136,35 @@ def bounded(argv, env, deadline, input_file=None):
             except subprocess.TimeoutExpired:
                 failure = "command exit deadline reached after EOF"
         # No wait/poll has reaped the root. Signal only this recorded child session.
+        reap_deadline = time.monotonic() + 2
+        signal_refusal = False
         try:
             os.killpg(child.pid, signal.SIGKILL)
         except ProcessLookupError:
             pass  # The unreaped child may already have exited; no PID is guessed.
+        except PermissionError:
+            signal_refusal = True
         try:
-            child.wait(timeout=2)
+            # macOS can reject a zombie-only group with EPERM. A successful
+            # exit observation AND group settlement AND actual reap are required;
+            # the original collection/deadline refusal is never turned into PASS.
+            reap_owned_group(child, reap_deadline)
             entry.update({"exit": child.returncode, "collectedBytes": collected, "reaped": True, "refusal": failure})
-        except subprocess.TimeoutExpired:
-            entry.update({"reaped": False, "refusal": failure})
+            if signal_refusal:
+                entry["signalRefusalResolvedByExactQuiescence"] = True
+        except (Refusal, subprocess.TimeoutExpired):
+            HELD_CHILDREN.append(child)
+            entry.update({"reaped": False, "refusal": failure, "settlement": "held"})
             raise Refusal("owned host child reap unresolved; VM effects remain uncertain") from None
         raise Refusal(failure)
     finally:
         selector.close()
         child.stdout.close()
         child.stderr.close()
+        if not entry.get("reaped") and child not in HELD_CHILDREN:
+            # Keep the actual Child capability; a later Popen must not cause
+            # Python's orphan cleanup to reap this root before group settlement.
+            HELD_CHILDREN.append(child)
 
 
 def require(code, label):
@@ -331,6 +412,8 @@ def run(receipt_path, root):
     finally:
         if attempted:
             try:
+                if any(not entry.get("reaped") for entry in JOURNAL) or HELD_CHILDREN:
+                    raise Refusal("host child settlement unresolved; VM cleanup held")
                 ownership(root, env, token)
                 cleanup_deadline = time.monotonic() + 120
                 code, _ = bounded([COLIMA, "stop", PROFILE], env, cleanup_deadline)
