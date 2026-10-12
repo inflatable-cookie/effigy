@@ -44,6 +44,19 @@ Current authority surfaces:
   `docs/knowledge/contracts/042-external-skill-task-runner-contract.md` for isolated
   external task-source and consumer-target ownership
 
+## YAML dependency boundary
+
+The root, catalog, containers, doctor, Rhai and runtime crates use the YAML
+organization's maintained `yaml_serde` compatibility backend, named `serde_yaml`
+in Cargo so existing call sites share the same `Value` and `Mapping` types.
+Compose documents, pnpm workspace discovery and the Rhai YAML helpers retain
+their existing data formats and error handling. The backend uses `libyaml-rs`;
+this replaces the archived `unsafe-libyaml` dependency without an advisory
+exception. It is not a claim that the third-party parser contains no unsafe code.
+
+The `test:audit:yaml`, `check:audit:yaml` and `lint:audit:yaml` selectors cover
+these callers. `deny.toml` remains the dependency policy authority.
+
 ## Workspace Crates
 
 ### Surface and presentation

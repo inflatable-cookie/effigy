@@ -1622,6 +1622,52 @@ fn complete_cli_fixture_family_succeeds_with_authenticated_parent_root() {
 }
 
 #[test]
+#[ignore = "requires private Queue fixture; run test:audit:contracts"]
+fn complete_contract_fixture_family_succeeds_with_authenticated_parent_root() {
+    run_contract_fixture_family_with_parent("--fast");
+}
+
+#[test]
+#[ignore = "requires private Queue fixture; run test:audit:contracts"]
+fn full_contract_fixture_family_succeeds_with_authenticated_parent_root() {
+    run_contract_fixture_family_with_parent("--full");
+}
+
+fn run_contract_fixture_family_with_parent(mode: &str) {
+    assert_reviewed_private_queue_checkout();
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let server = Server::start(None);
+    let output = Command::new(EFFIGY)
+        .arg("test:audit:contracts:runner")
+        .args(["--", mode])
+        .current_dir(repo_root)
+        .env("NO_COLOR", "1")
+        .env("EFFIGY_HOST_RUN_ROOT", &server.state)
+        .env("EFFIGY_ADMISSION_CPU_UNITS", "1")
+        .env("EFFIGY_ADMISSION_MEMORY_MIB", "64")
+        .env("EFFIGY_ADMISSION_TIMEOUT_SECS", "5")
+        // Isolate this outer admission only; the checker retains the real
+        // private parent throughout every executing contract fixture.
+        .env_remove("HOST_RUN_TOKEN")
+        .env_remove("HOST_RUN_ID")
+        .env_remove("EFFIGY_INTERNAL_CONTAINER_HANDOFF")
+        .env_remove("EFFIGY_HOST_SCHEDULER")
+        .env_remove("EFFIGY_SCHEDULER_OVERRIDE")
+        .output()
+        .expect("public contract checker under private parent");
+    eprintln!("{}", text(&output.stderr));
+    println!("{}", text(&output.stdout));
+    let runs = server.run_ids();
+    assert_eq!(runs.len(), 1, "one admission covers all contract cases");
+    let settled = server.status(&runs[0]);
+    eprintln!("contract checker private-parent receipt: {}", settled);
+    assert_eq!(code(&output), 0, "{}", text(&output.stderr));
+    assert_eq!(settled["state"], "settled");
+    assert_eq!(settled["settlement"]["outcome"], "passed");
+    assert_eq!(settled["settlement"]["result"]["exitCode"], 0);
+}
+
+#[test]
 #[ignore = "requires the private Queue fixture; run test:host-run:integration"]
 fn unset_setting_routes_heavy_work_through_the_scheduler_once() {
     let server = Server::start(None);

@@ -90,6 +90,21 @@ remain unchanged.
 
 ## Private binary fixtures
 
+The JSON contract checker owns its generated repositories for one invocation.
+Skill consumers and QA-group repositories execute below the selected checkout's
+ignored `.effigy/tmp/contract-fixtures` root; inspection, dependency dry-run and
+literal-cwd fixtures retain their external temporary roots. Fixture paths are
+substituted into parsed arguments without interpreting their spaces or quotes.
+The genuine QA-group run record stays available to every selected status probe;
+its setup result is cached only for that invocation, including a refusal.
+Generated repositories are removed on return or unwind. Parent verification
+still applies to light tasks and group members.
+
+`test:audit:contracts` checks the whole maintained contract index in both fast
+and full modes under a genuine private parent, plus deliberate outside-root and
+no-parent controls. It runs only against the reviewed private Queue fixture;
+it does not grant access to the live scheduler or qualify a consumer runtime.
+
 A command that launches a nested task from its selected repository needs that
 execution root inside its authenticated parent root. Changing only `--repo`
 does not establish parent authority. Discovery-only fixtures may use a separate
