@@ -1266,3 +1266,21 @@ release or tag changes, global installation, existing data or volume changes,
 and effects on live consumers, gateway settings or VM lifecycle. Private
 qualification cannot establish remote cancellation or unrelated Linux Effigy
 artifact freshness.
+
+Tom subsequently answered "Approved" to the separate bounded lifecycle
+proposal. After incorporating that scope into the checked, approved fixture
+brief, qualification may create exactly one new profile named
+`effigy-minio-fixture-dfefc279`. Refuse any pre-existing name or state; existing
+profiles and the bundle owner's held scopes are not available for adoption.
+The profile is Linux arm64 with containerd and VZ, four CPUs, 4 GiB RAM,
+32 GiB data disk and 20 GiB root disk. It must not activate host contexts,
+modify SSH configuration, forward an SSH agent, mount host directories, edit
+templates, enable Kubernetes or foreign-architecture helpers, or add custom
+DNS, gateway, host networking or port forwarding.
+
+Record creation intent and exact owned identities before effects. Startup,
+one native proof batch and owned teardown have respective bounds of 300,
+600 and 120 seconds, with no automatic retries. Cleanup may stop and delete
+only that positively identified newly owned profile and its fixture resources.
+Any ownership uncertainty leaves them held. This exception does not authorize
+changes to any existing VM, held resource, consumer profile, data or allowance.
