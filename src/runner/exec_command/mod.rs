@@ -43,6 +43,8 @@ pub(in crate::runner) use transport::{
     probe_container_capabilities, run_command_capture_until, run_compose_exec,
     run_compose_exec_plan_with_deadline, run_compose_exec_plan_with_options,
 };
+#[cfg(not(test))]
+pub(in crate::runner) use transport::{capture_command_until, CommandCaptureError};
 
 pub(in crate::runner) use bounded::{
     BoundedCapture, BoundedCaptureFailure, BoundedCommandBudget, BoundedCommandPhase,

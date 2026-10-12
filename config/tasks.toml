@@ -727,6 +727,16 @@
   { id = "assurance-strict-clippy", run = "cargo clippy -p effigy -p effigy-core -p effigy-process -p effigy-host-run -p effigy-scan -p effigy-codegraph -p effigy-bootstrap -p effigy-cli --all-targets -- -D warnings", timeout_ms = 600000 },
 ]
 "check:qa:fixture-parent-isolation:cli" = "cargo check -p effigy --test bootstrap_cli_tests --test env_schema_tests --test secrets_local_dev_cli_tests --test cli_output_tests --test host_scheduler_integration"
+"test:audit:fixture-family" = [
+  { task = "test:audit:fixture-startup" },
+  { id = "complete-private-parent-fixture-families", run = "bash tests/scripts/fixture-parent-isolation.sh", timeout_ms = 900000 },
+  { id = "health-and-capture-unit-family", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-doctor -p effigy --lib --filterset 'package(effigy-doctor) | test(capture_deadline_tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
+]
+"test:audit:fixture-startup" = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test host_scheduler_integration --filterset 'test(private_server_startup_guard_reaps_on_unwind_and_preserves_foreign_child)' --no-capture --retries 0 --no-tests fail"
+"test:audit:fixture-family:runner".admission = "heavy"
+"test:audit:fixture-family:runner".run = [
+  { id = "all-cli-fixture-cases", run = "bash tests/scripts/fixture-parent-cli-tests.sh --all {args}", timeout_ms = 900000 },
+]
 "check:qa:fixture-parent-isolation" = "cargo clippy -p effigy -p effigy-bootstrap --all-targets -- -D warnings"
 # This heavy child is launched only by the controlled private-parent test.
 # It uses the already-built unit test executable, avoiding a nested Cargo

@@ -13,9 +13,10 @@ use effigy_demo::{write_active_attempt_record, PersistedDemoActiveAttempt};
 use super::support::{
     attach_bare_remote, git_commit_all, git_stdout, init_git_repo, parse_stdout_json,
     run_cli_command, run_json_cli_command, run_json_cli_command_with_manifest,
-    run_json_task_success, temp_execution_workspace, temp_workspace, wait_for_path_exists,
-    wait_for_positive_pid, write_effigy_release_root_marker, write_fake_effigy_install_repo,
-    write_release_changelog, write_release_manifest,
+    run_json_task_success, scheduler_state_root, temp_execution_workspace, temp_workspace,
+    wait_for_path_exists, wait_for_positive_pid, write_effigy_release_root_marker,
+    write_fake_effigy_install_repo, write_release_changelog, write_release_manifest,
+    FixtureCommandExt, OwnedCliChild,
 };
 
 static CLI_PROCESS_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
@@ -389,7 +390,7 @@ task = "dev"
     .expect("write multi-process concurrent demo manifest");
 }
 
-fn spawn_demo_run_process(root: &std::path::Path, demo_id: &str) -> std::process::Child {
+fn spawn_demo_run_process(root: &std::path::Path, demo_id: &str) -> OwnedCliChild {
     Command::new(env!("CARGO_BIN_EXE_effigy"))
         .arg("--json")
         .arg("demo")
@@ -400,14 +401,11 @@ fn spawn_demo_run_process(root: &std::path::Path, demo_id: &str) -> std::process
         .env("NO_COLOR", "1")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .spawn()
+        .spawn_owned()
         .expect("spawn demo run process")
 }
 
-fn spawn_demo_text_run_process_with_input(
-    root: &std::path::Path,
-    demo_id: &str,
-) -> std::process::Child {
+fn spawn_demo_text_run_process_with_input(root: &std::path::Path, demo_id: &str) -> OwnedCliChild {
     Command::new(env!("CARGO_BIN_EXE_effigy"))
         .arg("demo")
         .arg("run")
@@ -418,11 +416,11 @@ fn spawn_demo_text_run_process_with_input(
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .spawn()
+        .spawn_owned()
         .expect("spawn text demo run process with input")
 }
 
-fn wait_for_child_exit(child: &mut std::process::Child, timeout: Duration, label: &str) {
+fn wait_for_child_exit(child: &mut OwnedCliChild, timeout: Duration, label: &str) {
     let status = wait_for_child_completion(child, timeout, label);
     assert!(
         !status.success(),
@@ -431,7 +429,7 @@ fn wait_for_child_exit(child: &mut std::process::Child, timeout: Duration, label
 }
 
 fn wait_for_child_completion(
-    child: &mut std::process::Child,
+    child: &mut OwnedCliChild,
     timeout: Duration,
     label: &str,
 ) -> std::process::ExitStatus {
@@ -3634,7 +3632,7 @@ fn run_cli_command_with_input(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
+        .spawn_owned()
         .expect("spawn effigy");
 
     let mut stdin = child.stdin.take().expect("child stdin");
@@ -3661,7 +3659,7 @@ fn rewrite_release_state_prepared_at(root: &std::path::Path, prepared_at: &str) 
 
 #[test]
 fn cli_doctor_supports_colorized_output_when_forced() {
-    let root = temp_workspace("cli-color-doctor");
+    let root = temp_execution_workspace("cli-color-doctor");
     fs::write(
         root.join("effigy.toml"),
         "[tasks.health]\nrun = \"sh -lc 'printf doctor-color; exit 4'\"\n",
@@ -3688,7 +3686,7 @@ fn cli_doctor_supports_colorized_output_when_forced() {
 #[cfg(unix)]
 #[test]
 fn cli_deep_doctor_timeout_terminates_health_process_tree() {
-    let root = temp_workspace("cli-doctor-health-timeout");
+    let root = temp_execution_workspace("cli-doctor-health-timeout");
     let marker = root.join("leaked-health-child");
     fs::write(
         root.join("effigy.toml"),
@@ -3714,7 +3712,7 @@ fn cli_deep_doctor_timeout_terminates_health_process_tree() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(rendered.contains("complete: false"));
+    assert!(rendered.contains("complete: false"), "{rendered}");
     assert!(rendered.contains("health_task"));
     std::thread::sleep(std::time::Duration::from_millis(2_200));
     assert!(!marker.exists(), "timed-out health child survived doctor");
@@ -9241,6 +9239,7 @@ fn cli_container_data_export_json_reports_transfer_contract() {
         .arg(&root)
         .arg("--json")
         .env("NO_COLOR", "1")
+        .env("EFFIGY_HOST_RUN_ROOT", scheduler_state_root())
         .env("HOME", &root)
         .env("PATH", path)
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
@@ -9299,6 +9298,7 @@ fn cli_container_data_import_json_reports_transfer_contract() {
         .arg(&root)
         .arg("--json")
         .env("NO_COLOR", "1")
+        .env("EFFIGY_HOST_RUN_ROOT", scheduler_state_root())
         .env("HOME", &root)
         .env("PATH", path)
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
@@ -9351,6 +9351,7 @@ fn cli_container_data_pull_production_json_reports_hook_contract() {
         .arg(&root)
         .arg("--json")
         .env("NO_COLOR", "1")
+        .env("EFFIGY_HOST_RUN_ROOT", scheduler_state_root())
         .env("HOME", &root)
         .env("PATH", path)
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
@@ -9384,7 +9385,7 @@ fn cli_container_data_pull_production_json_reports_hook_contract() {
 
 #[test]
 fn cli_container_data_seed_json_reports_seed_contract() {
-    let root = temp_workspace("container-data-seed");
+    let root = temp_execution_workspace("container-data-seed");
     let output = run_container_data_seed_fixture(&root, true);
     let reapers = HostContainerLeaseReaperGuard::capture(&root);
 
@@ -9397,7 +9398,7 @@ fn cli_container_data_seed_json_reports_seed_contract() {
 
 #[test]
 fn cli_container_data_seed_reaper_detector_catches_enabled_control_and_cleans_owned_child() {
-    let root = temp_workspace("container-data-seed-reaper-control");
+    let root = temp_execution_workspace("container-data-seed-reaper-control");
     let output = run_container_data_seed_fixture(&root, false);
     let mut reapers = HostContainerLeaseReaperGuard::capture(&root);
 
@@ -9422,6 +9423,12 @@ fn run_container_data_seed_fixture(
     fixture_root: &std::path::Path,
     disable_reaper: bool,
 ) -> std::process::Output {
+    container_data_seed_command(fixture_root, disable_reaper)
+        .output()
+        .expect("run fake-runtime data seed")
+}
+
+fn container_data_seed_command(fixture_root: &std::path::Path, disable_reaper: bool) -> Command {
     let root = fs::canonicalize(fixture_root).expect("canonicalize seed fixture root");
     write_generated_container_data_seed_fixture(&root);
     let (bin_dir, colima_state) = install_fake_container_runtime(&root);
@@ -9449,6 +9456,7 @@ fn run_container_data_seed_fixture(
         .arg(&root)
         .arg("--json")
         .env("NO_COLOR", "1")
+        .env("EFFIGY_HOST_RUN_ROOT", scheduler_state_root())
         .env("HOME", &root)
         .env("PATH", path)
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
@@ -9463,7 +9471,83 @@ fn run_container_data_seed_fixture(
     } else {
         command.env_remove("EFFIGY_DISABLE_HOST_CONTAINER_LEASE_REAPER");
     }
-    command.output().expect("run fake-runtime data seed")
+    command
+}
+
+#[test]
+#[ignore = "requires inherited private parent; run test:audit:fixture-family"]
+fn cli_nested_health_and_seed_old_placement_refuse_before_task_effects() {
+    assert!(std::env::var_os("HOST_RUN_TOKEN").is_some());
+    let outside = tempfile::tempdir().expect("old outside-root fixture");
+    let root = outside.path();
+    fs::write(root.join("package.json"), "{}\n").expect("package marker");
+    fs::write(
+        root.join("effigy.toml"),
+        "[tasks.health]\nrun = \"printf ran > health-marker\"\n",
+    )
+    .expect("old health manifest");
+    let health = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .args(["--json", "doctor", "--deep", "--repo"])
+        .arg(root)
+        .output()
+        .expect("old health public entry");
+    assert!(!health.status.success(), "{health:?}");
+    let report = parse_stdout_json(&health);
+    assert!(
+        report["error"]["details"]["findings"]
+            .as_array()
+            .expect("findings")
+            .iter()
+            .any(|finding| finding["check_id"] == "health.task.execute"
+                && finding["severity"] == "error"),
+        "{report}"
+    );
+    // Doctor intentionally summarizes/truncates nested JSON. Verify the exact
+    // parent refusal separately through the same public health selector.
+    let nested = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .args(["--json", "health"])
+        .current_dir(root)
+        .output()
+        .expect("old nested health entry");
+    assert_eq!(nested.status.code(), Some(77), "{nested:?}");
+    assert!(
+        String::from_utf8_lossy(&nested.stdout).contains("cwd is outside token root"),
+        "{nested:?}"
+    );
+    assert!(!root.join("health-marker").exists());
+
+    // Seed performs local/runtime preparation before the nested task refusal;
+    // only the task marker, not every setup effect, must remain absent.
+    let seed = container_data_seed_command(root, true)
+        .output()
+        .expect("old seed entry");
+    assert!(!seed.status.success(), "{seed:?}");
+    assert!(
+        String::from_utf8_lossy(&seed.stdout).contains("cwd is outside token root"),
+        "{seed:?}"
+    );
+    assert!(!root.join(".effigy/local/db-seed.marker").exists());
+}
+
+#[test]
+#[ignore = "requires inherited private parent; run test:audit:fixture-family"]
+fn cli_seed_isolated_home_without_trusted_state_refuses_before_task_effects() {
+    assert!(std::env::var_os("HOST_RUN_TOKEN").is_some());
+    let root = temp_execution_workspace("seed-old-home-state");
+    let output = container_data_seed_command(&root, true)
+        .env_remove("EFFIGY_HOST_RUN_ROOT")
+        .output()
+        .expect("old HOME state lookup");
+    assert!(!output.status.success(), "{output:?}");
+    let report = parse_stdout_json(&output);
+    assert!(
+        report["error"]["message"]
+            .as_str()
+            .expect("message")
+            .contains("scheduler_unreachable"),
+        "{report}"
+    );
+    assert!(!root.join(".effigy/local/db-seed.marker").exists());
 }
 
 fn assert_container_data_seed_contract(root: &std::path::Path, output: &std::process::Output) {
@@ -9687,7 +9771,7 @@ fn cli_container_attached_session_stops_environment_on_sigint() {
         .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
+        .spawn_owned()
         .expect("spawn effigy");
 
     wait_for_path_exists(
@@ -9736,7 +9820,7 @@ fn cli_container_attached_stream_session_reports_operator_overview() {
         .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
+        .spawn_owned()
         .expect("spawn effigy");
 
     wait_for_path_exists(
@@ -9799,7 +9883,7 @@ fn cli_container_attached_session_handles_sigint_during_startup() {
         .env("EFFIGY_TEST_COLIMA_START_DELAY_SECS", "15")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
+        .spawn_owned()
         .expect("spawn effigy");
 
     let _startup_pid = wait_for_positive_pid(
@@ -9830,7 +9914,7 @@ fn cli_container_attached_session_handles_sigint_during_startup() {
 #[test]
 fn cli_workspace_binding_handoff_stops_environment_after_return() {
     let _guard = lock_cli_process_tests();
-    let root = temp_workspace("task-workspace-binding");
+    let root = temp_execution_workspace("task-workspace-binding");
     write_container_fixture_with_task(&root, None, "./app:/workspace", true);
     let (bin_dir, colima_state) = install_fake_container_runtime(&root);
     let colima_args = root.join("colima-args.log");
@@ -9898,7 +9982,7 @@ fn cli_container_attached_session_terminates_log_process_group() {
         .env("EFFIGY_TEST_ORPHAN_FILE", &orphan_file)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
+        .spawn_owned()
         .expect("spawn effigy");
 
     wait_for_path_exists(

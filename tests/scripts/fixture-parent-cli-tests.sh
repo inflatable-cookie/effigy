@@ -1,5 +1,24 @@
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ "${1:-}" == --all ]]; then
+  : "${HOST_RUN_TOKEN:?authenticated parent required}"
+  : "${HOST_RUN_ID:?authenticated run required}"
+  log=${2:?owned complete-family log path required}
+  # tee retains the entire private diagnostic stream, separately from the
+  # scheduler's bounded output tail. pipefail keeps the actual nextest exit.
+  fixture_home=${3:?owned canonical state home required}
+  fixture_cargo_home=${CARGO_HOME:-$HOME/.cargo}
+  fixture_rustup_home=${RUSTUP_HOME:-$HOME/.rustup}
+  # The real private endpoint already owns fixture_home/.local/state/host-run.
+  # Exercise canonical lookup after actual admission, without an explicit root
+  # or copying tokens/state. Queue's private-server live-path guard is unchanged.
+  env -u EFFIGY_HOST_RUN_ROOT HOME="$fixture_home" \
+    CARGO_HOME="$fixture_cargo_home" RUSTUP_HOME="$fixture_rustup_home" \
+    cargo nextest run --config-file tests/config/gateway-nextest.toml \
+    --user-config-file none -p effigy --test cli_output_tests \
+    --run-ignored all --no-fail-fast --retries 0 --no-tests fail 2>&1 | tee "$log"
+  exit $?
+fi
 bootstrap=${1:?bootstrap test binary required}
 schema=${2:?env schema test binary required}
 secrets=${3:?secrets test binary required}
@@ -17,6 +36,17 @@ while read -r family test_name; do
     cli) runner=$cli ;;
     *) printf 'unknown fixture family: %s\n' "$family" >&2; exit 2 ;;
   esac
+  if [[ "$family" == cli ]]; then
+    # The composed selector runs the complete CLI binary with nextest under
+    # its own real parent. Keep the original exact membership checks, but do
+    # not serially execute that same family a second time here.
+    listing=$("$runner" "$test_name" --exact --include-ignored --list)
+    [[ "$listing" == "$test_name: test"* ]] || {
+      printf 'required complete-family member is absent: %s\n' "$test_name" >&2
+      exit 2
+    }
+    continue
+  fi
   run_test "$test_name"
 done <<'REQUIRED_TESTS'
 bootstrap bootstrap_old_placement_refuses_all_three_binary_execution_paths

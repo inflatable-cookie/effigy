@@ -481,6 +481,34 @@ pub(in crate::runner) fn run_command_capture_until(
     stdin_file: Option<&Path>,
     deadline: Option<Instant>,
 ) -> Result<Output, RunnerError> {
+    capture_command_until(repo_root, program, args, stdin_file, deadline).map_err(|error| {
+        match error {
+            CommandCaptureError::Deadline { command } => {
+                RunnerError::task_invocation(format!("{command} timed out"))
+            }
+            CommandCaptureError::Runner(error) => error,
+        }
+    })
+}
+
+pub(in crate::runner) enum CommandCaptureError {
+    Deadline { command: String },
+    Runner(RunnerError),
+}
+
+impl From<RunnerError> for CommandCaptureError {
+    fn from(error: RunnerError) -> Self {
+        Self::Runner(error)
+    }
+}
+
+pub(in crate::runner) fn capture_command_until(
+    repo_root: &Path,
+    program: &OsStr,
+    args: &[OsString],
+    stdin_file: Option<&Path>,
+    deadline: Option<Instant>,
+) -> Result<Output, CommandCaptureError> {
     // Test-only deterministic seam. Production runs contain no scripted
     // runtime, so this compiles to a no-op branch and keeps the real capture,
     // argv and deadline semantics below unchanged.
@@ -488,7 +516,7 @@ pub(in crate::runner) fn run_command_capture_until(
     if let Some(scripted) =
         crate::runner::scripted_doctor::intercept_capture(program, args, deadline)
     {
-        return scripted;
+        return scripted.map_err(CommandCaptureError::Runner);
     }
     let resolved_program = resolve_host_program(program);
     let command_label = format!(
@@ -497,9 +525,9 @@ pub(in crate::runner) fn run_command_capture_until(
         format_args(args)
     );
     if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
-        return Err(RunnerError::task_invocation(format!(
-            "{command_label} timed out"
-        )));
+        return Err(CommandCaptureError::Deadline {
+            command: command_label,
+        });
     }
     let mut command = ProcessCommand::new(&resolved_program);
     command.current_dir(repo_root).args(args);
@@ -514,12 +542,12 @@ pub(in crate::runner) fn run_command_capture_until(
         command.stdin(Stdio::null());
     }
     let Some(deadline) = deadline else {
-        return command
-            .output()
-            .map_err(|error| RunnerError::TaskCommandLaunch {
+        return command.output().map_err(|error| {
+            CommandCaptureError::Runner(RunnerError::TaskCommandLaunch {
                 command: command_label,
                 error,
-            });
+            })
+        });
     };
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     #[cfg(unix)]
@@ -545,15 +573,15 @@ pub(in crate::runner) fn run_command_capture_until(
         })?;
     let Some(mut stdout) = child.stdout.take() else {
         super::bounded::terminate_owned_group(&mut child);
-        return Err(RunnerError::task_invocation(format!(
-            "{command_label} stdout unavailable"
-        )));
+        return Err(
+            RunnerError::task_invocation(format!("{command_label} stdout unavailable")).into(),
+        );
     };
     let Some(mut stderr) = child.stderr.take() else {
         super::bounded::terminate_owned_group(&mut child);
-        return Err(RunnerError::task_invocation(format!(
-            "{command_label} stderr unavailable"
-        )));
+        return Err(
+            RunnerError::task_invocation(format!("{command_label} stderr unavailable")).into(),
+        );
     };
     let stdout_reader = thread::spawn(move || {
         let mut bytes = Vec::new();
@@ -568,9 +596,9 @@ pub(in crate::runner) fn run_command_capture_until(
             super::bounded::terminate_owned_group(&mut child);
             // An escaped, unowned writer must not defeat the caller deadline.
             // Drop unfinished handles; never join a reader without observing EOF.
-            return Err(RunnerError::task_invocation(format!(
-                "{command_label} timed out"
-            )));
+            return Err(CommandCaptureError::Deadline {
+                command: command_label,
+            });
         }
         if stdout_reader.is_finished() && stderr_reader.is_finished() {
             match child.try_wait() {
@@ -580,7 +608,8 @@ pub(in crate::runner) fn run_command_capture_until(
                     let (Some(stdout), Some(stderr)) = (stdout, stderr) else {
                         return Err(RunnerError::task_invocation(format!(
                             "{command_label} output unavailable"
-                        )));
+                        ))
+                        .into());
                     };
                     return Ok(Output {
                         status,
@@ -594,7 +623,8 @@ pub(in crate::runner) fn run_command_capture_until(
                     return Err(RunnerError::TaskCommandLaunch {
                         command: command_label,
                         error,
-                    });
+                    }
+                    .into());
                 }
             }
         }

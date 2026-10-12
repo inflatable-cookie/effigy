@@ -103,7 +103,9 @@ During v0.x, MINOR bumps may include breaking changes.
   0.14.x releases without changing the support floor.
 
 ### Fixed
-
+- Doctor health subprocess capture now supervises exit and inherited output
+  against the same deadline, retaining its owned process group until final
+  drain or cancellation instead of joining readers after an early reap.
 - Keep JSON version identity consistent within one response while a local
   checkout changes.
 - Bound final output draining after a client exits, and retain the owned

@@ -2,6 +2,7 @@
 //! manifest tasks, unowned grouped spellings never reach a child built-in,
 //! direct routes stay warning-free, and existing selector precedence holds.
 
+use super::support::FixtureCommandExt;
 use serde_json::Value;
 use std::fs;
 use std::io::{BufRead, BufReader};
@@ -211,7 +212,7 @@ fn graph_watch_json_stream_has_no_migration_stderr() {
         .env("NO_COLOR", "1")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
+        .spawn_owned()
         .expect("spawn graph watch");
 
     let stdout = child.stdout.take().expect("stdout pipe");

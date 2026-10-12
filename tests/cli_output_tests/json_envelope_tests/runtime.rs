@@ -1,15 +1,14 @@
 use super::super::support::parse_stdout_json;
+use super::super::support::{temp_execution_workspace, FixtureCommandExt, OwnedCliChild};
 use super::*;
-#[cfg(unix)]
-use std::os::unix::process::CommandExt;
 use std::path::Path;
-use std::process::{Child, ExitStatus, Output, Stdio};
+use std::process::{ExitStatus, Output, Stdio};
 use std::time::Instant;
 
 const LOCK_HOLDER_EXIT_TIMEOUT: Duration = Duration::from_secs(2);
 
 struct HeldCliTask {
-    child: Option<Child>,
+    child: Option<OwnedCliChild>,
     task_pid_path: std::path::PathBuf,
     ready_path: std::path::PathBuf,
     release_path: std::path::PathBuf,
@@ -35,9 +34,7 @@ impl HeldCliTask {
             .stderr(Stdio::piped());
         // Own a fresh group rooted at the exact CLI child so cleanup can safely
         // stop the shell and any helper process it starts.
-        #[cfg(unix)]
-        command.process_group(0);
-        let child = command.spawn().expect("spawn lock holder");
+        let child = command.spawn_owned().expect("spawn lock holder");
         let cli_group_pid = child.id();
         Self {
             child: Some(child),
@@ -50,7 +47,8 @@ impl HeldCliTask {
     }
 
     fn wait_until_ready(&mut self, lock_path: &Path, timeout: Duration) -> Result<u32, String> {
-        let started = Instant::now();
+        let startup_deadline = self.child.as_ref().expect("holder child").deadline();
+        let mut task_started = None;
         loop {
             self.refresh_task_pid();
             if let Some(status) = self.try_wait()? {
@@ -64,12 +62,18 @@ impl HeldCliTask {
             }
 
             if let Some(task_pid) = self.task_pid {
+                task_started.get_or_insert_with(Instant::now);
                 if self.ready_path.exists() && lock_path.exists() && process_is_live(task_pid)? {
                     return Ok(task_pid);
                 }
             }
 
-            if started.elapsed() >= timeout {
+            // The unchanged readiness budget belongs to the started task.
+            // Cold CLI/metadata/admission entry has its existing absolute
+            // fixture deadline; neither phase can reset that outer deadline.
+            let readiness_expired =
+                task_started.is_some_and(|started: Instant| started.elapsed() >= timeout);
+            if readiness_expired || Instant::now() >= startup_deadline {
                 let readiness = fs::read_to_string(&self.ready_path)
                     .unwrap_or_else(|error| format!("unavailable ({error})"));
                 let child_result = self.release_and_reap();
@@ -77,8 +81,13 @@ impl HeldCliTask {
                     Ok(output) => describe_output(&output, output.status),
                     Err(error) => error,
                 };
+                let phase = if readiness_expired {
+                    "task_readiness"
+                } else {
+                    "cli_startup"
+                };
                 return Err(format!(
-                    "lock holder did not reach readiness within {timeout:?} (lock={} ready={} contents={readiness:?}); {child_diagnostic}",
+                    "lock holder did not reach readiness (phase={phase}) within {timeout:?} (lock={} ready={} contents={readiness:?}); {child_diagnostic}",
                     lock_path.display(),
                     self.ready_path.display(),
                 ));
@@ -190,7 +199,7 @@ impl HeldCliTask {
     fn try_wait(&mut self) -> Result<Option<ExitStatus>, String> {
         self.child
             .as_mut()
-            .map(Child::try_wait)
+            .map(OwnedCliChild::try_wait)
             .transpose()
             .map_err(|error| format!("could not inspect lock holder child: {error}"))
             .map(Option::flatten)
@@ -205,33 +214,12 @@ impl HeldCliTask {
     }
 
     fn force_cleanup(&mut self) {
-        signal_process_group(self.cli_group_pid, nix::sys::signal::Signal::SIGTERM);
-
-        let grace_deadline = Instant::now() + Duration::from_secs(1);
-        while self.child.as_mut().is_some_and(|child| {
-            child
-                .try_wait()
-                .map(|status| status.is_none())
-                .unwrap_or(true)
-        }) && Instant::now() < grace_deadline
-        {
-            std::thread::sleep(Duration::from_millis(10));
+        // The private release file is cooperative task cleanup; a reaped CLI
+        // or stale PID file never authorizes a process-group signal.
+        let _ = self.signal_release();
+        if let Some(child) = self.child.as_mut() {
+            let _ = child.terminate_and_wait();
         }
-
-        if self.child.as_mut().is_some_and(|child| {
-            child
-                .try_wait()
-                .map(|status| status.is_none())
-                .unwrap_or(true)
-        }) {
-            signal_process_group(self.cli_group_pid, nix::sys::signal::Signal::SIGKILL);
-            if let Some(child) = self.child.as_mut() {
-                let _ = child.kill();
-                let _ = child.wait();
-            }
-        }
-        signal_process_group(self.cli_group_pid, nix::sys::signal::Signal::SIGKILL);
-        let _ = wait_for_process_group_gone(self.cli_group_pid, Duration::from_secs(2));
         if let Some(task_pid) = self.task_pid {
             let _ = wait_for_process_gone(task_pid, Duration::from_secs(2));
         }
@@ -241,8 +229,6 @@ impl HeldCliTask {
 impl Drop for HeldCliTask {
     fn drop(&mut self) {
         if self.child.is_none() {
-            signal_process_group(self.cli_group_pid, nix::sys::signal::Signal::SIGKILL);
-            let _ = wait_for_process_group_gone(self.cli_group_pid, Duration::from_secs(2));
             return;
         }
         let _ = self.signal_release();
@@ -317,17 +303,6 @@ fn process_group_is_live(pid: u32) -> Result<bool, String> {
     }
 }
 
-fn signal_process_group(pid: u32, signal: nix::sys::signal::Signal) {
-    #[cfg(unix)]
-    {
-        if process_group_is_live(pid).unwrap_or(false) {
-            let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(-(pid as i32)), Some(signal));
-        }
-    }
-    #[cfg(not(unix))]
-    let _ = (pid, signal);
-}
-
 fn wait_for_process_group_gone(pid: u32, timeout: Duration) -> bool {
     let deadline = Instant::now() + timeout;
     loop {
@@ -374,7 +349,13 @@ fn assert_json_lock_conflict_is_held(
     command_name: &str,
     message_fragments: &[&str],
 ) {
-    let root = temp_workspace(root_name);
+    let root = if owner_args.first() == Some(&"watch") {
+        // Watch launches its target from the selected repository; direct
+        // selectors instead validate the literal invocation cwd.
+        temp_execution_workspace(root_name)
+    } else {
+        temp_workspace(root_name)
+    };
     let (task_pid_path, ready_path, release_path) = held_task_paths(&root, "holder");
     write_held_task_manifest(
         &root,
@@ -543,6 +524,40 @@ fn cli_json_lock_conflict_holder_exit_before_readiness_reports_child_output() {
 }
 
 #[test]
+fn cli_lock_readiness_budget_starts_at_task_entry_without_rebasing_outer_deadline() {
+    let root = temp_execution_workspace("lock-delayed-task-entry");
+    let (task_pid, ready, release) = held_task_paths(&root, "delayed");
+    // A real task delays its entry marker; this is not a warmed metadata or
+    // scheduler path. The original pre-entry five-second check fails here.
+    write_held_task_manifest(
+        &root,
+        "dev",
+        &format!(
+            "sleep 6; {}",
+            held_task_command(&task_pid, &ready, &release)
+        ),
+    );
+    let mut holder = HeldCliTask::spawn(&root, &["dev"], task_pid, ready, release);
+    let outer = holder.child.as_ref().expect("holder child").deadline();
+    let pid = holder
+        .wait_until_ready(
+            &root.join(".effigy/locks/task-dev.lock"),
+            Duration::from_secs(5),
+        )
+        .expect("actual task entry followed by timely readiness");
+    assert!(pid > 0);
+    assert_eq!(
+        holder.child.as_ref().expect("holder child").deadline(),
+        outer,
+        "readiness observation must not rebase the absolute fixture bound"
+    );
+    let output = holder
+        .release_and_reap()
+        .expect("release delayed-entry holder");
+    assert!(output.status.success(), "{output:?}");
+}
+
+#[test]
 fn cli_json_lock_conflict_readiness_timeout_reaps_owned_processes() {
     let root = temp_workspace("cli-json-lock-conflict-readiness-timeout");
     let (task_pid_path, ready_path, release_path) = held_task_paths(&root, "timeout");
@@ -636,7 +651,7 @@ fn cli_lock_wait_timeout_keeps_owner_on_status_and_omits_json_from_text_stdout()
         .env("NO_COLOR", "1")
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
-        .spawn()
+        .spawn_owned()
         .expect("spawn holding command");
 
     let workspace_lock = root.join(".effigy/locks/task-dev.lock");
@@ -724,7 +739,7 @@ fn cli_json_mode_watch_lock_conflict_has_unlock_remediation_hint() {
 
 #[test]
 fn cli_json_mode_watch_once_suppresses_target_stdout_for_machine_readable_output() {
-    let root = temp_workspace("cli-json-watch-once-clean-envelope");
+    let root = temp_execution_workspace("cli-json-watch-once-clean-envelope");
     fs::write(
         root.join("effigy.toml"),
         "[tasks.check]\nrun = \"printf noisy-watch-output\"\n",
@@ -803,7 +818,7 @@ fn cli_json_mode_failing_rhai_task_preserves_script_output_in_error_details() {
 
 #[test]
 fn cli_json_mode_watch_failed_rhai_target_preserves_script_output_in_error_details() {
-    let root = temp_workspace("cli-json-watch-failing-rhai");
+    let root = temp_execution_workspace("cli-json-watch-failing-rhai");
     write_failing_rhai_fixture(
         &root,
         "log(\"diagnostic line one\");\nlog_warn(\"warn diagnostic\");\nthrow(\"boom: deliberate failure\");\n",

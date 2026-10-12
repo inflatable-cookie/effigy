@@ -1,3 +1,4 @@
+use super::support::{scheduler_state_root, FixtureCommandExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -1029,6 +1030,7 @@ fn run_skill_with_home(cwd: &Path, home: &Path, args: &[&str]) -> Output {
         .args(args)
         .current_dir(cwd)
         .env("NO_COLOR", "1")
+        .env("EFFIGY_HOST_RUN_ROOT", scheduler_state_root())
         .env("HOME", home)
         .output()
         .expect("run skill command with isolated home")
@@ -1044,9 +1046,11 @@ fn run_skill_with_stdio(cwd: &Path, home: Option<&Path>, args: &[&str], stdin: &
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     if let Some(home) = home {
-        command.env("HOME", home);
+        command
+            .env("EFFIGY_HOST_RUN_ROOT", scheduler_state_root())
+            .env("HOME", home);
     }
-    let mut child = command.spawn().expect("spawn skill command");
+    let mut child = command.spawn_owned().expect("spawn skill command");
     child
         .stdin
         .take()
