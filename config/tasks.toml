@@ -31,6 +31,23 @@
 "lint:audit:contracts" = "cargo clippy -p effigy-contracts -p effigy --all-targets -- -D warnings"
 "fmt:audit:contracts" = "rustfmt --edition 2021 crates/effigy-contracts/src/lib.rs crates/effigy-contracts/src/tests.rs tests/host_scheduler_integration.rs"
 
+# All consumers of the maintained YAML compatibility backend; no live systems.
+"check:audit:yaml" = [
+  { task = "fmt:check" },
+  "cargo check -p effigy -p effigy-catalog -p effigy-containers -p effigy-doctor -p effigy-rhai -p effigy-runtime --all-targets --profile test",
+]
+"lint:audit:yaml" = "cargo clippy -p effigy -p effigy-catalog -p effigy-containers -p effigy-doctor -p effigy-rhai -p effigy-runtime --all-targets -- -D warnings"
+"test:audit:yaml" = [
+  "cargo test -p effigy-catalog -- --nocapture",
+  "cargo test -p effigy-containers --lib -- --nocapture",
+  "cargo test -p effigy-doctor --lib health::bootstrap:: -- --nocapture",
+  "cargo test -p effigy-rhai --lib tests::utility:: -- --nocapture",
+  "cargo test -p effigy-runtime --lib write::planning:: -- --nocapture",
+  "cargo test -p effigy --lib container_runtime_prep::tests:: -- --nocapture",
+  "cargo test -p effigy --lib gateway_registration -- --nocapture",
+  "cargo test -p effigy --lib container_command::lifecycle -- --nocapture",
+]
+
 # Managed TUI startup must render and remain cancellable while ordered child
 # startup delays are still pending. The PTY test follows the production path.
 "test:tui:startup-visibility" = [
