@@ -109,6 +109,44 @@ fn private_gateway_shutdown_handles_owned_term_int_and_inherited_ignore() {
     );
 }
 
+#[test]
+fn private_gateway_sentinel_reads_after_accept_before_client_bytes() {
+    // Controlled counterexample to the inherited nonblocking arrangement:
+    // accepting a connection does not mean its first byte is already ready.
+    let old_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let mut old_client = TcpStream::connect(old_listener.local_addr().unwrap()).unwrap();
+    let (mut old_stream, _) = old_listener.accept().unwrap();
+    old_stream.set_nonblocking(true).unwrap();
+    let mut byte = [0u8; 1];
+    assert_eq!(
+        old_stream.read(&mut byte).unwrap_err().kind(),
+        std::io::ErrorKind::WouldBlock
+    );
+    old_client
+        .write_all(b"old fixture would have discarded this")
+        .unwrap();
+
+    let sentinel = ForeignListener::bind("127.0.0.1:0".parse().unwrap());
+    let mut client = TcpStream::connect(sentinel.address).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while !sentinel.accepted.load(Ordering::Relaxed) {
+        assert!(Instant::now() < deadline, "sentinel did not accept");
+        thread::yield_now();
+    }
+    assert!(
+        !sentinel.received_request(),
+        "no bytes sent before accept acknowledgement"
+    );
+    client.write_all(b"still-owned").unwrap();
+    while !sentinel.received_request() {
+        assert!(
+            Instant::now() < deadline,
+            "bounded sentinel did not receive after acceptance"
+        );
+        thread::yield_now();
+    }
+}
+
 #[cfg(unix)]
 fn spawn_private_gateway_daemon(root: &Path, inherit_ignored_term: bool) -> PrivateGatewayChild {
     use std::os::unix::process::CommandExt;
@@ -1129,7 +1167,20 @@ fn managed_host_listeners_bind_routes_propagate_restart_and_scope_teardown() {
             collision_stopped["status"].as_str(),
             Some("failed" | "stopped")
         ),
-        "collision cleanup did not reach a terminal state: {collision_stopped}"
+        "collision cleanup did not reach a terminal state: {collision_stopped}; supervisor_log={}",
+        fs::read_to_string(
+            listener_state_path(primary_checkout, primary_profile, "app").with_file_name("app.log")
+        )
+        .unwrap_or_default()
+        .lines()
+        .filter(|line| line.starts_with("[effigy host-process]"))
+        .rev()
+        .take(16)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<Vec<_>>()
+        .join("\n")
     );
     assert!(
         collision_stopped["child_pid"].is_null(),
@@ -1987,6 +2038,18 @@ fn managed_host_readiness_terminal_failure_retains_phase_evidence() {
             "{case}: terminal failure must not retain endpoint or identity claims: {state}"
         );
 
+        let down = run_container_cli(&checkout, &cleanup, &["down", "--json"]);
+        assert!(down.status.success(), "{case}: explicit teardown failed");
+        let after_down = read_json_file(&state_path);
+        assert_eq!(
+            after_down["status"], "failed",
+            "{case}: teardown must preserve failure outcome"
+        );
+        assert_eq!(
+            after_down["diagnostic"], state["diagnostic"],
+            "{case}: teardown must preserve phase evidence"
+        );
+
         let diagnostic = &state["diagnostic"];
         let mut keys = diagnostic
             .as_object()
@@ -2367,6 +2430,7 @@ fn wait_for_https_response_containing(
 struct ForeignListener {
     address: SocketAddr,
     received: Arc<AtomicBool>,
+    accepted: Arc<AtomicBool>,
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
 }
@@ -2379,14 +2443,22 @@ impl ForeignListener {
             .set_nonblocking(true)
             .expect("nonblocking foreign listener");
         let received = Arc::new(AtomicBool::new(false));
+        let accepted = Arc::new(AtomicBool::new(false));
         let stop = Arc::new(AtomicBool::new(false));
         let thread_received = Arc::clone(&received);
+        let thread_accepted = Arc::clone(&accepted);
         let thread_stop = Arc::clone(&stop);
         let thread = thread::spawn(move || {
             while !thread_stop.load(Ordering::Relaxed) {
                 match listener.accept() {
                     Ok((mut stream, _)) => {
-                        let _ = stream.set_read_timeout(Some(Duration::from_millis(250)));
+                        stream
+                            .set_nonblocking(false)
+                            .expect("blocking sentinel receive");
+                        stream
+                            .set_read_timeout(Some(Duration::from_millis(250)))
+                            .expect("bounded sentinel receive");
+                        thread_accepted.store(true, Ordering::Relaxed);
                         let mut bytes = [0; 1];
                         if stream.read(&mut bytes).is_ok_and(|count| count > 0) {
                             thread_received.store(true, Ordering::Relaxed);
@@ -2402,6 +2474,7 @@ impl ForeignListener {
         Self {
             address,
             received,
+            accepted,
             stop,
             thread: Some(thread),
         }
@@ -2758,6 +2831,9 @@ impl Drop for Upstream {
 }
 
 fn respond_upstream(mut stream: TcpStream, body: &str) {
+    stream
+        .set_nonblocking(false)
+        .expect("blocking bounded upstream fixture reader");
     let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
     let mut request = Vec::new();
     let mut chunk = [0_u8; 1024];

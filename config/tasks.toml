@@ -255,6 +255,13 @@
   { id = "managed-host-readiness-probe", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(managed_host_readiness_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
   { id = "managed-host-readiness-terminal", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_host_readiness_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
 ]
+# Whole lifecycle correction: real public private-gateway cases and native
+# owned-root/descendant, selected-cause and exact recorded-identity controls.
+"proof:managed:lifecycle" = [
+  { id = "managed-lifecycle-native", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(host_process) | test(managed_host_transitions_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { id = "managed-lifecycle-identity", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy-gateway --lib --filterset 'test(identity::tests::) | test(managed_listener_routes_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { id = "managed-lifecycle-public", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'not test(managed_listener_fixture_child)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
+]
 "check:managed:host-listeners" = [
   { id = "managed-host-listener-compile", run = "cargo check -p effigy-process -p effigy-gateway -p effigy-manifest -p effigy-containers -p effigy-cli -p effigy --all-targets --profile test", timeout_ms = 600000 },
   { id = "managed-host-listener-clippy", run = "cargo clippy -p effigy-process -p effigy-gateway -p effigy-manifest -p effigy-containers -p effigy-cli -p effigy --all-targets -- -D warnings", timeout_ms = 600000 },

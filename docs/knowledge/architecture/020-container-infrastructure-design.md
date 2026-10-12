@@ -352,6 +352,32 @@ assignments, but does not authorize route, process or cleanup effects. Contract
 005 owns its v2 schema, historical v1 reader behavior and incomplete-evidence
 limits.
 
+Managed listener startup distinguishes an explicit stop observed while waiting
+from a readiness or report failure. That selected outcome is fixed before child
+teardown; a later rollback signal cannot turn a failed startup into stopped.
+Generic route cleanup preserves failed status and its bounded phase diagnostic.
+An incomplete pre-publication cleanup retains the exact child generation as
+unavailable, rather than claiming that startup continues or teardown succeeded.
+
+For a directly spawned child, the supervisor observes kernel exit state without
+reaping the leader. It stops surviving group members before reaping that leader
+and returns the real child exit status. The unreaped child reserves its PID
+through TERM, the existing grace period and bounded KILL settlement. This applies to directly owned readiness/stop cleanup, including a leader that
+has already exited but remains unreaped. Ordinary natural-exit selection still
+records the actual exit before state or route effects; surviving descendants
+after that reap keep the generation held and prevent automatic restart. A bounded system process-table observation
+is completion evidence, not identity or signal authority. Recorded-process
+recovery still refuses absent, changed or uncertain leader identities when group
+members remain; it cannot borrow the supervisor's owned Child capability.
+Private public-CLI and native descendant controls cover this boundary. Real
+Linux runtime and remote container cancellation remain separate unverified
+limits; no consumer qualification exception follows from these controls.
+
+Private loopback fixtures that read synchronously normalize accepted sockets to
+blocking mode while retaining their existing read timeouts. Acceptance alone
+does not prove request bytes are ready; a foreign-listener sentinel must not
+lose its positive isolation probe to inherited nonblocking mode.
+
 The route table at `~/.effigy/gateway/routes.json` maps domain names to
 upstream, DNS, TCP alias, TLS, source, and project facts. Writers replace it
 atomically. It carries an Effigy-managed marker and owner-only permissions.
