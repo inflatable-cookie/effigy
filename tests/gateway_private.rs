@@ -669,7 +669,7 @@ fn private_gateway_cli_serves_verified_https_and_isolates_concurrent_instances()
 }
 
 #[test]
-fn managed_host_listeners_bind_routes_propagate_restart_and_scope_teardown() {
+fn managed_host_dependent_replacement_preserves_routes_and_scope_teardown() {
     let fixture = tempfile::tempdir().expect("fresh managed listener fixture");
     let effects = HostEffectSentinels::new(fixture.path());
     let docker_dir = std::env::split_paths(&effects.env_path)
@@ -769,6 +769,51 @@ fn managed_host_listeners_bind_routes_propagate_restart_and_scope_teardown() {
             never_ready: false,
             report_mode: "",
         });
+    }
+
+    // Publish the dependent too: exercise the listener-specific owned-group
+    // settlement and relaunch path, including sibling and foreign identities.
+    for (index, (checkout, _, domain, _)) in checkouts.iter().enumerate() {
+        let controls = fixture.path().join(format!("dependent-control-{index}"));
+        fs::create_dir(&controls).unwrap();
+        let path = checkout.join("effigy.toml");
+        let mut manifest: toml::Value =
+            toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        let consumer = &mut manifest["containers"]["web"]["host_processes"][0];
+        consumer["run"] = toml::Value::String(
+            "printf 'internal=%s public=%s generation=%s\\n' \"$EFFIGY_MANAGED_HOST_APP_INTERNAL_URL\" \"$EFFIGY_MANAGED_HOST_APP_PUBLIC_URL\" \"$EFFIGY_MANAGED_HOST_APP_GENERATION\"; exec \"$FIXTURE_BINARY\" --ignored --exact managed_listener_fixture_child --nocapture".into());
+        let mut env = toml::map::Map::new();
+        env.insert(
+            "FIXTURE_BINARY".into(),
+            toml::Value::String(child_binary.display().to_string()),
+        );
+        env.insert(
+            "FIXTURE_BODY".into(),
+            toml::Value::String("dependent".into()),
+        );
+        for (key, file) in [
+            ("FIXTURE_PREVIOUS_PORT_FILE", "previous-port"),
+            ("FIXTURE_RESTART_FILE", "restart"),
+            ("FIXTURE_PAUSED_FILE", "paused"),
+            ("FIXTURE_CONTINUE_FILE", "continue"),
+            ("FIXTURE_READINESS_REFUSED_FILE", "readiness-refused"),
+        ] {
+            env.insert(
+                key.into(),
+                toml::Value::String(controls.join(file).display().to_string()),
+            );
+        }
+        consumer
+            .as_table_mut()
+            .unwrap()
+            .insert("env".into(), toml::Value::Table(env));
+        let listener: toml::Value = toml::from_str(&format!(
+            "bind = \"127.0.0.1:0\"\n[readiness]\npath = \"/health\"\nstatus = 200\ntimeout_secs = 20\n[route]\ndomain = {}\ntls = true\n", toml_quote(&format!("dependent.{domain}")))).unwrap();
+        consumer
+            .as_table_mut()
+            .unwrap()
+            .insert("listener".into(), listener);
+        fs::write(path, toml::to_string(&manifest).unwrap()).unwrap();
     }
 
     let mut container_cleanup = ManagedContainerCleanup {
@@ -955,6 +1000,12 @@ fn managed_host_listeners_bind_routes_propagate_restart_and_scope_teardown() {
         prior_consumer_logs.push((consumer_log, state.clone()));
     }
 
+    let old_dependent = read_json_file(&listener_state_path(
+        &primary,
+        "host-listener-main",
+        "consumer",
+    ));
+    assert_eq!(old_dependent["status"], "ready");
     let (primary_checkout, primary_profile, primary_domain, primary_body) = &checkouts[0];
     let old_state = &app_states[0];
     let old_address = addresses[0];
@@ -1016,6 +1067,48 @@ fn managed_host_listeners_bind_routes_propagate_restart_and_scope_teardown() {
         ),
         Duration::from_secs(15),
     );
+    let dependent_successor = wait_for_listener_generation(
+        &listener_state_path(primary_checkout, primary_profile, "consumer"),
+        &private_gateway.join("routes.json"),
+        &format!("dependent.{primary_domain}"),
+        old_dependent["generation"].as_str().unwrap(),
+        Duration::from_secs(20),
+    );
+    let dependent_receipts = read_transition_receipt(
+        &listener_state_path(primary_checkout, primary_profile, "consumer")
+            .with_file_name("consumer.transitions.jsonl"),
+    );
+    let unavailable = records_for(
+        &dependent_receipts,
+        "dependency_unavailable",
+        old_dependent["generation"].as_str().unwrap(),
+    );
+    assert_eq!(unavailable.len(), 1);
+    assert_eq!(unavailable[0]["phase"], "published");
+    let successors = records_for(
+        &dependent_receipts,
+        "successor_launched",
+        dependent_successor["generation"].as_str().unwrap(),
+    );
+    assert_eq!(successors.len(), 1);
+    assert_eq!(
+        successors[0]["predecessor_generation"],
+        old_dependent["generation"]
+    );
+    assert_eq!(
+        successors[0]["assignments"],
+        app_assignments(
+            &listener_state_path(primary_checkout, primary_profile, "app")
+                .canonicalize()
+                .unwrap(),
+            &new_state,
+            new_state["generation"].as_str().unwrap()
+        )
+    );
+    assert_ne!(dependent_successor["child_pid"], old_dependent["child_pid"]);
+    assert_eq!(dependent_successor["status"], "ready");
+    println!("published dependent replacement: predecessor={} old_child={} successor={} new_child={} dependency_generation={} selected_phase=published native_exit_and_group_settlement=true",
+        old_dependent["generation"], old_dependent["child_pid"], dependent_successor["generation"], dependent_successor["child_pid"], new_state["generation"]);
     assert!(
         curl_websocket_for_hostname(https_address, &ca_path, primary_domain)
             .contains("101 Switching Protocols"),
@@ -1111,6 +1204,13 @@ fn managed_host_listeners_bind_routes_propagate_restart_and_scope_teardown() {
             && primary_stopped_state["child_pid"].is_null(),
         "scoped stop retained a managed listener generation: {primary_stopped_state}"
     );
+    let stopped_dependent = read_json_file(&listener_state_path(
+        primary_checkout,
+        primary_profile,
+        "consumer",
+    ));
+    assert_eq!(stopped_dependent["status"], "stopped");
+    assert!(stopped_dependent["child_pid"].is_null() && stopped_dependent["route_owner"].is_null());
     for index in [1, 2] {
         let (checkout, profile, domain, body) = &checkouts[index];
         let state = read_json_file(&listener_state_path(checkout, profile, "app"));

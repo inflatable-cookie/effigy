@@ -1370,9 +1370,17 @@ api = "services/api"
   - `{repo}` catalog root path (shell-quoted)
   - `{args}` passthrough args (shell-quoted)
   - `{request}` unresolved selector (deferral only)
+- For standard string commands, the catalog path uses the selected runtime's
+  filesystem: a host path for host tasks, or the container workspace path plus
+  the catalog suffix for container tasks. A host aggregate does not turn its
+  container leaf's `{repo}` into a host path. Plans render that same command;
+  literal host paths and user arguments are preserved.
 - Useful interpolation tokens in `tasks.<name>.env` values and `[env]` entries:
   - `{project}` catalog root path
   - `{repo}` alias of `{project}`
+- Standard command task env values use the same runtime catalog path; env-file
+  and configuration discovery remain host-side. Mixed container sequences and
+  managed commands keep their separate execution routes.
 
 ## Related Guides
 

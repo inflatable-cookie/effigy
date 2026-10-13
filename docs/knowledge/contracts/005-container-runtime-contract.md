@@ -1,7 +1,7 @@
 # 005 - Container Runtime Contract
 
 Owner: Platform
-Last Updated: 2026-10-11
+Last Updated: 2026-10-12
 
 This contract defines the required runtime guarantees for container-backed
 task execution in Effigy.
@@ -23,6 +23,36 @@ launched through a TUI, a plain shell, or a one-shot bootstrap path.
 
 This contract exists to keep one explicit runtime guarantee across those
 surfaces.
+
+## Catalog paths in standard commands
+
+For a standard string `run` command, `{repo}` and `{project}` identify the
+selected catalog root in the command's execution filesystem. A host task uses
+the host catalog path. A host-dispatched container command maps that catalog
+through the owning runtime's host root and container working directory,
+including the relative catalog suffix. Both aliases and plain task environment
+values are rendered with that mapped root before shell quoting and transport.
+The same contained `CwdMapper` boundary governs raw exec working directories;
+an unmapped catalog path refuses rather than sending a host path into the
+container. A catalog that owns its own system uses that system's namespace.
+
+Human and JSON selector plans render the command with this runtime path. The
+plan's catalog and `cwd` fields remain host-side selection evidence; they are
+not an assertion that a host directory exists inside the container. Task
+schema and env-file discovery, cache inputs, configuration and scheduler
+control paths remain host-rooted. Literal command text, user arguments,
+secret values and bundle/skill source paths are not rewritten by replacing a
+host-path substring. This contract does not promise that a selected service
+has mounted a path merely because a command was mapped successfully.
+
+An invocation already running inside a container handoff uses its locally
+resolved catalog path. Legacy handoffs retain their selector and original env
+metadata for that inner resolution. Mixed container sequences retain their
+existing handoff route; host-owned aggregate task references resolve each
+standard leaf independently. This change does not enable inline standard
+routing, alter managed command mapping or interpret builtin `exec` raw argv as
+manifest placeholders. It transfers no scheduler credentials into a container
+and establishes no real Linux or remote cancellation proof.
 
 ## Optional workspace mounts at creation
 
@@ -1333,3 +1363,55 @@ one native proof batch and owned teardown have respective bounds of 300,
 only that positively identified newly owned profile and its fixture resources.
 Any ownership uncertainty leaves them held. This exception does not authorize
 changes to any existing VM, held resource, consumer profile, data or allowance.
+
+## Owned completion observation and stop authority
+
+A bounded process-table observation can be unavailable while Effigy still owns
+an unreaped child and its created process group. That unavailable observation
+must not abort the existing TERM/KILL sequence or reset its clocks. The original
+grace (minimum 100 ms) and fixed two-second force phase remain unchanged.
+Production uses the fixed bounded OS observer; tests inject only negative
+outcomes and use real owned children for positive completion.
+
+Only positive root-exit and whole-group settlement evidence followed by the
+actual owned wait permits reaping and a successful exit status. Persistent
+observation uncertainty leaves the generation held. An actual wait failure
+remains fatal and held; it is not retried as observation unavailability. A signal
+permission refusal remains a refusal unless positive settlement and actual wait
+resolve the race. Process IDs and status observations grant no signal authority,
+and no signal is sent after reaping.
+
+The retained macOS CI failure proves an observation deadline was reported; its
+exact historical interleaving remains unknown. This correction does not change
+unsafe/FFI blocks, doctor deadlines, admission, container cancellation or public
+APIs. Existing unsafe proof-comment observations remain report-only in the
+scoped Rust audit, without a soundness or whole-product certification claim.
+
+
+### Exit capture evidence and published dependent replacement
+
+The fixed `/bin/ps -p <owned-child> -o stat=` observation remains completion
+evidence only. Its 500 ms per-capture cap, 64-byte stdout and 128-byte stderr
+limits and original stop-phase deadlines are unchanged. Active state tokens
+remain active; only a complete valid exited-state observation can participate
+in group settlement and the owned wait. Empty, unsuccessful, invalid UTF-8,
+multiple-token, unknown-state and incomplete captures remain refusals. No
+parser fallback or absent-PID inference authorizes reaping or signals.
+
+A refusal retains only its typed category, owned PID, exit code, bounded byte
+counts and SHA-256 correspondence, UTF-8/token classification and elapsed
+milliseconds. Captured output, arguments, environment and credentials are
+excluded. Launch, read, overflow, incomplete-output and deadline failures keep
+their typed capture category; unavailable retained bytes are not invented.
+This private diagnostic change does not change listener-state or transition
+receipt schemas.
+
+The controlled public proof publishes both a dependency and its dependent,
+selects dependency unavailability in the published phase, then requires a new
+dependent generation with the current dependency assignments after actual
+owned-group settlement. Scoped teardown must preserve sibling and foreign
+listeners. It uses private host fixtures and the production native observer;
+it does not certify consumer VM cleanup, real Linux or remote cancellation.
+The historical malformed capture from bundle005 was not retained. Its exact
+bytes and cause remain unknown; the additional diagnostics and controlled proof
+do not establish that historical cause or authorize a consumer retry.

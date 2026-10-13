@@ -26,6 +26,22 @@ Shortest path:
 3. use `effigy container shell` or a task such as `effigy dev`
 4. run `effigy container down` when you want the environment gone
 
+## Catalog paths in container tasks
+
+Existing standard commands such as `run = "cd {repo} && bun x tsc --noEmit"`
+keep their placeholders when a host aggregate invokes a container leaf.
+`{repo}` and `{project}` become the selected catalog's container-mapped path;
+a nested catalog keeps its suffix under the workspace mount. The same aliases
+in task environment values use that path. Host tasks continue to use host
+paths, and env-file/configuration lookup stays on the host.
+
+Use `effigy <catalog>/<task> --plan` to inspect the selected runtime and rendered
+command. Catalog and `cwd` metadata still describe host selection. Arbitrary
+literal host paths and arguments are preserved, so a hard-coded host path is
+not automatically portable. Mapping a command does not prove that its service
+mounted the workspace. Mixed container sequences keep their existing handoff
+behavior; this does not add inline standard-task support or Linux admission.
+
 ## Host prerequisites (macOS)
 
 Container features are host-dependent. Install only what the features you use

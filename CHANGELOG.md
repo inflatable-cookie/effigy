@@ -7,6 +7,12 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- Managed owned-child exit refusals now distinguish empty, invalid UTF-8,
+  multiple-token, unknown-state and unsuccessful process-table captures using
+  bounded structural diagnostics. They retain counts, hashes and elapsed time,
+  never captured process output. Incomplete observation still refuses settlement;
+  stop authority, state grammar and deadlines remain unchanged.
+
 - Launchd loopback listener handoff for a user-owned gateway (task 156,
   SOURCE implementation candidate). `effigy gateway setup-listener-handoff`
   prints the deterministic administrator launchd definition that owns exactly
@@ -150,6 +156,15 @@ During v0.x, MINOR bumps may include breaking changes.
   0.14.x releases without changing the support floor.
 
 ### Fixed
+- Managed host cleanup keeps its owned TERM/KILL sequence when bounded
+  completion observation is unavailable. It retains the original stop clocks,
+  requires positive group settlement and actual wait before reaping, and holds
+  persistent uncertainty or an actual wait failure.
+- Standard container task commands now render `{repo}` and `{project}` with
+  the container-mapped catalog root when invoked by a host aggregate. Task env
+  aliases and selector plans use the same runtime path; nested catalogs keep
+  their relative suffix. Host configuration lookup, literal paths, arguments,
+  scheduler admission and existing sequence/managed routes are preserved.
 - Managed host listeners preserve readiness failures and phase diagnostics
   through rollback and teardown. Supervisors settle surviving owned descendants
   before reaping an owned child leader during cleanup, and retain unavailable
