@@ -1269,7 +1269,53 @@ returned HTTP 200. This proves the reported launch failure is resolved on the
 existing running stack; it is not a fresh-stack bootstrap claim. No mount
 restructuring, manual chown/chmod, reseed, stack restart or VM restart occurred.
 
-### Owned completion observation and stop authority
+## Private legacy MinIO fixture distribution — 2026-10-12
+
+Tom's recorded ruling is: "Authorize separately bounded private fixture-only
+package qualification; no shared catalog/default change or publication."
+The ruling selects direction; a checked, approved bounded brief must precede
+package construction or runtime qualification.
+
+The shipped MinIO catalog remains unchanged. A private fixture package must
+identify the exact upstream server release and verify its downloaded bytes,
+plus independently pinned base and client identities. It must preserve the
+catalog's server command, environment contract, ports, persistent `/data`,
+`/bin/sh` target and `mc ready local` health contract. Record packaging and
+client differences explicitly; a new private image is not the unavailable
+upstream image, and Silo must not be substituted under the MinIO identity.
+
+Artifact inspection and checksums establish package identity, not service
+readiness or consumer parity. Qualification must separately prove the native
+Linux server/client behavior, bootstrap, storage operations and owned cleanup.
+Any unavailable runtime or incomplete ownership proof remains an explicit
+boundary. Consumer profile acceptance and its attempt allowance remain with
+the bundle owner; package work does not start or retry that profile.
+
+This scope excludes shared catalog adoption, default migration, publication,
+release or tag changes, global installation, existing data or volume changes,
+and effects on live consumers, gateway settings or VM lifecycle. Private
+qualification cannot establish remote cancellation or unrelated Linux Effigy
+artifact freshness.
+
+Tom subsequently answered "Approved" to the separate bounded lifecycle
+proposal. After incorporating that scope into the checked, approved fixture
+brief, qualification may create exactly one new profile named
+`effigy-minio-fixture-dfefc279`. Refuse any pre-existing name or state; existing
+profiles and the bundle owner's held scopes are not available for adoption.
+The profile is Linux arm64 with containerd and VZ, four CPUs, 4 GiB RAM,
+32 GiB data disk and 20 GiB root disk. It must not activate host contexts,
+modify SSH configuration, forward an SSH agent, mount host directories, edit
+templates, enable Kubernetes or foreign-architecture helpers, or add custom
+DNS, gateway, host networking or port forwarding.
+
+Record creation intent and exact owned identities before effects. Startup,
+one native proof batch and owned teardown have respective bounds of 300,
+600 and 120 seconds, with no automatic retries. Cleanup may stop and delete
+only that positively identified newly owned profile and its fixture resources.
+Any ownership uncertainty leaves them held. This exception does not authorize
+changes to any existing VM, held resource, consumer profile, data or allowance.
+
+## Owned completion observation and stop authority
 
 A bounded process-table observation can be unavailable while Effigy still owns
 an unreaped child and its created process group. That unavailable observation
