@@ -1,6 +1,6 @@
 # 053 - Qualified Docs Execution Closure Contract
 
-Status: private implementation candidate; independent qualification and native
+Status: fixture-qualified private implementation; production and native
 admission remain unavailable. The resolver and live-controller bridge below
 are bounded to the reviewed macOS fixture provider. Ordinary task-plan surfaces
 do not establish this closure, resource authority or native admission.
@@ -292,6 +292,16 @@ launch. No allocation replacement, unknown-predecessor settlement, durable
 outcome or native authorization follows. Actual usage, finite process and
 verification accounting, compatibility and platform limits live in
 [guide 084](../../guides/084-qualified-docs-execution.md).
+
+Independent private qualification exercised the exact three-leaf resolver and
+bridge, including clean success, links-first failure, retired-checker failure,
+shadow environment, owned timeout and expiry. The current implementation also
+refuses oversized source inventories and unsupported passthrough instead of
+expanding the provider's reserve. These are private fixture proofs under the
+accepted macOS/runtime policy, not an actual Nucleus project allocation or
+producer activation. The result still reports durable outcome and native
+authorization as unavailable; consumer integration must establish those
+separate boundaries before any fresh protected validation.
 
 The first supported closure is the three ordered host docs leaves selected by
 `qa:docs`: links, the declared paths list, then the named
