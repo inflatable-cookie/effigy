@@ -25,7 +25,7 @@ the durable original local outcome, private resource allocation and proof,
 and distinct native fresh-generation authorization. This seam adds no scheduler,
 native issuer, production signing policy or second validation client.
 
-### Current fixture provider boundary
+### Earlier full-provenance provider boundary
 
 The reviewed Nucleus input-provider preflight, at source
 `985d04e7f8309b7d69615ea9b773e54c88943496`, establishes an unsupported,
@@ -53,8 +53,36 @@ installed-tool discovery task or a wrapper around the outcome APIs.
 
 The exact three docs leaves remain required. No builtin-only substitute, partial
 producer eligibility or fixture qualification follows from this preflight.
-Execution remains unavailable until the owning plane supplies the accepted
-input and resource evidence.
+That preflight used the earlier full-provenance premise. Its unsupported outcome
+and absence of an accepted packet remain historical truth. It does not resolve
+the subsequently changed premise below.
+
+### Bounded host-runtime trust ruling — 2026-10-13
+
+Tom answered "Yes" to Nucleus decision
+`7f35ff3a2fbb225237d4bdec403cfc70` version 2. Nucleus's owning contracts 001 and
+007 record that ruling at `70c77a24fd39e2a548ed586eb78ab9f2362c26e8`.
+For fresh docs recovery only, the macOS host/runtime and exact pinned
+Bun/Git/Effigy installation are accepted as trusted cooperative infrastructure
+under the existing plane installation epoch. Full producer distribution and
+shared-library provenance are no longer an asserted prerequisite. Checksums
+remain correspondence, not provenance.
+
+The provider must distinguish this accepted infrastructure from verified private
+source, temporary and output resources. Exact supported recipe, configuration,
+read/write declarations, retained installation and namespace generation,
+lifetime, drift refusal and genuine new outcomes remain required. Missing owner,
+secret or unknown allocation stays a lookup-only hold. This ruling introduces no
+external issuer, frozen host-run authority change, physical writer exclusion or
+production activation, and does not settle unknown predecessors.
+
+The bounded provider is being implemented under Nucleus's owning scope using
+policy packet v2, `bounded-host-runtime-docs-v1`. Its accepted callable API and
+packet are unavailable until independent review and closeout. Effigy must consume
+the actual reviewed binding, not guess an API or execute against a proposed
+packet. The exact three leaves remain mandatory. Provider, Effigy closure, local
+outcome ownership and native fresh-generation qualification form one eligibility
+gate; no component alone authorizes the protected docs job.
 
 ## Exact closure
 
@@ -101,19 +129,24 @@ Required read dependencies include:
   exact checker;
 - the selected skill marker, manifest, script and supported source includes;
 - every nested executable and the fixed environment/configuration that can
-  change its execution, including Git lookup inside the Bun script.
+  change its execution, including Git lookup inside the Bun script, bound to
+  the accepted installation epoch for trusted host/runtime inputs.
 
-Unknown, outside, escaping, mutable or undeclared dependencies refuse before
-execution. Complete read/write declarations must account for cache, lock, temp
+Unknown, escaping or undeclared dependencies refuse before execution. Host/runtime
+inputs explicitly covered by the bounded trust ruling are accepted infrastructure,
+not privately verified package provenance. Private mutable reads outside their
+owned lifetime refuse. Complete read/write declarations account for cache, lock, temp
 and output behavior; “no cache configured” is not an ownership proof.
 
 ## Enforcement boundary
 
-The caller supplies named frozen reads backed by its resource plane's actual
-ownership and immutability proof. Effigy checks and enforces their exact byte,
-path and execution bindings. Hashes, mock flags, process observations or
-planning output cannot establish production immutability, non-replacement,
-non-interference or absence of historical writers.
+The caller supplies named private reads backed by its resource plane's actual
+ownership and bounded lifetime, plus the explicitly accepted host/runtime
+installation binding. Effigy checks and enforces exact byte, path, generation and
+execution bindings without claiming infrastructure provenance it accepts by
+policy. Hashes, mock flags, process observations or planning output cannot
+establish production non-replacement, non-interference or absence of historical
+writers.
 
 Execution must reject changed program, manifest, script, read-set or environment
 bindings before the first nested effect. PATH, local `node_modules/.bin`, HOME
