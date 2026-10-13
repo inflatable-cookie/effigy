@@ -103,6 +103,10 @@ During v0.x, MINOR bumps may include breaking changes.
   0.14.x releases without changing the support floor.
 
 ### Fixed
+- Managed host cleanup keeps its owned TERM/KILL sequence when bounded
+  completion observation is unavailable. It retains the original stop clocks,
+  requires positive group settlement and actual wait before reaping, and holds
+  persistent uncertainty or an actual wait failure.
 - Standard container task commands now render `{repo}` and `{project}` with
   the container-mapped catalog root when invoked by a host aggregate. Task env
   aliases and selector plans use the same runtime path; nested catalogs keep

@@ -3131,6 +3131,14 @@ struct OwnedHostChild {
     stop_attempted: bool,
 }
 
+/// Observation availability does not decide whether the retained Child can
+/// be stopped. A failed owned wait, however, cannot be retried as observation.
+#[derive(Debug)]
+enum OwnedChildReapError {
+    Observation(RunnerError),
+    Wait(RunnerError),
+}
+
 impl OwnedHostChild {
     fn new(child: std::process::Child) -> Self {
         Self {
@@ -3152,6 +3160,18 @@ impl OwnedHostChild {
     }
 
     fn stop(&mut self, grace: Duration) -> Result<std::process::ExitStatus, RunnerError> {
+        self.stop_with_observer(grace, Self::reap_quiescent_group)
+    }
+
+    fn stop_with_observer(
+        &mut self,
+        grace: Duration,
+        mut observe: impl FnMut(
+            &mut Self,
+            Instant,
+        )
+            -> Result<Option<std::process::ExitStatus>, OwnedChildReapError>,
+    ) -> Result<std::process::ExitStatus, RunnerError> {
         self.stop_attempted = true;
         if self.reaped {
             return Err(RunnerError::task_invocation(
@@ -3161,60 +3181,79 @@ impl OwnedHostChild {
         // The private spawn path created this group and this Child has never
         // been reaped. Its PID cannot be reused while we signal descendants.
         let mut deadline = Instant::now() + grace.max(Duration::from_millis(100));
-        if let Some(status) = self.reap_quiescent_group(deadline)? {
-            return Ok(status);
-        }
+        let mut unavailable = match observe(self, deadline) {
+            Ok(Some(status)) => return Ok(status),
+            Ok(None) => None,
+            Err(OwnedChildReapError::Observation(error)) => Some(error),
+            Err(OwnedChildReapError::Wait(error)) => return Err(error),
+        };
         if let Err(error) = self.signal(Signal::SIGTERM) {
             // On macOS a zombie-only group can reject signaling with EPERM.
             // A race to quiescence is success only after positive observation
             // and the actual owned reap; never ignore a permission failure.
-            if let Ok(Some(status)) = self.reap_quiescent_group(deadline) {
-                return Ok(status);
-            }
-            return Err(error);
+            return match observe(self, deadline) {
+                Ok(Some(status)) => Ok(status),
+                Err(OwnedChildReapError::Wait(wait_error)) => Err(wait_error),
+                _ => Err(error),
+            };
         }
         let mut forced = false;
         loop {
             if Instant::now() >= deadline {
                 if forced {
-                    return Err(RunnerError::task_invocation("managed host child group did not exit after force-stop; leaving generation held"));
+                    let detail = unavailable
+                        .map(|error| format!("; completion observation unavailable: {error}"))
+                        .unwrap_or_default();
+                    return Err(RunnerError::task_invocation(format!(
+                        "managed host child group did not exit after force-stop; leaving generation held{detail}"
+                    )));
                 }
                 deadline = Instant::now() + Duration::from_secs(2);
                 if let Err(error) = self.signal(Signal::SIGKILL) {
-                    if let Ok(Some(status)) = self.reap_quiescent_group(deadline) {
-                        return Ok(status);
-                    }
-                    return Err(error);
+                    return match observe(self, deadline) {
+                        Ok(Some(status)) => Ok(status),
+                        Err(OwnedChildReapError::Wait(wait_error)) => Err(wait_error),
+                        _ => Err(error),
+                    };
                 }
                 forced = true;
             }
-            match self.reap_quiescent_group(deadline) {
+            // Unavailable process-table evidence never permits a reap, but it
+            // does not revoke the retained Child's existing stop authority.
+            // Keep the original phase clocks; only a positive native predicate
+            // followed by the actual owned wait can finish successfully.
+            match observe(self, deadline) {
                 Ok(Some(status)) => return Ok(status),
-                Ok(None) => {}
-                Err(_) if Instant::now() >= deadline => continue,
-                Err(error) => return Err(error),
+                Ok(None) => unavailable = None,
+                Err(OwnedChildReapError::Observation(error)) => unavailable = Some(error),
+                Err(OwnedChildReapError::Wait(error)) => return Err(error),
             }
-            thread::sleep(Duration::from_millis(50));
+            thread::sleep(
+                Duration::from_millis(50).min(deadline.saturating_duration_since(Instant::now())),
+            );
         }
     }
 
     fn reap_quiescent_group(
         &mut self,
         deadline: Instant,
-    ) -> Result<Option<std::process::ExitStatus>, RunnerError> {
-        if !observe_owned_child_exit(self.id(), deadline)? {
+    ) -> Result<Option<std::process::ExitStatus>, OwnedChildReapError> {
+        if !observe_owned_child_exit(self.id(), deadline)
+            .map_err(OwnedChildReapError::Observation)?
+        {
             return Ok(None);
         }
         // Observe exit first, then members: the exited root cannot fork
         // between this snapshot and its reap. Any other member holds it.
-        let members = observe_owned_group_members(self.id(), deadline)?;
+        let members = observe_owned_group_members(self.id(), deadline)
+            .map_err(OwnedChildReapError::Observation)?;
         if members.iter().any(|pid| *pid != self.id()) {
             return Ok(None);
         }
         let status = self.child.wait().map_err(|error| {
-            RunnerError::task_invocation(format!(
+            OwnedChildReapError::Wait(RunnerError::task_invocation(format!(
                 "managed host child reap failed; leaving generation held: {error}"
-            ))
+            )))
         })?;
         self.reaped = true;
         Ok(Some(status))
@@ -3823,6 +3862,23 @@ mod tests {
         _root: tempfile::TempDir,
     }
 
+    fn wait_for_owned_fixture_root_exit(pid: u32, deadline: Instant) {
+        loop {
+            match observe_owned_child_exit(pid, deadline) {
+                Ok(true) => return,
+                observation => {
+                    assert!(
+                        Instant::now() < deadline,
+                        "owned root exit was not positively observed: {observation:?}"
+                    );
+                }
+            }
+            thread::sleep(
+                Duration::from_millis(10).min(deadline.saturating_duration_since(Instant::now())),
+            );
+        }
+    }
+
     impl OwnedGroupFixture {
         fn new(ignore_term: bool) -> Self {
             let root = tempfile::tempdir().unwrap();
@@ -3861,10 +3917,7 @@ mod tests {
                 start_identity: live.start_identity,
             };
             fs::write(release, b"exit").unwrap();
-            while !observe_owned_child_exit(child.id(), deadline).unwrap() {
-                assert!(Instant::now() < deadline, "owned root did not exit");
-                thread::sleep(Duration::from_millis(10));
-            }
+            wait_for_owned_fixture_root_exit(child.id(), deadline);
             Self {
                 child,
                 identity,
@@ -3915,6 +3968,161 @@ mod tests {
                 thread::sleep(Duration::from_millis(10));
             }
         }
+    }
+
+    #[derive(Clone, Copy)]
+    enum UnavailablePhase {
+        BeforeTerm,
+        AfterTerm,
+        AfterForce,
+    }
+
+    fn assert_owned_observation_recovers(phase: UnavailablePhase) {
+        let mut foreign = TestChild::sleep();
+        let foreign_identity = read_live_process_identity(foreign.0.id()).unwrap();
+        let mut owned = OwnedGroupFixture::new(matches!(phase, UnavailablePhase::AfterForce));
+        let mut calls = 0;
+        let mut injected = false;
+        let status = owned
+            .child
+            .stop_with_observer(Duration::from_millis(100), |child, deadline| {
+                let selected = match phase {
+                    UnavailablePhase::BeforeTerm => calls == 0,
+                    UnavailablePhase::AfterTerm => calls == 1,
+                    UnavailablePhase::AfterForce => {
+                        deadline.saturating_duration_since(Instant::now()) > Duration::from_secs(1)
+                    }
+                };
+                calls += 1;
+                if selected && !injected {
+                    injected = true;
+                    return Err(OwnedChildReapError::Observation(
+                        RunnerError::task_invocation(
+                            "controlled unavailable completion observation",
+                        ),
+                    ));
+                }
+                child.reap_quiescent_group(deadline)
+            })
+            .unwrap();
+        owned.root_reaped = true;
+        owned.settled = true;
+        assert!(
+            injected,
+            "the selected stop phase must exercise unavailability"
+        );
+        assert_eq!(status.code(), Some(7), "keep the real natural root exit");
+        assert!(owned.child.reaped);
+        assert!(effigy_process::process_group_member_ids(owned.identity.pid)
+            .unwrap()
+            .is_empty());
+        assert!(foreign.0.try_wait().unwrap().is_none());
+        assert!(checked_child_identity(
+            foreign.0.id(),
+            &foreign_identity.boot_identity,
+            &foreign_identity.start_identity
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn host_process_owned_observation_unavailable_before_term_keeps_stop_authority() {
+        assert_owned_observation_recovers(UnavailablePhase::BeforeTerm);
+    }
+
+    #[test]
+    fn host_process_owned_observation_unavailable_after_term_keeps_stop_authority() {
+        assert_owned_observation_recovers(UnavailablePhase::AfterTerm);
+    }
+
+    #[test]
+    fn host_process_owned_observation_unavailable_after_force_keeps_stop_authority() {
+        assert_owned_observation_recovers(UnavailablePhase::AfterForce);
+    }
+
+    #[test]
+    fn host_process_owned_observation_unavailable_through_stop_keeps_generation_held() {
+        let mut foreign = TestChild::sleep();
+        let foreign_identity = read_live_process_identity(foreign.0.id()).unwrap();
+        let mut owned = OwnedGroupFixture::new(true);
+        let mut calls = 0;
+        let error = owned
+            .child
+            .stop_with_observer(Duration::from_millis(100), |_, _| {
+                calls += 1;
+                Err(OwnedChildReapError::Observation(
+                    RunnerError::task_invocation("controlled unavailable completion observation"),
+                ))
+            })
+            .unwrap_err();
+        assert!(
+            calls > 2,
+            "unavailability must not abort the owned stop sequence"
+        );
+        assert!(error.to_string().contains("leaving generation held"));
+        assert!(
+            !owned.child.reaped,
+            "uncertainty cannot supply an exit status"
+        );
+        // Test teardown uses the real positive predicate and actual owned wait.
+        // The failed stop has already sent KILL; no extra signal or retry is
+        // needed to prove that this test's private fixture has settled.
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let status = loop {
+            match owned.child.reap_quiescent_group(deadline) {
+                Ok(Some(status)) => break status,
+                Ok(None) | Err(OwnedChildReapError::Observation(_)) => {}
+                Err(OwnedChildReapError::Wait(error)) => {
+                    panic!("owned teardown wait failed: {error}")
+                }
+            }
+            assert!(
+                Instant::now() < deadline,
+                "owned fixture teardown remained uncertain"
+            );
+            thread::sleep(Duration::from_millis(10));
+        };
+        owned.root_reaped = true;
+        owned.settled = true;
+        assert_eq!(status.code(), Some(7));
+        assert!(effigy_process::process_group_member_ids(owned.identity.pid)
+            .unwrap()
+            .is_empty());
+        assert!(foreign.0.try_wait().unwrap().is_none());
+        assert!(checked_child_identity(
+            foreign.0.id(),
+            &foreign_identity.boot_identity,
+            &foreign_identity.start_identity
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn host_process_owned_wait_failure_is_fatal_without_observation_retry() {
+        let mut owned = OwnedGroupFixture::new(true);
+        let mut calls = 0;
+        let error = owned
+            .child
+            .stop_with_observer(Duration::from_millis(100), |_, _| {
+                calls += 1;
+                Err(OwnedChildReapError::Wait(RunnerError::task_invocation(
+                    "controlled owned wait failure; leaving generation held",
+                )))
+            })
+            .unwrap_err();
+        assert_eq!(
+            calls, 1,
+            "wait failure is not retried as unavailable observation"
+        );
+        assert!(error.to_string().contains("controlled owned wait failure"));
+        assert!(!owned.child.reaped);
+        assert!(checked_child_identity(
+            owned.descendant.pid,
+            &owned.descendant.boot_identity,
+            &owned.descendant.start_identity
+        )
+        .is_ok());
+        // The fixture Drop retains its original real, bounded owned cleanup.
     }
 
     #[test]
@@ -3997,10 +4205,7 @@ mod tests {
         let mut child = OwnedHostChild::new(command.spawn().unwrap());
         fs::write(release, b"exit").unwrap();
         let deadline = Instant::now() + Duration::from_secs(5);
-        while !observe_owned_child_exit(child.id(), deadline).unwrap() {
-            assert!(Instant::now() < deadline, "owned root did not exit");
-            thread::sleep(Duration::from_millis(10));
-        }
+        wait_for_owned_fixture_root_exit(child.id(), deadline);
         let pid = child.id();
         let status = child.stop(Duration::from_secs(2)).unwrap();
         assert_eq!(status.code(), Some(7));

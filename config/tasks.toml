@@ -257,6 +257,28 @@
 ]
 # Whole lifecycle correction: real public private-gateway cases and native
 # owned-root/descendant, selected-cause and exact recorded-identity controls.
+# Owned completion observation can be unavailable without revoking stop
+# authority. Deterministic phase controls use real private groups and only
+# inject negative observation/wait outcomes; no consumer runtime is started.
+"test:host-process:owned-stop" = [
+  { id = "owned-stop-observation", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(host_process_owned_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
+]
+"format:host-process:owned-stop" = "rustfmt --edition 2021 --config skip_children=true src/runner/host_process.rs"
+"test:host-process:owned-stop:family" = [
+  { task = "test:host-process:owned-stop" },
+  { task = "test:host-process:owned-stop:remaining" },
+]
+"test:host-process:owned-stop:remaining" = [
+  { id = "owned-stop-other-native-callers", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --lib --filterset '(test(host_process) | test(managed_host_transitions_)) - test(host_process_owned_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { id = "owned-stop-generation-identity", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy-gateway --lib --filterset 'test(identity::tests::) | test(managed_listener_routes_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { id = "owned-stop-public-lifecycle", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'not test(managed_listener_fixture_child)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
+]
+"check:host-process:owned-stop:compile" = [
+  { id = "owned-stop-compile", run = "cargo check -p effigy --all-targets --profile test", timeout_ms = 600000 },
+]
+"check:host-process:owned-stop:lint" = [
+  { id = "owned-stop-clippy", run = "cargo clippy -p effigy --all-targets -- -D warnings", timeout_ms = 600000 },
+]
 "proof:managed:lifecycle" = [
   { id = "managed-lifecycle-native", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(host_process) | test(managed_host_transitions_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
   { id = "managed-lifecycle-identity", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy-gateway --lib --filterset 'test(identity::tests::) | test(managed_listener_routes_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },

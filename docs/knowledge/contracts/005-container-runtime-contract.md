@@ -1268,3 +1268,26 @@ readable and writable, with `501:20` ownership and mode 0755. The legacy route
 returned HTTP 200. This proves the reported launch failure is resolved on the
 existing running stack; it is not a fresh-stack bootstrap claim. No mount
 restructuring, manual chown/chmod, reseed, stack restart or VM restart occurred.
+
+### Owned completion observation and stop authority
+
+A bounded process-table observation can be unavailable while Effigy still owns
+an unreaped child and its created process group. That unavailable observation
+must not abort the existing TERM/KILL sequence or reset its clocks. The original
+grace (minimum 100 ms) and fixed two-second force phase remain unchanged.
+Production uses the fixed bounded OS observer; tests inject only negative
+outcomes and use real owned children for positive completion.
+
+Only positive root-exit and whole-group settlement evidence followed by the
+actual owned wait permits reaping and a successful exit status. Persistent
+observation uncertainty leaves the generation held. An actual wait failure
+remains fatal and held; it is not retried as observation unavailability. A signal
+permission refusal remains a refusal unless positive settlement and actual wait
+resolve the race. Process IDs and status observations grant no signal authority,
+and no signal is sent after reaping.
+
+The retained macOS CI failure proves an observation deadline was reported; its
+exact historical interleaving remains unknown. This correction does not change
+unsafe/FFI blocks, doctor deadlines, admission, container cancellation or public
+APIs. Existing unsafe proof-comment observations remain report-only in the
+scoped Rust audit, without a soundness or whole-product certification claim.
