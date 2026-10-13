@@ -382,6 +382,12 @@ reviewer owns the approved fresh-profile proof; existing profiles and consumer
 resources are never adopted. See the
 [private fixture contract](../knowledge/contracts/005-container-runtime-contract.md#private-legacy-minio-fixture-distribution--2026-10-12).
 
+Private engine state uses a short exclusively owned control directory, separate
+from durable proof receipts. The helper refuses an oversized resolved Lima socket
+path before startup and preserves inode-bound cleanup authority. Startup failure
+reports a fixed safe category; raw tool output remains withheld. A failed native
+attempt stays spent even after source repair.
+
 For this exact server, bucket-CORS updates are unsupported. Global HTTP CORS is
 a separate capability. The private proof records both positive global-CORS
 behavior and the expected bucket-CORS refusal; it does not claim the unchanged

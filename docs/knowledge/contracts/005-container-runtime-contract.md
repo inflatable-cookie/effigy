@@ -1273,9 +1273,22 @@ requires the bundle owner's explicit same-task fixture-only URI/helper amendment
 it does not restore the unchanged DockerHub distribution or certify a full profile.
 
 The native helper uses private Colima/Lima/cache/Docker control roots, stdin
-artifact transfer and guest-only credentials. It collects bounded command
-output, withholds raw diagnostics and does not persist credentials in image
-layers or proof output. Startup, cumulative proof and cumulative teardown clocks
+artifact transfer and guest-only credentials. A newly created mode-0700 short
+control root is separate from the durable attempt receipt directory. Before any
+private engine operation, the helper checks the resolved full Lima SSH temporary
+socket path, including its random suffix: it must be less than 104 filesystem
+bytes on macOS. Symlinks cannot shorten that resolved path. The creation intent
+binds the control root and each Colima/Lima/cache/Docker directory by device and
+inode, in addition to the receipt root and profile configuration. Changed roots,
+directories or private permissions refuse startup or cleanup. After positive
+owned profile deletion and unchanged external inventory, the helper removes only
+that verified private control root; uncertainty retains it with its receipt.
+
+It collects bounded command output, withholds raw diagnostics and does not
+persist credentials in image layers or proof output. A nonzero startup retains
+only an exit code and a fixed diagnostic category: `unix_socket_path_limit` for
+Lima's known path refusal, otherwise `unclassified`. This does not reconstruct
+diagnostics discarded by earlier attempts. Startup, cumulative proof and cumulative teardown clocks
 are 300/600/120 seconds respectively; host-child cancellation/reap has a separate
 two-second grace. Host child cancellation is not remote VM cancellation. A
 zombie-only macOS group signal refusal is resolved only by positive root-exit
@@ -1287,6 +1300,9 @@ the real exited-root race and an owned descendant that outlives its root.
 A missing or changed profile/config/root identity keeps teardown held. Synchronous
 filesystem calls and external system load are not hard real-time guarantees.
 One native attempt remains spent even on refusal; there is no automatic retry.
+Source correction and offline checks do not renew a spent lifecycle allowance
+or qualify the package. A further native proof needs its own genuinely approved
+bounded allowance and a fresh authenticated reviewer binding.
 
 Tom's recorded ruling is: "Authorize separately bounded private fixture-only
 package qualification; no shared catalog/default change or publication."

@@ -108,6 +108,9 @@ During v0.x, MINOR bumps may include breaking changes.
   0.14.x releases without changing the support floor.
 
 ### Fixed
+- Private MinIO qualification uses short, exclusively owned engine control roots
+  alongside durable receipts, checks the complete resolved Lima socket path
+  before startup, and retains safe startup failure categories without raw output.
 - Managed host listeners preserve readiness failures and phase diagnostics
   through rollback and teardown. Supervisors settle surviving owned descendants
   before reaping an owned child leader during cleanup, and retain unavailable

@@ -8,8 +8,10 @@ from pathlib import Path
 import re
 import secrets
 import selectors
+import shutil
 import signal
 import subprocess
+import tempfile
 import time
 
 from minio_fixture_package import PROFILE, Refusal, verify
@@ -24,6 +26,27 @@ MAX_OUTPUT = 1048576
 MAX_PROBE_OUTPUT = 1048576
 JOURNAL = []
 HELD_CHILDREN = []
+CONTROL_DIRECTORIES = {"COLIMA_HOME": "colima", "COLIMA_CACHE_HOME": "cache",
+                       "LIMA_HOME": "lima", "DOCKER_CONFIG": "docker"}
+LONGEST_LIMA_SOCKET = "ssh.sock.1234567890123456"
+MACOS_SOCKET_LIMIT = 104
+
+
+def validate_control_paths(root):
+    # Lima resolves LIMA_HOME before joining the instance and SSH temp socket.
+    # A short symlink to a long evidence root therefore cannot fix this limit.
+    if root.is_symlink():
+        raise Refusal("fixture control root is a symlink; no adoption")
+    socket = root.resolve() / "lima" / ("colima-" + PROFILE) / LONGEST_LIMA_SOCKET
+    if len(os.fsencode(socket)) >= MACOS_SOCKET_LIMIT:
+        raise Refusal("fixture Unix socket path limit; refused before engine effects")
+
+
+def startup_category(output):
+    # Classify only a fixed public tool error; never retain the diagnostic bytes.
+    if b"UNIX_PATH_MAX" in output and b"too long" in output:
+        return "unix_socket_path_limit"
+    return "unclassified"
 
 
 def owned_group_quiescent(child, deadline):
@@ -91,7 +114,7 @@ def reap_owned_group(child, deadline):
     raise Refusal("owned host group settlement unresolved; child retained")
 
 
-def bounded(argv, env, deadline, input_file=None):
+def bounded(argv, env, deadline, input_file=None, classify_startup=False):
     """Drain both streams with a collection bound; argv/output are never logged.
 
     An unreaped owned session leader pins its process group through cancellation.
@@ -104,6 +127,7 @@ def bounded(argv, env, deadline, input_file=None):
     entry = {"ownedHostPID": child.pid, "startedMonotonic": time.monotonic(), "deadlineMonotonic": deadline}
     JOURNAL.append(entry)
     output = bytearray()
+    diagnostic = bytearray()
     collected = 0
     failure = None
     selector = selectors.DefaultSelector()
@@ -124,6 +148,8 @@ def bounded(argv, env, deadline, input_file=None):
                     break
                 else:
                     collected += len(data)
+                    if classify_startup:
+                        diagnostic.extend(data)
                     if key.fileobj is child.stdout:
                         output.extend(data)
             if failure:
@@ -132,6 +158,8 @@ def bounded(argv, env, deadline, input_file=None):
             try:
                 code = child.wait(timeout=max(0.001, deadline - time.monotonic()))
                 entry.update({"exit": code, "collectedBytes": collected, "reaped": True})
+                if classify_startup and code != 0:
+                    entry["diagnosticCategory"] = startup_category(diagnostic)
                 return code, bytes(output)
             except subprocess.TimeoutExpired:
                 failure = "command exit deadline reached after EOF"
@@ -173,10 +201,10 @@ def require(code, label):
 
 
 def private_environment(root):
+    validate_control_paths(root)
     env = dict(os.environ)
     # Only fixture-owned control roots; HOME and existing profiles are untouched.
-    for name, relative in [("COLIMA_HOME", "colima"), ("COLIMA_CACHE_HOME", "cache"),
-                           ("LIMA_HOME", "lima"), ("DOCKER_CONFIG", "docker")]:
+    for name, relative in CONTROL_DIRECTORIES.items():
         directory = root / relative
         directory.mkdir(mode=0o700)
         env[name] = str(directory)
@@ -211,16 +239,32 @@ def profile_snapshot(env, deadline=None):
     return values
 
 
-def ownership(root, env, token):
+def control_ownership(root, env, token):
     intent = json.loads((root / "intent.json").read_text())
     if intent["token"] != token or intent["profile"] != PROFILE:
         raise Refusal("fixture ownership changed; cleanup held")
     if root.is_symlink() or (root.stat().st_dev, root.stat().st_ino) != tuple(intent["rootIdentity"]):
         raise Refusal("fixture root identity changed; cleanup held")
-    for key in ("COLIMA_HOME", "LIMA_HOME"):
-        if Path(env[key]).is_symlink() or Path(env[key]).parent != root:
+    control = Path(intent["controlRoot"])
+    if control.is_symlink() or (control.stat().st_dev, control.stat().st_ino) != tuple(intent["controlRootIdentity"]):
+        raise Refusal("fixture control root identity changed; cleanup held")
+    if control.stat().st_mode & 0o777 != 0o700:
+        raise Refusal("fixture control root permissions changed; cleanup held")
+    validate_control_paths(control)
+    for key, relative in CONTROL_DIRECTORIES.items():
+        directory = Path(env[key])
+        if directory != control / relative or directory.is_symlink():
             raise Refusal("fixture control root identity changed; cleanup held")
-    config = root / "colima" / PROFILE / "colima.yaml"
+        if (directory.stat().st_dev, directory.stat().st_ino) != tuple(intent["controlDirectoryIdentities"][key]):
+            raise Refusal("fixture control directory identity changed; cleanup held")
+        if directory.stat().st_mode & 0o777 != 0o700:
+            raise Refusal("fixture control directory permissions changed; cleanup held")
+    return control
+
+
+def ownership(root, env, token):
+    control_ownership(root, env, token)
+    config = Path(env["COLIMA_HOME"]) / PROFILE / "colima.yaml"
     identity = root / "profile-identity.json"
     if not config.is_file() or config.is_symlink():
         raise Refusal("new profile identity unavailable; cleanup held")
@@ -334,7 +378,7 @@ def run(receipt_path, root):
     JOURNAL.clear()
     receipt = verify(receipt_path)
     root = Path(root).absolute()
-    if root.exists():
+    if root.exists() or root.is_symlink():
         raise Refusal("native attempt root exists; no replay")
     refuse_existing_state(dict(os.environ))
     original_profiles = profile_snapshot(dict(os.environ))
@@ -346,15 +390,39 @@ def run(receipt_path, root):
         raise Refusal("installed Colima differs from approved supported tool")
     root.mkdir(mode=0o700, parents=True)
     token = secrets.token_hex(32)
+    # Durable receipts may be deep; Unix sockets need a separate short root.
+    # mkdtemp creates one new exclusive 0700 directory, never a reused profile.
+    control = Path(tempfile.mkdtemp(prefix="efm-", dir="/tmp")).resolve()
+    control_identity = [control.stat().st_dev, control.stat().st_ino]
+    try:
+        env = private_environment(control)
+    except Exception:
+        # Do not recursively delete partly created or uncertain state. Retain
+        # its exact path/identity even when a local filesystem preflight fails.
+        cleanup = "held"
+        if not control.is_symlink() and [control.stat().st_dev, control.stat().st_ino] == control_identity:
+            try:
+                control.rmdir()  # Only an empty, positively owned root.
+                cleanup = "settled"
+            except OSError:
+                pass
+        result = {"qualified": False, "nativeBatch": "not_started", "cleanup": cleanup,
+                  "controlRoot": str(control), "controlRootIdentity": control_identity,
+                  "refusal": "fixture control setup failed; no engine started"}
+        (root / "result.json").write_text(json.dumps(result, indent=2) + "\n")
+        return result
     intent = {"schema": "effigy.private-minio-native-intent.v1", "token": token, "profile": PROFILE,
               "colimaSHA256": hashlib.sha256(Path(COLIMA).read_bytes()).hexdigest(),
               "rootIdentity": [root.stat().st_dev, root.stat().st_ino], "artifactSHA256": receipt["artifactSHA256"],
               "observedAgent": os.environ.get("PASEO_AGENT_ID"), "batch": 1, "budgets": {"startup": 300, "proof": 600, "teardown": 120},
+              "controlRoot": str(control), "controlRootIdentity": control_identity,
+              "controlDirectoryIdentities": {key: [Path(env[key]).stat().st_dev, Path(env[key]).stat().st_ino]
+                                             for key in CONTROL_DIRECTORIES},
               "authorizations": ["86a7e90a-9fa3-401c-865a-ad9ff2ace354", "11b9b302-358e-414e-a40a-60dbd17282ef"]}
     with (root / "intent.json").open("x") as output:
         output.write(json.dumps(intent, indent=2) + "\n")
-    env = private_environment(root)
-    result = {"qualified": False, "profile": PROFILE, "artifactSHA256": receipt["artifactSHA256"], "nativeBatch": "spent", "cleanup": "held"}
+    result = {"qualified": False, "profile": PROFILE, "artifactSHA256": receipt["artifactSHA256"],
+              "controlRoot": str(control), "nativeBatch": "spent", "cleanup": "held"}
     attempted = False
     try:
         if profile_snapshot(env):
@@ -362,8 +430,12 @@ def run(receipt_path, root):
         refuse_existing_state(dict(os.environ))
         if any(item["name"] == PROFILE for item in profile_snapshot(dict(os.environ))):
             raise Refusal("fixed profile appeared before startup; no adoption")
+        control_ownership(root, env, token)
         attempted = True
-        code, _ = bounded([COLIMA, "start", PROFILE, *START_FLAGS], env, time.monotonic() + 300)
+        code, _ = bounded([COLIMA, "start", PROFILE, *START_FLAGS], env, time.monotonic() + 300,
+                          classify_startup=True)
+        if code != 0:
+            result["startupFailure"] = {"exit": code, "category": JOURNAL[-1]["diagnosticCategory"]}
         require(code, "new profile startup")
         ownership(root, env, token)
         proof_deadline = time.monotonic() + 600
@@ -425,6 +497,9 @@ def run(receipt_path, root):
                     raise Refusal("private profile inventory not empty after deletion")
                 if profile_snapshot(dict(os.environ), cleanup_deadline) != original_profiles:
                     raise Refusal("external profile inventory changed; no external cleanup attempted")
+                control_ownership(root, env, token)
+                shutil.rmtree(control)
+                result["controlRootRemoved"] = True
                 result["cleanup"] = "settled"
             except Exception as error:
                 result["cleanupRefusal"] = str(error) if isinstance(error, Refusal) else "owned teardown unresolved"
