@@ -1304,6 +1304,14 @@ Source correction and offline checks do not renew a spent lifecycle allowance
 or qualify the package. A further native proof needs its own genuinely approved
 bounded allowance and a fresh authenticated reviewer binding.
 
+Tom reaffirmed on 2026-10-13: "You have blanket approval, stop asking for it!"
+Within this existing private fixture scope, the owner may check and approve one
+renewed source-pinned native batch after a coherent correction. The original
+failed batch stays spent; the renewed batch uses a new attempt directory and
+the same absent-profile, ownership, 300/600/120 limits and independent reviewer
+gates. It grants no automatic retry, existing-profile adoption, consumer action
+or shared catalog/default change.
+
 Tom's recorded ruling is: "Authorize separately bounded private fixture-only
 package qualification; no shared catalog/default change or publication."
 The ruling selects direction; a checked, approved bounded brief must precede
