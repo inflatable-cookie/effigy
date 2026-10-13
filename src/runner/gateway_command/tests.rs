@@ -418,9 +418,13 @@ fn probe_state_resolver_keeps_a_confirmed_running_gateway() {
 fn gateway_identity_legacy_replacement_uses_one_interactive_handoff_and_refuses_null_stdin() {
     use std::cell::Cell;
 
+    // Self-reference makes production diagnosis skip native probes.
+    // Keep typed denial coverage without touching an arbitrary host PID.
+    let pid = std::process::id();
+
     let fixture = tempfile::tempdir().expect("diagnosis fixture");
     let fixture_config = GatewayConfig::standard(fixture.path().to_path_buf());
-    std::fs::write(&fixture_config.pid_file_path, "4242\n").expect("write fixture PID");
+    std::fs::write(&fixture_config.pid_file_path, format!("{pid}\n")).expect("write fixture PID");
     let start_identity = if cfg!(target_os = "macos") {
         serde_json::json!({"platform":"macos","start_seconds":1,"start_microseconds":0})
     } else {
@@ -430,7 +434,7 @@ fn gateway_identity_legacy_replacement_uses_one_interactive_handoff_and_refuses_
         fixture_config.pid_file_path.with_extension("identity"),
         serde_json::to_vec(&serde_json::json!({
             "format_version": 1,
-            "pid": 4242,
+            "pid": pid,
             "boot_identity": "test-boot",
             "start_identity": start_identity,
         }))
@@ -449,7 +453,7 @@ fn gateway_identity_legacy_replacement_uses_one_interactive_handoff_and_refuses_
 
     let handoffs = Cell::new(0);
     let launches = Cell::new(0);
-    let status = Err(effigy_gateway::GatewayError::ProcessStateUnknown { pid: 4242 });
+    let status = Err(effigy_gateway::GatewayError::ProcessStateUnknown { pid });
     let result = run_gateway_up_after_identity_permission_denied(
         &fixture_config,
         status,
@@ -472,7 +476,7 @@ fn gateway_identity_legacy_replacement_uses_one_interactive_handoff_and_refuses_
         "replacement launches only in the handoff"
     );
 
-    let status = Err(effigy_gateway::GatewayError::ProcessStateUnknown { pid: 4242 });
+    let status = Err(effigy_gateway::GatewayError::ProcessStateUnknown { pid });
     let noninteractive = run_gateway_up_after_identity_permission_denied(
         &fixture_config,
         status,
@@ -486,13 +490,15 @@ fn gateway_identity_legacy_replacement_uses_one_interactive_handoff_and_refuses_
     );
     let refusal = noninteractive.expect_err("null stdin must refuse replacement");
     assert!(
-        refusal.to_string().contains("current diagnosis: record="),
+        refusal.to_string().contains(
+            "current diagnosis: record=self-reference process=not-probed identity=not-checked"
+        ),
         "noninteractive refusal must carry the bounded diagnosis: {refusal}"
     );
     assert_eq!(handoffs.get(), 1, "null stdin must not authenticate");
     assert_eq!(launches.get(), 1, "null stdin must not launch replacement");
 
-    let status = Err(effigy_gateway::GatewayError::ProcessStateUnknown { pid: 4242 });
+    let status = Err(effigy_gateway::GatewayError::ProcessStateUnknown { pid });
     let declined = run_gateway_up_after_identity_permission_denied(
         &fixture_config,
         status,
@@ -515,9 +521,13 @@ fn gateway_identity_legacy_replacement_uses_one_interactive_handoff_and_refuses_
 fn gateway_down_permission_denied_uses_one_lifecycle_handoff_or_preserves_unknown() {
     use std::cell::Cell;
 
+    // Self-reference makes production diagnosis skip native probes.
+    // Keep typed denial coverage without touching an arbitrary host PID.
+    let pid = std::process::id();
+
     let fixture = tempfile::tempdir().expect("down fixture");
     let fixture_config = GatewayConfig::standard(fixture.path().to_path_buf());
-    std::fs::write(&fixture_config.pid_file_path, "4242\n").expect("write fixture PID");
+    std::fs::write(&fixture_config.pid_file_path, format!("{pid}\n")).expect("write fixture PID");
     let start_identity = if cfg!(target_os = "macos") {
         serde_json::json!({"platform":"macos","start_seconds":1,"start_microseconds":0})
     } else {
@@ -527,7 +537,7 @@ fn gateway_down_permission_denied_uses_one_lifecycle_handoff_or_preserves_unknow
         fixture_config.pid_file_path.with_extension("identity"),
         serde_json::to_vec(&serde_json::json!({
             "format_version": 1,
-            "pid": 4242,
+            "pid": pid,
             "boot_identity": "test-boot",
             "start_identity": start_identity,
         }))
@@ -545,7 +555,7 @@ fn gateway_down_permission_denied_uses_one_lifecycle_handoff_or_preserves_unknow
     }
 
     let handoffs = Cell::new(0);
-    let status = Err(effigy_gateway::GatewayError::ProcessStateUnknown { pid: 4242 });
+    let status = Err(effigy_gateway::GatewayError::ProcessStateUnknown { pid });
     let result = run_gateway_down_after_identity_permission_denied(
         &fixture_config,
         status,
@@ -562,7 +572,7 @@ fn gateway_down_permission_denied_uses_one_lifecycle_handoff_or_preserves_unknow
     );
     assert_eq!(handoffs.get(), 1, "down has one administrator handoff");
 
-    let status = Err(effigy_gateway::GatewayError::ProcessStateUnknown { pid: 4242 });
+    let status = Err(effigy_gateway::GatewayError::ProcessStateUnknown { pid });
     let error = run_gateway_down_after_identity_permission_denied(
         &fixture_config,
         status,
@@ -580,7 +590,9 @@ fn gateway_down_permission_denied_uses_one_lifecycle_handoff_or_preserves_unknow
         "unexpected error: {error}"
     );
     assert!(
-        error.contains("current diagnosis: record="),
+        error.contains(
+            "current diagnosis: record=self-reference process=not-probed identity=not-checked"
+        ),
         "down refusal must carry the bounded diagnosis: {error}"
     );
     assert!(error.contains("interactive admin-capable terminal"));
@@ -642,7 +654,8 @@ fn probe_state_up_refuses_unknown_without_starting_a_replacement() {
     // `run_gateway_up` only reaches `spawn_gateway_daemon` after
     // `inspect_existing_gateway` returns `Absent`, so a
     // `GatewayProcessProbe::Unknown` must surface as `Err`.
-    let config = GatewayConfig::standard(PathBuf::from("/tmp/effigy/gateway"));
+    let dir = tempfile::tempdir().expect("private unknown-state fixture");
+    let config = GatewayConfig::standard(dir.path().to_path_buf());
     let unknown = inspect_existing_gateway(
         &config,
         Err(effigy_gateway::GatewayError::ProcessStateUnknown { pid: 4242 }),
@@ -1542,9 +1555,12 @@ fn permission_reuse_denied_reader_stays_unknown_and_preserves_records() {
 #[cfg(unix)]
 #[test]
 fn permission_reuse_diagnosis_hint_distinguishes_gates_without_raw_leak() {
+    // Self-reference makes production diagnosis skip native probes.
+    // Keep typed denial coverage without touching an arbitrary host PID.
+    let pid = std::process::id();
     let dir = tempfile::tempdir().expect("diagnosis fixture");
     let config = GatewayConfig::standard(dir.path().to_path_buf());
-    std::fs::write(&config.pid_file_path, "4242\n").expect("write fixture PID");
+    std::fs::write(&config.pid_file_path, format!("{pid}\n")).expect("write fixture PID");
     let start_identity = if cfg!(target_os = "macos") {
         serde_json::json!({"platform":"macos","start_seconds":1,"start_microseconds":0})
     } else {
@@ -1554,7 +1570,7 @@ fn permission_reuse_diagnosis_hint_distinguishes_gates_without_raw_leak() {
         config.pid_file_path.with_extension("identity"),
         serde_json::to_vec(&serde_json::json!({
             "format_version": 1,
-            "pid": 4242,
+            "pid": pid,
             "boot_identity": "test-boot",
             "start_identity": start_identity,
         }))
@@ -1572,12 +1588,14 @@ fn permission_reuse_diagnosis_hint_distinguishes_gates_without_raw_leak() {
     }
     let error = resolve_gateway_status_for_config(
         &config,
-        Err(effigy_gateway::GatewayError::ProcessStateUnknown { pid: 4242 }),
+        Err(effigy_gateway::GatewayError::ProcessStateUnknown { pid }),
     )
     .expect_err("unknown stays an error");
     let message = error.to_string();
     assert!(message.contains("cannot determine gateway state"));
-    assert!(message.contains("current diagnosis: record="));
+    assert!(message.contains(
+        "current diagnosis: record=self-reference process=not-probed identity=not-checked"
+    ));
     assert!(message.contains("no signal was sent"));
     assert!(message.contains("left in place for reconciliation"));
     // Labels only: no raw ps bytes, digests, paths, or credentials.
@@ -1759,6 +1777,9 @@ fn permission_reuse_managed_reuses_matching_owned_generation_without_replacement
 #[cfg(unix)]
 #[test]
 fn permission_reuse_managed_denied_preflight_refuses_with_diagnosis_without_launch() {
+    // Self-reference makes production diagnosis skip native probes.
+    // Keep typed denial coverage without touching an arbitrary host PID.
+    let pid = std::process::id();
     let root = tempfile::tempdir().expect("private fixture directory");
     let home = root.path().join("home");
     let gateway_home = home.join(GATEWAY_DIR_NAME);
@@ -1772,7 +1793,7 @@ fn permission_reuse_managed_denied_preflight_refuses_with_diagnosis_without_laun
 
     let pid_path = gateway_home.join("gateway.pid");
     let identity_path = gateway_home.join("gateway.identity");
-    std::fs::write(&pid_path, "4242\n").expect("write fixture PID");
+    std::fs::write(&pid_path, format!("{pid}\n")).expect("write fixture PID");
     let start_identity = if cfg!(target_os = "macos") {
         serde_json::json!({"platform":"macos","start_seconds":1,"start_microseconds":0})
     } else {
@@ -1782,7 +1803,7 @@ fn permission_reuse_managed_denied_preflight_refuses_with_diagnosis_without_laun
         &identity_path,
         serde_json::to_vec(&serde_json::json!({
             "format_version": 1,
-            "pid": 4242,
+            "pid": pid,
             "boot_identity": "test-boot",
             "start_identity": start_identity,
         }))
@@ -1802,13 +1823,15 @@ fn permission_reuse_managed_denied_preflight_refuses_with_diagnosis_without_laun
     let marker = root.path().join("managed-start-ran");
     let command = format!("touch '{}'", marker.display());
     let error = gateway_up_for_managed_task_with(&command, |_| GatewayUpStatusProbe {
-        status: Err(effigy_gateway::GatewayError::ProcessStateUnknown { pid: 4242 }),
+        status: Err(effigy_gateway::GatewayError::ProcessStateUnknown { pid }),
         identity_permission_denied: true,
     })
     .expect_err("denied managed preflight must refuse");
     let message = error.to_string();
     assert!(
-        message.contains("current diagnosis: record="),
+        message.contains(
+            "current diagnosis: record=self-reference process=not-probed identity=not-checked"
+        ),
         "managed denial must carry the bounded diagnosis: {message}"
     );
     assert!(
