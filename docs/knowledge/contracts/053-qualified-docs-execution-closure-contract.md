@@ -149,11 +149,10 @@ submodules and packed Git metadata also remain denied. Nucleus owns the separate
 lock-policy correction. No usable real-project packet or native admission is
 established by this handover.
 
-Effigy #153's active continuation remains pinned to the reviewed #218 tiny
-fixture and its existing finite budget. This #219 handover is retained for
-normal next-run/review mapping only within approved scope; no worker prompt,
-interruption, allowance reset, source omission or implicit version migration
-follows from it. Full three-leaf closure and all five gates remain required.
+The continuation at the #219 handover was pinned to the reviewed #218 tiny
+fixture and its existing finite budget. That handover did not migrate its
+packet version or renew its allowance. Full three-leaf closure and all five
+gates remain required.
 
 ### Required named-skill marker boundary
 
@@ -178,6 +177,45 @@ Its current wave's original deadline and earlier closed allowance remain intact.
 Continuation waits for the actual reviewed provider correction and exact packet
 mapping; it does not reuse old callbacks, renew an allocation or establish any
 of the five unproved acceptance gates.
+
+### Qualified marker and source-lock provider mapping
+
+The independently executed provider correction at Nucleus source
+`d36cd4af22e78ea2b76ff8d0175e66ddab655841`, reviewed at
+`95b0b2c29d33731d67917e84c7c821b6cfb0e48a`, establishes the private version 4
+provider fixture. The same library exports remain; context and packet version 4
+use policy `bounded-host-runtime-docs-source-lock-v1`. The context adds
+`namedSkill` with canonical root, root identity and marker identity. The exact
+installed `/Users/tom/.agents/skills/northstar` root and its 11,937-byte
+`SKILL.md` are declared and checked through their original lifetime, alongside
+the manifest, script and exact retained private inventory. The provider admits
+only three named source package-lock files as inert text. Legacy version 2 and
+3 semantics remain unchanged, sharing the original allocation effect slot;
+changing packet versions cannot remint it.
+
+The independent proof executed build, typecheck, native build and docs checks,
+plus 41 provider and delivery tests without failures or skips. The genuine
+private allocation and five command oracles ran, including the unchanged
+checker rejecting violations and accepting empty rules. The preceding static
+review and failed allocation proof establish no executable qualification and
+remain separate evidence. Preparation was separated from allocation waits;
+all 2,048 directory entries and the original provider deadline and caps were
+preserved. Allocation's roughly 15-second duration inside a 20-second watchdog
+is limited fixture evidence, not a host-load guarantee.
+
+This corrects the marker-provider prerequisite only. The packet's execution
+bridge remains null. Effigy must implement named selection against the original
+authenticated skill and bind that result to private execution using the actual
+controller and retained packet. No explicit-path selection, project-local skill
+substitute, HOME discovery widening or marker waiver follows. The earlier
+consumer source pin `672548bf` and observed installed `7b26a15` remain distinct
+from any newly compiled Effigy-under-test fixture pin.
+
+Earlier author allowances and blocked reports remain closed. Further work uses
+a separately recorded finite continuation with the exact reviewed provider
+mapping; it does not extend an old wave. No real Nucleus input packet, protected
+docs outcome or native fresh-generation admission is established here. All
+three leaves and five acceptance gates remain necessary for the whole producer.
 
 ## Exact closure
 
