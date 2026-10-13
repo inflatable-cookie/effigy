@@ -10,6 +10,9 @@ use effigy_cli::{
 };
 use effigy_containers::exec::list_running_compose_containers;
 use effigy_gateway::identity::{self, GatewayIdentityProbe, GatewayRecordSnapshot};
+use effigy_gateway::listener_handoff::{
+    ListenerHandoffSetup, HANDOFF_HTTPS_SOCKET_NAME, HANDOFF_HTTP_SOCKET_NAME, LAUNCHD_JOB_LABEL,
+};
 use effigy_gateway::routes::RouteTable;
 use effigy_gateway::server::{
     self, GatewayConfig, GatewayProcessProbe, GatewayStatus, VerifiedGatewayStatus,
@@ -132,6 +135,9 @@ pub(super) fn run_gateway(args: GatewayArgs) -> Result<String, RunnerError> {
             args.output_json,
         ),
         GatewaySubcommand::SetupTls => run_gateway_setup_tls_with_config(&config, args.output_json),
+        GatewaySubcommand::SetupListenerHandoff => {
+            run_gateway_setup_listener_handoff_with_config(&config, args.output_json)
+        }
     }
 }
 
@@ -217,7 +223,10 @@ fn gateway_up_for_managed_task_with(
 }
 
 pub(super) fn run_internal_gateway(args: InternalGatewayArgs) -> Result<String, RunnerError> {
-    let config = gateway_config_with_private(args.private.as_ref())?;
+    let mut config = gateway_config_with_private(args.private.as_ref())?;
+    if args.listener_handoff {
+        config = config.with_listener_handoff(true);
+    }
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -1314,6 +1323,46 @@ fn run_gateway_setup_tls_with_config(
             .map(|path| format!("\nclient CA: {} (not installed)", path.display()))
             .unwrap_or_default(),
         tls_config.certs_dir.display()
+    ))
+}
+
+/// Render the launchd listener-handoff setup definition for the operator.
+///
+/// SOURCE candidate only: this prints generated definition bytes and the
+/// operator-owned next steps. It never registers a launchd job, binds the
+/// privileged endpoints, or touches live gateway state; installation and
+/// verification belong to Tom alone (architecture 034, guide 063).
+fn run_gateway_setup_listener_handoff_with_config(
+    _config: &GatewayConfig,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    let setup = ListenerHandoffSetup::for_current_operator()
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let definition = setup.render_launchd_plist();
+
+    if output_json {
+        return Ok(json!({
+            "schema": "effigy.gateway.command.v1",
+            "schema_version": 1,
+            "ok": true,
+            "action": "setup-listener-handoff",
+            "result": "definition_generated",
+            "label": setup.label,
+            "program": setup.program_path.display().to_string(),
+            "user": setup.user_name,
+            "group": setup.group_name,
+            "home": setup.home.display().to_string(),
+            "registration": "operator_managed",
+            "definition": definition,
+        })
+        .to_string());
+    }
+
+    Ok(format!(
+        "[ok] listener handoff definition generated (SOURCE candidate; nothing is installed)\n\nlabel: {LAUNCHD_JOB_LABEL}\nsockets: tcp/127.0.0.1:80 ({HANDOFF_HTTP_SOCKET_NAME}), tcp/127.0.0.1:443 ({HANDOFF_HTTPS_SOCKET_NAME})\nruns as: {}:{} with HOME {}\n\n--8<-- definition (save, review, then install as an administrator) --8<--\n{definition}--8<-- end definition --8<--\n\nnext steps are operator-owned and unexecuted by this command; see docs/guides/063-container-system-guide.md (user gateway listener handoff) for the exact install, verify, and rollback plan.",
+        setup.user_name,
+        setup.group_name,
+        setup.home.display()
     ))
 }
 

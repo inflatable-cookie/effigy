@@ -118,6 +118,10 @@ pub enum GatewayError {
     #[error("gateway is not running")]
     NotRunning,
 
+    /// The launchd listener handoff refused before any listener was adopted.
+    #[error("{0}")]
+    ListenerHandoff(#[from] crate::listener_handoff::ListenerHandoffError),
+
     /// The recorded gateway PID could not be probed.
     ///
     /// Distinct from [`Self::NotRunning`]: the process state is ambiguous, so

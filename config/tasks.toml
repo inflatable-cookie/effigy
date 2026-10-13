@@ -318,6 +318,20 @@
   "cargo check -p effigy-gateway --all-targets",
   "cargo clippy -p effigy-gateway --all-targets -- -D warnings",
 ]
+# Launchd loopback listener handoff (task 156): descriptor validation and
+# adoption through the production boundary on ephemeral loopback endpoints,
+# the deterministic administrator setup definition with strict parse/refuse
+# controls, and the daemon refusal that publishes no record outside launchd.
+# Private fixtures and owned descriptors only; no launchd registration, no
+# privileged endpoint, no live gateway state, and no cross-UID or cross-boot
+# proof is claimed.
+"test:gateway:listener-handoff" = [
+  { id = "gateway-listener-handoff", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-gateway -p effigy --lib --filterset 'test(listener_handoff) | test(parse_gateway_setup_listener_handoff) | test(parse_gateway_run_accepts_listener_handoff_flag) | test(parse_gateway_run_defaults_listener_handoff_off)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 240000 },
+]
+"check:gateway:listener-handoff" = [
+  "cargo check -p effigy-gateway -p effigy-cli -p effigy --all-targets",
+  "cargo clippy -p effigy-gateway -p effigy-cli -p effigy --all-targets -- -D warnings",
+]
 "test:install:previous-binary-preservation" = [
   { id = "install-previous-binary-preservation", run = "cargo test -p effigy -p effigy-rhai --lib previous_binary_preservation -- --nocapture", timeout_ms = 120000 },
 ]

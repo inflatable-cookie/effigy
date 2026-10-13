@@ -1142,6 +1142,79 @@ route. A route from a retired checkout generation can be reclaimed on the
 next registration. `effigy gateway repair --yes` can clean stale TCP alias
 conflicts, but leaves live checkout routes alone.
 
+### User gateway listener handoff (SOURCE candidate; operator-run install)
+
+The exact loopback ports `80` and `443` cannot be bound by an unprivileged
+daemon (architecture 034). The implemented route is launchd socket
+activation: an administrator-installed launchd definition owns exactly two
+loopback sockets — TCP `127.0.0.1:80` (socket name `http`) and TCP
+`127.0.0.1:443` (socket name `https`) — and hands them to a gateway daemon
+running as you. The daemon validates every handed descriptor (exact family,
+type, listening state, endpoint, no duplicates) before adopting it, keeps
+DNS (UDP `127.0.0.1:15353`) and TCP aliases on their ordinary unprivileged
+paths, and refuses fail-closed without publishing a record when activation
+is missing or malformed.
+
+Status: **SOURCE implementation candidate.** Definition bytes, descriptor
+adoption, and refusals are privately qualified on ephemeral loopback
+fixtures. The administrator install, live activation, and cross-boot
+restore below are **unexecuted** and remain yours alone; no agent, task, or
+workflow runs them (architecture 034). Everything here targets macOS only;
+other platforms refuse the handoff.
+
+Generate and review the definition (operator, unprivileged; installs
+nothing):
+
+```sh
+effigy gateway setup-listener-handoff > dev.effigy.gateway.user.plist
+```
+
+Install and start (administrator; you run each step yourself):
+
+```sh
+# 1. Follow the task-155 migration order first: confirm the old root-owned
+#    gateway generation with `effigy gateway status`, stop it through the
+#    bounded interactive path (`effigy gateway recover --adopt-candidate`),
+#    and verify absence with `effigy gateway status`.
+# 2. Install the reviewed definition root-owned and not world-writable;
+#    launchd refuses other modes.
+sudo cp dev.effigy.gateway.user.plist /Library/LaunchDaemons/dev.effigy.gateway.user.plist
+sudo chown root:wheel /Library/LaunchDaemons/dev.effigy.gateway.user.plist
+sudo chmod 0644 /Library/LaunchDaemons/dev.effigy.gateway.user.plist
+# 3. Register and start the job (RunAtLoad plus KeepAlive in the definition
+#    keep it running and restore it at boot).
+sudo launchctl bootstrap system /Library/LaunchDaemons/dev.effigy.gateway.user.plist
+```
+
+Verify (operator):
+
+```sh
+effigy gateway status            # running, standard endpoints, your records
+sudo launchctl print system/dev.effigy.gateway.user   # job state and sockets
+```
+
+Rollback (administrator):
+
+```sh
+sudo launchctl bootout system/dev.effigy.gateway.user
+sudo rm /Library/LaunchDaemons/dev.effigy.gateway.user.plist
+```
+
+Boundaries that stay true regardless of the handoff:
+
+- `effigy gateway down` cannot durably stop a KeepAlive launchd job —
+  launchd restarts it. Use `launchctl bootout` (above) to stop it.
+- The definition carries no trust claim. launchd does not verify the
+  executable's contents; regenerate the definition after changing the
+  Effigy install so the reviewed executable path stays exact.
+- Resolver files, `lo0` aliases (which need reapplying after reboot), and
+  CA trust stay separate administrator steps from the task-155 inventory.
+  The daemon never writes `/etc/resolver`, never deletes setup, and the
+  handoff changes no route-table, registry, certificate, or generation
+  contract.
+- Until you have executed the install and a real reboot restore, consumer
+  gateways must keep using the existing root or private startup paths.
+
 ### Route-table trust
 
 The gateway daemon can run elevated (to bind `:80`/`:443` and write resolver

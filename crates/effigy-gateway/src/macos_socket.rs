@@ -30,6 +30,12 @@ const TSI_S_LISTEN: i32 = 1;
 const INI_IPV4: u8 = 0x1;
 const INI_IPV6: u8 = 0x2;
 
+/// Offset of `soi_so` (the kernel's opaque socket handle) inside
+/// `socket_fdinfo`: `sizeof(proc_fileinfo)` + `offsetof(socket_info, soi_so)`
+/// (= `sizeof(vinfo_stat)` = 136). Two descriptors of one socket share the
+/// handle; macOS `fstat` reports dev=0/ino=0 for every socket and cannot.
+const SOI_SO: usize = PSI_OFFSET + 136;
+
 pub(super) fn process_listening_endpoints(
     pid: u32,
 ) -> Result<Vec<GatewayEndpoint>, std::io::Error> {
@@ -103,7 +109,45 @@ fn list_socket_fds(pid: i32) -> Result<Vec<i32>, std::io::Error> {
         .collect())
 }
 
-fn socket_endpoint(pid: i32, fd: i32) -> Result<Option<GatewayEndpoint>, std::io::Error> {
+/// Kernel socket handle for one process-owned descriptor.
+///
+/// The listener handoff uses this to refuse duplicate socket objects: two
+/// descriptors of the same socket share the handle, while macOS `fstat`
+/// reports `dev=0, ino=0` for every socket and cannot distinguish them.
+pub(super) fn fd_socket_handle(pid: i32, fd: i32) -> Result<u64, std::io::Error> {
+    let mut buf = [0u8; SOCKET_FDINFO_SIZE];
+    // SAFETY: `buf` is aligned writable storage of PROC_PIDFDSOCKETINFO_SIZE
+    // bytes; pid/fd are the process-owned descriptors from PROC_PIDLISTFDS.
+    let read = unsafe {
+        libc::proc_pidfdinfo(
+            pid,
+            fd,
+            PROC_PIDFDSOCKETINFO,
+            buf.as_mut_ptr().cast(),
+            SOCKET_FDINFO_SIZE as i32,
+        )
+    };
+    if read < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    if read as usize != SOCKET_FDINFO_SIZE {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "macOS socket_fdinfo size mismatch: expected {SOCKET_FDINFO_SIZE} bytes, got {read}"
+            ),
+        ));
+    }
+    read_u64_slice(&buf, SOI_SO)
+}
+
+/// Listening-endpoint probe for one process-owned descriptor, used by the
+/// listener handoff to verify a handed socket is in the listening state
+/// (macOS has no `SO_ACCEPTCONN`; this is the documented libproc probe).
+pub(super) fn socket_endpoint(
+    pid: i32,
+    fd: i32,
+) -> Result<Option<GatewayEndpoint>, std::io::Error> {
     let mut buf = [0u8; SOCKET_FDINFO_SIZE];
     // SAFETY: `buf` is aligned writable storage of PROC_PIDFDSOCKETINFO_SIZE
     // bytes; pid/fd are the process-owned descriptors from PROC_PIDLISTFDS.
@@ -206,11 +250,30 @@ fn read_i32_slice(buf: &[u8], offset: usize) -> Result<i32, std::io::Error> {
     })?))
 }
 
+fn read_u64_slice(buf: &[u8], offset: usize) -> Result<u64, std::io::Error> {
+    let bytes = buf.get(offset..offset + 8).ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "socket_fdinfo field is out of range",
+        )
+    })?;
+    Ok(u64::from_ne_bytes(bytes.try_into().map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "socket_fdinfo field is out of range",
+        )
+    })?))
+}
+
 #[cfg(test)]
 mod macos_socket_layout_tests {
     #[test]
     fn legacy_recovery_macos_socket_fdinfo_matches_sdk_size() {
         assert_eq!(super::SOCKET_FDINFO_SIZE, 792);
         assert_eq!(std::mem::size_of::<libc::proc_fdinfo>(), 8);
+        // `soi_so` sits after `proc_fileinfo` (24) and `vinfo_stat` (136);
+        // the socket handle must land inside the fixed prefix of the record.
+        assert_eq!(super::SOI_SO, 160);
+        const { assert!(super::SOI_SO + 8 <= super::SOCKET_FDINFO_SIZE) };
     }
 }

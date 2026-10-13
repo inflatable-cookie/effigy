@@ -34,6 +34,7 @@ pub mod dns;
 pub mod error;
 pub mod identity;
 pub mod legacy;
+pub mod listener_handoff;
 pub mod loopback;
 pub mod managed_listener;
 pub mod ports;
