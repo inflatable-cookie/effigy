@@ -1241,6 +1241,24 @@ restructuring, manual chown/chmod, reseed, stack restart or VM restart occurred.
 
 ## Private legacy MinIO fixture distribution — 2026-10-12
 
+### Underlay scope correction — 2026-10-13
+
+Tom's subsequent ruling is: "We're supposed to be dropping minio for silo -
+this is such a silly waste of time and effort!" For Underlay profile acceptance,
+the private legacy MinIO parity/package prerequisite is withdrawn. Further
+MinIO packaging, native qualification and review intake for that prerequisite
+stop; the existing source, unqualified artifact and receipts remain preserved.
+No deletion, abandonment, runtime cleanup or qualification follows from this
+ruling.
+
+The bundle owner now owns an explicitly named Silo container/hybrid proof and
+default migration through its normal checked scope. Silo must retain its own
+identity and contract; it is not a substitution under a MinIO label. This ruling
+does not itself change the shipped catalog, prove Silo acceptance or authorize
+release, installation or existing-data effects. The older private-package ruling
+below remains historical context, not continuing authority for Underlay's
+withdrawn prerequisite.
+
 Tom's recorded ruling is: "Authorize separately bounded private fixture-only
 package qualification; no shared catalog/default change or publication."
 The ruling selects direction; a checked, approved bounded brief must precede
