@@ -1415,3 +1415,38 @@ it does not certify consumer VM cleanup, real Linux or remote cancellation.
 The historical malformed capture from bundle005 was not retained. Its exact
 bytes and cause remain unknown; the additional diagnostics and controlled proof
 do not establish that historical cause or authorize a consumer retry.
+
+
+### Reviewed replacement source assurance (2026-10-14)
+
+Task 151 / PR 272 completed at clean synchronized main
+`77d22adcbdbca20752720d6671310f13894d219f`. Its tree matches independently
+reviewed head `11d8530fda6a653a4375152405130826a5158bbd`: all five review
+subjects passed, the reviewer executed all nine covering selectors with 105
+cases and no required skips, and all seven exact-head CI checks passed.
+
+The one fresh main QA, `01f42aa0-04dd-4a02-a5ef-69ab19f27465`, passed: 5,038
+tests, no failures, 34 skips. Setup, QA and teardown each exited zero; every
+owned group settled empty, with no escaped descendants or containers. Capacity
+released automatically at `2026-10-13T22:58:20.605Z`. One passing test carried
+a nextest LEAK diagnostic: `bootstrap_help_is_command_specific` at 2.071 seconds.
+Its process/output lifetime cause is unestablished and is recorded separately
+as lead `6920b85a-f6c3-4513-bb31-0a9d58df5743`; it is not attributed to the
+historical release-plan leak or bundle005 failure.
+
+One private `build:release` from that unchanged source exited zero. The artifact
+is Mach-O Darwin arm64 with SHA-256
+`95b16dbf56f507f0593ca205694fc5e667d311eee7e67b4e1d3afc81ba724938`.
+Its displayed `v0.14.1` is not source attestation. The qualified handover retains
+the original intents, exact source/build correspondence, exits, logs, checksum
+and settlement in the owner audit directory
+`owned-child-exit-observation/final-main-77d22adc/qualified-source-artifact-handover.json`.
+It is a private artifact, not an installed or published release.
+
+Acowtancy and the bundle owner retain admission of their actual next runs. This
+assurance does not retry bundle005, adopt or clean held resources, change its
+spent allowance, prove the historical malformed capture, or qualify real Linux
+and remote container cancellation. Source 156's launchd handoff remains privately
+qualified source only; administrator installation, live migration and cross-boot
+proof are Tom-only and unexecuted. Older source, QA and artifact receipts remain
+immutable history.
