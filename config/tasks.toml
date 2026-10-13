@@ -305,6 +305,19 @@
   { id = "gateway-permission-reuse-server", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-gateway --lib --filterset 'test(permission_reuse_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 240000 },
   { id = "gateway-permission-reuse-runner", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(permission_reuse_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 240000 },
 ]
+# User-owned gateway migration boundary (task 155): finite privilege
+# inventory, read-only readiness gate with injected setup evidence, byte-exact
+# migration preservation with an owned-child generation transition, safe
+# refusal for stale/unknown/symlink records, unchanged operator defaults,
+# and one native loopback-lowport bind proof. Synthetic fixtures and owned
+# children only; no live gateway state, sudo, or cross-UID proof is claimed.
+"test:gateway:user-runtime" = [
+  { id = "gateway-user-runtime", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-gateway --lib --filterset 'test(user_runtime)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 240000 },
+]
+"check:gateway:user-runtime" = [
+  "cargo check -p effigy-gateway --all-targets",
+  "cargo clippy -p effigy-gateway --all-targets -- -D warnings",
+]
 "test:install:previous-binary-preservation" = [
   { id = "install-previous-binary-preservation", run = "cargo test -p effigy -p effigy-rhai --lib previous_binary_preservation -- --nocapture", timeout_ms = 120000 },
 ]
