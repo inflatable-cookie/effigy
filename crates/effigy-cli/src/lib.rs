@@ -910,12 +910,14 @@ pub enum GatewaySubcommand {
     Repair { yes: bool },
     Recover { yes: bool, adopt_candidate: bool },
     SetupTls,
+    SetupListenerHandoff,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[doc(hidden)]
 pub struct InternalGatewayArgs {
     pub private: Option<GatewayPrivateArgs>,
+    pub listener_handoff: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

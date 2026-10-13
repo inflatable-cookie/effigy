@@ -14,6 +14,7 @@ pub(crate) fn render_gateway_help<R: HelpRenderer + ?Sized>(renderer: &mut R) ->
             "`gateway recover` restores an ordinary upgrade past a live pre-identity daemon: confirmed-absence cleanup, or `--adopt-candidate` with interactive digest consent then a generation-bound stop. `--yes` cannot adopt a live candidate.",
             "On macOS, `gateway up` and `gateway down` also manage `/etc/resolver/test` and will prompt for admin approval when host setup needs it.",
             "For disposable consumers, `--private-state-root <DIR>` selects caller-owned state and client-scoped TLS trust; private mode binds only loopback, never installs trust or writes host resolver/alias state, and reports the actual listener addresses.",
+            "`gateway setup-listener-handoff` prints the SOURCE launchd definition that would hand TCP 127.0.0.1:80/443 to a user-owned gateway; nothing is installed and the administrator install, activation, and cross-boot proof remain operator-owned (guide 063).",
             "Managed container startup can select the same mode with `EFFIGY_GATEWAY_PRIVATE_STATE_ROOT=<DIR>`; clients must explicitly trust `<DIR>/ca/rootCA.pem` and resolve route names to the reported HTTPS loopback address.",
         ],
         &[
@@ -23,6 +24,7 @@ pub(crate) fn render_gateway_help<R: HelpRenderer + ?Sized>(renderer: &mut R) ->
             "effigy gateway recover [--yes] [--adopt-candidate] [--json]",
             "effigy gateway repair [--yes] [--json]",
             "effigy gateway setup-tls [--private-state-root <DIR>] [--json]",
+            "effigy gateway setup-listener-handoff [--json]",
             "effigy --json gateway status",
         ],
         &[

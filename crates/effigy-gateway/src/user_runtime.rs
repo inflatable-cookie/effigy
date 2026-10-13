@@ -12,9 +12,11 @@
 //! foreign process, or starts a gateway. The exact loopback lowports
 //! (`127.0.0.1:80`/`443`) cannot be bound without privilege (see
 //! [`probe_loopback_lowport_once`] evidence and the XNU reserved-port branch
-//! cited in architecture 034); the one missing capability is identified by
-//! [`MISSING_CAPABILITY_ID`] and remains a design boundary, not a supported
-//! start path.
+//! cited in architecture 034). The one missing capability is identified by
+//! [`MISSING_CAPABILITY_ID`]; its source implementation is the launchd
+//! listener handoff in [`crate::listener_handoff`], which an administrator
+//! installs and the operator later activates — this readiness gate still
+//! models the direct unprivileged bind, which stays unsupported.
 
 use std::net::{Ipv4Addr, TcpListener};
 
@@ -68,6 +70,11 @@ const INVENTORY: &[InventoryEntry] = &[
         summary: "binding TCP 127.0.0.1:80 and 127.0.0.1:443 needs privilege even on loopback (EACCES for unprivileged callers; XNU in_pcb checks reserved-port privilege for non-wildcard binds); DNS UDP 127.0.0.1:15353 is above 1024 and binds without privilege",
     },
     InventoryEntry {
+        id: "listener-handoff-setup",
+        owner: SetupOwner::Administrator,
+        summary: "installing the launchd listener-handoff definition that owns TCP 127.0.0.1:80 and 127.0.0.1:443 needs privilege; the user daemon only validates and adopts the handed sockets at runtime and never registers, edits, or removes the job",
+    },
+    InventoryEntry {
         id: "ca-trust",
         owner: SetupOwner::Administrator,
         summary: "installing CA trust in the system store needs privilege; certificate files and a fixture CA directory are operator user state and existing trust must not be replaced incidentally",
@@ -96,15 +103,17 @@ pub fn privilege_inventory() -> Vec<PrivilegedOperation> {
         .collect()
 }
 
-/// The one missing capability for an unprivileged exact-endpoint gateway.
+/// The missing capability for a direct unprivileged exact-endpoint gateway.
 ///
 /// Loopback-only privileged listener handoff: a mechanism that pre-binds
 /// TCP `127.0.0.1:80`/`443` (and only those loopback sockets) outside the
 /// user daemon and hands ownership to it, with launchd-owned lifetime
 /// (reboot restores it), no wildcard listener, no URL change, no packet
-/// filter, and no new standing Effigy helper. This is a design boundary
-/// requiring a separate operator ruling and genuine cross-boot proof; it is
-/// not implemented here and no supported user start path depends on it.
+/// filter, and no new standing Effigy helper. The source implementation is
+/// the launchd listener handoff in [`crate::listener_handoff`] (task 156);
+/// the readiness label stays accurate for the gate it names — a start that
+/// relies on this daemon binding the lowports itself remains unsupported
+/// until the administrator setup exists and the operator has activated it.
 pub const MISSING_CAPABILITY_ID: &str = "loopback-privileged-listener-handoff";
 
 /// Injected setup evidence for the readiness gate.

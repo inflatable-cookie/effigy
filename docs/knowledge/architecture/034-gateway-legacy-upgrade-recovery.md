@@ -1057,6 +1057,53 @@ activation, migration and rollback commands must come from implementation and
 review; source and private fixture qualification cannot establish live
 administrator installation or cross-boot behavior. Tom owns those later steps.
 
+### Implemented source candidate (task 156)
+
+Task 156 implements the capability as `crates/effigy-gateway/src/listener_handoff.rs`
+plus the `effigy gateway setup-listener-handoff` command and the internal
+`__gateway-run --listener-handoff` opt-in. Status: **source implementation
+candidate, privately qualified only**. The unexecuted set stays exactly as the
+ruling requires: no agent has registered a launchd job, bound the privileged
+endpoints, migrated a live gateway, or observed a boot. The implemented
+surface:
+
+- Definition: `ListenerHandoffSetup` renders deterministic launchd plist bytes
+  — label `dev.effigy.gateway.user`, the canonical reviewed executable,
+  `__gateway-run --listener-handoff`, the operator's passwd user, group and
+  home (`HOME` pinned, never the calling shell's environment), `RunAtLoad` and
+  `KeepAlive`, and a `Sockets` dict owning exactly `http` = TCP `127.0.0.1:80`
+  and `https` = TCP `127.0.0.1:443` over IPv4. A strict parser plus
+  `validate_launchd_definition` refuse any other shape — different label,
+  wildcard node, moved port, extra socket keys, disabled KeepAlive — so an
+  unknown definition never validates.
+- Activation: the daemon adopts sockets through launchd's documented
+  `launch_activate_socket` ABI (`<launch.h>`, macOS 10.10+; `ESRCH` outside a
+  launchd job, `ENOENT` for a missing socket name). Every handed descriptor is
+  validated — open, not a duplicate number or duplicate kernel socket object
+  (the libproc `soi_so` handle; macOS `fstat` cannot distinguish sockets), a
+  stream socket, listening (libproc TCP state; macOS has no `SO_ACCEPTCONN`),
+  exactly the expected IPv4 loopback endpoint — before adoption, and is marked
+  close-on-exec. Any refusal closes every handed descriptor exactly once,
+  adopts nothing, and publishes no generation record; DNS, route watching,
+  aliases and TLS keep their ordinary paths. Identity refusals are structural:
+  a root effective UID or a `SUDO_*` environment refuses the handoff, and no
+  environment value ever authorizes it. Private fixtures exercise this same
+  adoption boundary on ephemeral loopback endpoints with owned descriptors and
+  real accept round trips.
+- Operator shape: the guide's listener-handoff section carries the exact
+  install, verify and rollback plan (`launchctl bootstrap`/`bootout`, the
+  task-155 migration order, and the KeepAlive consequence that `gateway down`
+  cannot durably stop the job). Resolver files, `lo0` aliases and CA trust
+  remain separate administrator steps; alias reapply after reboot is declared
+  separately there. Resolver, alias and CA needs do not silently pass because
+  the sockets hand off.
+
+Unexecuted, still required before any migration depends on this: Tom's
+administrator install and activation, a live `gateway status` against the
+user-owned daemon, and one real cross-boot restore proof. `check_user_runtime_readiness`
+keeps reporting `missing-capability=loopback-privileged-listener-handoff` for
+a direct unprivileged lowport bind, which remains unsupported.
+
 ## Proposed read-only root-daemon attestation
 
 This is a concrete proposal for a separate operator ruling if Q-002's

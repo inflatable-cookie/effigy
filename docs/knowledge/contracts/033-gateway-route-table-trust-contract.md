@@ -12,6 +12,13 @@ privileged proxy. This contract states what the daemon is allowed to trust that
 file to assert, how it verifies the file's provenance, and what it does when the
 file fails verification.
 
+The launchd listener handoff (SOURCE implementation candidate;
+[architecture 034](../architecture/034-gateway-legacy-upgrade-recovery.md))
+adds an operator-owned daemon that adopts the two handed loopback listeners
+instead of binding them. It reads the same route table under the same checks;
+nothing in this contract changes with who owns the listener sockets, and the
+unexecuted install/activation does not alter today's elevated default.
+
 ## Problem
 
 Today `routes.json` (typically `~/.effigy/gateway/routes.json`) is a plain

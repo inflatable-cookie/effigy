@@ -7,6 +7,27 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- Launchd loopback listener handoff for a user-owned gateway (task 156,
+  SOURCE implementation candidate). `effigy gateway setup-listener-handoff`
+  prints the deterministic administrator launchd definition that owns exactly
+  TCP `127.0.0.1:80` (`http`) and TCP `127.0.0.1:443` (`https`) over IPv4,
+  launches the daemon as the authenticated non-root operator with the
+  canonical reviewed executable and pinned `HOME`, and opts it into adoption
+  via `__gateway-run --listener-handoff`. The daemon adopts handed sockets
+  only through launchd's documented `launch_activate_socket` ABI, validating
+  each descriptor (open, non-duplicate number and kernel socket object,
+  stream type, listening state via libproc on macOS and `SO_ACCEPTCONN` on
+  Linux, exact endpoint, close-on-exec) before adoption; DNS, route watching,
+  TCP aliases and TLS keep their ordinary unprivileged paths. Any refusal —
+  root or sudo-environment identity, missing or malformed activation, wrong
+  count, family, type, endpoint, or duplicate — closes every handed
+  descriptor exactly once, adopts nothing, and publishes no generation
+  record; unknown definition shapes refuse strict parse-and-validate
+  controls. Nothing is registered, bound, installed, or migrated by any
+  command: the administrator install, live activation, and cross-boot
+  restore remain operator-executed (guide 063's listener-handoff section,
+  architecture 034), and the task-155 direct-bind readiness gate stays
+  unchanged for non-opt-in runtimes.
 - `effigy --json docs qualified resolve` declares the bounded ordered host docs
   recipe and its selected installed Northstar source. The private Node bridge
   binds that selection to the reviewed v4 provider's retained inputs and uses

@@ -37,7 +37,7 @@ fn privilege_inventory_names_admin_owner_for_every_host_effect() {
     let inventory = privilege_inventory();
     assert_eq!(
         inventory.len(),
-        7,
+        8,
         "inventory must stay finite and explicit"
     );
     let owner_of = |id: &str| {
@@ -52,6 +52,7 @@ fn privilege_inventory_names_admin_owner_for_every_host_effect() {
         "bootstrap-resolver",
         "route-resolvers",
         "lowport-bind",
+        "listener-handoff-setup",
         "ca-trust",
         "old-root-stop",
     ] {
