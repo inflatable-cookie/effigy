@@ -612,6 +612,8 @@ impl DemoHistoryOutcome {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DocsSubcommand {
+    /// Resolve the bounded three-leaf host recipe; this is not an execution grant.
+    QualifiedResolve,
     Check {
         kind: DocsCheckKind,
         paths: Vec<PathBuf>,

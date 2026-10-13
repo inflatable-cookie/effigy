@@ -1,9 +1,9 @@
 # 053 - Qualified Docs Execution Closure Contract
 
-Status: proposed and unavailable. Existing CLI, library and task-plan surfaces
-do not resolve, freeze and enforce the complete execution closure described
-here. No callable spelling, immutable resource qualification or native admission
-is established by this document.
+Status: private implementation candidate; independent qualification and native
+admission remain unavailable. The resolver and live-controller bridge below
+are bounded to the reviewed macOS fixture provider. Ordinary task-plan surfaces
+do not establish this closure, resource authority or native admission.
 
 Owner: task selection, external task sources and docs execution
 Contracts: [013](013-task-execution-request-contract.md),
@@ -252,6 +252,46 @@ docs outcome or native fresh-generation admission is established here. All
 three leaves and five acceptance gates remain necessary for the whole producer.
 
 ## Exact closure
+
+### Private callable surface
+
+`effigy --json docs qualified resolve` emits
+`effigy.docs.qualified.resolution.v1`; its maintained data contract is
+[qualified-docs-resolution-v1.schema.json](qualified-docs-resolution-v1.schema.json).
+This observational CLI declares selection and complete supported source reads.
+It never grants resource ownership. Literal includes are checked before the
+ordinary composition owner reads them; selected task shapes and argv are
+checked against the bounded recipe, with builtin ASTs parsed by the CLI owner.
+The ordinary contract 042 resolver selects the original installed skill.
+
+The Effigy-owned private Node module `scripts/qualified-docs-execution.mjs`
+provides `prepareQualifiedDocs(controller, packet)`,
+`preflightQualifiedDocs(controller, packet, receipt)` and
+`executeQualifiedDocs(controller, packet, receipt)`. Preparation authenticates
+the actual reviewed provider controller and packet through live lookup, runs
+the private Effigy resolver, and retains an in-process frozen receipt. Copied
+JSON receipts have no execution authority. Execution authenticates the original
+packet before every leaf, checks retained source/tool/argv/environment bindings,
+then invokes the existing Docs builtins and unchanged retired script by literal
+argv. It does not re-resolve the skill during execution or substitute `--path`.
+
+The original discovery phase uses the fixed approved installed namespace and
+original source root. Leaf execution uses only the provider's private HOME,
+PATH, source/skill roots and environment. Original source/skill observations,
+including named precedence, stay distinct from private retained execution.
+Accepted cooperative host/runtime/tool installation is not verified private
+distribution provenance. No production installer or independent native grant is
+added by the bridge. The controller must come from the reviewed constructor;
+task JSON, packet bytes or caller booleans cannot supply it.
+
+The execution result is `effigy.docs.qualified.execution.v1`, including actual
+ordered process observations, source/tool bytes, generation/lifetime, limits
+and accepted/verified vocabulary. Missing ownership, configuration, correspondence,
+namespace or budget yields `qualified docs unavailable`, before another leaf
+launch. No allocation replacement, unknown-predecessor settlement, durable
+outcome or native authorization follows. Actual usage, finite process and
+verification accounting, compatibility and platform limits live in
+[guide 084](../../guides/084-qualified-docs-execution.md).
 
 The first supported closure is the three ordered host docs leaves selected by
 `qa:docs`: links, the declared paths list, then the named

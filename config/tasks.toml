@@ -819,6 +819,16 @@
 ]
 
 # Documentation QA
+"check:docs:qualified-closure" = [
+  "cargo check -p effigy -p effigy-cli -p effigy-docs-policy --all-targets",
+  "cargo clippy -p effigy -p effigy-cli -p effigy-docs-policy --all-targets -- -D warnings",
+  "cargo build --profile qualified-docs --bin effigy",
+  "node --check scripts/qualified-docs-execution.mjs",
+]
+"test:docs:qualified-closure" = [
+  { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-docs-policy --lib --filterset 'test(docs_command::qualified::) | test(parse_docs_) | test(scan_markdown_links) | test(collect_link_check_files)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { run = "node --test --test-timeout=120000 --test-force-exit tests/qualified_docs_execution.test.mjs", timeout_ms = 300000 },
+]
 "qa:docs:links" = "cargo run --bin effigy -- docs check links"
 "qa:docs:examples" = "cargo run --bin effigy -- docs check json-examples"
 "qa:docs:agent-defaults" = "cargo run --bin effigy -- docs check forbidden AGENTS.md .github/workflows/json-contracts.yml docs/knowledge/contracts/json-selection-contract.json --forbid '--repo .'"
