@@ -263,15 +263,28 @@
 "test:host-process:owned-stop" = [
   { id = "owned-stop-observation", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(host_process_owned_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
 ]
-"format:host-process:owned-stop" = "rustfmt --edition 2021 --config skip_children=true src/runner/host_process.rs"
+"format:host-process:owned-stop" = "rustfmt --edition 2021 --config skip_children=true src/runner/host_process.rs tests/gateway_private.rs"
+"test:host-process:exit-observation" = [
+  { id = "owned-exit-observation", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(host_process_exit_observation_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
+]
+"test:host-process:dependent-replacement" = [
+  { id = "published-dependent-replacement", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_host_dependent_replacement_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
+]
+"test:host-process:exit-observation:matrix" = [
+  { task = "test:host-process:exit-observation" },
+  { task = "test:host-process:dependent-replacement" },
+  { task = "test:host-process:owned-stop:family" },
+  { task = "test:exec:runtime-paths" },
+  { task = "test:exec:container-admission" },
+]
 "test:host-process:owned-stop:family" = [
   { task = "test:host-process:owned-stop" },
   { task = "test:host-process:owned-stop:remaining" },
 ]
 "test:host-process:owned-stop:remaining" = [
-  { id = "owned-stop-other-native-callers", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --lib --filterset '(test(host_process) | test(managed_host_transitions_)) - test(host_process_owned_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { id = "owned-stop-other-native-callers", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --lib --filterset '(test(host_process) | test(managed_host_transitions_)) - test(host_process_owned_) - test(host_process_exit_observation_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
   { id = "owned-stop-generation-identity", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy-gateway --lib --filterset 'test(identity::tests::) | test(managed_listener_routes_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
-  { id = "owned-stop-public-lifecycle", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'not test(managed_listener_fixture_child)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { id = "owned-stop-public-lifecycle", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'not (test(managed_listener_fixture_child) | test(managed_host_dependent_replacement_))' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
 ]
 "check:host-process:owned-stop:compile" = [
   { id = "owned-stop-compile", run = "cargo check -p effigy --all-targets --profile test", timeout_ms = 600000 },

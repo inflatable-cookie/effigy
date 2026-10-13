@@ -3288,11 +3288,9 @@ impl Drop for OwnedHostChild {
 /// authorize any signal or supply an exit code; the owned Child does both.
 fn observe_owned_child_exit(pid: u32, deadline: Instant) -> Result<bool, RunnerError> {
     use super::exec_command::{BoundedCommandBudget, BoundedCommandPhase};
-    let mut budget = BoundedCommandBudget::new(
-        deadline.min(Instant::now() + Duration::from_millis(500)),
-        64,
-        128,
-    );
+    let started = Instant::now();
+    let mut budget =
+        BoundedCommandBudget::new(deadline.min(started + Duration::from_millis(500)), 64, 128);
     let capture = budget
         .run_command(
             Path::new("/"),
@@ -3307,35 +3305,59 @@ fn observe_owned_child_exit(pid: u32, deadline: Instant) -> Result<bool, RunnerE
             &[],
             BoundedCommandPhase::CommandExecution,
         )
-        .map_err(|failure| {
-            RunnerError::task_invocation(format!(
-                "owned child exit observation failed: {:?}",
-                failure.failure
-            ))
-        })?;
-    if !capture.status.success() {
-        return Err(RunnerError::task_invocation(
-            "owned child exit observation was unavailable",
-        ));
-    }
-    let text = std::str::from_utf8(&capture.stdout)
-        .map_err(|_| RunnerError::task_invocation("owned child exit observation was malformed"))?;
-    let mut rows = text.split_whitespace();
-    let state = rows
-        .next()
-        .and_then(|value| value.as_bytes().first())
-        .copied();
-    if rows.next().is_some()
-        || !matches!(
-            state,
-            Some(b'I' | b'R' | b'S' | b'T' | b'U' | b'D' | b'W' | b'Z' | b'X')
-        )
-    {
-        return Err(RunnerError::task_invocation(
-            "owned child exit observation was malformed",
-        ));
-    }
-    Ok(matches!(state, Some(b'Z' | b'X')))
+        .map_err(|failure| owned_child_capture_failure(pid, &failure.failure, started.elapsed()))?;
+    classify_owned_child_exit(pid, &capture, started.elapsed())
+}
+
+fn owned_child_capture_failure(
+    pid: u32,
+    failure: &super::exec_command::BoundedCaptureFailure,
+    elapsed: Duration,
+) -> RunnerError {
+    RunnerError::task_invocation(format!(
+        "owned child exit observation failed: {failure:?}; owned_pid={pid}; elapsed_ms={}",
+        elapsed.as_millis()
+    ))
+}
+
+/// Only structural information about the bounded, fixed `ps stat=` response.
+/// Neither these diagnostics nor a positive state confer signal authority.
+fn classify_owned_child_exit(
+    pid: u32,
+    capture: &super::exec_command::BoundedCapture,
+    elapsed: Duration,
+) -> Result<bool, RunnerError> {
+    use sha2::{Digest, Sha256};
+    let text = std::str::from_utf8(&capture.stdout);
+    let (tokens, state) = match text {
+        Ok(text) => {
+            let mut rows = text.split_whitespace();
+            let first = rows.next().and_then(|row| row.as_bytes().first()).copied();
+            (usize::from(first.is_some()) + rows.count(), first)
+        }
+        Err(_) => (0, None),
+    };
+    let category = if !capture.status.success() {
+        "status_unavailable"
+    } else if text.is_err() {
+        "invalid_utf8"
+    } else if tokens == 0 {
+        "empty"
+    } else if tokens != 1 {
+        "multiple_tokens"
+    } else if !matches!(
+        state,
+        Some(b'I' | b'R' | b'S' | b'T' | b'U' | b'D' | b'W' | b'Z' | b'X')
+    ) {
+        "unknown_state"
+    } else {
+        return Ok(matches!(state, Some(b'Z' | b'X')));
+    };
+    Err(RunnerError::task_invocation(format!(
+        "owned child exit observation refused: category={category}; owned_pid={pid}; status_code={:?}; stdout_bytes={}; stdout_sha256={}; stderr_bytes={}; stderr_sha256={}; utf8={}; tokens={tokens}; elapsed_ms={}",
+        capture.status.code(), capture.stdout.len(), Sha256::digest(&capture.stdout).iter().map(|byte| format!("{byte:02x}")).collect::<String>(),
+        capture.stderr.len(), Sha256::digest(&capture.stderr).iter().map(|byte| format!("{byte:02x}")).collect::<String>(), text.is_ok(), elapsed.as_millis()
+    )))
 }
 
 /// Finite PID/group-only inventory: never retain arguments or command output.
@@ -3841,6 +3863,93 @@ fn nix_signal_child_group_kill_after(
 mod tests {
     use super::*;
     use crate::runner::host_transition_evidence::read_transition_evidence;
+
+    #[test]
+    fn host_process_exit_observation_classifies_strict_bounded_capture_without_output() {
+        use super::super::exec_command::BoundedCapture;
+        for (bytes, code, expected) in [
+            (&b" S+E\n"[..], 0, Some(false)),
+            (&b"R\n"[..], 0, Some(false)),
+            (&b"I"[..], 0, Some(false)),
+            (&b"T"[..], 0, Some(false)),
+            (&b"U"[..], 0, Some(false)),
+            (&b"D"[..], 0, Some(false)),
+            (&b"W"[..], 0, Some(false)),
+            (&b"Z+\n"[..], 0, Some(true)),
+            (&b"X\n"[..], 0, Some(true)),
+            (&b""[..], 0, None),
+            (&b" \n"[..], 0, None),
+            (&b"Z S"[..], 0, None),
+            (&b"E"[..], 0, None),
+            (&b"secret-marker"[..], 0, None),
+            (&b"\xff"[..], 0, None),
+            (&b"Z"[..], 1, None),
+        ] {
+            let capture = BoundedCapture {
+                status: std::process::ExitStatus::from_raw(code << 8),
+                stdout: bytes.to_vec(),
+                stderr: b"secret-stderr".to_vec(),
+            };
+            let result = classify_owned_child_exit(123, &capture, Duration::from_millis(4));
+            match expected {
+                Some(expected) => assert_eq!(result.unwrap(), expected),
+                None => {
+                    let error = result.unwrap_err().to_string();
+                    assert!(
+                        error.contains("owned_pid=123")
+                            && error.contains("stdout_sha256=")
+                            && error.contains("elapsed_ms=4")
+                    );
+                    assert!(!error.contains("secret-marker") && !error.contains("secret-stderr"));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn host_process_exit_observation_incomplete_capture_categories_remain_refusals() {
+        use super::super::exec_command::{BoundedCaptureFailure, BoundedStream};
+        for failure in [
+            BoundedCaptureFailure::Deadline,
+            BoundedCaptureFailure::ReadFailure {
+                stream: BoundedStream::Stdout,
+            },
+            BoundedCaptureFailure::IncompleteOutput {
+                stream: BoundedStream::Stderr,
+            },
+            BoundedCaptureFailure::Overflow {
+                stream: BoundedStream::Stdout,
+                limit_bytes: 64,
+                retained_bytes: 64,
+            },
+            BoundedCaptureFailure::Launch,
+        ] {
+            let error =
+                owned_child_capture_failure(123, &failure, Duration::from_millis(5)).to_string();
+            assert!(
+                error.contains("owned child exit observation failed:")
+                    && error.contains("owned_pid=123")
+                    && error.contains("elapsed_ms=5")
+            );
+        }
+    }
+
+    #[test]
+    fn host_process_exit_observation_native_active_zombie_reaped_and_deadline() {
+        let mut child = TestChild::sleep();
+        assert!(
+            !observe_owned_child_exit(child.0.id(), Instant::now() + Duration::from_secs(1))
+                .unwrap()
+        );
+        assert!(observe_owned_child_exit(child.0.id(), Instant::now()).is_err());
+        child.0.signal(Signal::SIGTERM).unwrap();
+        wait_for_owned_fixture_root_exit(child.0.id(), Instant::now() + Duration::from_secs(5));
+        let pid = child.0.id();
+        child.0.stop(Duration::from_secs(2)).unwrap();
+        assert!(child.0.reaped);
+        // Empty/nonzero ps for an absent root remains unavailable, never clean.
+        assert!(observe_owned_child_exit(pid, Instant::now() + Duration::from_secs(1)).is_err());
+    }
 
     struct TestChild(OwnedHostChild);
 

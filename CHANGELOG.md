@@ -7,6 +7,12 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- Managed owned-child exit refusals now distinguish empty, invalid UTF-8,
+  multiple-token, unknown-state and unsuccessful process-table captures using
+  bounded structural diagnostics. They retain counts, hashes and elapsed time,
+  never captured process output. Incomplete observation still refuses settlement;
+  stop authority, state grammar and deadlines remain unchanged.
+
 - `effigy container <NAME> shell --command <CMD> --bounded --deadline-ms <MS>
   --stdout-limit-bytes <N> --stderr-limit-bytes <N> [--json]` is an explicit
   opt-in finite container-command surface. One absolute deadline governs

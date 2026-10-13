@@ -1386,3 +1386,32 @@ exact historical interleaving remains unknown. This correction does not change
 unsafe/FFI blocks, doctor deadlines, admission, container cancellation or public
 APIs. Existing unsafe proof-comment observations remain report-only in the
 scoped Rust audit, without a soundness or whole-product certification claim.
+
+
+### Exit capture evidence and published dependent replacement
+
+The fixed `/bin/ps -p <owned-child> -o stat=` observation remains completion
+evidence only. Its 500 ms per-capture cap, 64-byte stdout and 128-byte stderr
+limits and original stop-phase deadlines are unchanged. Active state tokens
+remain active; only a complete valid exited-state observation can participate
+in group settlement and the owned wait. Empty, unsuccessful, invalid UTF-8,
+multiple-token, unknown-state and incomplete captures remain refusals. No
+parser fallback or absent-PID inference authorizes reaping or signals.
+
+A refusal retains only its typed category, owned PID, exit code, bounded byte
+counts and SHA-256 correspondence, UTF-8/token classification and elapsed
+milliseconds. Captured output, arguments, environment and credentials are
+excluded. Launch, read, overflow, incomplete-output and deadline failures keep
+their typed capture category; unavailable retained bytes are not invented.
+This private diagnostic change does not change listener-state or transition
+receipt schemas.
+
+The controlled public proof publishes both a dependency and its dependent,
+selects dependency unavailability in the published phase, then requires a new
+dependent generation with the current dependency assignments after actual
+owned-group settlement. Scoped teardown must preserve sibling and foreign
+listeners. It uses private host fixtures and the production native observer;
+it does not certify consumer VM cleanup, real Linux or remote cancellation.
+The historical malformed capture from bundle005 was not retained. Its exact
+bytes and cause remain unknown; the additional diagnostics and controlled proof
+do not establish that historical cause or authorize a consumer retry.
