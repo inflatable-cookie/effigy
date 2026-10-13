@@ -136,19 +136,42 @@ pub(super) fn run_gateway(args: GatewayArgs) -> Result<String, RunnerError> {
 }
 
 pub(in crate::runner) fn gateway_up_for_managed_task(command: &str) -> Result<(), RunnerError> {
+    gateway_up_for_managed_task_with(command, verified_gateway_status_for_up)
+}
+
+/// Managed-start preflight with an injectable status probe. Production passes
+/// the local read-only preflight; tests inject a typed denial to prove the
+/// caller-level refusal carries the bounded diagnosis and launches nothing.
+fn gateway_up_for_managed_task_with(
+    command: &str,
+    preflight: impl FnOnce(&GatewayConfig) -> GatewayUpStatusProbe,
+) -> Result<(), RunnerError> {
     let mut state = ManagedStartState::Unverified;
     if effigy_core::executable_override::current().is_none() {
         let config = gateway_config()?;
-        let probe = verified_gateway_status_for_up(&config);
-        if !probe.identity_permission_denied {
-            if let Some(status) = resolve_gateway_status(probe.status)? {
-                if gateway_status_matches_current_binary(&status) {
-                    return Ok(());
+        let probe = preflight(&config);
+        if probe.identity_permission_denied {
+            // Mirror `up`: one elevated lifecycle through the command when an
+            // interactive terminal can approve it; otherwise refuse with the
+            // same bounded diagnosis and launch no replacement.
+            if !(std::io::stdin().is_terminal() && elevation::gateway_identity_elevation_allowed())
+            {
+                match resolve_gateway_status_for_config(&config, probe.status) {
+                    Err(error) => return Err(error),
+                    Ok(_) => {
+                        return Err(RunnerError::task_invocation(
+                            "gateway identity is unknown; refusing replacement",
+                        ));
+                    }
                 }
-                state = ManagedStartState::Replacing;
-            } else {
-                state = ManagedStartState::Stopped;
             }
+        } else if let Some(status) = resolve_gateway_status_for_config(&config, probe.status)? {
+            if gateway_status_matches_current_binary(&status) {
+                return Ok(());
+            }
+            state = ManagedStartState::Replacing;
+        } else {
+            state = ManagedStartState::Stopped;
         }
     }
     emit_gateway_startup_notice(state);
@@ -350,13 +373,25 @@ fn verified_gateway_status(
     }
 }
 
-/// Resolve a `get_status` result for a lifecycle command.
+/// Resolve a `get_status` result for a lifecycle command, with a bounded
+/// same-field diagnosis hint.
 ///
 /// Returns `Ok(Some(status))` for a confirmed running gateway, `Ok(None)` when
 /// the records prove the gateway is stopped, and an error when the process
 /// probe was unavailable or ambiguous. Callers must never treat that error as
-/// "stopped": the PID records stay in place for reconciliation.
-fn resolve_gateway_status(
+/// "stopped": the PID records stay in place for reconciliation. The appended
+/// `current diagnosis` line only names which gate (record, liveness probe, or
+/// local identity read) is currently unproven. It performs read-only probes,
+/// never signals, mutates, or elevates, and never marks an unknown gateway
+/// running. Labels only; no raw probe output, paths, or secrets.
+/// Bounded same-field hint for refusal paths that do not carry a status
+/// result of their own. Read-only, labels only, never marks unknown running.
+fn gateway_diagnosis_hint(config: &GatewayConfig) -> String {
+    server::render_gateway_diagnosis(&server::diagnose_gateway_status(config))
+}
+
+fn resolve_gateway_status_for_config(
+    config: &GatewayConfig,
     status: Result<VerifiedGatewayStatus, effigy_gateway::GatewayError>,
 ) -> Result<Option<VerifiedGatewayStatus>, RunnerError> {
     match status {
@@ -366,8 +401,9 @@ fn resolve_gateway_status(
             Err(legacy_identity_status_error(error, false))
         }
         Err(error) => Err(RunnerError::task_invocation(format!(
-            "cannot determine gateway state ({error}); no signal was sent and the gateway PID record is left in place for reconciliation. If the reason is a permission denial for a root-owned gateway, rerun from an interactive admin-capable terminal and approve the bounded identity prompt"
-        ))),
+            "cannot determine gateway state ({error}); current diagnosis: {}; no signal was sent and the gateway PID record is left in place for reconciliation. If the reason is a permission denial for a root-owned gateway, rerun from an interactive admin-capable terminal and approve the bounded identity prompt",
+            gateway_diagnosis_hint(config)
+        )))
     }
 }
 
@@ -385,7 +421,7 @@ fn inspect_existing_gateway(
     status: Result<VerifiedGatewayStatus, effigy_gateway::GatewayError>,
     output_json: bool,
 ) -> Result<ExistingGateway, RunnerError> {
-    let Some(status) = resolve_gateway_status(status)? else {
+    let Some(status) = resolve_gateway_status_for_config(config, status)? else {
         return Ok(ExistingGateway::Absent);
     };
     if gateway_status_matches_current_binary(&status) {
@@ -459,6 +495,7 @@ fn run_gateway_up_with_config(
     let probe = verified_gateway_status_for_up(config);
     if probe.identity_permission_denied {
         return run_gateway_up_after_identity_permission_denied(
+            config,
             probe.status,
             std::io::stdin().is_terminal(),
             elevation::gateway_identity_elevation_allowed(),
@@ -493,9 +530,10 @@ fn run_private_gateway_up(
     prepare_gateway_state_for_elevated_run(config)?;
     let probe = verified_gateway_status_for_up(config);
     if probe.identity_permission_denied {
-        return Err(RunnerError::task_invocation(
-            "private gateway identity is unknown; refusing startup or replacement",
-        ));
+        return Err(RunnerError::task_invocation(format!(
+            "private gateway identity is unknown; current diagnosis: {}; refusing startup or replacement",
+            gateway_diagnosis_hint(config)
+        )));
     }
     match inspect_existing_gateway(config, probe.status, output_json)? {
         ExistingGateway::Rendered(rendered) => return Ok(rendered),
@@ -523,6 +561,7 @@ fn run_private_gateway_up(
 }
 
 fn run_gateway_up_after_identity_permission_denied(
+    config: &GatewayConfig,
     status: Result<VerifiedGatewayStatus, effigy_gateway::GatewayError>,
     interactive: bool,
     elevation_allowed: bool,
@@ -531,7 +570,7 @@ fn run_gateway_up_after_identity_permission_denied(
     if interactive && elevation_allowed {
         return elevate();
     }
-    match resolve_gateway_status(status) {
+    match resolve_gateway_status_for_config(config, status) {
         Err(error) => Err(error),
         Ok(_) => Err(RunnerError::task_invocation(
             "gateway identity is unknown; refusing replacement",
@@ -540,6 +579,8 @@ fn run_gateway_up_after_identity_permission_denied(
 }
 
 fn run_gateway_down_after_identity_permission_denied(
+    config: &GatewayConfig,
+    status: Result<VerifiedGatewayStatus, effigy_gateway::GatewayError>,
     interactive: bool,
     elevation_allowed: bool,
     elevate: impl FnOnce() -> Result<String, RunnerError>,
@@ -547,9 +588,13 @@ fn run_gateway_down_after_identity_permission_denied(
     if interactive && elevation_allowed {
         return elevate();
     }
-    Err(RunnerError::task_invocation(
-        "gateway process identity is unreadable without administrator access; no signal was sent and gateway records are preserved. Run `effigy gateway down` from an interactive admin-capable terminal and approve the bounded administrator request",
-    ))
+    match resolve_gateway_status_for_config(config, status) {
+        Err(error) => Err(error),
+        Ok(_) => Err(RunnerError::task_invocation(format!(
+            "gateway process identity is unreadable without administrator access; current diagnosis: {}; no signal was sent and gateway records are preserved. Run `effigy gateway down` from an interactive admin-capable terminal and approve the bounded administrator request",
+            gateway_diagnosis_hint(config)
+        ))),
+    }
 }
 
 /// Operator-owned first-start files are created under the transition lock,
@@ -628,12 +673,14 @@ fn run_gateway_down_with_config(
         && probe.identity_permission_denied
     {
         return run_gateway_down_after_identity_permission_denied(
+            config,
+            probe.status,
             std::io::stdin().is_terminal(),
             elevation::gateway_identity_elevation_allowed(),
             || run_gateway_elevated(GatewaySubcommand::Down, output_json),
         );
     }
-    let status = resolve_gateway_status(probe.status)?;
+    let status = resolve_gateway_status_for_config(config, probe.status)?;
     if !config.is_private()
         && !gateway_invocation_is_escalated()
         && gateway_down_requires_elevation(config, status.as_ref())?
@@ -643,11 +690,12 @@ fn run_gateway_down_with_config(
     let _lock = recover::acquire_transition_lock(config)?;
     let probe = verified_gateway_status_for_up(config);
     if probe.identity_permission_denied {
-        return Err(RunnerError::task_invocation(
-            "gateway process identity became unreadable while the transition lock was held; no signal was sent and gateway records are preserved. Rerun `effigy gateway down` from an interactive admin-capable terminal",
-        ));
+        return Err(RunnerError::task_invocation(format!(
+            "gateway process identity became unreadable while the transition lock was held; current diagnosis: {}; no signal was sent and gateway records are preserved. Rerun `effigy gateway down` from an interactive admin-capable terminal",
+            gateway_diagnosis_hint(config)
+        )));
     }
-    let status = resolve_gateway_status(probe.status)?;
+    let status = resolve_gateway_status_for_config(config, probe.status)?;
     let warnings = if config.is_private() || keep_gateway_resolver_on_down() {
         Vec::new()
     } else {
@@ -777,7 +825,7 @@ fn run_gateway_status_with_config(
         Err(error @ effigy_gateway::GatewayError::LegacyIdentityRequired { .. }) => {
             return Err(legacy_identity_status_error(error, output_json));
         }
-        other => resolve_gateway_status(other)?,
+        other => resolve_gateway_status_for_config(config, other)?,
     };
     let route_table = RouteTable::load(&config.route_table_path)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;

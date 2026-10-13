@@ -70,6 +70,14 @@ During v0.x, MINOR bumps may include breaking changes.
   submission, then inspect or follow that exact request with `effigy tasks
   request status|follow`. Only authenticated `unknown_run` permits a same-key
   retry; ambiguous recovery remains held.
+- `effigy gateway status|up|down` and managed auto-start append a bounded
+  `current diagnosis: record=<kind> process=<probe> identity=<outcome>` hint
+  when the gateway state is unknown. Labels only; no raw probe output, paths,
+  digests, arguments, environment, or credentials. Lifecycle behavior is
+  unchanged: unknown stays unknown, records are preserved, nothing is
+  signalled or replaced, and a positively verified matching live gateway still
+  reuses without a second daemon. Noninteractive cross-UID verification remains
+  unsupported with approved interfaces; no new privilege or helper is added.
 
 ### Changed
 - Host-admitted standard direct-command tasks bound to a container now execute
