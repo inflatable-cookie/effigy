@@ -12,6 +12,7 @@ use super::error::RunnerError;
 
 mod checks;
 mod context;
+mod qualified;
 mod report;
 
 const DEFAULT_JSON_EXAMPLES_FILE: &str = "docs/guides/026-json-payload-examples.md";
@@ -24,6 +25,7 @@ pub(super) fn run_docs(args: DocsArgs) -> Result<String, RunnerError> {
     let repo_root = resolved.resolved_root;
 
     match args.subcommand {
+        DocsSubcommand::QualifiedResolve => qualified::resolve(&repo_root),
         DocsSubcommand::Check {
             kind,
             paths,

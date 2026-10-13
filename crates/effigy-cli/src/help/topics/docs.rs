@@ -13,9 +13,11 @@ const DOCS_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         "`docs context --sources` routes one query across the repositories that declare `[docs_policy.sources] share = true` under the named directories, grouped per repository and never merged into one ranked list.",
         "`docs context` retrieves bounded exact documentation sections with provenance from the shared graph; it returns source evidence, never a generated summary.",
         "Repo-specific policy should stay in task wiring and flags; these built-ins provide the generic validation engines.",
+        "`docs qualified resolve` declares only the exact ordered host links/paths/named-retired recipe. Its resolution is not resource authority or native admission; the private execution bridge requires an actual attached reviewed provider controller.",
     ],
     usage: &[
         "effigy docs check links [--repo <PATH>] [<FILE>...] [--json]",
+        "effigy --json docs qualified resolve",
         "effigy docs check json-examples [--repo <PATH>] [--file <PATH>] [--section <TITLE>] [--min-blocks <N>] [--require <TEXT>]... [--require-block <N:TEXT>]... [--json]",
         "effigy docs check headings [--repo <PATH>] <FILE>... --require-heading <TEXT>... [--json]",
         "effigy docs check paths [--repo <PATH>] <PATH>... [--json]",

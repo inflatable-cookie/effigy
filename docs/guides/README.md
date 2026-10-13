@@ -137,6 +137,7 @@ Use when:
 
 Read:
 - [`083-v0.14.0-consumer-migration.md`](083-v0.14.0-consumer-migration.md)
+- [`084-qualified-docs-execution.md`](084-qualified-docs-execution.md)
   before upgrading an Effigy consumer from v0.13.1 to the proposed v0.14.0
 - [`051-release-orchestration.md`](051-release-orchestration.md) for the
   release cut workflow

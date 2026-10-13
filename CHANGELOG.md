@@ -7,6 +7,11 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- `effigy --json docs qualified resolve` declares the bounded ordered host docs
+  recipe and its selected installed Northstar source. The private Node bridge
+  binds that selection to the reviewed v4 provider's retained inputs and uses
+  live lookup before each leaf. Resolution alone grants no execution or native
+  authorization; ordinary task and skill execution stay unchanged.
 - `effigy container <NAME> shell --command <CMD> --bounded --deadline-ms <MS>
   --stdout-limit-bytes <N> --stderr-limit-bytes <N> [--json]` is an explicit
   opt-in finite container-command surface. One absolute deadline governs

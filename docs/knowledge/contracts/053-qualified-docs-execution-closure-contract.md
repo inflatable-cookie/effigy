@@ -1,9 +1,9 @@
 # 053 - Qualified Docs Execution Closure Contract
 
-Status: proposed and unavailable. Existing CLI, library and task-plan surfaces
-do not resolve, freeze and enforce the complete execution closure described
-here. No callable spelling, immutable resource qualification or native admission
-is established by this document.
+Status: private implementation candidate; independent qualification and native
+admission remain unavailable. The resolver and live-controller bridge below
+are bounded to the reviewed macOS fixture provider. Ordinary task-plan surfaces
+do not establish this closure, resource authority or native admission.
 
 Owner: task selection, external task sources and docs execution
 Contracts: [013](013-task-execution-request-contract.md),
@@ -119,6 +119,40 @@ Provider, Effigy closure, local outcome ownership and native fresh-generation
 qualification remain one closed eligibility gate. Original #153 allowance and
 reports are preserved; its approved additional finite continuation is separate.
 
+### Historical installed named-source inventory assessment
+
+The reviewed provider at `8f214b6d5c52177aba08c220eccc9d0c9b2730db`
+did not retain the complete approved installed Northstar selection. Contract
+042 and `src/runner/skill_command.rs` require the direct `SKILL.md` marker
+alongside `effigy.toml` for named selection. The marker is a required input to
+this contract's frozen selection, even though the retired checker itself does
+not read it.
+
+In `hosts/paseo/src/docs-input-provider.ts`, context validation accepts only
+`skill/effigy.toml` and `skill/scripts/retired-concepts.ts` under `skill/`.
+Declaring `skill/SKILL.md` therefore produces `docs input: unsupported skill
+input`. Authenticated lookup separately requires the retained skill inventory
+to equal those two files plus `scripts/`; adding the marker after allocation
+produces `docs input: namespace/configuration changed`. Neither route supplies
+an owned marker binding.
+
+An input declared under `source/` must have its canonical origin beneath the
+synthetic source root. Relabelling the installed marker as a source input fails
+`docs input: source membership mismatch`. Creating a project-local skill copy
+would instead change contract 042's selected source to a project-local catalog;
+it does not freeze the approved installed selection. An explicit-path override
+would likewise replace the required named selection. Reading the installed
+marker outside the provider inventory supplies no private retained identity or
+authenticated lifetime check for that input.
+
+These are source-level refusal conditions, not a genuine private execution
+proof. No provider allocation, installation probe or docs outcome is established
+by this assessment. The reviewed tiny fixture still establishes its documented
+constructor path and tool correspondence, but the installed named-source
+closure was unavailable at that pin pending an owning-provider inventory correction or
+an explicitly approved change to the source-selection premise. The qualified v4
+correction below supersedes this inventory limitation. Effigy does not
+alter the provider, add an undeclared read or substitute a checker to bridge it.
 ### Reviewed source-policy version 3 handover
 
 Nucleus #219/PR281 closed at source
@@ -218,6 +252,46 @@ docs outcome or native fresh-generation admission is established here. All
 three leaves and five acceptance gates remain necessary for the whole producer.
 
 ## Exact closure
+
+### Private callable surface
+
+`effigy --json docs qualified resolve` emits
+`effigy.docs.qualified.resolution.v1`; its maintained data contract is
+[qualified-docs-resolution-v1.schema.json](qualified-docs-resolution-v1.schema.json).
+This observational CLI declares selection and complete supported source reads.
+It never grants resource ownership. Literal includes are checked before the
+ordinary composition owner reads them; selected task shapes and argv are
+checked against the bounded recipe, with builtin ASTs parsed by the CLI owner.
+The ordinary contract 042 resolver selects the original installed skill.
+
+The Effigy-owned private Node module `scripts/qualified-docs-execution.mjs`
+provides `prepareQualifiedDocs(controller, packet)`,
+`preflightQualifiedDocs(controller, packet, receipt)` and
+`executeQualifiedDocs(controller, packet, receipt)`. Preparation authenticates
+the actual reviewed provider controller and packet through live lookup, runs
+the private Effigy resolver, and retains an in-process frozen receipt. Copied
+JSON receipts have no execution authority. Execution authenticates the original
+packet before every leaf, checks retained source/tool/argv/environment bindings,
+then invokes the existing Docs builtins and unchanged retired script by literal
+argv. It does not re-resolve the skill during execution or substitute `--path`.
+
+The original discovery phase uses the fixed approved installed namespace and
+original source root. Leaf execution uses only the provider's private HOME,
+PATH, source/skill roots and environment. Original source/skill observations,
+including named precedence, stay distinct from private retained execution.
+Accepted cooperative host/runtime/tool installation is not verified private
+distribution provenance. No production installer or independent native grant is
+added by the bridge. The controller must come from the reviewed constructor;
+task JSON, packet bytes or caller booleans cannot supply it.
+
+The execution result is `effigy.docs.qualified.execution.v1`, including actual
+ordered process observations, source/tool bytes, generation/lifetime, limits
+and accepted/verified vocabulary. Missing ownership, configuration, correspondence,
+namespace or budget yields `qualified docs unavailable`, before another leaf
+launch. No allocation replacement, unknown-predecessor settlement, durable
+outcome or native authorization follows. Actual usage, finite process and
+verification accounting, compatibility and platform limits live in
+[guide 084](../../guides/084-qualified-docs-execution.md).
 
 The first supported closure is the three ordered host docs leaves selected by
 `qa:docs`: links, the declared paths list, then the named

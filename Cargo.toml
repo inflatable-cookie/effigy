@@ -46,6 +46,11 @@ license = "MIT"
 
 [workspace.lints]
 
+# Size-bounded private docs proof artifact; ordinary dev/release profiles stay unchanged.
+[profile.qualified-docs]
+inherits = "release"
+strip = "symbols"
+
 [package]
 name = "effigy"
 version.workspace = true
