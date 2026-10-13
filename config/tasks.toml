@@ -331,6 +331,28 @@
 "test:gateway:managed-tty" = [
   { id = "gateway-managed-tty-and-bounded-handoff", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(gateway_up_for_managed_task) | test(gateway_down_permission_denied_uses_one_lifecycle_handoff_or_preserves_unknown) | test(gateway_lifecycle_timeout_kills_and_reaps_only_its_owned_child)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 240000 },
 ]
+# Privileged gateway permission-reuse boundary: deterministic permission-denied
+# refusal plus genuine private owned-process reuse through the production
+# status and managed-start caller families, with safe structural-diagnosis
+# controls. Private fixtures and owned children only; no live gateway state,
+# sudo, or cross-UID proof is claimed.
+"test:gateway:permission-reuse" = [
+  { id = "gateway-permission-reuse-server", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-gateway --lib --filterset 'test(permission_reuse_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 240000 },
+  { id = "gateway-permission-reuse-runner", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(permission_reuse_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 240000 },
+]
+# User-owned gateway migration boundary (task 155): finite privilege
+# inventory, read-only readiness gate with injected setup evidence, byte-exact
+# migration preservation with an owned-child generation transition, safe
+# refusal for stale/unknown/symlink records, unchanged operator defaults,
+# and one native loopback-lowport bind proof. Synthetic fixtures and owned
+# children only; no live gateway state, sudo, or cross-UID proof is claimed.
+"test:gateway:user-runtime" = [
+  { id = "gateway-user-runtime", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-gateway --lib --filterset 'test(user_runtime)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 240000 },
+]
+"check:gateway:user-runtime" = [
+  "cargo check -p effigy-gateway --all-targets",
+  "cargo clippy -p effigy-gateway --all-targets -- -D warnings",
+]
 "test:install:previous-binary-preservation" = [
   { id = "install-previous-binary-preservation", run = "cargo test -p effigy -p effigy-rhai --lib previous_binary_preservation -- --nocapture", timeout_ms = 120000 },
 ]
@@ -879,6 +901,17 @@
 ]
 
 # Documentation QA
+"check:docs:qualified-closure" = [
+  "cargo check -p effigy -p effigy-cli -p effigy-docs-policy --all-targets",
+  "cargo clippy -p effigy -p effigy-cli -p effigy-docs-policy --all-targets -- -D warnings",
+  "cargo build --profile qualified-docs --bin effigy",
+  "node --check scripts/qualified-docs-execution.mjs",
+]
+"test:docs:qualified-closure" = [
+  { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests --filterset 'test(documentation_graph_runtime_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-docs-policy --lib --filterset 'test(docs_command::qualified::) | test(parse_docs_) | test(scan_markdown_links) | test(collect_link_check_files)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { run = "node --test --test-timeout=120000 --test-force-exit tests/qualified_docs_execution.test.mjs", timeout_ms = 300000 },
+]
 "qa:docs:links" = "cargo run --bin effigy -- docs check links"
 "qa:docs:examples" = "cargo run --bin effigy -- docs check json-examples"
 "qa:docs:agent-defaults" = "cargo run --bin effigy -- docs check forbidden AGENTS.md .github/workflows/json-contracts.yml docs/knowledge/contracts/json-selection-contract.json --forbid '--repo .'"

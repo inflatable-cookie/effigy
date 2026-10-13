@@ -122,7 +122,8 @@ pub fn collect_link_check_files(repo_root: &Path, paths: &[PathBuf]) -> Vec<Path
     defaults
 }
 
-pub fn scan_markdown_links(file: &Path) -> Result<Vec<BrokenLink>, BrokenLink> {
+/// Return the exact local existence reads used by the link checker.
+pub fn collect_markdown_local_targets(file: &Path) -> Result<Vec<(String, PathBuf)>, BrokenLink> {
     let content = std::fs::read_to_string(file).map_err(|err| BrokenLink {
         file: file.to_path_buf(),
         target: file.display().to_string(),
@@ -131,7 +132,7 @@ pub fn scan_markdown_links(file: &Path) -> Result<Vec<BrokenLink>, BrokenLink> {
     let link_re = Regex::new(r"\[[^\]]+\]\(([^)]+)\)").expect("link regex");
     let code_re = Regex::new(r"`[^`]*`").expect("inline code regex");
     let mut in_fence = false;
-    let mut failures = Vec::new();
+    let mut targets = Vec::new();
 
     for line in content.lines() {
         if line.trim_start().starts_with("```") {
@@ -159,17 +160,23 @@ pub fn scan_markdown_links(file: &Path) -> Result<Vec<BrokenLink>, BrokenLink> {
                 .parent()
                 .unwrap_or_else(|| Path::new("."))
                 .join(stripped);
-            if !resolved.exists() {
-                failures.push(BrokenLink {
-                    file: file.to_path_buf(),
-                    target: target.clone(),
-                    reason: "target does not exist".to_owned(),
-                });
-            }
+            targets.push((target, resolved));
         }
     }
 
-    Ok(failures)
+    Ok(targets)
+}
+
+pub fn scan_markdown_links(file: &Path) -> Result<Vec<BrokenLink>, BrokenLink> {
+    Ok(collect_markdown_local_targets(file)?
+        .into_iter()
+        .filter(|(_, resolved)| !resolved.exists())
+        .map(|(target, _)| BrokenLink {
+            file: file.to_path_buf(),
+            target,
+            reason: "target does not exist".to_owned(),
+        })
+        .collect())
 }
 
 pub fn resolve_docs_index_spec(

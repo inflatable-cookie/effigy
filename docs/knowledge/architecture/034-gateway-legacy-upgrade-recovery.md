@@ -924,6 +924,139 @@ standing privilege. Live role evidence does not prove historical spawn ownership
 or eliminate a same-path impostor; the last identity-check-to-signal race remains
 explicitly disclosed. Both capabilities are implemented as specified. Residual limits below still apply.
 
+## Operator-selected user-owned gateway route
+
+Tom's 2026-10-13 ruling, relayed verbatim by the Acowtancy owner, is:
+"I'm happy for the gateway to restart as me, would make things simpler."
+The selected next route is a user-owned gateway with separately bounded
+administrator setup and an operator-run migration. This is design and private
+qualification authority; no live gateway restart, administrator action or
+machine configuration change is authorized for an agent. The root-daemon
+attestation proposal below remains unimplemented and is not this route's
+prerequisite.
+
+Current root dependencies must be separated explicitly:
+
+- `/etc/resolver/test` and any declared route-specific resolver suffixes require
+  administrator writes. The current daemon reconciles route-driven files
+  directly, which assumes root. A user daemon must report missing setup and
+  leave those files to the explicit setup path, rather than silently prompting
+  or failing to provide a newly registered domain's DNS.
+- Creating `lo0` aliases for the bounded `127.1.0.1`–`127.1.0.50` pool requires
+  administrator network setup. The allocation registry is user state, separate
+  from those interface changes. Alias setup may need repeating after reboot;
+  "one-time" does not establish persistent interface configuration.
+- HTTP and HTTPS currently bind `127.0.0.1:80` and `127.0.0.1:443`. Effigy
+  currently treats all Unix low ports as requiring elevation. The claim that
+  recent macOS permits every unprivileged low-port bind is insufficient:
+  [Apple's IPv4 bind implementation](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/netinet/in_pcb.c)
+  checks reserved-port privilege for a specific non-wildcard address. That
+  source observation is not qualification of this machine's installed kernel.
+  The reviewed route must establish actual loopback bind support or state the
+  additional bounded setup mechanism needed. It must not expose a wildcard
+  listener or change URLs to hide this distinction.
+- Installing CA trust is an administrator operation when required; ongoing
+  certificate, route and registry writes must remain readable and writable by
+  the authenticated operator. Existing CA trust and credentials must not be
+  replaced as an incidental migration step.
+
+Migration must use the existing fresh-generation verification and bounded
+interactive root lifecycle path to stop the old gateway. Preserve the complete
+route table, its route ownership and the loopback assignments; specifically,
+the reported manual `acowtancy.test` upstream `127.0.0.1:43210` belongs to the
+UI-sweep checkout and must not be regenerated from the main checkout. Do not
+start a successor until the old exact generation is confirmed stopped.
+Ambiguous ownership, replacement, concurrent route edits or uncertain effects
+hold the migration and preserve its evidence. No recursive ownership change,
+PID-only signal or unknown-state cleanup follows from this ruling.
+
+The final implementation must provide the actual reviewed setup and migration
+commands with their remaining administrator requirements. Those commands are
+for Tom to execute later; neither this ruling nor private fixtures qualify a
+live cross-UID stop or install new packet-filter, socket-activation or privileged
+helper machinery. A required new mechanism must be returned as a concrete
+bounded design boundary, with its compatibility and network exposure stated.
+
+### Qualification result (task 155)
+
+Status: assessed on corrected main. The exact loopback lowports cannot be
+served by an unprivileged steady-state daemon with the existing approved
+interfaces, so no new supported user start path is claimed. The bounded
+corrections below are implemented and proved; the one missing capability is
+returned as a design boundary.
+
+Finite privilege inventory (`crates/effigy-gateway/src/user_runtime.rs`,
+`privilege_inventory`, seven entries): `lo0` aliases, the bootstrap
+`/etc/resolver/test` file, route-driven `/etc/resolver/<suffix>` files, TCP
+`127.0.0.1:80`/`443` binds, CA trust installation, and the old root
+generation stop stay administrator-owned; gateway records, route table,
+loopback registry, certificates and logs stay operator-owned with no
+recursive ownership change.
+
+Native port permission evidence (same UID 501, this machine, `TcpListener`
+bind of `127.0.0.1:180` once, own socket closed immediately): `EACCES`
+(errno 13, permission denied). The current endpoints (`80`, `443`, `15353`)
+were never bound and non-lowports are refused by the probe guard. Together
+with the XNU reserved-port branch cited above, exact `127.0.0.1:80`/`443`
+service without privilege is an unsupported gate, not a configuration detail.
+DNS UDP `127.0.0.1:15353` is above 1024 and binds without privilege; its
+resolver file still needs the administrator.
+
+Read-only readiness gate (`check_user_runtime_readiness`): pure, injected
+setup evidence only, no I/O, elevation, or mutation. It refuses the user
+start unless the bootstrap resolver, route resolvers, loopback aliases,
+lowport bind permission, CA trust, and old-generation absence all hold, and
+it names each missing fact with a bounded label-only diagnosis. A user daemon
+never enters automatic full-gateway elevation for setup, never writes
+`/etc/resolver` itself, never erases setup on ordinary stop, and never
+claims missing DNS ready.
+
+One missing capability (`loopback-privileged-listener-handoff`, design
+boundary only, not implemented): a loopback-only privileged listener handoff
+that pre-binds TCP `127.0.0.1:80`/`443` outside the user daemon and hands
+socket ownership to it, with launchd-owned lifetime (reboot restores it), no
+wildcard listener, no URL change, no packet filter, and no new standing
+Effigy helper. Source implementation is authorized by the ruling below;
+genuine operator-run activation and cross-boot proof remain required before
+any migration may depend on it.
+
+Migration preservation (synthetic fixtures and owned children only): the
+complete `routes.json` envelope (including the manual `acowtancy.test` upstream
+`127.0.0.1:43210` and sibling routes with ownership and metadata) and
+`loopback-ips.json` survive every refusal byte-for-byte; stale, unknown,
+symlink, UID-ambiguous, route-edited, and bind-failure cases hold with
+evidence preserved; the old exact generation (real owned child) is confirmed
+absent before any successor, and the transition names both generations.
+Selectors `test:gateway:user-runtime` and `check:gateway:user-runtime`.
+
+Operator-run shape once the capability exists (existing commands only; Tom
+executes later, nothing here ran them live): confirm the old generation with
+`effigy gateway status`, stop it through the bounded interactive path
+(`effigy gateway recover --adopt-candidate` for a live daemon,
+`effigy gateway recover --yes` only for a confirmed-absent record), verify
+absence with `effigy gateway status`, then start the user gateway. Unexecuted:
+the privileged listener handoff, every administrator setup step, the live
+cross-UID stop, and the reboot-restore proof.
+
+### Source-only launchd handoff ruling
+
+Tom answered decision `235519af-aa5b-41b7-ac61-1a75579fb34e` version 2 through
+the operator board on 2026-10-13:
+"Implement source-only launchd handoff; Tom installs/tests later".
+This authorizes the bounded implementation and independent private review of
+the exact loopback listener handoff. It does not authorize an agent to register
+a system or user launchd job, run an administrator command, install network or
+CA configuration, stop the live root gateway, migrate live state or reboot.
+
+The new launchd definition must bind only TCP `127.0.0.1:80` and `443`, launch
+the daemon as the authenticated non-root operator, and preserve all route,
+loopback-registry, certificate and generation ownership contracts. No wildcard
+listener, packet filter, URL change, passwordless sudo, setuid program or new
+standing Effigy root helper is part of this ruling. Exact supported setup,
+activation, migration and rollback commands must come from implementation and
+review; source and private fixture qualification cannot establish live
+administrator installation or cross-boot behavior. Tom owns those later steps.
+
 ## Proposed read-only root-daemon attestation
 
 This is a concrete proposal for a separate operator ruling if Q-002's

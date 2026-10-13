@@ -116,7 +116,9 @@ fn resolve_skill_source(raw: &Path) -> Result<TaskSourceContext, RunnerError> {
 
 /// Resolve an installed agent skill from the invocation project, then unique
 /// global install roots. `--repo` never participates.
-fn resolve_named_skill_source(selector: &str) -> Result<TaskSourceContext, RunnerError> {
+pub(in crate::runner) fn resolve_named_skill_source(
+    selector: &str,
+) -> Result<TaskSourceContext, RunnerError> {
     let skill_name = named_skill_segment(selector)?;
     let invocation_cwd = active_invocation_cwd()?;
     let project_candidate = invocation_cwd.join(PROJECT_SKILL_ROOT).join(skill_name);
@@ -220,6 +222,32 @@ fn candidate_has_named_skill_files(candidate: &Path) -> bool {
     candidate.is_dir()
         && candidate.join(SKILL_MARKER_FILE).is_file()
         && candidate.join(TASK_MANIFEST_FILE).is_file()
+}
+
+/// Complete bounded discovery read namespace for a frozen named selection.
+/// The normal resolver above remains authoritative for precedence and ambiguity.
+pub(in crate::runner) fn named_skill_discovery_reads(
+    selector: &str,
+) -> Result<Vec<PathBuf>, RunnerError> {
+    let name = named_skill_segment(selector)?;
+    let mut roots = vec![active_invocation_cwd()?.join(PROJECT_SKILL_ROOT).join(name)];
+    let home = home_dir()
+        .ok_or_else(|| RunnerError::task_invocation("named source home unavailable".to_owned()))?;
+    roots.extend(
+        GLOBAL_SKILL_ROOTS
+            .iter()
+            .map(|root| home.join(root).join(name)),
+    );
+    Ok(roots
+        .into_iter()
+        .flat_map(|root| {
+            [
+                root.clone(),
+                root.join(SKILL_MARKER_FILE),
+                root.join(TASK_MANIFEST_FILE),
+            ]
+        })
+        .collect())
 }
 
 fn home_dir() -> Option<PathBuf> {

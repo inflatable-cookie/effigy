@@ -13,6 +13,11 @@ During v0.x, MINOR bumps may include breaking changes.
   never captured process output. Incomplete observation still refuses settlement;
   stop authority, state grammar and deadlines remain unchanged.
 
+- `effigy --json docs qualified resolve` declares the bounded ordered host docs
+  recipe and its selected installed Northstar source. The private Node bridge
+  binds that selection to the reviewed v4 provider's retained inputs and uses
+  live lookup before each leaf. Resolution alone grants no execution or native
+  authorization; ordinary task and skill execution stay unchanged.
 - `effigy container <NAME> shell --command <CMD> --bounded --deadline-ms <MS>
   --stdout-limit-bytes <N> --stderr-limit-bytes <N> [--json]` is an explicit
   opt-in finite container-command surface. One absolute deadline governs
@@ -76,6 +81,27 @@ During v0.x, MINOR bumps may include breaking changes.
   submission, then inspect or follow that exact request with `effigy tasks
   request status|follow`. Only authenticated `unknown_run` permits a same-key
   retry; ambiguous recovery remains held.
+- `effigy gateway status|up|down` and managed auto-start append a bounded
+  `current diagnosis: record=<kind> process=<probe> identity=<outcome>` hint
+  when the gateway state is unknown. Labels only; no raw probe output, paths,
+  digests, arguments, environment, or credentials. Lifecycle behavior is
+  unchanged: unknown stays unknown, records are preserved, nothing is
+  signalled or replaced, and a positively verified matching live gateway still
+  reuses without a second daemon. Noninteractive cross-UID verification remains
+  unsupported with approved interfaces; no new privilege or helper is added.
+- User-owned gateway migration boundary (task 155, design and private
+  qualification only; no live migration ran): a finite seven-entry privilege
+  inventory, a read-only user-runtime readiness gate over injected setup
+  evidence (bootstrap and route-driven `/etc/resolver` files, `lo0` aliases,
+  lowport bind permission, CA trust, old-generation absence), byte-exact
+  `routes.json`/`loopback-ips.json` migration preservation with a named old
+  to new generation transition, and safe refusal for stale, unknown, symlink,
+  UID-ambiguous, route-edited, and bind-failure cases. Native same-UID proof
+  on this machine binds `127.0.0.1:180` once and reports `EACCES` (errno 13),
+  so exact `127.0.0.1:80`/`443` service without privilege is an unsupported
+  gate; the one missing capability (`loopback-privileged-listener-handoff`)
+  is a design boundary, not a supported start path. No operator defaults,
+  endpoints, or trust behavior change.
 
 ### Changed
 - Host-admitted standard direct-command tasks bound to a container now execute
