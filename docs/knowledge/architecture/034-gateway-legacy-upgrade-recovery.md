@@ -1016,8 +1016,9 @@ boundary only, not implemented): a loopback-only privileged listener handoff
 that pre-binds TCP `127.0.0.1:80`/`443` outside the user daemon and hands
 socket ownership to it, with launchd-owned lifetime (reboot restores it), no
 wildcard listener, no URL change, no packet filter, and no new standing
-Effigy helper. It needs a separate operator ruling plus genuine cross-boot
-proof before any migration may depend on it.
+Effigy helper. Source implementation is authorized by the ruling below;
+genuine operator-run activation and cross-boot proof remain required before
+any migration may depend on it.
 
 Migration preservation (synthetic fixtures and owned children only): the
 complete `routes.json` envelope (including the manual `acowtancy.test` upstream
@@ -1036,6 +1037,25 @@ executes later, nothing here ran them live): confirm the old generation with
 absence with `effigy gateway status`, then start the user gateway. Unexecuted:
 the privileged listener handoff, every administrator setup step, the live
 cross-UID stop, and the reboot-restore proof.
+
+### Source-only launchd handoff ruling
+
+Tom answered decision `235519af-aa5b-41b7-ac61-1a75579fb34e` version 2 through
+the operator board on 2026-10-13:
+"Implement source-only launchd handoff; Tom installs/tests later".
+This authorizes the bounded implementation and independent private review of
+the exact loopback listener handoff. It does not authorize an agent to register
+a system or user launchd job, run an administrator command, install network or
+CA configuration, stop the live root gateway, migrate live state or reboot.
+
+The new launchd definition must bind only TCP `127.0.0.1:80` and `443`, launch
+the daemon as the authenticated non-root operator, and preserve all route,
+loopback-registry, certificate and generation ownership contracts. No wildcard
+listener, packet filter, URL change, passwordless sudo, setuid program or new
+standing Effigy root helper is part of this ruling. Exact supported setup,
+activation, migration and rollback commands must come from implementation and
+review; source and private fixture qualification cannot establish live
+administrator installation or cross-boot behavior. Tom owns those later steps.
 
 ## Proposed read-only root-daemon attestation
 
