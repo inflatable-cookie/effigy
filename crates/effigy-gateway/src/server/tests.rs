@@ -912,3 +912,185 @@ fn scheduled_idle_shutdown_is_cancelled_when_generation_changes() {
 
     assert!(!*shutdown_rx.borrow());
 }
+
+/// Permission-reuse boundary: a deterministic permission-denied identity read
+/// stays `ProcessStateUnknown`, preserves every record byte, dispatches no
+/// probe for PID 0/1/out-of-range, and never authorizes a replacement start.
+#[cfg(unix)]
+#[test]
+fn permission_reuse_denied_identity_is_unknown_and_preserves_records() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = GatewayConfig::standard(dir.path().to_path_buf());
+    crate::identity::write_test_record(&config.pid_file_path, 4242);
+    let version_path = config.pid_file_path.with_extension("version");
+    std::fs::write(&version_path, "v0.14.1+local.test\n").unwrap();
+    let identity_path = config.pid_file_path.with_extension("identity");
+    let before_pid = std::fs::read(&config.pid_file_path).unwrap();
+    let before_identity = std::fs::read(&identity_path).unwrap();
+    let before_version = std::fs::read(&version_path).unwrap();
+
+    let status = get_verified_gateway_status_with_probes(
+        &config,
+        |_| GatewayProcessProbe::Running,
+        |_, _| crate::identity::GatewayIdentityProbe::PermissionDenied,
+    );
+    assert!(
+        matches!(status, Err(GatewayError::ProcessStateUnknown { pid: 4242 })),
+        "permission-denied identity must stay unknown, got {status:?}"
+    );
+    let start = check_existing_gateway_pid_with(
+        &config,
+        |_| GatewayProcessProbe::Running,
+        |_| crate::identity::GatewayIdentityProbe::PermissionDenied,
+    );
+    assert!(matches!(
+        start,
+        Err(GatewayError::ProcessStateUnknown { pid: 4242 })
+    ));
+    assert_eq!(std::fs::read(&config.pid_file_path).unwrap(), before_pid);
+    assert_eq!(std::fs::read(&identity_path).unwrap(), before_identity);
+    assert_eq!(std::fs::read(&version_path).unwrap(), before_version);
+
+    let diagnosis = diagnose_gateway_status_with(
+        &config,
+        |_| GatewayProcessProbe::Running,
+        |_| crate::identity::GatewayIdentityProbe::PermissionDenied,
+    );
+    assert_eq!(diagnosis.pid, Some(4242));
+    assert_eq!(diagnosis.record, GatewayRecordKind::Authenticated);
+    assert_eq!(diagnosis.process_probe, Some(GatewayProcessProbe::Running));
+    assert_eq!(diagnosis.identity, GatewayIdentityOutcome::PermissionDenied);
+    let rendered = render_gateway_diagnosis(&diagnosis);
+    assert!(rendered.contains("record=authenticated"));
+    assert!(rendered.contains("process=running"));
+    assert!(rendered.contains("identity=permission-denied"));
+    assert!(!rendered.contains("4242"), "diagnosis carries labels only");
+}
+
+/// Permission-reuse positive proof: a genuine private owned native process
+/// with a matching recorded generation yields truthful running status through
+/// the production path, twice, without a second daemon, record removal, or
+/// signals. The fixture child is the only process ever spawned, joined, and
+/// reaped here; its PID and exit are recorded.
+#[cfg(unix)]
+#[test]
+fn permission_reuse_private_owned_generation_is_reusable_without_replacement() {
+    use std::process::{Child, Command};
+    use std::time::{Duration, Instant};
+
+    struct OwnedChild(Child);
+    impl Drop for OwnedChild {
+        fn drop(&mut self) {
+            if self.0.try_wait().ok().flatten().is_none() {
+                let _ = self.0.kill();
+            }
+            let _ = self.0.wait();
+        }
+    }
+
+    let mut owned = OwnedChild(
+        Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .expect("start private owned child"),
+    );
+    let pid = owned.0.id();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while probe_gateway_process(pid) != GatewayProcessProbe::Running {
+        assert!(
+            Instant::now() < deadline,
+            "private owned child was never observed running"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let config = GatewayConfig::standard(dir.path().to_path_buf());
+    crate::identity::write_test_record(&config.pid_file_path, pid);
+    let identity_path = config.pid_file_path.with_extension("identity");
+    let before_pid = std::fs::read(&config.pid_file_path).unwrap();
+    let before_identity = std::fs::read(&identity_path).unwrap();
+
+    // Production path: real `ps` liveness plus the real kernel identity read.
+    let first = get_status(&config).expect("matched owned child is running");
+    assert_eq!(first.pid, pid);
+    let second = get_status(&config).expect("reuse must not need a second daemon");
+    assert_eq!(second.pid, pid);
+    assert_eq!(std::fs::read(&config.pid_file_path).unwrap(), before_pid);
+    assert_eq!(std::fs::read(&identity_path).unwrap(), before_identity);
+
+    let diagnosis = diagnose_gateway_status(&config);
+    assert_eq!(diagnosis.pid, Some(pid));
+    assert_eq!(diagnosis.record, GatewayRecordKind::Authenticated);
+    assert_eq!(diagnosis.process_probe, Some(GatewayProcessProbe::Running));
+    assert_eq!(diagnosis.identity, GatewayIdentityOutcome::Matched);
+    assert!(render_gateway_diagnosis(&diagnosis).contains("identity=matched"));
+
+    // Read-only reuse never authorizes stop/replacement: the child is alive
+    // until this fixture reaps exactly it.
+    assert!(owned.0.try_wait().unwrap().is_none());
+    owned.0.kill().expect("terminate only the owned child");
+    let exit = owned.0.wait().expect("reap only the owned child");
+    assert!(!exit.success());
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while probe_gateway_process(pid) != GatewayProcessProbe::ConfirmedAbsent {
+        assert!(
+            Instant::now() < deadline,
+            "reaped owned child was never confirmed absent"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// Structural-diagnosis controls: unavailable `ps`, malformed rows, legacy,
+/// mismatch, and changed-generation cases stay distinct, and the rendered
+/// hint never carries raw probe bytes, PIDs-as-proof, or credentials.
+#[cfg(unix)]
+#[test]
+fn permission_reuse_structural_diagnosis_distinguishes_each_gate() {
+    // Unavailable ps with an authenticated record: process unknown, identity
+    // not checked. Distinct from permission-denied identity.
+    let dir = tempfile::tempdir().unwrap();
+    let config = GatewayConfig::standard(dir.path().to_path_buf());
+    crate::identity::write_test_record(&config.pid_file_path, 4242);
+    let unknown_ps = diagnose_gateway_status_with(
+        &config,
+        |_| GatewayProcessProbe::Unknown,
+        |_| panic!("identity must not be checked before liveness"),
+    );
+    assert_eq!(unknown_ps.process_probe, Some(GatewayProcessProbe::Unknown));
+    assert_eq!(unknown_ps.identity, GatewayIdentityOutcome::NotChecked);
+
+    // Malformed stdout is still process-unknown, never confirmed-absent.
+    let malformed = probe_gateway_process_with(42, |_| Some(ps_output(true, b"not-a-row\n", b"")));
+    assert_eq!(malformed, GatewayProcessProbe::Unknown);
+
+    // Legacy numeric-only record never reaches identity.
+    let legacy_dir = tempfile::tempdir().unwrap();
+    let legacy_config = GatewayConfig::standard(legacy_dir.path().to_path_buf());
+    std::fs::write(&legacy_config.pid_file_path, "4242\n").unwrap();
+    let legacy = diagnose_gateway_status_with(
+        &legacy_config,
+        |_| GatewayProcessProbe::Running,
+        |_| panic!("legacy record must not probe identity"),
+    );
+    assert_eq!(legacy.record, GatewayRecordKind::LegacyPidOnly);
+    assert!(render_gateway_diagnosis(&legacy).contains("legacy-pid-only"));
+
+    // Readable different generation is mismatch, not unknown.
+    let mismatch = diagnose_gateway_status_with(
+        &config,
+        |_| GatewayProcessProbe::Running,
+        |_| crate::identity::GatewayIdentityProbe::Mismatch,
+    );
+    assert_eq!(mismatch.identity, GatewayIdentityOutcome::Mismatch);
+
+    // Rendered hints carry only fixed labels.
+    for diagnosis in [unknown_ps, legacy, mismatch] {
+        let rendered = render_gateway_diagnosis(&diagnosis);
+        assert!(!rendered.contains("not-a-row"));
+        assert!(!rendered.contains("permission denied"));
+        assert!(!rendered.contains("digest"));
+        assert!(rendered.len() < 1024, "diagnosis stays bounded");
+    }
+}

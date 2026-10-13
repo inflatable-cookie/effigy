@@ -485,6 +485,17 @@ fn identity_reader_invocation_allowed(
             .all(|value| value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
 }
 
+/// Test seam proving the headless UI flag grants no privilege: the reader gate
+/// depends only on a real terminal plus digest binding, never on managed mode.
+#[cfg(test)]
+pub(super) fn identity_reader_invocation_allowed_for_test(
+    interactive: bool,
+    digest: &str,
+    target_digest: &str,
+) -> bool {
+    identity_reader_invocation_allowed(interactive, digest, target_digest)
+}
+
 fn build_gateway_identity_reader_command(
     executable: &std::path::Path,
     digest: &str,

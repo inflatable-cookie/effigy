@@ -1391,3 +1391,163 @@ impl ManagedTtySession {
         String::from_utf8_lossy(&self.output).into_owned()
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn permission_reuse_denied_reader_stays_unknown_and_preserves_records() {
+    let (_dir, verified) = gateway_status_fixture(4242);
+    let record = verified.snapshot.record().unwrap().clone();
+    let pid_path = verified.snapshot.pid_path().to_path_buf();
+    let identity_path = pid_path.with_extension("identity");
+    let before_pid = std::fs::read(&pid_path).expect("PID fixture");
+    let before_identity = std::fs::read(&identity_path).expect("identity fixture");
+
+    // Local kernel denies access and the bounded reader is declined or
+    // unavailable: the generation stays unknown, never running or stopped.
+    for unavailable in [None, Some(GatewayIdentityProbe::PermissionDenied)] {
+        let result = gateway_identity_probe_with(
+            &record,
+            &verified.snapshot,
+            |_| GatewayIdentityProbe::PermissionDenied,
+            |_, _, _| unavailable,
+        );
+        assert_eq!(result, GatewayIdentityProbe::Unknown);
+    }
+    assert_eq!(std::fs::read(&pid_path).expect("PID preserved"), before_pid);
+    assert_eq!(
+        std::fs::read(&identity_path).expect("identity preserved"),
+        before_identity
+    );
+
+    // A positively verified matching generation reuses without signals or
+    // replacement; a substituted record never reaches elevation.
+    let matched = gateway_identity_probe_with(
+        &record,
+        &verified.snapshot,
+        |_| GatewayIdentityProbe::PermissionDenied,
+        |_, _, _| Some(GatewayIdentityProbe::Matched),
+    );
+    assert_eq!(matched, GatewayIdentityProbe::Matched);
+    let (_other_dir, other) = gateway_status_fixture(9999);
+    let substituted = other.snapshot.record().unwrap().clone();
+    let refused = gateway_identity_probe_with(
+        &substituted,
+        &verified.snapshot,
+        |_| GatewayIdentityProbe::PermissionDenied,
+        |_, _, _| panic!("substituted records must not invoke elevation"),
+    );
+    assert_eq!(refused, GatewayIdentityProbe::Unknown);
+}
+
+#[cfg(unix)]
+#[test]
+fn permission_reuse_diagnosis_hint_distinguishes_gates_without_raw_leak() {
+    let dir = tempfile::tempdir().expect("diagnosis fixture");
+    let config = GatewayConfig::standard(dir.path().to_path_buf());
+    std::fs::write(&config.pid_file_path, "4242\n").expect("write fixture PID");
+    let start_identity = if cfg!(target_os = "macos") {
+        serde_json::json!({"platform":"macos","start_seconds":1,"start_microseconds":0})
+    } else {
+        serde_json::json!({"platform":"linux","start_ticks":1})
+    };
+    std::fs::write(
+        config.pid_file_path.with_extension("identity"),
+        serde_json::to_vec(&serde_json::json!({
+            "format_version": 1,
+            "pid": 4242,
+            "boot_identity": "test-boot",
+            "start_identity": start_identity,
+        }))
+        .expect("serialize fixture identity"),
+    )
+    .expect("write fixture identity");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(
+            config.pid_file_path.with_extension("identity"),
+            std::fs::Permissions::from_mode(0o600),
+        )
+        .expect("protect fixture identity");
+    }
+    let error = resolve_gateway_status_for_config(
+        &config,
+        Err(effigy_gateway::GatewayError::ProcessStateUnknown { pid: 4242 }),
+    )
+    .expect_err("unknown stays an error");
+    let message = error.to_string();
+    assert!(message.contains("cannot determine gateway state"));
+    assert!(message.contains("current diagnosis: record="));
+    assert!(message.contains("no signal was sent"));
+    assert!(message.contains("left in place for reconciliation"));
+    // Labels only: no raw ps bytes, digests, paths, or credentials.
+    assert!(!message.contains("digest"));
+    assert!(!message.contains("target_digest"));
+    assert!(!message.contains("argv"));
+    assert!(message.len() < 4096, "diagnosis stays bounded");
+
+    // Confirmed absence still resolves to stopped, not unknown.
+    let stopped =
+        resolve_gateway_status_for_config(&config, Err(effigy_gateway::GatewayError::NotRunning))
+            .expect("absence resolves");
+    assert!(stopped.is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn permission_reuse_headless_flag_grants_no_privilege_and_implies_no_tty() {
+    // The headless UI flag selects the managed runtime, not privilege: the
+    // bounded reader still requires a real terminal on stdin, and elevation
+    // selection still refuses root/escalated callers the same way.
+    let digest = "a".repeat(64);
+    let target = "b".repeat(64);
+    assert!(!elevation::identity_reader_invocation_allowed_for_test(
+        false, &digest, &target
+    ));
+    assert!(elevation::identity_reader_invocation_allowed_for_test(
+        true, &digest, &target
+    ));
+    assert!(!elevation::identity_reader_invocation_allowed_for_test(
+        true, "short", &target
+    ));
+    // Setting the managed headless marker must not change the gate.
+    std::env::set_var("EFFIGY_MANAGED_HEADLESS", "1");
+    let gated = elevation::identity_reader_invocation_allowed_for_test(false, &digest, &target);
+    std::env::remove_var("EFFIGY_MANAGED_HEADLESS");
+    assert!(!gated, "headless flag must not grant noninteractive reads");
+}
+
+#[cfg(unix)]
+#[test]
+fn permission_reuse_read_only_status_cannot_authorize_stop_or_replacement() {
+    use std::cell::Cell;
+    // An unknown generation refuses signals entirely.
+    let signals = Cell::new(0);
+    let refused = daemon::stop_gateway_process_with_test_control(
+        4242,
+        |_| effigy_gateway::server::GatewayProcessProbe::Running,
+        || GatewayIdentityProbe::Unknown,
+        |_, _| {
+            signals.set(signals.get() + 1);
+            Ok(())
+        },
+        |_| {},
+    );
+    assert!(refused.is_err());
+    assert_eq!(signals.get(), 0, "unknown identity dispatches no signal");
+
+    // A readable different generation is absence, not a stop target.
+    let mismatch_signals = Cell::new(0);
+    daemon::stop_gateway_process_with_test_control(
+        4242,
+        |_| effigy_gateway::server::GatewayProcessProbe::Running,
+        || GatewayIdentityProbe::Mismatch,
+        |_, _| {
+            mismatch_signals.set(mismatch_signals.get() + 1);
+            Ok(())
+        },
+        |_| {},
+    )
+    .expect("mismatch reconciles without signaling");
+    assert_eq!(mismatch_signals.get(), 0);
+}

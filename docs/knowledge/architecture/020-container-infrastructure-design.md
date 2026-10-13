@@ -780,6 +780,44 @@ selectors remain `test:gateway:legacy-recovery`,
 `check:gateway:legacy-recovery`, `fmt:check`, and
 `qa:docs:gateway-identity` when docs change.
 
+#### Follow-up correction in task 154 (structural diagnosis only, no trust change)
+
+The privileged-gateway report (`dev --headless` and `gateway status` returning
+`ProcessStateUnknown` for a recorded root-owned gateway) was classified
+without live inspection: at both the reported source and current main,
+liveness uses `ps -p <pid> -o pid= -o stat=`, and the same `ProcessStateUnknown`
+also covers a denied or otherwise failed live-identity read. The historical raw
+capture was not observed and is not guessed at. No PID, sidecar, ownership,
+route, or traffic observation alone authenticates the daemon.
+
+What changed is diagnostics, not trust. `server::diagnose_gateway_status`
+re-probes read-only (record shape, `ps` outcome, local identity outcome) and
+`server::render_gateway_diagnosis` renders fixed labels only
+(`record=`, `process=`, `identity=`), with no raw probe bytes, paths,
+digests, arguments, environment, or credentials. Status, managed-start
+preflight classification, `up`, and `down` append this as a `current diagnosis`
+hint on an already-Unknown failure; the verified-status outcome still governs
+every decision, and Unknown is never reported running, never cleaned up, and
+never replaced. A positively verified matching live generation still reuses
+without a second daemon, record removal, or signal; mismatch, reused, foreign,
+legacy, malformed, symlink, and unknown identities keep their existing
+refusals, and read-only reuse never authorizes stop or replacement. The
+headless UI flag neither grants privilege nor changes the terminal
+requirement: the bounded read-only reader still needs a real terminal on
+stdin, and declined, timed-out, or noninteractive reads stay Unknown.
+
+Truly noninteractive cross-UID verification remains unavailable with approved
+interfaces: macOS `PROC_PIDTBSDINFO` applies `CHECK_SAME_USER` (cross-uid
+reads need `PRIV_GLOBAL_PROC_INFO`), and the Q-002 reader requires an
+interactive terminal. No new helper, privilege, socket trust, authentication
+waiver, timeout/ retry change, or unsafe/FFI repair is implemented here. The
+bounded design evidence for a prompt-free read-only attestation remains the
+separate [read-only daemon attestation proposal](034-gateway-legacy-upgrade-recovery.md#proposed-read-only-root-daemon-attestation),
+which needs its own operator ruling before any implementation. Private
+controls: `test:gateway:permission-reuse` (deterministic refusal plus genuine
+private owned-process reuse through the production callers, with structural
+diagnosis controls); no real cross-UID qualification is claimed.
+
 ### Gateway process identity ruling
 
 Tom ruled on 2026-10-06: "Approved, but you need to fix this so other users

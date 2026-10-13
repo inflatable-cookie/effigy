@@ -424,6 +424,208 @@ impl GatewayProcessProbe {
     pub fn is_unknown(self) -> bool {
         matches!(self, Self::Unknown)
     }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Running => "running",
+            Self::ConfirmedAbsent => "confirmed-absent",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+/// Which persisted record shape a read-only diagnosis observed.
+///
+/// Labels only; no file bytes, paths, digests, or process arguments are
+/// exposed. Used to separate a liveness-capture failure from an identity
+/// verification failure without leaking raw probe output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GatewayRecordKind {
+    /// A versioned sidecar is present (valid or not); identity decides.
+    Authenticated,
+    /// Decimal PID with no sidecar at all.
+    LegacyPidOnly,
+    /// Present but untrusted: malformed, mismatched, unsafe, or symlink.
+    UntrustedOrMalformed,
+    /// No PID record at all.
+    Absent,
+    /// The record names this process; never probed or signalled.
+    SelfReference,
+}
+
+impl GatewayRecordKind {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Authenticated => "authenticated",
+            Self::LegacyPidOnly => "legacy-pid-only",
+            Self::UntrustedOrMalformed => "untrusted-or-malformed",
+            Self::Absent => "absent",
+            Self::SelfReference => "self-reference",
+        }
+    }
+}
+
+/// Local identity outcome used by the read-only diagnosis.
+///
+/// `PermissionDenied` is distinct from `Unknown`: the kernel refused this
+/// caller access to the live process identity. No elevation is performed
+/// here; the runner's bounded reader remains the only approved follow-up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GatewayIdentityOutcome {
+    /// PID, boot identity, and precise start identity all match.
+    Matched,
+    /// A readable live generation differs from the record.
+    Mismatch,
+    /// The kernel denied this caller access to the live identity.
+    PermissionDenied,
+    /// Identity could not be read or trusted.
+    Unknown,
+    /// No identity check applied (absent/legacy/self/unprobed record).
+    NotChecked,
+}
+
+impl GatewayIdentityOutcome {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Matched => "matched",
+            Self::Mismatch => "mismatch",
+            Self::PermissionDenied => "permission-denied",
+            Self::Unknown => "unknown",
+            Self::NotChecked => "not-checked",
+        }
+    }
+}
+
+/// Bounded structural diagnosis of the current gateway state.
+///
+/// Read-only: file and liveness probes only, no signals, no record
+/// mutation, no elevation, no raw output. A diagnosis describes the current
+/// observation, not the historical cause of an earlier failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GatewayStatusDiagnosis {
+    /// Recorded PID, when a PID record was read.
+    pub pid: Option<u32>,
+    /// Which record shape was observed.
+    pub record: GatewayRecordKind,
+    /// Liveness probe result, when a PID was probed.
+    pub process_probe: Option<GatewayProcessProbe>,
+    /// Local identity outcome, when an authenticated record was checked.
+    pub identity: GatewayIdentityOutcome,
+}
+
+/// Diagnose the current gateway state with the production probes.
+///
+/// Never fails closed into a lifecycle decision: callers must still branch
+/// on the verified-status result. The diagnosis is an honest same-field
+/// hint only and never substitutes for a successful identity match.
+pub fn diagnose_gateway_status(config: &GatewayConfig) -> GatewayStatusDiagnosis {
+    diagnose_gateway_status_with(config, probe_gateway_process, identity::probe_live_identity)
+}
+
+fn diagnose_gateway_status_with(
+    config: &GatewayConfig,
+    process_probe: impl Fn(u32) -> GatewayProcessProbe,
+    identity_probe: impl Fn(&identity::GatewayIdentityRecord) -> GatewayIdentityProbe,
+) -> GatewayStatusDiagnosis {
+    if config.validate_private_mode().is_err() {
+        return GatewayStatusDiagnosis {
+            pid: None,
+            record: GatewayRecordKind::UntrustedOrMalformed,
+            process_probe: None,
+            identity: GatewayIdentityOutcome::NotChecked,
+        };
+    }
+    let snapshot = match identity::read_snapshot(&config.pid_file_path) {
+        Ok(Some(snapshot)) => snapshot,
+        Ok(None) => {
+            return GatewayStatusDiagnosis {
+                pid: None,
+                record: GatewayRecordKind::Absent,
+                process_probe: None,
+                identity: GatewayIdentityOutcome::NotChecked,
+            };
+        }
+        Err(_) => {
+            return GatewayStatusDiagnosis {
+                pid: None,
+                record: GatewayRecordKind::UntrustedOrMalformed,
+                process_probe: None,
+                identity: GatewayIdentityOutcome::NotChecked,
+            };
+        }
+    };
+    let pid = snapshot.pid();
+    if pid == std::process::id() {
+        return GatewayStatusDiagnosis {
+            pid: Some(pid),
+            record: GatewayRecordKind::SelfReference,
+            process_probe: None,
+            identity: GatewayIdentityOutcome::NotChecked,
+        };
+    }
+    let Some(record) = snapshot.record() else {
+        if snapshot.is_legacy_pid_only() {
+            let probe = process_probe(pid);
+            return GatewayStatusDiagnosis {
+                pid: Some(pid),
+                record: GatewayRecordKind::LegacyPidOnly,
+                process_probe: Some(probe),
+                identity: GatewayIdentityOutcome::NotChecked,
+            };
+        }
+        return GatewayStatusDiagnosis {
+            pid: Some(pid),
+            record: GatewayRecordKind::UntrustedOrMalformed,
+            process_probe: None,
+            identity: GatewayIdentityOutcome::NotChecked,
+        };
+    };
+    let probe = process_probe(pid);
+    if probe != GatewayProcessProbe::Running {
+        return GatewayStatusDiagnosis {
+            pid: Some(pid),
+            record: GatewayRecordKind::Authenticated,
+            process_probe: Some(probe),
+            identity: GatewayIdentityOutcome::NotChecked,
+        };
+    }
+    let identity = match identity_probe(record) {
+        GatewayIdentityProbe::Matched => GatewayIdentityOutcome::Matched,
+        GatewayIdentityProbe::Mismatch => GatewayIdentityOutcome::Mismatch,
+        GatewayIdentityProbe::PermissionDenied => GatewayIdentityOutcome::PermissionDenied,
+        GatewayIdentityProbe::Unknown => GatewayIdentityOutcome::Unknown,
+    };
+    GatewayStatusDiagnosis {
+        pid: Some(pid),
+        record: GatewayRecordKind::Authenticated,
+        process_probe: Some(probe),
+        identity,
+    }
+}
+
+/// Render a diagnosis with fixed labels only. No paths, digests, raw `ps`
+/// output, arguments, environment, or credentials are included. The headless
+/// UI flag neither grants privilege nor changes terminal requirements.
+pub fn render_gateway_diagnosis(diagnosis: &GatewayStatusDiagnosis) -> String {
+    let process = diagnosis
+        .process_probe
+        .map(GatewayProcessProbe::label)
+        .unwrap_or("not-probed");
+    let mut rendered = format!(
+        "record={} process={} identity={}",
+        diagnosis.record.label(),
+        process,
+        diagnosis.identity.label(),
+    );
+    if diagnosis.identity == GatewayIdentityOutcome::PermissionDenied {
+        rendered.push_str(
+            "; identity unreadable to this user (approve the bounded read-only check from an interactive terminal; noninteractive/headless use stays unknown)",
+        );
+    }
+    if diagnosis.record == GatewayRecordKind::LegacyPidOnly {
+        rendered.push_str("; legacy numeric-only record needs `effigy gateway recover`");
+    }
+    rendered
 }
 
 /// Captured `ps` invocation result used to classify a probe.

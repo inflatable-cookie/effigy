@@ -296,6 +296,15 @@
 "test:gateway:managed-tty" = [
   { id = "gateway-managed-tty-and-bounded-handoff", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(gateway_up_for_managed_task) | test(gateway_down_permission_denied_uses_one_lifecycle_handoff_or_preserves_unknown) | test(gateway_lifecycle_timeout_kills_and_reaps_only_its_owned_child)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 240000 },
 ]
+# Privileged gateway permission-reuse boundary: deterministic permission-denied
+# refusal plus genuine private owned-process reuse through the production
+# status and managed-start caller families, with safe structural-diagnosis
+# controls. Private fixtures and owned children only; no live gateway state,
+# sudo, or cross-UID proof is claimed.
+"test:gateway:permission-reuse" = [
+  { id = "gateway-permission-reuse-server", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-gateway --lib --filterset 'test(permission_reuse_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 240000 },
+  { id = "gateway-permission-reuse-runner", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(permission_reuse_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 240000 },
+]
 "test:install:previous-binary-preservation" = [
   { id = "install-previous-binary-preservation", run = "cargo test -p effigy -p effigy-rhai --lib previous_binary_preservation -- --nocapture", timeout_ms = 120000 },
 ]
