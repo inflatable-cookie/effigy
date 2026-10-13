@@ -76,13 +76,48 @@ secret or unknown allocation stays a lookup-only hold. This ruling introduces no
 external issuer, frozen host-run authority change, physical writer exclusion or
 production activation, and does not settle unknown predecessors.
 
-The bounded provider is being implemented under Nucleus's owning scope using
-policy packet v2, `bounded-host-runtime-docs-v1`. Its accepted callable API and
-packet are unavailable until independent review and closeout. Effigy must consume
-the actual reviewed binding, not guess an API or execute against a proposed
-packet. The exact three leaves remain mandatory. Provider, Effigy closure, local
-outcome ownership and native fresh-generation qualification form one eligibility
-gate; no component alone authorizes the protected docs job.
+### Reviewed private provider handover
+
+Nucleus #218/PR280 closed at merged source
+`8f214b6d5c52177aba08c220eccc9d0c9b2730db`, independently reviewed at
+`4c2625082543cbb73be9909971e0d6a468cdef73`. Its library exports
+`DocsInputController.attach(peer, approved)`, `allocateDocsInputs(controller)`,
+`lookupDocsInputs(controller, packet)` and
+`probeDocsInstallation(controller, packet)` from
+`hosts/paseo/src/docs-input-provider.ts`. There is no daemon RPC, CLI or
+production runtime installer. The constructor requires the genuine private
+macOS launcher/lease peer and approved context embedded in the pinned program;
+task JSON or copied packet bytes are not installed verification authority.
+
+Packet version 2, policy `bounded-host-runtime-docs-v1`, separates accepted
+host/tool-installation trust and same-UID cooperation from verified named
+bytes, exact declared inputs and fresh private allocation identity. It binds
+the installation epoch, source/resource generations, original nonrenewable
+deadline, ordered leaves, command/environment and read/write controls.
+Lookup and byte-verification budgets are shared and finite. Its execution bridge
+is null; the one installation probe is not a docs outcome. Missing ownership,
+secret, drift or expiry holds the original allocation, with no remint or cleanup
+API.
+
+The reviewed tiny private fixture demonstrates an accepted constructor path
+using `createMaintenanceSpec`, the private canary launcher and adapter lease.
+Effigy's continuation must use that actual peer path and reviewed provider
+lookup, or return a precise unsupported embedding seam. A caller-provided
+boolean, copied packet or generic wrapper is not a substitute. Any fixture tool
+pin, including the newly compiled private Effigy under test, must be embedded
+in the explicitly approved private installation context; it grants no global
+installation or protected consumer admission.
+
+This source does not establish a usable real Nucleus packet. The provider
+rejects ordinary package/TypeScript configuration paths and packed Git metadata;
+the recorded 1,080 tracked entries already exceed its 1,024-entry ceiling before
+directories, tools and controls. Nucleus owns the separate compatibility and
+finite-inventory correction. Effigy must neither omit source nor raise provider
+caps to manufacture consumer fit. Its isolated tiny-fixture binding proof can
+proceed separately with the full three leaves and all five acceptance gates.
+Provider, Effigy closure, local outcome ownership and native fresh-generation
+qualification remain one closed eligibility gate. Original #153 allowance and
+reports are preserved; its approved additional finite continuation is separate.
 
 ## Exact closure
 
