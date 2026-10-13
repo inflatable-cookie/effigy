@@ -25,6 +25,37 @@ the durable original local outcome, private resource allocation and proof,
 and distinct native fresh-generation authorization. This seam adds no scheduler,
 native issuer, production signing policy or second validation client.
 
+### Current fixture provider boundary
+
+The reviewed Nucleus input-provider preflight, at source
+`985d04e7f8309b7d69615ea9b773e54c88943496`, establishes an unsupported,
+unqualified dependency. Nucleus contract 007 and evidence 047 record no accepted
+Bun/Git fixture packet, retained tool paths or qualified allocation lifetime.
+Their source observations do not supply a frozen execution closure.
+
+`LocalOutcomeController.attach` authenticates the installed private adapter
+peer. `InstalledLocalOwner.install` creates original outcome controls under
+`local-outcomes-v1`; its request validator accepts `process.execPath`, a compiled
+`.js` program and bounded `LANG`/`LC_ALL`/`TZ` values. These APIs do not construct
+or authenticate Bun/Git distributions, their loader/system-runtime dependencies
+or consumer-visible fixture allocations. Ordinary `validationEnvironment`
+retains ambient values, including PATH, HOME and runtime options. Program hashes
+identify bytes; they do not establish provenance or cooperative no-replacement.
+
+The missing provider is a protected resource-plane fixture-input constructor
+and ownership/provenance attestor for the complete named tool, runtime,
+configuration and read/write closure, with a fresh exclusive allocation and
+finite retained lifetime. No accepted callable provider is currently established.
+Extending the outcome component would require separate implementation scope
+and genuine distribution/shared-runtime evidence; neither a constructor nor a
+signature can manufacture that evidence. This is not resolved by another
+installed-tool discovery task or a wrapper around the outcome APIs.
+
+The exact three docs leaves remain required. No builtin-only substitute, partial
+producer eligibility or fixture qualification follows from this preflight.
+Execution remains unavailable until the owning plane supplies the accepted
+input and resource evidence.
+
 ## Exact closure
 
 The first supported closure is the three ordered host docs leaves selected by
