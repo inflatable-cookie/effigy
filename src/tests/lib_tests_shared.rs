@@ -9,10 +9,11 @@ pub(super) use effigy_cli::{
     DemoListQuery, DemoListStatus, DemoSubcommand, DeployArgs, DeploySubcommand, DepsArgs,
     DepsManager, DepsSubcommand, DocsArgs, DocsBlockRequirement, DocsSubcommand, DoctorArgs,
     DraftArgs, DraftsArgs, ExecArgs, GatewayArgs, GatewayPrivateArgs, GatewaySubcommand, GraphArgs,
-    GraphSubcommand, HelpGroup, HelpTopic, ReleaseArgs, ReleaseEvidenceSubcommand,
-    ReleaseSubcommand, RhaiArgs, RhaiSubcommand, ServiceArgs, ServiceSubcommand, SkillArgs,
-    SkillStdioMode, SkillSubcommand, StateArgs, StateSubcommand, SystemArgs, SystemSubcommand,
-    TaskInvocation, TasksArgs, TasksQaCommand, TasksRequestCommand, UninstallArgs, WorkspaceArgs,
+    GraphSubcommand, HelpGroup, HelpTopic, InternalGatewayArgs, ReleaseArgs,
+    ReleaseEvidenceSubcommand, ReleaseSubcommand, RhaiArgs, RhaiSubcommand, ServiceArgs,
+    ServiceSubcommand, SkillArgs, SkillStdioMode, SkillSubcommand, StateArgs, StateSubcommand,
+    SystemArgs, SystemSubcommand, TaskInvocation, TasksArgs, TasksQaCommand, TasksRequestCommand,
+    UninstallArgs, WorkspaceArgs,
 };
 pub(super) use effigy_ui::PlainRenderer;
 pub(super) use std::path::PathBuf;

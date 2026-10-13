@@ -1,5 +1,6 @@
 use crate::tests::prelude::{
-    parse_command, Command, GatewayArgs, GatewayPrivateArgs, GatewaySubcommand, HelpTopic, PathBuf,
+    parse_command, Command, GatewayArgs, GatewayPrivateArgs, GatewaySubcommand, HelpTopic,
+    InternalGatewayArgs, PathBuf,
 };
 
 #[test]
@@ -186,6 +187,67 @@ fn parse_gateway_recover_yes_does_not_imply_adopt() {
             },
             private: None,
             output_json: false,
+        })
+    );
+}
+
+#[test]
+fn parse_gateway_setup_listener_handoff_supports_json() {
+    let cmd = parse_command(vec![
+        "gateway".to_owned(),
+        "setup-listener-handoff".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Gateway(GatewayArgs {
+            subcommand: GatewaySubcommand::SetupListenerHandoff,
+            private: None,
+            output_json: true,
+        })
+    );
+}
+
+#[test]
+fn parse_gateway_setup_listener_handoff_refuses_private_root() {
+    let error = parse_command(vec![
+        "gateway".to_owned(),
+        "setup-listener-handoff".to_owned(),
+        "--private-state-root".to_owned(),
+        "/tmp/effigy-gateway-private".to_owned(),
+    ])
+    .expect_err("private state root is not a listener-handoff flag");
+    assert!(
+        error.to_string().contains("unknown"),
+        "expected an unknown-argument refusal, got {error}"
+    );
+}
+
+#[test]
+fn parse_gateway_run_accepts_listener_handoff_flag() {
+    let cmd = parse_command(vec![
+        "__gateway-run".to_owned(),
+        "--listener-handoff".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::InternalGateway(InternalGatewayArgs {
+            private: None,
+            listener_handoff: true,
+        })
+    );
+}
+
+#[test]
+fn parse_gateway_run_defaults_listener_handoff_off() {
+    let cmd = parse_command(vec!["__gateway-run".to_owned()]).expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::InternalGateway(InternalGatewayArgs {
+            private: None,
+            listener_handoff: false,
         })
     );
 }

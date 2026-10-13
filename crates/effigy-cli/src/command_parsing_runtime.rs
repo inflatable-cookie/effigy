@@ -31,6 +31,7 @@ where
             adopt_candidate: false,
         },
         "setup-tls" => GatewaySubcommand::SetupTls,
+        "setup-listener-handoff" => GatewaySubcommand::SetupListenerHandoff,
         other => return Err(unknown_argument(other)),
     };
 
