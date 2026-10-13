@@ -119,6 +119,40 @@ Provider, Effigy closure, local outcome ownership and native fresh-generation
 qualification remain one closed eligibility gate. Original #153 allowance and
 reports are preserved; its approved additional finite continuation is separate.
 
+### Installed named-source inventory boundary
+
+The reviewed provider at `8f214b6d5c52177aba08c220eccc9d0c9b2730db`
+does not retain the complete approved installed Northstar selection. Contract
+042 and `src/runner/skill_command.rs` require the direct `SKILL.md` marker
+alongside `effigy.toml` for named selection. The marker is a required input to
+this contract's frozen selection, even though the retired checker itself does
+not read it.
+
+In `hosts/paseo/src/docs-input-provider.ts`, context validation accepts only
+`skill/effigy.toml` and `skill/scripts/retired-concepts.ts` under `skill/`.
+Declaring `skill/SKILL.md` therefore produces `docs input: unsupported skill
+input`. Authenticated lookup separately requires the retained skill inventory
+to equal those two files plus `scripts/`; adding the marker after allocation
+produces `docs input: namespace/configuration changed`. Neither route supplies
+an owned marker binding.
+
+An input declared under `source/` must have its canonical origin beneath the
+synthetic source root. Relabelling the installed marker as a source input fails
+`docs input: source membership mismatch`. Creating a project-local skill copy
+would instead change contract 042's selected source to a project-local catalog;
+it does not freeze the approved installed selection. An explicit-path override
+would likewise replace the required named selection. Reading the installed
+marker outside the provider inventory supplies no private retained identity or
+authenticated lifetime check for that input.
+
+These are source-level refusal conditions, not a genuine private execution
+proof. No provider allocation, installation probe or docs outcome is established
+by this assessment. The reviewed tiny fixture still establishes its documented
+constructor path and tool correspondence, but the installed named-source
+closure remains unavailable pending an owning-provider inventory correction or
+an explicitly approved change to the source-selection premise. Effigy does not
+alter the provider, add an undeclared read or substitute a checker to bridge it.
+
 ## Exact closure
 
 The first supported closure is the three ordered host docs leaves selected by
