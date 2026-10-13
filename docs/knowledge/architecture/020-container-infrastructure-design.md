@@ -805,9 +805,10 @@ refusals, and read-only reuse never authorizes stop or replacement. The
 headless UI flag neither grants privilege nor changes the terminal
 requirement: the bounded read-only reader still needs a real terminal on
 stdin, and declined, timed-out, or noninteractive reads stay Unknown.
-Review revision: permission-denied `up` and managed-start preflights now
-refuse noninteractive input with that same bounded diagnosis before launching
-any replacement, so every Unknown refusal path carries the gate labels.
+Review revision: permission-denied `up`, `down`, and managed-start
+preflights now refuse noninteractive input with that same bounded diagnosis
+before launching any replacement or signal, so every Unknown refusal path
+carries the gate labels.
 
 Truly noninteractive cross-UID verification remains unavailable with approved
 interfaces: macOS `PROC_PIDTBSDINFO` applies `CHECK_SAME_USER` (cross-uid
