@@ -47,6 +47,7 @@ pub mod stats;
 pub mod tcp_alias;
 pub mod tls;
 pub mod trust;
+pub mod user_runtime;
 
 pub use error::GatewayError;
 pub use routes::{Route, RouteTable};

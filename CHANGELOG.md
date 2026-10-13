@@ -78,6 +78,19 @@ During v0.x, MINOR bumps may include breaking changes.
   signalled or replaced, and a positively verified matching live gateway still
   reuses without a second daemon. Noninteractive cross-UID verification remains
   unsupported with approved interfaces; no new privilege or helper is added.
+- User-owned gateway migration boundary (task 155, design and private
+  qualification only; no live migration ran): a finite seven-entry privilege
+  inventory, a read-only user-runtime readiness gate over injected setup
+  evidence (bootstrap and route-driven `/etc/resolver` files, `lo0` aliases,
+  lowport bind permission, CA trust, old-generation absence), byte-exact
+  `routes.json`/`loopback-ips.json` migration preservation with a named old
+  to new generation transition, and safe refusal for stale, unknown, symlink,
+  UID-ambiguous, route-edited, and bind-failure cases. Native same-UID proof
+  on this machine binds `127.0.0.1:180` once and reports `EACCES` (errno 13),
+  so exact `127.0.0.1:80`/`443` service without privilege is an unsupported
+  gate; the one missing capability (`loopback-privileged-listener-handoff`)
+  is a design boundary, not a supported start path. No operator defaults,
+  endpoints, or trust behavior change.
 
 ### Changed
 - Host-admitted standard direct-command tasks bound to a container now execute

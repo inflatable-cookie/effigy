@@ -977,6 +977,66 @@ live cross-UID stop or install new packet-filter, socket-activation or privilege
 helper machinery. A required new mechanism must be returned as a concrete
 bounded design boundary, with its compatibility and network exposure stated.
 
+### Qualification result (task 155)
+
+Status: assessed on corrected main. The exact loopback lowports cannot be
+served by an unprivileged steady-state daemon with the existing approved
+interfaces, so no new supported user start path is claimed. The bounded
+corrections below are implemented and proved; the one missing capability is
+returned as a design boundary.
+
+Finite privilege inventory (`crates/effigy-gateway/src/user_runtime.rs`,
+`privilege_inventory`, seven entries): `lo0` aliases, the bootstrap
+`/etc/resolver/test` file, route-driven `/etc/resolver/<suffix>` files, TCP
+`127.0.0.1:80`/`443` binds, CA trust installation, and the old root
+generation stop stay administrator-owned; gateway records, route table,
+loopback registry, certificates and logs stay operator-owned with no
+recursive ownership change.
+
+Native port permission evidence (same UID 501, this machine, `TcpListener`
+bind of `127.0.0.1:180` once, own socket closed immediately): `EACCES`
+(errno 13, permission denied). The current endpoints (`80`, `443`, `15353`)
+were never bound and non-lowports are refused by the probe guard. Together
+with the XNU reserved-port branch cited above, exact `127.0.0.1:80`/`443`
+service without privilege is an unsupported gate, not a configuration detail.
+DNS UDP `127.0.0.1:15353` is above 1024 and binds without privilege; its
+resolver file still needs the administrator.
+
+Read-only readiness gate (`check_user_runtime_readiness`): pure, injected
+setup evidence only, no I/O, elevation, or mutation. It refuses the user
+start unless the bootstrap resolver, route resolvers, loopback aliases,
+lowport bind permission, CA trust, and old-generation absence all hold, and
+it names each missing fact with a bounded label-only diagnosis. A user daemon
+never enters automatic full-gateway elevation for setup, never writes
+`/etc/resolver` itself, never erases setup on ordinary stop, and never
+claims missing DNS ready.
+
+One missing capability (`loopback-privileged-listener-handoff`, design
+boundary only, not implemented): a loopback-only privileged listener handoff
+that pre-binds TCP `127.0.0.1:80`/`443` outside the user daemon and hands
+socket ownership to it, with launchd-owned lifetime (reboot restores it), no
+wildcard listener, no URL change, no packet filter, and no new standing
+Effigy helper. It needs a separate operator ruling plus genuine cross-boot
+proof before any migration may depend on it.
+
+Migration preservation (synthetic fixtures and owned children only): the
+complete `routes.json` envelope (including the manual `acowtancy.test` upstream
+`127.0.0.1:43210` and sibling routes with ownership and metadata) and
+`loopback-ips.json` survive every refusal byte-for-byte; stale, unknown,
+symlink, UID-ambiguous, route-edited, and bind-failure cases hold with
+evidence preserved; the old exact generation (real owned child) is confirmed
+absent before any successor, and the transition names both generations.
+Selectors `test:gateway:user-runtime` and `check:gateway:user-runtime`.
+
+Operator-run shape once the capability exists (existing commands only; Tom
+executes later, nothing here ran them live): confirm the old generation with
+`effigy gateway status`, stop it through the bounded interactive path
+(`effigy gateway recover --adopt-candidate` for a live daemon,
+`effigy gateway recover --yes` only for a confirmed-absent record), verify
+absence with `effigy gateway status`, then start the user gateway. Unexecuted:
+the privileged listener handoff, every administrator setup step, the live
+cross-UID stop, and the reboot-restore proof.
+
 ## Proposed read-only root-daemon attestation
 
 This is a concrete proposal for a separate operator ruling if Q-002's
