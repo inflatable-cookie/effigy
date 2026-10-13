@@ -924,6 +924,59 @@ standing privilege. Live role evidence does not prove historical spawn ownership
 or eliminate a same-path impostor; the last identity-check-to-signal race remains
 explicitly disclosed. Both capabilities are implemented as specified. Residual limits below still apply.
 
+## Operator-selected user-owned gateway route
+
+Tom's 2026-10-13 ruling, relayed verbatim by the Acowtancy owner, is:
+"I'm happy for the gateway to restart as me, would make things simpler."
+The selected next route is a user-owned gateway with separately bounded
+administrator setup and an operator-run migration. This is design and private
+qualification authority; no live gateway restart, administrator action or
+machine configuration change is authorized for an agent. The root-daemon
+attestation proposal below remains unimplemented and is not this route's
+prerequisite.
+
+Current root dependencies must be separated explicitly:
+
+- `/etc/resolver/test` and any declared route-specific resolver suffixes require
+  administrator writes. The current daemon reconciles route-driven files
+  directly, which assumes root. A user daemon must report missing setup and
+  leave those files to the explicit setup path, rather than silently prompting
+  or failing to provide a newly registered domain's DNS.
+- Creating `lo0` aliases for the bounded `127.1.0.1`–`127.1.0.50` pool requires
+  administrator network setup. The allocation registry is user state, separate
+  from those interface changes. Alias setup may need repeating after reboot;
+  "one-time" does not establish persistent interface configuration.
+- HTTP and HTTPS currently bind `127.0.0.1:80` and `127.0.0.1:443`. Effigy
+  currently treats all Unix low ports as requiring elevation. The claim that
+  recent macOS permits every unprivileged low-port bind is insufficient:
+  [Apple's IPv4 bind implementation](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/netinet/in_pcb.c)
+  checks reserved-port privilege for a specific non-wildcard address. That
+  source observation is not qualification of this machine's installed kernel.
+  The reviewed route must establish actual loopback bind support or state the
+  additional bounded setup mechanism needed. It must not expose a wildcard
+  listener or change URLs to hide this distinction.
+- Installing CA trust is an administrator operation when required; ongoing
+  certificate, route and registry writes must remain readable and writable by
+  the authenticated operator. Existing CA trust and credentials must not be
+  replaced as an incidental migration step.
+
+Migration must use the existing fresh-generation verification and bounded
+interactive root lifecycle path to stop the old gateway. Preserve the complete
+route table, its route ownership and the loopback assignments; specifically,
+the reported manual `acowtancy.test` upstream `127.0.0.1:43210` belongs to the
+UI-sweep checkout and must not be regenerated from the main checkout. Do not
+start a successor until the old exact generation is confirmed stopped.
+Ambiguous ownership, replacement, concurrent route edits or uncertain effects
+hold the migration and preserve its evidence. No recursive ownership change,
+PID-only signal or unknown-state cleanup follows from this ruling.
+
+The final implementation must provide the actual reviewed setup and migration
+commands with their remaining administrator requirements. Those commands are
+for Tom to execute later; neither this ruling nor private fixtures qualify a
+live cross-UID stop or install new packet-filter, socket-activation or privileged
+helper machinery. A required new mechanism must be returned as a concrete
+bounded design boundary, with its compatibility and network exposure stated.
+
 ## Proposed read-only root-daemon attestation
 
 This is a concrete proposal for a separate operator ruling if Q-002's
