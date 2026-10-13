@@ -108,16 +108,52 @@ pin, including the newly compiled private Effigy under test, must be embedded
 in the explicitly approved private installation context; it grants no global
 installation or protected consumer admission.
 
-This source does not establish a usable real Nucleus packet. The provider
-rejects ordinary package/TypeScript configuration paths and packed Git metadata;
-the recorded 1,080 tracked entries already exceed its 1,024-entry ceiling before
-directories, tools and controls. Nucleus owns the separate compatibility and
+At the #218 handover, that source did not establish a usable real Nucleus
+packet. Its provider rejected ordinary package/TypeScript configuration paths
+and packed Git metadata; the recorded 1,080 tracked entries exceeded its
+1,024-entry ceiling before directories, tools and controls. Nucleus owns the separate compatibility and
 finite-inventory correction. Effigy must neither omit source nor raise provider
 caps to manufacture consumer fit. Its isolated tiny-fixture binding proof can
 proceed separately with the full three leaves and all five acceptance gates.
 Provider, Effigy closure, local outcome ownership and native fresh-generation
 qualification remain one closed eligibility gate. Original #153 allowance and
 reports are preserved; its approved additional finite continuation is separate.
+
+### Reviewed source-policy version 3 handover
+
+Nucleus #219/PR281 closed at source
+`1e1d5f0d19f1ab32e38944a969ffa4b6fb1d1ad6`, independently reviewed at
+`fdaf2cf77952421b1c4357b2bf7497a61fa4508f`. The same library callable names
+remain. A context with exact `version: 3` and policy
+`bounded-host-runtime-docs-source-v1` produces packet version 3. Legacy contexts
+have no version field and use `bounded-host-runtime-docs-v1`, producing packet
+version 2. Mixed or unknown versions refuse. Both use the historical effect slot
+and intent; selecting another version cannot remint the original allocation.
+
+Version 3 raises the entry ceiling to 2,048 with 64 provider entries reserved;
+byte, footprint, packet and filesystem-reserve bounds remain unchanged. It
+permits source package/TypeScript configuration files only as inert data. The
+unchanged retired checker runs by its absolute skill entry with Bun's literal
+`run --no-install --no-env-file --no-macros` flags, private skill working
+directory and `--repo` private source argument. Its source tree is not imported
+as modules or configuration. These distinctions are version-specific; they do
+not silently expand a legacy packet or an active Effigy brief.
+
+The reviewed private proof ran actual Bun/Git and the unchanged checker with
+expected rejection and empty-rule success; it observed no planted marker or
+network access. Tool-byte drift and timeout enforcement were not exercised by
+that proof. The provider still does not execute Effigy, and its execution bridge
+is null. Real Nucleus acceptance remains blocked by denied tracked source locks;
+Bun configuration, environment files, dependency directories, Git attributes,
+submodules and packed Git metadata also remain denied. Nucleus owns the separate
+lock-policy correction. No usable real-project packet or native admission is
+established by this handover.
+
+Effigy #153's active continuation remains pinned to the reviewed #218 tiny
+fixture and its existing finite budget. This #219 handover is retained for
+normal next-run/review mapping only within approved scope; no worker prompt,
+interruption, allowance reset, source omission or implicit version migration
+follows from it. Full three-leaf closure and all five gates remain required.
 
 ## Exact closure
 
