@@ -109,6 +109,10 @@ pub enum ActivationFailure {
     Other,
 }
 
+/// Errno mapping for the launchd activation call, which exists only on
+/// macOS; on other platforms no activation is attempted and the enum's
+/// `Other` label is never produced.
+#[cfg(target_os = "macos")]
 impl ActivationFailure {
     fn from_errno(errno: i32) -> Self {
         match errno {
