@@ -155,6 +155,30 @@ normal next-run/review mapping only within approved scope; no worker prompt,
 interruption, allowance reset, source omission or implicit version migration
 follows from it. Full three-leaf closure and all five gates remain required.
 
+### Required named-skill marker boundary
+
+The #153 continuation stopped at a concrete provider inventory mismatch.
+Contract 042 and Effigy's named-skill resolver require the direct `SKILL.md`
+marker. At reviewed provider pins #218 (`8f214b6d`) and #219 (`1e1d5f0d`), the
+declaration allowlist accepts only the skill manifest and retired script; the
+lookup also requires that exact retained inventory. The installed marker cannot
+be declared, relabelled as source, or added after allocation within that contract.
+No allocation, installation probe or docs outcome was issued by this attempt.
+
+Under the existing approved full-three-leaf goal, Effigy selects the bounded
+provider-inventory correction: Nucleus must retain the exact installed marker
+with its declared bytes, identity, allocation lifetime and drift checks, updating
+both declaration validation and retained-inventory enforcement through its
+normal reviewed scope. Named selection remains unchanged. An undeclared read,
+project-local substitute, explicit-path bypass or marker waiver is unsupported.
+A marker hash alone is correspondence, not allocation or installer authority.
+
+The same #153 task, worker, workspace and pushed boundary assessment are kept.
+Its current wave's original deadline and earlier closed allowance remain intact.
+Continuation waits for the actual reviewed provider correction and exact packet
+mapping; it does not reuse old callbacks, renew an allocation or establish any
+of the five unproved acceptance gates.
+
 ## Exact closure
 
 The first supported closure is the three ordered host docs leaves selected by
