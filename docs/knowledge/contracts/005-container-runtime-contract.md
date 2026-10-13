@@ -1269,7 +1269,56 @@ returned HTTP 200. This proves the reported launch failure is resolved on the
 existing running stack; it is not a fresh-stack bootstrap claim. No mount
 restructuring, manual chown/chmod, reseed, stack restart or VM restart occurred.
 
+## Owned-child exit observation qualification — 2026-10-13
+
+Tom's standing bounded hybrid approval and explicit "OK, coordinate with effigy
+to get this done" authorize qualification of the generic owned-child observation
+and published dependent-replacement path. This extends the existing owned-stop
+repair scope; it does not authorize another consumer attempt or runtime cleanup.
+
+The retained `0412cc7b` Reference attempt selected `owner_unverified`, then both
+dependent supervisor logs reported `owned child exit observation was malformed`.
+The published dependency-stop path propagated that error before relaunch.
+Front/admin listener files remained present as `unavailable`; their retained
+identities do not prove current process liveness or death. The owner-verification
+subfailure and actual malformed process-table capture are not established.
+
+Qualification must first exercise the actual production path in isolated private
+host fixtures: published dependency replacement, new tuple/assignments, native
+owned-group settlement and cleanup, with siblings and foreign processes
+preserved. Valid active/exited/zombie observations must remain distinct from
+empty, malformed, unreadable, deadline and failed inspection. No parser fallback,
+longer deadline, fabricated completion or weakened identity predicate may turn
+uncertainty into success.
+
+Only bounded structural evidence may be added when necessary: exact owned
+PID/boot/start/group identity, capture byte count and digest, UTF-8/token/state
+classification, result/exit/deadline/capture category and timing. Arbitrary raw
+output, environment, commands and secrets are excluded. Any demonstrated defect
+must be corrected narrowly; otherwise the exact missing observation or capability
+remains explicit. The existing owned-stop correction is not presumed to cure
+this capture without independent controlled proof, exact-head review/CI and
+coherent main assurance. No consumer repin or retry follows from this policy.
+
 ## Private legacy MinIO fixture distribution — 2026-10-12
+
+### Underlay scope correction — 2026-10-13
+
+Tom's subsequent ruling is: "We're supposed to be dropping minio for silo -
+this is such a silly waste of time and effort!" For Underlay profile acceptance,
+the private legacy MinIO parity/package prerequisite is withdrawn. Further
+MinIO packaging, native qualification and review intake for that prerequisite
+stop; the existing source, unqualified artifact and receipts remain preserved.
+No deletion, abandonment, runtime cleanup or qualification follows from this
+ruling.
+
+The bundle owner now owns an explicitly named Silo container/hybrid proof and
+default migration through its normal checked scope. Silo must retain its own
+identity and contract; it is not a substitution under a MinIO label. This ruling
+does not itself change the shipped catalog, prove Silo acceptance or authorize
+release, installation or existing-data effects. The older private-package ruling
+below remains historical context, not continuing authority for Underlay's
+withdrawn prerequisite.
 
 Tom's recorded ruling is: "Authorize separately bounded private fixture-only
 package qualification; no shared catalog/default change or publication."
