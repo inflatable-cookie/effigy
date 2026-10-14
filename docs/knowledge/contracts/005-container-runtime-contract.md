@@ -146,6 +146,11 @@ restarts or loses readiness, Effigy stops the dependent generation and starts
 it with the current endpoint values.
 
 Detached activation records admitted context after a successful Compose launch.
+A running stack without that original admission refuses detached reconciliation;
+current inputs cannot establish a replacement baseline. If recording failed,
+JSON recovery is null and human advice grants no retry authority. Detached JSON
+retains closed-vocabulary managed-listener readiness observations (including HTTP
+status mismatch) without copying backend output, process names or arguments.
 Inventory, exec readiness and exposure failures retain partial/unavailable
 state and do not tear down or restart running services. Reconciliation with
 `effigy container up --detach` verifies the exact canonical source/context and

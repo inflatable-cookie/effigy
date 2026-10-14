@@ -166,6 +166,8 @@ An owned backing replacement updates its TCP target through the existing locked
 route transaction, releasing the old own association without changing foreign
 or shared route claims. Private fake-transport/process evidence qualifies this
 adapter path, not a real engine or elevated gateway daemon.
+For an unscoped checkout the inspected scope label must also be absent; an
+unexpected, null, empty or unreadable label is not absence-to-absence proof.
 
 ### Detached admission at publication
 

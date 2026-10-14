@@ -10109,6 +10109,7 @@ fn cli_workspace_binding_handoff_stops_environment_after_return() {
         .env("PATH", path)
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
         .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
+        .env("EFFIGY_TEST_SERVICE_STATE_FILE", root.join("service-state"))
         .env("EFFIGY_TEST_OWNED_INSPECT_FILE", &inspect)
         .env("EFFIGY_TEST_OWNED_CHECKOUT", &canonical_root)
         .env("EFFIGY_TEST_SKIP_WORKSPACE_EFFIGY_HANDOFF", "1")
@@ -10262,6 +10263,7 @@ fn cli_container_falls_back_to_colima_nerdctl_when_docker_is_missing() {
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
         .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
         .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
+        .env("EFFIGY_TEST_SERVICE_STATE_FILE", root.join("service-state"))
         .output()
         .expect("run effigy");
 

@@ -180,6 +180,10 @@ During v0.x, MINOR bumps may include breaking changes.
   0.14.x releases without changing the support floor.
 
 ### Fixed
+- Detached reconciliation refuses a running stack whose original admission
+  marker is missing, including after a failed marker write. Unscoped binding
+  verification rejects unexpected scope labels. Detached JSON retains bounded
+  managed-listener readiness classifications without raw backend output.
 - Recurring nerdctl health-check collisions now name the missing preservation
   interface when service-only recreation is unavailable: declaration-to-mount
   association, exclusive volume/data ownership, and a supported backend plan.

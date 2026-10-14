@@ -27,6 +27,11 @@ pub enum RunnerError {
     Task(TaskError),
     Ui(String),
     TaskInvocation(String),
+    /// Diagnostic contains only closed-vocabulary observations, never raw stdio.
+    ManagedHostReadiness {
+        process: String,
+        diagnostic: String,
+    },
     ContainerSurfaceRegistryMissing,
     ContainerSurfaceDefaultTargetMissing,
     ContainerSurfaceNotDefined {

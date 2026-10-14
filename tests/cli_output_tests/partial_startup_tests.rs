@@ -251,6 +251,101 @@ version = "16"
 }
 
 #[test]
+fn private_missing_admission_never_rebaselines_running_stack() {
+    let mut fixture = Fixture::new();
+    fixture.set(0, "mode", json!("marker-write-fail"));
+    let failed = fixture.run(0, &["container", "up", "--detach", "--json"]);
+    assert!(!failed.status.success(), "{failed:?}");
+    let result: Value = serde_json::from_slice(&failed.stdout).expect("partial JSON");
+    assert_eq!(result["error"]["details"]["state"], "partial");
+    assert!(result["error"]["details"]["recovery"].is_null());
+    assert!(fixture.state(0)["active"].as_bool().unwrap());
+    let blocked = fixture
+        .root
+        .path()
+        .join("home/.effigy/runtime/host-container-leases");
+    fs::remove_file(&blocked).expect("remove exclusively owned write fault");
+    fixture.set(0, "mode", json!("ready"));
+    let manifest = fixture.stacks[0].root.join("effigy.toml");
+    let original = fs::read(&manifest).unwrap();
+    let mut changed = original.clone();
+    changed.extend_from_slice(b"\n# changed after unrecorded launch\n");
+    fs::write(&manifest, changed).unwrap();
+    for json_output in [true, false] {
+        let args = if json_output {
+            vec!["container", "up", "--detach", "--json"]
+        } else {
+            vec!["container", "up", "--detach"]
+        };
+        let refused = fixture.run(0, &args);
+        assert!(!refused.status.success(), "{refused:?}");
+        if json_output {
+            let result: Value = serde_json::from_slice(&refused.stdout).unwrap();
+            assert!(result["error"]["details"]["recovery"].is_null());
+        } else {
+            assert!(String::from_utf8_lossy(&refused.stderr)
+                .contains("original detached admission is missing"));
+            assert!(!String::from_utf8_lossy(&refused.stderr)
+                .contains("reconcile with `effigy container up --detach`"));
+        }
+        fixture.assert_no_recreation(0);
+        assert!(!blocked.exists(), "retry must not mint admission");
+        assert!(!fixture
+            .root
+            .path()
+            .join("home/.effigy/gateway/routes.json")
+            .exists());
+        for i in 0..3 {
+            fixture.probe(i);
+        }
+        assert_eq!(
+            fs::read_to_string(fixture.stacks[0].root.join("data")).unwrap(),
+            "private-data-0"
+        );
+    }
+    fs::write(manifest, original).unwrap();
+    assert!(!fixture
+        .run(0, &["container", "up", "--detach"])
+        .status
+        .success());
+    fixture.assert_no_recreation(0);
+    assert!(!blocked.exists());
+}
+
+#[test]
+fn private_unscoped_inspect_requires_exact_absence() {
+    let mut fixture = Fixture::new();
+    let output = Command::new("git")
+        .args(["config", "--unset", "effigy.runtimeScope"])
+        .current_dir(&fixture.stacks[0].root)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let admitted = fixture.run(0, &["container", "up", "--detach", "--json"]);
+    assert!(
+        admitted.status.success(),
+        "absence-to-absence: {admitted:?}"
+    );
+    let routes = fixture.routes();
+    for mode in ["scope-unexpected", "scope-null", "scope-empty"] {
+        fixture.set(0, "mode", json!(mode));
+        let refused = fixture.run(0, &["container", "up", "--detach", "--json"]);
+        assert!(!refused.status.success(), "{mode}: {refused:?}");
+        assert_eq!(fixture.routes(), routes);
+        fixture.assert_no_recreation(0);
+        for i in 0..3 {
+            fixture.probe(i);
+        }
+    }
+    fixture.set(0, "mode", json!("ready"));
+    assert!(fixture
+        .run(0, &["container", "up", "--detach"])
+        .status
+        .success());
+    fixture.assert_no_recreation(0);
+}
+
+#[test]
 fn private_three_scopes_partial_resume_replacement_and_cli_refusals() {
     let mut fixture = Fixture::new();
     // Services and persistent exec connections belong to the test, not to any
@@ -654,6 +749,9 @@ if args and args[0]=='compose':
  if sub=='up':
   if state['active']: state['collateral_recreation']=True
   state['project']=args[args.index('-p')+1];state['active']=True;save()
+  if mode=='marker-write-fail':
+   parent=root/'home/.effigy/runtime';parent.mkdir(parents=True,exist_ok=True)
+   (parent/'host-container-leases').write_text('exclusive admission write fault')
   if mode=='up-fail': sys.exit(17)
   if mode=='interrupt':
    import signal
@@ -673,7 +771,12 @@ if args and args[0]=='ps':
   elif '--format' in args: print(s['project']+'-db-1\tUp 1 minute\t127.0.0.1:'+str(s['port'])+'->5432/tcp\t'+s['project']+'\t'+s['checkout']+'\t'+('undeclared' if s['mode']=='orphan' else 'db')+'\tfalse')
  sys.exit(0)
 if args and args[0]=='inspect':
- labels={'com.docker.compose.project':state['project'],'com.docker.compose.service':'db','com.docker.compose.oneoff':'false','com.docker.compose.project.working_dir':str(cwd),'com.effigy.scope':record(state)['token']}
+ labels={'com.docker.compose.project':state['project'],'com.docker.compose.service':'db','com.docker.compose.oneoff':'false','com.docker.compose.project.working_dir':str(cwd)}
+ r=record(state)
+ if r: labels['com.effigy.scope']=r['token']
+ if mode=='scope-unexpected': labels['com.effigy.scope']='foreign-scope'
+ if mode=='scope-null': labels['com.effigy.scope']=None
+ if mode=='scope-empty': labels['com.effigy.scope']=''
  if mode=='shared': labels['com.effigy.scope']='foreign-scope'
  if mode=='orphan': labels['com.docker.compose.service']='undeclared'
  if mode=='foreign': labels['com.docker.compose.project']='foreign-project'

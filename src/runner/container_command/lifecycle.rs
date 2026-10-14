@@ -96,6 +96,13 @@ struct ContainerUpRuntimeIntegrations {
     warnings: Vec<String>,
 }
 
+#[derive(Default)]
+struct DetachedOperationState {
+    active: bool,
+    partial: bool,
+    admitted: bool,
+}
+
 pub(super) fn run_container_up(
     repo_root: &Path,
     name: Option<&str>,
@@ -103,20 +110,20 @@ pub(super) fn run_container_up(
     detach: bool,
     output_json: bool,
 ) -> Result<String, RunnerError> {
-    let mut detached_operation = detach;
-    let mut partial = false;
-    let result = run_container_up_inner(
-        repo_root,
-        name,
-        attach,
-        detach,
-        output_json,
-        &mut detached_operation,
-        &mut partial,
-    );
+    let mut operation = DetachedOperationState {
+        active: detach,
+        ..Default::default()
+    };
+    let result =
+        run_container_up_inner(repo_root, name, attach, detach, output_json, &mut operation);
     result.map_err(|error| {
-        if !detached_operation { return error; }
-        let state = if partial { "partial" } else { "unavailable" };
+        if !operation.active { return error; }
+        let state = if operation.partial { "partial" } else { "unavailable" };
+        let recovery = operation.admitted.then_some("effigy container up --detach");
+        let message = match &error {
+            RunnerError::ManagedHostReadiness { diagnostic, .. } => format!("Detached activation did not complete: {diagnostic}"),
+            _ => "Detached activation did not complete. Reconciliation requires the original admitted inputs and fresh exact-owned bindings; unavailable observations grant no restart, recreation or route authority.".to_owned(),
+        };
         if output_json {
             return RunnerError::CommandJsonFailure {
                 rendered: serde_json::json!({
@@ -124,14 +131,19 @@ pub(super) fn run_container_up(
                     "phase": "detached_activation",
                     "readiness": "unverified",
                     "exposure": "unverified",
-                    "recovery": "effigy container up --detach",
+                    "recovery": recovery,
                     "stop": "effigy container down",
                     "retirement_removes_mutable_data": true,
-                    "message": "Detached activation did not complete. Reconciliation requires unchanged admitted inputs and fresh exact-owned bindings; unavailable observations grant no restart, recreation or route authority.",
+                    "message": message,
                 }).to_string(),
             };
         }
-        RunnerError::task_invocation(format!("{error}\ndetached activation {state}: readiness and exposure are unverified. Inspect with `effigy container status`; reconcile with `effigy container up --detach` only with the unchanged admitted inputs. `effigy container down` stops the scope; `effigy container retire --yes` removes owned mutable data."))
+        let advice = if operation.admitted {
+            "reconcile with `effigy container up --detach` only with the unchanged original admitted inputs"
+        } else {
+            "the original admission is unavailable; retry cannot adopt a running stack's current inputs"
+        };
+        RunnerError::task_invocation(format!("{error}\ndetached activation {state}: readiness and exposure are unverified. Inspect with `effigy container status`; {advice}. `effigy container down` stops the scope; `effigy container retire --yes` removes owned mutable data."))
     })
 }
 
@@ -141,13 +153,16 @@ fn run_container_up_inner(
     attach: bool,
     detach: bool,
     output_json: bool,
-    detached_operation: &mut bool,
-    partial: &mut bool,
+    operation: &mut DetachedOperationState,
 ) -> Result<String, RunnerError> {
     reject_conflicting_container_up_modes(attach, detach)?;
 
     let plan = prepare_container_up(repo_root, name, attach, detach)?;
-    *detached_operation = plan.attach_mode == EffectiveAttachMode::Detached;
+    operation.active = plan.attach_mode == EffectiveAttachMode::Detached;
+    operation.admitted = plan
+        .admitted_context
+        .as_ref()
+        .is_some_and(|context| context.marker_required);
 
     if container_up_stop_requested(&plan) {
         return render_container_up_interrupted(repo_root, &plan);
@@ -158,11 +173,12 @@ fn run_container_up_inner(
             return Ok(closeout);
         }
         if plan.attach_mode == EffectiveAttachMode::Detached {
-            *partial = true;
+            operation.partial = true;
             record_admitted_context(repo_root, &plan)?;
+            operation.admitted = true;
         }
     }
-    *partial = plan.attach_mode == EffectiveAttachMode::Detached;
+    operation.partial = plan.attach_mode == EffectiveAttachMode::Detached;
     write_container_up_backend_override(repo_root, &plan.policy);
 
     if container_up_stop_requested(&plan) {
@@ -549,6 +565,11 @@ fn detached_partial_activation_error(
     recorded_error: Option<RunnerError>,
 ) -> RunnerError {
     let Some(recorded_error) = recorded_error else {
+        // The outer detached renderer supplies partial-state/recovery advice.
+        // Keep the typed, bounded readiness evidence intact across this seam.
+        if matches!(&error, RunnerError::ManagedHostReadiness { .. }) {
+            return error;
+        }
         return RunnerError::task_invocation(format!(
             "{error}\ncontainer `{}` is partially activated: its Compose services stay in place and complete gateway exposure is unverified. No teardown ran. Re-run `effigy container up --detach` to reconcile routes; that run does not recreate the running services. Run `effigy container down` to stop it instead.",
             policy.name
@@ -594,15 +615,15 @@ fn partial_activation_reconcile_pending(
                 plan.policy.name
             ))
         })?;
-    if !recorded && running.is_empty() {
-        return Ok(false);
+    if !recorded {
+        if running.is_empty() {
+            return Ok(false);
+        }
+        return Err(RunnerError::task_invocation("partial activation reconciliation unavailable: original detached admission is missing for the running stack. Current inputs cannot be adopted. No compose up, restart, teardown or publication ran"));
     }
     let running = effigy_containers::exec::verify_owned_running_compose_rows(repo_root, &plan.policy, &running, deadline)
         .map_err(|_| RunnerError::task_invocation("partial activation reconciliation unavailable: current full-ID ownership/bindings could not be verified. No services were recreated"))?;
     if partial_reconcile_skips_compose_up(&plan.policy, &running) {
-        if !recorded {
-            record_admitted_context(repo_root, plan)?;
-        }
         return Ok(true);
     }
     Err(RunnerError::task_invocation(format!(
@@ -1214,6 +1235,23 @@ mod tests {
             detach_timeout_secs: 10,
             host_processes: Vec::new(),
         }
+    }
+
+    #[test]
+    fn detached_partial_failure_preserves_typed_readiness_evidence() {
+        let policy = test_policy(Vec::new());
+        let diagnostic = "report=accepted, ownership=exclusive_owner_observed, http_probe=status_mismatch:503, route=not_reached";
+        let error = detached_partial_activation_error(
+            &policy,
+            RunnerError::ManagedHostReadiness {
+                process: "private-listener".to_owned(),
+                diagnostic: diagnostic.to_owned(),
+            },
+            None,
+        );
+        assert!(
+            matches!(error, RunnerError::ManagedHostReadiness { diagnostic: observed, .. } if observed == diagnostic)
+        );
     }
 
     #[test]

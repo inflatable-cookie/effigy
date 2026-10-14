@@ -345,13 +345,15 @@ pub fn verify_owned_running_compose_rows(
         let working_dir = labels
             .and_then(|labels| labels.get("com.docker.compose.project.working_dir"))
             .and_then(|value| value.as_str());
-        let inspected_scope = labels
-            .and_then(|labels| labels.get("com.effigy.scope"))
-            .and_then(|value| value.as_str());
+        let inspected_scope = labels.and_then(|labels| labels.get("com.effigy.scope"));
         let owned = identity.name == row.container_name
-            && scope_token
-                .as_deref()
-                .is_none_or(|token| inspected_scope == Some(token.trim()))
+            && match (scope_token.as_deref(), inspected_scope) {
+                (None, None) => true,
+                (Some(token), Some(value)) => {
+                    !token.trim().is_empty() && value.as_str() == Some(token.trim())
+                }
+                _ => false,
+            }
             && identity.project.as_deref() == Some(policy.project_name.as_str())
             && identity.service == row.service
             && identity
