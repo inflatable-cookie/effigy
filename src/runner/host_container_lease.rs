@@ -10,6 +10,7 @@ use effigy_containers::EffectiveContainerPolicy;
 use effigy_ui::style_text;
 use effigy_ui::theme::{resolve_color_enabled, Theme};
 use effigy_ui::OutputMode;
+use sha2::{Digest, Sha256};
 use std::io::IsTerminal;
 
 use super::error::RunnerError;
@@ -20,7 +21,7 @@ const HOST_CONTAINER_LEASE_FALLBACK_DIR: &str = ".effigy/runtime/host-container-
 const HOST_CONTAINER_LEASE_SCHEMA: &str = "effigy.host-container-lease.v1";
 const DEFAULT_HOST_CONTAINER_LEASE_TIMEOUT_SECS: u64 = 300;
 const DISABLE_HOST_CONTAINER_LEASE_ENV: &str = "EFFIGY_DISABLE_HOST_CONTAINER_LEASE";
-const PARTIAL_ACTIVATION_SCHEMA: &str = "effigy.container-partial-activation.v1";
+const PARTIAL_ACTIVATION_SCHEMA: &str = "effigy.container-partial-activation.v2";
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct HostContainerLease {
@@ -130,12 +131,7 @@ pub(in crate::runner) fn record_partial_activation(
 ) -> Result<(), RunnerError> {
     fs::create_dir_all(host_container_lease_dir(repo_root, policy))
         .map_err(|error| RunnerError::task_invocation_failed_write(repo_root, error))?;
-    let marker = serde_json::json!({
-        "schema": PARTIAL_ACTIVATION_SCHEMA,
-        "container_name": policy.name,
-        "profile": policy.profile,
-        "project_name": policy.project_name,
-    });
+    let marker = partial_activation_context(repo_root, policy)?;
     let encoded = serde_json::to_string_pretty(&marker)
         .map_err(|error| RunnerError::host_container_lease_encode(error.to_string()))?;
     let marker_path = partial_activation_path(repo_root, policy);
@@ -148,14 +144,73 @@ pub(in crate::runner) fn partial_activation_recorded(
     policy: &EffectiveContainerPolicy,
 ) -> Result<bool, RunnerError> {
     let marker_path = partial_activation_path(repo_root, policy);
-    match fs::metadata(&marker_path) {
-        Ok(_) => Ok(true),
+    match fs::read_to_string(&marker_path) {
+        Ok(raw) => {
+            let marker: serde_json::Value = serde_json::from_str(&raw)
+                .map_err(|error| RunnerError::task_invocation_failed_parse(&marker_path, error))?;
+            if marker != partial_activation_context(repo_root, policy)? {
+                return Err(RunnerError::task_invocation(
+                    "partial activation context changed or is unverified; reconciliation refused without compose up, restart or teardown. Restore the admitted checkout/Compose inputs before retrying, or explicitly stop the scope with `effigy container down`",
+                ));
+            }
+            Ok(true)
+        }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
         Err(error) => Err(RunnerError::task_invocation_failed_read(
             &marker_path,
             error,
         )),
     }
+}
+
+fn partial_activation_context(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<serde_json::Value, RunnerError> {
+    let canonical_root = fs::canonicalize(repo_root)
+        .map_err(|error| RunnerError::task_invocation_failed_read(repo_root, error))?;
+    let mut inputs = Vec::new();
+    for path in std::iter::once(repo_root.join("effigy.toml"))
+        .chain(policy.compose_files.iter().map(|path| repo_root.join(path)))
+    {
+        let canonical = fs::canonicalize(&path)
+            .map_err(|error| RunnerError::task_invocation_failed_read(&path, error))?;
+        let bytes = fs::read(&canonical)
+            .map_err(|error| RunnerError::task_invocation_failed_read(&canonical, error))?;
+        inputs.push(serde_json::json!({
+            "path": canonical,
+            "sha256": Sha256::digest(&bytes).iter().map(|byte| format!("{byte:02x}")).collect::<String>(),
+        }));
+    }
+    let scope = effigy_core::worktree_scope::resolve(repo_root)
+        .map_err(|error| RunnerError::task_invocation_failed_read(repo_root, error))?
+        .map(|scope| {
+            fs::read_to_string(
+                scope
+                    .token_dir
+                    .join(effigy_core::worktree_scope::SCOPE_FILE),
+            )
+        })
+        .transpose()
+        .map_err(|error| RunnerError::task_invocation_failed_read(repo_root, error))?;
+    Ok(serde_json::json!({
+        "schema": PARTIAL_ACTIVATION_SCHEMA,
+        "scope_token": scope,
+        "repo_root": canonical_root,
+        "container_name": policy.name,
+        "profile": policy.profile,
+        "project_name": policy.project_name,
+        "primary_service": policy.primary_service,
+        "backend": match effigy_containers::compose::resolve_compose_backend_for_repo(repo_root, policy) {
+            effigy_containers::compose::ComposeBackend::Docker => "docker",
+            effigy_containers::compose::ComposeBackend::ColimaNerdctl => "colima-nerdctl",
+        },
+        "compose_source": match policy.compose_source {
+            effigy_containers::EffectiveComposeSource::Direct => "direct",
+            effigy_containers::EffectiveComposeSource::Generated => "generated",
+        },
+        "inputs": inputs,
+    }))
 }
 
 pub(in crate::runner) fn clear_partial_activation(

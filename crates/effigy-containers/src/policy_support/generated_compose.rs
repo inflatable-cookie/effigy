@@ -1261,6 +1261,11 @@ fn test_effigy_home_override() -> Option<PathBuf> {
     if explicit.is_some() {
         return explicit;
     }
+    // A production CLI linked with test-support needs one explicitly private
+    // home shared by concurrent fixture processes, not separate default homes.
+    if let Some(home) = std::env::var_os("EFFIGY_TEST_CONTAINERS_HOME") {
+        return Some(PathBuf::from(home));
+    }
 
     Some(DEFAULT_TEST_EFFIGY_HOME.with(Clone::clone))
 }

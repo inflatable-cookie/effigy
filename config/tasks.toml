@@ -177,13 +177,17 @@
 # mark; a re-run with a running primary skips `compose up`. Attached bring-up
 # keeps its teardown. Reuses the registration-loopback family.
 "test:containers:partial-startup" = [
-  "cargo test -p effigy --lib container_command::lifecycle::tests:: -- --nocapture",
-  "cargo test -p effigy-containers --lib detached_capture_tests:: -- --nocapture",
+  { id = "partial-startup-lifecycle", run = "cargo nextest run --config-file tests/config/deadline-marker-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(container_command::lifecycle::tests::)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
+  { id = "partial-startup-pipes", run = "cargo nextest run --config-file tests/config/deadline-marker-nextest.toml --user-config-file none -p effigy-containers --lib --filterset 'test(detached_capture_tests::) | test(exec::process::tests::)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
+  { task = "test:containers:partial-startup:private-cli" },
   { task = "test:gateway:registration-loopback" },
 ]
+"test:containers:partial-startup:private-cli" = [
+  { id = "partial-startup-private-cli", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests --filterset 'test(partial_startup_tests::)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
+]
 "check:containers:partial-startup" = [
-  "cargo check -p effigy -p effigy-containers --all-targets",
-  "cargo clippy -p effigy -p effigy-containers --all-targets -- -D warnings",
+  "cargo check -p effigy -p effigy-containers -p effigy-runtime -p effigy-cli --all-targets",
+  "cargo clippy -p effigy -p effigy-containers -p effigy-runtime -p effigy-cli --all-targets -- -D warnings",
 ]
 "test:gateway:pid-domain" = [
   { id = "gateway-pid-domain", run = "cargo test -p effigy-gateway -p effigy --lib pid_domain -- --nocapture", timeout_ms = 240000 },

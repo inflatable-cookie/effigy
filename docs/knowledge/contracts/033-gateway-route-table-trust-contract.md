@@ -153,3 +153,16 @@ A missing table remains valid (empty table), unchanged from current behavior.
 - Planning review against `g08.014` plus focused trust-verification fixtures
   (well-formed, tampered, wrong-permission, foreign-marked tables) once
   implementation starts.
+
+## Container reconciliation binding proof
+
+A route reservation is not a published binding. The production registration
+adapter re-admits selected inventory rows through fresh inspect under one
+cumulative deadline. Canonical full ID, exact project/service, explicit
+non-oneoff running state, checkout and scoped label identity must agree before
+current published-port associations enter route resolution. Missing, foreign,
+shared, stale or unavailable associations refuse without guessing a target.
+An owned backing replacement updates its TCP target through the existing locked
+route transaction, releasing the old own association without changing foreign
+or shared route claims. Private fake-transport/process evidence qualifies this
+adapter path, not a real engine or elevated gateway daemon.

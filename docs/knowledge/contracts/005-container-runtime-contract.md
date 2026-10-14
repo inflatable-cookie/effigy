@@ -145,14 +145,23 @@ start after that listener is ready. A dependent process receives
 restarts or loses readiness, Effigy stops the dependent generation and starts
 it with the current endpoint values.
 
-A failed route registration after `compose up` (bounded inventory, readiness
-or route reconciliation) is partial activation for detached bring-up. Effigy
-keeps the started Compose services, registers no route, runs no teardown,
-records a private reconcile mark beside the scope's lease, and exits non-zero
-with `partially activated` and the re-run/stop steps. A re-run of detached
-`container up` skips `compose up` while the mark exists and the primary service
-runs, then completes route reconciliation. The mark clears on success or when
-the primary is no longer running. Attached bring-up keeps its teardown.
+Detached activation records admitted context after a successful Compose launch.
+Inventory, exec readiness and exposure failures retain partial/unavailable
+state and do not tear down or restart running services. Reconciliation with
+`effigy container up --detach` verifies the exact canonical source/context and
+fresh owned full-ID bindings before registering exposure; missing primary,
+changed/legacy markers and unavailable observations refuse without Compose up.
+The context persists as the detached owner after success; only the selected
+temporary task lease is cleared. Explicit `container down` clears that context
+and keeps volumes. Attached bring-up keeps its existing cleanup policy.
+
+Detached JSON failures contain bounded structural details: state, phase,
+unverified readiness/exposure, and supported recovery/stop commands. No raw
+backend logs, argv or environment enter these details. Current inspect must
+verify full ID, project, service, explicit non-oneoff running state, canonical
+checkout ownership and published-port associations. These are fixture-qualified
+production adapters, not evidence of the original consumer incident or real
+Linux/containerd preservation.
 
 Detached `container up --json` includes `managed_host_listeners` entries for
 listeners that passed readiness. Entries report status, runtime and child

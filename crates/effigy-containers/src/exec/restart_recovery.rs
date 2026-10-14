@@ -410,7 +410,7 @@ fn compose_files_for_project(
         .collect()
 }
 
-fn declared_service_names(
+pub(super) fn declared_service_names(
     compose_files: &[PathBuf],
 ) -> Result<BTreeSet<String>, ContainerExecError> {
     let mut names = BTreeSet::new();

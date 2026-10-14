@@ -306,3 +306,21 @@ Update this contract when Effigy changes:
 - the alias guarantee scope for Effigy-owned execution targets
 - the expected compatibility cases used to prove backend-sensitive behavior
 - how generated Compose values escape `$` for backend interpolation
+
+## Detached subprocess evidence boundary
+
+Compose detach alone does not isolate stdout/stderr inheritance. The launch
+adapter now uses null sinks for detached up, with bounded phase/status failure
+diagnostics; the existing logs command remains the service-output surface.
+Finite Unix inventory capture uses nonblocking reads with bounded retention and
+no reader threads. Success requires client exit and both EOFs; overflow or
+unverified settlement refuses. Cancellation owns only the client process group
+and positively reaps its direct child. Remote engine cancellation and historical
+SIGPIPE sender/pipe provenance remain unverified. Non-Unix bounded pipe capture
+requires a missing nonblocking adapter and returns an explicit unsupported error.
+
+The private CLI matrix runs three overlapping scoped stacks through production
+adapters, maintains persistent exec sentinel connections, tests partial/warm
+reconciliation and full-ID/port replacement, and exercises noninteractive
+retirement ownership refusals. Native engine semantics and actual consumer
+admission remain separate from these private command-transport controls.

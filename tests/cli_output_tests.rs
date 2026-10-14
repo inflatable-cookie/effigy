@@ -43,3 +43,7 @@ mod wave4_papercuts_tests;
 mod execution_fixture_support;
 #[path = "cli_output_tests/fixture_parent_tests.rs"]
 mod fixture_parent_tests;
+
+#[cfg(unix)]
+#[path = "cli_output_tests/partial_startup_tests.rs"]
+mod partial_startup_tests;

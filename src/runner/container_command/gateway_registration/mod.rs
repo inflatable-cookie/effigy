@@ -90,6 +90,7 @@ fn wait_for_gateway_service_ports_ready(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> Result<Vec<RunningComposeContainer>, RunnerError> {
+    let deadline = Instant::now() + GATEWAY_SERVICE_PORT_READY_TIMEOUT;
     wait_for_gateway_service_ports_ready_with(
         repo_root,
         policy,
@@ -97,6 +98,11 @@ fn wait_for_gateway_service_ports_ready(
         GATEWAY_SERVICE_PORT_POLL_INTERVAL,
         |timeout| {
             list_running_compose_containers_for_policy_with_timeout(repo_root, policy, timeout)
+                .and_then(|rows| {
+                    effigy_containers::exec::verify_owned_running_compose_rows(
+                        repo_root, policy, &rows, deadline,
+                    )
+                })
                 .map_err(|error| error.to_string())
         },
         |timeout| {
@@ -573,8 +579,10 @@ fn resolve_gateway_routes_against_rows(
         let target = if let Some(host_target) = dns_route.target_host.as_deref() {
             host_target.trim().to_owned()
         } else {
-            let host_port = runtime_host_port_for_route(repo_root, policy, dns_route, rows)?
-                .unwrap_or(selected_host_port_for_route(policy, dns_route)?);
+            let host_port = match runtime_host_port_for_route(repo_root, policy, dns_route, rows)? {
+                Some(port) => port,
+                None => selected_host_port_for_route(policy, dns_route)?,
+            };
             format!("127.0.0.1:{host_port}")
         };
         routes.push(RegisteredGatewayRoute {

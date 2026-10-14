@@ -455,8 +455,7 @@ catalog = "postgres"
 catalog = "redis"
 
 [containers.web.dns]
-domain = "my-app.test"
-tls = true
+routes = [{ domain = "my-app.test", tls = true }]
 
 [containers.web.lifecycle]
 on_task_exit = "stop"
@@ -709,24 +708,43 @@ Gateway registration keeps the project, service, published-port and host-listene
 ownership checks, and does not claim a route while its declared runtime
 binding is missing.
 
-Partial detached bring-up: when step 5 fails after `compose up` already started
-the services (for example, the bounded inventory or readiness wait times out),
-detached `effigy container up` keeps those services running, registers no
-route, records a private reconcile mark for the scope, and exits non-zero. The
-message begins with the original stage error and then says `partially
-activated` and `No teardown ran`. The supported recovery is to re-run
-`effigy container up --detach`. While the mark exists and the primary service
-is still running, that re-run skips `compose up` entirely, so generated Compose
-does not recreate running services or interrupt exec sessions. It repeats
-steps 3-5 and clears the mark on success. A re-run does not rebuild images, so
-a changed Dockerfile or compose file needs a fresh `container up` after the
-scope is stopped. If the primary service is no longer running, the mark is
-stale: it is cleared and bring-up runs normally. If the running-service
-inventory cannot be read, the re-run refuses without running `compose up`.
-The supported stop is `effigy container down`, which removes the project's
-containers but keeps volumes. Attached bring-up keeps its teardown on this
-failure. A host lease left by task activation is not cleared by the failure,
-so its idle expiry can still stop an unreconciled scope.
+Partial detached bring-up: a completed backend launch followed by failed
+inventory, exec readiness or exposure verification leaves the scope in place.
+`effigy container up --detach` exits non-zero and reports partial or unavailable
+activation. It never treats an unavailable probe as an empty or ready stack.
+
+The supported reconciliation command is `effigy container up --detach`.
+Its private admitted-context marker binds the canonical checkout, selected
+backend/profile/project/service, source kind and SHA-256 hashes of the manifest
+and Compose inputs. It persists as the detached owner after successful
+reconciliation. Changed, unreadable, legacy or foreign marker contexts refuse;
+a missing primary also refuses instead of falling back to generated
+`up --force-recreate`. A warm owned stack reconciles fresh inspected bindings
+without Compose up or primary restart. Exec readiness failures and interrupts
+retain unverified state without teardown. Success transfers ownership from a
+temporary task lease to the retained detached context; sibling leases stay.
+`effigy container down` is the explicit stop and clears the admitted context
+while keeping volumes. Retirement removes owned mutable data and is not restart
+recovery.
+
+JSON failure details expose `state` (`partial` or `unavailable`),
+`phase = "detached_activation"`, unverified readiness/exposure and supported
+recovery/stop commands. They contain no raw backend output, argv or environment.
+Fresh full-ID inspect must match project, service, non-oneoff running state and
+checkout ownership; bindings come from current inspect published ports. An
+owned replacement updates its TCP target in the same locked route transaction,
+without changing foreign or shared routes. Command exit zero is not binding or
+readiness proof.
+
+Detached Compose launch sends stdout/stderr to null sinks so service writers
+cannot inherit Effigy capture pipes. Failure reports command/phase and status;
+use `effigy container logs` for service output. Finite inventory capture drains
+both nonblocking pipes without reader threads, retains at most 1 MiB per stream,
+and refuses overflow or incomplete EOF. Cancellation signals only its created
+client process group and positively reaps the direct client. This does not prove
+remote engine cancellation. The private-process/transport proofs do not
+reconstruct historical SIGPIPE provenance or qualify real Linux/containerd
+behavior; non-Unix bounded capture lacks a nonblocking adapter and refuses.
 
 Attached mode behavior:
 

@@ -186,24 +186,18 @@ During v0.x, MINOR bumps may include breaking changes.
   The refusal explains that `container retire --yes` removes mutable volumes
   and is not restart recovery. A private command-adapter fixture verifies the
   recurring collision and retained file markers without a live backend.
-- Container Compose capture no longer waits for pipe writers that outlive the
-  CLI. `Command::output` also waited for every writer of the captured stdout
-  and stderr, so a helper that inherited those pipes could hold a detached
-  `container up` open indefinitely. Output is now read on drain threads: after
-  the CLI exits, readers get a 2 second grace and return the bytes read so far.
-  Still-running writers are drained rather than disconnected or killed. The
-  wait for the CLI exit itself is unchanged, and this is verified only with a
-  private fake CLI on macOS, not on a real Colima or containerd backend.
-- Detached `effigy container up` no longer tears down a scope whose route
-  registration fails after Compose services started. The services keep
-  running, no gateway route is registered, and the command exits non-zero with
-  a `partially activated` message. It records a private reconcile mark; a
-  re-run of `effigy container up --detach` with a running primary service
-  skips `compose up` and completes route registration without recreating
-  services. `effigy container down` remains the stop step. Attached bring-up
-  keeps its teardown. A temporary host lease from task activation is not
-  cleared by this failure, so its idle expiry can still stop the unreconciled
-  scope.
+- Detached scoped bring-up now retains an admitted context bound to checkout,
+  backend/project and manifest/Compose hashes. Partial and warm reconciliation
+  skip Compose up and primary restart, require fresh full-ID published bindings,
+  and refuse drift, unavailable ownership or a missing primary. JSON failures
+  expose bounded partial/unavailable details. Explicit down clears the context
+  and keeps volumes; retirement removes owned mutable data.
+- Detached Compose launch isolates service writers with null output sinks.
+  Finite inventory capture drains nonblocking pipes without persistent reader
+  threads, caps retained output at 1 MiB per stream, refuses incomplete EOF or
+  overflow, and positively reaps its owned client on timeout. These mechanisms
+  have private process/transport evidence, with no claim about original SIGPIPE
+  provenance or a real Linux/containerd backend.
 - Managed host cleanup keeps its owned TERM/KILL sequence when bounded
   completion observation is unavailable. It retains the original stop clocks,
   requires positive group settlement and actual wait before reaping, and holds

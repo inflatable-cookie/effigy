@@ -4,8 +4,6 @@ use std::io::Read;
 use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
-use std::sync::mpsc;
-use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -83,67 +81,210 @@ pub(super) fn run_command_capture_os_with_env(
     Ok(output)
 }
 
-/// How long output readers may keep draining after the CLI exits. A normal
-/// exit closes its pipes at once, so this only bounds a writer that a
-/// backgrounded helper keeps open.
+/// One post-exit drain budget for both streams, without retained reader threads.
 const PIPE_EOF_GRACE: Duration = Duration::from_secs(2);
+const CAPTURE_LIMIT: usize = 1024 * 1024;
 
-/// Runs `command` with piped stdin-null, stdout and stderr and returns once the
-/// child exits. `Command::output` also waits for every pipe writer to close, so
-/// a helper that inherited the pipes could hold a detached CLI call open
-/// indefinitely. Here readers drain on their own threads: after exit they get
-/// `eof_grace` to finish and the bytes read so far are returned. Readers are
-/// never killed, and their drain keeps a still-running writer from hitting a
-/// broken pipe. A reader ends when its writer closes.
+pub(super) fn run_detached_command_with_env(
+    repo_root: &Path,
+    program: &str,
+    args: &[OsString],
+    label: &str,
+    env: &[(String, OsString)],
+) -> Result<Output, ContainerExecError> {
+    // A detached service must never inherit an Effigy-owned log pipe. A null
+    // sink has no reader lifetime and remains writable after this CLI exits.
+    let mut command = Command::new(resolve_host_cli_program(program));
+    command
+        .current_dir(repo_root)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    for (key, value) in env {
+        command.env(key, value);
+    }
+    let status = command
+        .status()
+        .map_err(|error| ContainerExecError::Launch {
+            command: label.to_owned(),
+            error,
+        })?;
+    if !status.success() {
+        return Err(ContainerExecError::Failure {
+            command: label.to_owned(), code: status.code(), stdout: String::new(),
+            stderr: "[effigy] detached backend failed; output was isolated from service writers. Inspect the selected scope with `effigy container status` and `effigy container logs`".to_owned(),
+        });
+    }
+    Ok(Output {
+        status,
+        stdout: Vec::new(),
+        stderr: Vec::new(),
+    })
+}
+
 fn capture_output_after_exit(mut command: Command, eof_grace: Duration) -> std::io::Result<Output> {
     command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let mut child = command.spawn()?;
-    let stdout = spawn_pipe_reader(child.stdout.take());
-    let stderr = spawn_pipe_reader(child.stderr.take());
-    let status = child.wait()?;
-    Ok(Output {
-        status,
-        stdout: collect_pipe_reader(stdout, eof_grace),
-        stderr: collect_pipe_reader(stderr, eof_grace),
-    })
+    #[cfg(unix)]
+    command.process_group(0);
+    capture_child(command.spawn()?, None, eof_grace)
 }
 
-struct PipeReader {
-    bytes: Arc<Mutex<Vec<u8>>>,
-    finished: mpsc::Receiver<()>,
+#[cfg(unix)]
+fn make_nonblocking(pipe: &impl std::os::fd::AsFd) -> std::io::Result<()> {
+    use nix::fcntl::{fcntl, FcntlArg, OFlag};
+    let flags = fcntl(pipe, FcntlArg::F_GETFL).map_err(std::io::Error::from)?;
+    fcntl(
+        pipe,
+        FcntlArg::F_SETFL(OFlag::from_bits_truncate(flags) | OFlag::O_NONBLOCK),
+    )
+    .map_err(std::io::Error::from)?;
+    Ok(())
 }
 
-fn spawn_pipe_reader<R: Read + Send + 'static>(pipe: Option<R>) -> Option<PipeReader> {
-    let mut pipe = pipe?;
-    let bytes = Arc::new(Mutex::new(Vec::new()));
-    let sink = Arc::clone(&bytes);
-    let (finished_tx, finished) = mpsc::channel();
-    thread::spawn(move || {
+fn drain_pipe(
+    pipe: &mut impl Read,
+    bytes: &mut Vec<u8>,
+    eof: &mut bool,
+    overflow: &mut bool,
+    retention_limit: usize,
+) -> std::io::Result<()> {
+    // Limit work per pass as well as retained bytes, so a continuously writing
+    // stream cannot starve cancellation or the other stream.
+    for _ in 0..32 {
         let mut chunk = [0_u8; 8192];
-        loop {
-            match pipe.read(&mut chunk) {
-                Ok(0) | Err(_) => break,
-                Ok(read) => sink
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .extend_from_slice(&chunk[..read]),
+        match pipe.read(&mut chunk) {
+            Ok(0) => {
+                *eof = true;
+                break;
+            }
+            Ok(read) => {
+                let retained = read.min(retention_limit.saturating_sub(bytes.len()));
+                bytes.extend_from_slice(&chunk[..retained]);
+                *overflow |= retained < read;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn capture_child(
+    mut child: std::process::Child,
+    deadline: Option<Instant>,
+    eof_grace: Duration,
+) -> std::io::Result<Output> {
+    let mut stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| std::io::Error::other("capture stdout missing"))?;
+    let mut stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| std::io::Error::other("capture stderr missing"))?;
+    if let Err(error) = make_nonblocking(&stdout).and_then(|()| make_nonblocking(&stderr)) {
+        terminate_child_process_tree(&mut child);
+        let _ = child.wait();
+        return Err(error);
+    }
+    let retention_limit = if deadline.is_some() {
+        CAPTURE_LIMIT
+    } else {
+        usize::MAX
+    };
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let (mut out_eof, mut err_eof, mut overflow) = (false, false, false);
+    let mut exited = None;
+    let mut drain_deadline = None;
+    let mut timed_out = false;
+    loop {
+        if let Err(error) = drain_pipe(
+            &mut stdout,
+            &mut out,
+            &mut out_eof,
+            &mut overflow,
+            retention_limit,
+        )
+        .and_then(|()| {
+            drain_pipe(
+                &mut stderr,
+                &mut err,
+                &mut err_eof,
+                &mut overflow,
+                retention_limit,
+            )
+        }) {
+            if exited.is_none() {
+                terminate_child_process_tree(&mut child);
+            }
+            let _ = child.wait();
+            return Err(error);
+        }
+        if exited.is_none() {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    exited = Some(status);
+                    drain_deadline = Some(Instant::now() + eof_grace);
+                }
+                Ok(None) if deadline.is_some_and(|deadline| Instant::now() >= deadline) => {
+                    terminate_child_process_tree(&mut child);
+                    exited = Some(child.wait()?);
+                    drain_deadline = Some(Instant::now() + eof_grace);
+                    timed_out = true;
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    terminate_child_process_tree(&mut child);
+                    let _ = child.wait();
+                    return Err(error);
+                }
             }
         }
-        let _ = finished_tx.send(());
-    });
-    Some(PipeReader { bytes, finished })
+        if let Some(status) = exited {
+            if out_eof && err_eof {
+                if timed_out {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "owned capture child terminated and reaped; stdout/stderr EOF verified",
+                    ));
+                }
+                if overflow {
+                    return Err(std::io::Error::other(
+                        "capture exceeded the per-stream retention limit; output is unavailable",
+                    ));
+                }
+                return Ok(Output {
+                    status,
+                    stdout: out,
+                    stderr: err,
+                });
+            }
+            if drain_deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+                return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "capture unavailable: child exited but inherited pipe EOF was not verified; writer provenance and settlement unknown"));
+            }
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
 }
 
-fn collect_pipe_reader(reader: Option<PipeReader>, eof_grace: Duration) -> Vec<u8> {
-    let Some(reader) = reader else {
-        return Vec::new();
-    };
-    let _ = reader.finished.recv_timeout(eof_grace);
-    let captured = reader.bytes.lock().unwrap_or_else(PoisonError::into_inner);
-    captured.clone()
+#[cfg(not(unix))]
+fn capture_child(
+    mut child: std::process::Child,
+    _deadline: Option<Instant>,
+    _eof_grace: Duration,
+) -> std::io::Result<Output> {
+    let _ = child.kill();
+    let _ = child.wait();
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "bounded container capture requires a nonblocking pipe adapter on this platform",
+    ))
 }
 
 pub(super) fn format_args(args: &[OsString]) -> String {
@@ -277,44 +418,30 @@ fn spawn_and_supervise_capture(
 }
 
 fn supervise_capture_child(
-    mut child: std::process::Child,
+    child: std::process::Child,
     program: &str,
     args: &[&str],
     label: &str,
     deadline: Instant,
     reported_timeout: Duration,
 ) -> Result<Output, ContainerExecError> {
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => {
-                return child
-                    .wait_with_output()
-                    .map_err(|error| ContainerExecError::Launch {
-                        command: format!("{program} {}", args.join(" ")),
-                        error,
-                    });
-            }
-            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(100)),
-            Ok(None) => {
-                terminate_child_process_tree(&mut child);
-                let output =
-                    child
-                        .wait_with_output()
-                        .map_err(|error| ContainerExecError::Launch {
-                            command: format!("{program} {}", args.join(" ")),
-                            error,
-                        })?;
-                return timeout_failure(label, reported_timeout, output);
-            }
-            Err(error) => {
-                terminate_child_process_tree(&mut child);
-                let _ = child.wait();
-                return Err(ContainerExecError::Launch {
-                    command: format!("{program} {}", args.join(" ")),
-                    error,
-                });
-            }
+    match capture_child(child, Some(deadline), PIPE_EOF_GRACE) {
+        Ok(output) => Ok(output),
+        Err(error) if error.kind() == std::io::ErrorKind::TimedOut => {
+            Err(ContainerExecError::Failure {
+                command: label.to_owned(),
+                code: None,
+                stdout: String::new(),
+                stderr: format!(
+                    "[effigy] command timed out after {}s: {error}",
+                    reported_timeout.as_secs()
+                ),
+            })
         }
+        Err(error) => Err(ContainerExecError::Launch {
+            command: format!("{program} {}", args.join(" ")),
+            error,
+        }),
     }
 }
 
@@ -337,25 +464,6 @@ fn timeout_error(label: &str) -> ContainerExecError {
         stdout: String::new(),
         stderr: "[effigy] command timed out".to_owned(),
     }
-}
-
-fn timeout_failure(
-    label: &str,
-    timeout: Duration,
-    output: Output,
-) -> Result<Output, ContainerExecError> {
-    Err(ContainerExecError::Failure {
-        command: label.to_owned(),
-        code: output.status.code(),
-        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-        stderr: format!(
-            "{}\n[effigy] command timed out after {}s",
-            String::from_utf8_lossy(&output.stderr).trim_end(),
-            timeout.as_secs()
-        )
-        .trim()
-        .to_owned(),
-    })
 }
 
 #[cfg(test)]
@@ -669,14 +777,8 @@ mod tests {
         use nix::unistd::Pid;
         use std::fs;
 
-        let root = std::env::temp_dir().join(format!(
-            "effigy-containers-timeout-descendants-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("time")
-                .as_nanos()
-        ));
-        fs::create_dir_all(&root).expect("mkdir");
+        let fixture = tempfile::tempdir().expect("fresh descendant fixture");
+        let root = fixture.path();
         let pid_file = root.join("descendant.pid");
         let script = format!(
             "/bin/sh -c 'echo $$ > \"{}\"; trap \"exit 0\" TERM; /bin/sleep 5' & wait",
@@ -881,60 +983,167 @@ mod tests {
 
 #[cfg(all(test, unix))]
 mod detached_capture_tests {
+    use super::{run_command_capture_os_with_env, run_command_capture_with_timeout};
     use std::fs;
-    use std::os::unix::fs::PermissionsExt;
-    use std::time::Instant;
+    use std::io::{BufRead, BufReader, Write};
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
 
-    use nix::sys::signal::{kill, Signal};
-    use nix::unistd::Pid;
+    struct Sentinel(std::process::Child);
+    impl Drop for Sentinel {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
 
-    use super::run_command_capture_os_with_env;
-
-    /// A detached `up` that leaves a backgrounded writer on its stdout/stderr
-    /// must return when the CLI exits. The sentinel is a fixture child whose
-    /// pid is recorded so the test stops only that process.
     #[test]
-    fn detached_capture_returns_after_child_exit_when_grandchild_holds_pipes() {
-        let fixture = tempfile::tempdir().expect("fresh capture fixture");
-        let program = fixture.path().join("fake-compose");
-        let sentinel_pid = fixture.path().join("sentinel.pid");
-        fs::write(
-            &program,
-            format!(
-                "#!/bin/sh\nsleep 30 &\necho $! > '{}'\necho 'compose up ok'\necho 'compose warn' >&2\nexit 0\n",
-                sentinel_pid.display()
-            ),
+    fn detached_null_sink_and_inventory_cancel_preserve_independent_pipe_writer() {
+        let fixture = tempfile::tempdir().expect("fresh pipe ownership fixture");
+        let sentinel_program = fixture.path().join("sentinel.py");
+        fs::write(&sentinel_program, r#"import os,sys,json,stat
+json.dump({'pid':os.getpid(),'group':os.getpgrp(),'stdout_inode':os.fstat(1).st_ino,'stdout_fifo':stat.S_ISFIFO(os.fstat(1).st_mode)},open(sys.argv[1],'w'))
+for line in sys.stdin:
+ print('sentinel:'+line.strip(),flush=True)
+"#).expect("private writer program");
+        let mut sentinel = Sentinel(
+            Command::new("python3")
+                .arg("-u")
+                .arg(&sentinel_program)
+                .arg(fixture.path().join("sentinel.json"))
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn()
+                .expect("own independent writer"),
+        );
+        let mut reader = BufReader::new(sentinel.0.stdout.take().expect("sentinel read endpoint"));
+        fn probe(
+            sentinel: &mut Sentinel,
+            reader: &mut BufReader<std::process::ChildStdout>,
+            message: &str,
+        ) {
+            writeln!(
+                sentinel.0.stdin.as_mut().expect("owned control"),
+                "{message}"
+            )
+            .expect("send control");
+            let mut response = String::new();
+            reader
+                .read_line(&mut response)
+                .expect("writer acknowledgement");
+            assert_eq!(response.trim(), format!("sentinel:{message}"));
+            assert!(sentinel.0.try_wait().expect("owned status").is_none());
+        }
+        probe(&mut sentinel, &mut reader, "before");
+        let compose = fixture.path().join("compose.py");
+        fs::write(&compose, r#"import os,json,stat,sys
+json.dump({'pid':os.getpid(),'stdout_null':os.fstat(1).st_rdev==os.stat(os.devnull).st_rdev and stat.S_ISCHR(os.fstat(1).st_mode),'stderr_null':os.fstat(2).st_rdev==os.stat(os.devnull).st_rdev and stat.S_ISCHR(os.fstat(2).st_mode)},open('compose-identities.json','w'))
+print('detached output')
+print('detached diagnostic',file=sys.stderr)
+"#).expect("private detached CLI");
+        let mut policy = crate::with_test_effigy_home(&fixture.path().join("home"), || {
+            fs::write(fixture.path().join("effigy.toml"),"[containers]\ndefault = \"web\"\n[containers.web]\ncompose_file = \"compose.yml\"\nprimary_service = \"app\"\n").expect("manifest");
+            fs::write(
+                fixture.path().join("compose.yml"),
+                "services:\n  app:\n    image: fixture.invalid/app\n",
+            )
+            .expect("compose");
+            crate::load_container_policy(fixture.path(), None).expect("private policy")
+        });
+        policy.shared_services.clear();
+        let args = [compose.into_os_string(), "up".into(), "-d".into()];
+        let output = super::super::implementation::run_compose_invocation_capture_with_env(
+            fixture.path(),
+            &policy,
+            std::ffi::OsStr::new("python3"),
+            &args,
+            "private detached up",
+            &[],
         )
-        .expect("write fake compose");
-        fs::set_permissions(&program, fs::Permissions::from_mode(0o755))
-            .expect("make fake compose executable");
+        .expect("production detached adapter completes");
+        assert!(output.stdout.is_empty() && output.stderr.is_empty());
+        let identity: serde_json::Value = serde_json::from_slice(
+            &fs::read(fixture.path().join("compose-identities.json")).expect("actual FD receipt"),
+        )
+        .expect("identity JSON");
+        assert_eq!(identity["stdout_null"], true);
+        assert_eq!(identity["stderr_null"], true);
+        let inventory = fixture.path().join("inventory.py");
+        fs::write(&inventory,r#"import os,json,time,stat
+json.dump({'pid':os.getpid(),'group':os.getpgrp(),'stdout_fifo':stat.S_ISFIFO(os.fstat(1).st_mode),'stdout_inode':os.fstat(1).st_ino},open('inventory-identities.json','w'))
+while True:
+ os.write(1,b'x'*8192)
+ os.write(2,b'y'*8192)
+"#).expect("private hung inventory");
+        let started = Instant::now();
+        let failure = run_command_capture_with_timeout(
+            fixture.path(),
+            "python3",
+            &[inventory.to_str().expect("private path")],
+            "private inventory",
+            Duration::from_millis(500),
+        )
+        .expect_err("bounded inventory refuses");
+        assert!(
+            failure
+                .to_string()
+                .contains("terminated and reaped; stdout/stderr EOF verified"),
+            "{failure}"
+        );
+        assert!(started.elapsed() < Duration::from_secs(5));
+        probe(&mut sentinel, &mut reader, "after-inventory");
+        let inventory_identity: serde_json::Value = serde_json::from_slice(
+            &fs::read(fixture.path().join("inventory-identities.json"))
+                .expect("inventory FD receipt"),
+        )
+        .expect("JSON");
+        let sentinel_identity: serde_json::Value = serde_json::from_slice(
+            &fs::read(fixture.path().join("sentinel.json")).expect("sentinel FD receipt"),
+        )
+        .expect("JSON");
+        assert_eq!(inventory_identity["pid"], inventory_identity["group"]);
+        assert_ne!(inventory_identity["group"], sentinel_identity["group"]);
+        assert_eq!(inventory_identity["stdout_fifo"], true);
+        assert_ne!(
+            inventory_identity["stdout_inode"],
+            sentinel_identity["stdout_inode"]
+        );
+        assert_eq!(sentinel_identity["stdout_fifo"], true);
+        println!("actual detached FD={identity}; inventory={inventory_identity}; independent writer={sentinel_identity}; {failure}");
+        drop(sentinel.0.stdin.take());
+        assert!(sentinel
+            .0
+            .wait()
+            .expect("positively reap independent writer")
+            .success());
+    }
 
+    #[test]
+    fn bounded_capture_distinguishes_eof_from_child_exit_and_refuses_overflow() {
+        let fixture = tempfile::tempdir().expect("fresh capture fixture");
         let started = Instant::now();
         let output = run_command_capture_os_with_env(
             fixture.path(),
-            program.to_str().expect("utf-8 fixture path"),
+            "python3",
+            &[
+                "-c".into(),
+                "import os,time; os.close(1); os.close(2); time.sleep(0.3)".into(),
+            ],
+            "EOF before exit",
             &[],
-            "fake compose up",
-            &[],
-        );
-        let elapsed = started.elapsed();
-
-        let pid = fs::read_to_string(&sentinel_pid).expect("sentinel pid recorded");
-        let pid: i32 = pid.trim().parse().expect("sentinel pid is numeric");
-        let sentinel = Pid::from_raw(pid);
-        let sentinel_alive_after_capture = kill(sentinel, None).is_ok();
-        let _ = kill(sentinel, Signal::SIGTERM);
-
-        let output = output.expect("compose exited 0");
-        assert!(String::from_utf8_lossy(&output.stdout).contains("compose up ok"));
-        assert!(String::from_utf8_lossy(&output.stderr).contains("compose warn"));
-        assert!(
-            elapsed < std::time::Duration::from_secs(10),
-            "detached capture waited {elapsed:?} for a pipe writer after the CLI exited"
-        );
-        assert!(
-            sentinel_alive_after_capture,
-            "capture must not stop the writer that still holds the pipes"
-        );
+        )
+        .expect("child settled");
+        assert!(output.status.success());
+        assert!(started.elapsed() >= Duration::from_millis(250));
+        let error = run_command_capture_with_timeout(
+            fixture.path(),
+            "python3",
+            &["-c", "import os; os.write(1,b'x'*(1024*1024+8192))"],
+            "overflow",
+            Duration::from_secs(5),
+        )
+        .expect_err("overflow never success");
+        assert!(error.to_string().contains("retention limit"));
     }
 }
