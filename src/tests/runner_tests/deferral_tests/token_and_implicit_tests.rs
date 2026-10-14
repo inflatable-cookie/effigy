@@ -28,11 +28,19 @@ fn setup_fake_docker_deferral_runtime(
     if service_running {
         fs::write(&runtime_state, "running\n").expect("seed fake runtime state");
     }
+    let inspect = bin_dir.join("inspect-proof.py");
+    fs::write(&inspect, r#"import sys,os,json,hashlib
+name=sys.argv[1];project=name.removesuffix('-app-1')
+print(json.dumps([{'Id':hashlib.sha256(name.encode()).hexdigest(),'Name':'/'+name,
+ 'State':{'Status':'running','Running':True},'Config':{'Labels':{'com.docker.compose.project':project,'com.docker.compose.service':'app','com.docker.compose.oneoff':'False','com.docker.compose.project.working_dir':os.getcwd()}},'NetworkSettings':{'Ports':{}}}]))
+"#).expect("write private full-ID declaration/binding proof");
     write_executable(
         &bin_dir.join("docker"),
         &format!(
             r#"#!/bin/sh
 printf '%s\n' "$*" >> '{}'
+if [ "$1" = inspect ]; then python3 '{}' "$2"; exit $?; fi
+project_file='{}'
 saw_id=
 id_mode=
 for arg in "$@"; do
@@ -103,17 +111,17 @@ if [ "$id_mode" = uid ]; then printf '501\n'; exit 0; fi
 if [ "$id_mode" = gid ]; then printf '20\n'; exit 0; fi
 if [ "$1" = ps ]; then
   if [ -f '{}' ]; then
-    printf 'legacy-dev-app-1\tUp 2 minutes\t\tlegacy-dev\t\tapp\n'
-    printf 'legacy-dev-web-1\tUp 2 minutes\t0.0.0.0:8201->80/tcp\tlegacy-dev\t\tweb\n'
-    printf 'legacy-dev-pma-1\tUp 2 minutes\t0.0.0.0:8202->80/tcp\tlegacy-dev\t\tpma\n'
-    printf 'legacy-dev-db-1\tUp 2 minutes\t0.0.0.0:3306->3306/tcp\tlegacy-dev\t\tdb\n'
-    printf 'legacy-dev-redis-1\tUp 2 minutes\t0.0.0.0:6379->6379/tcp\tlegacy-dev\t\tredis\n'
-    printf 'legacy-dev-memcache-1\tUp 2 minutes\t0.0.0.0:11211->11211/tcp\tlegacy-dev\t\tmemcache\n'
-    printf 'legacy-dev-mail-1\tUp 2 minutes\t0.0.0.0:23625->8025/tcp\tlegacy-dev\t\tmail\n'
+    project=$(cat "$project_file")
+    printf '%s-app-1\tUp 2 minutes\t\t%s\t%s\tapp\tFalse\n' "$project" "$project" "$PWD"
   fi
   exit 0
 fi
 if [ "$1" = compose ]; then
+  previous=
+  for arg in "$@"; do
+    if [ "$previous" = -p ]; then printf '%s\n' "$arg" > "$project_file"; fi
+    previous=$arg
+  done
   for arg in "$@"; do
     case "$arg" in
       up)
@@ -130,6 +138,8 @@ fi
 exit 0
 "#,
             docker_log.display(),
+            inspect.display(),
+            root.join("fake-compose-project").display(),
             vendor_exists.display(),
             vendor_repaired.display(),
             vendor_exists.display(),

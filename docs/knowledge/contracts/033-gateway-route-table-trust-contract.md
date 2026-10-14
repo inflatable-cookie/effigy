@@ -190,3 +190,11 @@ through publication; no latest-source or filesystem quiescence guarantee is
 claimed. Private production registration controls mutate source and marker
 files after actual owned probes and during delayed preparation, verify byte-
 exact retained tables on refusal, and restore the admitted inputs to reconcile.
+
+### TLS dependency maintenance
+
+The resolved rustls dependency is 0.23.46, which satisfies the patched range
+for RUSTSEC-2026-0346 through RUSTSEC-2026-0349. This lock-only maintenance
+changes no gateway TLS features, cipher selection, certificate validation or
+client authentication policy. The advisory finding on 0.23.45 does not by
+itself establish exploitability in Effigy's configuration.

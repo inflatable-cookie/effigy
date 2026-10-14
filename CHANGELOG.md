@@ -192,6 +192,9 @@ During v0.x, MINOR bumps may include breaking changes.
   and refuse drift, unavailable ownership or a missing primary. JSON failures
   expose bounded partial/unavailable details. Explicit down clears the context
   and keeps volumes; retirement removes owned mutable data.
+- Updated the locked rustls dependency from 0.23.45 to 0.23.46 for
+  RUSTSEC-2026-0346 through RUSTSEC-2026-0349, without changing TLS features,
+  cipher selection or authentication policy.
 - Detached route publication now checks the original admitted source and marker
   after runtime probes, under the route-table lock before preparation, and
   immediately before save. Drift or missing context preserves existing routes

@@ -8525,10 +8525,20 @@ fn install_fake_container_runtime(
     let colima_state = root.join("colima-running");
     let colima = bin_dir.join("colima");
     let docker = bin_dir.join("docker");
+    let canonical_root = fs::canonicalize(root).expect("canonical private runtime checkout");
+    let fixture_inspect = write_owned_runtime_inspect(&canonical_root);
+    let shell_quote = |value: &std::path::Path| {
+        format!("'{}'", value.display().to_string().replace('\'', "'\\''"))
+    };
+    let fixture_context = format!(
+        "set -eu\nfixture_checkout={}\nfixture_inspect={}\n",
+        shell_quote(&canonical_root),
+        shell_quote(&fixture_inspect)
+    );
 
     write_executable(
         &colima,
-        r#"#!/bin/sh
+        &r#"#!/bin/sh
 set -eu
 printf "%s\n" "$*" >> "$EFFIGY_TEST_COLIMA_ARGS_FILE"
 if [ "${1:-}" = "status" ]; then
@@ -8586,7 +8596,7 @@ case "$*" in
         fi
         case "$*" in
           *"--format"*)
-            printf "fixture-web-dev-app-1\tUp 10 seconds\t0.0.0.0:8080->80/tcp\tfixture-web-dev\t%s\tapp\tFalse\n" "${EFFIGY_TEST_OWNED_CHECKOUT:-/tmp/fixture}"
+            printf "fixture-web-dev-app-1\tUp 10 seconds\t0.0.0.0:8080->80/tcp\tfixture-web-dev\t%s\tapp\tFalse\n" "${EFFIGY_TEST_OWNED_CHECKOUT:-$fixture_checkout}"
             ;;
           *)
             printf "NAME                STATUS\napp                 running\n"
@@ -8594,7 +8604,7 @@ case "$*" in
         esac
         ;;
       inspect)
-        cat "$EFFIGY_TEST_OWNED_INSPECT_FILE"
+        /bin/cat "${EFFIGY_TEST_OWNED_INSPECT_FILE:-$fixture_inspect}"
         ;;
       start)
         printf "started\n"
@@ -8605,6 +8615,11 @@ case "$*" in
             : > "$EFFIGY_TEST_LOG_FOLLOW_FILE"
             if [ -n "${EFFIGY_TEST_ORPHAN_FILE:-}" ]; then
               sh -c 'trap "" TERM INT; sleep 3; printf orphaned > "$EFFIGY_TEST_ORPHAN_FILE"' &
+            fi
+            if [ -n "${EFFIGY_TEST_LOG_SETTLED_FILE:-}" ]; then
+              sleep 3600 &
+              owned_log_child=$!
+              trap 'set +e; kill -TERM "$owned_log_child"; wait "$owned_log_child"; child_exit=$?; printf "pid=%s exit=%s positively_waited\n" "$owned_log_child" "$child_exit" > "$EFFIGY_TEST_LOG_SETTLED_FILE"; exit 0' TERM INT
             fi
             while true; do
               sleep 1
@@ -8746,18 +8761,18 @@ case "$*" in
 esac
 printf "unexpected colima invocation: %s\n" "$*" >&2
 exit 1
-"#,
+"#.replace("set -eu\n", &fixture_context),
     );
 
     write_executable(
         &docker,
-        r#"#!/bin/sh
+        &r#"#!/bin/sh
 set -eu
 printf "%s\n" "$*" >> "$EFFIGY_TEST_DOCKER_ARGS_FILE"
 subcmd=""
 for arg in "$@"; do
   case "$arg" in
-    up|down|ps|logs|exec|kill|run|start)
+    up|down|ps|logs|exec|kill|run|start|inspect)
       subcmd="$arg"
       break
       ;;
@@ -8789,12 +8804,15 @@ case "$subcmd" in
   ps)
     case "$*" in
       *"--format"*)
-        printf "fixture-web-dev-app-1\tUp 10 seconds\t0.0.0.0:8080->80/tcp\tfixture-web-dev\t/tmp/fixture\tapp\n"
+        printf "fixture-web-dev-app-1\tUp 10 seconds\t0.0.0.0:8080->80/tcp\tfixture-web-dev\t%s\tapp\tFalse\n" "${EFFIGY_TEST_OWNED_CHECKOUT:-$fixture_checkout}"
         ;;
       *)
         printf "NAME                STATUS\napp                 running\n"
         ;;
     esac
+    ;;
+  inspect)
+    /bin/cat "${EFFIGY_TEST_OWNED_INSPECT_FILE:-$fixture_inspect}"
     ;;
   start)
     printf "started\n"
@@ -8905,7 +8923,7 @@ case "$subcmd" in
     exit 1
     ;;
 esac
-"#,
+"#.replace("set -eu\n", &fixture_context),
     );
 
     (bin_dir, colima_state)
@@ -8913,7 +8931,12 @@ esac
 
 #[test]
 fn cli_container_status_json_reports_default_container_contract() {
-    let root = temp_workspace("container-status");
+    let private = tempfile::Builder::new()
+        .prefix("effigy-158-private-")
+        .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
+        .expect("exclusive fake runtime fixture");
+    let root = fs::canonicalize(private.path()).expect("canonical fixture root");
+    fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
     write_container_fixture(&root, None, "./app:/workspace");
     let (bin_dir, colima_state) = install_fake_container_runtime(&root);
     let docker_args = root.join("docker-args.log");
@@ -8931,6 +8954,9 @@ fn cli_container_status_json_reports_default_container_contract() {
         .arg(&root)
         .arg("--json")
         .env("NO_COLOR", "1")
+        .env("HOME", &root)
+        .env("EFFIGY_HOST_RUN_ROOT", scheduler_state_root())
+        .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
         .env("PATH", path)
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
@@ -8962,7 +8988,12 @@ fn cli_container_status_json_reports_default_container_contract() {
 
 #[test]
 fn cli_container_status_succeeds_with_unrelated_required_container_secrets() {
-    let root = temp_workspace("container-status-unrelated-secrets");
+    let private = tempfile::Builder::new()
+        .prefix("effigy-158-private-")
+        .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
+        .expect("exclusive fake runtime fixture");
+    let root = fs::canonicalize(private.path()).expect("canonical fixture root");
+    fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
     write_container_fixture(&root, None, "./app:/workspace");
     append_required_container_secret(&root);
     write_locked_test_vault(&root, "vault-passphrase", &[]);
@@ -8982,6 +9013,9 @@ fn cli_container_status_succeeds_with_unrelated_required_container_secrets() {
         .arg(&root)
         .arg("--json")
         .env("NO_COLOR", "1")
+        .env("HOME", &root)
+        .env("EFFIGY_HOST_RUN_ROOT", scheduler_state_root())
+        .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
         .env("PATH", path)
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
@@ -9042,7 +9076,12 @@ fn cli_container_retire_named_environment_refuses_before_effects() {
 
 #[test]
 fn cli_container_reset_succeeds_with_unrelated_required_container_secrets() {
-    let root = temp_workspace("container-reset-unrelated-secrets");
+    let private = tempfile::Builder::new()
+        .prefix("effigy-158-private-")
+        .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
+        .expect("exclusive fake runtime fixture");
+    let root = fs::canonicalize(private.path()).expect("canonical fixture root");
+    fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
     write_container_fixture(&root, None, "./app:/workspace");
     append_required_container_secret(&root);
     write_locked_test_vault(&root, "vault-passphrase", &[]);
@@ -9063,6 +9102,9 @@ fn cli_container_reset_succeeds_with_unrelated_required_container_secrets() {
         .arg(&root)
         .arg("--json")
         .env("NO_COLOR", "1")
+        .env("HOME", &root)
+        .env("EFFIGY_HOST_RUN_ROOT", scheduler_state_root())
+        .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
         .env("PATH", path)
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
@@ -9084,7 +9126,12 @@ fn cli_container_reset_succeeds_with_unrelated_required_container_secrets() {
 
 #[test]
 fn cli_container_data_list_json_reports_managed_volumes() {
-    let root = temp_workspace("container-data-list");
+    let private = tempfile::Builder::new()
+        .prefix("effigy-158-private-")
+        .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
+        .expect("exclusive fake runtime fixture");
+    let root = fs::canonicalize(private.path()).expect("canonical fixture root");
+    fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
     write_generated_container_volume_fixture(&root);
     let (bin_dir, colima_state) = install_fake_container_runtime(&root);
     let docker_args = root.join("docker-args.log");
@@ -9105,6 +9152,9 @@ fn cli_container_data_list_json_reports_managed_volumes() {
         .arg(&root)
         .arg("--json")
         .env("NO_COLOR", "1")
+        .env("HOME", &root)
+        .env("EFFIGY_HOST_RUN_ROOT", scheduler_state_root())
+        .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
         .env("PATH", path)
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
@@ -9134,7 +9184,12 @@ fn cli_container_data_list_json_reports_managed_volumes() {
 
 #[test]
 fn cli_container_cache_list_json_reports_purge_safe_isolated_volumes() {
-    let root = temp_workspace("container-cache-list");
+    let private = tempfile::Builder::new()
+        .prefix("effigy-158-private-")
+        .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
+        .expect("exclusive fake runtime fixture");
+    let root = fs::canonicalize(private.path()).expect("canonical fixture root");
+    fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
     write_generated_container_volume_fixture(&root);
     let (bin_dir, colima_state) = install_fake_container_runtime(&root);
     let docker_args = root.join("docker-args.log");
@@ -9155,6 +9210,9 @@ fn cli_container_cache_list_json_reports_purge_safe_isolated_volumes() {
         .arg(&root)
         .arg("--json")
         .env("NO_COLOR", "1")
+        .env("HOME", &root)
+        .env("EFFIGY_HOST_RUN_ROOT", scheduler_state_root())
+        .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
         .env("PATH", path)
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
@@ -9179,7 +9237,12 @@ fn cli_container_cache_list_json_reports_purge_safe_isolated_volumes() {
 
 #[test]
 fn cli_generated_container_status_json_reports_media_mounts() {
-    let root = temp_workspace("container-generated-media-status");
+    let private = tempfile::Builder::new()
+        .prefix("effigy-158-private-")
+        .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
+        .expect("exclusive fake runtime fixture");
+    let root = fs::canonicalize(private.path()).expect("canonical fixture root");
+    fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
     write_generated_container_media_fixture(&root);
     let (bin_dir, colima_state) = install_fake_container_runtime(&root);
     let docker_args = root.join("docker-args.log");
@@ -9198,6 +9261,9 @@ fn cli_generated_container_status_json_reports_media_mounts() {
         .arg(&root)
         .arg("--json")
         .env("NO_COLOR", "1")
+        .env("HOME", &root)
+        .env("EFFIGY_HOST_RUN_ROOT", scheduler_state_root())
+        .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
         .env("PATH", path)
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
@@ -9224,7 +9290,12 @@ fn cli_generated_container_status_json_reports_media_mounts() {
 
 #[test]
 fn cli_container_data_export_json_reports_transfer_contract() {
-    let root = temp_workspace("container-data-export");
+    let private = tempfile::Builder::new()
+        .prefix("effigy-158-private-")
+        .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
+        .expect("exclusive fake runtime fixture");
+    let root = fs::canonicalize(private.path()).expect("canonical fixture root");
+    fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
     write_generated_container_volume_fixture(&root);
     let (bin_dir, colima_state) = install_fake_container_runtime(&root);
     let docker_args = root.join("docker-args.log");
@@ -9248,8 +9319,9 @@ fn cli_container_data_export_json_reports_transfer_contract() {
         .arg(&root)
         .arg("--json")
         .env("NO_COLOR", "1")
-        .env("EFFIGY_HOST_RUN_ROOT", scheduler_state_root())
         .env("HOME", &root)
+        .env("EFFIGY_HOST_RUN_ROOT", scheduler_state_root())
+        .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
         .env("PATH", path)
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
@@ -9281,7 +9353,12 @@ fn cli_container_data_export_json_reports_transfer_contract() {
 
 #[test]
 fn cli_container_data_import_json_reports_transfer_contract() {
-    let root = temp_workspace("container-data-import");
+    let private = tempfile::Builder::new()
+        .prefix("effigy-158-private-")
+        .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
+        .expect("exclusive fake runtime fixture");
+    let root = fs::canonicalize(private.path()).expect("canonical fixture root");
+    fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
     write_generated_container_volume_fixture(&root);
     let (bin_dir, colima_state) = install_fake_container_runtime(&root);
     let docker_args = root.join("docker-args.log");
@@ -9307,8 +9384,9 @@ fn cli_container_data_import_json_reports_transfer_contract() {
         .arg(&root)
         .arg("--json")
         .env("NO_COLOR", "1")
-        .env("EFFIGY_HOST_RUN_ROOT", scheduler_state_root())
         .env("HOME", &root)
+        .env("EFFIGY_HOST_RUN_ROOT", scheduler_state_root())
+        .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
         .env("PATH", path)
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
@@ -9339,7 +9417,12 @@ fn cli_container_data_import_json_reports_transfer_contract() {
 
 #[test]
 fn cli_container_data_pull_production_json_reports_hook_contract() {
-    let root = temp_workspace("container-data-pull-production");
+    let private = tempfile::Builder::new()
+        .prefix("effigy-158-private-")
+        .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
+        .expect("exclusive fake runtime fixture");
+    let root = fs::canonicalize(private.path()).expect("canonical fixture root");
+    fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
     write_generated_container_pull_production_fixture(&root);
     let (bin_dir, colima_state) = install_fake_container_runtime(&root);
     let docker_args = root.join("docker-args.log");
@@ -9360,8 +9443,9 @@ fn cli_container_data_pull_production_json_reports_hook_contract() {
         .arg(&root)
         .arg("--json")
         .env("NO_COLOR", "1")
-        .env("EFFIGY_HOST_RUN_ROOT", scheduler_state_root())
         .env("HOME", &root)
+        .env("EFFIGY_HOST_RUN_ROOT", scheduler_state_root())
+        .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
         .env("PATH", path)
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
@@ -9491,8 +9575,9 @@ fn container_data_seed_command(fixture_root: &std::path::Path, disable_reaper: b
         .arg(&root)
         .arg("--json")
         .env("NO_COLOR", "1")
-        .env("EFFIGY_HOST_RUN_ROOT", scheduler_state_root())
         .env("HOME", &root)
+        .env("EFFIGY_HOST_RUN_ROOT", scheduler_state_root())
+        .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
         .env("PATH", path)
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
@@ -9742,7 +9827,12 @@ fn command_matches_reaper_root(command: &str, root: &std::path::Path) -> bool {
 
 #[test]
 fn cli_container_up_detached_starts_colima_and_reports_ready() {
-    let root = temp_workspace("container-up-detached");
+    let private = tempfile::Builder::new()
+        .prefix("effigy-158-private-")
+        .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
+        .expect("exclusive fake runtime fixture");
+    let root = fs::canonicalize(private.path()).expect("canonical fixture root");
+    fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind health");
     let port = listener.local_addr().expect("addr").port();
     write_container_fixture(
@@ -9767,10 +9857,17 @@ fn cli_container_up_detached_starts_colima_and_reports_ready() {
         .arg("--detach")
         .arg("--json")
         .env("NO_COLOR", "1")
+        .env("HOME", &root)
+        .env("EFFIGY_HOST_RUN_ROOT", scheduler_state_root())
+        .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
         .env("PATH", path)
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
         .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
+        .env(
+            "EFFIGY_TEST_SERVICE_STATE_FILE",
+            root.join("service-running"),
+        )
         .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
         .output()
         .expect("run effigy");
@@ -9788,8 +9885,15 @@ fn cli_container_up_detached_starts_colima_and_reports_ready() {
 
 #[test]
 fn cli_container_attached_session_stops_environment_on_sigint() {
-    let _guard = lock_cli_process_tests();
-    let root = temp_workspace("container-up-attached");
+    // All resources and HOME are private; no shared lock file is touched.
+    let _guard = CLI_PROCESS_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    let private = tempfile::Builder::new()
+        .prefix("effigy-158-attached-")
+        .tempdir()
+        .expect("exclusive private fixture");
+    let root = fs::canonicalize(private.path()).expect("canonical private fixture");
     write_container_fixture(&root, None, "./app:/workspace");
     let (bin_dir, colima_state) = install_fake_container_runtime(&root);
     let docker_args = root.join("docker-args.log");
@@ -9807,6 +9911,9 @@ fn cli_container_attached_session_stops_environment_on_sigint() {
         .arg("--repo")
         .arg(&root)
         .env("NO_COLOR", "1")
+        .env("HOME", &root)
+        .env("EFFIGY_HOST_RUN_ROOT", scheduler_state_root())
+        .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
         .env("PATH", path)
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
@@ -9837,8 +9944,15 @@ fn cli_container_attached_session_stops_environment_on_sigint() {
 
 #[test]
 fn cli_container_attached_stream_session_reports_operator_overview() {
-    let _guard = lock_cli_process_tests();
-    let root = temp_workspace("container-up-stream-overview");
+    // All resources and HOME are private; no shared lock file is touched.
+    let _guard = CLI_PROCESS_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    let private = tempfile::Builder::new()
+        .prefix("effigy-158-attached-")
+        .tempdir()
+        .expect("exclusive private fixture");
+    let root = fs::canonicalize(private.path()).expect("canonical private fixture");
     write_container_fixture(&root, None, "./app:/workspace");
     let (bin_dir, colima_state) = install_fake_container_runtime(&root);
     let colima_args = root.join("colima-args.log");
@@ -9855,6 +9969,9 @@ fn cli_container_attached_stream_session_reports_operator_overview() {
         .arg("--repo")
         .arg(&root)
         .env("NO_COLOR", "1")
+        .env("HOME", &root)
+        .env("EFFIGY_HOST_RUN_ROOT", scheduler_state_root())
+        .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
         .env("PATH", path)
         .env("EFFIGY_CONTAINER_STREAM", "1")
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", root.join("docker-args.log"))
@@ -9893,8 +10010,15 @@ fn cli_container_attached_stream_session_reports_operator_overview() {
 
 #[test]
 fn cli_container_attached_session_handles_sigint_during_startup() {
-    let _guard = lock_cli_process_tests();
-    let root = temp_workspace("container-up-startup-sigint");
+    let _guard = CLI_PROCESS_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    let private = tempfile::Builder::new()
+        .prefix("effigy-158-private-")
+        .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
+        .expect("exclusive fake runtime fixture");
+    let root = fs::canonicalize(private.path()).expect("canonical fixture root");
+    fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
     write_container_fixture(&root, None, "./app:/workspace");
     let (bin_dir, colima_state) = install_fake_container_runtime(&root);
     let docker_args = root.join("docker-args.log");
@@ -9913,6 +10037,9 @@ fn cli_container_attached_session_handles_sigint_during_startup() {
         .arg("--repo")
         .arg(&root)
         .env("NO_COLOR", "1")
+        .env("HOME", &root)
+        .env("EFFIGY_HOST_RUN_ROOT", scheduler_state_root())
+        .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
         .env("PATH", path)
         .env("EFFIGY_CONTAINER_STREAM", "1")
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
@@ -9956,7 +10083,9 @@ fn cli_container_attached_session_handles_sigint_during_startup() {
 
 #[test]
 fn cli_workspace_binding_handoff_stops_environment_after_return() {
-    let _guard = lock_cli_process_tests();
+    let _guard = CLI_PROCESS_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
     let root = temp_execution_workspace("task-workspace-binding");
     write_container_fixture_with_task(&root, None, "./app:/workspace", true);
     let (bin_dir, colima_state) = install_fake_container_runtime(&root);
@@ -9974,6 +10103,9 @@ fn cli_workspace_binding_handoff_stops_environment_after_return() {
         .arg("--repo")
         .arg(&root)
         .env("NO_COLOR", "1")
+        .env("HOME", &root)
+        .env("EFFIGY_HOST_RUN_ROOT", scheduler_state_root())
+        .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
         .env("PATH", path)
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
         .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
@@ -10000,14 +10132,34 @@ fn cli_workspace_binding_handoff_stops_environment_after_return() {
 
 #[test]
 fn cli_container_attached_session_terminates_log_process_group() {
-    let _guard = lock_cli_process_tests();
-    let root = temp_workspace("container-up-process-group-stop");
+    // All resources and HOME are private; no shared lock file is touched.
+    let _guard = CLI_PROCESS_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    let private = tempfile::Builder::new()
+        .prefix("effigy-158-attached-")
+        .tempdir()
+        .expect("exclusive private fixture");
+    let root = fs::canonicalize(private.path()).expect("canonical private fixture");
     write_container_fixture(&root, None, "./app:/workspace");
     let (bin_dir, colima_state) = install_fake_container_runtime(&root);
     let docker_args = root.join("docker-args.log");
     let colima_args = root.join("colima-args.log");
     let log_follow = root.join("log-follow.marker");
     let orphan_file = root.join("orphaned.log");
+    let settled = root.join("owned-log-settled");
+    // An independent writer/session must survive the CLI's owned-group stop.
+    let mut sentinel = Command::new("/bin/cat")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn_owned()
+        .expect("own independent sentinel");
+    use std::io::{BufRead, BufReader};
+    let mut sentinel_output = BufReader::new(sentinel.stdout.take().expect("sentinel output"));
+    writeln!(sentinel.stdin.as_mut().unwrap(), "before-stop").unwrap();
+    let mut before = String::new();
+    sentinel_output.read_line(&mut before).unwrap();
+    assert_eq!(before, "before-stop\n");
     let path = format!(
         "{}:{}",
         bin_dir.display(),
@@ -10020,6 +10172,9 @@ fn cli_container_attached_session_terminates_log_process_group() {
         .arg("--repo")
         .arg(&root)
         .env("NO_COLOR", "1")
+        .env("HOME", &root)
+        .env("EFFIGY_HOST_RUN_ROOT", scheduler_state_root())
+        .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
         .env("PATH", path)
         .env("EFFIGY_CONTAINER_STREAM", "1")
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
@@ -10027,6 +10182,7 @@ fn cli_container_attached_session_terminates_log_process_group() {
         .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
         .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
         .env("EFFIGY_TEST_ORPHAN_FILE", &orphan_file)
+        .env("EFFIGY_TEST_LOG_SETTLED_FILE", &settled)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn_owned()
@@ -10045,6 +10201,23 @@ fn cli_container_attached_session_terminates_log_process_group() {
 
     let output = child.wait_with_output().expect("wait output");
     assert!(output.status.success(), "attached up failed: {output:?}");
+    let receipt = fs::read_to_string(&settled).expect("owned log parent reports actual child wait");
+    assert!(
+        receipt.contains("positively_waited") && !receipt.contains("exit=0"),
+        "{receipt}"
+    );
+    writeln!(sentinel.stdin.as_mut().unwrap(), "after-stop").unwrap();
+    let mut after = String::new();
+    sentinel_output.read_line(&mut after).unwrap();
+    assert_eq!(after, "after-stop\n");
+    drop(sentinel.stdin.take());
+    let sentinel_exit = sentinel
+        .wait_with_output()
+        .expect("positively reap independent sentinel");
+    assert!(sentinel_exit.status.success());
+    println!(
+        "owned group settlement {receipt}; independent writer acknowledged before/after and reaped"
+    );
     std::thread::sleep(Duration::from_secs(4));
     assert!(
         !orphan_file.exists(),
@@ -10054,7 +10227,12 @@ fn cli_container_attached_session_terminates_log_process_group() {
 
 #[test]
 fn cli_container_falls_back_to_colima_nerdctl_when_docker_is_missing() {
-    let root = temp_workspace("container-colima-nerdctl");
+    let private = tempfile::Builder::new()
+        .prefix("effigy-158-private-")
+        .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
+        .expect("exclusive fake runtime fixture");
+    let root = fs::canonicalize(private.path()).expect("canonical fixture root");
+    fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind health");
     let port = listener.local_addr().expect("addr").port();
     write_container_fixture(
@@ -10076,6 +10254,9 @@ fn cli_container_falls_back_to_colima_nerdctl_when_docker_is_missing() {
         .arg("--detach")
         .arg("--json")
         .env("NO_COLOR", "1")
+        .env("HOME", &root)
+        .env("EFFIGY_HOST_RUN_ROOT", scheduler_state_root())
+        .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
         .env("PATH", bin_dir.display().to_string())
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
@@ -10094,7 +10275,12 @@ fn cli_container_falls_back_to_colima_nerdctl_when_docker_is_missing() {
 
 #[test]
 fn cli_container_shell_command_runs_via_sh_lc() {
-    let root = temp_workspace("container-shell-command");
+    let private = tempfile::Builder::new()
+        .prefix("effigy-158-private-")
+        .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
+        .expect("exclusive fake runtime fixture");
+    let root = fs::canonicalize(private.path()).expect("canonical fixture root");
+    fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
     write_container_fixture(&root, None, "./:/workspace");
     let (bin_dir, colima_state) = install_fake_container_runtime(&root);
     let docker_args = root.join("docker-args.log");
@@ -10116,6 +10302,9 @@ fn cli_container_shell_command_runs_via_sh_lc() {
         .arg("--command")
         .arg("printf shell-ok")
         .env("NO_COLOR", "1")
+        .env("HOME", &root)
+        .env("EFFIGY_HOST_RUN_ROOT", scheduler_state_root())
+        .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
         .env("PATH", path)
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
@@ -10142,8 +10331,15 @@ fn cli_container_shell_command_runs_via_sh_lc() {
 
 #[test]
 fn cli_container_rejects_mounts_that_escape_repo_root() {
-    let root = temp_workspace("container-invalid-mount");
-    fs::create_dir_all(root.join("../outside")).expect("mkdir outside");
+    let private = tempfile::Builder::new()
+        .prefix("effigy-158-private-")
+        .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
+        .expect("exclusive fake runtime fixture");
+    let root = private.path().join("repo");
+    fs::create_dir(&root).expect("owned checkout");
+    let root = fs::canonicalize(root).expect("canonical fixture root");
+    fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
+    fs::create_dir(private.path().join("outside")).expect("owned rejected mount");
     write_container_fixture(&root, None, "../outside:/workspace");
     let (bin_dir, colima_state) = install_fake_container_runtime(&root);
     let docker_args = root.join("docker-args.log");
@@ -10160,6 +10356,9 @@ fn cli_container_rejects_mounts_that_escape_repo_root() {
         .arg("--repo")
         .arg(&root)
         .env("NO_COLOR", "1")
+        .env("HOME", &root)
+        .env("EFFIGY_HOST_RUN_ROOT", scheduler_state_root())
+        .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
         .env("PATH", path)
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
