@@ -1709,8 +1709,10 @@ enum PublicationStage {
     BeforeSave,
 }
 #[cfg(test)]
+type PublicationControl = Box<dyn FnMut(PublicationStage)>;
+#[cfg(test)]
 thread_local! {
-    static PUBLICATION_CONTROL: std::cell::RefCell<Option<Box<dyn FnMut(PublicationStage)>>> = const { std::cell::RefCell::new(None) };
+    static PUBLICATION_CONTROL: std::cell::RefCell<Option<PublicationControl>> = const { std::cell::RefCell::new(None) };
 }
 #[cfg(test)]
 fn publication_test_control(stage: PublicationStage) {
