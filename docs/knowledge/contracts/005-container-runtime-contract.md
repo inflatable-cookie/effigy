@@ -873,6 +873,14 @@ limited to that proven owned service, preserve its data and volume identities,
 and refuse unknown, foreign, shared or changing ownership. Existing retirement
 confirmation does not authorize agents to delete the reported live stack.
 
+Detached publication retains the originally admitted context across probes and
+requires it at the locked route save. A publication refusal does not rewrite
+its marker from changed inputs. The checked interval and cooperative-source-
+writer limits are owned by
+[the gateway route trust contract](033-gateway-route-table-trust-contract.md#detached-admission-at-publication).
+Restore that admitted context before supported reconciliation; unavailable
+context cannot authorize recreation, cleanup or guessed exposure.
+
 The current health-check recovery interface cannot qualify service-only
 recreation. Its inspect snapshot records mount references, but does not bind
 them to an immutable service declaration, prove exclusive volume/data ownership,

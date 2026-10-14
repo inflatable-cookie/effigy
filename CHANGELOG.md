@@ -192,6 +192,11 @@ During v0.x, MINOR bumps may include breaking changes.
   and refuse drift, unavailable ownership or a missing primary. JSON failures
   expose bounded partial/unavailable details. Explicit down clears the context
   and keeps volumes; retirement removes owned mutable data.
+- Detached route publication now checks the original admitted source and marker
+  after runtime probes, under the route-table lock before preparation, and
+  immediately before save. Drift or missing context preserves existing routes
+  and refuses without a new source baseline, recreation or teardown. The table
+  lock does not exclude source-file writers or guarantee atomic source reads.
 - Detached Compose launch isolates service writers with null output sinks.
   Finite inventory capture drains nonblocking pipes without persistent reader
   threads, caps retained output at 1 MiB per stream, refuses incomplete EOF or

@@ -11,9 +11,7 @@ use super::closeout::{
     stop_host_processes_best_effort,
 };
 use super::deregister_runtime_gateway_routes;
-use super::gateway_registration::{
-    deregister_gateway_routes_for_container, register_gateway_routes_for_container,
-};
+use super::gateway_registration::deregister_gateway_routes_for_container;
 use super::runtime_error_from_runner;
 use super::secret_env::{
     materialize_container_secret_runtime, resolve_container_secret_runtime,
@@ -39,7 +37,6 @@ use crate::runner::exec_command::{
 };
 use crate::runner::host_container_lease::{
     clear_host_container_lease, clear_partial_activation, partial_activation_recorded,
-    record_partial_activation,
 };
 use crate::runner::host_process::start_host_processes_for_container;
 use effigy_containers::{
@@ -89,6 +86,7 @@ struct ContainerUpPlan {
     shared_service_notes: Vec<String>,
     workspace_mount_decisions: Vec<WorkspaceExtraMountDecision>,
     up_plan: ContainerComposeInvocationPlan,
+    admitted_context: Option<crate::runner::host_container_lease::DetachedActivationContext>,
 }
 
 struct ContainerUpRuntimeIntegrations {
@@ -161,7 +159,7 @@ fn run_container_up_inner(
         }
         if plan.attach_mode == EffectiveAttachMode::Detached {
             *partial = true;
-            record_partial_activation(repo_root, &plan.policy)?;
+            record_admitted_context(repo_root, &plan)?;
         }
     }
     *partial = plan.attach_mode == EffectiveAttachMode::Detached;
@@ -211,7 +209,11 @@ fn prepare_container_up(
     let mut policy = load_container_policy(repo_root, name)?;
     // Validate a retained marker before runtime activation or generated input
     // refresh can obscure drift in the originally admitted Compose context.
-    let reconcile_pending = partial_activation_recorded(repo_root, &policy)?;
+    let retained_context =
+        crate::runner::host_container_lease::retained_detached_activation_context(
+            repo_root, &policy,
+        )?;
+    let reconcile_pending = retained_context.is_some();
     let operation_plan = lifecycle_operation_plan(
         repo_root,
         &policy,
@@ -239,6 +241,20 @@ fn prepare_container_up(
     let warnings = colima_profile_warnings(&policy, repo_root);
     emit_warning_lines(&warnings);
     let attach_mode = effective_attach_mode(&policy, attach, detach);
+    // Direct Compose observation happens during preparation; capture its
+    // admission before that probe rather than minting a post-probe baseline.
+    let retained_context = if attach_mode == EffectiveAttachMode::Detached
+        && retained_context.is_none()
+        && policy.compose_source == effigy_containers::EffectiveComposeSource::Direct
+    {
+        Some(
+            crate::runner::host_container_lease::capture_detached_activation_context(
+                repo_root, &policy,
+            )?,
+        )
+    } else {
+        retained_context
+    };
     let colima_started = start_runtime_after_scope_registration(&policy, || {
         ensure_runtime_backend_running(&policy, repo_root).map_err(Into::into)
     })?;
@@ -280,6 +296,19 @@ fn prepare_container_up(
         "docker compose up",
     )
     .map_err(RunnerError::from)?;
+    let admitted_context = if attach_mode == EffectiveAttachMode::Detached {
+        Some(match retained_context {
+            Some(context) => context,
+            None => crate::runner::host_container_lease::capture_detached_activation_context(
+                repo_root, &policy,
+            )?,
+        })
+    } else {
+        None
+    };
+    if let Some(context) = &admitted_context {
+        context.verify(repo_root, &policy, context.marker_required)?;
+    }
     Ok(ContainerUpPlan {
         stop_flag,
         policy,
@@ -291,6 +320,7 @@ fn prepare_container_up(
         shared_service_notes,
         workspace_mount_decisions,
         up_plan,
+        admitted_context,
     })
 }
 
@@ -429,18 +459,24 @@ fn complete_container_up_runtime_integrations(
         let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, policy);
         return Err(finish_container_up_failure(error, cleanup_result));
     }
-    let gateway_routes = match register_gateway_routes_for_container(repo_root, policy) {
-        Ok(routes) => routes,
-        Err(error) => {
-            return Err(gateway_registration_failure(
-                plan.attach_mode,
-                repo_root,
-                policy,
-                error,
-                || lifecycle_cleanup_failed_container_up(repo_root, policy),
-            ));
-        }
-    };
+    let gateway_routes =
+        match super::gateway_registration::register_gateway_routes_for_container_with_context(
+            repo_root,
+            policy,
+            plan.admitted_context.as_ref(),
+        ) {
+            Ok(routes) => routes,
+            Err(error) => {
+                return Err(gateway_registration_failure(
+                    plan.attach_mode,
+                    repo_root,
+                    policy,
+                    plan.admitted_context.as_ref(),
+                    error,
+                    || lifecycle_cleanup_failed_container_up(repo_root, policy),
+                ));
+            }
+        };
     let tcp_alias_host_notes = match reconcile_primary_service_tcp_alias_hosts(repo_root, policy) {
         Ok(notes) => notes,
         Err(error) => {
@@ -491,12 +527,15 @@ fn gateway_registration_failure(
     attach_mode: EffectiveAttachMode,
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
+    admitted: Option<&crate::runner::host_container_lease::DetachedActivationContext>,
     error: RunnerError,
     cleanup: impl FnOnce() -> Result<(), RunnerError>,
 ) -> RunnerError {
     if attach_mode == EffectiveAttachMode::Detached {
-        let recorded = record_partial_activation(repo_root, policy);
-        return detached_partial_activation_error(policy, error, recorded.err());
+        let verified = admitted
+            .ok_or_else(|| RunnerError::task_invocation("detached admission missing"))
+            .and_then(|context| context.verify(repo_root, policy, true));
+        return detached_partial_activation_error(policy, error, verified.err());
     }
     finish_container_up_failure(error, cleanup())
 }
@@ -525,6 +564,17 @@ fn detached_partial_activation_error(
 /// without `compose up`, so running services and exec sessions are not
 /// recreated. Missing primary, unavailable inventory or changed admission
 /// context refuses rather than falling back to `compose up`.
+fn record_admitted_context(repo_root: &Path, plan: &ContainerUpPlan) -> Result<(), RunnerError> {
+    let context = plan.admitted_context.as_ref().ok_or_else(|| {
+        RunnerError::task_invocation("detached activation admission snapshot missing")
+    })?;
+    crate::runner::host_container_lease::record_admitted_partial_activation(
+        repo_root,
+        &plan.policy,
+        context,
+    )
+}
+
 fn partial_activation_reconcile_pending(
     repo_root: &Path,
     plan: &ContainerUpPlan,
@@ -533,6 +583,9 @@ fn partial_activation_reconcile_pending(
         return Ok(false);
     }
     let recorded = partial_activation_recorded(repo_root, &plan.policy)?;
+    if let Some(context) = &plan.admitted_context {
+        context.verify(repo_root, &plan.policy, recorded || context.marker_required)?;
+    }
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
     let running =
         effigy_containers::exec::list_running_compose_containers_for_policy_with_deadline(repo_root, &plan.policy, Some(deadline)).map_err(|error| {
@@ -548,7 +601,7 @@ fn partial_activation_reconcile_pending(
         .map_err(|_| RunnerError::task_invocation("partial activation reconciliation unavailable: current full-ID ownership/bindings could not be verified. No services were recreated"))?;
     if partial_reconcile_skips_compose_up(&plan.policy, &running) {
         if !recorded {
-            record_partial_activation(repo_root, &plan.policy)?;
+            record_admitted_context(repo_root, plan)?;
         }
         return Ok(true);
     }
@@ -1098,14 +1151,15 @@ mod tests {
         annotate_workspace_extra_mount_decisions, clear_partial_activation,
         detached_partial_activation_error, exec_operation_plan, gateway_registration_failure,
         lifecycle_operation_plan, partial_activation_recorded, partial_reconcile_skips_compose_up,
-        primary_service_is_running, record_partial_activation,
-        refresh_workspace_mounts_for_creation, resolve_workspace_mounts_for_creation,
-        run_container_eject, start_runtime_after_scope_registration, RunnerError,
+        primary_service_is_running, refresh_workspace_mounts_for_creation,
+        resolve_workspace_mounts_for_creation, run_container_eject,
+        start_runtime_after_scope_registration, RunnerError,
     };
     use crate::runner::container_command::support::{
         annotate_left_running_shared_services, annotate_shared_service_notes,
     };
     use crate::runner::container_command::test_support::temp_repo;
+    use crate::runner::host_container_lease::record_partial_activation;
     use effigy_containers::EffectiveAttachMode;
     use effigy_containers::{
         down_report, load_container_policy, up_detached_report, ContainerAction,
@@ -1678,11 +1732,19 @@ primary_service = "app"
     fn detached_gateway_registration_failure_keeps_started_scope() {
         let (temp, _lease_home) = isolated_lease_home();
         let policy = test_policy(Vec::new());
+        record_partial_activation(temp.path(), &policy).expect("admit before publication");
+        let admitted = crate::runner::host_container_lease::retained_detached_activation_context(
+            temp.path(),
+            &policy,
+        )
+        .unwrap()
+        .unwrap();
         let cleaned = std::cell::Cell::new(false);
         let error = gateway_registration_failure(
             EffectiveAttachMode::Detached,
             temp.path(),
             &policy,
+            Some(&admitted),
             RunnerError::task_invocation("timed out waiting for declared gateway services"),
             || {
                 cleaned.set(true);
@@ -1716,6 +1778,7 @@ primary_service = "app"
             EffectiveAttachMode::Attached,
             temp.path(),
             &policy,
+            None,
             RunnerError::task_invocation("gateway registration failed"),
             || {
                 cleaned.set(true);
@@ -1736,6 +1799,7 @@ primary_service = "app"
             EffectiveAttachMode::Attached,
             temp.path(),
             &policy,
+            None,
             RunnerError::task_invocation("gateway registration failed"),
             || Err(RunnerError::task_invocation("docker compose down failed")),
         );

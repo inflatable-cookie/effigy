@@ -171,7 +171,9 @@
   { id = "healthcheck-unload-private", run = "cargo nextest run --config-file tests/config/deadline-marker-nextest.toml --user-config-file none -p effigy-containers --lib --filterset 'test(unload_proof_) | test(restart_recovery::tests::pathological_start_fatal)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
   "cargo check -p effigy-containers --lib --tests",
 ]
-"test:gateway:registration-loopback" = "cargo test -p effigy gateway_registration::tests:: -- --nocapture"
+"test:gateway:registration-loopback" = [
+  { id = "gateway-registration-loopback", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(gateway_registration::tests::)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
+]
 # Partial scoped bring-up: a failed route registration after `compose up` keeps
 # a detached scope running with an explicit partial result and a reconcile
 # mark; a re-run with a running primary skips `compose up`. Attached bring-up

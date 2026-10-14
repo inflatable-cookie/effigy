@@ -1784,3 +1784,382 @@ fn load_or_allocate_project_loopback_ip_migrates_legacy_identity_for_same_repo()
         );
     });
 }
+
+/// Real source files, owned children, fake backend transport and persisted
+/// production registration. The hook only chooses a mutation time; it never
+/// supplies readiness or admission evidence.
+#[cfg(unix)]
+#[test]
+fn detached_publication_refuses_source_and_marker_changes_after_owned_probe() {
+    use crate::runner::host_container_lease::{
+        capture_detached_activation_context, record_admitted_partial_activation,
+        retained_detached_activation_context,
+    };
+    use std::io::{BufRead, BufReader, Write};
+    use std::os::unix::fs::PermissionsExt;
+    use std::process::{Child, ChildStdout, Stdio};
+
+    struct Service {
+        child: Child,
+        output: BufReader<ChildStdout>,
+        port: u16,
+    }
+    impl Service {
+        fn new() -> Self {
+            let mut child = Command::new("python3")
+                .args([
+                    "-u",
+                    "-c",
+                    r#"
+import socket,threading,sys
+s=socket.socket();s.bind(('127.0.0.1',0));s.listen()
+def serve():
+ while True:
+  c,_=s.accept()
+  with c:
+   c.recv(128);c.sendall(b'owned-service\n')
+threading.Thread(target=serve,daemon=True).start()
+print(s.getsockname()[1],flush=True)
+for line in sys.stdin: print('exec:'+line.strip(),flush=True)
+"#,
+                ])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn()
+                .expect("own exclusive service child");
+            let mut output = BufReader::new(child.stdout.take().unwrap());
+            let mut line = String::new();
+            output.read_line(&mut line).unwrap();
+            Self {
+                child,
+                output,
+                port: line.trim().parse().unwrap(),
+            }
+        }
+        fn exec(&mut self) {
+            writeln!(self.child.stdin.as_mut().unwrap(), "sentinel").unwrap();
+            let mut line = String::new();
+            self.output.read_line(&mut line).unwrap();
+            assert_eq!(line, "exec:sentinel\n");
+            assert!(self.child.try_wait().unwrap().is_none());
+        }
+    }
+    impl Drop for Service {
+        fn drop(&mut self) {
+            if self.child.try_wait().unwrap().is_none() {
+                self.child.kill().unwrap();
+            }
+            self.child.wait().expect("positively reap owned service");
+        }
+    }
+    struct ControlReset;
+    impl Drop for ControlReset {
+        fn drop(&mut self) {
+            PUBLICATION_CONTROL.with(|control| *control.borrow_mut() = None);
+        }
+    }
+
+    let fixture = tempfile::Builder::new()
+        .prefix("effigy-158-publication-")
+        .tempdir_in(Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
+        .unwrap();
+    let root = fixture.path();
+    let checkout = root.join("selected");
+    std::fs::create_dir(&checkout).unwrap();
+    std::fs::create_dir(checkout.join(".git")).unwrap();
+    std::fs::write(
+        checkout.join(".git/config"),
+        "[effigy]\n runtimeScope = ephemeral\n",
+    )
+    .unwrap();
+    std::fs::write(
+        checkout
+            .join(".git")
+            .join(effigy_core::worktree_scope::SCOPE_FILE),
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    )
+    .unwrap();
+    let manifest = checkout.join("effigy.toml");
+    let compose = checkout.join("compose.yml");
+    std::fs::write(&manifest, "[containers]\n").unwrap();
+    std::fs::write(
+        &compose,
+        "services:\n  app:\n    image: private.invalid/app\n",
+    )
+    .unwrap();
+    let bin = root.join("bin");
+    std::fs::create_dir(&bin).unwrap();
+    let mut services: Vec<_> = (0..3).map(|_| Service::new()).collect();
+    let receipt = root.join("backend-commands");
+    let python = Command::new("python3")
+        .args(["-c", "import sys;print(sys.executable)"])
+        .output()
+        .unwrap();
+    assert!(python.status.success());
+    let script = format!(
+        "#!{}\n{}",
+        String::from_utf8_lossy(&python.stdout).trim(),
+        r#"
+import sys,os,socket,json,pathlib
+args=sys.argv[1:];root=pathlib.Path(os.environ['PRIVATE_PROOF_ROOT']);port=int(os.environ['PRIVATE_PROOF_PORT'])
+with (root/'backend-commands').open('a') as f:f.write(json.dumps(args)+'\n')
+if args and args[0] in ['ps','inspect']:
+ with socket.create_connection(('127.0.0.1',port),timeout=2) as c:
+  c.sendall(b'probe');assert c.recv(128)==b'owned-service\n'
+ if args[0]=='ps':print('demo-web-dev-app-1\tUp 10 seconds\t127.0.0.1:%d->80/tcp\tdemo-web-dev\t%s\tapp\tFalse'%(port,pathlib.Path.cwd()))
+ else:print((root/'inspect.json').read_text())
+else:sys.exit('unexpected private backend operation')
+"#
+    );
+    let docker = bin.join("docker");
+    std::fs::write(&docker, script).unwrap();
+    std::fs::set_permissions(&docker, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let lsof = bin.join("lsof");
+    std::fs::write(&lsof, "#!/bin/sh\nexit 1\n").unwrap();
+    std::fs::set_permissions(&lsof, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let _env = crate::contract_test_support::EnvGuard::set_many(&[
+        (
+            "PATH",
+            Some(format!(
+                "{}:{}",
+                bin.display(),
+                std::env::var("PATH").unwrap()
+            )),
+        ),
+        ("HOME", Some(root.display().to_string())),
+        ("EFFIGY_COMPOSE_BACKEND", Some("docker".to_owned())),
+        ("PRIVATE_PROOF_ROOT", Some(root.display().to_string())),
+        ("PRIVATE_PROOF_PORT", Some(services[0].port.to_string())),
+        (
+            "EFFIGY_TEST_HOST_CONTAINER_LEASE_HOME",
+            Some(root.join("lease-home").display().to_string()),
+        ),
+    ]);
+    let _home = crate::runner::gateway_command::set_test_gateway_home(&root.join("home"));
+    let _control = ControlReset;
+    let mut policy = test_policy();
+    policy.repo_root = checkout.clone();
+    policy.compose_files = vec![compose.clone()];
+    policy.service_aliases.clear();
+    policy.dns_domain = Some("app.fixture.test".to_owned());
+    policy.dns_tls = false;
+    policy.dns_routes[0].domain = "app.fixture.test".to_owned();
+    policy.dns_routes[0].declared_domain = "app.fixture.test".to_owned();
+    policy.dns_routes[0].tls = false;
+    policy.dns_routes[0].service = Some("app".to_owned());
+    policy.declared_ports = vec![format!("{}:80", services[0].port)];
+    let admission = capture_detached_activation_context(&checkout, &policy).unwrap();
+    record_admitted_partial_activation(&checkout, &policy, &admission).unwrap();
+    let admission = retained_detached_activation_context(&checkout, &policy)
+        .unwrap()
+        .unwrap();
+    let scope_file = checkout
+        .join(".git")
+        .join(effigy_core::worktree_scope::SCOPE_FILE);
+    let scope = std::fs::read_to_string(&scope_file).unwrap();
+    std::fs::write(root.join("inspect.json"), serde_json::json!([{
+        "Id": "c".repeat(64), "Name": "/demo-web-dev-app-1",
+        "State": {"Status":"running", "Running":true},
+        "Config":{"Labels":{"com.docker.compose.project":"demo-web-dev",
+            "com.docker.compose.service":"app", "com.docker.compose.oneoff":"False",
+            "com.docker.compose.project.working_dir":checkout,
+            "com.effigy.scope":scope.trim()}},
+        "NetworkSettings":{"Ports":{"80/tcp":[{"HostIp":"127.0.0.1", "HostPort":services[0].port.to_string()}]}}
+    }]).to_string()).unwrap();
+    let marker =
+        root.join("lease-home/runtime/host-container-leases/effigy/demo-web-dev/web.partial.json");
+    let marker_bytes = std::fs::read(&marker).unwrap();
+    let path = gateway_route_table_path().unwrap();
+    let mut baseline = RouteTable::new();
+    for (i, domain) in [
+        "old.fixture.test",
+        "sibling.fixture.test",
+        "foreign.fixture.test",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let owner = if i == 0 {
+            checkout.clone()
+        } else {
+            root.join(format!("sibling{i}"))
+        };
+        std::fs::create_dir_all(&owner).unwrap();
+        for name in ["data", "lease"] {
+            std::fs::write(owner.join(name), format!("retained-{i}-{name}")).unwrap();
+        }
+        baseline.upsert(Route {
+            domain: domain.to_string(),
+            target: Some(format!("127.0.0.1:{}", services[i].port)),
+            dns_ip: None,
+            tcp_port: None,
+            tcp_target: None,
+            source: if i == 2 {
+                RouteSource::Manual
+            } else {
+                RouteSource::Container
+            },
+            project: owner.display().to_string(),
+            scope: if i == 0 {
+                Some(scope.trim().to_owned())
+            } else {
+                None
+            },
+            tls: false,
+            managed_listener: None,
+            registered: chrono::Utc::now(),
+        });
+    }
+    baseline.save(&path).unwrap();
+    let persisted = std::fs::read(&path).unwrap();
+    for (phase, mutation) in [
+        (PublicationStage::AfterProbe, "manifest"),
+        (PublicationStage::AfterProbe, "compose"),
+        (PublicationStage::AfterProbe, "scope"),
+        (PublicationStage::AfterProbe, "checkout"),
+        (PublicationStage::BeforePreparation, "compose"),
+        (PublicationStage::AfterProbe, "marker"),
+        (PublicationStage::AfterProbe, "missing"),
+        (PublicationStage::AfterProbe, "unreadable"),
+        (PublicationStage::DuringPreparation, "manifest"),
+        (PublicationStage::BeforeSave, "marker"),
+    ] {
+        let manifest_copy = manifest.clone();
+        let compose_copy = compose.clone();
+        let scope_copy = scope_file.clone();
+        let marker_copy = marker.clone();
+        let checkout_copy = checkout.clone();
+        let moved_copy = root.join("moved-checkout");
+        let seen = std::rc::Rc::new(std::cell::Cell::new(false));
+        let hook_seen = seen.clone();
+        PUBLICATION_CONTROL.with(|control| {
+            *control.borrow_mut() = Some(Box::new(move |stage| {
+                if stage != phase || hook_seen.replace(true) {
+                    return;
+                }
+                let file = match mutation {
+                    "manifest" => &manifest_copy,
+                    "compose" => &compose_copy,
+                    "scope" => &scope_copy,
+                    _ => &marker_copy,
+                }
+                .clone();
+                let checkout_copy = checkout_copy.clone();
+                let moved_copy = moved_copy.clone();
+                let mutate = move || match mutation {
+                    "missing" => std::fs::remove_file(file).unwrap(),
+                    "unreadable" => {
+                        std::fs::remove_file(&file).unwrap();
+                        std::fs::create_dir(file).unwrap();
+                    }
+                    "marker" => std::fs::write(file, "{}\n").unwrap(),
+                    "scope" => std::fs::write(file, "dddddddddddddddddddddddddddddddd").unwrap(),
+                    "checkout" => {
+                        std::fs::rename(&checkout_copy, &moved_copy).unwrap();
+                        std::os::unix::fs::symlink(&moved_copy, &checkout_copy).unwrap();
+                    }
+                    _ => std::fs::OpenOptions::new()
+                        .append(true)
+                        .open(file)
+                        .unwrap()
+                        .write_all(b"\n# changed after probe\n")
+                        .unwrap(),
+                };
+                if stage == PublicationStage::DuringPreparation {
+                    let writer = std::thread::spawn(move || {
+                        std::thread::sleep(Duration::from_millis(20));
+                        mutate();
+                    });
+                    std::thread::sleep(Duration::from_millis(60));
+                    writer.join().unwrap();
+                } else {
+                    mutate();
+                }
+            }))
+        });
+        let error = register_gateway_routes_for_container_with_context(
+            &checkout,
+            &policy,
+            Some(&admission),
+        )
+        .expect_err("drift must refuse");
+        assert!(
+            seen.get(),
+            "real owned probe and selected timing point must be reached"
+        );
+        assert!(
+            error
+                .to_string()
+                .contains("detached activation publication refused"),
+            "{error}"
+        );
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            persisted,
+            "own and foreign persisted table must remain byte-exact"
+        );
+        // Refusal cannot overwrite the mutated marker or mint a new baseline.
+        if mutation == "marker" {
+            assert_eq!(std::fs::read_to_string(&marker).unwrap(), "{}\n");
+        }
+        if mutation == "missing" {
+            assert!(!marker.exists());
+        }
+        if mutation == "unreadable" {
+            assert!(marker.is_dir());
+            std::fs::remove_dir(&marker).unwrap();
+        }
+        if mutation == "checkout" {
+            std::fs::remove_file(&checkout).unwrap();
+            std::fs::rename(root.join("moved-checkout"), &checkout).unwrap();
+        }
+        std::fs::write(&manifest, "[containers]\n").unwrap();
+        std::fs::write(
+            &compose,
+            "services:\n  app:\n    image: private.invalid/app\n",
+        )
+        .unwrap();
+        std::fs::write(&scope_file, &scope).unwrap();
+        std::fs::write(&marker, &marker_bytes).unwrap();
+        PUBLICATION_CONTROL.with(|control| *control.borrow_mut() = None);
+        for (i, service) in services.iter_mut().enumerate() {
+            service.exec();
+            let owner = if i == 0 {
+                checkout.clone()
+            } else {
+                root.join(format!("sibling{i}"))
+            };
+            for name in ["data", "lease"] {
+                assert_eq!(
+                    std::fs::read_to_string(owner.join(name)).unwrap(),
+                    format!("retained-{i}-{name}")
+                );
+            }
+        }
+        let routes = register_gateway_routes_for_container_with_context(
+            &checkout,
+            &policy,
+            Some(&admission),
+        )
+        .expect("restored admitted context reconciles");
+        assert_eq!(
+            routes[0].target,
+            Some(format!("127.0.0.1:{}", services[0].port))
+        );
+        let current = RouteTable::load(&path).unwrap();
+        assert!(current.lookup("old.fixture.test").is_none());
+        for domain in ["sibling.fixture.test", "foreign.fixture.test"] {
+            assert_eq!(current.lookup(domain), baseline.lookup(domain));
+        }
+        assert_eq!(std::fs::read(&marker).unwrap(), marker_bytes);
+        baseline.save(&path).unwrap();
+        println!("publication timing refusal {mutation}; original source restored; owned service pids={:?}",services.iter().map(|s|s.child.id()).collect::<Vec<_>>());
+    }
+    let commands = std::fs::read_to_string(receipt).unwrap();
+    assert!(commands.contains("inspect") && commands.contains("ps"));
+    for forbidden in ["\"up\"", "\"down\"", "\"restart\"", "\"rm\""] {
+        assert!(!commands.contains(forbidden), "{commands}");
+    }
+    println!("actual production probe receipts:\n{commands}");
+}

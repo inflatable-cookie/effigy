@@ -125,6 +125,102 @@ pub(super) fn clear_host_container_lease(
 /// registration did not finish. A later detached `container up` reads the mark
 /// to reconcile routes without running `compose up` again. The mark lives
 /// beside the scope's lease, keyed by profile, project and container name.
+/// Immutable admission snapshot; publication must compare against this value,
+/// never replace it with a baseline read after runtime observation.
+#[derive(Debug)]
+pub(in crate::runner) struct DetachedActivationContext {
+    value: serde_json::Value,
+    pub(in crate::runner) marker_required: bool,
+}
+
+pub(in crate::runner) fn capture_detached_activation_context(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<DetachedActivationContext, RunnerError> {
+    Ok(DetachedActivationContext {
+        value: partial_activation_context(repo_root, policy)?,
+        marker_required: false,
+    })
+}
+
+pub(in crate::runner) fn retained_detached_activation_context(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<Option<DetachedActivationContext>, RunnerError> {
+    let path = partial_activation_path(repo_root, policy);
+    let raw = match fs::read_to_string(&path) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(RunnerError::task_invocation_failed_read(&path, error)),
+    };
+    let value = serde_json::from_str(&raw)
+        .map_err(|error| RunnerError::task_invocation_failed_parse(&path, error))?;
+    let context = DetachedActivationContext {
+        value,
+        marker_required: true,
+    };
+    context.verify(repo_root, policy, true)?;
+    Ok(Some(context))
+}
+
+impl DetachedActivationContext {
+    pub(in crate::runner) fn verify(
+        &self,
+        repo_root: &Path,
+        policy: &EffectiveContainerPolicy,
+        require_marker: bool,
+    ) -> Result<(), RunnerError> {
+        let verified = (|| -> Result<bool, RunnerError> {
+            if self.value != partial_activation_context(repo_root, policy)? {
+                return Ok(false);
+            }
+            if require_marker {
+                let path = partial_activation_path(repo_root, policy);
+                let raw = fs::read_to_string(&path)
+                    .map_err(|error| RunnerError::task_invocation_failed_read(&path, error))?;
+                let recorded: serde_json::Value = serde_json::from_str(&raw)
+                    .map_err(|error| RunnerError::task_invocation_failed_parse(&path, error))?;
+                return Ok(recorded == self.value);
+            }
+            Ok(true)
+        })();
+        if !matches!(verified, Ok(true)) {
+            return Err(RunnerError::task_invocation(
+                "detached activation publication refused: admitted source/checkout/scope/Compose or marker context changed, missing or unreadable; no routes published. Restore the admitted inputs and marker before reconciliation",
+            ));
+        }
+        Ok(())
+    }
+}
+
+pub(in crate::runner) fn record_admitted_partial_activation(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    admitted: &DetachedActivationContext,
+) -> Result<(), RunnerError> {
+    admitted.verify(repo_root, policy, false)?;
+    fs::create_dir_all(host_container_lease_dir(repo_root, policy))
+        .map_err(|error| RunnerError::task_invocation_failed_write(repo_root, error))?;
+    let encoded = serde_json::to_string_pretty(&admitted.value)
+        .map_err(|error| RunnerError::host_container_lease_encode(error.to_string()))?;
+    let path = partial_activation_path(repo_root, policy);
+    use std::io::Write;
+    let mut file = match fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+    {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            return admitted.verify(repo_root, policy, true);
+        }
+        Err(error) => return Err(RunnerError::task_invocation_failed_write(&path, error)),
+    };
+    file.write_all(encoded.as_bytes())
+        .map_err(|error| RunnerError::task_invocation_failed_write(&path, error))
+}
+
+#[cfg(test)]
 pub(in crate::runner) fn record_partial_activation(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
