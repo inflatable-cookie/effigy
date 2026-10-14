@@ -101,6 +101,7 @@ struct DetachedOperationState {
     active: bool,
     partial: bool,
     admitted: bool,
+    stage: Option<&'static str>,
 }
 
 pub(super) fn run_container_up(
@@ -129,6 +130,7 @@ pub(super) fn run_container_up(
                 rendered: serde_json::json!({
                     "state": state,
                     "phase": "detached_activation",
+                    "activation_stage": operation.stage.unwrap_or("preparation"),
                     "readiness": "unverified",
                     "exposure": "unverified",
                     "recovery": recovery,
@@ -157,6 +159,7 @@ fn run_container_up_inner(
 ) -> Result<String, RunnerError> {
     reject_conflicting_container_up_modes(attach, detach)?;
 
+    operation.stage = Some("preparation");
     let plan = prepare_container_up(repo_root, name, attach, detach)?;
     operation.active = plan.attach_mode == EffectiveAttachMode::Detached;
     operation.admitted = plan
@@ -168,12 +171,15 @@ fn run_container_up_inner(
         return render_container_up_interrupted(repo_root, &plan);
     }
 
+    operation.stage = Some("reconciliation_inventory");
     if !partial_activation_reconcile_pending(repo_root, &plan)? {
+        operation.stage = Some("compose_activation");
         if let Some(closeout) = run_container_up_compose(repo_root, &plan)? {
             return Ok(closeout);
         }
         if plan.attach_mode == EffectiveAttachMode::Detached {
             operation.partial = true;
+            operation.stage = Some("admission_record");
             record_admitted_context(repo_root, &plan)?;
             operation.admitted = true;
         }
@@ -185,6 +191,7 @@ fn run_container_up_inner(
         return render_container_up_interrupted(repo_root, &plan);
     }
 
+    operation.stage = Some("stopped_service_recovery");
     let recovery = recover_exited_owned_compose_services(repo_root, &plan.policy)?;
     emit_warning_lines(&recovery.warnings);
 
@@ -192,15 +199,18 @@ fn run_container_up_inner(
         return render_container_up_interrupted(repo_root, &plan);
     }
 
+    operation.stage = Some("readiness");
     let health = wait_for_container_ready(&plan.policy, Some(&plan.stop_flag))?;
     if container_up_stop_requested(&plan) {
         return render_container_up_interrupted(repo_root, &plan);
     }
 
+    operation.stage = Some("runtime_integrations");
     let mut integrations = complete_container_up_runtime_integrations(repo_root, &plan)?;
     integrations.warnings.extend(recovery.warnings);
 
     // Retain admitted context as the detached owner across later reconciliation.
+    operation.stage = Some("persistent_owner");
     clear_host_container_lease(repo_root, &plan.policy)?;
 
     render_container_up_result(repo_root, &plan, health, integrations, output_json)

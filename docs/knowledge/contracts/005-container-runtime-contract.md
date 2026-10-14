@@ -892,6 +892,13 @@ requires it at the locked route save. A publication refusal does not rewrite
 its marker from changed inputs. The checked interval and cooperative-source-
 writer limits are owned by
 [the gateway route trust contract](033-gateway-route-table-trust-contract.md#detached-admission-at-publication).
+Detached JSON also reports `activation_stage` from a closed vocabulary:
+`preparation`, `reconciliation_inventory`, `compose_activation`,
+`admission_record`, `stopped_service_recovery`, `readiness`,
+`runtime_integrations`, or `persistent_owner`. This identifies the checked
+caller boundary without exposing backend output, argv or environment. It is
+not a cause attribution, an absent-resource verdict, or readiness proof.
+
 Restore that admitted context before supported reconciliation; unavailable
 context cannot authorize recreation, cleanup or guessed exposure.
 

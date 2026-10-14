@@ -180,6 +180,8 @@ During v0.x, MINOR bumps may include breaking changes.
   0.14.x releases without changing the support floor.
 
 ### Fixed
+- Detached activation errors now retain a bounded `activation_stage` alongside
+  partial/unavailable status, without exposing raw backend output or arguments.
 - Detached reconciliation refuses a running stack whose original admission
   marker is missing, including after a failed marker write. Unscoped binding
   verification rejects unexpected scope labels. Detached JSON retains bounded

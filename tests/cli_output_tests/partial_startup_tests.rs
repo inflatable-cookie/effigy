@@ -203,7 +203,10 @@ version = "16"
     fn set(&self, i: usize, key: &str, value: Value) {
         let mut s = self.state(i);
         s[key] = value;
-        fs::write(self.stacks[i].root.join("state.json"), s.to_string()).expect("private control");
+        let pending = self.stacks[i].root.join("state.control.pending");
+        fs::write(&pending, s.to_string()).expect("private control bytes");
+        fs::rename(pending, self.stacks[i].root.join("state.json"))
+            .expect("publish complete private control");
     }
     fn routes(&self) -> Value {
         serde_json::from_slice(
@@ -398,6 +401,131 @@ fn private_generated_preparation_must_not_adopt_probe_time_drift() {
 }
 
 #[test]
+fn private_state_publication_preserves_concurrent_inventory() {
+    let mut fixture = Fixture::new();
+    assert!(fixture
+        .run(2, &["container", "up", "--detach", "--json"])
+        .status
+        .success());
+    let before = fixture.routes()["routes"]["stack2.fixture.test"].clone();
+    fixture.set(0, "pause_state_publish", json!(true));
+    fixture.set(1, "wait_for_other_publish", json!(true));
+    let mut healthy = Process(
+        fixture
+            .command(1, &["container", "up", "--detach", "--json"])
+            .spawn()
+            .unwrap(),
+    );
+    let ready = fixture.stacks[1].root.join("compose-up-ready");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !ready.exists() {
+        assert!(
+            Instant::now() < deadline,
+            "healthy Compose activation barrier"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let mut owner = Process(
+        fixture
+            .command(0, &["container", "up", "--detach", "--json"])
+            .spawn()
+            .unwrap(),
+    );
+    let publishing = fixture.stacks[0].root.join("state-publish-ready");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !publishing.exists() {
+        assert!(
+            Instant::now() < deadline,
+            "owned partial temporary write barrier"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(
+        fixture.state(0)["active"],
+        false,
+        "reader retains the complete previous publication while derived state is written"
+    );
+    let pending = fs::read_dir(&fixture.stacks[0].root)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "pending")
+                && path
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with("state.")
+        })
+        .expect("actual owned pending file");
+    assert!(
+        serde_json::from_slice::<Value>(&fs::read(pending).unwrap()).is_err(),
+        "control must pause during incomplete derived bytes"
+    );
+    let mut sibling_stdout = Vec::new();
+    healthy
+        .0
+        .stdout
+        .take()
+        .unwrap()
+        .read_to_end(&mut sibling_stdout)
+        .unwrap();
+    let mut sibling_stderr = Vec::new();
+    healthy
+        .0
+        .stderr
+        .take()
+        .unwrap()
+        .read_to_end(&mut sibling_stderr)
+        .unwrap();
+    let sibling = Output {
+        status: healthy.0.wait().unwrap(),
+        stdout: sibling_stdout,
+        stderr: sibling_stderr,
+    };
+    // Always release our own writer before evaluating the success assertion.
+    fs::write(
+        fixture.stacks[0].root.join("state-publish-release"),
+        "release",
+    )
+    .unwrap();
+    let mut stdout = Vec::new();
+    owner
+        .0
+        .stdout
+        .take()
+        .unwrap()
+        .read_to_end(&mut stdout)
+        .unwrap();
+    let status = owner.0.wait().unwrap();
+    for i in 0..3 {
+        fixture.probe(i);
+    }
+    let observations =
+        fs::read_to_string(fixture.stacks[1].root.join("observations.jsonl")).unwrap();
+    assert!(
+        sibling.status.success(),
+        "healthy sibling during owned publication: {sibling:?}; observations={observations}"
+    );
+    assert!(
+        status.success(),
+        "writer activation after release: {stdout:?}"
+    );
+    assert_eq!(fixture.routes()["routes"]["stack2.fixture.test"], before);
+    for i in 0..3 {
+        fixture.assert_no_recreation(i);
+        assert_eq!(
+            fs::read_to_string(fixture.stacks[i].root.join("data")).unwrap(),
+            format!("private-data-{i}")
+        );
+        assert_eq!(
+            fs::read_to_string(fixture.stacks[i].root.join("lease-sentinel")).unwrap(),
+            format!("private-lease-{i}")
+        );
+    }
+}
+
+#[test]
 fn private_missing_admission_never_rebaselines_running_stack() {
     let mut fixture = Fixture::new();
     fixture.set(0, "mode", json!("marker-write-fail"));
@@ -545,8 +673,11 @@ fn private_three_scopes_partial_resume_replacement_and_cli_refusals() {
         serde_json::from_slice(&outputs[0].stdout).expect("one JSON failure envelope");
     assert_eq!(failed["error"]["details"]["state"], "partial", "{failed}");
     assert_eq!(failed["error"]["details"]["readiness"], "unverified");
-    for output in &outputs[1..] {
-        assert!(output.status.success(), "{output:?}");
+    for (i, output) in outputs.iter().enumerate().skip(1) {
+        let commands = fs::read_to_string(fixture.stacks[i].root.join("commands.jsonl")).unwrap();
+        let observations =
+            fs::read_to_string(fixture.stacks[i].root.join("observations.jsonl")).unwrap();
+        assert!(output.status.success(), "healthy stack{i}: {output:?}; actual commands={commands}; transport observations={observations}");
     }
     let lease_root = fixture
         .root
@@ -879,13 +1010,36 @@ if pathlib.Path(sys.argv[0]).name=='colima':
  else: print('private inert colima transport')
  sys.exit(0)
 with open(cwd/'commands.jsonl','a') as f: f.write(json.dumps(args)+'\n')
+import atexit
+observation={'pid':os.getpid(),'args':args,'started':time.monotonic(),'result':'exit'}
+def observed():
+ observation['finished']=time.monotonic()
+ with open(cwd/'observations.jsonl','a') as f: f.write(json.dumps(observation)+'\n')
+atexit.register(observed)
+def failed(kind,value,traceback):
+ observation['result']=kind.__name__
+ sys.__excepthook__(kind,value,traceback)
+sys.excepthook=failed
 sfile=cwd/'state.json'; state=json.load(open(sfile)); mode=state['mode']
 if args==['ps'] and mode in ['probe-manifest-drift','probe-compose-drift'] and not (cwd/'probe-drift.json').exists():
  import hashlib
  path=cwd/'effigy.toml' if mode=='probe-manifest-drift' else cwd/'.effigy/runtime/compose/.effigy-compose.generated.yml'
  before=path.read_bytes();(cwd/'probe-original-input').write_bytes(before);after=before+b'\n# original input changed during owned runtime probe\n';path.write_bytes(after)
  (cwd/'probe-drift.json').write_text(json.dumps({'command':'ps','path':str(path),'before_sha256':hashlib.sha256(before).hexdigest(),'after_sha256':hashlib.sha256(after).hexdigest()}))
-def save(): sfile.write_text(json.dumps(state))
+def save():
+ payload=json.dumps(state)
+ pending=cwd/('state.'+str(os.getpid())+'.pending')
+ with open(pending,'w') as f:
+  if state.get('pause_state_publish'):
+   f.write(payload[:len(payload)//2]);f.flush()
+   (cwd/'state-publish-ready').write_text('owned writer paused')
+   deadline=time.monotonic()+10
+   while not (cwd/'state-publish-release').exists():
+    if time.monotonic()>deadline: raise TimeoutError('private state publication control')
+    time.sleep(.01)
+   f.write(payload[len(payload)//2:])
+  else: f.write(payload)
+ os.replace(pending,sfile)
 def record(s):
  for p in (root/'home/.effigy/runtime-scopes').glob('*.json'):
   r=json.load(open(p))
@@ -901,6 +1055,12 @@ if args and args[0]=='compose':
  if sub=='up':
   if state['active']: state['collateral_recreation']=True
   state['project']=args[args.index('-p')+1];state['active']=True;save()
+  if state.get('wait_for_other_publish'):
+   (cwd/'compose-up-ready').write_text('healthy Compose completed')
+   deadline=time.monotonic()+10
+   while not (root/'stack0/state-publish-ready').exists():
+    if time.monotonic()>deadline: raise TimeoutError('private sibling publication control')
+    time.sleep(.01)
   if mode=='marker-write-fail':
    parent=root/'home/.effigy/runtime';parent.mkdir(parents=True,exist_ok=True)
    (parent/'host-container-leases').write_text('exclusive admission write fault')
