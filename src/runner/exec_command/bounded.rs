@@ -30,7 +30,7 @@ use std::ffi::{OsStr, OsString};
 use std::io::Read;
 use std::path::Path;
 use std::process::{Child, Command as ProcessCommand, ExitStatus, Output, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, TryRecvError};
 use std::sync::Arc;
 use std::thread;
@@ -86,6 +86,11 @@ impl BoundedStream {
         }
     }
 }
+/// Version of the structural refusal observation record attached to bounded
+/// transport refusals. Bump when a field changes meaning; purely additive
+/// fields keep this version.
+pub(in crate::runner) const BOUNDED_REFUSAL_OBSERVATIONS_VERSION: u32 = 1;
+
 /// Why a bounded capture could not produce a complete, in-budget result.
 #[derive(Debug)]
 pub(in crate::runner) enum BoundedCaptureFailure {
@@ -124,16 +129,201 @@ impl BoundedCommandPhase {
     }
 }
 
-/// A bounded capture failure tagged with the operation phase that launched it.
+/// A bounded capture failure tagged with the operation phase that launched it,
+/// plus the versioned structural observations taken at one coherent snapshot
+/// when the refusal was decided. Observations are boxed: refusals are rare,
+/// and callers pass the failure through result types.
 #[derive(Debug)]
 pub(in crate::runner) struct BoundedScopedCaptureFailure {
     pub(in crate::runner) phase: BoundedCommandPhase,
     pub(in crate::runner) failure: BoundedCaptureFailure,
+    pub(in crate::runner) observations: Box<BoundedRefusalObservations>,
 }
 
-/// One bounded operation's absolute deadline and per-stream remaining budgets.
+/// A bounded transport refusal plus the observations from its snapshot.
+#[derive(Debug)]
+pub(in crate::runner) struct BoundedTransportRefusal {
+    pub(in crate::runner) failure: BoundedCaptureFailure,
+    pub(in crate::runner) observations: Box<BoundedRefusalObservations>,
+}
+
+/// How far the refused capture's host spawn transition observably reached,
+/// from real transition observations only. This describes the owned host
+/// client process; it is never a claim that a remote or guest process began.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::runner) enum BoundedSpawnDisposition {
+    /// The refusal was decided before the host spawn syscall was issued.
+    NotAttempted,
+    /// A host spawn was attempted and failed; no child could be confirmed.
+    AttemptedNotConfirmed,
+    /// A host client child process was created for this capture.
+    Spawned,
+    /// The spawn transition could not be observed. Current transitions always
+    /// know this truth, but `unknown` is part of the versioned observation
+    /// vocabulary and stays available for readers of the refusal payload.
+    #[allow(dead_code)]
+    Unknown,
+}
+
+impl BoundedSpawnDisposition {
+    pub(in crate::runner) fn label(self) -> &'static str {
+        match self {
+            Self::NotAttempted => "not_attempted",
+            Self::AttemptedNotConfirmed => "attempted_not_confirmed",
+            Self::Spawned => "spawned",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+/// One stream's observed reading state at a refusal snapshot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::runner) enum BoundedStreamRefusalState {
+    /// The reader was still reading at the snapshot; its counts are lower
+    /// bounds and end-of-stream is not established.
+    Pending,
+    /// The reader reached end-of-stream; its retained count is exact.
+    Eof,
+    /// The reader exceeded this attempt's retention budget. The retained
+    /// prefix is exact; reads continued only to keep the writer unblocked.
+    Overflow,
+    /// The reader hit a read error and stopped.
+    ReadError,
+    /// No stream observation exists: no reader ran, or a reader ended
+    /// without reporting an outcome.
+    Unknown,
+}
+
+impl BoundedStreamRefusalState {
+    pub(in crate::runner) fn label(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Eof => "eof",
+            Self::Overflow => "overflow",
+            Self::ReadError => "read_error",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+/// A byte count with explicit observation semantics. A missing observation
+/// is [`BoundedObservedBytes::Unknown`], never zero and never proof that no
+/// bytes flowed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::runner) enum BoundedObservedBytes {
+    /// The count is exact at the snapshot.
+    Exact(u64),
+    /// The true total is at least this count.
+    LowerBound(u64),
+    /// No truthful count is available.
+    Unknown,
+}
+
+/// Pretermination leader observation, taken only from the existing safe
+/// in-budget `try_wait` window. A non-reaping exit observation is not
+/// supported by the bounded path, so an unobserved leader stays unknown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::runner) enum BoundedLeaderExitObservation {
+    /// The leader was still running at the last safe observation (the
+    /// existing `try_wait` only runs once both streams are complete, and
+    /// returning `None` reaps nothing).
+    Alive,
+    /// No safe pretermination exit observation exists. This is explicit
+    /// unknown: it is not a claim that the leader exited or survived.
+    Unknown,
+}
+
+impl BoundedLeaderExitObservation {
+    pub(in crate::runner) fn label(self) -> &'static str {
+        match self {
+            Self::Alive => "alive",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+/// One stream's structural observation at one coherent refusal snapshot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::runner) struct BoundedStreamRefusalObservation {
+    pub(in crate::runner) state: BoundedStreamRefusalState,
+    /// The bounded retained prefix at the snapshot. For a refused attempt
+    /// these bytes are the failed prefix: they are reported here and never
+    /// added to completed-capture retained totals or charged to the
+    /// cumulative caps a second time.
+    pub(in crate::runner) retained_prefix: BoundedObservedBytes,
+    /// Total bytes read off the stream: retained bytes plus discarded
+    /// overflow, so a flood is visible even when retention stopped early.
+    pub(in crate::runner) read_total: BoundedObservedBytes,
+}
+
+/// Versioned, secret-free structural observations from one bounded refusal
+/// snapshot. Everything here comes from the original monotonic operation
+/// clock and the capture's own transitions: no bytes, argv, environment,
+/// raw errors, content digests or names. Missing observations are explicitly
+/// unknown, never zero and never proof of no effect.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::runner) struct BoundedRefusalObservations {
+    pub(in crate::runner) version: u32,
+    /// Monotonic elapsed from the original operation origin to the snapshot.
+    pub(in crate::runner) operation_elapsed: Duration,
+    /// Remaining budget at the snapshot; zero once the deadline has passed.
+    pub(in crate::runner) remaining_budget: Duration,
+    /// Elapsed from the operation origin to the refused attempt's start.
+    /// Absent when no attempt began.
+    pub(in crate::runner) preparation_elapsed: Option<Duration>,
+    /// Elapsed from the refused attempt's start to the snapshot. Absent when
+    /// no attempt began.
+    pub(in crate::runner) attempt_elapsed: Option<Duration>,
+    pub(in crate::runner) spawn_disposition: BoundedSpawnDisposition,
+    pub(in crate::runner) stdout: BoundedStreamRefusalObservation,
+    pub(in crate::runner) stderr: BoundedStreamRefusalObservation,
+    pub(in crate::runner) leader_exit: BoundedLeaderExitObservation,
+}
+
+impl BoundedRefusalObservations {
+    /// Observations for a refusal decided at a budget boundary before any
+    /// transport attempt of this step: no spawn, stream or leader of its own
+    /// exists to observe, so those say so explicitly.
+    pub(in crate::runner) fn budget_boundary(
+        origin: Instant,
+        deadline: Instant,
+        now: Instant,
+    ) -> Self {
+        let stream = BoundedStreamRefusalObservation {
+            state: BoundedStreamRefusalState::Unknown,
+            retained_prefix: BoundedObservedBytes::Unknown,
+            read_total: BoundedObservedBytes::Unknown,
+        };
+        Self {
+            version: BOUNDED_REFUSAL_OBSERVATIONS_VERSION,
+            operation_elapsed: now.saturating_duration_since(origin),
+            remaining_budget: deadline.saturating_duration_since(now),
+            preparation_elapsed: None,
+            attempt_elapsed: None,
+            spawn_disposition: BoundedSpawnDisposition::NotAttempted,
+            stdout: stream,
+            stderr: stream,
+            leader_exit: BoundedLeaderExitObservation::Unknown,
+        }
+    }
+}
+
+/// Byte progress shared from each reader thread to the monitor loop so a
+/// pending stream can report a truthful lower bound at a refusal snapshot.
+#[derive(Debug, Default)]
+pub(in crate::runner) struct BoundedStreamProgress {
+    pub(in crate::runner) retained: AtomicU64,
+    pub(in crate::runner) read: AtomicU64,
+}
+
+/// One bounded operation's original monotonic origin, absolute deadline and
+/// per-stream remaining budgets.
 #[derive(Debug, Clone, Copy)]
 pub(in crate::runner) struct BoundedStreamLimit {
+    /// The original operation clock origin this capture belongs to. All
+    /// refusal clock observations are measured from it; it is never derived
+    /// from an external deadline or rebased.
+    pub(in crate::runner) origin: Instant,
     pub(in crate::runner) deadline: Instant,
     pub(in crate::runner) stdout_bytes: u64,
     pub(in crate::runner) stderr_bytes: u64,
@@ -155,6 +345,10 @@ std::thread_local! {
 /// cannot be reset by a second attempt.
 #[derive(Debug)]
 pub(in crate::runner) struct BoundedCommandBudget {
+    /// The original monotonic operation origin, created before discovery and
+    /// preparation and never rebased. Refusal clock observations are
+    /// measured from it.
+    origin: Instant,
     deadline: Instant,
     stdout_remaining: u64,
     stderr_remaining: u64,
@@ -187,8 +381,14 @@ impl BoundedCommandBudget {
         (result, trace)
     }
 
-    pub(in crate::runner) fn new(deadline: Instant, stdout_bytes: u64, stderr_bytes: u64) -> Self {
+    pub(in crate::runner) fn new(
+        origin: Instant,
+        deadline: Instant,
+        stdout_bytes: u64,
+        stderr_bytes: u64,
+    ) -> Self {
         Self {
+            origin,
             deadline,
             stdout_remaining: stdout_bytes,
             stderr_remaining: stderr_bytes,
@@ -198,6 +398,27 @@ impl BoundedCommandBudget {
             preparation_captures: 0,
             preparation_stdout_retained: 0,
             preparation_stderr_retained: 0,
+        }
+    }
+
+    /// Truthful clock observations for a refusal decided at a budget
+    /// boundary, from the original operation origin, with no spawn, stream
+    /// or leader of the refused step to observe.
+    pub(in crate::runner) fn boundary_observations(&self) -> BoundedRefusalObservations {
+        BoundedRefusalObservations::budget_boundary(self.origin, self.deadline, Instant::now())
+    }
+
+    /// A refusal decided at a budget boundary before this step's transport
+    /// attempt, carrying those truthful boundary observations.
+    pub(in crate::runner) fn boundary_refusal(
+        &self,
+        phase: BoundedCommandPhase,
+        failure: BoundedCaptureFailure,
+    ) -> BoundedScopedCaptureFailure {
+        BoundedScopedCaptureFailure {
+            phase,
+            failure,
+            observations: Box::new(self.boundary_observations()),
         }
     }
 
@@ -262,12 +483,10 @@ impl BoundedCommandBudget {
         phase: BoundedCommandPhase,
     ) -> Result<BoundedCapture, BoundedScopedCaptureFailure> {
         // An expired deadline refuses before any spawn, so it is not counted as
-        // an attempt.
+        // an attempt. The boundary observations record that truthfully: not
+        // attempted, with no stream or leader of this step to observe.
         if Instant::now() >= self.deadline {
-            return Err(BoundedScopedCaptureFailure {
-                phase,
-                failure: BoundedCaptureFailure::Deadline,
-            });
+            return Err(self.boundary_refusal(phase, BoundedCaptureFailure::Deadline));
         }
         match phase {
             BoundedCommandPhase::CommandExecution => self.attempts += 1,
@@ -275,7 +494,13 @@ impl BoundedCommandBudget {
                 self.preparation_captures += 1
             }
         }
+        // The attempt boundary on the original operation clock: preparation
+        // observations run from the origin to here, attempt observations from
+        // here to the refusal snapshot. This is a strictly internal join on
+        // the same clock, not a rebased or invented origin.
+        let attempt_started = Instant::now();
         let limit = BoundedStreamLimit {
+            origin: self.origin,
             deadline: self.deadline,
             stdout_bytes: self.stdout_remaining,
             stderr_bytes: self.stderr_remaining,
@@ -286,8 +511,20 @@ impl BoundedCommandBudget {
                 trace.push((phase, limit));
             }
         });
-        let capture = run_command_capture_bounded(repo_root, program, args, stdin_file, env, limit)
-            .map_err(|failure| BoundedScopedCaptureFailure { phase, failure })?;
+        let capture = run_command_capture_bounded(
+            repo_root,
+            program,
+            args,
+            stdin_file,
+            env,
+            limit,
+            attempt_started,
+        )
+        .map_err(|refusal| BoundedScopedCaptureFailure {
+            phase,
+            failure: refusal.failure,
+            observations: refusal.observations,
+        })?;
         let stdout_bytes = capture.stdout.len() as u64;
         let stderr_bytes = capture.stderr.len() as u64;
         self.stdout_remaining = self.stdout_remaining.saturating_sub(stdout_bytes);
@@ -304,7 +541,7 @@ impl BoundedCommandBudget {
 
 /// Outcome of one bounded stream reader.
 #[derive(Debug)]
-enum StreamOutcome {
+pub(in crate::runner) enum StreamOutcome {
     Complete(Vec<u8>),
     Overflow { retained_bytes: u64 },
     ReadFailed,
@@ -313,12 +550,14 @@ enum StreamOutcome {
 /// A minimal bounded reader used by the monitor loop and the focused
 /// read-failure proof. It keeps at most `limit` bytes, reports overflow once,
 /// keeps draining so a flooded writer is not blocked forever, and never
-/// panics.
+/// panics. Every kept or discarded byte is added to `progress` so a refusal
+/// snapshot can report a truthful lower bound for a still-pending stream.
 fn drive_bounded_reader<R: Read>(
     reader: &mut R,
     limit: u64,
     overflow: &AtomicBool,
     read_failure: &AtomicBool,
+    progress: &BoundedStreamProgress,
     mut report: impl FnMut(StreamOutcome),
 ) {
     let mut kept: Vec<u8> = Vec::new();
@@ -328,6 +567,7 @@ fn drive_bounded_reader<R: Read>(
         match reader.read(&mut buffer) {
             Ok(0) => break,
             Ok(read) => {
+                progress.read.fetch_add(read as u64, Ordering::SeqCst);
                 if exceeded {
                     continue;
                 }
@@ -342,6 +582,7 @@ fn drive_bounded_reader<R: Read>(
                     continue;
                 }
                 kept.extend_from_slice(&buffer[..read]);
+                progress.retained.fetch_add(read as u64, Ordering::SeqCst);
             }
             Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
             Err(_) => {
@@ -356,22 +597,113 @@ fn drive_bounded_reader<R: Read>(
     }
 }
 
+/// Build one stream's refusal-snapshot observation from its harvested
+/// outcome (if any), its shared progress counters and whether its reader
+/// already ended without reporting an outcome. The channel delivery of an
+/// outcome orders the reader's final counter writes before this load, so a
+/// stopped reader's counts are exact; a pending reader's are lower bounds.
+pub(in crate::runner) fn refusal_stream_observation(
+    outcome: Option<&StreamOutcome>,
+    progress: &BoundedStreamProgress,
+    reader_ended_without_outcome: bool,
+) -> BoundedStreamRefusalObservation {
+    let retained_now = progress.retained.load(Ordering::SeqCst);
+    let read_now = progress.read.load(Ordering::SeqCst);
+    match outcome {
+        Some(StreamOutcome::Complete(bytes)) => BoundedStreamRefusalObservation {
+            state: BoundedStreamRefusalState::Eof,
+            retained_prefix: BoundedObservedBytes::Exact(bytes.len() as u64),
+            read_total: BoundedObservedBytes::Exact(read_now),
+        },
+        Some(StreamOutcome::Overflow { retained_bytes }) => BoundedStreamRefusalObservation {
+            state: BoundedStreamRefusalState::Overflow,
+            retained_prefix: BoundedObservedBytes::Exact(*retained_bytes),
+            // An overflowing stream keeps draining discarded bytes until
+            // EOF, so the read total can still grow after the snapshot.
+            read_total: BoundedObservedBytes::LowerBound(read_now),
+        },
+        Some(StreamOutcome::ReadFailed) => BoundedStreamRefusalObservation {
+            state: BoundedStreamRefusalState::ReadError,
+            // The reader stopped at the error, so both counters are final.
+            retained_prefix: BoundedObservedBytes::Exact(retained_now),
+            read_total: BoundedObservedBytes::Exact(read_now),
+        },
+        None if reader_ended_without_outcome => BoundedStreamRefusalObservation {
+            state: BoundedStreamRefusalState::Unknown,
+            // The reader kept bytes it never reported; the counter is a
+            // truthful lower bound on that lost prefix, not a zero claim.
+            retained_prefix: BoundedObservedBytes::LowerBound(retained_now),
+            read_total: BoundedObservedBytes::Exact(read_now),
+        },
+        None => BoundedStreamRefusalObservation {
+            state: BoundedStreamRefusalState::Pending,
+            retained_prefix: BoundedObservedBytes::LowerBound(retained_now),
+            read_total: BoundedObservedBytes::LowerBound(read_now),
+        },
+    }
+}
+
+/// Assemble the versioned refusal observations from one coherent snapshot
+/// instant: all clock facts derive from that single `now`, the original
+/// operation origin and the refused attempt's start.
+fn refusal_observations(
+    limit: BoundedStreamLimit,
+    attempt_started: Instant,
+    now: Instant,
+    spawn_disposition: BoundedSpawnDisposition,
+    stdout: BoundedStreamRefusalObservation,
+    stderr: BoundedStreamRefusalObservation,
+    leader_exit: BoundedLeaderExitObservation,
+) -> BoundedRefusalObservations {
+    BoundedRefusalObservations {
+        version: BOUNDED_REFUSAL_OBSERVATIONS_VERSION,
+        operation_elapsed: now.saturating_duration_since(limit.origin),
+        remaining_budget: limit.deadline.saturating_duration_since(now),
+        preparation_elapsed: Some(attempt_started.saturating_duration_since(limit.origin)),
+        attempt_elapsed: Some(now.saturating_duration_since(attempt_started)),
+        spawn_disposition,
+        stdout,
+        stderr,
+        leader_exit,
+    }
+}
+
+/// A snapshot with no stream observation at all (no reader ever ran).
+fn unobserved_stream() -> BoundedStreamRefusalObservation {
+    BoundedStreamRefusalObservation {
+        state: BoundedStreamRefusalState::Unknown,
+        retained_prefix: BoundedObservedBytes::Unknown,
+        read_total: BoundedObservedBytes::Unknown,
+    }
+}
+
 fn spawn_bounded_reader<R: Read + Send + 'static>(
     mut reader: R,
     limit: u64,
     stream: BoundedStream,
     overflow: Arc<AtomicBool>,
     read_failure: Arc<AtomicBool>,
+    progress: Arc<BoundedStreamProgress>,
     sender: mpsc::Sender<(BoundedStream, StreamOutcome)>,
 ) {
     thread::spawn(move || {
-        drive_bounded_reader(&mut reader, limit, &overflow, &read_failure, |outcome| {
-            let _ = sender.send((stream, outcome));
-        });
+        drive_bounded_reader(
+            &mut reader,
+            limit,
+            &overflow,
+            &read_failure,
+            &progress,
+            |outcome| {
+                let _ = sender.send((stream, outcome));
+            },
+        );
     });
 }
 
 /// Run one finite command under a caller deadline and separate stream budgets.
+/// A refusal carries versioned structural observations from one coherent
+/// snapshot at its decision point; the snapshot never calls `try_wait`, so it
+/// cannot reap the leader or observe anything the existing policy forbids.
 pub(in crate::runner) fn run_command_capture_bounded(
     repo_root: &Path,
     program: &OsStr,
@@ -379,10 +711,23 @@ pub(in crate::runner) fn run_command_capture_bounded(
     stdin_file: Option<&Path>,
     env: &[(OsString, OsString)],
     limit: BoundedStreamLimit,
-) -> Result<BoundedCapture, BoundedCaptureFailure> {
+    attempt_started: Instant,
+) -> Result<BoundedCapture, BoundedTransportRefusal> {
     let resolved_program = resolve_host_program(program);
     if Instant::now() >= limit.deadline {
-        return Err(BoundedCaptureFailure::Deadline);
+        let now = Instant::now();
+        return Err(BoundedTransportRefusal {
+            failure: BoundedCaptureFailure::Deadline,
+            observations: Box::new(refusal_observations(
+                limit,
+                attempt_started,
+                now,
+                BoundedSpawnDisposition::NotAttempted,
+                unobserved_stream(),
+                unobserved_stream(),
+                BoundedLeaderExitObservation::Unknown,
+            )),
+        });
     }
 
     let mut command = ProcessCommand::new(&resolved_program);
@@ -390,9 +735,24 @@ pub(in crate::runner) fn run_command_capture_bounded(
     for (key, value) in env {
         command.env(key, value);
     }
+    let launch_refusal = |disposition, now: Instant| BoundedTransportRefusal {
+        failure: BoundedCaptureFailure::Launch,
+        observations: Box::new(refusal_observations(
+            limit,
+            attempt_started,
+            now,
+            disposition,
+            unobserved_stream(),
+            unobserved_stream(),
+            BoundedLeaderExitObservation::Unknown,
+        )),
+    };
     match stdin_file {
         Some(path) => {
-            let file = std::fs::File::open(path).map_err(|_| BoundedCaptureFailure::Launch)?;
+            // The spawn syscall was never issued, so this is not an attempt.
+            let file = std::fs::File::open(path).map_err(|_| {
+                launch_refusal(BoundedSpawnDisposition::NotAttempted, Instant::now())
+            })?;
             command.stdin(Stdio::from(file));
         }
         None => {
@@ -412,21 +772,30 @@ pub(in crate::runner) fn run_command_capture_bounded(
                 .map_err(std::io::Error::from)
         });
     }
-    let mut child = command.spawn().map_err(|_| BoundedCaptureFailure::Launch)?;
+    let mut child = command.spawn().map_err(|_| {
+        launch_refusal(
+            BoundedSpawnDisposition::AttemptedNotConfirmed,
+            Instant::now(),
+        )
+    })?;
+    // A child exists from here on, whatever later refusals report.
+    let spawned = BoundedSpawnDisposition::Spawned;
 
     let Some(stdout) = child.stdout.take() else {
         terminate_owned_group(&mut child);
-        return Err(BoundedCaptureFailure::Launch);
+        return Err(launch_refusal(spawned, Instant::now()));
     };
     let Some(stderr) = child.stderr.take() else {
         terminate_owned_group(&mut child);
-        return Err(BoundedCaptureFailure::Launch);
+        return Err(launch_refusal(spawned, Instant::now()));
     };
 
     let stdout_overflow = Arc::new(AtomicBool::new(false));
     let stderr_overflow = Arc::new(AtomicBool::new(false));
     let stdout_failure = Arc::new(AtomicBool::new(false));
     let stderr_failure = Arc::new(AtomicBool::new(false));
+    let stdout_progress = Arc::new(BoundedStreamProgress::default());
+    let stderr_progress = Arc::new(BoundedStreamProgress::default());
     let (sender, receiver) = mpsc::channel();
     spawn_bounded_reader(
         stdout,
@@ -434,6 +803,7 @@ pub(in crate::runner) fn run_command_capture_bounded(
         BoundedStream::Stdout,
         stdout_overflow.clone(),
         stdout_failure.clone(),
+        stdout_progress.clone(),
         sender.clone(),
     );
     spawn_bounded_reader(
@@ -442,11 +812,16 @@ pub(in crate::runner) fn run_command_capture_bounded(
         BoundedStream::Stderr,
         stderr_overflow.clone(),
         stderr_failure.clone(),
+        stderr_progress.clone(),
         sender.clone(),
     );
     drop(sender);
 
     let mut exit_status: Option<ExitStatus> = None;
+    // True only after the existing safe `try_wait` window observed the leader
+    // still running (returning None reaps nothing). No other pretermination
+    // observation exists, so an unobserved leader stays explicitly unknown.
+    let mut leader_observed_alive = false;
     let mut stdout_outcome: Option<StreamOutcome> = None;
     let mut stderr_outcome: Option<StreamOutcome> = None;
     let mut failure: Option<BoundedCaptureFailure> = None;
@@ -472,15 +847,37 @@ pub(in crate::runner) fn run_command_capture_bounded(
         let streams_complete = matches!(stdout_outcome, Some(StreamOutcome::Complete(_)))
             && matches!(stderr_outcome, Some(StreamOutcome::Complete(_)));
         if Instant::now() >= limit.deadline {
+            // Snapshot before termination: one coherent decision instant, no
+            // diagnostic try_wait, no reap, no post-deadline observation.
+            let now = Instant::now();
+            let reader_ended = !channel_open;
+            let leader_exit = if leader_observed_alive {
+                BoundedLeaderExitObservation::Alive
+            } else {
+                BoundedLeaderExitObservation::Unknown
+            };
+            let observations = refusal_observations(
+                limit,
+                attempt_started,
+                now,
+                spawned,
+                refusal_stream_observation(stdout_outcome.as_ref(), &stdout_progress, reader_ended),
+                refusal_stream_observation(stderr_outcome.as_ref(), &stderr_progress, reader_ended),
+                leader_exit,
+            );
             terminate_owned_group(&mut child);
-            return Err(BoundedCaptureFailure::Deadline);
+            return Err(BoundedTransportRefusal {
+                failure: BoundedCaptureFailure::Deadline,
+                observations: Box::new(observations),
+            });
         }
         if exit_status.is_none() && streams_complete {
             match child.try_wait() {
-                Ok(status) => exit_status = status,
+                Ok(None) => leader_observed_alive = true,
+                Ok(status @ Some(_)) => exit_status = status,
                 Err(_) => {
                     terminate_owned_group(&mut child);
-                    return Err(BoundedCaptureFailure::Launch);
+                    return Err(launch_refusal(spawned, Instant::now()));
                 }
             }
         }
@@ -519,8 +916,24 @@ pub(in crate::runner) fn run_command_capture_bounded(
             });
         }
         if let Some(failure) = failure {
+            // Snapshot at the decision instant, before the fixed termination
+            // grace: still no diagnostic try_wait and no early reap.
+            let now = Instant::now();
+            let reader_ended = !channel_open;
+            let observations = refusal_observations(
+                limit,
+                attempt_started,
+                now,
+                spawned,
+                refusal_stream_observation(stdout_outcome.as_ref(), &stdout_progress, reader_ended),
+                refusal_stream_observation(stderr_outcome.as_ref(), &stderr_progress, reader_ended),
+                BoundedLeaderExitObservation::Unknown,
+            );
             terminate_owned_group(&mut child);
-            return Err(failure);
+            return Err(BoundedTransportRefusal {
+                failure,
+                observations: Box::new(observations),
+            });
         }
 
         thread::sleep(BOUNDED_POLL_INTERVAL);
@@ -587,7 +1000,11 @@ mod tests {
     use std::sync::atomic::AtomicBool;
 
     fn stream_limit(deadline: Instant, stdout_bytes: u64, stderr_bytes: u64) -> BoundedStreamLimit {
+        // Tests may pass already-expired deadlines; the origin stays before
+        // both now and the deadline so clock facts stay monotonic.
+        let now = Instant::now();
         BoundedStreamLimit {
+            origin: now.min(deadline),
             deadline,
             stdout_bytes,
             stderr_bytes,
@@ -615,9 +1032,16 @@ mod tests {
         let failure = AtomicBool::new(false);
         let mut input = std::io::Cursor::new(vec![b'a'; 32]);
         let mut outcome = None;
-        drive_bounded_reader(&mut input, 32, &overflow, &failure, |reported| {
-            outcome = Some(reported);
-        });
+        drive_bounded_reader(
+            &mut input,
+            32,
+            &overflow,
+            &failure,
+            &BoundedStreamProgress::default(),
+            |reported| {
+                outcome = Some(reported);
+            },
+        );
         match outcome.expect("reader reports an outcome") {
             StreamOutcome::Complete(bytes) => assert_eq!(bytes.len(), 32),
             other => panic!("expected complete, got {other:?}"),
@@ -642,9 +1066,16 @@ mod tests {
         }
         let mut input = Chunked(vec![b'a'; 33], 8);
         let mut outcome = None;
-        drive_bounded_reader(&mut input, 32, &overflow, &failure, |reported| {
-            outcome = Some(reported);
-        });
+        drive_bounded_reader(
+            &mut input,
+            32,
+            &overflow,
+            &failure,
+            &BoundedStreamProgress::default(),
+            |reported| {
+                outcome = Some(reported);
+            },
+        );
         match outcome.expect("reader reports an outcome") {
             StreamOutcome::Overflow { retained_bytes } => {
                 assert!(retained_bytes <= 32, "retention must stay bounded");
@@ -656,21 +1087,46 @@ mod tests {
 
     #[test]
     fn bounded_reader_reports_read_failure_without_panicking() {
-        struct FailingReader;
-        impl Read for FailingReader {
-            fn read(&mut self, _buffer: &mut [u8]) -> std::io::Result<usize> {
-                Err(std::io::Error::other("private read fault"))
+        // A real owned reader that delivers bytes and then fails: this drives
+        // the exact production reader loop the spawned-pipe readers run, so
+        // the ReadFailed outcome, stop behavior and final counters are
+        // proven on production code. (A genuine pipe read error is not
+        // inducible through the spawned production path; see contract 005.)
+        struct BytesThenFailure {
+            delivered: bool,
+        }
+        impl Read for BytesThenFailure {
+            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+                if self.delivered {
+                    Err(std::io::Error::other("private read fault"))
+                } else {
+                    self.delivered = true;
+                    buffer[..5].copy_from_slice(b"12345");
+                    Ok(5)
+                }
             }
         }
         let overflow = AtomicBool::new(false);
         let failure = AtomicBool::new(false);
-        let mut reader = FailingReader;
+        let progress = BoundedStreamProgress::default();
+        let mut reader = BytesThenFailure { delivered: false };
         let mut outcome = None;
-        drive_bounded_reader(&mut reader, 64, &overflow, &failure, |reported| {
-            outcome = Some(reported);
-        });
+        drive_bounded_reader(
+            &mut reader,
+            64,
+            &overflow,
+            &failure,
+            &progress,
+            |reported| {
+                outcome = Some(reported);
+            },
+        );
         assert!(matches!(outcome, Some(StreamOutcome::ReadFailed)));
         assert!(failure.load(Ordering::SeqCst));
+        // The reader stopped at the error, so its counters are final and
+        // exact: the refused snapshot may report them as such.
+        assert_eq!(progress.retained.load(Ordering::SeqCst), 5);
+        assert_eq!(progress.read.load(Ordering::SeqCst), 5);
     }
 
     #[cfg(unix)]
@@ -685,6 +1141,7 @@ mod tests {
             None,
             &[],
             stream_limit(deadline, 4, 4),
+            Instant::now(),
         )
         .expect("exact boundary must succeed");
         assert!(capture.status.success());
@@ -698,10 +1155,11 @@ mod tests {
             None,
             &[],
             stream_limit(Instant::now() + Duration::from_secs(30), 4, 4),
+            Instant::now(),
         )
         .expect_err("one byte over must refuse");
         assert!(matches!(
-            error,
+            error.failure,
             BoundedCaptureFailure::Overflow {
                 stream: BoundedStream::Stdout,
                 ..
@@ -723,9 +1181,13 @@ mod tests {
             None,
             &[],
             stream_limit(Instant::now() + Duration::from_secs(30), 8, 8),
+            Instant::now(),
         )
         .expect_err("flood must refuse");
-        assert!(matches!(error, BoundedCaptureFailure::Overflow { .. }));
+        assert!(matches!(
+            error.failure,
+            BoundedCaptureFailure::Overflow { .. }
+        ));
     }
 
     #[cfg(unix)]
@@ -743,10 +1205,11 @@ mod tests {
             None,
             &[],
             stream_limit(Instant::now() + Duration::from_secs(30), 4, 16),
+            Instant::now(),
         )
         .expect_err("asymmetric flood must refuse");
         assert!(matches!(
-            error,
+            error.failure,
             BoundedCaptureFailure::Overflow {
                 stream: BoundedStream::Stderr,
                 ..
@@ -771,9 +1234,28 @@ mod tests {
                 4,
                 4,
             ),
+            Instant::now(),
         )
         .expect_err("expired deadline must refuse");
-        assert!(matches!(error, BoundedCaptureFailure::Deadline));
+        assert!(matches!(error.failure, BoundedCaptureFailure::Deadline));
+        // A true pre-spawn expiry is not a spawn: the refusal says so
+        // explicitly instead of implying it from the attempt count.
+        assert_eq!(
+            error.observations.spawn_disposition,
+            BoundedSpawnDisposition::NotAttempted
+        );
+        assert_eq!(
+            error.observations.version,
+            BOUNDED_REFUSAL_OBSERVATIONS_VERSION
+        );
+        assert_eq!(
+            error.observations.stdout.state,
+            BoundedStreamRefusalState::Unknown
+        );
+        assert_eq!(
+            error.observations.leader_exit,
+            BoundedLeaderExitObservation::Unknown
+        );
     }
 
     #[cfg(unix)]
@@ -794,9 +1276,10 @@ mod tests {
             None,
             &[],
             stream_limit(Instant::now() + Duration::from_millis(300), 64, 64),
+            Instant::now(),
         )
         .expect_err("slow command must hit the deadline");
-        assert!(matches!(error, BoundedCaptureFailure::Deadline));
+        assert!(matches!(error.failure, BoundedCaptureFailure::Deadline));
         assert!(
             started.elapsed() < Duration::from_secs(5),
             "deadline must terminate and reap instead of waiting out the child"
@@ -824,9 +1307,10 @@ mod tests {
             None,
             &[],
             stream_limit(Instant::now() + Duration::from_millis(400), 64, 64),
+            Instant::now(),
         )
         .expect_err("an inherited writer must not defeat the deadline");
-        assert!(matches!(error, BoundedCaptureFailure::Deadline));
+        assert!(matches!(error.failure, BoundedCaptureFailure::Deadline));
         assert!(started.elapsed() < Duration::from_secs(5));
     }
 
@@ -841,6 +1325,7 @@ mod tests {
             None,
             &[],
             stream_limit(Instant::now() + Duration::from_secs(30), 64, 64),
+            Instant::now(),
         )
         .expect("capture within budget");
         assert_eq!(capture.status.code(), Some(3));
@@ -859,10 +1344,11 @@ mod tests {
             None,
             &[],
             stream_limit(Instant::now() + Duration::from_millis(300), 64, 64),
+            Instant::now(),
         )
         .expect_err("EOF alone must not count as process completion");
         assert!(
-            matches!(error, BoundedCaptureFailure::Deadline),
+            matches!(error.failure, BoundedCaptureFailure::Deadline),
             "{error:?}"
         );
 
@@ -874,6 +1360,7 @@ mod tests {
             None,
             &[],
             stream_limit(Instant::now() + Duration::from_secs(30), 64, 64),
+            Instant::now(),
         )
         .expect("closed streams must preserve a later inner exit");
         assert_eq!(capture.status.code(), Some(7));
@@ -899,9 +1386,10 @@ mod tests {
             None,
             &[],
             stream_limit(Instant::now() + Duration::from_millis(300), 64, 64),
+            Instant::now(),
         )
         .expect_err("inherited pipe must expire");
-        assert!(matches!(error, BoundedCaptureFailure::Deadline));
+        assert!(matches!(error.failure, BoundedCaptureFailure::Deadline));
         thread::sleep(Duration::from_secs(2));
         assert!(!marker.exists(), "writer survived owned group cancellation");
     }
@@ -912,7 +1400,13 @@ mod tests {
         // First attempt retains 3 bytes of stdout; the second attempt may only
         // retain one more before the total budget is exhausted.
         let (_dir, program, args) = test_command("printf 'abc'");
-        let mut budget = BoundedCommandBudget::new(Instant::now() + Duration::from_secs(30), 4, 4);
+        let operation_origin = Instant::now();
+        let mut budget = BoundedCommandBudget::new(
+            operation_origin,
+            operation_origin + Duration::from_secs(30),
+            4,
+            4,
+        );
         let plan = plan_for(Path::new("."), &program, &args);
         budget
             .run_plan(&plan, BoundedCommandPhase::CommandExecution)

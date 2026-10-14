@@ -48,7 +48,16 @@ pub(in crate::runner) use transport::{capture_command_until, CommandCaptureError
 
 pub(in crate::runner) use bounded::{
     BoundedCapture, BoundedCaptureFailure, BoundedCommandBudget, BoundedCommandPhase,
-    BoundedScopedCaptureFailure, BoundedStream,
+    BoundedObservedBytes, BoundedRefusalObservations, BoundedScopedCaptureFailure, BoundedStream,
+    BoundedStreamRefusalObservation,
+};
+// Observation vocabulary and construction used by the private refusal
+// accounting proofs; not part of the non-test runtime surface.
+#[cfg(test)]
+pub(in crate::runner) use bounded::{
+    refusal_stream_observation, BoundedLeaderExitObservation, BoundedSpawnDisposition,
+    BoundedStreamProgress, BoundedStreamRefusalState, StreamOutcome,
+    BOUNDED_REFUSAL_OBSERVATIONS_VERSION,
 };
 
 pub(super) fn run_exec(args: ExecArgs) -> Result<String, RunnerError> {
