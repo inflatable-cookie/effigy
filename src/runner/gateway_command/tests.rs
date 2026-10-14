@@ -1990,4 +1990,53 @@ fn listener_handoff_maintenance_report_json_envelope_is_bounded_and_unexecuted()
     assert_eq!(payload["result"], serde_json::json!("observed"));
     assert_eq!(payload["effects"], serde_json::json!("unexecuted"));
     assert!(payload.get("steps").is_none(), "status carries no steps");
+
+    // The production disposition-to-result mapping is exercised directly, so
+    // the `run_gateway_remove_listener_handoff` branch is proven without
+    // touching live launchd state: only a plan carries the fixed steps.
+    let (result, steps) = removal_result_for_disposition(RemovalDisposition::PlanAvailable);
+    assert_eq!(result, "plan_emitted");
+    assert_eq!(steps, Some(removal_plan_steps()));
+    let (result, steps) = removal_result_for_disposition(RemovalDisposition::NothingInstalled);
+    assert_eq!(result, "nothing_installed");
+    assert!(steps.is_none());
+    let (result, steps) = removal_result_for_disposition(RemovalDisposition::Refused(
+        RemovalRefusal::DefinitionProgramStale,
+    ));
+    assert_eq!(result, "removal_refused");
+    assert!(steps.is_none());
+
+    // Nothing installed has its own JSON envelope: missing definition with a
+    // confirmed-absent job, no refusal, no steps, no observed file.
+    let absent = HandoffMaintenanceReport {
+        definition: DefinitionState::Missing,
+        program: ProgramPathState::Unknown,
+        operator: OperatorMatch::Unknown,
+        job: JobObservation::ConfirmedAbsent,
+        removal: RemovalDisposition::NothingInstalled,
+        identity: None,
+    };
+    let human = render_removal_human(&absent);
+    assert!(human.contains("nothing installed"), "{human}");
+    let (result, steps) = removal_result_for_disposition(absent.removal);
+    let rendered = gateway_handoff_report_json("remove-listener-handoff", result, &absent, steps);
+    let payload: serde_json::Value =
+        serde_json::from_str(&rendered).expect("nothing-installed envelope is valid JSON");
+    assert_eq!(
+        payload["action"],
+        serde_json::json!("remove-listener-handoff")
+    );
+    assert_eq!(payload["result"], serde_json::json!("nothing_installed"));
+    assert_eq!(payload["effects"], serde_json::json!("unexecuted"));
+    assert_eq!(payload["definition"], serde_json::json!("missing"));
+    assert_eq!(payload["removal"], serde_json::json!("nothing_installed"));
+    assert!(
+        payload.get("refusal").is_none(),
+        "absence carries no refusal"
+    );
+    assert!(payload.get("steps").is_none(), "absence carries no steps");
+    assert!(
+        payload.get("observed_file").is_none(),
+        "absence carries no observed file"
+    );
 }

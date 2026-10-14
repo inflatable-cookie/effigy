@@ -348,6 +348,44 @@ fn listener_handoff_maintenance_refuses_shape_operator_and_program_mismatch() {
     );
     assert_eq!(report.definition, DefinitionState::OperatorMismatch);
     assert_eq!(report.operator, OperatorMatch::Mismatched);
+    assert_eq!(
+        report.removal,
+        RemovalDisposition::Refused(RemovalRefusal::DefinitionOperatorMismatch)
+    );
+
+    // A different operator group: mismatch, even when the user name matches.
+    let mut group_setup = setup.clone();
+    group_setup.group_name = format!("{}-group", setup.group_name);
+    let path = directory.path().join("operator-group.plist");
+    write_fixture(&path, &group_setup.render_launchd_plist());
+    let report = inspect_handoff(
+        &observe_definition_file(&path),
+        JobObservation::ConfirmedAbsent,
+        &expectation,
+    );
+    assert_eq!(report.definition, DefinitionState::OperatorMismatch);
+    assert_eq!(report.operator, OperatorMatch::Mismatched);
+    assert_eq!(
+        report.removal,
+        RemovalDisposition::Refused(RemovalRefusal::DefinitionOperatorMismatch)
+    );
+
+    // A different operator home: mismatch, even when user and group match.
+    let mut home_setup = setup.clone();
+    home_setup.home = directory.path().join("other-home");
+    let path = directory.path().join("operator-home.plist");
+    write_fixture(&path, &home_setup.render_launchd_plist());
+    let report = inspect_handoff(
+        &observe_definition_file(&path),
+        JobObservation::ConfirmedAbsent,
+        &expectation,
+    );
+    assert_eq!(report.definition, DefinitionState::OperatorMismatch);
+    assert_eq!(report.operator, OperatorMatch::Mismatched);
+    assert_eq!(
+        report.removal,
+        RemovalDisposition::Refused(RemovalRefusal::DefinitionOperatorMismatch)
+    );
 
     // Malformed bytes.
     let path = directory.path().join("malformed.plist");

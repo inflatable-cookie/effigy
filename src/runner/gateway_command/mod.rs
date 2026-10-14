@@ -1403,11 +1403,7 @@ fn run_gateway_listener_handoff_status(output_json: bool) -> Result<String, Runn
 fn run_gateway_remove_listener_handoff(output_json: bool) -> Result<String, RunnerError> {
     let report = observe_handoff_maintenance_for_removal();
     if output_json {
-        let (result, steps) = match report.removal {
-            RemovalDisposition::PlanAvailable => ("plan_emitted", Some(removal_plan_steps())),
-            RemovalDisposition::NothingInstalled => ("nothing_installed", None),
-            RemovalDisposition::Refused(_) => ("removal_refused", None),
-        };
+        let (result, steps) = removal_result_for_disposition(report.removal);
         return Ok(gateway_handoff_report_json(
             "remove-listener-handoff",
             result,
@@ -1416,6 +1412,22 @@ fn run_gateway_remove_listener_handoff(output_json: bool) -> Result<String, Runn
         ));
     }
     Ok(render_removal_human(&report))
+}
+
+/// Map a removal disposition to its bounded JSON result and optional steps.
+///
+/// Pure mapping so the production `run_gateway_remove_listener_handoff`
+/// branch is fixture-proven without touching live launchd state: only an
+/// available plan carries the two fixed literal steps; nothing-installed and
+/// refusals carry none.
+fn removal_result_for_disposition(
+    removal: RemovalDisposition,
+) -> (&'static str, Option<[&'static str; 2]>) {
+    match removal {
+        RemovalDisposition::PlanAvailable => ("plan_emitted", Some(removal_plan_steps())),
+        RemovalDisposition::NothingInstalled => ("nothing_installed", None),
+        RemovalDisposition::Refused(_) => ("removal_refused", None),
+    }
 }
 
 /// Render a bounded listener-handoff report as command-envelope JSON.
