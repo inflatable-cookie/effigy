@@ -64,6 +64,7 @@ pub fn load_inline_workspace_container_policy(
         DEFAULT_COLIMA_PROFILE,
         &RuntimeDnsOverrideRoutes::default(),
         &mut compose_files,
+        None,
     )?;
     Ok(EffectiveContainerPolicy {
         repo_root: repo_root.to_path_buf(),

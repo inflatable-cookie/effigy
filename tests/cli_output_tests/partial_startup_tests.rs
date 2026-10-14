@@ -253,8 +253,38 @@ version = "16"
 #[test]
 fn private_generated_preparation_must_not_adopt_probe_time_drift() {
     let mut failures = Vec::new();
-    for mode in ["probe-manifest-drift", "probe-compose-drift"] {
+    for (direct, mode) in [
+        (false, "probe-manifest-drift"),
+        (false, "probe-compose-drift"),
+        (true, "probe-manifest-drift"),
+    ] {
         let mut fixture = Fixture::new();
+        if direct {
+            assert!(Command::new("git")
+                .args(["config", "--unset", "effigy.runtimeScope"])
+                .current_dir(&fixture.stacks[0].root)
+                .status()
+                .unwrap()
+                .success());
+            let manifest = fs::read_to_string(fixture.stacks[0].root.join("effigy.toml")).unwrap();
+            let direct_manifest = manifest
+                .split("[containers.web.services.db]")
+                .next()
+                .unwrap()
+                .replace(
+                    "primary_service = \"db\"",
+                    "compose_file = \"compose.yml\"\nprimary_service = \"db\"",
+                );
+            fs::write(fixture.stacks[0].root.join("effigy.toml"), direct_manifest).unwrap();
+            fs::write(
+                fixture.stacks[0].root.join("compose.yml"),
+                format!(
+                    "services:\n  db:\n    image: fixture.invalid/db\n    ports: [\"{}:5432\"]\n",
+                    fixture.stacks[0].port
+                ),
+            )
+            .unwrap();
+        }
         assert!(fixture
             .run(1, &["container", "up", "--detach", "--json"])
             .status
@@ -263,7 +293,30 @@ fn private_generated_preparation_must_not_adopt_probe_time_drift() {
             .run(0, &["container", "status", "--json"])
             .status
             .success());
-        let before_table = fixture.routes();
+        let mut table = fixture.routes();
+        let mut foreign = table["routes"]
+            .as_object()
+            .unwrap()
+            .values()
+            .next()
+            .unwrap()
+            .clone();
+        let owner = fixture.root.path().join("foreign-admission-owner");
+        fs::create_dir(&owner).unwrap();
+        foreign["domain"] = json!("foreign-admission.fixture.test");
+        foreign["project"] = json!(owner);
+        foreign["source"] = json!("manual");
+        foreign.as_object_mut().unwrap().remove("scope");
+        for field in ["target", "dns_ip", "tcp_port", "tcp_target"] {
+            foreign[field] = Value::Null;
+        }
+        table["routes"]["foreign-admission.fixture.test"] = foreign;
+        fs::write(
+            fixture.root.path().join("home/.effigy/gateway/routes.json"),
+            table.to_string(),
+        )
+        .unwrap();
+        let before_table = table;
         let sibling_project = fixture.state(1)["project"].as_str().unwrap().to_owned();
         let sibling_marker = fixture
             .root
@@ -319,6 +372,27 @@ fn private_generated_preparation_must_not_adopt_probe_time_drift() {
         // Restore only this fixture's own source; a refusal must allow an
         // unchanged cold retry, while an unsafe accepted launch remains marked.
         fs::write(fixture.stacks[0].root.join("effigy.toml"), before).unwrap();
+        let changed_path = PathBuf::from(witness["path"].as_str().unwrap());
+        assert!(changed_path.starts_with(&fixture.stacks[0].root));
+        fs::write(
+            changed_path,
+            fs::read(fixture.stacks[0].root.join("probe-original-input")).unwrap(),
+        )
+        .unwrap();
+        fixture.set(0, "mode", json!("ready"));
+        let retry = fixture.run(0, &["container", "up", "--detach", "--json"]);
+        assert!(
+            retry.status.success(),
+            "restored original inputs must support unchanged cold activation: {retry:?}"
+        );
+        fixture.assert_no_recreation(0);
+        assert_eq!(
+            fixture.routes()["routes"]["foreign-admission.fixture.test"],
+            before_table["routes"]["foreign-admission.fixture.test"]
+        );
+        for i in 0..3 {
+            fixture.probe(i);
+        }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
@@ -809,7 +883,7 @@ sfile=cwd/'state.json'; state=json.load(open(sfile)); mode=state['mode']
 if args==['ps'] and mode in ['probe-manifest-drift','probe-compose-drift'] and not (cwd/'probe-drift.json').exists():
  import hashlib
  path=cwd/'effigy.toml' if mode=='probe-manifest-drift' else cwd/'.effigy/runtime/compose/.effigy-compose.generated.yml'
- before=path.read_bytes();after=before+b'\n# original input changed during owned runtime probe\n';path.write_bytes(after)
+ before=path.read_bytes();(cwd/'probe-original-input').write_bytes(before);after=before+b'\n# original input changed during owned runtime probe\n';path.write_bytes(after)
  (cwd/'probe-drift.json').write_text(json.dumps({'command':'ps','path':str(path),'before_sha256':hashlib.sha256(before).hexdigest(),'after_sha256':hashlib.sha256(after).hexdigest()}))
 def save(): sfile.write_text(json.dumps(state))
 def record(s):

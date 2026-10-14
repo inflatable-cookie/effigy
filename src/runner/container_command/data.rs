@@ -136,7 +136,7 @@ pub(super) fn run_container_data_pull_production(
         repo_root,
         name,
         output_json,
-        |policy| ensure_shared_services_running(policy).map_err(runtime_error_from_runner),
+        |policy| ensure_shared_services_running(policy, None).map_err(runtime_error_from_runner),
         |policy| wait_for_container_ready(policy, None).map_err(runtime_error_from_runner),
         |repo_root, policy| {
             register_gateway_routes_for_container(repo_root, policy)

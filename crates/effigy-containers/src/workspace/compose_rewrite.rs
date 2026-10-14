@@ -13,6 +13,7 @@ pub(super) fn rewrite_workspace_mounts_for_direct_compose(
     request: WorkspaceComposeRewrite<'_>,
     source_compose: &Path,
     record_optional_extra_mount_decisions: bool,
+    admission: Option<&mut crate::policy::admission::PolicyAdmission>,
 ) -> Result<(PathBuf, Vec<WorkspaceExtraMountDecision>), ContainerPolicyError> {
     let WorkspaceComposeRewrite {
         repo_root,
@@ -109,10 +110,16 @@ pub(super) fn rewrite_workspace_mounts_for_direct_compose(
             "failed to serialize workspace mount rewrite for `{container_name}`: {error}"
         ))
     })?;
-    std::fs::write(&rewrite_path, rendered).map_err(|error| ContainerPolicyError::Read {
+    if let Some(guard) = &admission {
+        guard.before_render_write(&rewrite_path, rendered.as_bytes())?;
+    }
+    std::fs::write(&rewrite_path, &rendered).map_err(|error| ContainerPolicyError::Read {
         path: rewrite_path.clone(),
         error,
     })?;
+    if let Some(guard) = admission {
+        guard.record_rendered(&rewrite_path, rendered.as_bytes())?;
+    }
     Ok((rewrite_path, extra_mount_decisions))
 }
 

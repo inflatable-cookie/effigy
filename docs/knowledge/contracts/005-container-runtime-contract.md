@@ -146,17 +146,15 @@ restarts or loses readiness, Effigy stops the dependent generation and starts
 it with the current endpoint values.
 
 Detached activation records admitted context after a successful Compose launch.
-The initial generated-policy path currently captures that context after runtime
-and workspace preparation. Its marker and publication checks protect the
-recorded context; they do not establish that it predates initial preparation.
-A manifest change during the initial owned runtime probe can be adopted, and a
-generated-file change can be overwritten by refresh before capture. Original
-preparation-time admission therefore remains unqualified for generated cold up.
-The direct snapshot also follows profile-warning preparation; a warning path
-that observes runtime must be included in any complete pre-probe admission seam.
-The missing interface is a pre-probe sealed declaration and a checked renderer
-receipt joining legitimate generated/workspace artifacts to that declaration;
-file paths returned after refresh are insufficient provenance.
+Detached policy loading now seals the original declaration sources and selected
+checkout/scope/backend/profile/project/primary identity before generation's
+inventory probes, warning/runtime preparation or workspace refresh. Generated,
+workspace and DNS renderers contribute expected-byte receipts to that same
+snapshot: original inputs and existing artifacts must still match before a
+write, and the resulting file must match its renderer bytes afterward. Creation
+refresh verifies the retained declaration rather than capturing a new baseline.
+Marked reconciliation also verifies its original marker inputs before any
+materialization. Attached and unrelated data preparation retain legacy behavior.
 A running stack without that original admission refuses detached reconciliation;
 current inputs cannot establish a replacement baseline. If recording failed,
 JSON recovery is null and human advice grants no retry authority. Detached JSON

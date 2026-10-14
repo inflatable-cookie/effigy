@@ -133,6 +133,7 @@ pub(in crate::runner) struct DetachedActivationContext {
     pub(in crate::runner) marker_required: bool,
 }
 
+#[cfg(test)]
 pub(in crate::runner) fn capture_detached_activation_context(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
@@ -164,6 +165,15 @@ pub(in crate::runner) fn retained_detached_activation_context(
 }
 
 impl DetachedActivationContext {
+    pub(in crate::runner) fn from_materialization(
+        policy: &EffectiveContainerPolicy,
+        admission: &effigy_containers::policy::admission::PolicyAdmission,
+    ) -> Result<Self, RunnerError> {
+        Ok(Self {
+            value: admission.context_for_policy(policy)?,
+            marker_required: admission.marker_required(),
+        })
+    }
     pub(in crate::runner) fn verify(
         &self,
         repo_root: &Path,
@@ -265,18 +275,31 @@ fn partial_activation_context(
 ) -> Result<serde_json::Value, RunnerError> {
     let canonical_root = fs::canonicalize(repo_root)
         .map_err(|error| RunnerError::task_invocation_failed_read(repo_root, error))?;
-    let mut inputs = Vec::new();
-    for path in std::iter::once(repo_root.join("effigy.toml"))
-        .chain(policy.compose_files.iter().map(|path| repo_root.join(path)))
+    let loaded =
+        effigy_manifest::load_task_manifest_with_inspection(&repo_root.join("effigy.toml"))
+            .map_err(|_| RunnerError::task_invocation("original declaration unavailable"))?;
+    let mut paths = loaded
+        .evaluation_order
+        .into_iter()
+        .collect::<std::collections::BTreeSet<_>>();
+    if let Some(config) = loaded
+        .manifest
+        .containers
+        .as_ref()
+        .and_then(|containers| containers.environments.get(&policy.name))
     {
+        if let Some(path) = &config.compose_file {
+            paths.insert(repo_root.join(path));
+        }
+    }
+    paths.extend(policy.compose_files.iter().map(|path| repo_root.join(path)));
+    let mut inputs = Vec::new();
+    for path in paths {
         let canonical = fs::canonicalize(&path)
             .map_err(|error| RunnerError::task_invocation_failed_read(&path, error))?;
         let bytes = fs::read(&canonical)
             .map_err(|error| RunnerError::task_invocation_failed_read(&canonical, error))?;
-        inputs.push(serde_json::json!({
-            "path": canonical,
-            "sha256": Sha256::digest(&bytes).iter().map(|byte| format!("{byte:02x}")).collect::<String>(),
-        }));
+        inputs.push(serde_json::json!({"path":canonical,"sha256":Sha256::digest(&bytes).iter().map(|byte| format!("{byte:02x}")).collect::<String>()}));
     }
     let scope = effigy_core::worktree_scope::resolve(repo_root)
         .map_err(|error| RunnerError::task_invocation_failed_read(repo_root, error))?
@@ -494,6 +517,11 @@ fn sanitize_lease_path_component(value: &str) -> String {
             }
         })
         .collect()
+}
+
+pub(in crate::runner) fn detached_admission_marker_root(repo_root: &Path) -> PathBuf {
+    host_container_lease_home_dir()
+        .unwrap_or_else(|| repo_root.join(HOST_CONTAINER_LEASE_FALLBACK_DIR))
 }
 
 fn host_container_lease_home_dir() -> Option<PathBuf> {

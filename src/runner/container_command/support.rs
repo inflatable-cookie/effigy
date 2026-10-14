@@ -340,9 +340,13 @@ patch_alias() {
 
 pub(super) fn ensure_shared_services_running(
     policy: &EffectiveContainerPolicy,
+    admission: Option<&effigy_containers::policy::admission::PolicyAdmission>,
 ) -> Result<Vec<String>, RunnerError> {
     let mut notes = Vec::new();
     for service in &policy.shared_services {
+        if let Some(guard) = admission {
+            guard.verify()?;
+        }
         let workdir = service.compose_file.parent().ok_or_else(|| {
             RunnerError::task_invocation("shared service compose file has no parent directory")
         })?;
@@ -352,6 +356,9 @@ pub(super) fn ensure_shared_services_running(
             &shared_compose_args(service, ["up", "-d"]),
             &format!("docker compose up (shared {})", service.service_name),
         )?;
+        if let Some(guard) = admission {
+            guard.verify()?;
+        }
         let recovery = recover_exited_owned_compose_services_for_project(
             &policy.repo_root,
             policy,

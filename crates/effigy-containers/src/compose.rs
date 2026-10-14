@@ -56,10 +56,29 @@ pub fn resolve_compose_backend_for_repo(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> ComposeBackend {
-    let detection = compose_backend_detection_for_policy(repo_root, policy);
+    resolve_declared_backend(repo_root, &policy.name, policy.driver)
+}
+
+pub(crate) fn resolve_declared_backend(
+    repo_root: &Path,
+    name: &str,
+    driver: ManifestContainerDriver,
+) -> ComposeBackend {
+    let mut detection = compose_backend_detection();
+    if detection.backend_override.is_none() {
+        detection.backend_override = load_runtime_backend_override(repo_root, Some(name));
+    }
+    if detection.backend_override.is_none() {
+        detection.backend_override = crate::user_global_backend_preference();
+    }
+    if detection.backend_override.is_none() {
+        detection.backend_override = Some(match driver {
+            ManifestContainerDriver::Colima => BackendId::colima_nerdctl(),
+        });
+    }
     let backend_id = ContainerBackendRegistry::defaults()
         .detect_backend(&detection)
-        .unwrap_or_else(|_| backend_id_for_policy(policy));
+        .unwrap_or_else(|_| BackendId::colima_nerdctl());
     ComposeBackend::from_backend_id(&backend_id)
 }
 

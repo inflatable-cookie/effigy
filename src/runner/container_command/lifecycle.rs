@@ -222,7 +222,49 @@ fn prepare_container_up(
     detach: bool,
 ) -> Result<ContainerUpPlan, RunnerError> {
     let stop_flag = install_stop_requested_flag()?;
-    let mut policy = load_container_policy(repo_root, name)?;
+    // Resolve the attach declaration without materializing policy or probing runtime.
+    let declared =
+        effigy_manifest::load_task_manifest_with_inspection(&repo_root.join("effigy.toml"))
+            .map_err(|_| RunnerError::task_invocation("original declaration unavailable"))?;
+    let selected = name.or_else(|| {
+        declared
+            .manifest
+            .containers
+            .as_ref()
+            .and_then(|c| c.default.as_deref())
+    });
+    let declared_detached = detach
+        || (!attach
+            && declared
+                .manifest
+                .containers
+                .as_ref()
+                .and_then(|c| selected.and_then(|name| c.environments.get(name)))
+                .is_some_and(|c| {
+                    c.startup == Some(effigy_manifest::ManifestContainerStartup::Detached)
+                }));
+    let (mut policy, mut preparation_admission) = if declared_detached {
+        let (policy, admission) = effigy_containers::policy::load::load_admitted_container_policy(
+            repo_root,
+            name,
+            &crate::runner::host_container_lease::detached_admission_marker_root(repo_root),
+        )?;
+        (policy, Some(admission))
+    } else {
+        (load_container_policy(repo_root, name)?, None)
+    };
+    let mut admitted_context = if let Some(admission) = &preparation_admission {
+        Some(
+            crate::runner::host_container_lease::DetachedActivationContext::from_materialization(
+                &policy, admission,
+            )?,
+        )
+    } else {
+        None
+    };
+    if let Some(context) = &admitted_context {
+        context.verify(repo_root, &policy, context.marker_required)?;
+    }
     // Validate a retained marker before runtime activation or generated input
     // refresh can obscure drift in the originally admitted Compose context.
     let retained_context =
@@ -257,25 +299,18 @@ fn prepare_container_up(
     let warnings = colima_profile_warnings(&policy, repo_root);
     emit_warning_lines(&warnings);
     let attach_mode = effective_attach_mode(&policy, attach, detach);
-    // Direct Compose observation happens during preparation; capture its
-    // admission before that probe rather than minting a post-probe baseline.
-    let retained_context = if attach_mode == EffectiveAttachMode::Detached
-        && retained_context.is_none()
-        && policy.compose_source == effigy_containers::EffectiveComposeSource::Direct
-    {
-        Some(
-            crate::runner::host_container_lease::capture_detached_activation_context(
-                repo_root, &policy,
-            )?,
-        )
-    } else {
-        retained_context
-    };
     let colima_started = start_runtime_after_scope_registration(&policy, || {
         ensure_runtime_backend_running(&policy, repo_root).map_err(Into::into)
     })?;
+    if let Some(context) = &admitted_context {
+        context.verify(repo_root, &policy, context.marker_required)?;
+    }
     emit_ssh_agent_socket_warning(&policy, repo_root);
-    let shared_service_notes = ensure_shared_services_running(&policy)?;
+    if let Some(context) = &admitted_context {
+        context.verify(repo_root, &policy, context.marker_required)?;
+    }
+    let shared_service_notes =
+        ensure_shared_services_running(&policy, preparation_admission.as_ref())?;
     let primary_service_running = if reconcile_pending {
         true
     } else if policy.compose_source == effigy_containers::EffectiveComposeSource::Direct {
@@ -290,8 +325,25 @@ fn prepare_container_up(
     } else {
         false
     };
+    if let Some(context) = &admitted_context {
+        context.verify(repo_root, &policy, context.marker_required)?;
+    }
     let workspace_mount_decisions = if reconcile_pending {
         Vec::new()
+    } else if let Some(admission) = preparation_admission.as_mut() {
+        let (creation, decisions) =
+            effigy_containers::policy::load::refresh_admitted_container_policy(
+                repo_root,
+                &policy.name,
+                admission,
+            )?;
+        policy.compose_files = creation.compose_files;
+        admitted_context = Some(
+            crate::runner::host_container_lease::DetachedActivationContext::from_materialization(
+                &policy, admission,
+            )?,
+        );
+        decisions
     } else {
         resolve_workspace_mounts_for_creation(repo_root, &mut policy, primary_service_running)?
     };
@@ -312,16 +364,11 @@ fn prepare_container_up(
         "docker compose up",
     )
     .map_err(RunnerError::from)?;
-    let admitted_context = if attach_mode == EffectiveAttachMode::Detached {
-        Some(match retained_context {
-            Some(context) => context,
-            None => crate::runner::host_container_lease::capture_detached_activation_context(
-                repo_root, &policy,
-            )?,
-        })
-    } else {
-        None
-    };
+    if attach_mode == EffectiveAttachMode::Detached && admitted_context.is_none() {
+        return Err(RunnerError::task_invocation(
+            "original detached preparation admission unavailable",
+        ));
+    }
     if let Some(context) = &admitted_context {
         context.verify(repo_root, &policy, context.marker_required)?;
     }
@@ -385,6 +432,9 @@ fn run_container_up_compose(
     repo_root: &Path,
     plan: &ContainerUpPlan,
 ) -> Result<Option<String>, RunnerError> {
+    if let Some(context) = &plan.admitted_context {
+        context.verify(repo_root, &plan.policy, context.marker_required)?;
+    }
     if plan.attach_mode == EffectiveAttachMode::Attached {
         match run_compose_plan_inherit_with_stop_flag_and_env(
             &plan.up_plan,

@@ -164,12 +164,125 @@ pub fn load_container_policy_for_creation(
     load_container_policy_with_workspace_decisions(repo_root, requested_name, None, true)
 }
 
+pub fn load_admitted_container_policy(
+    repo_root: &Path,
+    requested_name: Option<&str>,
+    marker_root: &Path,
+) -> Result<(EffectiveContainerPolicy, super::admission::PolicyAdmission), ContainerPolicyError> {
+    let loaded = load_task_manifest_with_inspection(&repo_root.join(TASK_MANIFEST_FILE))?;
+    let containers = loaded
+        .manifest
+        .containers
+        .as_ref()
+        .ok_or_else(|| ContainerPolicyError::TaskInvocation("containers missing".to_owned()))?;
+    let name = resolve_container_name(containers, requested_name)?;
+    let config = containers
+        .environments
+        .get(&name)
+        .ok_or_else(|| ContainerPolicyError::TaskInvocation("container missing".to_owned()))?;
+    let project = resolve_project_name(
+        config,
+        &default_project_name_base(&loaded, repo_root),
+        &name,
+        containers.environments.len(),
+        repo_root,
+    )?;
+    let root = repo_root
+        .canonicalize()
+        .map_err(|error| ContainerPolicyError::Read {
+            path: repo_root.to_owned(),
+            error,
+        })?;
+    let token = effigy_core::worktree_scope::load_or_create(&root)
+        .map_err(|_| ContainerPolicyError::TaskInvocation("scope unavailable".to_owned()))?;
+    let profile = config.profile.as_deref().unwrap_or(DEFAULT_COLIMA_PROFILE);
+    let identity = serde_json::json!({"schema":"effigy.container-partial-activation.v2", "repo_root":root,"scope_token":token,"container_name":name,"profile":profile,"project_name":project,"primary_service":config.primary_service,"backend":super::admission::backend_name(crate::compose::resolve_declared_backend(repo_root,&name,config.driver.unwrap_or(ManifestContainerDriver::Colima))),"compose_source":if config.compose_file.is_some(){"direct"}else{"generated"}});
+    let mut declarations = loaded
+        .evaluation_order
+        .iter()
+        .map(|path| {
+            path.canonicalize()
+                .map_err(|error| ContainerPolicyError::Read {
+                    path: path.clone(),
+                    error,
+                })
+        })
+        .collect::<Result<std::collections::BTreeSet<_>, _>>()?;
+    if let Some(path) = &config.compose_file {
+        declarations.insert(root.join(path).canonicalize().map_err(|error| {
+            ContainerPolicyError::Read {
+                path: root.join(path),
+                error,
+            }
+        })?);
+    }
+    let mut artifacts = vec![
+        root.join(".effigy/runtime/compose/.effigy-compose.generated.yml"),
+        root.join(".effigy/runtime/compose/.effigy-compose.override.yml"),
+        root.join(format!(
+            ".effigy/runtime/compose/{name}.workspace.compose.yml"
+        )),
+        root.join(format!(".effigy/runtime/dns/{name}.compose.override.yml")),
+    ];
+    artifacts.extend(declarations.iter().cloned());
+    let clean = |value: &str| {
+        value
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') {
+                    c
+                } else {
+                    '-'
+                }
+            })
+            .collect::<String>()
+    };
+    let marker = marker_root
+        .join(clean(profile))
+        .join(clean(&project))
+        .join(format!("{}.partial.json", clean(&name)));
+    let mut admission =
+        super::admission::PolicyAdmission::capture(identity, declarations, artifacts, marker)?;
+    let (policy, _) =
+        load_policy_with_admission(repo_root, requested_name, None, false, Some(&mut admission))?;
+    admission.context_for_policy(&policy)?;
+    Ok((policy, admission))
+}
+
+pub fn refresh_admitted_container_policy(
+    repo_root: &Path,
+    name: &str,
+    admission: &mut super::admission::PolicyAdmission,
+) -> Result<(EffectiveContainerPolicy, Vec<WorkspaceExtraMountDecision>), ContainerPolicyError> {
+    admission.verify()?;
+    load_policy_with_admission(repo_root, Some(name), None, true, Some(admission))
+}
+
 fn load_container_policy_with_workspace_decisions(
     repo_root: &Path,
     requested_name: Option<&str>,
     workspace_override: Option<&ManifestWorkspaceConfig>,
     record_optional_extra_mount_decisions: bool,
 ) -> Result<(EffectiveContainerPolicy, Vec<WorkspaceExtraMountDecision>), ContainerPolicyError> {
+    load_policy_with_admission(
+        repo_root,
+        requested_name,
+        workspace_override,
+        record_optional_extra_mount_decisions,
+        None,
+    )
+}
+
+fn load_policy_with_admission(
+    repo_root: &Path,
+    requested_name: Option<&str>,
+    workspace_override: Option<&ManifestWorkspaceConfig>,
+    record_optional_extra_mount_decisions: bool,
+    admission: Option<&mut super::admission::PolicyAdmission>,
+) -> Result<(EffectiveContainerPolicy, Vec<WorkspaceExtraMountDecision>), ContainerPolicyError> {
+    if let Some(guard) = &admission {
+        guard.verify()?;
+    }
     let manifest_path = repo_root.join(TASK_MANIFEST_FILE);
     let loaded = load_task_manifest_with_inspection(&manifest_path)?;
     let inferred_workspace =
@@ -205,6 +318,7 @@ fn load_container_policy_with_workspace_decisions(
         workspace: inferred_workspace.as_ref(),
         library_mounts: &library_mounts,
         record_optional_extra_mount_decisions,
+        admission,
     })
 }
 
@@ -238,6 +352,7 @@ pub fn load_all_container_policies(
                 workspace: workspace.as_ref(),
                 library_mounts: &library_mounts,
                 record_optional_extra_mount_decisions: false,
+                admission: None,
             })
             .map(|(policy, _)| policy)
         })
@@ -329,6 +444,7 @@ struct PolicyBuildContext<'a> {
     workspace: Option<&'a ManifestWorkspaceConfig>,
     library_mounts: &'a [effigy_manifest::LibraryMount],
     record_optional_extra_mount_decisions: bool,
+    admission: Option<&'a mut super::admission::PolicyAdmission>,
 }
 
 fn build_effective_policy(
@@ -345,7 +461,11 @@ fn build_effective_policy(
         workspace,
         library_mounts,
         record_optional_extra_mount_decisions,
+        mut admission,
     } = context;
+    if let Some(guard) = &admission {
+        guard.verify()?;
+    }
     let driver = config.driver.unwrap_or(ManifestContainerDriver::Colima);
     let profile = config
         .profile
@@ -371,6 +491,7 @@ fn build_effective_policy(
         config,
         &project_name,
         effective_manifest,
+        admission.as_deref_mut(),
     )?;
     let primary_service = config.primary_service.clone().ok_or_else(|| {
         ContainerPolicyError::TaskInvocation(format!(
@@ -394,6 +515,7 @@ fn build_effective_policy(
                 },
                 &mut compose_files,
                 record_optional_extra_mount_decisions,
+                admission.as_deref_mut(),
             )?;
         }
     }
@@ -429,6 +551,7 @@ fn build_effective_policy(
             &profile,
             &runtime_routes,
             &mut compose_files,
+            admission.as_deref_mut(),
         )?;
     }
     let host = config.host.as_ref().cloned().unwrap_or_default();
@@ -505,6 +628,9 @@ fn build_effective_policy(
             .map(|entry| resolve_host_process(entry, runtime_host_key))
             .collect(),
     };
+    if let Some(guard) = &admission {
+        guard.context_for_policy(&policy)?;
+    }
     Ok((policy, workspace_mount_decisions))
 }
 

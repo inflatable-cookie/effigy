@@ -327,13 +327,16 @@ admission remain separate from these private command-transport controls.
 
 ## Preparation admission interface
 
-Policy loading combines declaration evaluation, generated assembly, loopback
-inventory/allocation and artifact writes. Creation refresh evaluates the
-manifest again and returns an effective policy plus mount decisions; the caller
-currently retains its Compose paths. Those return types do not carry a sealed
-original declaration or expected rendered-byte provenance for the resulting
-generated, workspace and DNS artifacts. A post-refresh file hash can bind the
-new file, but cannot establish that it derives from an admission taken before
-the original runtime probes. Detached original-input admission needs that
-explicit join before refresh can be credited as safe source preservation.
-This does not change the route lock into exclusion of filesystem writers.
+`PolicyAdmission` seals declaration fingerprints and selected identity before
+policy generation can observe inventory. The admitted loader and creation
+refresh pass that same snapshot through `PolicyBuildContext`. Generated
+assembly, workspace rewriting and DNS rendering verify the original sources
+and existing artifacts before writes, then record expected rendered-byte
+fingerprints after checking the written output. Workspace decisions come from
+the same guarded renderer invocation; activation retains the resulting paths,
+decisions and admission context. No post-probe declaration is adopted as a new
+baseline, and marked inputs must match before materialization. The snapshot
+also gates runtime/shared-service preparation and feeds the existing locked
+publication checks. These are cooperative checked intervals, not an atomic
+multi-file snapshot or exclusion of source writers; change/restoration between
+reads and changes after the final check remain outside the guarantee.

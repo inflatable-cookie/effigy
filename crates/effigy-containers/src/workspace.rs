@@ -47,6 +47,7 @@ pub(crate) fn materialize_runtime_workspace_mount_rewrite(
     request: WorkspaceComposeRewrite<'_>,
     compose_files: &mut [PathBuf],
     record_optional_extra_mount_decisions: bool,
+    admission: Option<&mut crate::policy::admission::PolicyAdmission>,
 ) -> Result<Vec<WorkspaceExtraMountDecision>, ContainerPolicyError> {
     let Some(source_compose) = compose_files.first().cloned() else {
         return Ok(Vec::new());
@@ -55,6 +56,7 @@ pub(crate) fn materialize_runtime_workspace_mount_rewrite(
         request,
         &source_compose,
         record_optional_extra_mount_decisions,
+        admission,
     )?;
     compose_files[0] = rewritten;
     Ok(decisions)
