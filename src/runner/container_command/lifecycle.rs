@@ -160,7 +160,7 @@ fn run_container_up_inner(
     reject_conflicting_container_up_modes(attach, detach)?;
 
     operation.stage = Some("preparation");
-    let plan = prepare_container_up(repo_root, name, attach, detach)?;
+    let plan = prepare_container_up(repo_root, name, attach, detach, operation)?;
     operation.active = plan.attach_mode == EffectiveAttachMode::Detached;
     operation.admitted = plan
         .admitted_context
@@ -230,6 +230,7 @@ fn prepare_container_up(
     name: Option<&str>,
     attach: bool,
     detach: bool,
+    operation: &mut DetachedOperationState,
 ) -> Result<ContainerUpPlan, RunnerError> {
     let stop_flag = install_stop_requested_flag()?;
     // Resolve the attach declaration without materializing policy or probing runtime.
@@ -253,6 +254,7 @@ fn prepare_container_up(
                 .is_some_and(|c| {
                     c.startup == Some(effigy_manifest::ManifestContainerStartup::Detached)
                 }));
+    operation.active = declared_detached;
     let (mut policy, mut preparation_admission) = if declared_detached {
         let (policy, admission) = effigy_containers::policy::load::load_admitted_container_policy(
             repo_root,

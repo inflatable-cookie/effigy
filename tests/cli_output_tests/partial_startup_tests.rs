@@ -526,6 +526,41 @@ fn private_state_publication_preserves_concurrent_inventory() {
 }
 
 #[test]
+fn private_manifest_detached_preparation_failure_retains_unavailable_state() {
+    let mut fixture = Fixture::new();
+    let manifest = fixture.stacks[0].root.join("effigy.toml");
+    let original = fs::read_to_string(&manifest).unwrap();
+    fs::write(
+        &manifest,
+        original.replace(
+            "primary_service = \"db\"",
+            "startup = \"detached\"\nprimary_service = \"db\"",
+        ),
+    )
+    .unwrap();
+    fixture.set(0, "mode", json!("probe-manifest-drift"));
+    let output = fixture.run(0, &["container", "up", "--json"]);
+    assert!(!output.status.success(), "{output:?}");
+    let result: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(result["error"]["details"]["state"], "unavailable");
+    assert_eq!(
+        result["error"]["details"]["activation_stage"],
+        "preparation"
+    );
+    assert!(result["error"]["details"]["recovery"].is_null());
+    let commands = fs::read_to_string(fixture.stacks[0].root.join("commands.jsonl")).unwrap();
+    assert!(!commands
+        .lines()
+        .map(|line| serde_json::from_str::<Vec<String>>(line).unwrap())
+        .any(|args| args
+            .iter()
+            .any(|arg| matches!(arg.as_str(), "up" | "restart" | "down" | "rm"))));
+    for i in 0..3 {
+        fixture.probe(i);
+    }
+}
+
+#[test]
 fn private_missing_admission_never_rebaselines_running_stack() {
     let mut fixture = Fixture::new();
     fixture.set(0, "mode", json!("marker-write-fail"));
@@ -631,9 +666,17 @@ fn private_three_scopes_partial_resume_replacement_and_cli_refusals() {
     fixture.set(0, "mode", json!("hang-after-up"));
     let mut launches = Vec::new();
     for i in 0..3 {
+        // Preserve the failing selected stack's JSON contract. Healthy siblings
+        // use the supported human surface so an unexpected refusal retains its
+        // underlying private error, rather than only the generic JSON message.
+        let args = if i == 0 {
+            vec!["container", "up", "--detach", "--json"]
+        } else {
+            vec!["container", "up", "--detach"]
+        };
         launches.push(Process(
             fixture
-                .command(i, &["container", "up", "--detach", "--json"])
+                .command(i, &args)
                 .spawn()
                 .expect("concurrent scoped up"),
         ));

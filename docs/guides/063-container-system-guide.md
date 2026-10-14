@@ -729,7 +729,13 @@ recovery.
 
 JSON failure details expose `state` (`partial` or `unavailable`),
 `phase = "detached_activation"`, unverified readiness/exposure and supported
-recovery/stop commands. They contain no raw backend output, argv or environment.
+recovery/stop commands. `activation_stage` uses the closed vocabulary
+`preparation`, `reconciliation_inventory`, `compose_activation`,
+`admission_record`, `stopped_service_recovery`, `readiness`,
+`runtime_integrations`, or `persistent_owner`. Manifest-declared detached mode
+also reports preparation failures as unavailable with no recovery authority.
+These stages identify caller boundaries, not causes or readiness proof. Details
+contain no raw backend output, argv or environment.
 Fresh full-ID inspect must match project, service, non-oneoff running state and
 checkout ownership; bindings come from current inspect published ports. An
 owned replacement updates its TCP target in the same locked route transaction,
