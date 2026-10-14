@@ -225,6 +225,59 @@ fn parse_gateway_setup_listener_handoff_refuses_private_root() {
 }
 
 #[test]
+fn parse_gateway_listener_handoff_status_supports_json() {
+    let cmd = parse_command(vec![
+        "gateway".to_owned(),
+        "listener-handoff-status".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Gateway(GatewayArgs {
+            subcommand: GatewaySubcommand::ListenerHandoffStatus,
+            private: None,
+            output_json: true,
+        })
+    );
+}
+
+#[test]
+fn parse_gateway_remove_listener_handoff_supports_json() {
+    let cmd = parse_command(vec![
+        "gateway".to_owned(),
+        "remove-listener-handoff".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Gateway(GatewayArgs {
+            subcommand: GatewaySubcommand::RemoveListenerHandoff,
+            private: None,
+            output_json: true,
+        })
+    );
+}
+
+#[test]
+fn parse_gateway_handoff_maintenance_refuses_private_root() {
+    for subcommand in ["listener-handoff-status", "remove-listener-handoff"] {
+        let error = parse_command(vec![
+            "gateway".to_owned(),
+            subcommand.to_owned(),
+            "--private-state-root".to_owned(),
+            "/tmp/effigy-gateway-private".to_owned(),
+        ])
+        .expect_err("private state root is not a maintenance flag");
+        assert!(
+            error.to_string().contains("unknown"),
+            "expected an unknown-argument refusal for {subcommand}, got {error}"
+        );
+    }
+}
+
+#[test]
 fn parse_gateway_run_accepts_listener_handoff_flag() {
     let cmd = parse_command(vec![
         "__gateway-run".to_owned(),

@@ -1231,6 +1231,49 @@ Boundaries that stay true regardless of the handoff:
 - Until you have executed the install and a real reboot restore, consumer
   gateways must keep using the existing root or private startup paths.
 
+Check and remove the handoff (operator, unprivileged; both read-only):
+
+```sh
+effigy gateway listener-handoff-status          # human-readable observation
+effigy gateway listener-handoff-status --json   # bounded command envelope
+effigy gateway remove-listener-handoff          # checked plan, unexecuted
+```
+
+`listener-handoff-status` reports the fixed definition's identity and the
+launchd job as distinct findings. `definition` is `verified` only when the
+file is root-owned, not group/other-writable, not a symlink, within the byte
+bound, parses as the exact generator shape, and names the resolved operator
+(`UserName`/`GroupName`/`HOME`) and the current canonical executable. Otherwise
+it names the finding (`foreign_owner`, `unsafe_mode`, `symlink`, `changed`,
+`shape_mismatch`, `operator_mismatch`, `program_stale`, `program_missing`, and
+so on); `program: stale` or `program: missing` is the moved/missing executable
+case. `job` is `loaded_running`, `loaded_not_running`, `confirmed_absent`, or a
+bounded unavailable state (`permission_denied`, `capture_timed_out`,
+`capture_truncated`, `nonzero_exit`, `malformed`, `association_mismatch`,
+`unavailable`, `unsupported`). Label, PID, file checksum and the displayed
+path are observations, never authority to signal or remove anything.
+
+`remove-listener-handoff` prints only the fixed administrator plan below, and
+only when the definition verifies for the current operator and executable and
+the job observation is determinate. It runs no `sudo`, `launchctl` or `rm`.
+Foreign, stale, changed or uncertain definitions and loaded jobs refuse before
+any usable plan is produced.
+
+```text
+# UNEXECUTED plan. Re-run `effigy gateway listener-handoff-status` first and
+# confirm definition: verified, program: current, operator: matching, and a
+# determinate job observation; stop if anything is foreign, stale or unknown.
+sudo launchctl bootout system/dev.effigy.gateway.user
+sudo rm /Library/LaunchDaemons/dev.effigy.gateway.user.plist
+```
+
+The two commands do not stop the gateway: the build-156 KeepAlive consequence
+still holds, so `effigy gateway down` cannot durably stop the job and only the
+`bootout` step above does. After an operator-executed removal, verifying success
+and starting a supported gateway remain operator steps; nothing restarts
+automatically, and resolver files, `lo0` aliases, CA trust and routes are not
+touched by the plan.
+
 ### Route-table trust
 
 The gateway daemon can run elevated (to bind `:80`/`:443` and write resolver

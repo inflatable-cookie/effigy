@@ -1104,6 +1104,53 @@ user-owned daemon, and one real cross-boot restore proof. `check_user_runtime_re
 keeps reporting `missing-capability=loopback-privileged-listener-handoff` for
 a direct unprivileged lowport bind, which remains unsupported.
 
+### Handoff status and removal plan (task 157)
+
+Task 157 adds the symmetric operator surface without widening the
+source-only and Tom-only boundary: `effigy gateway listener-handoff-status` is
+read-only, and `effigy gateway remove-listener-handoff` emits a checked
+**unexecuted** administrator plan. Neither command registers, activates,
+signals, removes, elevates or migrates anything, and no command was run
+against the fixed live definition or launchd job.
+
+- Definition observation: the fixed path
+  `/Library/LaunchDaemons/dev.effigy.gateway.user.plist` is opened with
+  `O_NOFOLLOW`, bound to a single regular file's kernel identity (device,
+  inode, size, mtime, owner, group, mode), read within a 64 KiB bound, and
+  re-checked for a concurrent change. Ownership must be the administrator;
+  group/other write, symlinks, non-regular objects, oversized files and
+  permission refusals are distinct. The bytes must pass the strict parser and
+  the complete expected generator shape (now including unknown or duplicated
+  top-level keys), the resolved operator user/group/`HOME`, and the current
+  canonical executable. A moved or missing executable path is a read-only
+  finding, not authenticity: it reports stale/unverified and refuses a plan.
+- launchd observation: `launchctl print system/dev.effigy.gateway.user` runs
+  as a fixed literal argv (never a shell, never interpolated text) under one
+  absolute deadline and byte limit. Only the documented service header, the
+  top-level `state` and the on-disk `path` are read structurally; the output
+  is explicitly not API (`man launchctl`), so unrecognized structure, a
+  non-zero exit, a permission failure, a deadline, a truncated capture or an
+  unavailable/unsupported binary stay distinct from the documented
+  `Could not find service` absence. A loaded job whose `path` is not the fixed
+  definition path is an association mismatch. Label, PID, checksum and the
+  displayed executable path are observations only, never signal authority.
+- Removal: a plan is emitted only when the definition verifies as the exact
+  reviewed generator for the current operator and executable **and** the job
+  observation is determinate (loaded with the matching path, or confirmed
+  absent). The plan contains only the two fixed literal steps
+  `sudo launchctl bootout system/dev.effigy.gateway.user` and
+  `sudo rm /Library/LaunchDaemons/dev.effigy.gateway.user.plist`, in safe
+  order, with a required fresh identity recheck and a KeepAlive warning. It
+  states that its effects are UNEXECUTED, never that a gateway was stopped.
+  Foreign ownership, unsafe modes, symlinks, changed bytes, unknown or stale
+  shapes, operator/executable mismatches, a loaded job without a verified
+  definition, and every unknown or failed observation refuse before any
+  usable plan is produced.
+
+The unexecuted set is unchanged: no agent installed, booted out, removed or
+mutated a launchd job or plist, and the administrator execution, verification
+and reboot proofs remain Tom-run.
+
 ## Proposed read-only root-daemon attestation
 
 This is a concrete proposal for a separate operator ruling if Q-002's

@@ -1109,6 +1109,8 @@ fn gateway_subcommand_name(subcommand: GatewaySubcommand) -> &'static str {
         GatewaySubcommand::Recover { .. } => "recover",
         GatewaySubcommand::SetupTls => "setup-tls",
         GatewaySubcommand::SetupListenerHandoff => "setup-listener-handoff",
+        GatewaySubcommand::ListenerHandoffStatus => "listener-handoff-status",
+        GatewaySubcommand::RemoveListenerHandoff => "remove-listener-handoff",
     }
 }
 

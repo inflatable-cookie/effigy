@@ -911,6 +911,8 @@ pub enum GatewaySubcommand {
     Recover { yes: bool, adopt_candidate: bool },
     SetupTls,
     SetupListenerHandoff,
+    ListenerHandoffStatus,
+    RemoveListenerHandoff,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

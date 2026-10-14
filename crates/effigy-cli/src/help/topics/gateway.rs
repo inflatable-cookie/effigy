@@ -15,6 +15,8 @@ pub(crate) fn render_gateway_help<R: HelpRenderer + ?Sized>(renderer: &mut R) ->
             "On macOS, `gateway up` and `gateway down` also manage `/etc/resolver/test` and will prompt for admin approval when host setup needs it.",
             "For disposable consumers, `--private-state-root <DIR>` selects caller-owned state and client-scoped TLS trust; private mode binds only loopback, never installs trust or writes host resolver/alias state, and reports the actual listener addresses.",
             "`gateway setup-listener-handoff` prints the SOURCE launchd definition that would hand TCP 127.0.0.1:80/443 to a user-owned gateway; nothing is installed and the administrator install, activation, and cross-boot proof remain operator-owned (guide 063).",
+            "`gateway listener-handoff-status` is read-only: it reports the installed definition and a bounded launchd observation as distinct installed/loaded/absent/stale/unknown findings, including a moved or missing executable path, without treating label, PID, checksum or displayed path as authority.",
+            "`gateway remove-listener-handoff` emits a checked, UNEXECUTED administrator plan for the exact verified definition; it runs no sudo, launchctl or rm, refuses foreign, stale or uncertain definition/job association, and never claims a gateway was stopped.",
             "Managed container startup can select the same mode with `EFFIGY_GATEWAY_PRIVATE_STATE_ROOT=<DIR>`; clients must explicitly trust `<DIR>/ca/rootCA.pem` and resolve route names to the reported HTTPS loopback address.",
         ],
         &[
@@ -25,6 +27,8 @@ pub(crate) fn render_gateway_help<R: HelpRenderer + ?Sized>(renderer: &mut R) ->
             "effigy gateway repair [--yes] [--json]",
             "effigy gateway setup-tls [--private-state-root <DIR>] [--json]",
             "effigy gateway setup-listener-handoff [--json]",
+            "effigy gateway listener-handoff-status [--json]",
+            "effigy gateway remove-listener-handoff [--json]",
             "effigy --json gateway status",
         ],
         &[
@@ -44,6 +48,8 @@ pub(crate) fn render_gateway_help<R: HelpRenderer + ?Sized>(renderer: &mut R) ->
             "effigy gateway repair",
             "effigy gateway repair --yes",
             "effigy gateway setup-tls",
+            "effigy gateway listener-handoff-status --json",
+            "effigy gateway remove-listener-handoff",
             "effigy gateway down",
         ],
     )

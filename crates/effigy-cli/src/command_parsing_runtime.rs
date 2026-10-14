@@ -32,6 +32,8 @@ where
         },
         "setup-tls" => GatewaySubcommand::SetupTls,
         "setup-listener-handoff" => GatewaySubcommand::SetupListenerHandoff,
+        "listener-handoff-status" => GatewaySubcommand::ListenerHandoffStatus,
+        "remove-listener-handoff" => GatewaySubcommand::RemoveListenerHandoff,
         other => return Err(unknown_argument(other)),
     };
 

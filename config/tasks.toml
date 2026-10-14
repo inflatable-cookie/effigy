@@ -367,6 +367,19 @@
   "cargo check -p effigy-gateway -p effigy-cli -p effigy --all-targets",
   "cargo clippy -p effigy-gateway -p effigy-cli -p effigy --all-targets -- -D warnings",
 ]
+# Launchd listener-handoff status and removal plan (task 157): read-only file
+# identity observation, bounded launchd capture classification, and the checked
+# unexecuted administrator plan through the production parsers, inspection and
+# rendering boundaries. Fresh temporary definitions and owned children only; no
+# live launchd job, plist, privileged endpoint or administrator command is
+# touched.
+"test:gateway:handoff-maintenance" = [
+  { id = "gateway-handoff-maintenance", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-gateway -p effigy --lib --filterset 'test(listener_handoff_maintenance) | test(parse_gateway_listener_handoff_status) | test(parse_gateway_remove_listener_handoff) | test(parse_gateway_handoff_maintenance)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 240000 },
+]
+"check:gateway:handoff-maintenance" = [
+  "cargo check -p effigy-gateway -p effigy-cli -p effigy --all-targets",
+  "cargo clippy -p effigy-gateway -p effigy-cli -p effigy --all-targets -- -D warnings",
+]
 "test:install:previous-binary-preservation" = [
   { id = "install-previous-binary-preservation", run = "cargo test -p effigy -p effigy-rhai --lib previous_binary_preservation -- --nocapture", timeout_ms = 120000 },
 ]
