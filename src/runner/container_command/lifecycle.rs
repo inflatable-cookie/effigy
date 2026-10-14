@@ -37,7 +37,10 @@ use crate::runner::container_runtime_prep::ensure_primary_service_exec_ready_for
 use crate::runner::exec_command::{
     append_color_exec_env, probe_container_capabilities, run_compose_exec_plan_with_options,
 };
-use crate::runner::host_container_lease::clear_host_container_lease;
+use crate::runner::host_container_lease::{
+    clear_host_container_lease, clear_partial_activation, partial_activation_recorded,
+    record_partial_activation,
+};
 use crate::runner::host_process::start_host_processes_for_container;
 use effigy_containers::{
     annotate_workspace_extra_mount_decisions,
@@ -111,8 +114,10 @@ pub(super) fn run_container_up(
         return render_container_up_interrupted(repo_root, &plan);
     }
 
-    if let Some(closeout) = run_container_up_compose(repo_root, &plan)? {
-        return Ok(closeout);
+    if !partial_activation_reconcile_pending(repo_root, &plan)? {
+        if let Some(closeout) = run_container_up_compose(repo_root, &plan)? {
+            return Ok(closeout);
+        }
     }
     write_container_up_backend_override(repo_root, &plan.policy);
 
@@ -135,6 +140,7 @@ pub(super) fn run_container_up(
     let mut integrations = complete_container_up_runtime_integrations(repo_root, &plan)?;
     integrations.warnings.extend(recovery.warnings);
 
+    clear_partial_activation(repo_root, &plan.policy)?;
     clear_host_container_lease(repo_root, &plan.policy)?;
 
     render_container_up_result(repo_root, &plan, health, integrations, output_json)
@@ -354,6 +360,7 @@ fn complete_container_up_runtime_integrations(
         Err(error) => {
             return Err(gateway_registration_failure(
                 plan.attach_mode,
+                repo_root,
                 policy,
                 error,
                 || lifecycle_cleanup_failed_container_up(repo_root, policy),
@@ -397,29 +404,76 @@ fn complete_container_up_runtime_integrations(
 /// Decides what a failed route registration does to the started scope.
 ///
 /// Attached bring-up tears the started scope down, as before. Detached bring-up
-/// keeps the Compose services that `up` already started: a teardown would stop
-/// running services for an exposure step that a later `container up --detach`
-/// can retry. The `cleanup` closure runs only on the attached path.
+/// keeps the Compose services that `up` already started and records a partial
+/// activation mark, so a later detached `container up` reconciles routes without
+/// running `compose up` again. The `cleanup` closure runs only on the attached path.
 fn gateway_registration_failure(
     attach_mode: EffectiveAttachMode,
+    repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     error: RunnerError,
     cleanup: impl FnOnce() -> Result<(), RunnerError>,
 ) -> RunnerError {
     if attach_mode == EffectiveAttachMode::Detached {
-        return detached_partial_activation_error(policy, error);
+        let recorded = record_partial_activation(repo_root, policy);
+        return detached_partial_activation_error(policy, error, recorded.err());
     }
     finish_container_up_failure(error, cleanup())
 }
 
+/// `recorded_error` is set when the reconcile mark could not be written. The
+/// message then withholds the re-run advice, because a re-run without the mark
+/// would run `compose up` again.
 fn detached_partial_activation_error(
     policy: &EffectiveContainerPolicy,
     error: RunnerError,
+    recorded_error: Option<RunnerError>,
 ) -> RunnerError {
+    let Some(recorded_error) = recorded_error else {
+        return RunnerError::task_invocation(format!(
+            "{error}\ncontainer `{}` is partially activated: its Compose services stay running and no gateway route is registered. No teardown ran. Re-run `effigy container up --detach` to reconcile routes; that run does not recreate the running services. Run `effigy container down` to stop it instead.",
+            policy.name
+        ));
+    };
     RunnerError::task_invocation(format!(
-        "{error}\ncontainer `{}` is partially activated: its Compose services stay running and no gateway route is registered. No teardown ran. Re-run `effigy container up --detach` to reconcile routes (generated Compose recreates its services on that run), or `effigy container down` to stop it.",
+        "{error}\ncontainer `{}` is partially activated: its Compose services stay running and no gateway route is registered. No teardown ran. The reconcile mark could not be recorded ({recorded_error}), so do not re-run `effigy container up`; run `effigy container down` to stop it.",
         policy.name
     ))
+}
+
+/// A recorded partial activation whose primary service still runs reconciles
+/// without `compose up`, so running services and exec sessions are not
+/// recreated. A recorded mark with no running primary is stale: it is cleared
+/// and bring-up runs normally. An unavailable inventory refuses rather than
+/// falling back to `compose up`.
+fn partial_activation_reconcile_pending(
+    repo_root: &Path,
+    plan: &ContainerUpPlan,
+) -> Result<bool, RunnerError> {
+    if plan.attach_mode != EffectiveAttachMode::Detached
+        || !partial_activation_recorded(repo_root, &plan.policy)?
+    {
+        return Ok(false);
+    }
+    let running =
+        list_running_compose_containers_for_policy(repo_root, &plan.policy).map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "partially activated container `{}` was not reconciled: running Compose services could not be inspected ({error}). No services were recreated.",
+                plan.policy.name
+            ))
+        })?;
+    if partial_reconcile_skips_compose_up(&plan.policy, &running) {
+        return Ok(true);
+    }
+    clear_partial_activation(repo_root, &plan.policy)?;
+    Ok(false)
+}
+
+fn partial_reconcile_skips_compose_up(
+    policy: &EffectiveContainerPolicy,
+    running: &[RunningComposeContainer],
+) -> bool {
+    primary_service_is_running(policy, running)
 }
 
 fn render_container_up_result(
@@ -945,8 +999,10 @@ fn emit_ssh_agent_socket_warning(policy: &EffectiveContainerPolicy, repo_root: &
 #[cfg(test)]
 mod tests {
     use super::{
-        annotate_workspace_extra_mount_decisions, exec_operation_plan,
-        gateway_registration_failure, lifecycle_operation_plan, primary_service_is_running,
+        annotate_workspace_extra_mount_decisions, clear_partial_activation,
+        detached_partial_activation_error, exec_operation_plan, gateway_registration_failure,
+        lifecycle_operation_plan, partial_activation_recorded, partial_reconcile_skips_compose_up,
+        primary_service_is_running, record_partial_activation,
         refresh_workspace_mounts_for_creation, resolve_workspace_mounts_for_creation,
         run_container_eject, start_runtime_after_scope_registration, RunnerError,
     };
@@ -1491,12 +1547,42 @@ primary_service = "app"
             .contains("does not accept both `--keep-data` and `--wipe-data`"));
     }
 
+    /// Isolates the partial-activation mark in a private lease home. The guard
+    /// keeps the environment override for the life of the test.
+    fn isolated_lease_home() -> (tempfile::TempDir, crate::contract_test_support::EnvGuard) {
+        let temp = tempfile::tempdir().expect("temporary fixture root");
+        let lease_home = temp.path().join("lease-home");
+        fs::create_dir_all(&lease_home).expect("temporary lease home");
+        let guard = crate::contract_test_support::EnvGuard::set_many(&[(
+            "EFFIGY_TEST_HOST_CONTAINER_LEASE_HOME",
+            Some(lease_home.display().to_string()),
+        )]);
+        (temp, guard)
+    }
+
+    fn running_row(
+        service: &str,
+        oneoff: bool,
+    ) -> effigy_containers::exec::RunningComposeContainer {
+        effigy_containers::exec::RunningComposeContainer {
+            container_name: format!("web-{service}"),
+            status: "Up 2 minutes".to_owned(),
+            ports: Vec::new(),
+            project_name: Some("web".to_owned()),
+            working_dir: None,
+            service: Some(service.to_owned()),
+            oneoff,
+        }
+    }
+
     #[test]
     fn detached_gateway_registration_failure_keeps_started_scope() {
+        let (temp, _lease_home) = isolated_lease_home();
         let policy = test_policy(Vec::new());
         let cleaned = std::cell::Cell::new(false);
         let error = gateway_registration_failure(
             EffectiveAttachMode::Detached,
+            temp.path(),
             &policy,
             RunnerError::task_invocation("timed out waiting for declared gateway services"),
             || {
@@ -1515,14 +1601,21 @@ primary_service = "app"
         assert!(rendered.contains("no gateway route is registered"));
         assert!(rendered.contains("No teardown ran"));
         assert!(rendered.contains("effigy container up --detach"));
+        assert!(rendered.contains("does not recreate the running services"));
+        assert!(
+            partial_activation_recorded(temp.path(), &policy).expect("read partial mark"),
+            "detached registration failure records the reconcile mark"
+        );
     }
 
     #[test]
     fn attached_gateway_registration_failure_still_tears_scope_down() {
+        let (temp, _lease_home) = isolated_lease_home();
         let policy = test_policy(Vec::new());
         let cleaned = std::cell::Cell::new(false);
         let error = gateway_registration_failure(
             EffectiveAttachMode::Attached,
+            temp.path(),
             &policy,
             RunnerError::task_invocation("gateway registration failed"),
             || {
@@ -1533,13 +1626,16 @@ primary_service = "app"
 
         assert!(cleaned.get(), "attached bring-up keeps its cleanup path");
         assert_eq!(error.to_string(), "gateway registration failed");
+        assert!(!partial_activation_recorded(temp.path(), &policy).expect("read partial mark"));
     }
 
     #[test]
     fn attached_gateway_registration_failure_reports_cleanup_failure() {
+        let (temp, _lease_home) = isolated_lease_home();
         let policy = test_policy(Vec::new());
         let error = gateway_registration_failure(
             EffectiveAttachMode::Attached,
+            temp.path(),
             &policy,
             RunnerError::task_invocation("gateway registration failed"),
             || Err(RunnerError::task_invocation("docker compose down failed")),
@@ -1549,5 +1645,52 @@ primary_service = "app"
             error.to_string(),
             "gateway registration failed\ncontainer up cleanup also failed: docker compose down failed"
         );
+    }
+
+    #[test]
+    fn partial_activation_mark_round_trips_and_clears() {
+        let (temp, _lease_home) = isolated_lease_home();
+        let policy = test_policy(Vec::new());
+
+        assert!(!partial_activation_recorded(temp.path(), &policy).expect("read mark"));
+        record_partial_activation(temp.path(), &policy).expect("record mark");
+        assert!(partial_activation_recorded(temp.path(), &policy).expect("read mark"));
+        clear_partial_activation(temp.path(), &policy).expect("clear mark");
+        assert!(!partial_activation_recorded(temp.path(), &policy).expect("read mark"));
+        clear_partial_activation(temp.path(), &policy).expect("clearing an absent mark is ok");
+    }
+
+    #[test]
+    fn partial_activation_reconcile_skips_compose_up_only_for_running_primary() {
+        let policy = test_policy(Vec::new());
+
+        assert!(partial_reconcile_skips_compose_up(
+            &policy,
+            &[running_row("app", false)]
+        ));
+        assert!(
+            !partial_reconcile_skips_compose_up(&policy, &[running_row("worker", false)]),
+            "a running sibling is not the primary service"
+        );
+        assert!(
+            !partial_reconcile_skips_compose_up(&policy, &[running_row("app", true)]),
+            "a one-off run of the primary service is not the running primary"
+        );
+        assert!(!partial_reconcile_skips_compose_up(&policy, &[]));
+    }
+
+    #[test]
+    fn detached_partial_error_withholds_retry_when_mark_cannot_be_recorded() {
+        let policy = test_policy(Vec::new());
+        let rendered = detached_partial_activation_error(
+            &policy,
+            RunnerError::task_invocation("timed out waiting for declared gateway services"),
+            Some(RunnerError::task_invocation("read-only lease home")),
+        )
+        .to_string();
+
+        assert!(rendered.contains("reconcile mark could not be recorded (read-only lease home)"));
+        assert!(rendered.contains("do not re-run `effigy container up`"));
+        assert!(!rendered.contains("Re-run `effigy container up --detach`"));
     }
 }

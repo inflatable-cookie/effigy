@@ -175,10 +175,11 @@
 ]
 "test:gateway:registration-loopback" = "cargo test -p effigy gateway_registration::tests:: -- --nocapture"
 # Partial scoped bring-up: a failed route registration after `compose up` keeps
-# a detached scope running with an explicit partial result, while attached
-# bring-up keeps its teardown. Reuses the registration-loopback family.
+# a detached scope running with an explicit partial result and a reconcile
+# mark; a re-run with a running primary skips `compose up`. Attached bring-up
+# keeps its teardown. Reuses the registration-loopback family.
 "test:containers:partial-startup" = [
-  "cargo test -p effigy --lib gateway_registration_failure -- --nocapture",
+  "cargo test -p effigy --lib container_command::lifecycle::tests:: -- --nocapture",
   { task = "test:gateway:registration-loopback" },
 ]
 "check:containers:partial-startup" = [

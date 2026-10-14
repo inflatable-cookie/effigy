@@ -147,10 +147,12 @@ it with the current endpoint values.
 
 A failed route registration after `compose up` (bounded inventory, readiness
 or route reconciliation) is partial activation for detached bring-up. Effigy
-keeps the started Compose services, registers no route, runs no teardown, and
-exits non-zero with `partially activated` and the re-run/stop steps. Attached
-bring-up keeps its teardown. Re-running detached `container up` is the
-reconcile path; the guide states the generated-Compose recreation consequence.
+keeps the started Compose services, registers no route, runs no teardown,
+records a private reconcile mark beside the scope's lease, and exits non-zero
+with `partially activated` and the re-run/stop steps. A re-run of detached
+`container up` skips `compose up` while the mark exists and the primary service
+runs, then completes route reconciliation. The mark clears on success or when
+the primary is no longer running. Attached bring-up keeps its teardown.
 
 Detached `container up --json` includes `managed_host_listeners` entries for
 listeners that passed readiness. Entries report status, runtime and child

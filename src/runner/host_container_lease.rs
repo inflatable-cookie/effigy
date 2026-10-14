@@ -20,6 +20,7 @@ const HOST_CONTAINER_LEASE_FALLBACK_DIR: &str = ".effigy/runtime/host-container-
 const HOST_CONTAINER_LEASE_SCHEMA: &str = "effigy.host-container-lease.v1";
 const DEFAULT_HOST_CONTAINER_LEASE_TIMEOUT_SECS: u64 = 300;
 const DISABLE_HOST_CONTAINER_LEASE_ENV: &str = "EFFIGY_DISABLE_HOST_CONTAINER_LEASE";
+const PARTIAL_ACTIVATION_SCHEMA: &str = "effigy.container-partial-activation.v1";
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct HostContainerLease {
@@ -117,6 +118,66 @@ pub(super) fn clear_host_container_lease(
             error,
         )),
     }
+}
+
+/// Marks a detached bring-up whose Compose services started but whose route
+/// registration did not finish. A later detached `container up` reads the mark
+/// to reconcile routes without running `compose up` again. The mark lives
+/// beside the scope's lease, keyed by profile, project and container name.
+pub(in crate::runner) fn record_partial_activation(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<(), RunnerError> {
+    fs::create_dir_all(host_container_lease_dir(repo_root, policy))
+        .map_err(|error| RunnerError::task_invocation_failed_write(repo_root, error))?;
+    let marker = serde_json::json!({
+        "schema": PARTIAL_ACTIVATION_SCHEMA,
+        "container_name": policy.name,
+        "profile": policy.profile,
+        "project_name": policy.project_name,
+    });
+    let encoded = serde_json::to_string_pretty(&marker)
+        .map_err(|error| RunnerError::host_container_lease_encode(error.to_string()))?;
+    let marker_path = partial_activation_path(repo_root, policy);
+    fs::write(&marker_path, encoded)
+        .map_err(|error| RunnerError::task_invocation_failed_write(&marker_path, error))
+}
+
+pub(in crate::runner) fn partial_activation_recorded(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<bool, RunnerError> {
+    let marker_path = partial_activation_path(repo_root, policy);
+    match fs::metadata(&marker_path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(RunnerError::task_invocation_failed_read(
+            &marker_path,
+            error,
+        )),
+    }
+}
+
+pub(in crate::runner) fn clear_partial_activation(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<(), RunnerError> {
+    let marker_path = partial_activation_path(repo_root, policy);
+    match fs::remove_file(&marker_path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(RunnerError::task_invocation_failed_write(
+            &marker_path,
+            error,
+        )),
+    }
+}
+
+fn partial_activation_path(repo_root: &Path, policy: &EffectiveContainerPolicy) -> PathBuf {
+    host_container_lease_dir(repo_root, policy).join(format!(
+        "{}.partial.json",
+        sanitize_lease_path_component(&policy.name)
+    ))
 }
 
 pub(in crate::runner) fn run_internal_container_lease_reaper(

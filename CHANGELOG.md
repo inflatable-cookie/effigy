@@ -183,12 +183,13 @@ During v0.x, MINOR bumps may include breaking changes.
 - Detached `effigy container up` no longer tears down a scope whose route
   registration fails after Compose services started. The services keep
   running, no gateway route is registered, and the command exits non-zero with
-  a `partially activated` message naming `effigy container up --detach` as the
-  reconcile step and `effigy container down` as the stop step. Attached
-  bring-up keeps its teardown. Generated Compose still recreates its services
-  on the re-run; direct Compose does not. A temporary host lease from task
-  activation is not cleared by this failure, so its idle expiry can still stop
-  the unreconciled scope.
+  a `partially activated` message. It records a private reconcile mark; a
+  re-run of `effigy container up --detach` with a running primary service
+  skips `compose up` and completes route registration without recreating
+  services. `effigy container down` remains the stop step. Attached bring-up
+  keeps its teardown. A temporary host lease from task activation is not
+  cleared by this failure, so its idle expiry can still stop the unreconciled
+  scope.
 - Managed host cleanup keeps its owned TERM/KILL sequence when bounded
   completion observation is unavailable. It retains the original stop clocks,
   requires positive group settlement and actual wait before reaping, and holds
