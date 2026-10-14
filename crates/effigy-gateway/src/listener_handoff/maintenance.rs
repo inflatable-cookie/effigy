@@ -52,6 +52,13 @@ use std::time::{Duration, Instant};
 /// Fixed path of the administrator-installed system definition.
 pub const LAUNCHD_PLIST_PATH: &str = "/Library/LaunchDaemons/dev.effigy.gateway.user.plist";
 
+/// Absolute path of the launchd control tool used for the read-only probe.
+///
+/// The fixed literal path avoids a caller-controlled `PATH` selecting a
+/// different program; the argv below is always fixed and never a shell.
+#[cfg(target_os = "macos")]
+pub const LAUNCHCTL_PATH: &str = "/bin/launchctl";
+
 /// Maximum definition bytes this module will read.
 pub const MAX_DEFINITION_BYTES: usize = 64 * 1024;
 
@@ -488,9 +495,10 @@ fn classify_launchd_capture(
 
 /// Observe the fixed launchd job read-only.
 ///
-/// On macOS this runs the fixed `launchctl print system/<label>` argv (never a
-/// shell, never interpolated text) through [`capture_bounded`]. Other platforms
-/// report the observation as unsupported.
+/// On macOS this runs the fixed `/bin/launchctl print system/<label>` argv
+/// (never a shell, never interpolated text, never a caller-controlled `PATH`)
+/// through [`capture_bounded`]. Other platforms report the observation as
+/// unsupported.
 #[cfg(target_os = "macos")]
 pub fn observe_launchd_job(expected_path: &str) -> JobObservation {
     let target = format!("system/{LAUNCHD_JOB_LABEL}");
@@ -499,7 +507,7 @@ pub fn observe_launchd_job(expected_path: &str) -> JobObservation {
         LAUNCHD_JOB_LABEL,
         expected_path,
         capture_bounded(
-            "launchctl",
+            LAUNCHCTL_PATH,
             &args,
             LAUNCHD_CAPTURE_TIMEOUT,
             MAX_LAUNCHD_CAPTURE_BYTES,
@@ -586,6 +594,8 @@ pub enum DefinitionState {
     ShapeMismatch,
     /// The definition's operator user, group or home differs.
     OperatorMismatch,
+    /// The current operator could not be resolved (elevated or unknown).
+    OperatorUnresolved,
     /// The definition's executable path does not exist.
     ProgramMissing,
     /// The definition's executable path is not the current executable.
@@ -609,6 +619,7 @@ impl DefinitionState {
             Self::Malformed => "malformed",
             Self::ShapeMismatch => "shape_mismatch",
             Self::OperatorMismatch => "operator_mismatch",
+            Self::OperatorUnresolved => "operator_unresolved",
             Self::ProgramMissing => "program_missing",
             Self::ProgramStale => "program_stale",
         }
@@ -810,6 +821,7 @@ fn definition_refusal(state: DefinitionState) -> RemovalRefusal {
         DefinitionState::Malformed => RemovalRefusal::DefinitionMalformed,
         DefinitionState::ShapeMismatch => RemovalRefusal::DefinitionShapeMismatch,
         DefinitionState::OperatorMismatch => RemovalRefusal::DefinitionOperatorMismatch,
+        DefinitionState::OperatorUnresolved => RemovalRefusal::OperatorUnavailable,
         DefinitionState::ProgramMissing => RemovalRefusal::DefinitionProgramMissing,
         DefinitionState::ProgramStale => RemovalRefusal::DefinitionProgramStale,
     }
@@ -1074,7 +1086,22 @@ fn classify_observed_handoff(
     reading: DefinitionFileReading,
     job: JobObservation,
 ) -> HandoffMaintenanceReport {
-    match OperatorExpectation::for_current_operator() {
+    classify_observed_handoff_with(reading, job, OperatorExpectation::for_current_operator())
+}
+
+/// Classify a reading and job against an operator expectation that may be
+/// unresolved.
+///
+/// A `Present` definition whose operator cannot be resolved reports the
+/// explicit [`DefinitionState::OperatorUnresolved`], never a fabricated
+/// operator mismatch, so the finding stays truthful under an elevated or
+/// otherwise unresolvable invocation.
+fn classify_observed_handoff_with(
+    reading: DefinitionFileReading,
+    job: JobObservation,
+    operator: Result<OperatorExpectation, SetupDefinitionError>,
+) -> HandoffMaintenanceReport {
+    match operator {
         Ok(expectation) => inspect_handoff(&reading, job, &expectation),
         Err(_) => {
             // Without a resolved operator we cannot bind the definition to this
@@ -1085,7 +1112,7 @@ fn classify_observed_handoff(
                 _ => None,
             };
             let definition = match &reading {
-                DefinitionFileReading::Present { .. } => DefinitionState::OperatorMismatch,
+                DefinitionFileReading::Present { .. } => DefinitionState::OperatorUnresolved,
                 DefinitionFileReading::Missing => DefinitionState::Missing,
                 DefinitionFileReading::PermissionDenied => DefinitionState::PermissionDenied,
                 DefinitionFileReading::Symlink => DefinitionState::Symlink,

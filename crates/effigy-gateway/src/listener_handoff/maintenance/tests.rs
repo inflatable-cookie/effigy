@@ -9,11 +9,11 @@
 
 use super::super::ListenerHandoffSetup;
 use super::{
-    capture_bounded, classify_launchd_capture, inspect_handoff, observe_definition_file,
-    observe_stable_definition, removal_plan_steps, render_removal_human, render_status_human,
-    BoundedCapture, DefinitionFileReading, DefinitionState, JobObservation, JobRunState,
-    OperatorExpectation, OperatorMatch, ProgramPathState, RemovalDisposition, RemovalRefusal,
-    LAUNCHD_PLIST_PATH, MAX_DEFINITION_BYTES,
+    capture_bounded, classify_launchd_capture, classify_observed_handoff_with, inspect_handoff,
+    observe_definition_file, observe_stable_definition, removal_plan_steps, render_removal_human,
+    render_status_human, BoundedCapture, DefinitionFileReading, DefinitionState, JobObservation,
+    JobRunState, OperatorExpectation, OperatorMatch, ProgramPathState, RemovalDisposition,
+    RemovalRefusal, SetupDefinitionError, LAUNCHD_PLIST_PATH, MAX_DEFINITION_BYTES,
 };
 use std::fs::Permissions;
 use std::os::unix::fs::PermissionsExt;
@@ -145,6 +145,51 @@ fn listener_handoff_maintenance_reports_nothing_installed_for_absent_file_and_jo
     let reading = observe_definition_file(&path);
     let report = inspect_handoff(&reading, JobObservation::ConfirmedAbsent, &expectation);
     assert_eq!(report.removal, RemovalDisposition::PlanAvailable);
+}
+
+/// An unresolvable operator reports an explicit unresolved state, never a
+/// fabricated operator mismatch, and refuses removal.
+#[test]
+fn listener_handoff_maintenance_reports_unresolved_operator_honestly() {
+    let directory = tempfile::tempdir().expect("fixture directory");
+    let setup = current_setup();
+    let path = write_definition(directory.path(), &setup);
+    let reading = observe_definition_file(&path);
+    let report = classify_observed_handoff_with(
+        reading,
+        JobObservation::ConfirmedAbsent,
+        Err(SetupDefinitionError::OperatorRecord),
+    );
+    assert_eq!(report.definition, DefinitionState::OperatorUnresolved);
+    assert_eq!(report.definition.label(), "operator_unresolved");
+    assert_eq!(report.operator, OperatorMatch::Unknown);
+    assert_eq!(
+        report.removal,
+        RemovalDisposition::Refused(RemovalRefusal::OperatorUnavailable)
+    );
+    let status = render_status_human(&report);
+    assert!(status.contains("definition: operator_unresolved"));
+    assert!(!status.contains("definition: operator_mismatch"));
+
+    // A missing definition with a confirmed-absent job is still determinate:
+    // no operator is needed to report nothing installed.
+    let missing = observe_definition_file(&directory.path().join("absent.plist"));
+    let report = classify_observed_handoff_with(
+        missing,
+        JobObservation::ConfirmedAbsent,
+        Err(SetupDefinitionError::OperatorRecord),
+    );
+    assert_eq!(report.definition, DefinitionState::Missing);
+    assert_eq!(report.removal, RemovalDisposition::NothingInstalled);
+}
+
+/// The production launchd probe uses a fixed absolute path, so a
+/// caller-controlled `PATH` cannot substitute the program.
+#[cfg(target_os = "macos")]
+#[test]
+fn listener_handoff_maintenance_uses_absolute_launchctl_path() {
+    assert_eq!(super::super::maintenance::LAUNCHCTL_PATH, "/bin/launchctl");
+    assert!(std::path::Path::new(super::super::maintenance::LAUNCHCTL_PATH).is_absolute());
 }
 
 /// A job loaded without a verified definition is an uncertain association and
