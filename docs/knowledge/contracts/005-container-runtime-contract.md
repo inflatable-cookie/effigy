@@ -835,6 +835,31 @@ bounded so a hung nerdctl command cannot present a partial stack as ready.
 `container status` lists those stopped owned rows instead of omitting them
 or reporting success by assumption.
 
+### Refusal-accounting observation boundary
+
+The bounded-execution receipt's legacy cumulative retained counts describe
+completed captures. A failed command can have private partial output without
+that output appearing in those counts. Equal preparation and cumulative counts
+therefore do not establish zero command output or absence of remote execution;
+the recorded attempt count is not spawn or remote-execution attestation.
+
+The 2026-10-14 owning hybrid coordination authorizes a bounded generic
+diagnostic extension: additive, versioned structural refusal observations from
+the original operation clock, truthful spawn disposition, and independent
+stdout/stderr count and completion states. Keep legacy meanings, failure
+behavior, deadlines, cumulative byte caps and fallback policy unchanged.
+Failed bytes, argv, environment, raw errors and content digests stay private.
+Unavailable or partial observations must say unknown or lower-bound explicitly.
+
+The leader remains unreaped while either pipe is incomplete. Pretermination
+leader state is unknown unless safely observed without reaping within the
+original budget; no new subprocess or post-deadline observation is implied.
+Host-client group cancellation does not prove remote cancellation or grant
+cleanup authority. Controlled private transport proof is separate from the
+selected image's PATH-resolved shell and login-input admission, and cannot
+establish the historical deadline's cause. This is the diagnostic design
+boundary; no new public field or qualified binary is claimed before delivery.
+
 ### Partial activation and recovery boundary
 
 The 2026-10-14 Acowtancy report establishes a consumer observation: a scoped
