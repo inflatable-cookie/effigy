@@ -414,6 +414,29 @@ fn listener_handoff_maintenance_refuses_oversized_and_permission_states() {
     );
 }
 
+/// A FIFO at the fixed path is a bounded `NotRegular` refusal, never a
+/// blocking open, even though no writer ever connects.
+#[test]
+fn listener_handoff_maintenance_refuses_fifo_without_blocking() {
+    let directory = tempfile::tempdir().expect("fixture directory");
+    let fifo = directory.path().join("fifo.plist");
+    nix::unistd::mkfifo(
+        &fifo,
+        nix::sys::stat::Mode::S_IRUSR | nix::sys::stat::Mode::S_IWUSR,
+    )
+    .expect("create fixture fifo");
+    let started = std::time::Instant::now();
+    assert_eq!(
+        observe_definition_file(&fifo),
+        DefinitionFileReading::NotRegular,
+        "a FIFO is a non-regular object, not a definition"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "a FIFO must not block the definition observation"
+    );
+}
+
 /// launchd capture outcomes map to distinct bounded job observations.
 #[test]
 fn listener_handoff_maintenance_classifies_launchd_capture_outcomes() {

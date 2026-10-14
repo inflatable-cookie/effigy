@@ -33,20 +33,16 @@
 
 // `dev_t`, `ino_t` and `mode_t` widths differ between Linux and macOS, so the
 // identity casts below are redundant on one platform and required on the other.
-#![allow(clippy::unnecessary_cast)]
-
 use super::{
     parse_launchd_definition, validate_launchd_definition, HandoffIdentity, ListenerHandoffSetup,
     PlistValue, SetupDefinitionError, LAUNCHD_JOB_LABEL,
 };
-use std::ffi::CString;
-use std::fs::File;
+use std::fs::OpenOptions;
 use std::io::Read;
-use std::os::fd::{AsRawFd, FromRawFd};
-use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::MetadataExt;
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 /// Fixed path of the administrator-installed system definition.
@@ -87,12 +83,14 @@ pub struct FileIdentity {
     pub gid: u32,
     /// Mode word, including file type bits.
     pub mode: u32,
+    /// Whether the observed object is a regular file.
+    pub regular: bool,
 }
 
 impl FileIdentity {
-    /// True when the mode word names a regular file.
+    /// True when the observed object is a regular file.
     pub fn is_regular(self) -> bool {
-        self.mode & libc::S_IFMT as u32 == libc::S_IFREG as u32
+        self.regular
     }
 
     /// True when group or other may write the file.
@@ -129,14 +127,15 @@ pub enum DefinitionFileReading {
 
 fn file_identity(metadata: &std::fs::Metadata) -> FileIdentity {
     FileIdentity {
-        device: metadata.dev() as u64,
-        inode: metadata.ino() as u64,
+        device: metadata.dev(),
+        inode: metadata.ino(),
         size: metadata.size(),
         modified_seconds: metadata.mtime(),
         modified_nanoseconds: metadata.mtime_nsec(),
         uid: metadata.uid(),
         gid: metadata.gid(),
         mode: metadata.mode(),
+        regular: metadata.file_type().is_file(),
     }
 }
 
@@ -145,32 +144,26 @@ fn file_identity(metadata: &std::fs::Metadata) -> FileIdentity {
 /// The open binds a single inode; the result carries that inode's identity and
 /// the exact bytes read within [`MAX_DEFINITION_BYTES`]. A second identity probe
 /// after the read detects a concurrent change to the opened inode. `O_NOFOLLOW`
-/// means a symlink refuses rather than redirects the read.
+/// means a symlink refuses rather than redirects the read; `O_NONBLOCK` keeps a
+/// FIFO or other non-regular object at the fixed path from blocking this
+/// process before the regular-file check, so a foreign object is a bounded
+/// [`DefinitionFileReading::NotRegular`] refusal, never a hang.
 pub fn observe_definition_file(path: &Path) -> DefinitionFileReading {
-    let Ok(name) = CString::new(path.as_os_str().as_bytes()) else {
-        return DefinitionFileReading::Unreadable;
+    let mut options = OpenOptions::new();
+    options
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    let file = match options.open(path) {
+        Ok(file) => file,
+        Err(error) => {
+            return match error.raw_os_error() {
+                Some(libc::ENOENT) => DefinitionFileReading::Missing,
+                Some(libc::EACCES) | Some(libc::EPERM) => DefinitionFileReading::PermissionDenied,
+                Some(libc::ELOOP) => DefinitionFileReading::Symlink,
+                _ => DefinitionFileReading::Unreadable,
+            };
+        }
     };
-    // SAFETY: `name` is a live NUL-terminated C string borrowed for the call
-    // and the remaining arguments are integer flags. A successful return yields
-    // a descriptor this function solely owns.
-    let descriptor = unsafe {
-        libc::open(
-            name.as_ptr(),
-            libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
-        )
-    };
-    if descriptor < 0 {
-        return match std::io::Error::last_os_error().raw_os_error() {
-            Some(libc::ENOENT) => DefinitionFileReading::Missing,
-            Some(libc::EACCES) | Some(libc::EPERM) => DefinitionFileReading::PermissionDenied,
-            Some(libc::ELOOP) => DefinitionFileReading::Symlink,
-            _ => DefinitionFileReading::Unreadable,
-        };
-    }
-    // SAFETY: `descriptor` is the fresh, non-negative descriptor returned by
-    // the successful `open` above; the `File` takes sole ownership and closes it
-    // exactly once.
-    let mut file = unsafe { File::from_raw_fd(descriptor) };
     let before = match file.metadata() {
         Ok(metadata) => file_identity(&metadata),
         Err(_) => return DefinitionFileReading::Unreadable,
@@ -178,6 +171,7 @@ pub fn observe_definition_file(path: &Path) -> DefinitionFileReading {
     if !before.is_regular() {
         return DefinitionFileReading::NotRegular;
     }
+    let mut file = file;
     let mut bytes = Vec::new();
     // `Read::take` is called on the mutable borrow so the `Take` wrapper does
     // not own (and cannot close) the underlying descriptor.
@@ -289,43 +283,46 @@ enum BoundedCapture {
     OutputLimit,
 }
 
-fn set_nonblocking(descriptor: std::os::fd::RawFd) -> std::io::Result<()> {
-    // SAFETY: `descriptor` is an open pipe descriptor owned by the spawned
-    // child's parent side; `F_GETFL`/`F_SETFL` only read and write its status
-    // flag word and have no other precondition.
-    let flags = unsafe { libc::fcntl(descriptor, libc::F_GETFL) };
-    if flags < 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-    if unsafe { libc::fcntl(descriptor, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-    Ok(())
+/// One captured child stream.
+#[derive(Debug, Clone, Copy)]
+enum CaptureStream {
+    Stdout,
+    Stderr,
 }
 
-fn drain_pipe<R: Read + AsRawFd>(
-    pipe: &mut Option<R>,
-    bytes: &mut Vec<u8>,
+/// Bounded result from one reader thread.
+enum StreamOutcome {
+    Complete(Vec<u8>),
+    Overflow,
+}
+
+/// Read one child pipe to EOF or the byte limit on an owned reader thread.
+///
+/// This is the safe-std replacement for setting `O_NONBLOCK` on the pipe: the
+/// reader blocks on its own thread while the caller keeps its absolute
+/// deadline, so a slow or leaking child cannot block the caller.
+fn read_bounded_stream<R: Read + Send + 'static>(
+    stream: CaptureStream,
+    mut reader: R,
     limit: usize,
-) -> Result<(), ()> {
-    let Some(stream) = pipe.as_mut() else {
-        return Ok(());
-    };
+    sender: mpsc::Sender<(CaptureStream, StreamOutcome)>,
+) {
+    let mut bytes = Vec::new();
     let mut buffer = [0_u8; 8192];
-    loop {
-        match stream.read(&mut buffer) {
-            Ok(0) => return Ok(()),
+    let outcome = loop {
+        match reader.read(&mut buffer) {
+            Ok(0) => break StreamOutcome::Complete(bytes),
             Ok(read) => {
                 if bytes.len() + read > limit {
-                    return Err(());
+                    break StreamOutcome::Overflow;
                 }
                 bytes.extend_from_slice(&buffer[..read]);
             }
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return Ok(()),
             Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
-            Err(_) => return Ok(()),
+            Err(_) => break StreamOutcome::Complete(bytes),
         }
-    }
+    };
+    let _ = sender.send((stream, outcome));
 }
 
 fn stop_owned_child(child: &mut Child) {
@@ -337,7 +334,7 @@ fn stop_owned_child(child: &mut Child) {
 }
 
 /// Run one owned child with piped output under an absolute deadline and byte
-/// limit, draining both streams without blocking.
+/// limit, reading both streams on owned threads without any unsafe I/O.
 fn capture_bounded(
     program: &str,
     args: &[&str],
@@ -354,58 +351,126 @@ fn capture_bounded(
         Ok(child) => child,
         Err(_) => return BoundedCapture::SpawnFailed,
     };
-    let mut stdout = child.stdout.take();
-    let mut stderr = child.stderr.take();
-    for descriptor in [
-        stdout.as_ref().map(AsRawFd::as_raw_fd),
-        stderr.as_ref().map(AsRawFd::as_raw_fd),
-    ]
-    .into_iter()
-    .flatten()
-    {
-        if set_nonblocking(descriptor).is_err() {
-            stop_owned_child(&mut child);
-            return BoundedCapture::SpawnFailed;
-        }
+    let (sender, receiver) = mpsc::channel();
+    let mut expected = 0_usize;
+    if let Some(stdout) = child.stdout.take() {
+        expected += 1;
+        let sender = sender.clone();
+        let _ = std::thread::spawn(move || {
+            read_bounded_stream(CaptureStream::Stdout, stdout, limit, sender)
+        });
     }
+    if let Some(stderr) = child.stderr.take() {
+        expected += 1;
+        let sender = sender.clone();
+        let _ = std::thread::spawn(move || {
+            read_bounded_stream(CaptureStream::Stderr, stderr, limit, sender)
+        });
+    }
+    drop(sender);
 
     let deadline = Instant::now() + timeout;
     let mut stdout_bytes = Vec::new();
     let mut stderr_bytes = Vec::new();
-    loop {
-        if drain_pipe(&mut stdout, &mut stdout_bytes, limit).is_err()
-            || drain_pipe(&mut stderr, &mut stderr_bytes, limit).is_err()
-        {
-            stop_owned_child(&mut child);
-            return BoundedCapture::OutputLimit;
+    let mut received = 0_usize;
+    let mut overflow = false;
+    let mut timed_out = false;
+    let mut unavailable = false;
+
+    let status = loop {
+        collect_capture_results(
+            &receiver,
+            &mut stdout_bytes,
+            &mut stderr_bytes,
+            &mut received,
+            &mut overflow,
+        );
+        if overflow {
+            break None;
         }
         match child.try_wait() {
-            Ok(Some(status)) => {
-                if drain_pipe(&mut stdout, &mut stdout_bytes, limit).is_err()
-                    || drain_pipe(&mut stderr, &mut stderr_bytes, limit).is_err()
-                {
-                    return BoundedCapture::OutputLimit;
-                }
-                if status.success() {
-                    return BoundedCapture::Success(stdout_bytes);
-                }
-                return BoundedCapture::NonZero {
-                    code: status.code(),
-                    stdout: stdout_bytes,
-                    stderr: stderr_bytes,
-                };
-            }
+            Ok(Some(status)) => break Some(status),
             Ok(None) if Instant::now() < deadline => {
                 std::thread::sleep(Duration::from_millis(10));
             }
             Ok(None) => {
-                stop_owned_child(&mut child);
-                return BoundedCapture::TimedOut;
+                timed_out = true;
+                break None;
             }
             Err(_) => {
-                stop_owned_child(&mut child);
-                return BoundedCapture::SpawnFailed;
+                unavailable = true;
+                break None;
             }
+        }
+    };
+    if overflow || timed_out || unavailable {
+        stop_owned_child(&mut child);
+    }
+
+    // After the child is reaped both pipes reach EOF, so the reader threads
+    // normally finish immediately. A foreign process that still holds a pipe
+    // open is bounded by the deadline and reported as an incomplete capture.
+    let drain_deadline = deadline.max(Instant::now() + Duration::from_millis(100));
+    while received < expected {
+        let remaining = drain_deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        match receiver.recv_timeout(remaining) {
+            Ok((stream, StreamOutcome::Complete(bytes))) => {
+                received += 1;
+                match stream {
+                    CaptureStream::Stdout => stdout_bytes = bytes,
+                    CaptureStream::Stderr => stderr_bytes = bytes,
+                }
+            }
+            Ok((_, StreamOutcome::Overflow)) => {
+                received += 1;
+                overflow = true;
+            }
+            Err(_) => break,
+        }
+    }
+
+    if overflow {
+        return BoundedCapture::OutputLimit;
+    }
+    if unavailable {
+        return BoundedCapture::SpawnFailed;
+    }
+    if timed_out || received < expected {
+        return BoundedCapture::TimedOut;
+    }
+    let Some(status) = status else {
+        return BoundedCapture::SpawnFailed;
+    };
+    if status.success() {
+        BoundedCapture::Success(stdout_bytes)
+    } else {
+        BoundedCapture::NonZero {
+            code: status.code(),
+            stdout: stdout_bytes,
+            stderr: stderr_bytes,
+        }
+    }
+}
+
+/// Move every reader result already on the channel into the capture buffers.
+fn collect_capture_results(
+    receiver: &mpsc::Receiver<(CaptureStream, StreamOutcome)>,
+    stdout_bytes: &mut Vec<u8>,
+    stderr_bytes: &mut Vec<u8>,
+    received: &mut usize,
+    overflow: &mut bool,
+) {
+    while let Ok((stream, outcome)) = receiver.try_recv() {
+        *received += 1;
+        match outcome {
+            StreamOutcome::Complete(bytes) => match stream {
+                CaptureStream::Stdout => *stdout_bytes = bytes,
+                CaptureStream::Stderr => *stderr_bytes = bytes,
+            },
+            StreamOutcome::Overflow => *overflow = true,
         }
     }
 }
