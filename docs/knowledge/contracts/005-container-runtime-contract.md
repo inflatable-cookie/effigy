@@ -835,6 +835,31 @@ bounded so a hung nerdctl command cannot present a partial stack as ready.
 `container status` lists those stopped owned rows instead of omitting them
 or reporting success by assumption.
 
+### Partial activation and recovery boundary
+
+The 2026-10-14 Acowtancy report establishes a consumer observation: a scoped
+bring-up can time out before route registration despite containers starting.
+Sibling exit codes and a recurring transient health-check timer collision were
+also reported. The proposed link between the timed-out process, log pipes and
+SIGPIPE is unestablished; an exit code alone does not identify the sender or
+pipe owner. Current Compose startup already requests `up -d`, and scoped
+non-interactive retirement already supports `container retire --yes`.
+
+The requested recovery follow-through must preserve explicit partial-state
+reporting, exact project/service/container ownership and fresh published-port
+evidence. An unavailable inventory cannot authorize a route or be treated as
+an empty or ready stack. A later exposure reconciliation must preserve sibling
+routes and running exec sessions rather than require whole-stack recreation.
+Any newly qualified recreation of a stopped health-checked service must be
+limited to that proven owned service, preserve its data and volume identities,
+and refuse unknown, foreign, shared or changing ownership. Existing retirement
+confirmation does not authorize agents to delete the reported live stack.
+
+Source and controlled private-process proofs may establish the generic
+mechanism. They do not retrospectively explain the reported exits or qualify
+an unobserved real Linux backend. Live profile repair, held-resource cleanup,
+consumer proof waivers and global installation remain separate boundaries.
+
 Runtime activation planning belongs to `effigy-runtime-plan`. The runner
 runtime-prep modules are side-effect adapters for that plan: they may start
 the runtime, perform readiness checks, reconcile aliases/routes, and refresh
