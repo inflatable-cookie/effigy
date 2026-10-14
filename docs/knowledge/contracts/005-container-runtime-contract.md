@@ -145,6 +145,13 @@ start after that listener is ready. A dependent process receives
 restarts or loses readiness, Effigy stops the dependent generation and starts
 it with the current endpoint values.
 
+A failed route registration after `compose up` (bounded inventory, readiness
+or route reconciliation) is partial activation for detached bring-up. Effigy
+keeps the started Compose services, registers no route, runs no teardown, and
+exits non-zero with `partially activated` and the re-run/stop steps. Attached
+bring-up keeps its teardown. Re-running detached `container up` is the
+reconcile path; the guide states the generated-Compose recreation consequence.
+
 Detached `container up --json` includes `managed_host_listeners` entries for
 listeners that passed readiness. Entries report status, runtime and child
 generations, assigned address, internal and public URLs, the declared route

@@ -352,8 +352,12 @@ fn complete_container_up_runtime_integrations(
     let gateway_routes = match register_gateway_routes_for_container(repo_root, policy) {
         Ok(routes) => routes,
         Err(error) => {
-            let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, policy);
-            return Err(finish_container_up_failure(error, cleanup_result));
+            return Err(gateway_registration_failure(
+                plan.attach_mode,
+                policy,
+                error,
+                || lifecycle_cleanup_failed_container_up(repo_root, policy),
+            ));
         }
     };
     let tcp_alias_host_notes = match reconcile_primary_service_tcp_alias_hosts(repo_root, policy) {
@@ -388,6 +392,34 @@ fn complete_container_up_runtime_integrations(
         tcp_alias_host_notes,
         warnings,
     })
+}
+
+/// Decides what a failed route registration does to the started scope.
+///
+/// Attached bring-up tears the started scope down, as before. Detached bring-up
+/// keeps the Compose services that `up` already started: a teardown would stop
+/// running services for an exposure step that a later `container up --detach`
+/// can retry. The `cleanup` closure runs only on the attached path.
+fn gateway_registration_failure(
+    attach_mode: EffectiveAttachMode,
+    policy: &EffectiveContainerPolicy,
+    error: RunnerError,
+    cleanup: impl FnOnce() -> Result<(), RunnerError>,
+) -> RunnerError {
+    if attach_mode == EffectiveAttachMode::Detached {
+        return detached_partial_activation_error(policy, error);
+    }
+    finish_container_up_failure(error, cleanup())
+}
+
+fn detached_partial_activation_error(
+    policy: &EffectiveContainerPolicy,
+    error: RunnerError,
+) -> RunnerError {
+    RunnerError::task_invocation(format!(
+        "{error}\ncontainer `{}` is partially activated: its Compose services stay running and no gateway route is registered. No teardown ran. Re-run `effigy container up --detach` to reconcile routes (generated Compose recreates its services on that run), or `effigy container down` to stop it.",
+        policy.name
+    ))
 }
 
 fn render_container_up_result(
@@ -913,15 +945,16 @@ fn emit_ssh_agent_socket_warning(policy: &EffectiveContainerPolicy, repo_root: &
 #[cfg(test)]
 mod tests {
     use super::{
-        annotate_workspace_extra_mount_decisions, exec_operation_plan, lifecycle_operation_plan,
-        primary_service_is_running, refresh_workspace_mounts_for_creation,
-        resolve_workspace_mounts_for_creation, run_container_eject,
-        start_runtime_after_scope_registration, RunnerError,
+        annotate_workspace_extra_mount_decisions, exec_operation_plan,
+        gateway_registration_failure, lifecycle_operation_plan, primary_service_is_running,
+        refresh_workspace_mounts_for_creation, resolve_workspace_mounts_for_creation,
+        run_container_eject, start_runtime_after_scope_registration, RunnerError,
     };
     use crate::runner::container_command::support::{
         annotate_left_running_shared_services, annotate_shared_service_notes,
     };
     use crate::runner::container_command::test_support::temp_repo;
+    use effigy_containers::EffectiveAttachMode;
     use effigy_containers::{
         down_report, load_container_policy, up_detached_report, ContainerAction,
         EffectiveComposeSource, EffectiveContainerPolicy, SharedServiceBinding,
@@ -1456,5 +1489,65 @@ primary_service = "app"
         assert!(error
             .to_string()
             .contains("does not accept both `--keep-data` and `--wipe-data`"));
+    }
+
+    #[test]
+    fn detached_gateway_registration_failure_keeps_started_scope() {
+        let policy = test_policy(Vec::new());
+        let cleaned = std::cell::Cell::new(false);
+        let error = gateway_registration_failure(
+            EffectiveAttachMode::Detached,
+            &policy,
+            RunnerError::task_invocation("timed out waiting for declared gateway services"),
+            || {
+                cleaned.set(true);
+                Ok(())
+            },
+        );
+
+        assert!(
+            !cleaned.get(),
+            "detached bring-up must not tear the scope down"
+        );
+        let rendered = error.to_string();
+        assert!(rendered.starts_with("timed out waiting for declared gateway services"));
+        assert!(rendered.contains("container `web` is partially activated"));
+        assert!(rendered.contains("no gateway route is registered"));
+        assert!(rendered.contains("No teardown ran"));
+        assert!(rendered.contains("effigy container up --detach"));
+    }
+
+    #[test]
+    fn attached_gateway_registration_failure_still_tears_scope_down() {
+        let policy = test_policy(Vec::new());
+        let cleaned = std::cell::Cell::new(false);
+        let error = gateway_registration_failure(
+            EffectiveAttachMode::Attached,
+            &policy,
+            RunnerError::task_invocation("gateway registration failed"),
+            || {
+                cleaned.set(true);
+                Ok(())
+            },
+        );
+
+        assert!(cleaned.get(), "attached bring-up keeps its cleanup path");
+        assert_eq!(error.to_string(), "gateway registration failed");
+    }
+
+    #[test]
+    fn attached_gateway_registration_failure_reports_cleanup_failure() {
+        let policy = test_policy(Vec::new());
+        let error = gateway_registration_failure(
+            EffectiveAttachMode::Attached,
+            &policy,
+            RunnerError::task_invocation("gateway registration failed"),
+            || Err(RunnerError::task_invocation("docker compose down failed")),
+        );
+
+        assert_eq!(
+            error.to_string(),
+            "gateway registration failed\ncontainer up cleanup also failed: docker compose down failed"
+        );
     }
 }

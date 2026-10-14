@@ -699,6 +699,19 @@ Gateway registration keeps the project, service, published-port and host-listene
 ownership checks, and does not claim a route while its declared runtime
 binding is missing.
 
+Partial detached bring-up: when step 5 fails after `compose up` already started
+the services (for example, the bounded inventory or readiness wait times out),
+detached `effigy container up` keeps those services running, registers no
+route, and exits non-zero. The message begins with the original stage error and
+then says `partially activated` and `No teardown ran`. The supported recovery
+is to re-run `effigy container up --detach`, which repeats step 5 for the same
+project; generated Compose recreates its services on that run, while direct
+Compose leaves running containers alone. The supported stop is
+`effigy container down`, which removes the project's containers but keeps
+volumes. Attached bring-up keeps its teardown on this failure. A host lease
+left by task activation is not cleared by the failure, so its idle expiry can
+still stop an unreconciled scope.
+
 Attached mode behavior:
 
 - attached mode is the default when `startup = "attached"`
