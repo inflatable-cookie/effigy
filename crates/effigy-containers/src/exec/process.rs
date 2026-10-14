@@ -1,8 +1,11 @@
 use std::ffi::OsString;
+use std::io::Read;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
+use std::sync::mpsc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -63,12 +66,12 @@ pub(super) fn run_command_capture_os_with_env(
     for (key, value) in env {
         command.env(key, value);
     }
-    let output = command
-        .output()
-        .map_err(|error| ContainerExecError::Launch {
+    let output = capture_output_after_exit(command, PIPE_EOF_GRACE).map_err(|error| {
+        ContainerExecError::Launch {
             command: format!("{program} {}", format_args(args)),
             error,
-        })?;
+        }
+    })?;
     if !output.status.success() {
         return Err(ContainerExecError::Failure {
             command: label.to_owned(),
@@ -78,6 +81,69 @@ pub(super) fn run_command_capture_os_with_env(
         });
     }
     Ok(output)
+}
+
+/// How long output readers may keep draining after the CLI exits. A normal
+/// exit closes its pipes at once, so this only bounds a writer that a
+/// backgrounded helper keeps open.
+const PIPE_EOF_GRACE: Duration = Duration::from_secs(2);
+
+/// Runs `command` with piped stdin-null, stdout and stderr and returns once the
+/// child exits. `Command::output` also waits for every pipe writer to close, so
+/// a helper that inherited the pipes could hold a detached CLI call open
+/// indefinitely. Here readers drain on their own threads: after exit they get
+/// `eof_grace` to finish and the bytes read so far are returned. Readers are
+/// never killed, and their drain keeps a still-running writer from hitting a
+/// broken pipe. A reader ends when its writer closes.
+fn capture_output_after_exit(mut command: Command, eof_grace: Duration) -> std::io::Result<Output> {
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command.spawn()?;
+    let stdout = spawn_pipe_reader(child.stdout.take());
+    let stderr = spawn_pipe_reader(child.stderr.take());
+    let status = child.wait()?;
+    Ok(Output {
+        status,
+        stdout: collect_pipe_reader(stdout, eof_grace),
+        stderr: collect_pipe_reader(stderr, eof_grace),
+    })
+}
+
+struct PipeReader {
+    bytes: Arc<Mutex<Vec<u8>>>,
+    finished: mpsc::Receiver<()>,
+}
+
+fn spawn_pipe_reader<R: Read + Send + 'static>(pipe: Option<R>) -> Option<PipeReader> {
+    let mut pipe = pipe?;
+    let bytes = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&bytes);
+    let (finished_tx, finished) = mpsc::channel();
+    thread::spawn(move || {
+        let mut chunk = [0_u8; 8192];
+        loop {
+            match pipe.read(&mut chunk) {
+                Ok(0) | Err(_) => break,
+                Ok(read) => sink
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .extend_from_slice(&chunk[..read]),
+            }
+        }
+        let _ = finished_tx.send(());
+    });
+    Some(PipeReader { bytes, finished })
+}
+
+fn collect_pipe_reader(reader: Option<PipeReader>, eof_grace: Duration) -> Vec<u8> {
+    let Some(reader) = reader else {
+        return Vec::new();
+    };
+    let _ = reader.finished.recv_timeout(eof_grace);
+    let captured = reader.bytes.lock().unwrap_or_else(PoisonError::into_inner);
+    captured.clone()
 }
 
 pub(super) fn format_args(args: &[OsString]) -> String {
@@ -810,5 +876,65 @@ mod tests {
             "with a rebased origin the short child completes, so the no-rebase oracle is non-vacuous"
         );
         let _ = fs::remove_dir_all(&root);
+    }
+}
+
+#[cfg(all(test, unix))]
+mod detached_capture_tests {
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use std::time::Instant;
+
+    use nix::sys::signal::{kill, Signal};
+    use nix::unistd::Pid;
+
+    use super::run_command_capture_os_with_env;
+
+    /// A detached `up` that leaves a backgrounded writer on its stdout/stderr
+    /// must return when the CLI exits. The sentinel is a fixture child whose
+    /// pid is recorded so the test stops only that process.
+    #[test]
+    fn detached_capture_returns_after_child_exit_when_grandchild_holds_pipes() {
+        let fixture = tempfile::tempdir().expect("fresh capture fixture");
+        let program = fixture.path().join("fake-compose");
+        let sentinel_pid = fixture.path().join("sentinel.pid");
+        fs::write(
+            &program,
+            format!(
+                "#!/bin/sh\nsleep 30 &\necho $! > '{}'\necho 'compose up ok'\necho 'compose warn' >&2\nexit 0\n",
+                sentinel_pid.display()
+            ),
+        )
+        .expect("write fake compose");
+        fs::set_permissions(&program, fs::Permissions::from_mode(0o755))
+            .expect("make fake compose executable");
+
+        let started = Instant::now();
+        let output = run_command_capture_os_with_env(
+            fixture.path(),
+            program.to_str().expect("utf-8 fixture path"),
+            &[],
+            "fake compose up",
+            &[],
+        );
+        let elapsed = started.elapsed();
+
+        let pid = fs::read_to_string(&sentinel_pid).expect("sentinel pid recorded");
+        let pid: i32 = pid.trim().parse().expect("sentinel pid is numeric");
+        let sentinel = Pid::from_raw(pid);
+        let sentinel_alive_after_capture = kill(sentinel, None).is_ok();
+        let _ = kill(sentinel, Signal::SIGTERM);
+
+        let output = output.expect("compose exited 0");
+        assert!(String::from_utf8_lossy(&output.stdout).contains("compose up ok"));
+        assert!(String::from_utf8_lossy(&output.stderr).contains("compose warn"));
+        assert!(
+            elapsed < std::time::Duration::from_secs(10),
+            "detached capture waited {elapsed:?} for a pipe writer after the CLI exited"
+        );
+        assert!(
+            sentinel_alive_after_capture,
+            "capture must not stop the writer that still holds the pipes"
+        );
     }
 }

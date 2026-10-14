@@ -180,11 +180,12 @@
 # keeps its teardown. Reuses the registration-loopback family.
 "test:containers:partial-startup" = [
   "cargo test -p effigy --lib container_command::lifecycle::tests:: -- --nocapture",
+  "cargo test -p effigy-containers --lib detached_capture_tests:: -- --nocapture",
   { task = "test:gateway:registration-loopback" },
 ]
 "check:containers:partial-startup" = [
-  "cargo check -p effigy --all-targets",
-  "cargo clippy -p effigy --all-targets -- -D warnings",
+  "cargo check -p effigy -p effigy-containers --all-targets",
+  "cargo clippy -p effigy -p effigy-containers --all-targets -- -D warnings",
 ]
 "test:gateway:pid-domain" = [
   { id = "gateway-pid-domain", run = "cargo test -p effigy-gateway -p effigy --lib pid_domain -- --nocapture", timeout_ms = 240000 },

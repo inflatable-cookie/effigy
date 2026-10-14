@@ -180,6 +180,14 @@ During v0.x, MINOR bumps may include breaking changes.
   0.14.x releases without changing the support floor.
 
 ### Fixed
+- Container Compose capture no longer waits for pipe writers that outlive the
+  CLI. `Command::output` also waited for every writer of the captured stdout
+  and stderr, so a helper that inherited those pipes could hold a detached
+  `container up` open indefinitely. Output is now read on drain threads: after
+  the CLI exits, readers get a 2 second grace and return the bytes read so far.
+  Still-running writers are drained rather than disconnected or killed. The
+  wait for the CLI exit itself is unchanged, and this is verified only with a
+  private fake CLI on macOS, not on a real Colima or containerd backend.
 - Detached `effigy container up` no longer tears down a scope whose route
   registration fails after Compose services started. The services keep
   running, no gateway route is registered, and the command exits non-zero with
