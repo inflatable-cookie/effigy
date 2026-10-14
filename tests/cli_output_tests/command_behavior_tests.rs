@@ -8572,12 +8572,18 @@ case "$*" in
     done
     case "$subcmd" in
       up)
+        if [ -n "${EFFIGY_TEST_SERVICE_STATE_FILE:-}" ]; then
+          : > "$EFFIGY_TEST_SERVICE_STATE_FILE"
+        fi
         printf "compose-up\n"
         ;;
       info)
         printf "containerd: ready\n"
         ;;
       ps)
+        if [ -n "${EFFIGY_TEST_SERVICE_STATE_FILE:-}" ] && [ ! -f "$EFFIGY_TEST_SERVICE_STATE_FILE" ]; then
+          exit 0
+        fi
         case "$*" in
           *"--format"*)
             printf "fixture-web-dev-app-1\tUp 10 seconds\t0.0.0.0:8080->80/tcp\tfixture-web-dev\t%s\tapp\tFalse\n" "${EFFIGY_TEST_OWNED_CHECKOUT:-/tmp/fixture}"
@@ -9431,16 +9437,8 @@ fn run_container_data_seed_fixture(
         .expect("run fake-runtime data seed")
 }
 
-fn container_data_seed_command(fixture_root: &std::path::Path, disable_reaper: bool) -> Command {
-    let root = fs::canonicalize(fixture_root).expect("canonicalize seed fixture root");
-    write_generated_container_data_seed_fixture(&root);
-    let (bin_dir, colima_state) = install_fake_container_runtime(&root);
-    let docker_args = root.join("docker-args.log");
-    let colima_args = root.join("colima-args.log");
-    let log_follow = root.join("log-follow.marker");
+fn write_owned_runtime_inspect(root: &std::path::Path) -> std::path::PathBuf {
     let inspect = root.join("owned-container-inspect.json");
-    // This unscoped checkout has no generation token. Its running-row proof
-    // still supplies canonical identity, declaration, checkout and bindings.
     fs::write(
         &inspect,
         serde_json::json!([{
@@ -9461,6 +9459,17 @@ fn container_data_seed_command(fixture_root: &std::path::Path, disable_reaper: b
         .to_string(),
     )
     .expect("write exact owned inspect proof");
+    inspect
+}
+
+fn container_data_seed_command(fixture_root: &std::path::Path, disable_reaper: bool) -> Command {
+    let root = fs::canonicalize(fixture_root).expect("canonicalize seed fixture root");
+    write_generated_container_data_seed_fixture(&root);
+    let (bin_dir, colima_state) = install_fake_container_runtime(&root);
+    let docker_args = root.join("docker-args.log");
+    let colima_args = root.join("colima-args.log");
+    let log_follow = root.join("log-follow.marker");
+    let inspect = write_owned_runtime_inspect(&root);
     let path = format!(
         "{}:{}",
         bin_dir.display(),
@@ -9491,6 +9500,12 @@ fn container_data_seed_command(fixture_root: &std::path::Path, disable_reaper: b
         .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
         .env("EFFIGY_TEST_OWNED_INSPECT_FILE", &inspect)
         .env("EFFIGY_TEST_OWNED_CHECKOUT", &root)
+        // Cold service activation must create the temporary lease. An already
+        // running unleased service deliberately does not acquire such a lease.
+        .env(
+            "EFFIGY_TEST_SERVICE_STATE_FILE",
+            root.join("service-running"),
+        )
         .env("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", "1")
         .env_remove("EFFIGY_DISABLE_HOST_CONTAINER_LEASE")
         .env_remove("EFFIGY_HOST_CONTAINER_LEASE_TIMEOUT_SECS");
@@ -9945,6 +9960,8 @@ fn cli_workspace_binding_handoff_stops_environment_after_return() {
     let root = temp_execution_workspace("task-workspace-binding");
     write_container_fixture_with_task(&root, None, "./app:/workspace", true);
     let (bin_dir, colima_state) = install_fake_container_runtime(&root);
+    let canonical_root = fs::canonicalize(&root).expect("canonical handoff checkout");
+    let inspect = write_owned_runtime_inspect(&canonical_root);
     let colima_args = root.join("colima-args.log");
     let path = format!(
         "{}:{}",
@@ -9960,6 +9977,8 @@ fn cli_workspace_binding_handoff_stops_environment_after_return() {
         .env("PATH", path)
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
         .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
+        .env("EFFIGY_TEST_OWNED_INSPECT_FILE", &inspect)
+        .env("EFFIGY_TEST_OWNED_CHECKOUT", &canonical_root)
         .env("EFFIGY_TEST_SKIP_WORKSPACE_EFFIGY_HANDOFF", "1")
         .env("EFFIGY_DISABLE_HOST_CONTAINER_LEASE_REAPER", "1")
         .output()

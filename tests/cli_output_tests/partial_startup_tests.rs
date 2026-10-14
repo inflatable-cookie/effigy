@@ -352,7 +352,18 @@ fn private_three_scopes_partial_resume_replacement_and_cli_refusals() {
         table.to_string(),
     )
     .unwrap();
-    let siblings = fixture.routes();
+    let mut siblings = fixture.routes();
+    // Route::scope serializes None as absent, including a loaded JSON null.
+    // Canonicalize only that field; all ownership and foreign fields stay exact.
+    for route in siblings["routes"]
+        .as_object_mut()
+        .expect("route table")
+        .values_mut()
+    {
+        if route.get("scope") == Some(&Value::Null) {
+            route.as_object_mut().expect("route object").remove("scope");
+        }
+    }
     let before_ids: Vec<Value> = (0..3).map(|i| fixture.state(i)["id"].clone()).collect();
     for i in 0..3 {
         fixture.probe(i);
@@ -378,24 +389,15 @@ fn private_three_scopes_partial_resume_replacement_and_cli_refusals() {
         .into_iter()
         .flat_map(|routes| routes.iter())
     {
-        let mut expected = route.1.clone();
-        let mut actual = routes["routes"][route.0].clone();
-        // Route::scope is Option with skip_serializing_if = Option::is_none:
-        // a loaded null is serialized as absent. Keep every other field exact.
-        for value in [&mut expected, &mut actual] {
-            if value.get("scope") == Some(&Value::Null) {
-                value.as_object_mut().expect("route object").remove("scope");
-            }
-        }
-        assert_eq!(actual, expected, "sibling route changed");
+        assert_eq!(routes["routes"][route.0], *route.1, "sibling route changed");
     }
     // Warm detached activation also reconciles without a second compose up.
     let warm = fixture.run(0, &["container", "up", "--detach"]);
     assert!(warm.status.success(), "{warm:?}");
     fixture.assert_no_recreation(0);
-    for i in 1..3 {
+    for (i, before_id) in before_ids.iter().enumerate().skip(1) {
         fixture.assert_no_recreation(i);
-        assert_eq!(fixture.state(i)["id"], before_ids[i]);
+        assert_eq!(fixture.state(i)["id"], *before_id);
         fixture.probe(i);
     }
     // Same declared backing service, new full ID and actual private binding.
@@ -504,9 +506,9 @@ fn private_three_scopes_partial_resume_replacement_and_cli_refusals() {
         .wait()
         .expect("positive selected replacement reap after retirement")
         .success());
-    for i in 1..3 {
+    for (i, before_id) in before_ids.iter().enumerate().skip(1) {
         fixture.probe(i);
-        assert_eq!(fixture.state(i)["id"], before_ids[i]);
+        assert_eq!(fixture.state(i)["id"], *before_id);
         assert!(fixture.stacks[i].root.join("data").exists());
         assert_eq!(
             fs::read_to_string(fixture.stacks[i].root.join("lease-sentinel")).unwrap(),
