@@ -204,6 +204,8 @@ During v0.x, MINOR bumps may include breaking changes.
   immediately before save. Drift or missing context preserves existing routes
   and refuses without a new source baseline, recreation or teardown. The table
   lock does not exclude source-file writers or guarantee atomic source reads.
+  Initial generated preparation still lacks a sealed pre-probe declaration and
+  a checked derivation receipt; those initial inputs are not yet qualified.
 - Detached Compose launch isolates service writers with null output sinks.
   Finite inventory capture drains nonblocking pipes without persistent reader
   threads, caps retained output at 1 MiB per stream, refuses incomplete EOF or

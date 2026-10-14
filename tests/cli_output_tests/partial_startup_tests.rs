@@ -251,6 +251,79 @@ version = "16"
 }
 
 #[test]
+fn private_generated_preparation_must_not_adopt_probe_time_drift() {
+    let mut failures = Vec::new();
+    for mode in ["probe-manifest-drift", "probe-compose-drift"] {
+        let mut fixture = Fixture::new();
+        assert!(fixture
+            .run(1, &["container", "up", "--detach", "--json"])
+            .status
+            .success());
+        assert!(fixture
+            .run(0, &["container", "status", "--json"])
+            .status
+            .success());
+        let before_table = fixture.routes();
+        let sibling_project = fixture.state(1)["project"].as_str().unwrap().to_owned();
+        let sibling_marker = fixture
+            .root
+            .path()
+            .join("home/.effigy/runtime/host-container-leases/private-1")
+            .join(sibling_project)
+            .join("web.partial.json");
+        let sibling_admission = fs::read(&sibling_marker).unwrap();
+        fixture.set(0, "mode", json!(mode));
+        let before = fs::read(fixture.stacks[0].root.join("effigy.toml")).unwrap();
+        let output = fixture.run(0, &["container", "up", "--detach", "--json"]);
+        let witness = fixture.stacks[0].root.join("probe-drift.json");
+        assert!(
+            witness.exists(),
+            "real owned runtime probe must reach mutation: {mode}: {output:?}"
+        );
+        let witness: Value = serde_json::from_slice(&fs::read(witness).unwrap()).unwrap();
+        assert_eq!(witness["command"], "ps");
+        assert_ne!(witness["before_sha256"], witness["after_sha256"]);
+        for i in 0..3 {
+            fixture.probe(i);
+            assert_eq!(
+                fs::read_to_string(fixture.stacks[i].root.join("data")).unwrap(),
+                format!("private-data-{i}")
+            );
+            assert_eq!(
+                fs::read_to_string(fixture.stacks[i].root.join("lease-sentinel")).unwrap(),
+                format!("private-lease-{i}")
+            );
+        }
+        let commands = fs::read_to_string(fixture.stacks[0].root.join("commands.jsonl")).unwrap();
+        let calls: Vec<Vec<String>> = commands
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        let activated = calls.iter().any(|args| {
+            args.iter()
+                .any(|arg| matches!(arg.as_str(), "up" | "restart" | "down" | "rm"))
+        });
+        let after_table = fixture.routes();
+        for (domain, route) in before_table["routes"].as_object().unwrap() {
+            assert_eq!(
+                &after_table["routes"][domain], route,
+                "sibling route must remain unchanged"
+            );
+        }
+        assert_eq!(fs::read(&sibling_marker).unwrap(), sibling_admission);
+        let published = after_table != before_table;
+        println!("{mode}: actual probe witness={witness}; success={}; activation_effect={activated}; publication_effect={published}; backend receipt={commands}", output.status.success());
+        if output.status.success() || activated || published {
+            failures.push(format!("{mode}: changed inputs were admitted after the runtime probe (success={}, activation={activated}, publication={published})", output.status.success()));
+        }
+        // Restore only this fixture's own source; a refusal must allow an
+        // unchanged cold retry, while an unsafe accepted launch remains marked.
+        fs::write(fixture.stacks[0].root.join("effigy.toml"), before).unwrap();
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
 fn private_missing_admission_never_rebaselines_running_stack() {
     let mut fixture = Fixture::new();
     fixture.set(0, "mode", json!("marker-write-fail"));
@@ -733,6 +806,11 @@ if pathlib.Path(sys.argv[0]).name=='colima':
  sys.exit(0)
 with open(cwd/'commands.jsonl','a') as f: f.write(json.dumps(args)+'\n')
 sfile=cwd/'state.json'; state=json.load(open(sfile)); mode=state['mode']
+if args==['ps'] and mode in ['probe-manifest-drift','probe-compose-drift'] and not (cwd/'probe-drift.json').exists():
+ import hashlib
+ path=cwd/'effigy.toml' if mode=='probe-manifest-drift' else cwd/'.effigy/runtime/compose/.effigy-compose.generated.yml'
+ before=path.read_bytes();after=before+b'\n# original input changed during owned runtime probe\n';path.write_bytes(after)
+ (cwd/'probe-drift.json').write_text(json.dumps({'command':'ps','path':str(path),'before_sha256':hashlib.sha256(before).hexdigest(),'after_sha256':hashlib.sha256(after).hexdigest()}))
 def save(): sfile.write_text(json.dumps(state))
 def record(s):
  for p in (root/'home/.effigy/runtime-scopes').glob('*.json'):

@@ -324,3 +324,16 @@ adapters, maintains persistent exec sentinel connections, tests partial/warm
 reconciliation and full-ID/port replacement, and exercises noninteractive
 retirement ownership refusals. Native engine semantics and actual consumer
 admission remain separate from these private command-transport controls.
+
+## Preparation admission interface
+
+Policy loading combines declaration evaluation, generated assembly, loopback
+inventory/allocation and artifact writes. Creation refresh evaluates the
+manifest again and returns an effective policy plus mount decisions; the caller
+currently retains its Compose paths. Those return types do not carry a sealed
+original declaration or expected rendered-byte provenance for the resulting
+generated, workspace and DNS artifacts. A post-refresh file hash can bind the
+new file, but cannot establish that it derives from an admission taken before
+the original runtime probes. Detached original-input admission needs that
+explicit join before refresh can be credited as safe source preservation.
+This does not change the route lock into exclusion of filesystem writers.
