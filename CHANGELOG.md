@@ -7,6 +7,23 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- Secret-free versioned refusal accounting for bounded container transport
+  refusals (task 159). Every bounded transport refusal payload now carries a
+  `refusal_observations` block, additive in `effigy.container.bounded-exec.v1`
+  and internally versioned: preparation/attempt/operation elapsed and
+  remaining budget from the original operation clock at one coherent
+  snapshot, a truthful `spawn_disposition` for the owned host client only
+  (`not_attempted`, `attempted_not_confirmed`, `spawned`, `unknown`),
+  independent stdout/stderr `state` (`pending`, `eof`, `overflow`,
+  `read_error`, `unknown`) with `retained_prefix_bytes`/`read_bytes` counts
+  carrying explicit `exact`/`lower_bound`/`unknown` semantics, and an explicit
+  `leader_exit_observed` that stays `unknown` without a safe non-reaping
+  observation. The refused attempt's retained prefix is the failed-prefix
+  accounting: reported separately from completed-capture `retained` totals,
+  never added to them and never charged twice against the cumulative caps, so
+  deadlines, fallback eligibility and all legacy field meanings are unchanged.
+  The block never carries bytes, argv, environment, raw errors or digests,
+  and missing observations say unknown or lower-bound rather than zero.
 - Read-only launchd listener-handoff status and a checked administrator
   removal plan (task 157, SOURCE implementation candidate).
   `effigy gateway listener-handoff-status` opens

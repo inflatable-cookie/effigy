@@ -37,6 +37,13 @@ const FAKE_BACKEND: &str = r#"#!/bin/sh
 if [ -n "$FAKE_BOUNDED_MARKER" ]; then
     : > "$FAKE_BOUNDED_MARKER"
 fi
+# Optional late progress marker for refusal-accounting fixtures: written at
+# the fixture's critical point, never at startup.
+bounded_progress() {
+    if [ -n "$FAKE_BOUNDED_PROGRESS_MARKER" ]; then
+        : > "$FAKE_BOUNDED_PROGRESS_MARKER"
+    fi
+}
 args="$*"
 marker() {
     case "$args" in
@@ -89,6 +96,43 @@ if marker exit-7 || marker SECRET_ARG_MARKER_142; then
     printf 'SECRET_STDOUT_MARKER_142'
     printf 'SECRET_STDERR_MARKER_142' >&2
     exit 7
+fi
+if marker hang-secrets; then
+    # Refused-transport privacy fixture: private partial bytes on both
+    # channels, then a leader that never exits inside the budget.
+    printf 'SECRET_STDOUT_MARKER_142'
+    printf 'SECRET_STDERR_MARKER_142' >&2
+    exec /bin/sleep 30
+fi
+if marker pending-flood; then
+    # Pending-reader progress fixture: a flood that cannot fit in any pipe,
+    # then a sleeping leader that keeps both pipes open without EOF.
+    i=0
+    while [ "$i" -lt 100000 ]; do
+        printf 'x'
+        i=$((i + 1))
+    done
+    exec /bin/sleep 30
+fi
+if marker partial-both-hold; then
+    # The admitted refusal shape: the leader exits fast after private partial
+    # output on both channels while an inherited writer keeps the pipes open,
+    # so no EOF and no completed capture ever arrives. The progress marker
+    # proves the fixture reached its write point, keeping the proof
+    # load-independent.
+    printf 'abc'
+    printf 'xyz' 1>&2
+    (sleep 30) &
+    bounded_progress
+    exit 0
+fi
+if marker eof-hold-stderr; then
+    # Asymmetric snapshot fixture: stdout reaches a real EOF with zero bytes
+    # while the sleeping leader keeps stderr pending. The progress marker is
+    # written only after stdout is closed.
+    exec 1>&-
+    bounded_progress
+    exec /bin/sleep 30
 fi
 if marker sleep-30; then
     exec /bin/sleep 30
@@ -548,10 +592,19 @@ fn guarded_public_entry_child() {
         });
     assert!(!trace.is_empty(), "public proof must reach a real capture");
     let deadline = trace[0].1.deadline;
+    let origin = trace[0].1.origin;
+    assert!(
+        origin < deadline,
+        "the public entry origin must precede its deadline"
+    );
     for pair in trace.windows(2) {
         assert_eq!(
             pair[1].1.deadline, deadline,
             "phase reset the absolute deadline"
+        );
+        assert_eq!(
+            pair[1].1.origin, origin,
+            "phase rebased the original operation origin"
         );
         assert!(pair[1].1.stdout_bytes <= pair[0].1.stdout_bytes);
         assert!(pair[1].1.stderr_bytes <= pair[0].1.stderr_bytes);
@@ -874,12 +927,23 @@ fn expired_public_entry_refuses_before_the_first_discovery_spawn() {
         limits(30_000, 64, 64),
         true,
         deadline,
+        deadline,
     )
     .expect_err("expired operation must refuse before discovery");
     let details = failure_details(&error);
     assert_eq!(details["failure"], "deadline");
     assert_eq!(details["phase"], "runtime_discovery");
     assert_eq!(details["preparation"]["captures"], 0);
+    // The boundary refusal says explicitly that nothing was attempted and
+    // nothing about streams or a leader is known.
+    let observations = &details["refusal_observations"];
+    assert_eq!(observations["version"], 1);
+    assert_eq!(observations["spawn_disposition"], "not_attempted");
+    assert_eq!(observations["leader_exit_observed"], "unknown");
+    assert_eq!(observations["stdout"]["state"], "unknown");
+    assert_eq!(observations["stderr"]["state"], "unknown");
+    assert_eq!(observations["remaining_budget_ms"], 0);
+    assert_eq!(observations["attempt_elapsed_ms"], serde_json::Value::Null);
     assert!(
         !marker.exists(),
         "expired operation must not start the fake backend"
@@ -1106,4 +1170,496 @@ fn slow_command_hits_the_deadline_without_partial_success() {
         let details = failure_details(&error);
         assert_eq!(details["failure"], "deadline");
     });
+}
+
+// ---- Secret-free versioned refusal accounting (effigy#159) ----
+//
+// Each proof drives the production bounded entry with real owned fake-backend
+// processes and readers, then inspects the versioned `refusal_observations`
+// block on the actual failure payload. No bytes, argv or errors may surface:
+// only structural counts with explicit exact/lower-bound/unknown semantics.
+
+use std::sync::atomic::AtomicU64;
+
+use crate::runner::exec_command::{
+    refusal_stream_observation, BoundedLeaderExitObservation, BoundedObservedBytes,
+    BoundedRefusalObservations, BoundedSpawnDisposition, BoundedStreamProgress,
+    BoundedStreamRefusalObservation, BoundedStreamRefusalState, StreamOutcome,
+    BOUNDED_REFUSAL_OBSERVATIONS_VERSION,
+};
+
+fn observations_of(details: &serde_json::Value) -> &serde_json::Value {
+    &details["refusal_observations"]
+}
+
+fn assert_version_and_unknown_leader(observations: &serde_json::Value) {
+    assert_eq!(
+        observations["version"], BOUNDED_REFUSAL_OBSERVATIONS_VERSION,
+        "observation block must be explicitly versioned: {observations}"
+    );
+    assert_eq!(
+        observations["leader_exit_observed"], "unknown",
+        "an unobserved leader must stay explicitly unknown: {observations}"
+    );
+}
+
+fn assert_count_semantics(count: &serde_json::Value, semantics: &str) -> u64 {
+    assert_eq!(
+        count["semantics"], semantics,
+        "count semantics must be explicit: {count}"
+    );
+    count["bytes"].as_u64().unwrap_or(0)
+}
+
+#[test]
+fn refusal_accounting_pre_spawn_expiry_reports_not_attempted_with_unknown_streams() {
+    let (_dir, bin_dir, repo) = fixture("refusal-pre-spawn");
+    let policy = policy();
+    let marker = repo.join("refusal-pre-spawn-spawned");
+    {
+        let _lock = lock_test();
+        let current = std::env::var("PATH").unwrap_or_default();
+        let path = format!("{}:{}", bin_dir.display(), current);
+        let _env = EnvGuard::set_many(&[
+            ("PATH", Some(path)),
+            ("EFFIGY_COMPOSE_BACKEND", Some("docker".to_owned())),
+            ("FAKE_BOUNDED_MARKER", Some(marker.display().to_string())),
+        ]);
+        let origin = Instant::now();
+        let error = run_bounded_command_with_deadline(
+            BoundedCommandRequest {
+                repo_root: &repo,
+                policy: &policy,
+                service: "app",
+                working_dir: Some(Path::new("/workspace")),
+                command: "plain",
+                output_json: true,
+            },
+            &limits(30_000, 64, 64),
+            origin
+                .checked_sub(Duration::from_secs(1))
+                .expect("expired deadline"),
+        )
+        .expect_err("an expired deadline refuses before any spawn");
+        let details = failure_details(&error);
+        let observations = observations_of(&details);
+        assert_version_and_unknown_leader(observations);
+        assert_eq!(observations["spawn_disposition"], "not_attempted");
+        assert_eq!(observations["attempt_elapsed_ms"], serde_json::Value::Null);
+        assert_eq!(
+            observations["preparation_elapsed_ms"],
+            serde_json::Value::Null
+        );
+        assert_eq!(observations["remaining_budget_ms"], 0);
+        for stream in ["stdout", "stderr"] {
+            assert_eq!(observations[stream]["state"], "unknown");
+            assert_eq!(
+                observations[stream]["retained_prefix_bytes"]["semantics"],
+                "unknown"
+            );
+            assert_eq!(observations[stream]["read_bytes"]["semantics"], "unknown");
+        }
+        // Legacy fields keep their meanings: no attempt, no completed bytes.
+        assert_eq!(details["attempts"], 0);
+        assert_eq!(details["retained"]["stdout_bytes"], 0);
+    }
+    assert!(!marker.exists(), "an expired deadline must not spawn");
+}
+
+#[test]
+fn refusal_accounting_deadline_pending_streams_report_lower_bounds() {
+    let (_dir, bin_dir, repo) = fixture("refusal-pending");
+    let policy = policy();
+    with_fake_backend(&bin_dir, "docker", || {
+        let error = run_json(&repo, &policy, "sleep-30", &limits(400, 64, 64), 400)
+            .expect_err("slow command must hit the deadline");
+        let details = failure_details(&error);
+        assert_eq!(details["failure"], "deadline");
+        let observations = observations_of(&details);
+        assert_version_and_unknown_leader(observations);
+        assert_eq!(observations["spawn_disposition"], "spawned");
+        // A pending reader is a lower bound, never a zero claim or proof of
+        // no effect; end-of-stream is not established either.
+        for stream in ["stdout", "stderr"] {
+            assert_eq!(observations[stream]["state"], "pending");
+            assert_count_semantics(
+                &observations[stream]["retained_prefix_bytes"],
+                "lower_bound",
+            );
+            assert_count_semantics(&observations[stream]["read_bytes"], "lower_bound");
+        }
+        // Clock attribution from the original operation origin: the attempt
+        // consumed the budget, and preparation plus attempt make the whole.
+        let attempt_elapsed = observations["attempt_elapsed_ms"]
+            .as_u64()
+            .expect("attempt clock");
+        let preparation_elapsed = observations["preparation_elapsed_ms"]
+            .as_u64()
+            .expect("preparation clock");
+        let operation_elapsed = observations["operation_elapsed_ms"]
+            .as_u64()
+            .expect("operation clock");
+        assert!(
+            attempt_elapsed >= 300,
+            "attempt ran to the deadline: {observations}"
+        );
+        assert_eq!(
+            observations["remaining_budget_ms"], 0,
+            "an expired budget has no remaining time"
+        );
+        assert!(
+            preparation_elapsed.saturating_add(attempt_elapsed) <= operation_elapsed + 5,
+            "clocks must attribute one coherent operation timeline: {observations}"
+        );
+        // Completed-capture accounting stays separate and unchanged: a
+        // refused command contributes nothing to `retained`.
+        assert_eq!(details["retained"]["stdout_bytes"], 0);
+        assert_eq!(details["retained"]["stderr_bytes"], 0);
+    });
+}
+
+#[test]
+fn refusal_accounting_pending_progress_is_a_lower_bound_not_zero() {
+    let (_dir, bin_dir, repo) = fixture("refusal-flood-progress");
+    let policy = policy();
+    with_fake_backend(&bin_dir, "docker", || {
+        // 100000 bytes cannot fit in any pipe buffer, so the reader must
+        // have consumed whole chunks before the child can finish writing;
+        // the child then sleeps holding both pipes, keeping them pending.
+        let error = run_json(
+            &repo,
+            &policy,
+            "pending-flood",
+            &limits(3_000, 1_048_576, 64),
+            3_000,
+        )
+        .expect_err("the sleeping leader must hit the deadline");
+        let details = failure_details(&error);
+        assert_eq!(details["failure"], "deadline");
+        let observations = observations_of(&details);
+        assert_eq!(observations["spawn_disposition"], "spawned");
+        assert_eq!(observations["stdout"]["state"], "pending");
+        let retained = assert_count_semantics(
+            &observations["stdout"]["retained_prefix_bytes"],
+            "lower_bound",
+        );
+        let read = assert_count_semantics(&observations["stdout"]["read_bytes"], "lower_bound");
+        // A pending stream's progress is a truthful lower bound, never a
+        // zero claim or an unknown: the flood reached the reader.
+        assert!(
+            retained >= 1,
+            "pending retained progress must be a real lower bound: {observations}"
+        );
+        assert!(
+            read >= retained,
+            "reads include discarded bytes and never trail retention: {observations}"
+        );
+        assert_eq!(observations["stderr"]["state"], "pending");
+        // The failed prefix is reported but never charged to completed
+        // accounting or the remaining budget.
+        assert_eq!(details["retained"]["stdout_bytes"], 0);
+    });
+}
+
+#[test]
+fn refusal_accounting_leader_exit_with_inherited_writer_keeps_partial_output_visible() {
+    let (_dir, bin_dir, repo) = fixture("refusal-partial-hold");
+    let policy = policy();
+    let progress_marker = repo.join("refusal-partial-hold-write-point");
+    {
+        let _lock = lock_test();
+        let current = std::env::var("PATH").unwrap_or_default();
+        let path = format!("{}:{}", bin_dir.display(), current);
+        let _env = EnvGuard::set_many(&[
+            ("PATH", Some(path)),
+            ("EFFIGY_COMPOSE_BACKEND", Some("docker".to_owned())),
+            ("FAKE_BOUNDED_MARKER", None),
+            (
+                "FAKE_BOUNDED_PROGRESS_MARKER",
+                Some(progress_marker.display().to_string()),
+            ),
+        ]);
+        // The admitted shape: the leader exits fast after private partial
+        // output on both channels while an inherited writer keeps the pipes
+        // open, so the refusal snapshot is the only record of those bytes.
+        // The generous deadline only waits out process start under load; the
+        // progress marker proves the fixture reached its write point.
+        let error = run_json(
+            &repo,
+            &policy,
+            "partial-both-hold",
+            &limits(3_000, 64, 64),
+            3_000,
+        )
+        .expect_err("an inherited writer must not defeat the deadline");
+        let details = failure_details(&error);
+        assert!(
+            progress_marker.exists(),
+            "fixture must reach its write point before the counts mean anything"
+        );
+        assert_eq!(details["failure"], "deadline");
+        let observations = observations_of(&details);
+        assert_version_and_unknown_leader(observations);
+        assert_eq!(observations["spawn_disposition"], "spawned");
+        // Both channels held partial bytes; the lower bounds say at least
+        // the three written bytes without exposing them.
+        for (stream, written) in [("stdout", 3), ("stderr", 3)] {
+            assert_eq!(observations[stream]["state"], "pending");
+            let retained = assert_count_semantics(
+                &observations[stream]["retained_prefix_bytes"],
+                "lower_bound",
+            );
+            assert!(
+                retained >= written,
+                "the refused {stream} prefix must show its partial bytes: {observations}"
+            );
+        }
+        // Equal preparation and cumulative counts still establish nothing
+        // about command output: `retained` covers completed captures only.
+        assert_eq!(details["retained"]["stdout_bytes"], 0);
+        assert_eq!(details["retained"]["stderr_bytes"], 0);
+    }
+}
+
+#[test]
+fn refusal_accounting_exact_eof_and_pending_states_coexist_in_one_snapshot() {
+    let (_dir, bin_dir, repo) = fixture("refusal-asymmetric");
+    let policy = policy();
+    let progress_marker = repo.join("refusal-asymmetric-stdout-closed");
+    {
+        let _lock = lock_test();
+        let current = std::env::var("PATH").unwrap_or_default();
+        let path = format!("{}:{}", bin_dir.display(), current);
+        let _env = EnvGuard::set_many(&[
+            ("PATH", Some(path)),
+            ("EFFIGY_COMPOSE_BACKEND", Some("docker".to_owned())),
+            ("FAKE_BOUNDED_MARKER", None),
+            (
+                "FAKE_BOUNDED_PROGRESS_MARKER",
+                Some(progress_marker.display().to_string()),
+            ),
+        ]);
+        let error = run_json(
+            &repo,
+            &policy,
+            "eof-hold-stderr",
+            &limits(3_000, 64, 64),
+            3_000,
+        )
+        .expect_err("a held stderr must keep the operation pending");
+        let details = failure_details(&error);
+        // The marker is written only after the fixture closed stdout, so the
+        // EOF expectation below is load-independent.
+        assert!(
+            progress_marker.exists(),
+            "fixture must reach its stdout-closed point"
+        );
+        assert_eq!(details["failure"], "deadline");
+        let observations = observations_of(&details);
+        assert_version_and_unknown_leader(observations);
+        // stdout: a real EOF with zero bytes is an exact zero, distinct from
+        // an unknown or a fabricated combined state.
+        assert_eq!(observations["stdout"]["state"], "eof");
+        let retained =
+            assert_count_semantics(&observations["stdout"]["retained_prefix_bytes"], "exact");
+        assert_eq!(retained, 0);
+        assert_count_semantics(&observations["stdout"]["read_bytes"], "exact");
+        // stderr: still pending, so only lower bounds and no EOF claim.
+        assert_eq!(observations["stderr"]["state"], "pending");
+        assert_count_semantics(
+            &observations["stderr"]["retained_prefix_bytes"],
+            "lower_bound",
+        );
+        assert_count_semantics(&observations["stderr"]["read_bytes"], "lower_bound");
+    }
+}
+
+#[test]
+fn refusal_accounting_overflow_snapshot_is_exact_for_the_failing_stream() {
+    let (_dir, bin_dir, repo) = fixture("refusal-overflow");
+    let policy = policy();
+    with_fake_backend(&bin_dir, "docker", || {
+        let error = run_json(&repo, &policy, "big-stdout", &limits(30_000, 4, 64), 30_000)
+            .expect_err("stdout overflow must refuse");
+        let details = failure_details(&error);
+        assert_eq!(details["failure"], "stdout_overflow");
+        let observations = observations_of(&details);
+        assert_eq!(observations["spawn_disposition"], "spawned");
+        assert_eq!(observations["stdout"]["state"], "overflow");
+        let retained =
+            assert_count_semantics(&observations["stdout"]["retained_prefix_bytes"], "exact");
+        assert!(retained <= 4, "retention stays bounded: {observations}");
+        let read = assert_count_semantics(&observations["stdout"]["read_bytes"], "lower_bound");
+        assert!(
+            read >= retained,
+            "reads never trail retention: {observations}"
+        );
+        // The sibling stream never claims a fabricated combined state.
+        let sibling_state = observations["stderr"]["state"]
+            .as_str()
+            .expect("stderr state");
+        assert!(
+            sibling_state == "pending" || sibling_state == "eof",
+            "sibling must be pending or eof, not a fabricated state: {observations}"
+        );
+        assert!(!details.to_string().contains("xxxx"));
+    });
+}
+
+#[test]
+fn refusal_accounting_secret_partial_output_never_reaches_any_surface() {
+    let (_dir, bin_dir, repo) = fixture("refusal-secrets");
+    let policy = policy();
+    with_fake_backend(&bin_dir, "docker", || {
+        let error = run_json(&repo, &policy, "hang-secrets", &limits(800, 64, 64), 800)
+            .expect_err("the hanging secret command must hit the deadline");
+        let human = error.to_string();
+        let json = error.json_error_details().expect("json details");
+        let details = failure_details(&error);
+        assert_eq!(details["failure"], "deadline");
+        for marker in [
+            "SECRET_ARG_MARKER_142",
+            "SECRET_STDOUT_MARKER_142",
+            "SECRET_STDERR_MARKER_142",
+        ] {
+            assert!(!human.contains(marker), "human error leaked {marker}");
+            assert!(!json.contains(marker), "json details leaked {marker}");
+        }
+        // The bytes flowed; only structural counts may represent them.
+        let observations = observations_of(&details);
+        for stream in ["stdout", "stderr"] {
+            let retained = assert_count_semantics(
+                &observations[stream]["retained_prefix_bytes"],
+                "lower_bound",
+            );
+            assert!(
+                retained >= 1,
+                "partial {stream} must be counted: {observations}"
+            );
+        }
+        assert_eq!(details["retained"]["stdout_bytes"], 0);
+    });
+}
+
+#[test]
+fn refusal_accounting_success_and_inner_failures_carry_no_observation_block() {
+    let (_dir, bin_dir, repo) = fixture("refusal-absent");
+    let policy = policy();
+    with_fake_backend(&bin_dir, "docker", || {
+        let output = run_json(&repo, &policy, "plain", &limits(30_000, 64, 64), 30_000)
+            .expect("bounded command succeeds");
+        let value: serde_json::Value = serde_json::from_str(&output).expect("json");
+        assert!(
+            value.get("refusal_observations").is_none(),
+            "a complete capture is not a refusal: {value}"
+        );
+        let error = run_json(
+            &repo,
+            &policy,
+            "SECRET_ARG_MARKER_142",
+            &limits(30_000, 64, 64),
+            30_000,
+        )
+        .expect_err("inner nonzero exit must fail");
+        let details = failure_details(&error);
+        assert_eq!(details["failure"], "inner_command_failed");
+        assert!(
+            details.get("refusal_observations").is_none(),
+            "an inner failure is a complete in-budget capture, not a refusal: {details}"
+        );
+    });
+}
+
+#[test]
+fn refusal_accounting_snapshot_mapping_matches_each_reader_outcome() {
+    let progress = |retained: u64, read: u64| BoundedStreamProgress {
+        retained: AtomicU64::new(retained),
+        read: AtomicU64::new(read),
+    };
+
+    // EOF-complete: both counts final and exact.
+    let observation = refusal_stream_observation(
+        Some(&StreamOutcome::Complete(b"out".to_vec())),
+        &progress(3, 3),
+        false,
+    );
+    assert_eq!(observation.state, BoundedStreamRefusalState::Eof);
+    assert_eq!(observation.retained_prefix, BoundedObservedBytes::Exact(3));
+    assert_eq!(observation.read_total, BoundedObservedBytes::Exact(3));
+
+    // Overflow: the retained prefix is exact and final; reads continue
+    // draining discarded bytes, so the read total stays a lower bound.
+    let observation = refusal_stream_observation(
+        Some(&StreamOutcome::Overflow { retained_bytes: 4 }),
+        &progress(4, 4096),
+        false,
+    );
+    assert_eq!(observation.state, BoundedStreamRefusalState::Overflow);
+    assert_eq!(observation.retained_prefix, BoundedObservedBytes::Exact(4));
+    assert_eq!(
+        observation.read_total,
+        BoundedObservedBytes::LowerBound(4096)
+    );
+
+    // Read failure: the reader stopped, so its counters are final and exact
+    // even though the kept prefix was never delivered.
+    let observation = refusal_stream_observation(
+        Some(&StreamOutcome::ReadFailed),
+        &progress(2048, 2048),
+        false,
+    );
+    assert_eq!(observation.state, BoundedStreamRefusalState::ReadError);
+    assert_eq!(
+        observation.retained_prefix,
+        BoundedObservedBytes::Exact(2048)
+    );
+    assert_eq!(observation.read_total, BoundedObservedBytes::Exact(2048));
+
+    // A reader that ended without reporting: explicit unknown state, with a
+    // truthful lower bound on the lost prefix instead of a zero claim.
+    let observation = refusal_stream_observation(None, &progress(512, 512), true);
+    assert_eq!(observation.state, BoundedStreamRefusalState::Unknown);
+    assert_eq!(
+        observation.retained_prefix,
+        BoundedObservedBytes::LowerBound(512)
+    );
+    assert_eq!(observation.read_total, BoundedObservedBytes::Exact(512));
+
+    // Pending reader: everything is a lower bound and nothing is claimed
+    // about end-of-stream.
+    let observation = refusal_stream_observation(None, &progress(0, 0), false);
+    assert_eq!(observation.state, BoundedStreamRefusalState::Pending);
+    assert_eq!(
+        observation.retained_prefix,
+        BoundedObservedBytes::LowerBound(0)
+    );
+    assert_eq!(observation.read_total, BoundedObservedBytes::LowerBound(0));
+}
+
+#[test]
+fn refusal_accounting_boundary_observations_describe_no_attempt() {
+    let origin = Instant::now();
+    let deadline = origin + Duration::from_secs(30);
+    let observations = BoundedRefusalObservations::budget_boundary(origin, deadline, origin);
+    assert_eq!(observations.version, BOUNDED_REFUSAL_OBSERVATIONS_VERSION);
+    assert_eq!(
+        observations.spawn_disposition,
+        BoundedSpawnDisposition::NotAttempted
+    );
+    assert_eq!(
+        observations.leader_exit,
+        BoundedLeaderExitObservation::Unknown
+    );
+    assert_eq!(observations.attempt_elapsed, None);
+    assert_eq!(observations.preparation_elapsed, None);
+    for stream in [observations.stdout, observations.stderr] {
+        let BoundedStreamRefusalObservation {
+            state,
+            retained_prefix,
+            read_total,
+        } = stream;
+        assert_eq!(state, BoundedStreamRefusalState::Unknown);
+        assert_eq!(retained_prefix, BoundedObservedBytes::Unknown);
+        assert_eq!(read_total, BoundedObservedBytes::Unknown);
+    }
 }

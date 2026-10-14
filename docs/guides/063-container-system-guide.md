@@ -214,7 +214,26 @@ bytes.
 
 The `--json` payload is versioned `effigy.container.bounded-exec.v1`. Success
 returns the bounded command bytes and counts; a refusal returns a stable reason,
-phase, optional stream name, limit and safe counts. Launch diagnostics on both
+phase, optional stream name, limit and safe counts, plus a versioned
+`refusal_observations` block. Every observation in that block is structural and
+secret-free, taken at one snapshot from the original operation clock:
+`operation_elapsed_ms`, `remaining_budget_ms`, `preparation_elapsed_ms` and
+`attempt_elapsed_ms` (the attempt fields are null when no attempt began), a
+`spawn_disposition` (`not_attempted`, `attempted_not_confirmed`, `spawned` or
+`unknown`) for the owned host client only, and per-stream `stdout`/`stderr`
+objects with a `state` (`pending`, `eof`, `overflow`, `read_error`, `unknown`)
+and `retained_prefix_bytes`/`read_bytes` counts carrying explicit
+`exact`, `lower_bound` or `unknown` semantics. A pending stream is a lower
+bound, never a zero claim; an EOF-complete or overflowed stream's retained
+prefix is exact; a read failure's counters are final and exact for a prefix
+that was never delivered. The refused attempt's prefix is the failed-prefix
+accounting: it is reported separately from the completed-capture `retained`
+totals, never added to them, and never charged twice against the cumulative
+caps. `leader_exit_observed` stays `unknown` unless the leader was safely
+seen still running within the budget. The block never carries bytes, argv,
+environment, raw errors or digests, and equal preparation and cumulative
+counts still prove nothing about a failed command's output.
+Launch diagnostics on both
 human and JSON surfaces exclude raw argv, command strings, configured
 container/service names, output, credentials and host error payloads. The
 schema-v1 `container` and `service` keys retain their shape and contain the

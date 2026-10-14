@@ -41,7 +41,8 @@ use super::shell_prep::{
 use super::RunnerError;
 use crate::runner::exec_command::{
     BoundedCapture, BoundedCaptureFailure, BoundedCommandBudget, BoundedCommandPhase,
-    BoundedScopedCaptureFailure, BoundedStream,
+    BoundedObservedBytes, BoundedRefusalObservations, BoundedScopedCaptureFailure, BoundedStream,
+    BoundedStreamRefusalObservation,
 };
 
 pub(in crate::runner) const BOUNDED_EXEC_SCHEMA: &str = "effigy.container.bounded-exec.v1";
@@ -58,7 +59,10 @@ pub(in crate::runner) fn run_container_shell_bounded(
     output_json: bool,
 ) -> Result<String, RunnerError> {
     limits.validate().map_err(RunnerError::task_invocation)?;
-    let deadline = Instant::now() + Duration::from_millis(limits.deadline_ms);
+    // The original operation origin: created before discovery and
+    // preparation and carried unchanged with the deadline it produced.
+    let origin = Instant::now();
+    let deadline = origin + Duration::from_millis(limits.deadline_ms);
     run_container_shell_bounded_with_deadline(
         repo_root,
         name,
@@ -66,10 +70,15 @@ pub(in crate::runner) fn run_container_shell_bounded(
         command,
         limits,
         output_json,
+        origin,
         deadline,
     )
 }
 
+// The caller-supplied bounds plus the carried origin/deadline pair stay
+// explicit at this private entry; eight parameters read clearer here than a
+// parameter struct used by exactly two callers.
+#[allow(clippy::too_many_arguments)]
 fn run_container_shell_bounded_with_deadline(
     repo_root: &Path,
     name: Option<&str>,
@@ -77,9 +86,11 @@ fn run_container_shell_bounded_with_deadline(
     command: &str,
     limits: BoundedExecLimits,
     output_json: bool,
+    origin: Instant,
     deadline: Instant,
 ) -> Result<String, RunnerError> {
     let mut budget = BoundedCommandBudget::new(
+        origin,
         deadline,
         limits.stdout_limit_bytes,
         limits.stderr_limit_bytes,
@@ -149,7 +160,11 @@ pub(in crate::runner) fn run_bounded_command_with_deadline(
     limits: &BoundedExecLimits,
     deadline: Instant,
 ) -> Result<String, RunnerError> {
+    // A private fixture entry is its own operation: the origin is this real
+    // entry instant, before any plan construction or spawn.
+    let origin = Instant::now();
     let budget = BoundedCommandBudget::new(
+        origin,
         deadline,
         limits.stdout_limit_bytes,
         limits.stderr_limit_bytes,
@@ -436,6 +451,9 @@ fn deadline_refusal(
             },
             "workspace_user_fallback": false,
             "remote_cancellation": "unverified",
+            "refusal_observations": refusal_observations_json(
+                &budget.boundary_observations(),
+            ),
         })
         .to_string(),
     }
@@ -447,7 +465,11 @@ pub(in crate::runner) fn bounded_failure_error(
     budget: &BoundedCommandBudget,
     failure: BoundedScopedCaptureFailure,
 ) -> RunnerError {
-    let BoundedScopedCaptureFailure { phase, failure } = failure;
+    let BoundedScopedCaptureFailure {
+        phase,
+        failure,
+        observations,
+    } = failure;
     let (failure_kind, stream, limit_bytes, retained_bytes) = match &failure {
         BoundedCaptureFailure::Deadline => ("deadline", None, None, None),
         BoundedCaptureFailure::Overflow {
@@ -520,6 +542,7 @@ pub(in crate::runner) fn bounded_failure_error(
         },
         "workspace_user_fallback": budget.attempts() > 1,
         "remote_cancellation": "unverified",
+        "refusal_observations": refusal_observations_json(&observations),
     });
     if matches!(failure, BoundedCaptureFailure::Launch) {
         details["container"] = serde_json::Value::from("[redacted]");
@@ -564,6 +587,7 @@ pub(in crate::runner) fn bounded_phase_error(
         },
         "workspace_user_fallback": budget.attempts() > 1,
         "remote_cancellation": "unverified",
+        "refusal_observations": refusal_observations_json(&budget.boundary_observations()),
     });
     if let Some(exit_code) = exit_code {
         details["phase_exit_code"] = serde_json::Value::from(exit_code);
@@ -573,4 +597,51 @@ pub(in crate::runner) fn bounded_phase_error(
         message: message.to_owned(),
         json_details: details.to_string(),
     }
+}
+
+/// One byte count's explicit semantics in a refusal payload. `unknown` is a
+/// missing observation, never zero and never proof that no bytes flowed.
+fn observed_bytes_json(bytes: BoundedObservedBytes) -> serde_json::Value {
+    match bytes {
+        BoundedObservedBytes::Exact(count) => {
+            serde_json::json!({ "semantics": "exact", "bytes": count })
+        }
+        BoundedObservedBytes::LowerBound(count) => {
+            serde_json::json!({ "semantics": "lower_bound", "bytes": count })
+        }
+        BoundedObservedBytes::Unknown => serde_json::json!({ "semantics": "unknown" }),
+    }
+}
+
+fn stream_observation_json(stream: &BoundedStreamRefusalObservation) -> serde_json::Value {
+    serde_json::json!({
+        "state": stream.state.label(),
+        "retained_prefix_bytes": observed_bytes_json(stream.retained_prefix),
+        "read_bytes": observed_bytes_json(stream.read_total),
+    })
+}
+
+/// Render the versioned, secret-free refusal observations. Duration fields
+/// are null when no attempt began; the per-stream objects are always present
+/// and say `unknown` when nothing was observed.
+fn refusal_observations_json(observations: &BoundedRefusalObservations) -> serde_json::Value {
+    fn elapsed_ms(duration: Option<std::time::Duration>) -> serde_json::Value {
+        match duration {
+            Some(duration) => {
+                serde_json::Value::from(u64::try_from(duration.as_millis()).unwrap_or(u64::MAX))
+            }
+            None => serde_json::Value::Null,
+        }
+    }
+    serde_json::json!({
+        "version": observations.version,
+        "operation_elapsed_ms": elapsed_ms(Some(observations.operation_elapsed)),
+        "remaining_budget_ms": elapsed_ms(Some(observations.remaining_budget)),
+        "preparation_elapsed_ms": elapsed_ms(observations.preparation_elapsed),
+        "attempt_elapsed_ms": elapsed_ms(observations.attempt_elapsed),
+        "spawn_disposition": observations.spawn_disposition.label(),
+        "stdout": stream_observation_json(&observations.stdout),
+        "stderr": stream_observation_json(&observations.stderr),
+        "leader_exit_observed": observations.leader_exit.label(),
+    })
 }

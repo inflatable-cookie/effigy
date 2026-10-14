@@ -9,7 +9,7 @@ use crate::runner::command_context::current_working_dir;
 use crate::runner::container_command::{bounded_failure_error, bounded_phase_error};
 use crate::runner::exec_command::{
     copy_file_into_service, copy_file_into_service_bounded, BoundedCapture, BoundedCaptureFailure,
-    BoundedCommandBudget, BoundedCommandPhase, BoundedScopedCaptureFailure,
+    BoundedCommandBudget, BoundedCommandPhase,
 };
 
 use super::{workspace, RunnerError};
@@ -1171,10 +1171,10 @@ fn wait_for_in_progress_linux_workspace_artifact_build_bounded(
                 policy,
                 policy.primary_service.as_str(),
                 budget,
-                BoundedScopedCaptureFailure {
-                    phase: BoundedCommandPhase::WorkspacePreparation,
-                    failure: BoundedCaptureFailure::Deadline,
-                },
+                budget.boundary_refusal(
+                    BoundedCommandPhase::WorkspacePreparation,
+                    BoundedCaptureFailure::Deadline,
+                ),
             ));
         };
         if !linux_workspace_effigy_artifact_needs_refresh(freshness_anchor, artifact_path, target) {
@@ -1518,10 +1518,10 @@ fn download_linux_workspace_effigy_release_bounded(
             policy,
             policy.primary_service.as_str(),
             budget,
-            BoundedScopedCaptureFailure {
-                phase: BoundedCommandPhase::WorkspacePreparation,
-                failure: BoundedCaptureFailure::Deadline,
-            },
+            budget.boundary_refusal(
+                BoundedCommandPhase::WorkspacePreparation,
+                BoundedCaptureFailure::Deadline,
+            ),
         )
     })?;
     let response = client
@@ -1535,10 +1535,10 @@ fn download_linux_workspace_effigy_release_bounded(
                     policy,
                     policy.primary_service.as_str(),
                     budget,
-                    BoundedScopedCaptureFailure {
-                        phase: BoundedCommandPhase::WorkspacePreparation,
-                        failure: BoundedCaptureFailure::Deadline,
-                    },
+                    budget.boundary_refusal(
+                        BoundedCommandPhase::WorkspacePreparation,
+                        BoundedCaptureFailure::Deadline,
+                    ),
                 )
             } else {
                 bounded_phase_error(
@@ -1557,10 +1557,10 @@ fn download_linux_workspace_effigy_release_bounded(
             policy,
             policy.primary_service.as_str(),
             budget,
-            BoundedScopedCaptureFailure {
-                phase: BoundedCommandPhase::WorkspacePreparation,
-                failure: BoundedCaptureFailure::Deadline,
-            },
+            budget.boundary_refusal(
+                BoundedCommandPhase::WorkspacePreparation,
+                BoundedCaptureFailure::Deadline,
+            ),
         ));
     }
     let bytes = response.bytes().map_err(|_| {
@@ -1569,10 +1569,10 @@ fn download_linux_workspace_effigy_release_bounded(
                 policy,
                 policy.primary_service.as_str(),
                 budget,
-                BoundedScopedCaptureFailure {
-                    phase: BoundedCommandPhase::WorkspacePreparation,
-                    failure: BoundedCaptureFailure::Deadline,
-                },
+                budget.boundary_refusal(
+                    BoundedCommandPhase::WorkspacePreparation,
+                    BoundedCaptureFailure::Deadline,
+                ),
             )
         } else {
             bounded_phase_error(
@@ -1591,10 +1591,10 @@ fn download_linux_workspace_effigy_release_bounded(
             policy,
             policy.primary_service.as_str(),
             budget,
-            BoundedScopedCaptureFailure {
-                phase: BoundedCommandPhase::WorkspacePreparation,
-                failure: BoundedCaptureFailure::Deadline,
-            },
+            budget.boundary_refusal(
+                BoundedCommandPhase::WorkspacePreparation,
+                BoundedCaptureFailure::Deadline,
+            ),
         ));
     }
     let tmp_path = dest.with_extension("tmp");

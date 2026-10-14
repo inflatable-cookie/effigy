@@ -3289,8 +3289,12 @@ impl Drop for OwnedHostChild {
 fn observe_owned_child_exit(pid: u32, deadline: Instant) -> Result<bool, RunnerError> {
     use super::exec_command::{BoundedCommandBudget, BoundedCommandPhase};
     let started = Instant::now();
-    let mut budget =
-        BoundedCommandBudget::new(deadline.min(started + Duration::from_millis(500)), 64, 128);
+    let mut budget = BoundedCommandBudget::new(
+        started,
+        deadline.min(started + Duration::from_millis(500)),
+        64,
+        128,
+    );
     let capture = budget
         .run_command(
             Path::new("/"),
@@ -3363,8 +3367,10 @@ fn classify_owned_child_exit(
 /// Finite PID/group-only inventory: never retain arguments or command output.
 fn observe_owned_group_members(pid: u32, deadline: Instant) -> Result<Vec<u32>, RunnerError> {
     use super::exec_command::{BoundedCommandBudget, BoundedCommandPhase};
+    let started = Instant::now();
     let mut budget = BoundedCommandBudget::new(
-        deadline.min(Instant::now() + Duration::from_millis(500)),
+        started,
+        deadline.min(started + Duration::from_millis(500)),
         1_048_576,
         128,
     );

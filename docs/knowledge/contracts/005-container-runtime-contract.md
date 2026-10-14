@@ -456,6 +456,47 @@ container/service names, output, credentials and host error payloads. The v1
 failure payload keeps its `container` and `service` keys and uses the literal
 `[redacted]` for launch failures. Other bounded diagnostics also never echo
 captured command output or credentials.
+
+Transport refusals additionally carry a versioned `refusal_observations`
+block, additive in schema v1 and internally versioned (`version: 1`). Every
+fact comes from the original monotonic operation origin/deadline and the
+capture's own transitions; no bytes, argv, environment, raw errors, content
+digests or names are exposed:
+
+- `operation_elapsed_ms` and `remaining_budget_ms` from the original
+  operation clock at one coherent snapshot instant, with
+  `preparation_elapsed_ms` (origin to the refused attempt's start) and
+  `attempt_elapsed_ms` (attempt start to the snapshot); the attempt fields
+  are null when no attempt began. The origin is never rebased and no budget
+  is reset or extended for diagnostics.
+- `spawn_disposition`: `not_attempted` (refusal before the spawn syscall),
+  `attempted_not_confirmed` (spawn failed), `spawned` (a host client child
+  was created) or `unknown`. It observes the owned host client only and is
+  never a claim that a remote or guest process began. A true pre-spawn
+  expiry is not an attempt, and the legacy attempt count keeps its
+  call-level meaning: `attempts` is not spawn confirmation.
+- Per-stream `stdout`/`stderr` objects with `state` (`pending`, `eof`,
+  `overflow`, `read_error`, `unknown`), `retained_prefix_bytes` and
+  `read_bytes`, each count carrying explicit `exact`, `lower_bound` or
+  `unknown` semantics. Pending readers report lower bounds; EOF-complete and
+  overflowed readers report exact retained prefixes; read failures report
+  final exact counters for a prefix that was never delivered. An exact zero
+  from a real EOF is distinct from unknown, and unknown is never zero or
+  proof of no effect.
+- `leader_exit_observed`: `alive` only after the existing safe `try_wait`
+  window observed the leader still running (returning `None` reaps
+  nothing); otherwise explicitly `unknown`. The snapshot never calls
+  `try_wait`, so no diagnostic observation reaps the leader, spawns a
+  process, or looks past the deadline.
+
+The refused attempt's per-stream retained prefix is the failed-prefix
+accounting: it is reported separately from the completed-capture `retained`
+totals, is never added to them, and draws nothing twice from the cumulative
+caps, so fallback eligibility is unchanged. Equal preparation and cumulative
+counts therefore still establish nothing about a failed command's output.
+Budget-boundary refusals that never reached a transport (for example an
+expired budget before a phase) carry the same versioned block with
+`not_attempted` and explicit unknown streams.
 Terminating the owned host client group is not proof that a remote container
 process stopped: remote cancellation stays explicitly unverified, and no remote
 PID is guessed, no service or sibling is stopped, and an uncertain command is
@@ -850,15 +891,21 @@ stdout/stderr count and completion states. Keep legacy meanings, failure
 behavior, deadlines, cumulative byte caps and fallback policy unchanged.
 Failed bytes, argv, environment, raw errors and content digests stay private.
 Unavailable or partial observations must say unknown or lower-bound explicitly.
+That block is delivered as the versioned `refusal_observations` payload
+described under the supported bounded surface above. It reports structure from
+the refused operation only: it does not capture, aggregate or drain beyond the
+existing bounded retention, and it adds no observation subprocess.
 
 The leader remains unreaped while either pipe is incomplete. Pretermination
-leader state is unknown unless safely observed without reaping within the
-original budget; no new subprocess or post-deadline observation is implied.
-Host-client group cancellation does not prove remote cancellation or grant
-cleanup authority. Controlled private transport proof is separate from the
-selected image's PATH-resolved shell and login-input admission, and cannot
-establish the historical deadline's cause. This is the diagnostic design
-boundary; no new public field or qualified binary is claimed before delivery.
+leader state is reported explicitly unknown unless safely observed without
+reaping within the original budget (the existing `try_wait` window); no new
+subprocess or post-deadline observation is implied. Host-client group
+cancellation does not prove remote cancellation or grant cleanup authority.
+Controlled private transport proof is separate from the selected image's
+PATH-resolved shell and login-input admission, and the observations cannot
+establish the historical deadline's cause, a remote process, or any consumer
+diagnosis: they distinguish missing host transport observations, nothing more.
+No qualified binary or consumer admission is claimed by this source delivery.
 
 ### Partial activation and recovery boundary
 
