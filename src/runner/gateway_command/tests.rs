@@ -1848,3 +1848,195 @@ fn permission_reuse_managed_denied_preflight_refuses_with_diagnosis_without_laun
         before_identity
     );
 }
+
+/// Bounded fixture proof for the listener-handoff command-envelope JSON.
+///
+/// The production `gateway_handoff_report_json` envelope is exercised with
+/// constructed (never live-observed) reports alongside the human renderings,
+/// so the brief's "exercise human and JSON" proof covers the JSON surface:
+/// fixed schema/action/result/effects, bounded labels, exact literal steps
+/// only for an emitted plan, a single bounded refusal label otherwise, a
+/// masked `observed_file` identity, and no raw output or secret.
+#[test]
+fn listener_handoff_maintenance_report_json_envelope_is_bounded_and_unexecuted() {
+    use effigy_gateway::listener_handoff::maintenance::{
+        DefinitionState, FileIdentity, HandoffMaintenanceReport, JobObservation, JobRunState,
+        OperatorMatch, ProgramPathState, RemovalDisposition, RemovalRefusal,
+    };
+
+    let identity = FileIdentity {
+        device: 1,
+        inode: 42,
+        size: 1234,
+        modified_seconds: 1_700_000_000,
+        modified_nanoseconds: 0,
+        uid: 501,
+        gid: 20,
+        // Mode word carries file-type bits; only the permission bits may
+        // surface in the envelope.
+        mode: 0o100644,
+        regular: true,
+    };
+    let verified = HandoffMaintenanceReport {
+        definition: DefinitionState::Verified,
+        program: ProgramPathState::Current,
+        operator: OperatorMatch::Matching,
+        job: JobObservation::Loaded {
+            state: JobRunState::Running,
+        },
+        removal: RemovalDisposition::PlanAvailable,
+        identity: Some(identity),
+    };
+
+    // Human and JSON agree that the plan is available but unexecuted.
+    let human = render_removal_human(&verified);
+    assert!(
+        human.contains("UNEXECUTED"),
+        "human states unexecuted: {human}"
+    );
+    let status_human = render_status_human(&verified);
+    assert!(
+        status_human.contains("definition: verified"),
+        "{status_human}"
+    );
+
+    let rendered = gateway_handoff_report_json(
+        "remove-listener-handoff",
+        "plan_emitted",
+        &verified,
+        Some(removal_plan_steps()),
+    );
+    let payload: serde_json::Value =
+        serde_json::from_str(&rendered).expect("envelope is valid JSON");
+    assert_eq!(
+        payload["schema"],
+        serde_json::json!("effigy.gateway.command.v1")
+    );
+    assert_eq!(payload["schema_version"], serde_json::json!(1));
+    assert_eq!(payload["ok"], serde_json::json!(true));
+    assert_eq!(
+        payload["action"],
+        serde_json::json!("remove-listener-handoff")
+    );
+    assert_eq!(payload["result"], serde_json::json!("plan_emitted"));
+    assert_eq!(payload["effects"], serde_json::json!("unexecuted"));
+    assert_eq!(payload["definition"], serde_json::json!("verified"));
+    assert_eq!(payload["program"], serde_json::json!("current"));
+    assert_eq!(payload["job"], serde_json::json!("loaded_running"));
+    assert_eq!(payload["operator"], serde_json::json!("matching"));
+    assert_eq!(payload["removal"], serde_json::json!("plan_available"));
+    assert!(
+        payload.get("refusal").is_none(),
+        "a plan carries no refusal"
+    );
+    assert_eq!(
+        payload["steps"],
+        serde_json::json!([
+            "sudo launchctl bootout system/dev.effigy.gateway.user",
+            "sudo rm /Library/LaunchDaemons/dev.effigy.gateway.user.plist"
+        ])
+    );
+    assert_eq!(payload["observed_file"]["uid"], serde_json::json!(501));
+    assert_eq!(payload["observed_file"]["gid"], serde_json::json!(20));
+    assert_eq!(payload["observed_file"]["mode"], serde_json::json!(0o644));
+    assert_eq!(payload["observed_file"]["size"], serde_json::json!(1234));
+    assert_eq!(payload["observed_file"]["inode"], serde_json::json!(42));
+    assert!(
+        payload.get("device").is_none(),
+        "kernel device must not surface"
+    );
+    for forbidden in ["stdout", "stderr", "environment", "credential", "secret"] {
+        assert!(
+            !rendered.contains(forbidden),
+            "envelope must not carry raw output or secret: {forbidden}"
+        );
+    }
+
+    // A stale executable refuses with one bounded reason and no usable steps.
+    let stale = HandoffMaintenanceReport {
+        definition: DefinitionState::ProgramStale,
+        program: ProgramPathState::Stale,
+        operator: OperatorMatch::Matching,
+        job: JobObservation::ConfirmedAbsent,
+        removal: RemovalDisposition::Refused(RemovalRefusal::DefinitionProgramStale),
+        identity: Some(identity),
+    };
+    let human = render_removal_human(&stale);
+    assert!(
+        !human.contains("has been removed"),
+        "refusal claims nothing executed"
+    );
+    let rendered =
+        gateway_handoff_report_json("remove-listener-handoff", "removal_refused", &stale, None);
+    let payload: serde_json::Value =
+        serde_json::from_str(&rendered).expect("refusal envelope is valid JSON");
+    assert_eq!(payload["effects"], serde_json::json!("unexecuted"));
+    assert_eq!(payload["definition"], serde_json::json!("program_stale"));
+    assert_eq!(payload["removal"], serde_json::json!("refused"));
+    assert_eq!(
+        payload["refusal"],
+        serde_json::json!("definition_program_stale")
+    );
+    assert!(payload.get("steps").is_none(), "a refusal carries no steps");
+
+    // Status uses the same envelope with its own action/result and no steps.
+    let rendered = gateway_handoff_report_json("listener-handoff-status", "observed", &stale, None);
+    let payload: serde_json::Value =
+        serde_json::from_str(&rendered).expect("status envelope is valid JSON");
+    assert_eq!(
+        payload["action"],
+        serde_json::json!("listener-handoff-status")
+    );
+    assert_eq!(payload["result"], serde_json::json!("observed"));
+    assert_eq!(payload["effects"], serde_json::json!("unexecuted"));
+    assert!(payload.get("steps").is_none(), "status carries no steps");
+
+    // The production disposition-to-result mapping is exercised directly, so
+    // the `run_gateway_remove_listener_handoff` branch is proven without
+    // touching live launchd state: only a plan carries the fixed steps.
+    let (result, steps) = removal_result_for_disposition(RemovalDisposition::PlanAvailable);
+    assert_eq!(result, "plan_emitted");
+    assert_eq!(steps, Some(removal_plan_steps()));
+    let (result, steps) = removal_result_for_disposition(RemovalDisposition::NothingInstalled);
+    assert_eq!(result, "nothing_installed");
+    assert!(steps.is_none());
+    let (result, steps) = removal_result_for_disposition(RemovalDisposition::Refused(
+        RemovalRefusal::DefinitionProgramStale,
+    ));
+    assert_eq!(result, "removal_refused");
+    assert!(steps.is_none());
+
+    // Nothing installed has its own JSON envelope: missing definition with a
+    // confirmed-absent job, no refusal, no steps, no observed file.
+    let absent = HandoffMaintenanceReport {
+        definition: DefinitionState::Missing,
+        program: ProgramPathState::Unknown,
+        operator: OperatorMatch::Unknown,
+        job: JobObservation::ConfirmedAbsent,
+        removal: RemovalDisposition::NothingInstalled,
+        identity: None,
+    };
+    let human = render_removal_human(&absent);
+    assert!(human.contains("nothing installed"), "{human}");
+    let (result, steps) = removal_result_for_disposition(absent.removal);
+    let rendered = gateway_handoff_report_json("remove-listener-handoff", result, &absent, steps);
+    let payload: serde_json::Value =
+        serde_json::from_str(&rendered).expect("nothing-installed envelope is valid JSON");
+    assert_eq!(
+        payload["action"],
+        serde_json::json!("remove-listener-handoff")
+    );
+    assert_eq!(payload["result"], serde_json::json!("nothing_installed"));
+    assert_eq!(payload["effects"], serde_json::json!("unexecuted"));
+    assert_eq!(payload["definition"], serde_json::json!("missing"));
+    assert_eq!(payload["removal"], serde_json::json!("nothing_installed"));
+    assert!(
+        payload.get("refusal").is_none(),
+        "absence carries no refusal"
+    );
+    assert!(payload.get("steps").is_none(), "absence carries no steps");
+    assert!(
+        payload.get("observed_file").is_none(),
+        "absence carries no observed file"
+    );
+}

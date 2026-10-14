@@ -17,7 +17,11 @@ The launchd listener handoff (SOURCE implementation candidate;
 adds an operator-owned daemon that adopts the two handed loopback listeners
 instead of binding them. It reads the same route table under the same checks;
 nothing in this contract changes with who owns the listener sockets, and the
-unexecuted install/activation does not alter today's elevated default.
+unexecuted install/activation does not alter today's elevated default. The
+read-only `effigy gateway listener-handoff-status` and the unexecuted
+`effigy gateway remove-listener-handoff` plan inspect the launchd definition
+and job only: neither reads, trusts, rewrites or removes `routes.json`, and
+neither changes route-table ownership, markers or generations.
 
 ## Problem
 

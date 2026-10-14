@@ -7,6 +7,30 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- Read-only launchd listener-handoff status and a checked administrator
+  removal plan (task 157, SOURCE implementation candidate).
+  `effigy gateway listener-handoff-status` opens
+  `/Library/LaunchDaemons/dev.effigy.gateway.user.plist` with `O_NOFOLLOW`,
+  binds it to a single regular file's kernel identity and bounded bytes, and
+  reports the definition, the current canonical executable path and the
+  resolved operator as distinct findings: `definition` is `verified` only for
+  the complete expected generator shape with matching operator and executable,
+  and otherwise names the finding (`foreign_owner`, `unsafe_mode`, `symlink`,
+  `changed`, `oversized`, `malformed`, `shape_mismatch`, `operator_mismatch`,
+  `program_stale`, `program_missing`, `permission_denied`, and so on). A bounded
+  fixed-argv `launchctl print system/dev.effigy.gateway.user` capture is parsed
+  structurally into `loaded_running`, `loaded_not_running`, `confirmed_absent`,
+  `permission_denied`, `capture_timed_out`, `capture_truncated`, `nonzero_exit`,
+  `malformed`, `association_mismatch`, `unavailable` and `unsupported`; label,
+  PID, checksum and displayed path stay observations and never grant signal or
+  removal authority. `effigy gateway remove-listener-handoff` emits only the
+  two fixed literal administrator steps (`launchctl bootout` then `rm`) with a
+  required fresh identity recheck and a KeepAlive warning, states that its
+  effects are UNEXECUTED, and never runs `sudo`, `launchctl` or `rm`. Foreign,
+  stale, changed or uncertain definitions and loaded jobs refuse before any
+  usable plan is produced. Neither command installs, activates, signals,
+  removes or elevates anything; the administrator execution, verification and
+  cross-boot proofs remain operator-run (guide 063, architecture 034).
 - Managed owned-child exit refusals now distinguish empty, invalid UTF-8,
   multiple-token, unknown-state and unsuccessful process-table captures using
   bounded structural diagnostics. They retain counts, hashes and elapsed time,

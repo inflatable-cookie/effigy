@@ -37,6 +37,8 @@ use std::os::fd::FromRawFd;
 use std::os::unix::io::RawFd;
 use std::path::PathBuf;
 
+pub mod maintenance;
+
 /// launchd Sockets-dictionary key for the plain HTTP listener.
 pub const HANDOFF_HTTP_SOCKET_NAME: &str = "http";
 /// launchd Sockets-dictionary key for the TLS-terminating HTTPS listener.
@@ -985,7 +987,22 @@ pub enum DefinitionRefusal {
     /// Sockets are not exactly the two loopback endpoints.
     #[error("definition Sockets must be exactly http=127.0.0.1:80 and https=127.0.0.1:443 over IPv4 TCP")]
     WrongSockets,
+    /// A top-level key is unexpected or duplicated.
+    #[error("definition has an unexpected or duplicated top-level key {0:?}")]
+    UnexpectedKey(String),
 }
+
+/// The complete set of top-level keys the generator emits.
+const EXPECTED_ROOT_KEYS: [&str; 8] = [
+    "Label",
+    "ProgramArguments",
+    "UserName",
+    "GroupName",
+    "EnvironmentVariables",
+    "RunAtLoad",
+    "KeepAlive",
+    "Sockets",
+];
 
 /// Validate parsed definition bytes against the known-good handoff shape.
 ///
@@ -993,10 +1010,19 @@ pub enum DefinitionRefusal {
 /// values differ from the generated contract — a different label, a wildcard
 /// node, another port, extra socket keys, missing KeepAlive — refuses.
 pub fn validate_launchd_definition(value: &PlistValue) -> Result<(), DefinitionRefusal> {
-    let dict = match value {
-        PlistValue::Dict(_) => value,
-        _ => return Err(DefinitionRefusal::RootNotADict),
+    let PlistValue::Dict(entries) = value else {
+        return Err(DefinitionRefusal::RootNotADict);
     };
+    // Reject unknown or duplicated top-level keys: an unknown root key is an
+    // unrecognized shape and never validates, however familiar the rest looks.
+    let mut seen: Vec<&str> = Vec::with_capacity(entries.len());
+    for (key, _) in entries {
+        if !EXPECTED_ROOT_KEYS.contains(&key.as_str()) || seen.contains(&key.as_str()) {
+            return Err(DefinitionRefusal::UnexpectedKey(key.clone()));
+        }
+        seen.push(key.as_str());
+    }
+    let dict = value;
     let label = dict
         .get("Label")
         .and_then(PlistValue::as_str)
