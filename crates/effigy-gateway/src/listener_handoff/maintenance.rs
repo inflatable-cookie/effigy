@@ -41,9 +41,13 @@ use std::fs::OpenOptions;
 use std::io::Read;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
+#[cfg(any(test, target_os = "macos"))]
 use std::process::{Child, Command, Stdio};
+#[cfg(any(test, target_os = "macos"))]
 use std::sync::mpsc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(any(test, target_os = "macos"))]
+use std::time::Instant;
 
 /// Fixed path of the administrator-installed system definition.
 pub const LAUNCHD_PLIST_PATH: &str = "/Library/LaunchDaemons/dev.effigy.gateway.user.plist";
@@ -271,6 +275,7 @@ impl JobObservation {
 }
 
 /// Raw outcome of one bounded, owned child capture.
+#[cfg(any(test, target_os = "macos"))]
 enum BoundedCapture {
     Success(Vec<u8>),
     NonZero {
@@ -284,6 +289,7 @@ enum BoundedCapture {
 }
 
 /// One captured child stream.
+#[cfg(any(test, target_os = "macos"))]
 #[derive(Debug, Clone, Copy)]
 enum CaptureStream {
     Stdout,
@@ -291,11 +297,13 @@ enum CaptureStream {
 }
 
 /// Bounded result from one reader thread.
+#[cfg(any(test, target_os = "macos"))]
 enum StreamOutcome {
     Complete(Vec<u8>),
     Overflow,
 }
 
+#[cfg(any(test, target_os = "macos"))]
 /// Read one child pipe to EOF or the byte limit on an owned reader thread.
 ///
 /// This is the safe-std replacement for setting `O_NONBLOCK` on the pipe: the
@@ -325,6 +333,7 @@ fn read_bounded_stream<R: Read + Send + 'static>(
     let _ = sender.send((stream, outcome));
 }
 
+#[cfg(any(test, target_os = "macos"))]
 fn stop_owned_child(child: &mut Child) {
     // Best-effort termination and reaping of a child this call started. The
     // result is deliberately ignored: the capture outcome is already a
@@ -335,6 +344,7 @@ fn stop_owned_child(child: &mut Child) {
 
 /// Run one owned child with piped output under an absolute deadline and byte
 /// limit, reading both streams on owned threads without any unsafe I/O.
+#[cfg(any(test, target_os = "macos"))]
 fn capture_bounded(
     program: &str,
     args: &[&str],
@@ -456,6 +466,7 @@ fn capture_bounded(
 }
 
 /// Move every reader result already on the channel into the capture buffers.
+#[cfg(any(test, target_os = "macos"))]
 fn collect_capture_results(
     receiver: &mpsc::Receiver<(CaptureStream, StreamOutcome)>,
     stdout_bytes: &mut Vec<u8>,
@@ -475,6 +486,7 @@ fn collect_capture_results(
     }
 }
 
+#[cfg(any(test, target_os = "macos"))]
 fn looks_permission_denied(text: &str) -> bool {
     text.contains("Operation not permitted")
         || text.contains("Permission denied")
@@ -487,6 +499,7 @@ fn looks_permission_denied(text: &str) -> bool {
 /// `state`/`path` keys (single tab indentation). Any other structure — a
 /// missing header, a different on-disk path, a nested state line only — is
 /// reported as unknown or mismatched rather than interpreted.
+#[cfg(any(test, target_os = "macos"))]
 fn parse_launchd_print_service(text: &str, label: &str, expected_path: &str) -> JobObservation {
     let expected_header = format!("system/{label} = {{");
     let Some(header) = text.lines().find(|line| !line.trim().is_empty()) else {
@@ -523,6 +536,7 @@ fn parse_launchd_print_service(text: &str, label: &str, expected_path: &str) -> 
     JobObservation::Loaded { state }
 }
 
+#[cfg(any(test, target_os = "macos"))]
 fn classify_launchd_capture(
     label: &str,
     expected_path: &str,
