@@ -378,7 +378,16 @@ fn private_three_scopes_partial_resume_replacement_and_cli_refusals() {
         .into_iter()
         .flat_map(|routes| routes.iter())
     {
-        assert_eq!(routes["routes"][route.0], *route.1, "sibling route changed");
+        let mut expected = route.1.clone();
+        let mut actual = routes["routes"][route.0].clone();
+        // Route::scope is Option with skip_serializing_if = Option::is_none:
+        // a loaded null is serialized as absent. Keep every other field exact.
+        for value in [&mut expected, &mut actual] {
+            if value.get("scope") == Some(&Value::Null) {
+                value.as_object_mut().expect("route object").remove("scope");
+            }
+        }
+        assert_eq!(actual, expected, "sibling route changed");
     }
     // Warm detached activation also reconciles without a second compose up.
     let warm = fixture.run(0, &["container", "up", "--detach"]);

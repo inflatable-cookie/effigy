@@ -786,7 +786,7 @@ mod tests {
         );
 
         let error = run_command_capture_with_timeout(
-            &root,
+            root,
             "/bin/sh",
             &["-c", script.as_str()],
             "descendant test",

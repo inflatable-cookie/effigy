@@ -8564,7 +8564,7 @@ case "$*" in
     subcmd=""
     for arg in "$@"; do
       case "$arg" in
-        up|down|ps|logs|exec|kill|run|volume|info|start)
+        up|down|ps|logs|exec|kill|run|volume|info|start|inspect)
           subcmd="$arg"
           break
           ;;
@@ -8580,12 +8580,15 @@ case "$*" in
       ps)
         case "$*" in
           *"--format"*)
-            printf "fixture-web-dev-app-1\tUp 10 seconds\t0.0.0.0:8080->80/tcp\tfixture-web-dev\t/tmp/fixture\tapp\n"
+            printf "fixture-web-dev-app-1\tUp 10 seconds\t0.0.0.0:8080->80/tcp\tfixture-web-dev\t%s\tapp\tFalse\n" "${EFFIGY_TEST_OWNED_CHECKOUT:-/tmp/fixture}"
             ;;
           *)
             printf "NAME                STATUS\napp                 running\n"
             ;;
         esac
+        ;;
+      inspect)
+        cat "$EFFIGY_TEST_OWNED_INSPECT_FILE"
         ;;
       start)
         printf "started\n"
@@ -9435,6 +9438,29 @@ fn container_data_seed_command(fixture_root: &std::path::Path, disable_reaper: b
     let docker_args = root.join("docker-args.log");
     let colima_args = root.join("colima-args.log");
     let log_follow = root.join("log-follow.marker");
+    let inspect = root.join("owned-container-inspect.json");
+    // This unscoped checkout has no generation token. Its running-row proof
+    // still supplies canonical identity, declaration, checkout and bindings.
+    fs::write(
+        &inspect,
+        serde_json::json!([{
+            "Id": "a".repeat(64),
+            "Name": "/fixture-web-dev-app-1",
+            "State": {"Status": "running", "Running": true},
+            "Config": {"Labels": {
+                "com.docker.compose.project": "fixture-web-dev",
+                "com.docker.compose.service": "app",
+                "com.docker.compose.oneoff": "False",
+                "com.docker.compose.project.working_dir": root.to_string_lossy()
+            }},
+            "NetworkSettings": {"Ports": {
+                "80/tcp": [{"HostIp": "0.0.0.0", "HostPort": "8080"}]
+            }},
+            "Mounts": []
+        }])
+        .to_string(),
+    )
+    .expect("write exact owned inspect proof");
     let path = format!(
         "{}:{}",
         bin_dir.display(),
@@ -9463,6 +9489,8 @@ fn container_data_seed_command(fixture_root: &std::path::Path, disable_reaper: b
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
         .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
         .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
+        .env("EFFIGY_TEST_OWNED_INSPECT_FILE", &inspect)
+        .env("EFFIGY_TEST_OWNED_CHECKOUT", &root)
         .env("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", "1")
         .env_remove("EFFIGY_DISABLE_HOST_CONTAINER_LEASE")
         .env_remove("EFFIGY_HOST_CONTAINER_LEASE_TIMEOUT_SECS");
