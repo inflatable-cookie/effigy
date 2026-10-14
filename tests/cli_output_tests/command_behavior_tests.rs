@@ -4033,8 +4033,11 @@ fn doctor_git_cli_readiness_proof(arrangement: &str) {
         &mut fixture_guard,
     );
 
+    // Two bounded invocations at a 4000 ms budget plus fixture readiness and
+    // shutdown: far inside this bound on any admitted runner, while still
+    // proving the budget, not an unbounded hang, ended the doctor.
     assert!(
-        started.elapsed() < Duration::from_secs(20),
+        started.elapsed() < Duration::from_secs(45),
         "deep doctor invocations outlived their bounded budgets by far"
     );
     assert!(!output.status.success());
@@ -4059,7 +4062,7 @@ fn doctor_git_cli_readiness_proof(arrangement: &str) {
     let report = &parsed["error"]["details"];
     assert_eq!(report["schema"], "effigy.doctor.v1");
     assert_eq!(report["run"]["complete"], false);
-    assert_eq!(report["run"]["budget_ms"], 800);
+    assert_eq!(report["run"]["budget_ms"], 4000);
     assert_eq!(report["run"]["timeout_phase"], "scan_inventory");
     assert!(report["run"]["checks"]
         .as_array()
@@ -4160,7 +4163,21 @@ fn run_doctor_git_cli(
         .arg("--deep")
         .arg("--repo")
         .arg(fixture.root)
-        .env("EFFIGY_DOCTOR_TIMEOUT_MS", "800")
+        // The budget must outlast every pre-scan phase so the fixture's Git
+        // identity-tree hang is what exhausts it: on slow runners the cold
+        // graph_index build alone consumed nearly 800ms (effigy CI, twice),
+        // which put the timeout in the wrong phase and failed the proof.
+        // 4000ms keeps a wide margin over observed pre-scan cost while the
+        // two invocations stay far inside the 45s total and 30s per-run
+        // harness bounds below.
+        .env("EFFIGY_DOCTOR_TIMEOUT_MS", "4000")
+        // The fixture's readiness delays and descendant hold must be far
+        // longer than this budget: the non-ready controls prove the deadline
+        // expires before delayed readiness completes, and the ready
+        // arrangement proves the deadline expires mid-hold. The original
+        // fixed 2s/3s shape only cleared an 800ms budget.
+        .env("EFFIGY_TEST_DOCTOR_FIXTURE_DELAY_MS", "12000")
+        .env("EFFIGY_TEST_DOCTOR_FIXTURE_HOLD_MS", "12000")
         .env("PATH", fixture.path_value)
         .env("EFFIGY_TEST_DOCTOR_GIT_EVIDENCE", fixture.source_events)
         .env("EFFIGY_TEST_DOCTOR_GIT_INVOCATION", invocation)
@@ -4184,7 +4201,11 @@ fn run_doctor_git_cli(
     }
     let mut child = command.spawn().expect("spawn bounded deep doctor");
     fixture_guard.track_process(child.id(), "doctor CLI");
-    let harness_deadline = Instant::now() + Duration::from_secs(15);
+    // The budget is 4s; this independent bound only force-exits a doctor that
+    // leaked past its own cleanup. Seven times the budget leaves room for
+    // loaded-runner scheduling stalls (a fixture exec once stalled 13s under
+    // machine-wide load) while still bounding any real leak.
+    let harness_deadline = Instant::now() + Duration::from_secs(30);
     loop {
         if child
             .try_wait()
@@ -4197,7 +4218,7 @@ fn run_doctor_git_cli(
             fixture_guard.reap_recorded_processes();
             let _ = child.kill();
             let _ = child.wait();
-            panic!("doctor CLI exceeded independent 15 second harness bound");
+            panic!("doctor CLI exceeded independent 30 second harness bound");
         }
         std::thread::sleep(Duration::from_millis(10));
     }
@@ -4461,14 +4482,27 @@ fn doctor_git_timeout_process_fixture_child() {
             "caller_process": caller_evidence,
         }),
     );
-    if std::env::var("EFFIGY_TEST_DOCTOR_FIXTURE_DELAY").as_deref() == Ok("1") {
+    // Readiness delays and descendant holds scale with the caller's budget:
+    // the controls need the deadline to expire BEFORE delayed readiness, and
+    // the ready arrangement needs the hold to outlast the whole budget. Both
+    // default to the original fixed shape for callers that do not set them.
+    let fixture_delay_ms =
+        if std::env::var("EFFIGY_TEST_DOCTOR_FIXTURE_DELAY").as_deref() == Ok("1") {
+            std::env::var("EFFIGY_TEST_DOCTOR_FIXTURE_DELAY_MS")
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(2000)
+        } else {
+            0
+        };
+    if fixture_delay_ms > 0 {
         record_doctor_git_fixture_event(
             &events,
             serde_json::json!({
                 "invocation": invocation, "event": "readiness_deliberately_held", "role": role, "pid": pid,
             }),
         );
-        std::thread::sleep(Duration::from_secs(2));
+        std::thread::sleep(Duration::from_millis(fixture_delay_ms));
     }
     record_doctor_git_fixture_event(
         &events,
@@ -4486,7 +4520,11 @@ fn doctor_git_timeout_process_fixture_child() {
     match role.as_str() {
         "shim-observer" => (),
         "inventory-descendant" => {
-            let until = Instant::now() + Duration::from_secs(3);
+            let hold_ms = std::env::var("EFFIGY_TEST_DOCTOR_FIXTURE_HOLD_MS")
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(3000);
+            let until = Instant::now() + Duration::from_millis(hold_ms);
             while Instant::now() < until {
                 if terminated.swap(false, Ordering::AcqRel) {
                     record_doctor_git_fixture_event(

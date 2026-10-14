@@ -666,7 +666,10 @@
   "cargo clippy --all-targets -- -D warnings",
 ]
 # Original cold whole-CLI fixture and direct inventory fixture run as separate
-# nextest calls; both keep their existing 800 ms deadline origin.
+# nextest calls. The whole-CLI fixture uses a 4000 ms doctor budget so slow-
+# runner pre-scan phases (the cold graph_index build) cannot consume it before
+# the fixture's Git identity-tree hang; the direct inventory fixture keeps its
+# existing 800 ms deadline origin (it has no earlier phases to spend it).
 "test:doctor:git-timeout-proof" = [
   { id = "cold-cli-git-timeout-proof", run = "cargo nextest run -p effigy --test cli_output_tests --profile doctor-process --filter-expr 'test(cli_deep_doctor_timeout_terminates_git_identity_tree)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 120000 },
   { id = "serial-observer-readiness-counterexample", run = "cargo nextest run -p effigy --test cli_output_tests --profile doctor-process --filter-expr 'test(doctor_git_cli_serial_observer_counterexample)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 120000 },
