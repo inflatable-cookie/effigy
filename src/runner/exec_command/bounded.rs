@@ -1087,28 +1087,46 @@ mod tests {
 
     #[test]
     fn bounded_reader_reports_read_failure_without_panicking() {
-        struct FailingReader;
-        impl Read for FailingReader {
-            fn read(&mut self, _buffer: &mut [u8]) -> std::io::Result<usize> {
-                Err(std::io::Error::other("private read fault"))
+        // A real owned reader that delivers bytes and then fails: this drives
+        // the exact production reader loop the spawned-pipe readers run, so
+        // the ReadFailed outcome, stop behavior and final counters are
+        // proven on production code. (A genuine pipe read error is not
+        // inducible through the spawned production path; see contract 005.)
+        struct BytesThenFailure {
+            delivered: bool,
+        }
+        impl Read for BytesThenFailure {
+            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+                if self.delivered {
+                    Err(std::io::Error::other("private read fault"))
+                } else {
+                    self.delivered = true;
+                    buffer[..5].copy_from_slice(b"12345");
+                    Ok(5)
+                }
             }
         }
         let overflow = AtomicBool::new(false);
         let failure = AtomicBool::new(false);
-        let mut reader = FailingReader;
+        let progress = BoundedStreamProgress::default();
+        let mut reader = BytesThenFailure { delivered: false };
         let mut outcome = None;
         drive_bounded_reader(
             &mut reader,
             64,
             &overflow,
             &failure,
-            &BoundedStreamProgress::default(),
+            &progress,
             |reported| {
                 outcome = Some(reported);
             },
         );
         assert!(matches!(outcome, Some(StreamOutcome::ReadFailed)));
         assert!(failure.load(Ordering::SeqCst));
+        // The reader stopped at the error, so its counters are final and
+        // exact: the refused snapshot may report them as such.
+        assert_eq!(progress.retained.load(Ordering::SeqCst), 5);
+        assert_eq!(progress.read.load(Ordering::SeqCst), 5);
     }
 
     #[cfg(unix)]

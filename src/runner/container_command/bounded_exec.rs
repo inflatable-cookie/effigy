@@ -555,6 +555,16 @@ pub(in crate::runner) fn bounded_failure_error(
     }
 }
 
+/// Render a bounded phase failure that is not a transport refusal: phase
+/// errors are decided about completed captures (a probe exited nonzero or
+/// returned unusable data), non-transport steps (a download or lock wait), or
+/// boundaries reported by their own path. No refusal-observation block is
+/// attached: a boundary snapshot would claim `not_attempted` for captures
+/// that actually spawned and completed, and no per-capture observation
+/// exists for a semantic failure after a complete capture. Transport
+/// refusals carry their own snapshot via [`bounded_failure_error`], and true
+/// pre-step budget boundaries carry one via [`deadline_refusal`].
+#[allow(clippy::too_many_arguments)]
 pub(in crate::runner) fn bounded_phase_error(
     policy: &EffectiveContainerPolicy,
     service: &str,
@@ -587,7 +597,6 @@ pub(in crate::runner) fn bounded_phase_error(
         },
         "workspace_user_fallback": budget.attempts() > 1,
         "remote_cancellation": "unverified",
-        "refusal_observations": refusal_observations_json(&budget.boundary_observations()),
     });
     if let Some(exit_code) = exit_code {
         details["phase_exit_code"] = serde_json::Value::from(exit_code);

@@ -230,9 +230,15 @@ that was never delivered. The refused attempt's prefix is the failed-prefix
 accounting: it is reported separately from the completed-capture `retained`
 totals, never added to them, and never charged twice against the cumulative
 caps. `leader_exit_observed` stays `unknown` unless the leader was safely
-seen still running within the budget. The block never carries bytes, argv,
-environment, raw errors or digests, and equal preparation and cumulative
-counts still prove nothing about a failed command's output.
+seen still running within the budget. The block appears only on transport
+refusals and true pre-step budget boundaries; phase failures that are decided
+about completed captures (a probe that exited nonzero or returned unusable
+identity data) or about non-transport steps carry no block, so a spawned and
+completed capture is never mislabeled `not_attempted`. A stream `read_error`
+is not inducible through real spawned pipes; it is qualified at the
+production reader plus the snapshot mapping. The block never carries bytes,
+argv, environment, raw errors or digests, and equal preparation and
+cumulative counts still prove nothing about a failed command's output.
 Launch diagnostics on both
 human and JSON surfaces exclude raw argv, command strings, configured
 container/service names, output, credentials and host error payloads. The

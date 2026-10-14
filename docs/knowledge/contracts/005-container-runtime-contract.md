@@ -496,7 +496,19 @@ caps, so fallback eligibility is unchanged. Equal preparation and cumulative
 counts therefore still establish nothing about a failed command's output.
 Budget-boundary refusals that never reached a transport (for example an
 expired budget before a phase) carry the same versioned block with
-`not_attempted` and explicit unknown streams.
+`not_attempted` and explicit unknown streams. Phase failures that are neither
+transport refusals nor budget boundaries carry no block: they are decided
+about completed captures (for example a probe that exited nonzero or returned
+unusable identity data) or about non-transport steps, where no refused
+capture exists to observe, and fabricating a snapshot there would misreport
+spawned work as `not_attempted`.
+
+A stream `read_error` is not inducible through the spawned production path:
+`Stdio::piped` builds each pipe internally and a child closing a stream yields
+EOF, not a read error. That state is qualified at the production reader
+itself, with a real owned reader that delivers bytes and then fails, plus the
+refusal-snapshot mapping; producing it inside the production transport would
+require new injection authority that does not exist.
 Terminating the owned host client group is not proof that a remote container
 process stopped: remote cancellation stays explicitly unverified, and no remote
 PID is guessed, no service or sibling is stopped, and an uncertain command is

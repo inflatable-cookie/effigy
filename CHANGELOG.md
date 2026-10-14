@@ -23,7 +23,13 @@ During v0.x, MINOR bumps may include breaking changes.
   never added to them and never charged twice against the cumulative caps, so
   deadlines, fallback eligibility and all legacy field meanings are unchanged.
   The block never carries bytes, argv, environment, raw errors or digests,
-  and missing observations say unknown or lower-bound rather than zero.
+  and missing observations say unknown or lower-bound rather than zero. It
+  appears only on transport refusals and true pre-step budget boundaries;
+  phase failures decided about completed captures or non-transport steps
+  carry no block, so spawned-and-completed work is never mislabeled
+  `not_attempted`. A stream `read_error` is not inducible through real
+  spawned pipes and is qualified at the production reader plus the snapshot
+  mapping.
 - Read-only launchd listener-handoff status and a checked administrator
   removal plan (task 157, SOURCE implementation candidate).
   `effigy gateway listener-handoff-status` opens

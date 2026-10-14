@@ -665,6 +665,13 @@ fn guarded_public_entry_child() {
             assert_eq!(details["failure"], "workspace_preparation_failed");
             assert_eq!(details["phase"], "workspace_preparation");
             assert_eq!(details["preparation"]["captures"], 4);
+            // This phase failure is decided about four spawned-and-completed
+            // captures; it is not a transport refusal, so it must not claim
+            // any refusal observations (not_attempted would be false here).
+            assert!(
+                details.get("refusal_observations").is_none(),
+                "a phase failure about completed captures carries no refusal block: {details}"
+            );
             assert!(!final_marker.exists());
         }
         "launch-blocked-discovery" => {
@@ -1572,6 +1579,14 @@ fn refusal_accounting_success_and_inner_failures_carry_no_observation_block() {
 
 #[test]
 fn refusal_accounting_snapshot_mapping_matches_each_reader_outcome() {
+    // Capability limit: a genuine pipe read error is not inducible through
+    // the spawned production path (Stdio::piped builds the pipe internally,
+    // and a child closing a stream yields EOF, not a read error), so the
+    // read_error snapshot is proven here from the exact production reader's
+    // outcome plus the real reader loop's stop behavior
+    // (bounded_reader_reports_read_failure_without_panicking), not by a
+    // spawned process. Inducing it in the production transport would need
+    // new injection authority that does not exist.
     let progress = |retained: u64, read: u64| BoundedStreamProgress {
         retained: AtomicU64::new(retained),
         read: AtomicU64::new(read),
