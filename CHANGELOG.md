@@ -180,6 +180,12 @@ During v0.x, MINOR bumps may include breaking changes.
   0.14.x releases without changing the support floor.
 
 ### Fixed
+- Recurring nerdctl health-check collisions now name the missing preservation
+  interface when service-only recreation is unavailable: declaration-to-mount
+  association, exclusive volume/data ownership, and a supported backend plan.
+  The refusal explains that `container retire --yes` removes mutable volumes
+  and is not restart recovery. A private command-adapter fixture verifies the
+  recurring collision and retained file markers without a live backend.
 - Container Compose capture no longer waits for pipe writers that outlive the
   CLI. `Command::output` also waited for every writer of the captured stdout
   and stderr, so a helper that inherited those pipes could hold a detached

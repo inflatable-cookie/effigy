@@ -160,8 +160,7 @@
 # Exact-owned stale nerdctl health-check timer/service recovery: behavioral
 # fixtures plus existing restart-recovery cases, then compile the touched crate.
 "test:containers:healthcheck-timer" = [
-  "cargo test -p effigy-containers --lib healthcheck_timer:: -- --nocapture",
-  "cargo test -p effigy-containers --lib restart_recovery:: -- --nocapture",
+  { id = "healthcheck-timer-private", run = "cargo nextest run --config-file tests/config/deadline-marker-nextest.toml --user-config-file none -p effigy-containers --lib --filterset 'test(healthcheck_timer::) | test(restart_recovery::)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
   "cargo check -p effigy-containers --lib --tests",
 ]
 # Restart-safe proof for the exact-owned health-check unload: a stop/reset that
@@ -169,8 +168,7 @@
 # diagnostic, a late unload recovers once, and a running container is never
 # mutated or reported as a clean health-check recovery.
 "test:containers:healthcheck-unload" = [
-  "cargo test -p effigy-containers --lib unload_proof_ -- --nocapture",
-  "cargo test -p effigy-containers --lib restart_recovery::tests::pathological_start_fatal -- --nocapture",
+  { id = "healthcheck-unload-private", run = "cargo nextest run --config-file tests/config/deadline-marker-nextest.toml --user-config-file none -p effigy-containers --lib --filterset 'test(unload_proof_) | test(restart_recovery::tests::pathological_start_fatal)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
   "cargo check -p effigy-containers --lib --tests",
 ]
 "test:gateway:registration-loopback" = "cargo test -p effigy gateway_registration::tests:: -- --nocapture"

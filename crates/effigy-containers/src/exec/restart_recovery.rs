@@ -559,6 +559,9 @@ fn persistent_exited_service_error(
         stderr.push_str(
             "\nbackend reported a stale nerdctl health-check timer (`Unit <id>.timer was already loaded or has a fragment file`). That is a nerdctl systemd-timer defect; Effigy will not delete timer units.",
         );
+        stderr.push_str(
+            "\nservice-only recreation is unavailable: the recovery interface has no immutable declaration-to-mount association, exclusive volume/data ownership proof, or supported backend preservation plan. Inspect mount references alone cannot prove preservation. No service was recreated. `effigy container retire --yes` removes owned mutable volumes and is not restart recovery.",
+        );
     }
     if !backend_text.is_empty() {
         stderr.push_str("\nbackend:\n");
@@ -571,6 +574,10 @@ fn persistent_exited_service_error(
         stderr,
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "restart_recovery/private_tests.rs"]
+mod production_refusal_tests;
 
 fn stale_timer_warning(
     row: &RunningComposeContainer,

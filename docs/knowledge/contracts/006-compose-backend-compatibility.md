@@ -179,6 +179,9 @@ Effigy ownership:
   backend text (including a stale-timer warning or refusal diagnostic) in
   the bounded failure with
   `colima nerdctl --profile <profile> -- start <container>`
+- a recurring collision refuses service-only recreation with the missing
+  preservation interfaces named in contract 005; inspect mount references
+  alone do not authorize replacement or mutable-volume retirement
 
 Contract detail: `005-container-runtime-contract.md`.
 
@@ -193,6 +196,8 @@ Target compatibility cases:
 - `declared_stopped_service_recovers_while_oneoff_and_orphan_are_left_alone`
 - `inspect_timeout_after_successful_start_keeps_stale_timer_diagnosis`
 - `start_timeout_reports_observed_exited_status`
+- `recurring_health_collision_refuses_recreation_through_production_adapters`
+  (private fake transport and file markers; no real engine or live exec proof)
 - `unload_proof_stop_reset_exit_zero_but_still_loaded_fails_bounded`
 - `unload_proof_late_unload_within_bounded_probes_recovers_once`
 - `unload_proof_persistent_fragment_mid_flight_refuses`

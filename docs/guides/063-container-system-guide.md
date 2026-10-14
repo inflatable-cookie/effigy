@@ -695,6 +695,16 @@ one-off, running, or unverified units are left alone; the error then names
 the inspected identity, the refusal reason, and
 `colima nerdctl --profile <profile> -- start <container>`.
 `container status` lists stopped owned services instead of omitting them.
+If the same-ID start still fails with a timer collision, Effigy refuses
+service-only recreation. The current recovery interface reads inspect mount
+references, but has no immutable declaration-to-mount association, exclusive
+volume/data ownership proof, or supported backend preservation plan. Those
+references cannot establish that recreation will retain data, including
+anonymous, shared, unknown or changed mount associations. No container is
+recreated and no volume is removed. `effigy container retire --yes` removes
+owned mutable volumes; it is not restart recovery. The refusal is exercised
+through private fake command transports with file preservation markers; this
+does not qualify a real Linux/containerd health timer or a live exec session.
 Gateway registration keeps the project, service, published-port and host-listener
 ownership checks, and does not claim a route while its declared runtime
 binding is missing.

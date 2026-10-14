@@ -864,6 +864,18 @@ limited to that proven owned service, preserve its data and volume identities,
 and refuse unknown, foreign, shared or changing ownership. Existing retirement
 confirmation does not authorize agents to delete the reported live stack.
 
+The current health-check recovery interface cannot qualify service-only
+recreation. Its inspect snapshot records mount references, but does not bind
+them to an immutable service declaration, prove exclusive volume/data ownership,
+or carry a supported backend preservation plan. A recurring collision therefore
+reports those missing seams and refuses recreation. It performs no volume
+deletion; `container retire --yes` removes owned mutable volumes and is not a
+restart recovery step. The private production-command-adapter fixture
+`recurring_health_collision_refuses_recreation_through_production_adapters`
+proves the refusal after one exact transient unload and one retry. Retained file
+markers establish only fixture non-mutation, not real engine volume preservation
+or live exec/session continuity.
+
 Source and controlled private-process proofs may establish the generic
 mechanism. They do not retrospectively explain the reported exits or qualify
 an unobserved real Linux backend. Live profile repair, held-resource cleanup,
