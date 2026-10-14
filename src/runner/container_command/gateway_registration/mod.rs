@@ -67,7 +67,23 @@ pub(in crate::runner) fn register_gateway_routes_for_container(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> Result<Vec<RegisteredGatewayRoute>, RunnerError> {
+    register_gateway_routes_for_container_with_context(repo_root, policy, None)
+}
+
+pub(in crate::runner) fn register_gateway_routes_for_container_with_context(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    admitted: Option<&crate::runner::host_container_lease::DetachedActivationContext>,
+) -> Result<Vec<RegisteredGatewayRoute>, RunnerError> {
+    if let Some(context) = admitted {
+        context.verify(repo_root, policy, true)?;
+    }
     let rows = wait_for_gateway_service_ports_ready(repo_root, policy)?;
+    #[cfg(test)]
+    publication_test_control(PublicationStage::AfterProbe);
+    if let Some(context) = admitted {
+        context.verify(repo_root, policy, true)?;
+    }
     let mut routes = resolve_gateway_routes_against_rows(repo_root, policy, &rows)?;
     let project_alias_routes =
         resolve_gateway_service_alias_routes(repo_root, policy, true, Some(&rows))?;
@@ -82,7 +98,12 @@ pub(in crate::runner) fn register_gateway_routes_for_container(
     validate_gateway_routes_against_rows(repo_root, policy, &routes, &rows)?;
     validate_gateway_routes_against_host_listeners(policy, &routes)?;
     let route_table_path = gateway_route_table_path()?;
-    reconcile_gateway_routes(&route_table_path, repo_root, &routes)?;
+    reconcile_gateway_routes_guarded(
+        &route_table_path,
+        repo_root,
+        &routes,
+        admitted.map(|context| (context, policy)),
+    )?;
     Ok(routes)
 }
 
@@ -90,6 +111,7 @@ fn wait_for_gateway_service_ports_ready(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> Result<Vec<RunningComposeContainer>, RunnerError> {
+    let deadline = Instant::now() + GATEWAY_SERVICE_PORT_READY_TIMEOUT;
     wait_for_gateway_service_ports_ready_with(
         repo_root,
         policy,
@@ -97,6 +119,11 @@ fn wait_for_gateway_service_ports_ready(
         GATEWAY_SERVICE_PORT_POLL_INTERVAL,
         |timeout| {
             list_running_compose_containers_for_policy_with_timeout(repo_root, policy, timeout)
+                .and_then(|rows| {
+                    effigy_containers::exec::verify_owned_running_compose_rows(
+                        repo_root, policy, &rows, deadline,
+                    )
+                })
                 .map_err(|error| error.to_string())
         },
         |timeout| {
@@ -355,12 +382,28 @@ fn gateway_project_scope(project_path: &str) -> Result<Option<String>, RunnerErr
     project_scope(project_path).map_err(|error| RunnerError::task_invocation(error.to_string()))
 }
 
+#[cfg(test)]
 fn reconcile_gateway_routes(
     path: &Path,
     repo_root: &Path,
     desired: &[RegisteredGatewayRoute],
 ) -> Result<(), RunnerError> {
+    reconcile_gateway_routes_guarded(path, repo_root, desired, None)
+}
+
+fn reconcile_gateway_routes_guarded(
+    path: &Path,
+    repo_root: &Path,
+    desired: &[RegisteredGatewayRoute],
+    admitted: Option<(
+        &crate::runner::host_container_lease::DetachedActivationContext,
+        &EffectiveContainerPolicy,
+    )>,
+) -> Result<(), RunnerError> {
     let _lock = lock_gateway_route_table(path)?;
+    if let Some((context, policy)) = admitted {
+        context.verify(repo_root, policy, true)?;
+    }
     let mut table = load_gateway_route_table(path)?;
     let project_path = repo_root.display().to_string();
     let scope = gateway_project_scope(&project_path)?;
@@ -376,9 +419,16 @@ fn reconcile_gateway_routes(
         }
     }
     validate_gateway_tcp_alias_bindings_in_table(&table, repo_root, desired)?;
+    #[cfg(test)]
+    publication_test_control(PublicationStage::BeforePreparation);
+    if let Some((context, policy)) = admitted {
+        context.verify(repo_root, policy, true)?;
+    }
     for route in desired.iter().filter(|route| route.tls) {
         ensure_gateway_tls_cert(&route.domain)?;
     }
+    #[cfg(test)]
+    publication_test_control(PublicationStage::DuringPreparation);
     let desired_domains = desired
         .iter()
         .map(|route| route.domain.as_str())
@@ -417,6 +467,11 @@ fn reconcile_gateway_routes(
         });
     }
     if !stale.is_empty() || !desired.is_empty() {
+        #[cfg(test)]
+        publication_test_control(PublicationStage::BeforeSave);
+        if let Some((context, policy)) = admitted {
+            context.verify(repo_root, policy, true)?;
+        }
         save_gateway_route_table(&table, path)?;
     }
     for route in &stale {
@@ -573,8 +628,10 @@ fn resolve_gateway_routes_against_rows(
         let target = if let Some(host_target) = dns_route.target_host.as_deref() {
             host_target.trim().to_owned()
         } else {
-            let host_port = runtime_host_port_for_route(repo_root, policy, dns_route, rows)?
-                .unwrap_or(selected_host_port_for_route(policy, dns_route)?);
+            let host_port = match runtime_host_port_for_route(repo_root, policy, dns_route, rows)? {
+                Some(port) => port,
+                None => selected_host_port_for_route(policy, dns_route)?,
+            };
             format!("127.0.0.1:{host_port}")
         };
         routes.push(RegisteredGatewayRoute {
@@ -1640,6 +1697,30 @@ fn parse_port_binding(
 
 pub(super) fn gateway_route_table_path() -> Result<PathBuf, RunnerError> {
     Ok(gateway_dir()?.join("routes.json"))
+}
+
+// Internal test-only timing control; never exposed to CLI or environment.
+#[cfg(test)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PublicationStage {
+    AfterProbe,
+    BeforePreparation,
+    DuringPreparation,
+    BeforeSave,
+}
+#[cfg(test)]
+type PublicationControl = Box<dyn FnMut(PublicationStage)>;
+#[cfg(test)]
+thread_local! {
+    static PUBLICATION_CONTROL: std::cell::RefCell<Option<PublicationControl>> = const { std::cell::RefCell::new(None) };
+}
+#[cfg(test)]
+fn publication_test_control(stage: PublicationStage) {
+    PUBLICATION_CONTROL.with(|control| {
+        if let Some(control) = control.borrow_mut().as_mut() {
+            control(stage);
+        }
+    });
 }
 
 #[cfg(test)]

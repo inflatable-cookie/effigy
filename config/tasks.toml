@@ -160,8 +160,7 @@
 # Exact-owned stale nerdctl health-check timer/service recovery: behavioral
 # fixtures plus existing restart-recovery cases, then compile the touched crate.
 "test:containers:healthcheck-timer" = [
-  "cargo test -p effigy-containers --lib healthcheck_timer:: -- --nocapture",
-  "cargo test -p effigy-containers --lib restart_recovery:: -- --nocapture",
+  { id = "healthcheck-timer-private", run = "cargo nextest run --config-file tests/config/deadline-marker-nextest.toml --user-config-file none -p effigy-containers --lib --filterset 'test(healthcheck_timer::) | test(restart_recovery::)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
   "cargo check -p effigy-containers --lib --tests",
 ]
 # Restart-safe proof for the exact-owned health-check unload: a stop/reset that
@@ -169,11 +168,40 @@
 # diagnostic, a late unload recovers once, and a running container is never
 # mutated or reported as a clean health-check recovery.
 "test:containers:healthcheck-unload" = [
-  "cargo test -p effigy-containers --lib unload_proof_ -- --nocapture",
-  "cargo test -p effigy-containers --lib restart_recovery::tests::pathological_start_fatal -- --nocapture",
+  { id = "healthcheck-unload-private", run = "cargo nextest run --config-file tests/config/deadline-marker-nextest.toml --user-config-file none -p effigy-containers --lib --filterset 'test(unload_proof_) | test(restart_recovery::tests::pathological_start_fatal)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
   "cargo check -p effigy-containers --lib --tests",
 ]
-"test:gateway:registration-loopback" = "cargo test -p effigy gateway_registration::tests:: -- --nocapture"
+"test:gateway:registration-loopback" = [
+  { id = "gateway-registration-loopback", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(gateway_registration::tests::)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
+]
+# Partial scoped bring-up: a failed route registration after `compose up` keeps
+# a detached scope running with an explicit partial result and a reconcile
+# mark; a re-run with a running primary skips `compose up`. Attached bring-up
+# keeps its teardown. Reuses the registration-loopback family.
+"test:containers:activation-compatibility" = [
+  { task = "test:containers:activation-compatibility:runner" },
+  { task = "test:containers:activation-compatibility:cli" },
+]
+"test:containers:activation-compatibility:runner" = [
+  { id = "activation-deferral-context", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(deferral_tests::token_and_implicit_tests::run_manifest_task_php_app)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
+]
+"test:containers:activation-compatibility:cli" = [
+  { id = "activation-attached-cli", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests --filterset 'test(cli_container_attached_stream_session_reports_operator_overview) | test(cli_container_attached_session_stops_environment_on_sigint) | test(cli_container_attached_session_terminates_log_process_group) | test(cli_container_falls_back_to_colima_nerdctl_when_docker_is_missing) | test(cli_container_up_detached_starts_colima_and_reports_ready) | test(cli_container_shell_command_runs_via_sh_lc) | test(cli_container_status_) | test(cli_container_data_) | test(cli_container_cache_) | test(cli_container_reset_) | test(cli_container_retire_named_) | test(cli_generated_container_status_) | test(cli_container_rejects_mounts_) | test(cli_container_attached_session_handles_sigint_during_startup) | test(cli_workspace_binding_handoff_stops_environment_after_return)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
+]
+"check:supply-chain" = { run = "cargo deny check", timeout_ms = 240000 }
+"test:containers:partial-startup" = [
+  { id = "partial-startup-lifecycle", run = "cargo nextest run --config-file tests/config/deadline-marker-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(container_command::lifecycle::tests::)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
+  { id = "partial-startup-pipes", run = "cargo nextest run --config-file tests/config/deadline-marker-nextest.toml --user-config-file none -p effigy-containers --lib --filterset 'test(detached_capture_tests::) | test(exec::process::tests::)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
+  { task = "test:containers:partial-startup:private-cli" },
+  { task = "test:gateway:registration-loopback" },
+]
+"test:containers:partial-startup:private-cli" = [
+  { id = "partial-startup-private-cli", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests --filterset 'test(partial_startup_tests::)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
+]
+"check:containers:partial-startup" = [
+  "cargo check -p effigy -p effigy-containers -p effigy-runtime -p effigy-cli --all-targets",
+  "cargo clippy -p effigy -p effigy-containers -p effigy-runtime -p effigy-cli --all-targets -- -D warnings",
+]
 "test:gateway:pid-domain" = [
   { id = "gateway-pid-domain", run = "cargo test -p effigy-gateway -p effigy --lib pid_domain -- --nocapture", timeout_ms = 240000 },
 ]

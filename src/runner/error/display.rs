@@ -33,6 +33,7 @@ pub(super) fn fmt_runner_error(
         RunnerError::Task(err) => write!(f, "{err}"),
         RunnerError::Ui(msg) => write!(f, "ui render failed: {msg}"),
         RunnerError::TaskInvocation(msg) => write!(f, "{msg}"),
+        RunnerError::ManagedHostReadiness { process, diagnostic } => write!(f, "managed host listener `{process}` failed before readiness ({diagnostic})"),
         RunnerError::ContainerSurfaceRegistryMissing => {
             write!(f, "manifest does not define a `[containers]` registry")
         }

@@ -10,6 +10,7 @@ use effigy_containers::EffectiveContainerPolicy;
 use effigy_ui::style_text;
 use effigy_ui::theme::{resolve_color_enabled, Theme};
 use effigy_ui::OutputMode;
+use sha2::{Digest, Sha256};
 use std::io::IsTerminal;
 
 use super::error::RunnerError;
@@ -20,6 +21,7 @@ const HOST_CONTAINER_LEASE_FALLBACK_DIR: &str = ".effigy/runtime/host-container-
 const HOST_CONTAINER_LEASE_SCHEMA: &str = "effigy.host-container-lease.v1";
 const DEFAULT_HOST_CONTAINER_LEASE_TIMEOUT_SECS: u64 = 300;
 const DISABLE_HOST_CONTAINER_LEASE_ENV: &str = "EFFIGY_DISABLE_HOST_CONTAINER_LEASE";
+const PARTIAL_ACTIVATION_SCHEMA: &str = "effigy.container-partial-activation.v2";
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct HostContainerLease {
@@ -117,6 +119,239 @@ pub(super) fn clear_host_container_lease(
             error,
         )),
     }
+}
+
+/// Marks a detached bring-up whose Compose services started but whose route
+/// registration did not finish. A later detached `container up` reads the mark
+/// to reconcile routes without running `compose up` again. The mark lives
+/// beside the scope's lease, keyed by profile, project and container name.
+/// Immutable admission snapshot; publication must compare against this value,
+/// never replace it with a baseline read after runtime observation.
+#[derive(Debug)]
+pub(in crate::runner) struct DetachedActivationContext {
+    value: serde_json::Value,
+    pub(in crate::runner) marker_required: bool,
+}
+
+#[cfg(test)]
+pub(in crate::runner) fn capture_detached_activation_context(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<DetachedActivationContext, RunnerError> {
+    Ok(DetachedActivationContext {
+        value: partial_activation_context(repo_root, policy)?,
+        marker_required: false,
+    })
+}
+
+pub(in crate::runner) fn retained_detached_activation_context(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<Option<DetachedActivationContext>, RunnerError> {
+    let path = partial_activation_path(repo_root, policy);
+    let raw = match fs::read_to_string(&path) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(RunnerError::task_invocation_failed_read(&path, error)),
+    };
+    let value = serde_json::from_str(&raw)
+        .map_err(|error| RunnerError::task_invocation_failed_parse(&path, error))?;
+    let context = DetachedActivationContext {
+        value,
+        marker_required: true,
+    };
+    context.verify(repo_root, policy, true)?;
+    Ok(Some(context))
+}
+
+impl DetachedActivationContext {
+    pub(in crate::runner) fn from_materialization(
+        policy: &EffectiveContainerPolicy,
+        admission: &effigy_containers::policy::admission::PolicyAdmission,
+    ) -> Result<Self, RunnerError> {
+        Ok(Self {
+            value: admission.context_for_policy(policy)?,
+            marker_required: admission.marker_required(),
+        })
+    }
+    pub(in crate::runner) fn verify(
+        &self,
+        repo_root: &Path,
+        policy: &EffectiveContainerPolicy,
+        require_marker: bool,
+    ) -> Result<(), RunnerError> {
+        let verified = (|| -> Result<bool, RunnerError> {
+            if self.value != partial_activation_context(repo_root, policy)? {
+                return Ok(false);
+            }
+            if require_marker {
+                let path = partial_activation_path(repo_root, policy);
+                let raw = fs::read_to_string(&path)
+                    .map_err(|error| RunnerError::task_invocation_failed_read(&path, error))?;
+                let recorded: serde_json::Value = serde_json::from_str(&raw)
+                    .map_err(|error| RunnerError::task_invocation_failed_parse(&path, error))?;
+                return Ok(recorded == self.value);
+            }
+            Ok(true)
+        })();
+        if !matches!(verified, Ok(true)) {
+            return Err(RunnerError::task_invocation(
+                "detached activation publication refused: admitted source/checkout/scope/Compose or marker context changed, missing or unreadable; no routes published. Restore the admitted inputs and marker before reconciliation",
+            ));
+        }
+        Ok(())
+    }
+}
+
+pub(in crate::runner) fn record_admitted_partial_activation(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    admitted: &DetachedActivationContext,
+) -> Result<(), RunnerError> {
+    admitted.verify(repo_root, policy, false)?;
+    fs::create_dir_all(host_container_lease_dir(repo_root, policy))
+        .map_err(|error| RunnerError::task_invocation_failed_write(repo_root, error))?;
+    let encoded = serde_json::to_string_pretty(&admitted.value)
+        .map_err(|error| RunnerError::host_container_lease_encode(error.to_string()))?;
+    let path = partial_activation_path(repo_root, policy);
+    use std::io::Write;
+    let mut file = match fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+    {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            return admitted.verify(repo_root, policy, true);
+        }
+        Err(error) => return Err(RunnerError::task_invocation_failed_write(&path, error)),
+    };
+    file.write_all(encoded.as_bytes())
+        .map_err(|error| RunnerError::task_invocation_failed_write(&path, error))
+}
+
+#[cfg(test)]
+pub(in crate::runner) fn record_partial_activation(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<(), RunnerError> {
+    fs::create_dir_all(host_container_lease_dir(repo_root, policy))
+        .map_err(|error| RunnerError::task_invocation_failed_write(repo_root, error))?;
+    let marker = partial_activation_context(repo_root, policy)?;
+    let encoded = serde_json::to_string_pretty(&marker)
+        .map_err(|error| RunnerError::host_container_lease_encode(error.to_string()))?;
+    let marker_path = partial_activation_path(repo_root, policy);
+    fs::write(&marker_path, encoded)
+        .map_err(|error| RunnerError::task_invocation_failed_write(&marker_path, error))
+}
+
+pub(in crate::runner) fn partial_activation_recorded(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<bool, RunnerError> {
+    let marker_path = partial_activation_path(repo_root, policy);
+    match fs::read_to_string(&marker_path) {
+        Ok(raw) => {
+            let marker: serde_json::Value = serde_json::from_str(&raw)
+                .map_err(|error| RunnerError::task_invocation_failed_parse(&marker_path, error))?;
+            if marker != partial_activation_context(repo_root, policy)? {
+                return Err(RunnerError::task_invocation(
+                    "partial activation context changed or is unverified; reconciliation refused without compose up, restart or teardown. Restore the admitted checkout/Compose inputs before retrying, or explicitly stop the scope with `effigy container down`",
+                ));
+            }
+            Ok(true)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(RunnerError::task_invocation_failed_read(
+            &marker_path,
+            error,
+        )),
+    }
+}
+
+fn partial_activation_context(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<serde_json::Value, RunnerError> {
+    let canonical_root = fs::canonicalize(repo_root)
+        .map_err(|error| RunnerError::task_invocation_failed_read(repo_root, error))?;
+    let loaded =
+        effigy_manifest::load_task_manifest_with_inspection(&repo_root.join("effigy.toml"))
+            .map_err(|_| RunnerError::task_invocation("original declaration unavailable"))?;
+    let mut paths = loaded
+        .evaluation_order
+        .into_iter()
+        .collect::<std::collections::BTreeSet<_>>();
+    if let Some(config) = loaded
+        .manifest
+        .containers
+        .as_ref()
+        .and_then(|containers| containers.environments.get(&policy.name))
+    {
+        if let Some(path) = &config.compose_file {
+            paths.insert(repo_root.join(path));
+        }
+    }
+    paths.extend(policy.compose_files.iter().map(|path| repo_root.join(path)));
+    let mut inputs = Vec::new();
+    for path in paths {
+        let canonical = fs::canonicalize(&path)
+            .map_err(|error| RunnerError::task_invocation_failed_read(&path, error))?;
+        let bytes = fs::read(&canonical)
+            .map_err(|error| RunnerError::task_invocation_failed_read(&canonical, error))?;
+        inputs.push(serde_json::json!({"path":canonical,"sha256":Sha256::digest(&bytes).iter().map(|byte| format!("{byte:02x}")).collect::<String>()}));
+    }
+    let scope = effigy_core::worktree_scope::resolve(repo_root)
+        .map_err(|error| RunnerError::task_invocation_failed_read(repo_root, error))?
+        .map(|scope| {
+            fs::read_to_string(
+                scope
+                    .token_dir
+                    .join(effigy_core::worktree_scope::SCOPE_FILE),
+            )
+        })
+        .transpose()
+        .map_err(|error| RunnerError::task_invocation_failed_read(repo_root, error))?;
+    Ok(serde_json::json!({
+        "schema": PARTIAL_ACTIVATION_SCHEMA,
+        "scope_token": scope,
+        "repo_root": canonical_root,
+        "container_name": policy.name,
+        "profile": policy.profile,
+        "project_name": policy.project_name,
+        "primary_service": policy.primary_service,
+        "backend": match effigy_containers::compose::resolve_compose_backend_for_repo(repo_root, policy) {
+            effigy_containers::compose::ComposeBackend::Docker => "docker",
+            effigy_containers::compose::ComposeBackend::ColimaNerdctl => "colima-nerdctl",
+        },
+        "compose_source": match policy.compose_source {
+            effigy_containers::EffectiveComposeSource::Direct => "direct",
+            effigy_containers::EffectiveComposeSource::Generated => "generated",
+        },
+        "inputs": inputs,
+    }))
+}
+
+pub(in crate::runner) fn clear_partial_activation(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<(), RunnerError> {
+    let marker_path = partial_activation_path(repo_root, policy);
+    match fs::remove_file(&marker_path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(RunnerError::task_invocation_failed_write(
+            &marker_path,
+            error,
+        )),
+    }
+}
+
+fn partial_activation_path(repo_root: &Path, policy: &EffectiveContainerPolicy) -> PathBuf {
+    host_container_lease_dir(repo_root, policy).join(format!(
+        "{}.partial.json",
+        sanitize_lease_path_component(&policy.name)
+    ))
 }
 
 pub(in crate::runner) fn run_internal_container_lease_reaper(
@@ -282,6 +517,11 @@ fn sanitize_lease_path_component(value: &str) -> String {
             }
         })
         .collect()
+}
+
+pub(in crate::runner) fn detached_admission_marker_root(repo_root: &Path) -> PathBuf {
+    host_container_lease_home_dir()
+        .unwrap_or_else(|| repo_root.join(HOST_CONTAINER_LEASE_FALLBACK_DIR))
 }
 
 fn host_container_lease_home_dir() -> Option<PathBuf> {

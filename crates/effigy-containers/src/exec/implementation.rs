@@ -23,7 +23,7 @@ use super::participation::{
 };
 use super::process::{
     error_is_timeout, run_command_capture_os, run_command_capture_os_with_env,
-    run_command_capture_with_timeout,
+    run_command_capture_with_timeout, run_detached_command_with_env,
 };
 
 use crate::{
@@ -265,6 +265,147 @@ pub fn list_running_compose_containers_for_policy_with_timeout(
     )
 }
 
+/// Re-admit inventory rows from exact current inspect identities and bindings.
+/// A ps name, reserved address, or successful command alone is not port proof.
+pub fn verify_owned_running_compose_rows(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    rows: &[RunningComposeContainer],
+    deadline: Instant,
+) -> Result<Vec<RunningComposeContainer>, ContainerExecError> {
+    let mut verified = Vec::new();
+    let declared = super::restart_recovery::declared_service_names(&policy.compose_files)?;
+    let canonical = repo_root
+        .canonicalize()
+        .map_err(|error| ContainerExecError::Launch {
+            command: "verify selected checkout".to_owned(),
+            error,
+        })?;
+    let scope_token = effigy_core::worktree_scope::resolve(repo_root)
+        .map_err(|error| ContainerExecError::Launch {
+            command: "verify selected scope".to_owned(),
+            error,
+        })?
+        .map(|scope| {
+            std::fs::read_to_string(
+                scope
+                    .token_dir
+                    .join(effigy_core::worktree_scope::SCOPE_FILE),
+            )
+        })
+        .transpose()
+        .map_err(|error| ContainerExecError::Launch {
+            command: "verify selected scope token".to_owned(),
+            error,
+        })?;
+    for row in rows
+        .iter()
+        .filter(|row| row.project_name.as_deref() == Some(&policy.project_name))
+    {
+        if row.oneoff {
+            continue;
+        }
+        let args = [
+            OsString::from("inspect"),
+            OsString::from(&row.container_name),
+        ];
+        let remaining =
+            super::process::remaining_until_deadline(deadline, "inspect owned binding")?;
+        let output = run_runtime_command_capture_for_policy_with_absolute_deadline(
+            repo_root,
+            policy,
+            &args,
+            "inspect owned binding",
+            deadline,
+            remaining,
+        )?;
+        let raw: serde_json::Value =
+            serde_json::from_slice(&output.stdout).map_err(|_| ContainerExecError::Failure {
+                command: "inspect owned binding".to_owned(),
+                code: None,
+                stdout: String::new(),
+                stderr: "binding unavailable: inspect JSON is invalid".to_owned(),
+            })?;
+        let identity = super::healthcheck_timer::parse_inspected_container_identity(
+            &String::from_utf8_lossy(&output.stdout),
+        )
+        .map_err(|_| ContainerExecError::Failure {
+            command: "inspect owned binding".to_owned(),
+            code: None,
+            stdout: String::new(),
+            stderr: "binding unavailable: canonical full container identity is missing".to_owned(),
+        })?;
+        let record = raw.as_array().and_then(|records| records.first());
+        let labels = record
+            .and_then(|record| record.get("Config"))
+            .and_then(|config| config.get("Labels"));
+        let oneoff = labels
+            .and_then(|labels| labels.get("com.docker.compose.oneoff"))
+            .and_then(|value| value.as_str());
+        let working_dir = labels
+            .and_then(|labels| labels.get("com.docker.compose.project.working_dir"))
+            .and_then(|value| value.as_str());
+        let inspected_scope = labels.and_then(|labels| labels.get("com.effigy.scope"));
+        let owned = identity.name == row.container_name
+            && match (scope_token.as_deref(), inspected_scope) {
+                (None, None) => true,
+                (Some(token), Some(value)) => {
+                    !token.trim().is_empty() && value.as_str() == Some(token.trim())
+                }
+                _ => false,
+            }
+            && identity.project.as_deref() == Some(policy.project_name.as_str())
+            && identity.service == row.service
+            && identity
+                .service
+                .as_ref()
+                .is_some_and(|service| declared.contains(service))
+            && identity.running
+            && super::parse::compose_status_is_running(&identity.status)
+            && !identity.oneoff
+            && oneoff.is_some_and(|value| {
+                matches!(value.to_ascii_lowercase().as_str(), "false" | "0" | "no")
+            })
+            && working_dir
+                .and_then(|path| Path::new(path).canonicalize().ok())
+                .as_ref()
+                == Some(&canonical);
+        if !owned {
+            return Err(ContainerExecError::Failure { command: "inspect owned binding".to_owned(), code: None, stdout: String::new(), stderr: "binding unavailable: full-ID/project/service/oneoff/running/checkout ownership changed or is unknown".to_owned() });
+        }
+        let Some(ports) = record
+            .and_then(|record| record.get("NetworkSettings"))
+            .and_then(|network| network.get("Ports"))
+            .and_then(|ports| ports.as_object())
+        else {
+            return Err(ContainerExecError::Failure {
+                command: "inspect owned binding".to_owned(),
+                code: None,
+                stdout: String::new(),
+                stderr: "binding unavailable: fresh published-port associations are missing"
+                    .to_owned(),
+            });
+        };
+        let mut current = row.clone();
+        current.ports.clear();
+        for (container_port, bindings) in ports {
+            for binding in bindings.as_array().into_iter().flatten() {
+                let host_ip = binding.get("HostIp").and_then(|value| value.as_str());
+                let host_port = binding.get("HostPort").and_then(|value| value.as_str());
+                if let (Some(ip), Some(port)) = (host_ip, host_port) {
+                    if matches!(ip, "127.0.0.1" | "0.0.0.0")
+                        && port.parse::<u16>().is_ok_and(|port| port != 0)
+                    {
+                        current.ports.push(format!("{ip}:{port}->{container_port}"));
+                    }
+                }
+            }
+        }
+        verified.push(current);
+    }
+    Ok(verified)
+}
+
 pub fn list_compose_containers_for_project_including_stopped(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
@@ -418,6 +559,10 @@ pub fn run_compose_invocation_capture_with_env(
     env: &[(String, OsString)],
 ) -> Result<Output, ContainerExecError> {
     let program = program.to_string_lossy();
+    if args.iter().any(|arg| arg == "up") && args.iter().any(|arg| arg == "-d" || arg == "--detach")
+    {
+        return run_detached_command_with_env(repo_root, &program, args, label, env);
+    }
     match run_command_capture_os_with_env(repo_root, &program, args, label, env) {
         Ok(output) => Ok(output),
         Err(ContainerExecError::Failure {

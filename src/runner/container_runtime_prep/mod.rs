@@ -511,6 +511,23 @@ pub(in crate::runner) fn ensure_primary_service_exec_ready_for_runtime(
     )
 }
 
+/// Partial detached activation cannot grant restart authority to an unavailable
+/// exec probe: existing services and exec sessions must remain in place.
+pub(in crate::runner) fn verify_primary_service_exec_ready_for_reconciliation(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    working_dir: &Path,
+) -> Result<(), RunnerError> {
+    if probe_primary_service_exec_ready(repo_root, policy, working_dir, Duration::from_secs(2)) {
+        Ok(())
+    } else {
+        Err(RunnerError::container_runtime_exec_not_ready(
+            policy,
+            working_dir,
+        ))
+    }
+}
+
 fn ensure_primary_service_exec_ready_with_recovery_using(
     policy: &EffectiveContainerPolicy,
     working_dir: &Path,

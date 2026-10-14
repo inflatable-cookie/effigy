@@ -921,14 +921,15 @@ fn wait_for_listener_state(
                     }
                 }
                 "failed" => {
-                    let detail = state
-                        .diagnostic
-                        .as_ref()
-                        .map(|diagnostic| format!(" ({})", diagnostic.summary()))
-                        .unwrap_or_default();
-                    return Err(RunnerError::task_invocation(format!(
-                        "managed host listener `{process_name}` failed before readiness{detail}"
-                    )));
+                    return Err(RunnerError::ManagedHostReadiness {
+                        process: process_name.to_owned(),
+                        diagnostic: state
+                            .diagnostic
+                            .as_ref()
+                            .copied()
+                            .unwrap_or_default()
+                            .summary(),
+                    });
                 }
                 _ => {}
             }

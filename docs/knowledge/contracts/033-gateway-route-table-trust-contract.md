@@ -153,3 +153,50 @@ A missing table remains valid (empty table), unchanged from current behavior.
 - Planning review against `g08.014` plus focused trust-verification fixtures
   (well-formed, tampered, wrong-permission, foreign-marked tables) once
   implementation starts.
+
+## Container reconciliation binding proof
+
+A route reservation is not a published binding. The production registration
+adapter re-admits selected inventory rows through fresh inspect under one
+cumulative deadline. Canonical full ID, exact project/service, explicit
+non-oneoff running state, checkout and scoped label identity must agree before
+current published-port associations enter route resolution. Missing, foreign,
+shared, stale or unavailable associations refuse without guessing a target.
+An owned backing replacement updates its TCP target through the existing locked
+route transaction, releasing the old own association without changing foreign
+or shared route claims. Private fake-transport/process evidence qualifies this
+adapter path, not a real engine or elevated gateway daemon.
+For an unscoped checkout the inspected scope label must also be absent; an
+unexpected, null, empty or unreadable label is not absence-to-absence proof.
+
+### Detached admission at publication
+
+Detached `container up` carries an immutable admitted context through runtime
+observation into the existing locked route reconciliation. It compares the
+original snapshot with current checkout/scope/backend/profile/project/primary,
+manifest and Compose identities and bytes, and requires the persisted marker
+to match. Missing, unreadable or changed context refuses after the owned probe,
+before locked preparation, and immediately before saving the route table.
+The refusal preserves the existing own/foreign table and the original marker;
+it never records a baseline from the changed source. Restore the admitted
+files and marker, then run `effigy container up --detach` to reconcile the
+still-running owned stack. Attached and unrelated registrations carry no
+detached admission guard and retain their existing behavior.
+
+These checks cover the interval from admission through the final pre-save
+read. The route-table lock serializes route-table writers only. It does not
+exclude filesystem writers, make the multi-file reads atomic, detect a change
+and restoration between reads, or guarantee that files stay unchanged after
+the final read. Cooperating source writers must keep admitted inputs stable
+through publication; no latest-source or filesystem quiescence guarantee is
+claimed. Private production registration controls mutate source and marker
+files after actual owned probes and during delayed preparation, verify byte-
+exact retained tables on refusal, and restore the admitted inputs to reconcile.
+
+### TLS dependency maintenance
+
+The resolved rustls dependency is 0.23.46, which satisfies the patched range
+for RUSTSEC-2026-0346 through RUSTSEC-2026-0349. This lock-only maintenance
+changes no gateway TLS features, cipher selection, certificate validation or
+client authentication policy. The advisory finding on 0.23.45 does not by
+itself establish exploitability in Effigy's configuration.

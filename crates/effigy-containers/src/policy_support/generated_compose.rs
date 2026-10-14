@@ -301,6 +301,7 @@ pub(crate) fn resolve_compose_source(
     config: &ManifestContainerConfig,
     project_name: &str,
     effective_manifest: &str,
+    admission: Option<&mut crate::policy::admission::PolicyAdmission>,
 ) -> Result<ResolvedComposeSource, ContainerPolicyError> {
     if config.compose_file.is_some() && !config.services.is_empty() {
         return Err(ContainerPolicyError::TaskInvocation(format!(
@@ -469,7 +470,16 @@ pub(crate) fn resolve_compose_source(
                 .join(",")
         )
     };
+    let output_path = repo_root
+        .join(GENERATED_RUNTIME_COMPOSE_DIR)
+        .join(".effigy-compose.generated.yml");
+    if let Some(guard) = &admission {
+        guard.before_render_write(&output_path, assembly.compose_yaml.as_bytes())?;
+    }
     let write = output.write(&assembly, &manifest_cache_key)?;
+    if let Some(guard) = admission {
+        guard.record_rendered(&write.compose_path, assembly.compose_yaml.as_bytes())?;
+    }
 
     let mut compose_files = vec![write.compose_path];
     if output.has_override() {
@@ -1260,6 +1270,11 @@ fn test_effigy_home_override() -> Option<PathBuf> {
     let explicit = TEST_EFFIGY_HOME.with(|slot| slot.borrow().clone());
     if explicit.is_some() {
         return explicit;
+    }
+    // A production CLI linked with test-support needs one explicitly private
+    // home shared by concurrent fixture processes, not separate default homes.
+    if let Some(home) = std::env::var_os("EFFIGY_TEST_CONTAINERS_HOME") {
+        return Some(PathBuf::from(home));
     }
 
     Some(DEFAULT_TEST_EFFIGY_HOME.with(Clone::clone))

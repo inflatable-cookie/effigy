@@ -11,9 +11,7 @@ use super::closeout::{
     stop_host_processes_best_effort,
 };
 use super::deregister_runtime_gateway_routes;
-use super::gateway_registration::{
-    deregister_gateway_routes_for_container, register_gateway_routes_for_container,
-};
+use super::gateway_registration::deregister_gateway_routes_for_container;
 use super::runtime_error_from_runner;
 use super::secret_env::{
     materialize_container_secret_runtime, resolve_container_secret_runtime,
@@ -37,7 +35,9 @@ use crate::runner::container_runtime_prep::ensure_primary_service_exec_ready_for
 use crate::runner::exec_command::{
     append_color_exec_env, probe_container_capabilities, run_compose_exec_plan_with_options,
 };
-use crate::runner::host_container_lease::clear_host_container_lease;
+use crate::runner::host_container_lease::{
+    clear_host_container_lease, clear_partial_activation, partial_activation_recorded,
+};
 use crate::runner::host_process::start_host_processes_for_container;
 use effigy_containers::{
     annotate_workspace_extra_mount_decisions,
@@ -45,9 +45,8 @@ use effigy_containers::{
     effective_attach_mode, eject_generated_compose, eject_report,
     exec::{
         colima_profile_warnings, ensure_runtime_backend_running, inspect_colima_ssh_agent_socket,
-        list_running_compose_containers_for_policy, recover_exited_owned_compose_services,
-        shutdown_container as shutdown_container_via_exec, RunningComposeContainer,
-        SshAgentSocketHealth,
+        recover_exited_owned_compose_services, shutdown_container as shutdown_container_via_exec,
+        RunningComposeContainer, SshAgentSocketHealth,
     },
     load_container_exec_working_dir, load_container_policy, load_container_policy_for_creation,
     up_detached_report, validate_compose_backend_runtime, validate_container_policy,
@@ -87,6 +86,7 @@ struct ContainerUpPlan {
     shared_service_notes: Vec<String>,
     workspace_mount_decisions: Vec<WorkspaceExtraMountDecision>,
     up_plan: ContainerComposeInvocationPlan,
+    admitted_context: Option<crate::runner::host_container_lease::DetachedActivationContext>,
 }
 
 struct ContainerUpRuntimeIntegrations {
@@ -96,6 +96,14 @@ struct ContainerUpRuntimeIntegrations {
     warnings: Vec<String>,
 }
 
+#[derive(Default)]
+struct DetachedOperationState {
+    active: bool,
+    partial: bool,
+    admitted: bool,
+    stage: Option<&'static str>,
+}
+
 pub(super) fn run_container_up(
     repo_root: &Path,
     name: Option<&str>,
@@ -103,23 +111,87 @@ pub(super) fn run_container_up(
     detach: bool,
     output_json: bool,
 ) -> Result<String, RunnerError> {
+    let mut operation = DetachedOperationState {
+        active: detach,
+        ..Default::default()
+    };
+    let result =
+        run_container_up_inner(repo_root, name, attach, detach, output_json, &mut operation);
+    result.map_err(|error| {
+        if !operation.active { return error; }
+        let state = if operation.partial { "partial" } else { "unavailable" };
+        let recovery = operation.admitted.then_some("effigy container up --detach");
+        let message = match &error {
+            RunnerError::ManagedHostReadiness { diagnostic, .. } => format!("Detached activation did not complete: {diagnostic}"),
+            _ => "Detached activation did not complete. Reconciliation requires the original admitted inputs and fresh exact-owned bindings; unavailable observations grant no restart, recreation or route authority.".to_owned(),
+        };
+        if output_json {
+            return RunnerError::CommandJsonFailure {
+                rendered: serde_json::json!({
+                    "state": state,
+                    "phase": "detached_activation",
+                    "activation_stage": operation.stage.unwrap_or("preparation"),
+                    "readiness": "unverified",
+                    "exposure": "unverified",
+                    "recovery": recovery,
+                    "stop": "effigy container down",
+                    "retirement_removes_mutable_data": true,
+                    "message": message,
+                }).to_string(),
+            };
+        }
+        let advice = if operation.admitted {
+            "reconcile with `effigy container up --detach` only with the unchanged original admitted inputs"
+        } else {
+            "the original admission is unavailable; retry cannot adopt a running stack's current inputs"
+        };
+        RunnerError::task_invocation(format!("{error}\ndetached activation {state}: readiness and exposure are unverified. Inspect with `effigy container status`; {advice}. `effigy container down` stops the scope; `effigy container retire --yes` removes owned mutable data."))
+    })
+}
+
+fn run_container_up_inner(
+    repo_root: &Path,
+    name: Option<&str>,
+    attach: bool,
+    detach: bool,
+    output_json: bool,
+    operation: &mut DetachedOperationState,
+) -> Result<String, RunnerError> {
     reject_conflicting_container_up_modes(attach, detach)?;
 
-    let plan = prepare_container_up(repo_root, name, attach, detach)?;
+    operation.stage = Some("preparation");
+    let plan = prepare_container_up(repo_root, name, attach, detach, operation)?;
+    operation.active = plan.attach_mode == EffectiveAttachMode::Detached;
+    operation.admitted = plan
+        .admitted_context
+        .as_ref()
+        .is_some_and(|context| context.marker_required);
 
     if container_up_stop_requested(&plan) {
         return render_container_up_interrupted(repo_root, &plan);
     }
 
-    if let Some(closeout) = run_container_up_compose(repo_root, &plan)? {
-        return Ok(closeout);
+    operation.stage = Some("reconciliation_inventory");
+    if !partial_activation_reconcile_pending(repo_root, &plan)? {
+        operation.stage = Some("compose_activation");
+        if let Some(closeout) = run_container_up_compose(repo_root, &plan)? {
+            return Ok(closeout);
+        }
+        if plan.attach_mode == EffectiveAttachMode::Detached {
+            operation.partial = true;
+            operation.stage = Some("admission_record");
+            record_admitted_context(repo_root, &plan)?;
+            operation.admitted = true;
+        }
     }
+    operation.partial = plan.attach_mode == EffectiveAttachMode::Detached;
     write_container_up_backend_override(repo_root, &plan.policy);
 
     if container_up_stop_requested(&plan) {
         return render_container_up_interrupted(repo_root, &plan);
     }
 
+    operation.stage = Some("stopped_service_recovery");
     let recovery = recover_exited_owned_compose_services(repo_root, &plan.policy)?;
     emit_warning_lines(&recovery.warnings);
 
@@ -127,14 +199,18 @@ pub(super) fn run_container_up(
         return render_container_up_interrupted(repo_root, &plan);
     }
 
+    operation.stage = Some("readiness");
     let health = wait_for_container_ready(&plan.policy, Some(&plan.stop_flag))?;
     if container_up_stop_requested(&plan) {
         return render_container_up_interrupted(repo_root, &plan);
     }
 
+    operation.stage = Some("runtime_integrations");
     let mut integrations = complete_container_up_runtime_integrations(repo_root, &plan)?;
     integrations.warnings.extend(recovery.warnings);
 
+    // Retain admitted context as the detached owner across later reconciliation.
+    operation.stage = Some("persistent_owner");
     clear_host_container_lease(repo_root, &plan.policy)?;
 
     render_container_up_result(repo_root, &plan, health, integrations, output_json)
@@ -154,9 +230,60 @@ fn prepare_container_up(
     name: Option<&str>,
     attach: bool,
     detach: bool,
+    operation: &mut DetachedOperationState,
 ) -> Result<ContainerUpPlan, RunnerError> {
     let stop_flag = install_stop_requested_flag()?;
-    let mut policy = load_container_policy(repo_root, name)?;
+    // Resolve the attach declaration without materializing policy or probing runtime.
+    let declared =
+        effigy_manifest::load_task_manifest_with_inspection(&repo_root.join("effigy.toml"))
+            .map_err(|_| RunnerError::task_invocation("original declaration unavailable"))?;
+    let selected = name.or_else(|| {
+        declared
+            .manifest
+            .containers
+            .as_ref()
+            .and_then(|c| c.default.as_deref())
+    });
+    let declared_detached = detach
+        || (!attach
+            && declared
+                .manifest
+                .containers
+                .as_ref()
+                .and_then(|c| selected.and_then(|name| c.environments.get(name)))
+                .is_some_and(|c| {
+                    c.startup == Some(effigy_manifest::ManifestContainerStartup::Detached)
+                }));
+    operation.active = declared_detached;
+    let (mut policy, mut preparation_admission) = if declared_detached {
+        let (policy, admission) = effigy_containers::policy::load::load_admitted_container_policy(
+            repo_root,
+            name,
+            &crate::runner::host_container_lease::detached_admission_marker_root(repo_root),
+        )?;
+        (policy, Some(admission))
+    } else {
+        (load_container_policy(repo_root, name)?, None)
+    };
+    let mut admitted_context = if let Some(admission) = &preparation_admission {
+        Some(
+            crate::runner::host_container_lease::DetachedActivationContext::from_materialization(
+                &policy, admission,
+            )?,
+        )
+    } else {
+        None
+    };
+    if let Some(context) = &admitted_context {
+        context.verify(repo_root, &policy, context.marker_required)?;
+    }
+    // Validate a retained marker before runtime activation or generated input
+    // refresh can obscure drift in the originally admitted Compose context.
+    let retained_context =
+        crate::runner::host_container_lease::retained_detached_activation_context(
+            repo_root, &policy,
+        )?;
+    let reconcile_pending = retained_context.is_some();
     let operation_plan = lifecycle_operation_plan(
         repo_root,
         &policy,
@@ -187,18 +314,51 @@ fn prepare_container_up(
     let colima_started = start_runtime_after_scope_registration(&policy, || {
         ensure_runtime_backend_running(&policy, repo_root).map_err(Into::into)
     })?;
+    if let Some(context) = &admitted_context {
+        context.verify(repo_root, &policy, context.marker_required)?;
+    }
     emit_ssh_agent_socket_warning(&policy, repo_root);
-    let shared_service_notes = ensure_shared_services_running(&policy)?;
-    let primary_service_running =
-        if policy.compose_source == effigy_containers::EffectiveComposeSource::Direct {
-            let running = list_running_compose_containers_for_policy(repo_root, &policy)
-                .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-            primary_service_is_running(&policy, &running)
-        } else {
-            false
-        };
-    let workspace_mount_decisions =
-        resolve_workspace_mounts_for_creation(repo_root, &mut policy, primary_service_running)?;
+    if let Some(context) = &admitted_context {
+        context.verify(repo_root, &policy, context.marker_required)?;
+    }
+    let shared_service_notes =
+        ensure_shared_services_running(&policy, preparation_admission.as_ref())?;
+    let primary_service_running = if reconcile_pending {
+        true
+    } else if policy.compose_source == effigy_containers::EffectiveComposeSource::Direct {
+        let running =
+            effigy_containers::exec::list_running_compose_containers_for_policy_with_deadline(
+                repo_root,
+                &policy,
+                Some(std::time::Instant::now() + std::time::Duration::from_secs(15)),
+            )
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+        primary_service_is_running(&policy, &running)
+    } else {
+        false
+    };
+    if let Some(context) = &admitted_context {
+        context.verify(repo_root, &policy, context.marker_required)?;
+    }
+    let workspace_mount_decisions = if reconcile_pending {
+        Vec::new()
+    } else if let Some(admission) = preparation_admission.as_mut() {
+        let (creation, decisions) =
+            effigy_containers::policy::load::refresh_admitted_container_policy(
+                repo_root,
+                &policy.name,
+                admission,
+            )?;
+        policy.compose_files = creation.compose_files;
+        admitted_context = Some(
+            crate::runner::host_container_lease::DetachedActivationContext::from_materialization(
+                &policy, admission,
+            )?,
+        );
+        decisions
+    } else {
+        resolve_workspace_mounts_for_creation(repo_root, &mut policy, primary_service_running)?
+    };
     validate_container_policy(repo_root, &policy)?;
     validate_compose_backend_runtime(repo_root, &policy)?;
     let _manager_report = effigy_runtime::container_manager::lifecycle_operation_report(
@@ -216,6 +376,14 @@ fn prepare_container_up(
         "docker compose up",
     )
     .map_err(RunnerError::from)?;
+    if attach_mode == EffectiveAttachMode::Detached && admitted_context.is_none() {
+        return Err(RunnerError::task_invocation(
+            "original detached preparation admission unavailable",
+        ));
+    }
+    if let Some(context) = &admitted_context {
+        context.verify(repo_root, &policy, context.marker_required)?;
+    }
     Ok(ContainerUpPlan {
         stop_flag,
         policy,
@@ -227,6 +395,7 @@ fn prepare_container_up(
         shared_service_notes,
         workspace_mount_decisions,
         up_plan,
+        admitted_context,
     })
 }
 
@@ -275,6 +444,9 @@ fn run_container_up_compose(
     repo_root: &Path,
     plan: &ContainerUpPlan,
 ) -> Result<Option<String>, RunnerError> {
+    if let Some(context) = &plan.admitted_context {
+        context.verify(repo_root, &plan.policy, context.marker_required)?;
+    }
     if plan.attach_mode == EffectiveAttachMode::Attached {
         match run_compose_plan_inherit_with_stop_flag_and_env(
             &plan.up_plan,
@@ -321,6 +493,9 @@ fn render_container_up_interrupted(
     repo_root: &Path,
     plan: &ContainerUpPlan,
 ) -> Result<String, RunnerError> {
+    if plan.attach_mode == EffectiveAttachMode::Detached {
+        return Err(RunnerError::task_invocation("detached activation interrupted: readiness and exposure are unverified; no teardown or recreation ran. Inspect the selected scope with `effigy container status` before reconciliation"));
+    }
     render_interrupted_up_closeout(
         repo_root,
         &plan.policy,
@@ -337,28 +512,55 @@ fn complete_container_up_runtime_integrations(
     let policy = &plan.policy;
     let working_dir = load_container_exec_working_dir(repo_root, Some(policy.name.as_str()))
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    if let Err(error) =
+    let exec_ready = if plan.attach_mode == EffectiveAttachMode::Detached {
+        crate::runner::container_runtime_prep::verify_primary_service_exec_ready_for_reconciliation(
+            repo_root,
+            policy,
+            &working_dir,
+        )
+    } else {
         ensure_primary_service_exec_ready_for_runtime(repo_root, policy, &working_dir)
-    {
+    };
+    if let Err(error) = exec_ready {
+        if plan.attach_mode == EffectiveAttachMode::Detached {
+            return Err(detached_partial_activation_error(policy, error, None));
+        }
         let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, policy);
         return Err(finish_container_up_failure(error, cleanup_result));
     }
     if let Err(error) =
         materialize_container_secret_runtime(repo_root, policy, &plan.secret_runtime)
     {
+        if plan.attach_mode == EffectiveAttachMode::Detached {
+            return Err(detached_partial_activation_error(policy, error, None));
+        }
         let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, policy);
         return Err(finish_container_up_failure(error, cleanup_result));
     }
-    let gateway_routes = match register_gateway_routes_for_container(repo_root, policy) {
-        Ok(routes) => routes,
-        Err(error) => {
-            let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, policy);
-            return Err(finish_container_up_failure(error, cleanup_result));
-        }
-    };
+    let gateway_routes =
+        match super::gateway_registration::register_gateway_routes_for_container_with_context(
+            repo_root,
+            policy,
+            plan.admitted_context.as_ref(),
+        ) {
+            Ok(routes) => routes,
+            Err(error) => {
+                return Err(gateway_registration_failure(
+                    plan.attach_mode,
+                    repo_root,
+                    policy,
+                    plan.admitted_context.as_ref(),
+                    error,
+                    || lifecycle_cleanup_failed_container_up(repo_root, policy),
+                ));
+            }
+        };
     let tcp_alias_host_notes = match reconcile_primary_service_tcp_alias_hosts(repo_root, policy) {
         Ok(notes) => notes,
         Err(error) => {
+            if plan.attach_mode == EffectiveAttachMode::Detached {
+                return Err(detached_partial_activation_error(policy, error, None));
+            }
             let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, policy);
             return Err(finish_container_up_failure(error, cleanup_result));
         }
@@ -373,6 +575,9 @@ fn complete_container_up_runtime_integrations(
                 .iter()
                 .any(|process| process.listener.is_some()) =>
         {
+            if plan.attach_mode == EffectiveAttachMode::Detached {
+                return Err(detached_partial_activation_error(policy, error, None));
+            }
             let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, policy);
             return Err(finish_container_up_failure(error, cleanup_result));
         }
@@ -387,6 +592,117 @@ fn complete_container_up_runtime_integrations(
         managed_host_listeners,
         tcp_alias_host_notes,
         warnings,
+    })
+}
+
+/// Decides what a failed route registration does to the started scope.
+///
+/// Attached bring-up tears the started scope down, as before. Detached bring-up
+/// keeps the Compose services that `up` already started and records a partial
+/// activation mark, so a later detached `container up` reconciles routes without
+/// running `compose up` again. The `cleanup` closure runs only on the attached path.
+fn gateway_registration_failure(
+    attach_mode: EffectiveAttachMode,
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    admitted: Option<&crate::runner::host_container_lease::DetachedActivationContext>,
+    error: RunnerError,
+    cleanup: impl FnOnce() -> Result<(), RunnerError>,
+) -> RunnerError {
+    if attach_mode == EffectiveAttachMode::Detached {
+        let verified = admitted
+            .ok_or_else(|| RunnerError::task_invocation("detached admission missing"))
+            .and_then(|context| context.verify(repo_root, policy, true));
+        return detached_partial_activation_error(policy, error, verified.err());
+    }
+    finish_container_up_failure(error, cleanup())
+}
+
+/// `recorded_error` is set when the reconcile mark could not be written. The
+/// message then withholds the re-run advice, because a re-run without the mark
+/// would run `compose up` again.
+fn detached_partial_activation_error(
+    policy: &EffectiveContainerPolicy,
+    error: RunnerError,
+    recorded_error: Option<RunnerError>,
+) -> RunnerError {
+    let Some(recorded_error) = recorded_error else {
+        // The outer detached renderer supplies partial-state/recovery advice.
+        // Keep the typed, bounded readiness evidence intact across this seam.
+        if matches!(&error, RunnerError::ManagedHostReadiness { .. }) {
+            return error;
+        }
+        return RunnerError::task_invocation(format!(
+            "{error}\ncontainer `{}` is partially activated: its Compose services stay in place and complete gateway exposure is unverified. No teardown ran. Re-run `effigy container up --detach` to reconcile routes; that run does not recreate the running services. Run `effigy container down` to stop it instead.",
+            policy.name
+        ));
+    };
+    RunnerError::task_invocation(format!(
+        "{error}\ncontainer `{}` is partially activated: its Compose services stay in place and complete gateway exposure is unverified. No teardown ran. The reconcile mark could not be recorded ({recorded_error}), so do not re-run `effigy container up`; run `effigy container down` to stop it.",
+        policy.name
+    ))
+}
+
+/// A recorded partial activation whose primary service still runs reconciles
+/// without `compose up`, so running services and exec sessions are not
+/// recreated. Missing primary, unavailable inventory or changed admission
+/// context refuses rather than falling back to `compose up`.
+fn record_admitted_context(repo_root: &Path, plan: &ContainerUpPlan) -> Result<(), RunnerError> {
+    let context = plan.admitted_context.as_ref().ok_or_else(|| {
+        RunnerError::task_invocation("detached activation admission snapshot missing")
+    })?;
+    crate::runner::host_container_lease::record_admitted_partial_activation(
+        repo_root,
+        &plan.policy,
+        context,
+    )
+}
+
+fn partial_activation_reconcile_pending(
+    repo_root: &Path,
+    plan: &ContainerUpPlan,
+) -> Result<bool, RunnerError> {
+    if plan.attach_mode != EffectiveAttachMode::Detached {
+        return Ok(false);
+    }
+    let recorded = partial_activation_recorded(repo_root, &plan.policy)?;
+    if let Some(context) = &plan.admitted_context {
+        context.verify(repo_root, &plan.policy, recorded || context.marker_required)?;
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    let running =
+        effigy_containers::exec::list_running_compose_containers_for_policy_with_deadline(repo_root, &plan.policy, Some(deadline)).map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "partially activated container `{}` was not reconciled: running Compose services could not be inspected ({error}). No services were recreated.",
+                plan.policy.name
+            ))
+        })?;
+    if !recorded {
+        if running.is_empty() {
+            return Ok(false);
+        }
+        return Err(RunnerError::task_invocation("partial activation reconciliation unavailable: original detached admission is missing for the running stack. Current inputs cannot be adopted. No compose up, restart, teardown or publication ran"));
+    }
+    let running = effigy_containers::exec::verify_owned_running_compose_rows(repo_root, &plan.policy, &running, deadline)
+        .map_err(|_| RunnerError::task_invocation("partial activation reconciliation unavailable: current full-ID ownership/bindings could not be verified. No services were recreated"))?;
+    if partial_reconcile_skips_compose_up(&plan.policy, &running) {
+        return Ok(true);
+    }
+    Err(RunnerError::task_invocation(format!(
+        "partially activated container `{}` has no verified running primary; reconciliation unavailable. No compose up, restart or teardown ran. Inspect the selected scope with `effigy container status`; retry `effigy container up --detach` after the owned primary is running, or explicitly stop with `effigy container down`",
+        plan.policy.name
+    )))
+}
+
+fn partial_reconcile_skips_compose_up(
+    policy: &EffectiveContainerPolicy,
+    running: &[RunningComposeContainer],
+) -> bool {
+    running.iter().any(|row| {
+        row.project_name.as_deref() == Some(policy.project_name.as_str())
+            && row.service.as_deref() == Some(policy.primary_service.as_str())
+            && !row.oneoff
+            && effigy_containers::exec::compose_status_is_running(&row.status)
     })
 }
 
@@ -631,13 +947,15 @@ fn run_container_down_adapter(
     let policy = load_container_policy(repo_root, name)?;
     let _operation_plan =
         lifecycle_operation_plan(repo_root, &policy, ContainerLifecycleOperation::down(false));
-    run_container_down(
+    let output = run_container_down(
         repo_root,
         name,
         output_json,
         deregister_runtime_gateway_routes,
     )
-    .map_err(Into::into)
+    .map_err(RunnerError::from)?;
+    clear_partial_activation(repo_root, &policy)?;
+    Ok(output)
 }
 
 pub(in crate::runner) fn run_container_reset_adapter(
@@ -913,7 +1231,9 @@ fn emit_ssh_agent_socket_warning(policy: &EffectiveContainerPolicy, repo_root: &
 #[cfg(test)]
 mod tests {
     use super::{
-        annotate_workspace_extra_mount_decisions, exec_operation_plan, lifecycle_operation_plan,
+        annotate_workspace_extra_mount_decisions, clear_partial_activation,
+        detached_partial_activation_error, exec_operation_plan, gateway_registration_failure,
+        lifecycle_operation_plan, partial_activation_recorded, partial_reconcile_skips_compose_up,
         primary_service_is_running, refresh_workspace_mounts_for_creation,
         resolve_workspace_mounts_for_creation, run_container_eject,
         start_runtime_after_scope_registration, RunnerError,
@@ -922,6 +1242,8 @@ mod tests {
         annotate_left_running_shared_services, annotate_shared_service_notes,
     };
     use crate::runner::container_command::test_support::temp_repo;
+    use crate::runner::host_container_lease::record_partial_activation;
+    use effigy_containers::EffectiveAttachMode;
     use effigy_containers::{
         down_report, load_container_policy, up_detached_report, ContainerAction,
         EffectiveComposeSource, EffectiveContainerPolicy, SharedServiceBinding,
@@ -975,6 +1297,23 @@ mod tests {
             detach_timeout_secs: 10,
             host_processes: Vec::new(),
         }
+    }
+
+    #[test]
+    fn detached_partial_failure_preserves_typed_readiness_evidence() {
+        let policy = test_policy(Vec::new());
+        let diagnostic = "report=accepted, ownership=exclusive_owner_observed, http_probe=status_mismatch:503, route=not_reached";
+        let error = detached_partial_activation_error(
+            &policy,
+            RunnerError::ManagedHostReadiness {
+                process: "private-listener".to_owned(),
+                diagnostic: diagnostic.to_owned(),
+            },
+            None,
+        );
+        assert!(
+            matches!(error, RunnerError::ManagedHostReadiness { diagnostic: observed, .. } if observed == diagnostic)
+        );
     }
 
     #[test]
@@ -1456,5 +1795,165 @@ primary_service = "app"
         assert!(error
             .to_string()
             .contains("does not accept both `--keep-data` and `--wipe-data`"));
+    }
+
+    /// Isolates the partial-activation mark in a private lease home. The guard
+    /// keeps the environment override for the life of the test.
+    fn isolated_lease_home() -> (tempfile::TempDir, crate::contract_test_support::EnvGuard) {
+        let temp = tempfile::tempdir().expect("temporary fixture root");
+        fs::write(temp.path().join("effigy.toml"), "[containers]\n").expect("private marker input");
+        fs::write(temp.path().join("docker-compose.yml"), "services: {}\n")
+            .expect("private compose input");
+        let lease_home = temp.path().join("lease-home");
+        fs::create_dir_all(&lease_home).expect("temporary lease home");
+        let guard = crate::contract_test_support::EnvGuard::set_many(&[(
+            "EFFIGY_TEST_HOST_CONTAINER_LEASE_HOME",
+            Some(lease_home.display().to_string()),
+        )]);
+        (temp, guard)
+    }
+
+    fn running_row(
+        service: &str,
+        oneoff: bool,
+    ) -> effigy_containers::exec::RunningComposeContainer {
+        effigy_containers::exec::RunningComposeContainer {
+            container_name: format!("web-{service}"),
+            status: "Up 2 minutes".to_owned(),
+            ports: Vec::new(),
+            project_name: Some("demo-web-dev".to_owned()),
+            working_dir: None,
+            service: Some(service.to_owned()),
+            oneoff,
+        }
+    }
+
+    #[test]
+    fn detached_gateway_registration_failure_keeps_started_scope() {
+        let (temp, _lease_home) = isolated_lease_home();
+        let policy = test_policy(Vec::new());
+        record_partial_activation(temp.path(), &policy).expect("admit before publication");
+        let admitted = crate::runner::host_container_lease::retained_detached_activation_context(
+            temp.path(),
+            &policy,
+        )
+        .unwrap()
+        .unwrap();
+        let cleaned = std::cell::Cell::new(false);
+        let error = gateway_registration_failure(
+            EffectiveAttachMode::Detached,
+            temp.path(),
+            &policy,
+            Some(&admitted),
+            RunnerError::task_invocation("timed out waiting for declared gateway services"),
+            || {
+                cleaned.set(true);
+                Ok(())
+            },
+        );
+
+        assert!(
+            !cleaned.get(),
+            "detached bring-up must not tear the scope down"
+        );
+        let rendered = error.to_string();
+        assert!(rendered.starts_with("timed out waiting for declared gateway services"));
+        assert!(rendered.contains("container `web` is partially activated"));
+        assert!(rendered.contains("complete gateway exposure is unverified"));
+        assert!(rendered.contains("No teardown ran"));
+        assert!(rendered.contains("effigy container up --detach"));
+        assert!(rendered.contains("does not recreate the running services"));
+        assert!(
+            partial_activation_recorded(temp.path(), &policy).expect("read partial mark"),
+            "detached registration failure records the reconcile mark"
+        );
+    }
+
+    #[test]
+    fn attached_gateway_registration_failure_still_tears_scope_down() {
+        let (temp, _lease_home) = isolated_lease_home();
+        let policy = test_policy(Vec::new());
+        let cleaned = std::cell::Cell::new(false);
+        let error = gateway_registration_failure(
+            EffectiveAttachMode::Attached,
+            temp.path(),
+            &policy,
+            None,
+            RunnerError::task_invocation("gateway registration failed"),
+            || {
+                cleaned.set(true);
+                Ok(())
+            },
+        );
+
+        assert!(cleaned.get(), "attached bring-up keeps its cleanup path");
+        assert_eq!(error.to_string(), "gateway registration failed");
+        assert!(!partial_activation_recorded(temp.path(), &policy).expect("read partial mark"));
+    }
+
+    #[test]
+    fn attached_gateway_registration_failure_reports_cleanup_failure() {
+        let (temp, _lease_home) = isolated_lease_home();
+        let policy = test_policy(Vec::new());
+        let error = gateway_registration_failure(
+            EffectiveAttachMode::Attached,
+            temp.path(),
+            &policy,
+            None,
+            RunnerError::task_invocation("gateway registration failed"),
+            || Err(RunnerError::task_invocation("docker compose down failed")),
+        );
+
+        assert_eq!(
+            error.to_string(),
+            "gateway registration failed\ncontainer up cleanup also failed: docker compose down failed"
+        );
+    }
+
+    #[test]
+    fn partial_activation_mark_round_trips_and_clears() {
+        let (temp, _lease_home) = isolated_lease_home();
+        let policy = test_policy(Vec::new());
+
+        assert!(!partial_activation_recorded(temp.path(), &policy).expect("read mark"));
+        record_partial_activation(temp.path(), &policy).expect("record mark");
+        assert!(partial_activation_recorded(temp.path(), &policy).expect("read mark"));
+        clear_partial_activation(temp.path(), &policy).expect("clear mark");
+        assert!(!partial_activation_recorded(temp.path(), &policy).expect("read mark"));
+        clear_partial_activation(temp.path(), &policy).expect("clearing an absent mark is ok");
+    }
+
+    #[test]
+    fn partial_activation_reconcile_skips_compose_up_only_for_running_primary() {
+        let policy = test_policy(Vec::new());
+
+        assert!(partial_reconcile_skips_compose_up(
+            &policy,
+            &[running_row("app", false)]
+        ));
+        assert!(
+            !partial_reconcile_skips_compose_up(&policy, &[running_row("worker", false)]),
+            "a running sibling is not the primary service"
+        );
+        assert!(
+            !partial_reconcile_skips_compose_up(&policy, &[running_row("app", true)]),
+            "a one-off run of the primary service is not the running primary"
+        );
+        assert!(!partial_reconcile_skips_compose_up(&policy, &[]));
+    }
+
+    #[test]
+    fn detached_partial_error_withholds_retry_when_mark_cannot_be_recorded() {
+        let policy = test_policy(Vec::new());
+        let rendered = detached_partial_activation_error(
+            &policy,
+            RunnerError::task_invocation("timed out waiting for declared gateway services"),
+            Some(RunnerError::task_invocation("read-only lease home")),
+        )
+        .to_string();
+
+        assert!(rendered.contains("reconcile mark could not be recorded (read-only lease home)"));
+        assert!(rendered.contains("do not re-run `effigy container up`"));
+        assert!(!rendered.contains("Re-run `effigy container up --detach`"));
     }
 }

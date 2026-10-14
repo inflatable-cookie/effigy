@@ -179,6 +179,9 @@ Effigy ownership:
   backend text (including a stale-timer warning or refusal diagnostic) in
   the bounded failure with
   `colima nerdctl --profile <profile> -- start <container>`
+- a recurring collision refuses service-only recreation with the missing
+  preservation interfaces named in contract 005; inspect mount references
+  alone do not authorize replacement or mutable-volume retirement
 
 Contract detail: `005-container-runtime-contract.md`.
 
@@ -193,6 +196,8 @@ Target compatibility cases:
 - `declared_stopped_service_recovers_while_oneoff_and_orphan_are_left_alone`
 - `inspect_timeout_after_successful_start_keeps_stale_timer_diagnosis`
 - `start_timeout_reports_observed_exited_status`
+- `recurring_health_collision_refuses_recreation_through_production_adapters`
+  (private fake transport and file markers; no real engine or live exec proof)
 - `unload_proof_stop_reset_exit_zero_but_still_loaded_fails_bounded`
 - `unload_proof_late_unload_within_bounded_probes_recovers_once`
 - `unload_proof_persistent_fragment_mid_flight_refuses`
@@ -301,3 +306,37 @@ Update this contract when Effigy changes:
 - the alias guarantee scope for Effigy-owned execution targets
 - the expected compatibility cases used to prove backend-sensitive behavior
 - how generated Compose values escape `$` for backend interpolation
+
+## Detached subprocess evidence boundary
+
+Compose detach alone does not isolate stdout/stderr inheritance. The launch
+adapter now uses null sinks for detached up, with bounded phase/status failure
+diagnostics; the existing logs command remains the service-output surface.
+Finite Unix inventory capture uses nonblocking reads with bounded retention and
+no reader threads. Success requires client exit and both EOFs; overflow or
+unverified settlement refuses. Cancellation owns only the client process group
+and positively reaps its direct child. Remote engine cancellation and historical
+SIGPIPE sender/pipe provenance remain unverified. Non-Unix bounded pipe capture
+requires a missing nonblocking adapter and returns an explicit unsupported error.
+
+The private CLI matrix runs three overlapping scoped stacks through production
+adapters, maintains persistent exec sentinel connections, tests partial/warm
+reconciliation and full-ID/port replacement, and exercises noninteractive
+retirement ownership refusals. Native engine semantics and actual consumer
+admission remain separate from these private command-transport controls.
+
+## Preparation admission interface
+
+`PolicyAdmission` seals declaration fingerprints and selected identity before
+policy generation can observe inventory. The admitted loader and creation
+refresh pass that same snapshot through `PolicyBuildContext`. Generated
+assembly, workspace rewriting and DNS rendering verify the original sources
+and existing artifacts before writes, then record expected rendered-byte
+fingerprints after checking the written output. Workspace decisions come from
+the same guarded renderer invocation; activation retains the resulting paths,
+decisions and admission context. No post-probe declaration is adopted as a new
+baseline, and marked inputs must match before materialization. The snapshot
+also gates runtime/shared-service preparation and feeds the existing locked
+publication checks. These are cooperative checked intervals, not an atomic
+multi-file snapshot or exclusion of source writers; change/restoration between
+reads and changes after the final check remain outside the guarantee.

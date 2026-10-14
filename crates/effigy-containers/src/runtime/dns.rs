@@ -13,6 +13,7 @@ pub(crate) fn materialize_runtime_dns_override(
     profile: &str,
     routes: &RuntimeDnsOverrideRoutes,
     compose_files: &mut Vec<PathBuf>,
+    admission: Option<&mut crate::policy::admission::PolicyAdmission>,
 ) -> Result<(), ContainerPolicyError> {
     let services = collect_compose_service_names(compose_files)?;
     if services.is_empty() {
@@ -35,10 +36,16 @@ pub(crate) fn materialize_runtime_dns_override(
     let override_path = override_dir.join(format!("{container_name}.compose.override.yml"));
     let override_yaml =
         render_runtime_dns_override(&services, &dns_servers, gateway_address.as_deref(), routes);
-    std::fs::write(&override_path, override_yaml).map_err(|error| ContainerPolicyError::Read {
+    if let Some(guard) = &admission {
+        guard.before_render_write(&override_path, override_yaml.as_bytes())?;
+    }
+    std::fs::write(&override_path, &override_yaml).map_err(|error| ContainerPolicyError::Read {
         path: override_path.clone(),
         error,
     })?;
+    if let Some(guard) = admission {
+        guard.record_rendered(&override_path, override_yaml.as_bytes())?;
+    }
     compose_files.push(override_path);
     Ok(())
 }

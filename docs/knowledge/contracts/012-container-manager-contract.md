@@ -145,3 +145,20 @@ effigy qa:architecture:runtime-container-drift
 ```
 
 The command should pass with only documented, path-scoped allowances.
+
+## Detached reconciliation and capture
+
+Detached Compose launch uses null stdout/stderr sinks so service children cannot
+inherit an Effigy capture pipe. Backend failures retain phase/exit classification;
+service output is available through the existing logs command. Finite inventory
+capture owns its client group, drains nonblocking streams on the supervising
+thread, caps retention at 1 MiB per stream and requires both child exit and pipe
+EOF before success. Overflow or incomplete capture refuses. Direct-client reap
+is not remote container cancellation proof. No detached reader threads remain.
+
+The runner retains an admitted source/context marker across detached success.
+Warm/partial reconciliation does not authorize Compose up, primary restart or
+cleanup from an unavailable probe. Fresh full-ID/project/service/oneoff/scope/
+checkout and published-port inspection gates exposure. Source changes and a
+missing primary refuse until explicit scope stop. See contract 005 and guide 063
+for command/result ownership and native limits.

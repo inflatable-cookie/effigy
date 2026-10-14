@@ -203,6 +203,41 @@ During v0.x, MINOR bumps may include breaking changes.
   0.14.x releases without changing the support floor.
 
 ### Fixed
+- Detached activation errors now retain a bounded `activation_stage` alongside
+  partial/unavailable status, without exposing raw backend output or arguments.
+- Detached reconciliation refuses a running stack whose original admission
+  marker is missing, including after a failed marker write. Unscoped binding
+  verification rejects unexpected scope labels. Detached JSON retains bounded
+  managed-listener readiness classifications without raw backend output.
+- Recurring nerdctl health-check collisions now name the missing preservation
+  interface when service-only recreation is unavailable: declaration-to-mount
+  association, exclusive volume/data ownership, and a supported backend plan.
+  The refusal explains that `container retire --yes` removes mutable volumes
+  and is not restart recovery. A private command-adapter fixture verifies the
+  recurring collision and retained file markers without a live backend.
+- Detached scoped bring-up now retains an admitted context bound to checkout,
+  backend/project and manifest/Compose hashes. Partial and warm reconciliation
+  skip Compose up and primary restart, require fresh full-ID published bindings,
+  and refuse drift, unavailable ownership or a missing primary. JSON failures
+  expose bounded partial/unavailable details. Explicit down clears the context
+  and keeps volumes; retirement removes owned mutable data.
+- Updated the locked rustls dependency from 0.23.45 to 0.23.46 for
+  RUSTSEC-2026-0346 through RUSTSEC-2026-0349, without changing TLS features,
+  cipher selection or authentication policy.
+- Detached route publication now checks the original admitted source and marker
+  after runtime probes, under the route-table lock before preparation, and
+  immediately before save. Drift or missing context preserves existing routes
+  and refuses without a new source baseline, recreation or teardown. The table
+  lock does not exclude source-file writers or guarantee atomic source reads.
+  Both Direct and Generated preparation seal declarations before runtime
+  observations and join legitimate artifact refresh through checked renderer
+  receipts, refusing probe-time input drift before activation/publication.
+- Detached Compose launch isolates service writers with null output sinks.
+  Finite inventory capture drains nonblocking pipes without persistent reader
+  threads, caps retained output at 1 MiB per stream, refuses incomplete EOF or
+  overflow, and positively reaps its owned client on timeout. These mechanisms
+  have private process/transport evidence, with no claim about original SIGPIPE
+  provenance or a real Linux/containerd backend.
 - Managed host cleanup keeps its owned TERM/KILL sequence when bounded
   completion observation is unavailable. It retains the original stop clocks,
   requires positive group settlement and actual wait before reaping, and holds

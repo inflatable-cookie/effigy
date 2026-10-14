@@ -145,6 +145,38 @@ start after that listener is ready. A dependent process receives
 restarts or loses readiness, Effigy stops the dependent generation and starts
 it with the current endpoint values.
 
+Detached activation records admitted context after a successful Compose launch.
+Detached policy loading now seals the original declaration sources and selected
+checkout/scope/backend/profile/project/primary identity before generation's
+inventory probes, warning/runtime preparation or workspace refresh. Generated,
+workspace and DNS renderers contribute expected-byte receipts to that same
+snapshot: original inputs and existing artifacts must still match before a
+write, and the resulting file must match its renderer bytes afterward. Creation
+refresh verifies the retained declaration rather than capturing a new baseline.
+Marked reconciliation also verifies its original marker inputs before any
+materialization. Attached and unrelated data preparation retain legacy behavior.
+A running stack without that original admission refuses detached reconciliation;
+current inputs cannot establish a replacement baseline. If recording failed,
+JSON recovery is null and human advice grants no retry authority. Detached JSON
+retains closed-vocabulary managed-listener readiness observations (including HTTP
+status mismatch) without copying backend output, process names or arguments.
+Inventory, exec readiness and exposure failures retain partial/unavailable
+state and do not tear down or restart running services. Reconciliation with
+`effigy container up --detach` verifies the exact canonical source/context and
+fresh owned full-ID bindings before registering exposure; missing primary,
+changed/legacy markers and unavailable observations refuse without Compose up.
+The context persists as the detached owner after success; only the selected
+temporary task lease is cleared. Explicit `container down` clears that context
+and keeps volumes. Attached bring-up keeps its existing cleanup policy.
+
+Detached JSON failures contain bounded structural details: state, phase,
+unverified readiness/exposure, and supported recovery/stop commands. No raw
+backend logs, argv or environment enter these details. Current inspect must
+verify full ID, project, service, explicit non-oneoff running state, canonical
+checkout ownership and published-port associations. These are fixture-qualified
+production adapters, not evidence of the original consumer incident or real
+Linux/containerd preservation.
+
 Detached `container up --json` includes `managed_host_listeners` entries for
 listeners that passed readiness. Entries report status, runtime and child
 generations, assigned address, internal and public URLs, the declared route
@@ -938,6 +970,33 @@ Any newly qualified recreation of a stopped health-checked service must be
 limited to that proven owned service, preserve its data and volume identities,
 and refuse unknown, foreign, shared or changing ownership. Existing retirement
 confirmation does not authorize agents to delete the reported live stack.
+
+Detached publication retains the originally admitted context across probes and
+requires it at the locked route save. A publication refusal does not rewrite
+its marker from changed inputs. The checked interval and cooperative-source-
+writer limits are owned by
+[the gateway route trust contract](033-gateway-route-table-trust-contract.md#detached-admission-at-publication).
+Detached JSON also reports `activation_stage` from a closed vocabulary:
+`preparation`, `reconciliation_inventory`, `compose_activation`,
+`admission_record`, `stopped_service_recovery`, `readiness`,
+`runtime_integrations`, or `persistent_owner`. This identifies the checked
+caller boundary without exposing backend output, argv or environment. It is
+not a cause attribution, an absent-resource verdict, or readiness proof.
+
+Restore that admitted context before supported reconciliation; unavailable
+context cannot authorize recreation, cleanup or guessed exposure.
+
+The current health-check recovery interface cannot qualify service-only
+recreation. Its inspect snapshot records mount references, but does not bind
+them to an immutable service declaration, prove exclusive volume/data ownership,
+or carry a supported backend preservation plan. A recurring collision therefore
+reports those missing seams and refuses recreation. It performs no volume
+deletion; `container retire --yes` removes owned mutable volumes and is not a
+restart recovery step. The private production-command-adapter fixture
+`recurring_health_collision_refuses_recreation_through_production_adapters`
+proves the refusal after one exact transient unload and one retry. Retained file
+markers establish only fixture non-mutation, not real engine volume preservation
+or live exec/session continuity.
 
 Source and controlled private-process proofs may establish the generic
 mechanism. They do not retrospectively explain the reported exits or qualify
