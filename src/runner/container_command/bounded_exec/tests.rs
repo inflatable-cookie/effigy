@@ -1199,6 +1199,13 @@ fn observations_of(details: &serde_json::Value) -> &serde_json::Value {
     &details["refusal_observations"]
 }
 
+/// Deadline for the refusal proofs whose fixture must reach an observable
+/// point (a write, a marker, a held pipe) inside it. The deadline is
+/// absolute from entry, so the window must tolerate machine-load stalls:
+/// process spawns on this shared host once stalled for 13 seconds under
+/// machine-wide load. Healthy runs still refuse at the deadline itself.
+const REFUSAL_PROOF_BUDGET_MS: u64 = 20_000;
+
 fn assert_version_and_unknown_leader(observations: &serde_json::Value) {
     assert_eq!(
         observations["version"], BOUNDED_REFUSAL_OBSERVATIONS_VERSION,
@@ -1278,7 +1285,7 @@ fn refusal_accounting_deadline_pending_streams_report_lower_bounds() {
     let (_dir, bin_dir, repo) = fixture("refusal-pending");
     let policy = policy();
     with_fake_backend(&bin_dir, "docker", || {
-        let error = run_json(&repo, &policy, "sleep-30", &limits(400, 64, 64), 400)
+        let error = run_json(&repo, &policy, "sleep-30", &limits(5_000, 64, 64), 5_000)
             .expect_err("slow command must hit the deadline");
         let details = failure_details(&error);
         assert_eq!(details["failure"], "deadline");
@@ -1307,7 +1314,7 @@ fn refusal_accounting_deadline_pending_streams_report_lower_bounds() {
             .as_u64()
             .expect("operation clock");
         assert!(
-            attempt_elapsed >= 300,
+            attempt_elapsed >= 3_750,
             "attempt ran to the deadline: {observations}"
         );
         assert_eq!(
@@ -1337,8 +1344,8 @@ fn refusal_accounting_pending_progress_is_a_lower_bound_not_zero() {
             &repo,
             &policy,
             "pending-flood",
-            &limits(3_000, 1_048_576, 64),
-            3_000,
+            &limits(REFUSAL_PROOF_BUDGET_MS, 1_048_576, 64),
+            REFUSAL_PROOF_BUDGET_MS,
         )
         .expect_err("the sleeping leader must hit the deadline");
         let details = failure_details(&error);
@@ -1395,8 +1402,8 @@ fn refusal_accounting_leader_exit_with_inherited_writer_keeps_partial_output_vis
             &repo,
             &policy,
             "partial-both-hold",
-            &limits(3_000, 64, 64),
-            3_000,
+            &limits(REFUSAL_PROOF_BUDGET_MS, 64, 64),
+            REFUSAL_PROOF_BUDGET_MS,
         )
         .expect_err("an inherited writer must not defeat the deadline");
         let details = failure_details(&error);
@@ -1450,8 +1457,8 @@ fn refusal_accounting_exact_eof_and_pending_states_coexist_in_one_snapshot() {
             &repo,
             &policy,
             "eof-hold-stderr",
-            &limits(3_000, 64, 64),
-            3_000,
+            &limits(REFUSAL_PROOF_BUDGET_MS, 64, 64),
+            REFUSAL_PROOF_BUDGET_MS,
         )
         .expect_err("a held stderr must keep the operation pending");
         let details = failure_details(&error);
@@ -1518,8 +1525,14 @@ fn refusal_accounting_secret_partial_output_never_reaches_any_surface() {
     let (_dir, bin_dir, repo) = fixture("refusal-secrets");
     let policy = policy();
     with_fake_backend(&bin_dir, "docker", || {
-        let error = run_json(&repo, &policy, "hang-secrets", &limits(800, 64, 64), 800)
-            .expect_err("the hanging secret command must hit the deadline");
+        let error = run_json(
+            &repo,
+            &policy,
+            "hang-secrets",
+            &limits(REFUSAL_PROOF_BUDGET_MS, 64, 64),
+            REFUSAL_PROOF_BUDGET_MS,
+        )
+        .expect_err("the hanging secret command must hit the deadline");
         let human = error.to_string();
         let json = error.json_error_details().expect("json details");
         let details = failure_details(&error);
