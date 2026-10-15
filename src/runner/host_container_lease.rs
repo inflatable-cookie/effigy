@@ -54,12 +54,56 @@ pub(in crate::runner) fn refresh_host_container_lease_for_task_activation(
     if host_container_lease_disabled() {
         return Ok(false);
     }
+    // A stack admitted by detached `container up` is persistent: a task that
+    // reuses or restarts it must not attach an idle-shutdown lease, and an
+    // older lease no longer applies.
+    if detached_owner_recorded(repo_root, policy) {
+        clear_host_container_lease(repo_root, policy)?;
+        return Ok(false);
+    }
     let had_active_lease = has_active_host_container_lease(repo_root, policy)?;
     if had_active_lease || !system_was_running {
         refresh_host_container_lease(repo_root, policy)?;
         return Ok(true);
     }
     Ok(false)
+}
+
+fn detached_owner_recorded(repo_root: &Path, policy: &EffectiveContainerPolicy) -> bool {
+    persistent_owner_path(repo_root, policy).is_file()
+}
+
+/// An explicit `effigy container up` that left the stack running owns it
+/// persistently. Task activation never writes this; `container down` clears it.
+pub(in crate::runner) fn mark_persistent_container_owner(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<(), RunnerError> {
+    fs::create_dir_all(host_container_lease_dir(repo_root, policy))
+        .map_err(|error| RunnerError::task_invocation_failed_write(repo_root, error))?;
+    let path = persistent_owner_path(repo_root, policy);
+    fs::write(&path, b"")
+        .map_err(|error| RunnerError::task_invocation_failed_write(&path, error))?;
+    clear_host_container_lease(repo_root, policy)
+}
+
+pub(in crate::runner) fn clear_persistent_container_owner(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<(), RunnerError> {
+    let path = persistent_owner_path(repo_root, policy);
+    match fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(RunnerError::task_invocation_failed_write(&path, error)),
+    }
+}
+
+fn persistent_owner_path(repo_root: &Path, policy: &EffectiveContainerPolicy) -> PathBuf {
+    host_container_lease_dir(repo_root, policy).join(format!(
+        "{}.persistent",
+        sanitize_lease_path_component(&policy.name)
+    ))
 }
 
 pub(super) fn refresh_host_container_lease(
@@ -101,7 +145,7 @@ pub(in crate::runner) fn emit_host_container_lease_notice(container_name: &str) 
     let color_enabled =
         resolve_color_enabled(OutputMode::from_env(), std::io::stderr().is_terminal());
     eprintln!(
-        "{} temporary container lease active for `{container_name}`; idle shutdown in {timeout} unless reused or kept up explicitly",
+        "{} temporary container lease active for `{container_name}`; idle shutdown in {timeout} unless reused. Run `effigy container up --detach` to keep it running, or set {DISABLE_HOST_CONTAINER_LEASE_ENV}=1",
         style_text(color_enabled, Theme::default().label, "[info]")
     );
 }
@@ -423,6 +467,11 @@ fn reap_host_container_lease(
             ));
             continue;
         }
+        // The stack gained a persistent detached owner while this lease ran.
+        if detached_owner_recorded(repo_root, &policy) {
+            clear_host_container_lease(repo_root, &policy)?;
+            return Ok(());
+        }
         if is_primary_service_running(repo_root, &policy)? {
             let _ = shutdown_container(repo_root, &policy);
         }
@@ -622,6 +671,49 @@ mod tests {
             refresh_host_container_lease_for_task_activation(&repo_root, &test_policy(), true)
                 .expect("refresh lease");
         assert!(!refreshed);
+    }
+
+    #[test]
+    fn task_activation_never_leases_a_detached_owned_stack() {
+        let repo_root = std::env::temp_dir().join(format!(
+            "effigy-host-lease-detached-owner-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&repo_root).expect("mkdir repo");
+        let lease_home = repo_root.join("lease-home");
+        std::fs::create_dir_all(&lease_home).expect("mkdir lease home");
+        let _env = crate::contract_test_support::EnvGuard::set_many(&[
+            (
+                "EFFIGY_TEST_HOST_CONTAINER_LEASE_HOME",
+                Some(lease_home.display().to_string()),
+            ),
+            (
+                "EFFIGY_DISABLE_HOST_CONTAINER_LEASE_REAPER",
+                Some("1".to_owned()),
+            ),
+        ]);
+        let policy = test_policy();
+        // An earlier task lease, then an explicit `container up` takes over.
+        super::refresh_host_container_lease(&repo_root, &policy).expect("earlier lease");
+        super::mark_persistent_container_owner(&repo_root, &policy)
+            .expect("explicit container up owns the stack");
+
+        for system_was_running in [false, true] {
+            let refreshed = refresh_host_container_lease_for_task_activation(
+                &repo_root,
+                &policy,
+                system_was_running,
+            )
+            .expect("refresh lease");
+            assert!(!refreshed, "a detached-owned stack is never leased");
+        }
+        assert!(
+            !super::host_container_lease_path(&repo_root, &policy).exists(),
+            "the earlier temporary lease no longer applies"
+        );
     }
 
     #[test]

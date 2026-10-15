@@ -960,6 +960,7 @@ fn run_container_down_adapter(
     )
     .map_err(RunnerError::from)?;
     clear_partial_activation(repo_root, &policy)?;
+    crate::runner::host_container_lease::clear_persistent_container_owner(repo_root, &policy)?;
     Ok(output)
 }
 

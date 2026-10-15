@@ -891,6 +891,11 @@ Default lease behavior:
 - the runtime shuts down after the lease expires unless the user explicitly
   keeps it up through `effigy container up`, `effigy dev`, or another owned
   session
+- an explicit `effigy container up` that leaves the stack running makes it
+  persistent: later tasks that reuse or restart it never attach a lease, and
+  any earlier lease is dropped. `effigy container down` ends that ownership.
+- the notice that announces a lease names `effigy container up --detach` and
+  `EFFIGY_DISABLE_HOST_CONTAINER_LEASE=1` as the ways to keep the stack
 
 The goal is one warm-runtime contract for non-shell tasks instead of separate
 behavior for deferred versus explicit container routing.

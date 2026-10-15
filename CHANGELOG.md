@@ -227,6 +227,11 @@ During v0.x, MINOR bumps may include breaking changes.
   owner, and a finishing run never removes or refreshes a successor's lock. An
   unparsable lock is reclaimed only after a short grace period, so a lock still
   being written by an older Effigy is not stolen.
+- A container task no longer attaches a 5-minute idle-shutdown lease to a stack
+  you brought up explicitly with `effigy container up`, and a pending lease is
+  dropped when you do. Previously a task that reused or restarted such a stack
+  could tear the whole stack down five minutes later. The lease notice now names
+  `effigy container up --detach` and `EFFIGY_DISABLE_HOST_CONTAINER_LEASE=1`.
 - `effigy doctor` no longer reports `{ task = "defer …" }` and other builtin
   command references as unresolved tasks, and accepts every top-level manifest
   table (`isolation`, `state`, `deploy`, `data`, `env_schema`, `qa`). A manifest
