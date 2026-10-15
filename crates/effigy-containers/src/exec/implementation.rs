@@ -325,7 +325,7 @@ mod compose_binding_label_tests {
 #[cfg(test)]
 mod legacy_admission_tests {
     use std::collections::BTreeSet;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     use effigy_manifest::{
         ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerSecretDelivery,
@@ -335,6 +335,8 @@ mod legacy_admission_tests {
 
     use super::{OwnershipContext, RunningComposeContainer};
     use crate::{EffectiveComposeSource, EffectiveContainerPolicy};
+
+    const WORKING_DIR: &str = "/workspace";
 
     fn policy(project: &str) -> EffectiveContainerPolicy {
         EffectiveContainerPolicy {
@@ -374,10 +376,10 @@ mod legacy_admission_tests {
         }
     }
 
-    fn unscoped_context() -> OwnershipContext {
+    fn unscoped_context(checkout: &Path) -> OwnershipContext {
         OwnershipContext {
             declared: BTreeSet::from(["app".to_owned()]),
-            canonical: PathBuf::from("/repo"),
+            canonical: checkout.to_path_buf(),
             scope_token: None,
         }
     }
@@ -388,13 +390,13 @@ mod legacy_admission_tests {
             status: "Up 1 minute".to_owned(),
             ports: vec![],
             project_name: Some("acme".to_owned()),
-            working_dir: Some("/repo".to_owned()),
+            working_dir: Some(WORKING_DIR.to_owned()),
             service: Some("app".to_owned()),
             oneoff: false,
         }
     }
 
-    fn inspect(project: &str, labels: &Value) -> Vec<u8> {
+    fn inspect(project: &str, labels: &Value, mounts: &Value) -> Vec<u8> {
         let mut merged = json!({
             "com.docker.compose.project": project,
             "com.docker.compose.service": "app",
@@ -408,33 +410,104 @@ mod legacy_admission_tests {
             "Name": "/acme-app-1",
             "State": {"Status": "running", "Running": true},
             "Config": {"Labels": merged},
+            "Mounts": mounts,
         }]))
         .expect("inspect json")
     }
 
     #[test]
-    fn legacy_unlabelled_admission_still_requires_this_project() {
-        let context = unscoped_context();
+    fn legacy_unlabelled_admission_requires_identity_and_this_checkout_mount() {
+        let checkout = tempfile::tempdir().expect("checkout fixture");
+        let canonical = checkout.path().canonicalize().expect("canonical checkout");
+        let context = unscoped_context(&canonical);
         let row = listed_row();
         let policy = policy("acme");
-        // A pre-label container of this project and service is admitted.
-        assert!(context.admits_legacy_unlabelled(&policy, &row, &inspect("acme", &json!({}))));
+        let working_dir = Path::new(WORKING_DIR);
+        let bind = json!([{
+            "Type": "bind",
+            "Source": canonical.to_string_lossy(),
+            "Destination": WORKING_DIR,
+        }]);
+        // Full identity plus a bind mount of this checkout at the policy
+        // working directory is the only positive evidence.
+        assert!(context.admits_legacy_unlabelled(
+            &policy,
+            working_dir,
+            &row,
+            &inspect("acme", &json!({}), &bind)
+        ));
         // A mismatched inspected project is never admitted by label absence.
-        assert!(!context.admits_legacy_unlabelled(&policy, &row, &inspect("foreign", &json!({}))));
+        assert!(!context.admits_legacy_unlabelled(
+            &policy,
+            working_dir,
+            &row,
+            &inspect("foreign", &json!({}), &bind)
+        ));
         // An ownership label restores the strict checkout/scope proof.
         assert!(!context.admits_legacy_unlabelled(
             &policy,
+            working_dir,
             &row,
             &inspect(
                 "acme",
-                &json!({"com.docker.compose.project.working_dir": "/elsewhere"})
+                &json!({"com.docker.compose.project.working_dir": "/elsewhere"}),
+                &bind
             )
         ));
         // A one-off container is never admitted.
         assert!(!context.admits_legacy_unlabelled(
             &policy,
+            working_dir,
             &row,
-            &inspect("acme", &json!({"com.docker.compose.oneoff": "true"}))
+            &inspect("acme", &json!({"com.docker.compose.oneoff": "true"}), &bind)
+        ));
+        // No mount, no evidence.
+        assert!(!context.admits_legacy_unlabelled(
+            &policy,
+            working_dir,
+            &row,
+            &inspect("acme", &json!({}), &json!([]))
+        ));
+        // A bind mount at another destination is not this checkout's evidence.
+        let other_destination = json!([{
+            "Type": "bind",
+            "Source": canonical.to_string_lossy(),
+            "Destination": "/elsewhere",
+        }]);
+        assert!(!context.admits_legacy_unlabelled(
+            &policy,
+            working_dir,
+            &row,
+            &inspect("acme", &json!({}), &other_destination)
+        ));
+        // A non-bind mount of this checkout does not prove ownership.
+        let named = json!([{
+            "Type": "volume",
+            "Source": "acme-data",
+            "Destination": WORKING_DIR,
+        }]);
+        assert!(!context.admits_legacy_unlabelled(
+            &policy,
+            working_dir,
+            &row,
+            &inspect("acme", &json!({}), &named)
+        ));
+        // A mount of a different checkout is not evidence either.
+        let foreign_checkout = tempfile::tempdir().expect("foreign checkout fixture");
+        let foreign = foreign_checkout
+            .path()
+            .canonicalize()
+            .expect("canonical foreign checkout");
+        let foreign_bind = json!([{
+            "Type": "bind",
+            "Source": foreign.to_string_lossy(),
+            "Destination": WORKING_DIR,
+        }]);
+        assert!(!context.admits_legacy_unlabelled(
+            &policy,
+            working_dir,
+            &row,
+            &inspect("acme", &json!({}), &foreign_bind)
         ));
     }
 }
@@ -512,6 +585,16 @@ pub fn running_stack_admits_reactivation(
     deadline: Instant,
 ) -> Result<(), ContainerExecError> {
     let ownership = OwnershipContext::resolve(repo_root, policy)?;
+    // A pre-label container is adopted only with positive ownership evidence:
+    // its inspected identity plus a bind mount of this checkout at the policy
+    // working directory. Resolve that directory once for the whole stack.
+    let working_dir = crate::load_container_exec_working_dir(repo_root, Some(policy.name.as_str()))
+        .map_err(|error| ContainerExecError::Failure {
+            command: "resolve container working directory".to_owned(),
+            code: None,
+            stdout: String::new(),
+            stderr: format!("running container ownership cannot be verified: {error}"),
+        })?;
     for row in rows
         .iter()
         .filter(|row| row.project_name.as_deref() == Some(&policy.project_name))
@@ -532,7 +615,7 @@ pub fn running_stack_admits_reactivation(
         if ownership
             .verify_inspected(repo_root, policy, row, &output.stdout)
             .is_ok()
-            || ownership.admits_legacy_unlabelled(policy, row, &output.stdout)
+            || ownership.admits_legacy_unlabelled(policy, &working_dir, row, &output.stdout)
         {
             continue;
         }
@@ -660,10 +743,12 @@ impl OwnershipContext {
     /// no checkout, working-directory or scope label at all. Only an unscoped
     /// checkout may treat one as its own, matching what earlier releases did.
     /// The listed identity is still verified: absent ownership labels relax
-    /// only the checkout/scope proof, never the container's identity.
+    /// only the checkout/scope proof, never the container's identity or the
+    /// positive bind-mount evidence.
     fn admits_legacy_unlabelled(
         &self,
         policy: &EffectiveContainerPolicy,
+        working_dir: &Path,
         row: &RunningComposeContainer,
         inspect_stdout: &[u8],
     ) -> bool {
@@ -698,6 +783,7 @@ impl OwnershipContext {
         };
         let (_, oneoff_label_ok) = compose_binding_labels(labels_value);
         self.inspected_identity_matches(policy, row, &identity, oneoff_label_ok)
+            && inspected_mounts_checkout(&identity, &self.canonical, working_dir)
     }
 
     /// The identity fields every admitted container must satisfy regardless of
@@ -866,6 +952,28 @@ impl OwnershipContext {
             backend: crate::compose::resolve_compose_backend_for_repo(repo_root, policy),
         })
     }
+}
+
+/// Positive ownership evidence for a pre-label container: a bind mount whose
+/// source canonicalizes to exactly this checkout and whose destination is the
+/// policy working directory. A missing, non-bind, differently-targeted or
+/// other-checkout mount is not evidence, so the caller must refuse.
+fn inspected_mounts_checkout(
+    identity: &super::healthcheck_timer::InspectedContainerIdentity,
+    checkout: &Path,
+    working_dir: &Path,
+) -> bool {
+    identity.volume_refs.iter().any(|mount| {
+        mount.mount_type.as_deref() == Some("bind")
+            && mount.destination.as_deref().map(Path::new) == Some(working_dir)
+            && mount
+                .source
+                .as_deref()
+                .map(Path::new)
+                .and_then(|source| source.canonicalize().ok())
+                .as_deref()
+                == Some(checkout)
+    })
 }
 
 pub fn list_compose_containers_for_project_including_stopped(

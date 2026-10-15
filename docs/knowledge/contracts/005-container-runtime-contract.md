@@ -200,10 +200,12 @@ when a running stack has no record at all (a stack started by an earlier
 release, by a container task, or whose record write failed), detached `up`
 first proves that every running project container belongs to this checkout and
 scope, then retires the stale record and admits the current inputs with an
-ordinary Compose up. Containers with no checkout, working-directory or scope
-label count as this checkout's only when the checkout itself is unscoped, which
-matches earlier releases. Anything not proven refuses with no Compose up,
-restart or publication, and names `container down` for the owner.
+ordinary Compose up. A container with no checkout, working-directory or scope
+label is adopted only on positive evidence: it must carry this project's exact
+full identity (listed name, project, declared service, running, not one-off) and
+bind-mount this checkout at the policy working directory. Absent labels are not
+proof by themselves. Anything not proven refuses with no Compose up, restart or
+publication, and names `container down` for the owner.
 
 Operator ruling (Tom, 2026-10-15, v0.15.0 pre-release audit): "Restore for
 complete stacks". Detached `up` must not refuse a complete stack whose inputs
