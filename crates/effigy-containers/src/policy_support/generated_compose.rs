@@ -5,7 +5,9 @@ use effigy_catalog::{
     assembly::ServiceDeclaration, volumes::ManagedVolume, ComposeAssembler, ComposeOutput,
 };
 use effigy_core::runtime_dir::{ensure_effigy_ignored_in_git_root, git_local_exclude_path};
-use effigy_gateway::loopback::{project_loopback_identity, LoopbackRegistry};
+use effigy_gateway::loopback::{
+    project_loopback_identity, reserved_loopback_ips_for_other_projects, LoopbackRegistry,
+};
 use effigy_gateway::ports::PortRegistry;
 use effigy_gateway::routes::RouteTable;
 use effigy_gateway::routes::RouteTableLock;
@@ -1213,8 +1215,29 @@ fn load_or_allocate_loopback_ip_with_inventory(
         .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))?;
     let mut registry = LoopbackRegistry::load(&path)
         .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))?;
+    // Reserve every other project's container-route `dns_ip` with the one
+    // shared routine gateway registration also calls. Pruning drops registry
+    // assignments for stacks that are not running, but their routes stay in
+    // `routes.json` with a gateway TCP listener still bound, so handing out
+    // such an IP here would publish this stack on an address a stale listener
+    // holds while registration reallocates elsewhere.
+    let (route_table, route_table_error) =
+        match RouteTable::load(&home.join("gateway").join("routes.json")) {
+            Ok(route_table) => (Some(route_table), None),
+            Err(error) => (None, Some(error.to_string())),
+        };
+    let reserved = route_table
+        .as_ref()
+        .map_or_else(std::collections::HashSet::new, |route_table| {
+            reserved_loopback_ips_for_other_projects(route_table, source)
+        });
     if let Some(existing) = registry.get(identity) {
-        return Ok(Some(existing.ip));
+        if !reserved.contains(&existing.ip) {
+            return Ok(Some(existing.ip));
+        }
+        // The stored IP now belongs to another project's route listener.
+        // Drop it so the fresh allocation below agrees with registration.
+        registry.deallocate(identity);
     }
     let migrated_legacy_identity = legacy_identity
         .and_then(|legacy| {
@@ -1224,6 +1247,7 @@ fn load_or_allocate_loopback_ip_with_inventory(
                 .map(|assignment| (legacy, assignment))
         })
         .filter(|(_, assignment)| assignment.scope == source)
+        .filter(|(_, assignment)| !reserved.contains(&assignment.ip))
         .filter(|(legacy, assignment)| {
             !registry.assignments.iter().any(|(other_identity, other)| {
                 other_identity.as_str() != *legacy && other.ip == assignment.ip
@@ -1243,12 +1267,15 @@ fn load_or_allocate_loopback_ip_with_inventory(
         LoopbackPruneOutcome::default()
     } else {
         let inventory = discover_inventory();
-        match RouteTable::load(&home.join("gateway").join("routes.json")) {
-            Ok(route_table) => prune_loopback_assignments(&mut registry, &route_table, &inventory),
-            Err(error) => LoopbackPruneOutcome {
+        match route_table.as_ref() {
+            Some(route_table) => {
+                prune_loopback_assignments(&mut registry, &route_table, &inventory)
+            }
+            None => LoopbackPruneOutcome {
                 changed: false,
                 skipped_reason: Some(format!(
-                    "skipped stale loopback reclamation because the gateway route inventory could not be read; all uncertain assignments were preserved ({error})"
+                    "skipped stale loopback reclamation because the gateway route inventory could not be read; all uncertain assignments were preserved ({})",
+                    route_table_error.as_deref().unwrap_or("unknown error")
                 )),
             },
         }
@@ -1262,7 +1289,7 @@ fn load_or_allocate_loopback_ip_with_inventory(
         warn_skipped_reclamation(reason);
     }
     let assignment = registry
-        .allocate(identity, source)
+        .allocate_avoiding(identity, source, &reserved)
         .map_err(|error| {
             let detail = match &prune.skipped_reason {
                 Some(reason) => format!("{error}; {reason}"),
@@ -1774,6 +1801,122 @@ mod tests {
             assert_eq!(
                 LoopbackRegistry::load(&path).expect("reload").assignments,
                 before
+            );
+        });
+    }
+
+    fn write_stale_other_project_route_table(home: &Path, stale_ip: std::net::Ipv4Addr) {
+        let table = serde_json::json!({
+            "routes": {
+                "mysql.acowtancy-dead.test": {
+                    "domain": "mysql.acowtancy-dead.test",
+                    "dns_ip": stale_ip.to_string(),
+                    "tcp_port": 3306,
+                    "tcp_target": "127.0.0.1:23306",
+                    "source": "container",
+                    "project": "/tmp/acowtancy-dead-worktree",
+                    "tls": false,
+                    "registered": "2026-09-29T00:00:00Z"
+                }
+            }
+        });
+        let dir = home.join("gateway");
+        std::fs::create_dir_all(&dir).expect("mkdir gateway state");
+        std::fs::write(
+            dir.join("routes.json"),
+            serde_json::to_string(&table).expect("routes json"),
+        )
+        .expect("write routes.json");
+    }
+
+    #[test]
+    fn compose_generation_never_hands_out_a_stale_other_project_route_ip() {
+        use std::net::Ipv4Addr;
+
+        let _lock = crate::test_env_lock();
+        let tempdir = tempfile::tempdir().expect("test home");
+        with_test_effigy_home(tempdir.path(), || {
+            // Occupy the pool head with an unprunable shared assignment, so a
+            // reservation-blind allocator would take 127.1.0.2 next — exactly
+            // the dead worktree route's IP.
+            let mut registry = LoopbackRegistry::new();
+            registry
+                .allocate("shared:effigy-shared-keep", "/tmp/keep")
+                .expect("occupy pool head");
+            registry
+                .save(&tempdir.path().join("gateway/loopback-ips.json"))
+                .expect("save registry");
+            // The dead worktree's route still claims 127.1.0.2 with a gateway
+            // TCP listener bound. Pruning keeps the route, so generation must
+            // avoid the IP even though no registry slot holds it.
+            write_stale_other_project_route_table(tempdir.path(), Ipv4Addr::new(127, 1, 0, 2));
+
+            let identity =
+                project_loopback_identity("jal-accounts", Path::new("/tmp/jal-accounts"));
+            let ip = load_or_allocate_loopback_ip_with_inventory(
+                &identity,
+                Some("jal-accounts"),
+                "/tmp/jal-accounts",
+                RunningComposeContainerInventory::default,
+            )
+            .expect("allocate loopback IP")
+            .expect("allocated IP");
+
+            assert_eq!(ip, Ipv4Addr::new(127, 1, 0, 3));
+        });
+    }
+
+    #[test]
+    fn compose_generation_reallocates_when_a_stale_route_claims_the_stored_ip() {
+        use std::net::Ipv4Addr;
+
+        let _lock = crate::test_env_lock();
+        let tempdir = tempfile::tempdir().expect("test home");
+        with_test_effigy_home(tempdir.path(), || {
+            // Replay the incident: this stack previously stored 127.1.0.2,
+            // and a dead worktree's route now holds the same tuple with its
+            // gateway TCP listener still bound.
+            let mut registry = LoopbackRegistry::new();
+            registry
+                .allocate("project:filler:/tmp/filler", "/tmp/filler")
+                .expect("occupy pool head");
+            let identity =
+                project_loopback_identity("jal-accounts", Path::new("/tmp/jal-accounts"));
+            let stored = registry
+                .allocate(&identity, "/tmp/jal-accounts")
+                .expect("store stack IP")
+                .ip;
+            assert_eq!(stored, Ipv4Addr::new(127, 1, 0, 2));
+            registry
+                .save(&tempdir.path().join("gateway/loopback-ips.json"))
+                .expect("save registry");
+            write_stale_other_project_route_table(tempdir.path(), Ipv4Addr::new(127, 1, 0, 2));
+
+            // Incomplete runtime inventory forces prune to stand down, so only
+            // the shared reservation can move the stored assignment.
+            let ip = load_or_allocate_loopback_ip_with_inventory(
+                &identity,
+                Some("jal-accounts"),
+                "/tmp/jal-accounts",
+                || RunningComposeContainerInventory {
+                    rows: Vec::new(),
+                    failures: vec![crate::exec::RuntimeInventoryFailure {
+                        backend: "colima".to_owned(),
+                        profile: "default".to_owned(),
+                        error: "runtime ps failed".to_owned(),
+                    }],
+                },
+            )
+            .expect("allocate loopback IP")
+            .expect("allocated IP");
+
+            assert_eq!(ip, Ipv4Addr::new(127, 1, 0, 3));
+            let reloaded =
+                LoopbackRegistry::load(&tempdir.path().join("gateway/loopback-ips.json"))
+                    .expect("reload registry");
+            assert_eq!(
+                reloaded.get(&identity).map(|assignment| assignment.ip),
+                Some(Ipv4Addr::new(127, 1, 0, 3))
             );
         });
     }

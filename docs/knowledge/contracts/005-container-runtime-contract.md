@@ -758,6 +758,18 @@ capacity, but a full pool remains a capacity error that includes the discovery
 failure. Increasing the pool cannot substitute for identity and discovery
 correctness.
 
+Both allocation paths — generated Compose preparation and gateway
+registration — reserve every other project's container-route `dns_ip` through
+the one shared routine (`reserved_loopback_ips_for_other_projects`), and a
+stored assignment that collides with another project's route is reallocated
+instead of kept (Tom's 2026-10-15 papercut ruling, effigy#181). Pruning drops
+assignments for stacks that are not running while their routes stay
+registered, so without this reservation generation could publish a stack on
+an IP a stale route's gateway TCP listener still binds while registration
+reallocated elsewhere, hanging the host alias against a dead or wrong
+upstream while mapped localhost ports stayed ready. Stale-route deletion for
+missing checkouts stays with `effigy container retire --dead` (#305).
+
 Participation is decided before any `ps` discovery, without launching Docker,
 Colima, or a container. A proven-inactive optional runtime is skipped rather
 than reported as a failed inventory. Docker considers every endpoint that could

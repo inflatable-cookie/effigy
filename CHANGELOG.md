@@ -225,6 +225,17 @@ During v0.x, MINOR bumps may include breaking changes.
   1.2.0.
 
 ### Fixed
+- Effigy-managed service host aliases no longer hang while their mapped
+  localhost ports are ready. Compose generation and gateway registration now
+  share one loopback-IP reservation covering every other project's
+  container-route `dns_ip`, so a new stack never publishes on an IP a stale
+  route's gateway TCP listener still binds and both paths keep the same IP
+  for one identity. `effigy gateway status` and `effigy doctor` now report
+  TCP alias routes with a conflicting bind tuple or a missing/invalid
+  mapped-port fallback, naming the alias and the fallback; the status JSON
+  gains additive `tcp_alias_unbound_count`/`tcp_alias_unbound` fields.
+  Deleting stale routes for missing checkouts stays with
+  `effigy container retire --dead` (#305).
 - When a running Colima VM comes back from a restart with containerd and
   BuildKit stopped, `effigy container up` and container tasks now start those
   units inside the VM and continue, instead of waiting and then restarting the

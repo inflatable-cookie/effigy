@@ -17,7 +17,8 @@ use effigy_containers::{
     EffectiveDnsRoute, LoopbackPruneOutcome, SharedServiceBinding,
 };
 use effigy_gateway::loopback::{
-    project_loopback_identity, shared_loopback_identity, LoopbackRegistry,
+    project_loopback_identity, reserved_loopback_ips_for_other_projects, shared_loopback_identity,
+    LoopbackRegistry,
 };
 use effigy_gateway::registration::{check_claim, owned_by, project_scope};
 #[cfg(test)]
@@ -1262,13 +1263,11 @@ fn active_loopback_ips_for_other_projects(
     route_table: &RouteTable,
     project_path: &str,
 ) -> std::collections::HashSet<std::net::Ipv4Addr> {
-    route_table
-        .all_routes()
-        .into_iter()
-        .filter(|route| route.source == RouteSource::Container)
-        .filter(|route| route.project != project_path)
-        .filter_map(|route| route.dns_ip)
-        .collect()
+    // One shared reservation with compose generation
+    // (`effigy-containers`): both allocation paths must avoid other
+    // projects' container-route `dns_ip`s so the compose-published IP and
+    // the registered route IP stay identical for one identity.
+    reserved_loopback_ips_for_other_projects(route_table, project_path)
 }
 
 fn prune_stale_loopback_assignments_with_inventory(

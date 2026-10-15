@@ -333,6 +333,78 @@ fn gateway_repair_plan_ignores_duplicate_bind_when_upstream_matches() {
     assert!(plan.repairable_domains.is_empty());
 }
 
+fn tcp_alias_route(domain: &str, tcp_target: Option<&str>) -> (String, Route) {
+    (
+        domain.to_owned(),
+        Route {
+            domain: domain.to_owned(),
+            target: None,
+            dns_ip: Some("127.1.0.9".parse().expect("ip")),
+            tcp_port: Some(5432),
+            tcp_target: tcp_target.map(str::to_owned),
+            source: RouteSource::Container,
+            project: "/tmp/owner".to_owned(),
+            tls: false,
+            scope: None,
+            managed_listener: None,
+            registered: Utc::now(),
+        },
+    )
+}
+
+#[test]
+fn gateway_tcp_alias_unbound_routes_flags_missing_and_invalid_fallbacks() {
+    let table = RouteTable {
+        routes: [
+            tcp_alias_route("healthy.test", Some("127.0.0.1:15432")),
+            tcp_alias_route("missing.test", None),
+            tcp_alias_route("broken.test", Some("not-a-socket")),
+            (
+                "http.test".to_owned(),
+                Route {
+                    domain: "http.test".to_owned(),
+                    target: Some("127.0.0.1:18080".to_owned()),
+                    dns_ip: None,
+                    tcp_port: None,
+                    tcp_target: None,
+                    source: RouteSource::Container,
+                    project: "/tmp/owner".to_owned(),
+                    tls: false,
+                    scope: None,
+                    managed_listener: None,
+                    registered: Utc::now(),
+                },
+            ),
+        ]
+        .into_iter()
+        .collect(),
+    };
+
+    let unbound = gateway_tcp_alias_unbound_routes(&table);
+
+    assert_eq!(unbound.len(), 2);
+    assert_eq!(unbound[0].domain, "broken.test");
+    assert!(unbound[0].reason.contains("invalid mapped-port fallback"));
+    assert_eq!(unbound[1].domain, "missing.test");
+    assert!(unbound[1].reason.contains("missing mapped-port fallback"));
+}
+
+#[test]
+fn gateway_tcp_alias_unbound_lines_name_alias_and_fallback() {
+    let table = RouteTable {
+        routes: [tcp_alias_route("missing.test", None)]
+            .into_iter()
+            .collect(),
+    };
+
+    let lines = render_gateway_tcp_alias_unbound_lines(&gateway_tcp_alias_unbound_routes(&table));
+
+    assert_eq!(lines.len(), 1);
+    assert!(lines[0].contains("`missing.test`"));
+    assert!(lines[0].contains("127.1.0.9:5432"));
+    assert!(lines[0].contains("<missing>"));
+}
+
 fn gateway_status_fixture(pid: u32) -> (tempfile::TempDir, VerifiedGatewayStatus) {
     let dir = tempfile::tempdir().expect("fixture directory");
     let pid_path = dir.path().join("gateway.pid");

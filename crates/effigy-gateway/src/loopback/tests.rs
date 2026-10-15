@@ -111,3 +111,76 @@ fn allocate_avoiding_skips_reserved_ips() {
 
     assert_eq!(assignment.ip, Ipv4Addr::new(127, 1, 0, 2));
 }
+
+#[test]
+fn reserved_ips_cover_only_other_projects_container_routes() {
+    use crate::routes::{Route, RouteSource, RouteTable};
+    use chrono::Utc;
+
+    fn alias(domain: &str, project: &str, ip: Ipv4Addr, source: RouteSource) -> (String, Route) {
+        (
+            domain.to_owned(),
+            Route {
+                domain: domain.to_owned(),
+                target: None,
+                dns_ip: Some(ip),
+                tcp_port: Some(5432),
+                tcp_target: Some("127.0.0.1:15432".to_owned()),
+                source,
+                project: project.to_owned(),
+                tls: false,
+                scope: None,
+                managed_listener: None,
+                registered: Utc::now(),
+            },
+        )
+    }
+
+    let table = RouteTable {
+        routes: [
+            alias(
+                "stale.test",
+                "/projects/stale",
+                Ipv4Addr::new(127, 1, 0, 2),
+                RouteSource::Container,
+            ),
+            alias(
+                "own.test",
+                "/projects/mine",
+                Ipv4Addr::new(127, 1, 0, 3),
+                RouteSource::Container,
+            ),
+            alias(
+                "manual.test",
+                "/projects/stale",
+                Ipv4Addr::new(127, 1, 0, 4),
+                RouteSource::Manual,
+            ),
+        ]
+        .into_iter()
+        .collect(),
+    };
+
+    let reserved = reserved_loopback_ips_for_other_projects(&table, "/projects/mine");
+
+    assert_eq!(
+        reserved,
+        [Ipv4Addr::new(127, 1, 0, 2)].into_iter().collect()
+    );
+}
+
+#[test]
+fn deallocate_if_reserved_drops_only_colliding_identities() {
+    let mut registry = LoopbackRegistry::new();
+    registry
+        .allocate("colliding", "/projects/mine")
+        .expect("colliding");
+    registry.allocate("clear", "/projects/mine").expect("clear");
+    let reserved = [Ipv4Addr::new(127, 1, 0, 1)].into_iter().collect();
+
+    assert!(registry.deallocate_if_reserved("colliding", &reserved));
+    assert!(!registry.deallocate_if_reserved("clear", &reserved));
+    assert!(!registry.deallocate_if_reserved("missing", &reserved));
+    assert!(registry.get("colliding").is_none());
+    assert!(registry.get("clear").is_some());
+}
