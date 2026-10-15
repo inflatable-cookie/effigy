@@ -648,6 +648,7 @@
   { id = "direct-compose-ownership-override", run = "cargo test -p effigy-containers --lib direct_compose_ownership_override -- --nocapture", timeout_ms = 240000 },
   { id = "rhai-container-helper-admission", run = "cargo test -p effigy --lib run_manifest_task_run_array_rhai_steps_support_container_helpers -- --nocapture", timeout_ms = 600000 },
   { id = "direct-builder-no-port-activation", run = "cargo test -p effigy --lib direct_builder_activation_tests:: -- --nocapture", timeout_ms = 600000 },
+  { id = "direct-compose-admission-drift", run = "cargo test -p effigy-containers --lib policy::admission::drift_tests:: -- --nocapture", timeout_ms = 600000 },
 ]
 "check:workspace:artifact-freshness" = [
   "cargo check -p effigy-containers -p effigy --lib --tests --bins --profile test",

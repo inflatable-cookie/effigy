@@ -181,3 +181,111 @@ pub(crate) fn backend_name(backend: crate::compose::ComposeBackend) -> &'static 
         crate::compose::ComposeBackend::ColimaNerdctl => "colima-nerdctl",
     }
 }
+
+#[cfg(test)]
+mod drift_tests {
+    use super::*;
+    use crate::policy::load::load_admitted_container_policy;
+
+    /// Private direct-Compose checkout with a no-port builder. Only the manifest
+    /// and compose file are written, and the fresh directory is never a real repo.
+    fn direct_builder_checkout(label: &str) -> PathBuf {
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let root = std::env::temp_dir()
+            .canonicalize()
+            .expect("canonical temp dir")
+            .join(format!(
+                "effigy-admission-drift-{label}-{}-{}",
+                std::process::id(),
+                COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("infra/release")).expect("mkdir compose dir");
+        std::fs::write(
+            root.join("infra/release/docker-compose.yml"),
+            "services:\n  builder:\n    image: example\n",
+        )
+        .expect("write compose");
+        std::fs::write(
+            root.join("effigy.toml"),
+            r#"[containers.builder]
+driver = "colima"
+startup = "detached"
+profile = "dev"
+compose_file = "infra/release/docker-compose.yml"
+project_name = "admission-drift-builder"
+primary_service = "builder"
+"#,
+        )
+        .expect("write manifest");
+        root
+    }
+
+    #[test]
+    fn direct_builder_admission_refuses_rendered_override_drift() {
+        let root = direct_builder_checkout("override");
+        let marker_root = root.join("markers");
+        let (policy, admission) =
+            load_admitted_container_policy(&root, Some("builder"), &marker_root)
+                .expect("admit direct builder");
+        admission
+            .context_for_policy(&policy)
+            .expect("fresh admission");
+        let rendered_override = policy.compose_files[1].clone();
+        assert!(rendered_override.ends_with("builder.ownership.compose.yml"));
+
+        std::fs::write(&rendered_override, "services: {}\n").expect("drift override");
+
+        assert!(
+            admission.verify().is_err(),
+            "a changed rendered override must refuse admission"
+        );
+    }
+
+    #[test]
+    fn direct_builder_admission_refuses_declared_compose_drift() {
+        let root = direct_builder_checkout("declaration");
+        let marker_root = root.join("markers");
+        let (policy, admission) =
+            load_admitted_container_policy(&root, Some("builder"), &marker_root)
+                .expect("admit direct builder");
+        admission
+            .context_for_policy(&policy)
+            .expect("fresh admission");
+
+        std::fs::write(
+            root.join("infra/release/docker-compose.yml"),
+            "services:\n  builder:\n    image: other\n",
+        )
+        .expect("drift declaration");
+
+        assert!(
+            admission.verify().is_err(),
+            "a changed declared compose file must refuse admission"
+        );
+    }
+
+    #[test]
+    fn direct_builder_admission_refuses_manifest_source_drift() {
+        let root = direct_builder_checkout("manifest");
+        let marker_root = root.join("markers");
+        let (policy, admission) =
+            load_admitted_container_policy(&root, Some("builder"), &marker_root)
+                .expect("admit direct builder");
+        admission
+            .context_for_policy(&policy)
+            .expect("fresh admission");
+
+        let manifest = std::fs::read_to_string(root.join("effigy.toml")).expect("read manifest");
+        std::fs::write(
+            root.join("effigy.toml"),
+            format!("{manifest}\n# source drift\n"),
+        )
+        .expect("drift manifest");
+
+        assert!(
+            admission.verify().is_err(),
+            "a changed manifest source must refuse admission"
+        );
+    }
+}
