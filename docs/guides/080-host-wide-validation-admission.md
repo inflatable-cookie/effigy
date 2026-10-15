@@ -123,6 +123,15 @@ private authenticated parent. It treats inherited-output leaks as failures and
 retains a full native diagnostic stream separately from the scheduler's output
 tail. A passing family run qualifies that family, not the full repository QA.
 
+For workspace fixture qualification, run `test:workspace:artifact-freshness`
+and `test:workspace:catalog-handoff`, then set
+`EFFIGY_HOST_RUN_PRIVATE_SERVER` to the reviewed clean pinned Queue fixture and
+run `test:workspace:artifact-parent`. It derives the entire artifact membership
+and the catalog execution matrix from the maintained selectors, retains per-case
+diagnostics and refuses incomplete execution. See the [fixture boundary inventory](../knowledge/contracts/049-heavy-validation-admission-contract.md#workspace-fixture-admission-qualification).
+These checks use private fake backends and do not build or install a Linux
+workspace artifact.
+
 ## Caller-controlled request recovery
 
 A caller that may restart or lose the submit reply can choose a stable UUID

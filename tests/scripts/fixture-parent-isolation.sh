@@ -44,7 +44,7 @@ filter='test(fixture_parent_runner_selector_succeeds_with_authenticated_parent_r
 if [[ "${1:-}" == contracts ]]; then
   filter='test(complete_contract_fixture_family_succeeds_with_authenticated_parent_root) | test(full_contract_fixture_family_succeeds_with_authenticated_parent_root) | test(forged_expired_and_outside_root_tokens_exit_77_and_never_queue)'
 elif [[ "${1:-}" == workspace ]]; then
-  filter='test(fixture_parent_runner_selector_succeeds_with_authenticated_parent_root) | test(forged_expired_and_outside_root_tokens_exit_77_and_never_queue)'
+  filter='test(workspace_fixture_family_) | test(workspace_parent_membership_) | test(forged_expired_and_outside_root_tokens_exit_77_and_never_queue)'
 elif [[ "${1:-}" == cli ]]; then
   filter='test(binary_cli_fixtures_succeed_with_authenticated_parent_root) | test(complete_cli_fixture_family_succeeds_with_authenticated_parent_root)'
 elif [[ "${1:-}" == all-cli ]]; then
@@ -53,16 +53,23 @@ elif [[ "${1:-}" == non-cli ]]; then
   filter='test(fixture_parent_runner_selector_succeeds_with_authenticated_parent_root) | test(binary_cli_fixtures_succeed_with_authenticated_parent_root) | test(forged_expired_and_outside_root_tokens_exit_77_and_never_queue) | test(admitted_container_selector_stays_on_host_and_executes_its_resolved_payload)'
 fi
 
+ignored_options=(--run-ignored only)
+failure_options=(--max-fail 1:immediate)
+if [[ "${1:-}" == workspace ]]; then
+  failure_options=(--no-fail-fast)
+  ignored_options=(--run-ignored all)
+fi
+
 EFFIGY_REQUIRE_HOST_RUN_PRIVATE_SERVER=1 \
   cargo nextest run \
     --config-file tests/config/gateway-nextest.toml \
     --user-config-file none \
     -p effigy \
     --test host_scheduler_integration \
-    --run-ignored only \
+    "${ignored_options[@]}" \
     --filterset "$filter" \
     --no-capture \
-    --max-fail 1:immediate \
+    "${failure_options[@]}" \
     --retries 0 \
     --no-tests fail \
     -j 1

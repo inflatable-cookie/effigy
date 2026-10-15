@@ -496,8 +496,10 @@ fn run_manifest_task_managed_stream_executes_rhai_setup_in_process() {
 fn run_manifest_task_managed_stream_container_bound_rhai_setup_routes_before_process_launch() {
     let _guard = lock_test();
     let _env = managed_stream_env();
-    let temp = tempfile::tempdir().expect("private managed workload fixture");
-    let root = fs::canonicalize(temp.path()).expect("canonical private workload");
+    let root = fs::canonicalize(crate::runner::tests::prelude::temp_workspace(
+        "managed-stream-container-rhai-setup",
+    ))
+    .expect("canonical private workload");
     setup_managed_stream_container_rhai_setup(&root);
     let _runtime = install_fake_container_runtime(&root);
     let fake_effigy = write_fake_effigy(&root);

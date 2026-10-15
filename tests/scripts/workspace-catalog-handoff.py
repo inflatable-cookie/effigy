@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import traceback
 
 BINARY = str(Path(sys.argv[1]).resolve())
 
@@ -30,6 +31,8 @@ def guest_path(value):
         return root / 'guest-staging' / value[len('/tmp/'):]
     raise RuntimeError('unowned guest staging path')
 def call(command, env):
+    # The test-support CLI must resolve the same private home as the pack store.
+    env = dict(env, EFFIGY_TEST_CONTAINERS_HOME=str(pathlib.Path(env['HOME']) / '.effigy'))
     return subprocess.call(command, env=env, cwd=root / 'repo')
 if 'up' in args:
     if mode == 'recreate' and not (root / 'recreated').exists():
@@ -46,6 +49,22 @@ if 'ps' in args:
         print((root / 'generation').read_text())
     elif '--format' in args:
         print('catalog-web-app-1\tUp\t\tcatalog-web\t' + str(root / 'repo') + '\tapp\tfalse')
+    sys.exit(0)
+if 'inspect' in args:
+    identity = (root / 'generation').read_text()
+    requested = args[args.index('inspect') + 1]
+    if requested not in (identity, 'catalog-web-app-1'):
+        sys.exit(1)
+    print(json.dumps([{
+        'Id': identity, 'Name': '/catalog-web-app-1',
+        'State': {'Status': 'running', 'Running': True},
+        'Config': {'Labels': {
+            'com.docker.compose.project': 'catalog-web',
+            'com.docker.compose.service': 'app',
+            'com.docker.compose.oneoff': 'False',
+            'com.effigy.checkout': str(root / 'repo'),
+        }}, 'NetworkSettings': {'Ports': {}},
+    }]))
     sys.exit(0)
 if 'cp' in args:
     source, target = args[args.index('cp') + 1:]
@@ -78,7 +97,12 @@ if 'exec' not in args:
     # Version/read-only backend inventory only; never run another executable.
     sys.exit(0)
 i = args.index('exec') + 1
-env = os.environ.copy()
+# This process is the host engine client and legitimately inherits host
+# authority. A real container receives only declared exec environment, not the
+# client's environment. Preserve private adapter controls, then apply -e below.
+env = {key: value for key, value in os.environ.items()
+       if key in ('PATH', 'TMPDIR', 'LANG', 'LC_ALL',
+                  'FIXTURE_ROOT', 'FIXTURE_BINARY', 'FIXTURE_MODE', 'FIXTURE_IDENTITY')}
 user = None
 workdir = None
 while i < len(args) and args[i].startswith('-'):
@@ -147,6 +171,7 @@ if 'effigy-perm-access-batch' in command:
 if len(command) == 3 and command[:2] == ['sh', '-lc'] and command[2].startswith('id -u '):
     assert str(os.getuid()) in command[2]
     sys.exit(0)
+assert 'HOST_RUN_TOKEN' not in env and 'HOST_RUN_ID' not in env, 'guest inherited host authority'
 assert user == str(os.getuid()), ('wrong user', user)
 assert env.get('HOME') == str(root / 'guest-home'), ('wrong HOME', env.get('HOME'))
 assert command[:2] in (['sh', '-c'], ['sh', '-lc']) or command[0].startswith('/')
@@ -236,6 +261,10 @@ class Fixture:
         self.guest = root / 'guest-home'
         for path in [self.repo, self.host, self.guest, root / 'bin', root / 'guest-staging']:
             path.mkdir(parents=True)
+        # A new owned repository prevents the containing task worktree's scope
+        # from changing this fixture's deliberately fixed Compose identity.
+        subprocess.run(['/usr/bin/git', '-c', 'init.defaultBranch=main', 'init', '-q'],
+                       cwd=self.repo, check=True)
         gateway = root / 'private-gateway-guard'
         gateway.mkdir(mode=0o700)
         # This is an executable fake, not a link to a checkout or real backend.
@@ -245,7 +274,10 @@ class Fixture:
             executable.chmod(0o755)
         write(root / 'generation', 'a' * 64)
         self.env = {key: value for key, value in os.environ.items()
-                    if key in ['PATH', 'TMPDIR', 'LANG', 'LC_ALL', 'RUSTUP_HOME', 'CARGO_HOME']}
+                    if key in ['PATH', 'TMPDIR', 'LANG', 'LC_ALL', 'RUSTUP_HOME', 'CARGO_HOME',
+                               'HOST_RUN_TOKEN', 'HOST_RUN_ID', 'EFFIGY_HOST_RUN_ROOT']}
+        if self.env.get('HOST_RUN_TOKEN') and not self.env.get('EFFIGY_HOST_RUN_ROOT'):
+            self.env['EFFIGY_HOST_RUN_ROOT'] = str(Path.home() / '.local/state/host-run')
         self.env.update(HOME=str(self.host), PATH=str(root / 'bin') + ':/usr/bin:/bin',
                         EFFIGY_COMPOSE_BACKEND='docker', EFFIGY_WORKSPACE_EFFIGY_ARTIFACT_SOURCE='download',
                         EFFIGY_ACTIVE_VERSION='0.14.1-fixture',
@@ -316,7 +348,7 @@ class Fixture:
         write(root / 'silo/compose.fragment.yml', 'services:\n  {{ service_name }}:\n    image: private-silo:1\n')
 
     def cli(self, home, args, extra=None):
-        env = dict(self.env, HOME=str(home))
+        env = dict(self.env, HOME=str(home), EFFIGY_TEST_CONTAINERS_HOME=str(home / '.effigy'))
         if extra:
             env.update(extra)
         return run([BINARY] + args, env, self.repo)
@@ -353,6 +385,9 @@ def success(root, bounded, backend):
     code, stdout, stderr = fixture.cli(fixture.guest, ['--json', 'exec', '/usr/bin/true'])
     assert code != 0 and 'silo' in stdout + stderr, (stdout, stderr)
     assert not fixture.events(), fixture.events()
+    host_code, host_stdout, host_stderr = fixture.cli(fixture.host, ['service', 'pack', 'status', '--json'])
+    host_status = json.loads(host_stdout)['result']
+    assert host_code == 0 and host_status['selection']['reason'] == 'active-pack', (host_stdout, host_stderr)
     code, stdout, stderr = fixture.handoff(bounded)
     assert code == 0 and 'catalog-child-ok' in stdout, (code, stdout, stderr, fixture.events())
     events = fixture.events()
@@ -454,6 +489,7 @@ def refusal(root, mode, bounded=True):
         assert {str(path.relative_to(state.parent)): path.read_bytes() for path in state.parent.rglob('*') if path.is_file()} == store_before, mode
         assert 'copy' not in fixture.events(), fixture.events()
     if mode in ('selection-race', 'guest-cleanup-drift'):
+        assert state.is_file(), mode
         assert json.loads(state.read_text())['active'] is None
     if mode in ('partial-copy', 'changed-copy', 'copy-failure', 'install-failure', 'exit-zero-no-install',
                 'host-content-drift', 'snapshot-drift', 'wrong-home', 'wrong-user', 'malformed', 'home-after-copy', 'user-after-copy'):
@@ -481,47 +517,62 @@ def refusal(root, mode, bounded=True):
             assert details['refusal_observations']['remaining_budget_ms'] == 0, (mode, payload)
 
 
-def handoff_routes(root):
-    for bounded, backend in [(False, 'docker'), (True, 'docker'), (False, 'colima'), (True, 'colima')]:
-        success(root / f'success-{bounded}-{backend}', bounded, backend)
-    recreation(root / 'recreation')
-    baseline(root / 'baseline-no-store', False)
-    baseline(root / 'baseline-explicit', True)
+FAILURES = []
+
+
+def run_case(name, operation, *args):
+    try:
+        operation(*args)
+    except AssertionError:
+        FAILURES.append(name)
+        traceback.print_exc()
+        print('FAIL catalog handoff case: ' + name, flush=True)
+    else:
+        print('PASS catalog handoff case: ' + name, flush=True)
+
+
+def case_jobs(root, selection):
+    routes = [(f'success-{bounded}-{backend}', success,
+               (root / f'success-{bounded}-{backend}', bounded, backend))
+              for bounded, backend in [(False, 'docker'), (True, 'docker'),
+                                       (False, 'colima'), (True, 'colima')]]
+    routes += [('recreation', recreation, (root / 'recreation',)),
+               ('baseline-no-store', baseline, (root / 'baseline-no-store', False)),
+               ('baseline-explicit', baseline, (root / 'baseline-explicit', True))]
+    modes = ['different', 'explicit-baseline', 'corrupt-guest', 'incompatible-guest',
+             'corrupt-host', 'incompatible-host', 'host-state-corrupt', 'copy-failure',
+             'partial-copy', 'changed-copy', 'install-failure', 'exit-zero-no-install',
+             'wrong-home', 'wrong-user', 'malformed', 'host-content-drift', 'snapshot-drift', 'selection-race',
+             'host-selection-drift', 'host-source-drift', 'host-cleanup-drift', 'guest-cleanup-drift', 'target-drift',
+             'stdout-flood', 'stderr-flood', 'deadline', 'home-after-copy', 'user-after-copy', 'home-symlink']
+    refusals = [(mode, refusal, (root / mode, mode)) for mode in modes]
+    refusals += [('ordinary-' + mode, refusal, (root / ('ordinary-' + mode), mode, False))
+                 for mode in ['different', 'partial-copy', 'malformed']]
+    if selection == ['--handoffs']:
+        return routes
+    if selection == ['--refusals']:
+        return refusals
+    if selection:
+        assert all(mode in ('home-after-copy', 'user-after-copy') for mode in selection)
+        return [(mode, refusal, (root / mode, mode)) for mode in selection]
+    return routes + refusals
 
 
 def main():
-    with tempfile.TemporaryDirectory(prefix='effigy-catalog-handoff-proof-') as directory:
-        root = Path(directory).resolve()
-        modes = ['different', 'explicit-baseline', 'corrupt-guest', 'incompatible-guest',
-                 'corrupt-host', 'incompatible-host', 'host-state-corrupt', 'copy-failure',
-                 'partial-copy', 'changed-copy', 'install-failure', 'exit-zero-no-install',
-                 'wrong-home', 'wrong-user', 'malformed', 'host-content-drift', 'snapshot-drift', 'selection-race',
-                 'host-selection-drift', 'host-source-drift', 'host-cleanup-drift', 'guest-cleanup-drift', 'target-drift',
-                 'stdout-flood', 'stderr-flood', 'deadline', 'home-after-copy', 'user-after-copy', 'home-symlink']
-        if sys.argv[2:] == ['--handoffs']:
-            handoff_routes(root)
-            print('catalog handoff routes passed: 4 success/idempotence, post-activation recreation, 2 baseline')
-            return
-        if sys.argv[2:] == ['--refusals']:
-            for mode in modes:
-                refusal(root / mode, mode)
-            for mode in ['different', 'partial-copy', 'malformed']:
-                refusal(root / ('ordinary-' + mode), mode, False)
-            print(f'catalog handoff refusal controls passed: {len(modes) + 3}')
-            return
-        if len(sys.argv) > 2:
-            for mode in sys.argv[2:]:
-                assert mode in ('home-after-copy', 'user-after-copy')
-                refusal(root / mode, mode)
-            print('catalog handoff changed-identity controls passed: ' + ', '.join(sys.argv[2:]))
-            return
-        handoff_routes(root)
-        for mode in modes:
-            refusal(root / mode, mode)
-        for mode in ['different', 'partial-copy', 'malformed']:
-            refusal(root / ('ordinary-' + mode), mode, False)
-        print(f'catalog handoff production proof: 4 success/idempotence routes, post-activation recreation, 2 baseline routes, {len(modes) + 3} refusal controls passed')
+    if sys.argv[2:] == ['--list']:
+        print(json.dumps([name for name, _, _ in case_jobs(Path(), [])]))
+        return
+    checkout = Path(__file__).resolve().parents[2]
+    parent = (checkout / 'crates').resolve()
+    assert checkout in parent.parents, 'fixture parent escaped checkout'
+    with tempfile.TemporaryDirectory(prefix='effigy-parent-fixtures-catalog-', dir=parent) as directory:
+        jobs = case_jobs(Path(directory).resolve(), sys.argv[2:])
+        for name, operation, args in jobs:
+            run_case(name, operation, *args)
+        print(f'catalog handoff matrix executed: {len(jobs)} cases')
 
 
 if __name__ == '__main__':
     main()
+    if FAILURES:
+        raise SystemExit('catalog handoff failures: ' + ', '.join(FAILURES))

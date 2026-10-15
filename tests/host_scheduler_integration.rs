@@ -1786,6 +1786,158 @@ fn complete_cli_fixture_family_succeeds_with_authenticated_parent_root() {
     assert_eq!(settled["settlement"]["result"]["exitCode"], 0);
 }
 
+// Walk the actual task composition so the parent proof cannot silently lag
+// behind an added ordinary family member. Builds precede this parent boundary.
+fn workspace_fixture_commands(
+    tasks: &toml::Value,
+    value: &toml::Value,
+    commands: &mut Vec<String>,
+) {
+    match value {
+        toml::Value::String(command) => {
+            if !command.starts_with("cargo build ") && !commands.contains(command) {
+                commands.push(command.clone());
+            }
+        }
+        toml::Value::Array(steps) => {
+            for step in steps {
+                workspace_fixture_commands(tasks, step, commands);
+            }
+        }
+        toml::Value::Table(step) => {
+            if let Some(selector) = step.get("task").and_then(toml::Value::as_str) {
+                workspace_fixture_commands(tasks, &tasks[selector], commands);
+            } else {
+                workspace_fixture_commands(tasks, &step["run"], commands);
+            }
+        }
+        _ => panic!("unsupported workspace fixture task shape"),
+    }
+}
+
+#[test]
+fn workspace_parent_membership_covers_the_maintained_family() {
+    let manifest: toml::Value = toml::from_str(REPO_TASKS).expect("maintained task manifest");
+    let tasks = &manifest["tasks"];
+    let mut expected = Vec::new();
+    for selector in [
+        "test:workspace:artifact-freshness",
+        "test:workspace:catalog-handoff:private",
+    ] {
+        workspace_fixture_commands(tasks, &tasks[selector], &mut expected);
+    }
+    let mut covered = Vec::new();
+    for selector in WORKSPACE_PARENT_SELECTORS {
+        workspace_fixture_commands(tasks, &tasks[selector], &mut covered);
+    }
+    expected.sort();
+    covered.sort();
+    assert_eq!(
+        covered, expected,
+        "parent member inventory drifted from ordinary covering"
+    );
+}
+
+macro_rules! workspace_parent_cases {
+    ($($name:ident => $selector:literal),+ $(,)?) => {
+        const WORKSPACE_PARENT_SELECTORS: &[&str] = &[$($selector),+];
+        $(
+            #[test]
+            #[ignore = "requires private Queue fixture; run test:workspace:artifact-parent"]
+            fn $name() {
+                run_workspace_fixture_family($selector);
+            }
+        )+
+    };
+}
+
+workspace_parent_cases! {
+    workspace_fixture_family_provisioning => "test:workspace:artifact-provisioning",
+    workspace_fixture_family_admission => "test:workspace:artifact-admission",
+    workspace_fixture_family_readiness => "test:workspace:artifact-readiness",
+    workspace_fixture_family_builder => "test:workspace:artifact-builder",
+    workspace_fixture_family_owners => "test:workspace:artifact-owner-integrations",
+    workspace_fixture_family_diagnostics => "test:workspace:artifact-diagnostics",
+    workspace_fixture_family_managed => "test:workspace:artifact-managed-callers",
+    workspace_fixture_family_gateway => "test:workspace:artifact-gateway-callers",
+    workspace_fixture_family_cli => "test:workspace:artifact-cli-callers",
+    workspace_fixture_family_catalog => "test:workspace:catalog-handoff:private",
+}
+
+fn run_workspace_fixture_family(selector: &str) {
+    assert_reviewed_private_queue_checkout();
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest: toml::Value = toml::from_str(REPO_TASKS).expect("maintained task manifest");
+    let tasks = &manifest["tasks"];
+    let mut commands = Vec::new();
+    workspace_fixture_commands(tasks, &tasks[selector], &mut commands);
+    assert!(
+        !commands.is_empty(),
+        "workspace family must have executable members"
+    );
+    let evidence_parent = repo_root.join(".effigy/reports/fixture-family");
+    fs::create_dir_all(&evidence_parent).expect("fixture evidence parent");
+    let evidence = tempfile::Builder::new()
+        .prefix(&format!(
+            "workspace-{}-",
+            selector.rsplit(':').next().expect("selector suffix")
+        ))
+        .tempdir_in(evidence_parent)
+        .expect("unique retained workspace evidence")
+        .keep();
+    let specification = evidence.join("commands.json");
+    fs::write(
+        &specification,
+        serde_json::to_vec_pretty(&commands).expect("encode commands"),
+    )
+    .expect("write exact maintained command membership");
+    let server = Server::start(None);
+    let output = Command::new(EFFIGY)
+        .arg("test:workspace:artifact-parent:runner")
+        .arg(&specification)
+        .current_dir(repo_root)
+        .env("NO_COLOR", "1")
+        .env("EFFIGY_HOST_RUN_ROOT", &server.state)
+        .env("EFFIGY_ADMISSION_CPU_UNITS", "1")
+        .env("EFFIGY_ADMISSION_MEMORY_MIB", "64")
+        .env("EFFIGY_ADMISSION_TIMEOUT_SECS", "5")
+        // Only the submission boundary isolates the outer parent. Every
+        // runnable family member inherits the actual private admission.
+        .env_remove("HOST_RUN_TOKEN")
+        .env_remove("HOST_RUN_ID")
+        .env_remove("EFFIGY_INTERNAL_CONTAINER_HANDOFF")
+        .env_remove("EFFIGY_HOST_SCHEDULER")
+        .env_remove("EFFIGY_SCHEDULER_OVERRIDE")
+        .output()
+        .expect("complete workspace family under private parent");
+    fs::write(evidence.join("scheduler.stdout"), &output.stdout).expect("retain scheduler stdout");
+    fs::write(evidence.join("scheduler.stderr"), &output.stderr).expect("retain scheduler stderr");
+    eprintln!("workspace parent evidence: {}", evidence.display());
+    eprintln!("{}", text(&output.stderr));
+    println!("{}", text(&output.stdout));
+    let runs = server.run_ids();
+    assert_eq!(
+        runs.len(),
+        1,
+        "one actual admission covers this workspace member"
+    );
+    let settled = server.status(&runs[0]);
+    fs::write(
+        evidence.join("settlement.json"),
+        serde_json::to_vec_pretty(&settled).expect("encode settlement"),
+    )
+    .expect("retain private settlement");
+    assert_eq!(settled["state"], "settled");
+    assert_eq!(
+        code(&output),
+        0,
+        "workspace family failed; evidence: {}",
+        evidence.display()
+    );
+    assert_eq!(settled["settlement"]["outcome"], "passed");
+    assert_eq!(settled["settlement"]["result"]["exitCode"], 0);
+}
+
 #[test]
 #[ignore = "requires private Queue fixture; run test:audit:contracts"]
 fn complete_contract_fixture_family_succeeds_with_authenticated_parent_root() {
