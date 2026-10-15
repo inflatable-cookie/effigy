@@ -110,6 +110,31 @@ impl Fixture {
             .get_ref()
             .set_read_timeout(Some(Duration::from_secs(2)))
             .expect("bounded sentinel read");
+        // These stacks overlap on one private gateway. Model distinct TCP
+        // listeners instead of asking one raw bind to route by hostname.
+        let catalog = root.join("infra/dev/catalog/postgres");
+        fs::create_dir_all(catalog.join("configs")).expect("private database catalog");
+        fs::write(
+            catalog.join("service.toml"),
+            include_str!("../../crates/effigy-catalog/catalog/postgres/service.toml")
+                .replace(
+                    "loopback_alias_port = 5432",
+                    &format!("loopback_alias_port = {port}"),
+                )
+                .replace("default = [5432]", &format!("default = [{port}]")),
+        )
+        .expect("private database network contract");
+        fs::write(
+            catalog.join("compose.fragment.yml"),
+            include_str!("../../crates/effigy-catalog/catalog/postgres/compose.fragment.yml")
+                .replace("5432", &port.to_string()),
+        )
+        .expect("private database template");
+        fs::write(
+            catalog.join("configs/default.conf"),
+            include_str!("../../crates/effigy-catalog/catalog/postgres/configs/default.conf"),
+        )
+        .expect("private database configuration");
         fs::write(
             root.join("effigy.toml"),
             format!(
@@ -120,7 +145,7 @@ primary_service = "db"
 working_dir = "/workspace"
 profile = "private-{i}"
 [containers.web.host]
-ports = ["{port}:5432"]
+ports = ["{port}:{port}"]
 [containers.web.dns]
 routes = [{{ domain = "stack{i}.fixture.test", tls = false, service = "db", port = {port} }}]
 [containers.web.services.db]
@@ -1135,7 +1160,7 @@ if args and args[0]=='ps':
   s=json.load(open(p))
   if not s['active'] or not selected(s): continue
   if '{{.Names}}' in args: print(s['project']+'-db-1')
-  elif '--format' in args: print(s['project']+'-db-1\tUp 1 minute\t127.0.0.1:'+str(s['port'])+'->5432/tcp\t'+s['project']+'\t'+s['checkout']+'\t'+('undeclared' if s['mode']=='orphan' else 'db')+'\tfalse')
+  elif '--format' in args: print(s['project']+'-db-1\tUp 1 minute\t127.0.0.1:'+str(s['port'])+'->'+str(s['port'])+'/tcp\t'+s['project']+'\t'+s['checkout']+'\t'+('undeclared' if s['mode']=='orphan' else 'db')+'\tfalse')
  sys.exit(0)
 if args and args[0]=='inspect':
  labels={'com.docker.compose.project':state['project'],'com.docker.compose.service':'db','com.docker.compose.oneoff':'false','com.docker.compose.project.working_dir':str(cwd)}
@@ -1149,7 +1174,7 @@ if args and args[0]=='inspect':
  if mode=='foreign': labels['com.docker.compose.project']='foreign-project'
  if mode=='oneoff': labels['com.docker.compose.oneoff']='true'
  if mode=='drift': labels['com.docker.compose.project.working_dir']=str(root)
- print(json.dumps([{'Id':state['id'] if mode!='unknown' else 'short','Name':'/'+state['project']+'-db-1','State':{'Status':'running' if mode!='stopped' else 'exited','Running':mode!='stopped'},'Config':{'Labels':labels},'Mounts':[],'NetworkSettings':{'Ports':{'5432/tcp':[{'HostIp':'127.0.0.1','HostPort':str(state['port'])}]}}}]))
+ print(json.dumps([{'Id':state['id'] if mode!='unknown' else 'short','Name':'/'+state['project']+'-db-1','State':{'Status':'running' if mode!='stopped' else 'exited','Running':mode!='stopped'},'Config':{'Labels':labels},'Mounts':[],'NetworkSettings':{'Ports':{str(state['port'])+'/tcp':[{'HostIp':'127.0.0.1','HostPort':str(state['port'])}]}}}]))
  sys.exit(0)
 if args and args[0]=='network': sys.exit(0)
 if args and args[0]=='volume':

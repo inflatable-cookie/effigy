@@ -657,6 +657,10 @@
   { task = "test:workspace:artifact-owner-integrations" },
   { task = "test:workspace:artifact-diagnostics" },
   { task = "test:workspace:artifact-managed-callers" },
+  { task = "test:workspace:artifact-gateway-callers" },
+]
+"test:workspace:artifact-gateway-callers" = [
+  { id = "owned-gateway-container-callers", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_host_)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
 ]
 "test:workspace:artifact-managed-callers" = [
   { id = "managed-container-callers", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(managed_stream_tests::) | test(managed_tui_tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },

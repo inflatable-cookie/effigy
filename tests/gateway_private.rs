@@ -2277,7 +2277,51 @@ fn private_root(parent: &Path, name: &str) -> PathBuf {
 fn write_fake_docker(path: &Path) {
     fs::write(
         path,
-        "#!/bin/sh\nset -eu\nprintf '%s\\n' \"$*\" >> \"$FAKE_DOCKER_LOG\"\nif [ \"${1-}\" = compose ]; then\n  shift\n  while [ \"$#\" -gt 0 ]; do\n    case \"$1\" in\n      -f|-p) shift 2 ;;\n      --*) shift ;;\n      *) break ;;\n    esac\n  done\n  if [ \"${1-}\" = ps ]; then printf '[]\\n'; fi\nfi\nexit 0\n",
+        r#"#!/bin/sh
+set -eu
+printf '%s\n' "$*" >> "$FAKE_DOCKER_LOG"
+if [ "${1-}" = ps ]; then
+  [ -f "${FAKE_OWNED_ACTIVE-}" ] || exit 0
+  python3 - "$FAKE_OWNED_CONTAINER" <<'PYOWNED'
+import json,sys
+r=json.loads(sys.argv[1]); p=r['Config']['Labels']
+print(r['Name'].lstrip('/')+'\tUp 1 minute\t\t'+p['com.docker.compose.project']+'\t'+p['com.effigy.checkout']+'\t'+p['com.docker.compose.service']+'\tFalse')
+PYOWNED
+elif [ "${1-}" = inspect ]; then
+  [ -f "${FAKE_OWNED_ACTIVE-}" ] || exit 1
+  python3 - "$FAKE_OWNED_CONTAINER" "${2-}" <<'PYOWNED'
+import json,sys
+r=json.loads(sys.argv[1])
+if sys.argv[2] not in [r['Id'],r['Name'].lstrip('/')]: sys.exit(1)
+print(json.dumps([r]))
+PYOWNED
+elif [ "${1-}" = exec ]; then
+  shift
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      -i|-t|--tty=false) shift ;;
+      -w|-e|-u|--user|--env|--workdir) shift 2 ;;
+      *) break ;;
+    esac
+  done
+  [ "${1-}" = aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ] || exit 96
+elif [ "${1-}" = compose ]; then
+  shift
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      -f|-p) shift 2 ;;
+      --*) shift ;;
+      *) break ;;
+    esac
+  done
+  case "${1-}" in
+    up) : > "$FAKE_OWNED_ACTIVE" ;;
+    down) rm -f "$FAKE_OWNED_ACTIVE" ;;
+    ps) printf '[]\n' ;;
+  esac
+fi
+exit 0
+"#,
     )
     .expect("write disposable Docker command adapter");
     #[cfg(unix)]
@@ -2387,6 +2431,12 @@ struct ManagedContainerCleanup {
 
 impl Drop for ManagedContainerCleanup {
     fn drop(&mut self) {
+        if std::thread::panicking() {
+            eprintln!(
+                "private Docker adapter log: {}",
+                fs::read_to_string(&self.docker_log).unwrap_or_default()
+            );
+        }
         for checkout in &self.checkouts {
             let mut child = container_command(checkout, self);
             child
@@ -2401,8 +2451,36 @@ impl Drop for ManagedContainerCleanup {
 }
 
 fn container_command(checkout: &Path, cleanup: &ManagedContainerCleanup) -> Command {
+    let policy = effigy_containers::load_container_policy(checkout, Some("web"))
+        .expect("private declared container policy");
+    let mut labels = serde_json::json!({
+        "com.docker.compose.project": policy.project_name,
+        "com.docker.compose.service": policy.primary_service,
+        "com.docker.compose.oneoff": "False",
+        "com.effigy.checkout": fs::canonicalize(checkout).expect("private checkout"),
+    });
+    if let Some(scope) = effigy_core::worktree_scope::resolve(checkout).expect("private scope") {
+        if let Ok(token) = fs::read_to_string(
+            scope
+                .token_dir
+                .join(effigy_core::worktree_scope::SCOPE_FILE),
+        ) {
+            labels["com.effigy.scope"] = serde_json::json!(token.trim());
+        }
+    }
+    let proof = serde_json::json!({
+        "Id": "a".repeat(64),
+        "Name": format!("/{}-{}-1", policy.project_name, policy.primary_service),
+        "State": {"Status": "running", "Running": true},
+        "Config": {"Labels": labels}, "NetworkSettings": {"Ports": {}},
+    });
     let mut command = Command::new(EFFIGY);
     command
+        .env("FAKE_OWNED_CONTAINER", proof.to_string())
+        .env(
+            "FAKE_OWNED_ACTIVE",
+            checkout.join(".effigy/private-fake-active"),
+        )
         .args(["container", "web"])
         .current_dir(checkout)
         .env("HOME", &cleanup.home)

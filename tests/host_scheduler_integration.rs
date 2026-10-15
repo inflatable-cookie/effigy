@@ -868,11 +868,33 @@ fn install_fake_container_backend(workspace: &Workspace) -> PathBuf {
     let bin = workspace.file("fake-bin");
     fs::create_dir_all(&bin).expect("fake backend bin");
     let docker = bin.join("docker");
+    let checkout = fs::canonicalize(workspace.root()).expect("private canonical checkout");
+    let proof = json!({
+        "Id": "a".repeat(64), "Name": "/container-admission-app-1",
+        "State": {"Status": "running", "Running": true},
+        "Config": {"Labels": {
+            "com.docker.compose.project": "container-admission",
+            "com.docker.compose.service": "app",
+            "com.docker.compose.oneoff": "False",
+            "com.effigy.checkout": checkout,
+        }}, "NetworkSettings": {"Ports": {}},
+    });
+    fs::write(workspace.file("owned-container.json"), proof.to_string())
+        .expect("write private inspect evidence");
     fs::write(
         &docker,
         r#"#!/bin/sh
 set -u
 printf '%s\n' "$*" >> "$BACKEND_LOG"
+identity=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+if [ "${1-}" = inspect ]; then
+  case "${2-}" in
+    "$identity"|container-admission-app-1) printf '['; cat "$WORKSPACE_ROOT/owned-container.json"; printf ']\n'; exit 0 ;;
+    *) exit 1 ;;
+  esac
+fi
+native=no
+[ "${1-}" != exec ] || native=yes
 operation=
 for arg in "$@"; do
   case "$arg" in
@@ -898,12 +920,14 @@ shift
 workdir=
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    -T) shift ;;
+    -T|--tty=false|-i|-t) shift ;;
     -e) export "$2"; shift 2 ;;
     -w) workdir=$2; shift 2 ;;
     -u) shift 2 ;;
     -*) shift ;;
-    *) shift; break ;;
+    *)
+      if [ "$native" = yes ] && [ "$1" != "$identity" ]; then exit 96; fi
+      shift; break ;;
   esac
 done
 if [ "${1-}" = which ]; then printf '/usr/local/bin/effigy\n'; exit 0; fi
@@ -1257,7 +1281,13 @@ fn admitted_container_selector_stays_on_host_and_executes_its_resolved_payload()
     assert_eq!(code(&output), 0, "{}", text(&output.stderr));
 
     let backend = fs::read_to_string(ws.file("backend.log")).expect("captured fake backend");
-    assert!(backend.contains("-w /workspace app sh -lc"), "{backend}");
+    assert!(
+        backend.contains("-w /workspace ")
+            && backend.contains(
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa sh -lc"
+            ),
+        "{backend}"
+    );
     assert!(backend.contains("TASK_VALUE=allowed"), "{backend}");
     assert!(backend.contains("arg-one"), "{backend}");
     assert!(backend.contains("arg-two"), "{backend}");
@@ -1444,7 +1474,14 @@ env = { ROOT_ENV = "{repo}/data", ALIAS_ENV = "{project}" }
         ]
     );
     let backend = fs::read_to_string(ws.file("backend.log")).expect("backend argv");
-    assert!(backend.contains("-w /workspace/catalog with 'quote app sh -lc"));
+    assert!(
+        backend.contains("-w /workspace/catalog with 'quote "),
+        "{backend}"
+    );
+    assert!(
+        backend.contains("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa sh -lc"),
+        "{backend}"
+    );
     assert!(!backend.contains("/usr/local/bin/effigy"));
     assert!(!backend.contains("HOST_RUN_TOKEN="));
     assert!(!backend.contains("HOST_RUN_ID="));
