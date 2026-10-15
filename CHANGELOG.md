@@ -210,10 +210,12 @@ During v0.x, MINOR bumps may include breaking changes.
   Administrator identity and lifecycle handoffs provide visible operator
   guidance and bounded waits; after a timeout, check gateway status before
   retrying because privileged completion may be unknown.
-- The compiled catalog baseline now tracks catalog-pack v1.1.2
-  (`ghcr.io/inflatable-cookie/effigy-catalog-pack@sha256:c7ed52c19ff498c0e4fe28eb33adf629fc96d9594962b95df3040b8a452c6d3d`) with
-  compatibility `>=0.13, <0.15`, admitting the supported Effigy 0.13.x and
-  0.14.x releases without changing the support floor.
+- The compiled catalog baseline now tracks catalog-pack v1.2.0
+  (`ghcr.io/inflatable-cookie/effigy-catalog-pack@sha256:7f34c21acce23033d5972868df13a9b061dab995b50b38adb954f7a1d1b5ef5b`)
+  with compatibility `>=0.13, <0.16`, admitting Effigy 0.13 through 0.15, and
+  adds the `silo` S3-compatible object storage service. Installed packs from
+  1.1.2 or earlier reject 0.15: run `effigy service pack update` to move to
+  1.2.0.
 
 ### Fixed
 - `effigy doctor` no longer reports `{ task = "defer …" }` and other builtin

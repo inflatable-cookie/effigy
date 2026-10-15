@@ -27,6 +27,7 @@ fn list_bundled_fragments() {
             "phpmyadmin",
             "postgres",
             "redis",
+            "silo",
             "workspace-rust-bun",
         ],
         "bundled inventory must be exactly the service.toml parents, sorted once"

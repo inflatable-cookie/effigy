@@ -52,6 +52,7 @@ const EXPECTED_BUNDLED: &[&str] = &[
     "phpmyadmin",
     "postgres",
     "redis",
+    "silo",
     "workspace-rust-bun",
 ];
 
