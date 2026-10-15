@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_yaml::Value as YamlValue;
 
 use crate::exec::{discover_running_compose_containers, RunningComposeContainerInventory};
-use crate::runtime::scope::{MANAGED_LABEL, PROJECT_LABEL, SCOPE_LABEL};
+use crate::runtime::scope::{CHECKOUT_LABEL, MANAGED_LABEL, PROJECT_LABEL, SCOPE_LABEL};
 use crate::{
     layered_catalog_resolver, mount_spec::resolve_host_mounts, prune_loopback_assignments,
     resolve_catalog_network_contract, warn_skipped_reclamation, ContainerPolicyError,
@@ -415,6 +415,16 @@ pub(crate) fn resolve_compose_source(
     )?;
     if let Some(token) = runtime_scope_token(repo_root, config) {
         apply_runtime_scope_labels(&mut compose_document, &token, project_name);
+    }
+    let checkout = repo_root
+        .canonicalize()
+        .unwrap_or_else(|_| repo_root.to_path_buf());
+    for service in compose_document.services.values_mut() {
+        upsert_yaml_label(
+            &mut service.extra,
+            CHECKOUT_LABEL,
+            &checkout.display().to_string(),
+        );
     }
     let configured_bindings = configured_host_ports(config)
         .iter()

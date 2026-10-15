@@ -23,6 +23,10 @@ pub const SCOPE_LABEL: &str = "com.effigy.scope";
 pub const MANAGED_LABEL: &str = "com.effigy.managed";
 pub const PROJECT_LABEL: &str = "com.effigy.project";
 pub const PERSIST_LABEL: &str = "com.effigy.persist";
+/// Canonical checkout path that rendered a generated Compose service. nerdctl
+/// compose omits Docker's `com.docker.compose.project.working_dir`, so owned
+/// binding checks fall back to this label.
+pub const CHECKOUT_LABEL: &str = "com.effigy.checkout";
 pub const COMPOSE_PROJECT_LABEL: &str = "com.docker.compose.project";
 
 const RECORD_SCHEMA: &str = "effigy.runtime-scope.v1";
