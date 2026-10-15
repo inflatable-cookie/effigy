@@ -479,12 +479,14 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
   actual HTTPS address shown by `gateway status --json`
 - routes with `tls = true` redirect plain HTTP to HTTPS once the gateway TLS
   listener is available
-- `container shell` and `workspace` are interactive and intentionally do not
-  support `--json`
+- `workspace` and interactive `container shell` do not support `--json`; finite
+  `container shell --command … --bounded` capture supports it when all required
+  deadline and byte limits are supplied
 - `container status --global` and `container stats --global` are cross-project views
 - generated-compose data lifecycle stays on the product-owned path and does not
   widen direct `compose_file` ownership
-- `system logs` is streaming and intentionally does not support `--json`
+- `system logs --json` returns a finite snapshot; `system logs --follow` streams
+  logs and rejects `--json`. The same distinction applies to `container <NAME> logs`
 - `system repair` and `system reset-runtime` are the recovery surfaces for
   half-up substrate state
 - mounted sibling repos listed in `systems.<name>.mounts` auto-adopt
