@@ -267,6 +267,60 @@ pub fn list_running_compose_containers_for_policy_with_timeout(
 
 /// Re-admit inventory rows from exact current inspect identities and bindings.
 /// A ps name, reserved address, or successful command alone is not port proof.
+/// Read the Compose labels an owned binding check needs. Docker compose
+/// records the project working dir and an explicit `oneoff`; nerdctl compose
+/// records neither, so the working dir falls back to Effigy's checkout label
+/// and a missing `oneoff` is accepted (the inspected identity still rejects
+/// one-off containers).
+fn compose_binding_labels(labels: Option<&serde_json::Value>) -> (Option<&str>, bool) {
+    let label = |name: &str| {
+        labels
+            .and_then(|labels| labels.get(name))
+            .and_then(|value| value.as_str())
+    };
+    let working_dir = label("com.docker.compose.project.working_dir")
+        .or_else(|| label(crate::runtime::scope::CHECKOUT_LABEL));
+    let oneoff_ok = label("com.docker.compose.oneoff")
+        .is_none_or(|value| matches!(value.to_ascii_lowercase().as_str(), "false" | "0" | "no"));
+    (working_dir, oneoff_ok)
+}
+
+#[cfg(test)]
+mod compose_binding_label_tests {
+    use super::compose_binding_labels;
+    use serde_json::json;
+
+    #[test]
+    fn docker_labels_use_project_working_dir() {
+        let labels = json!({
+            "com.docker.compose.project.working_dir": "/repo",
+            "com.effigy.checkout": "/elsewhere",
+            "com.docker.compose.oneoff": "False",
+        });
+        assert_eq!(compose_binding_labels(Some(&labels)), (Some("/repo"), true));
+    }
+
+    #[test]
+    fn nerdctl_labels_fall_back_to_effigy_checkout() {
+        let labels = json!({
+            "com.docker.compose.project": "acme",
+            "com.effigy.checkout": "/repo",
+        });
+        assert_eq!(compose_binding_labels(Some(&labels)), (Some("/repo"), true));
+    }
+
+    #[test]
+    fn oneoff_and_unlabelled_containers_are_not_owned() {
+        let oneoff = json!({"com.docker.compose.project.working_dir": "/repo", "com.docker.compose.oneoff": "True"});
+        assert_eq!(
+            compose_binding_labels(Some(&oneoff)),
+            (Some("/repo"), false)
+        );
+        assert_eq!(compose_binding_labels(Some(&json!({}))), (None, true));
+        assert_eq!(compose_binding_labels(None), (None, true));
+    }
+}
+
 pub fn verify_owned_running_compose_rows(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
@@ -339,12 +393,7 @@ pub fn verify_owned_running_compose_rows(
         let labels = record
             .and_then(|record| record.get("Config"))
             .and_then(|config| config.get("Labels"));
-        let oneoff = labels
-            .and_then(|labels| labels.get("com.docker.compose.oneoff"))
-            .and_then(|value| value.as_str());
-        let working_dir = labels
-            .and_then(|labels| labels.get("com.docker.compose.project.working_dir"))
-            .and_then(|value| value.as_str());
+        let (working_dir, oneoff_label_ok) = compose_binding_labels(labels);
         let inspected_scope = labels.and_then(|labels| labels.get("com.effigy.scope"));
         let owned = identity.name == row.container_name
             && match (scope_token.as_deref(), inspected_scope) {
@@ -363,9 +412,7 @@ pub fn verify_owned_running_compose_rows(
             && identity.running
             && super::parse::compose_status_is_running(&identity.status)
             && !identity.oneoff
-            && oneoff.is_some_and(|value| {
-                matches!(value.to_ascii_lowercase().as_str(), "false" | "0" | "no")
-            })
+            && oneoff_label_ok
             && working_dir
                 .and_then(|path| Path::new(path).canonicalize().ok())
                 .as_ref()
