@@ -128,6 +128,28 @@ fn remove_if_unchanged(path: &Path, judged: &LockRecord) {
     }
 }
 
+/// Remove an unparsable lock only if it still holds exactly the judged bytes.
+/// A successor's just-published complete record has different bytes, so the
+/// comparison refuses to unlink it; two reclaimers racing the same corrupt
+/// record still serialize on the unlink, and the loser retries against the
+/// winner's fresh lock.
+fn remove_unparsable_if_unchanged(path: &Path, judged: &[u8]) -> bool {
+    // The judged bytes were already deemed corrupt; if they now parse, a
+    // successor published between the judge and the re-read.
+    if serde_json::from_slice::<LockRecord>(judged).is_ok() {
+        return false;
+    }
+    match fs::read(path) {
+        Ok(current) if current == judged => {
+            if !unparsable_lock_is_abandoned(path) {
+                return false;
+            }
+            fs::remove_file(path).is_ok()
+        }
+        _ => false,
+    }
+}
+
 fn unparsable_lock_is_abandoned(path: &Path) -> bool {
     fs::metadata(path)
         .and_then(|metadata| metadata.modified())
@@ -246,9 +268,12 @@ fn acquire_scope_lock(
                 let existing = match files::read_lock_record(&path) {
                     Ok(record) => Some(record),
                     // Unparsable: abandoned once old enough, otherwise held.
+                    // Reclaim only the judged bytes so a successor's
+                    // just-published lock is never unlinked.
                     Err(RunnerError::TaskInvocation(_)) => {
                         if unparsable_lock_is_abandoned(&path) {
-                            let _ = fs::remove_file(&path);
+                            let judged = fs::read(&path).unwrap_or_default();
+                            remove_unparsable_if_unchanged(&path, &judged);
                             continue;
                         }
                         None
@@ -326,9 +351,17 @@ impl LockGuard {
                             return;
                         };
                         let staged = files::staging_path(&heartbeat_path);
-                        if fs::write(&staged, body).is_err()
-                            || fs::rename(&staged, &heartbeat_path).is_err()
-                        {
+                        if fs::write(&staged, body).is_err() {
+                            let _ = fs::remove_file(&staged);
+                            return;
+                        }
+                        // Refuse to replace a successor: a reclaim that landed
+                        // after the pre-write check must not be overwritten.
+                        if !owns_lock(&heartbeat_path, &heartbeat_token) {
+                            let _ = fs::remove_file(&staged);
+                            return;
+                        }
+                        if fs::rename(&staged, &heartbeat_path).is_err() {
                             let _ = fs::remove_file(&staged);
                             return;
                         }
@@ -403,6 +436,19 @@ mod ownership_tests {
             path.exists(),
             "a possibly in-progress lock must not be deleted"
         );
+    }
+
+    #[test]
+    fn unparsable_reclaim_never_removes_a_successors_complete_lock() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let path = lock_path(root.path());
+        fs::create_dir_all(path.parent().unwrap()).expect("locks dir");
+        // Judge corrupt bytes, then let a successor publish before the
+        // reclaim runs: the judged bytes must not unlink the new record.
+        let judged = b"{invalid".to_vec();
+        let _successor = acquire_scopes(root.path(), &[scope()]).expect("successor publishes");
+        assert!(!remove_unparsable_if_unchanged(&path, &judged));
+        files::read_lock_record(&path).expect("successor lock survives reclaim");
     }
 
     #[test]
