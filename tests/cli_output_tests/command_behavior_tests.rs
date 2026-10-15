@@ -4946,13 +4946,14 @@ fn cli_changelog_extract_emits_release_notes_for_specific_version() {
         "extract should succeed: {output:?}"
     );
     let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
-    assert!(stdout.contains("### Added"), "got: {stdout}");
     assert!(
-        stdout.contains("Ship release orchestration status and prepare flow"),
-        "got: {stdout}"
+        !stdout.contains("EFFIGY"),
+        "piped extract output should not include the CLI banner: {stdout}"
     );
-    assert!(stdout.contains("### Fixed"), "got: {stdout}");
-    assert!(!stdout.contains("## [0.2.5]"), "got: {stdout}");
+    assert_eq!(
+        stdout,
+        "### Added\n- Ship release orchestration status and prepare flow\n\n### Fixed\n- Tighten release output contracts\n"
+    );
 }
 
 #[test]

@@ -100,8 +100,10 @@ pub fn run_cli(raw_args: Vec<String>) {
         .ok()
         .is_some_and(|value| matches!(value.trim(), "1" | "true" | "yes"));
     let local_qa_json = !global_json_mode && command_requests_local_qa_json(&cmd);
-    let suppress_header =
-        internal_suppress_header || command_requests_json(&cmd, global_json_mode) || local_qa_json;
+    let suppress_header = internal_suppress_header
+        || !std::io::stdout().is_terminal()
+        || command_requests_json(&cmd, global_json_mode)
+        || local_qa_json;
     let emit_json_envelope =
         !internal_suppress_header && command_requests_json(&cmd, global_json_mode);
     let (command_kind, command_name) = command_kind_and_name(&cmd);
@@ -234,7 +236,9 @@ pub fn run_and_render_command(context: &CliExecutionContext<'_>, command: Comman
             if !output.trim().is_empty() {
                 let _ = renderer.text(&output);
             }
-            if !task_stdout_owned || !output.trim().is_empty() {
+            if (!task_stdout_owned || !output.trim().is_empty())
+                && (output.trim().is_empty() || std::io::stdout().is_terminal())
+            {
                 let _ = renderer.text("");
             }
         }
