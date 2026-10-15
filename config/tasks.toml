@@ -337,7 +337,8 @@
   "cargo clippy -p effigy-gateway -p effigy-cli -p effigy-containers -p effigy --all-targets -- -D warnings",
 ]
 "test:gateway:legacy-recovery" = [
-  { id = "gateway-legacy-recovery", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-gateway -p effigy-cli -p effigy --lib --filterset 'test(legacy_recovery) | test(gateway_identity_legacy) | test(gateway_identity)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 240000 },
+  # Includes cold workspace compilation; native probe/readiness limits stay fixed.
+  { id = "gateway-legacy-recovery", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-gateway -p effigy-cli -p effigy --lib --filterset 'test(legacy_recovery) | test(gateway_identity_legacy) | test(gateway_identity)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
 ]
 "test:gateway:macos-inspection" = [
   { id = "gateway-macos-inspection", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-gateway --lib --filterset 'test(legacy_recovery_macos_)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
