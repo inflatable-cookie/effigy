@@ -25,6 +25,7 @@ use effigy_exec::detection::{build_capabilities_from_results, standard_probe_spe
 
 use crate::runner::container_command::{bounded_failure_error, bounded_phase_error};
 use crate::runner::container_runtime::CONTAINER_HANDOFF_ENV_ASSIGNMENT;
+use crate::runner::container_runtime_prep::OWNED_EXEC_VERIFICATION_TIMEOUT;
 use crate::runner::error::RunnerError;
 use crate::runner::exec_command::{BoundedCommandBudget, BoundedCommandPhase};
 
@@ -182,7 +183,7 @@ fn run_owned_compose_exec_plan_with_deadline(
         policy,
         &parsed.service,
         working_dir,
-        deadline.unwrap_or_else(|| Instant::now() + Duration::from_secs(2)),
+        deadline,
     )?;
     run_verified_compose_exec_plan(policy, plan, &binding, capture, stdin_file, deadline)
 }
@@ -208,7 +209,7 @@ pub(in crate::runner) fn run_verified_compose_exec_plan(
             .reverify(
                 &plan.repo_root,
                 policy,
-                deadline.unwrap_or_else(|| Instant::now() + Duration::from_secs(2)),
+                deadline.unwrap_or_else(|| Instant::now() + OWNED_EXEC_VERIFICATION_TIMEOUT),
             )
             .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
         return colima::run_colima_direct_exec(
@@ -352,7 +353,7 @@ pub(super) fn verified_native_exec_invocation(
     binding.reverify(
         &plan.repo_root,
         policy,
-        deadline.unwrap_or_else(|| Instant::now() + Duration::from_secs(2)),
+        deadline.unwrap_or_else(|| Instant::now() + OWNED_EXEC_VERIFICATION_TIMEOUT),
     )?;
     let mut args = vec![OsString::from("exec")];
     if attach_stdin {

@@ -96,6 +96,18 @@ service passes it. An unlabelled, foreign or wrong-checkout primary is neither
 exec'd nor restarted; the up reports not exec-ready. The shell and task exec
 that follow are gated by that readiness boundary.
 
+Ordinary workload entry gives the selected service's owned-binding observation
+(runtime inventory followed by strict inspect) a bounded 15-second window.
+The initial workload exec probe then has its separate two-second window; the
+existing post-restart probe remains 15 seconds. Final ownership rechecks before
+ordinary native exec also have a 15-second bound. This allows Colima transport
+hops to complete without spending the workload probe window on initial binding.
+Only the selected service is inspected to acquire that binding, and every
+effect still rechecks and targets its retained immutable full ID. An explicit
+caller absolute deadline bounds verification and execution unchanged: no fresh
+phase allowance extends it. Unavailable or foreign ownership still refuses;
+the longer observation window grants no restart or successor-adoption authority.
+
 The up diagnostic and detached JSON report describe only the Compose create
 spec decision and whether the Compose up command succeeded. They identify
 included or absent source/target pairs and report runtime mount verification as
@@ -1155,6 +1167,11 @@ Contract:
 - if Effigy auto-started the runtime, or the runtime was already under an
   active task lease, Effigy refreshes the host-container lease
 - default lease timeout is 5 minutes unless configured otherwise
+- a stack that an explicit `effigy container up` left running is persistently
+  owned: task activation never leases it, the reaper never shuts it down, and
+  only an explicit teardown ends that ownership - every `effigy container down`
+  form that stops the stack (`--global` and cwd-scoped included) and
+  `effigy container retire` once it removes the scope
 - lease reuse must not depend on whether the request came from deferral or
   explicit task routing
 

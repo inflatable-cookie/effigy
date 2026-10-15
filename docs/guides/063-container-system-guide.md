@@ -698,8 +698,12 @@ Use this with `effigy.local.toml` for per-machine mounts.
 `effigy container up` means:
 
 1. ensure the selected runtime is usable; for Colima containerd, Effigy waits
-   for profile-scoped `nerdctl info` and BuildKit workers, and can repair a
-   running but incomplete profile once
+   for profile-scoped `nerdctl info` and BuildKit workers. If a running
+   profile's runtime stays unavailable (for example after the VM restarted
+   outside Colima's boot provisioning and came back with containerd and
+   BuildKit stopped), Effigy first starts those units inside the VM and
+   reports it; only if that fails does it repair the profile once by
+   restarting it
 2. bring the compose environment up
 3. inspect owned Compose projects including stopped containers and `start`
    currently declared services that are still `Exited` or `Created`; this
@@ -891,6 +895,15 @@ Default lease behavior:
 - the runtime shuts down after the lease expires unless the user explicitly
   keeps it up through `effigy container up`, `effigy dev`, or another owned
   session
+- an explicit `effigy container up` that leaves the stack running makes it
+  persistent: later tasks that reuse or restart it never attach a lease, and
+  any earlier lease is dropped. Every `effigy container down` that stops the
+  stack ends that ownership - the checkout form, `--global`, and the
+  cwd-scoped form - as does `effigy container retire` once it removes the
+  scope. A stale owner marker never blocks a later task-started stack from
+  being leased and reclaimed.
+- the notice that announces a lease names `effigy container up --detach` and
+  `EFFIGY_DISABLE_HOST_CONTAINER_LEASE=1` as the ways to keep the stack
 
 The goal is one warm-runtime contract for non-shell tasks instead of separate
 behavior for deferred versus explicit container routing.

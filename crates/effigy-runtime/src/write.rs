@@ -78,19 +78,71 @@ where
         output_json,
         deregister_gateway_routes,
         |_repo_root, _policy| {},
+        |_repo_root, _policy| {},
     )
 }
 
-pub fn run_container_down_all_with_hook<F, H>(
+pub fn run_container_down_all_with_hook<F, H, P>(
     output_json: bool,
     deregister_gateway_routes: F,
     pre_shutdown: H,
+    post_shutdown: P,
 ) -> Result<String, EffigyRuntimeError>
 where
     F: Fn(&EffectiveContainerPolicy) -> Result<Vec<String>, EffigyRuntimeError>,
     H: Fn(&Path, &EffectiveContainerPolicy),
+    P: Fn(&Path, &EffectiveContainerPolicy),
 {
     let environments = discover_running_environments()?;
+    run_container_down_environments(
+        environments,
+        output_json,
+        deregister_gateway_routes,
+        pre_shutdown,
+        post_shutdown,
+    )
+}
+
+pub fn run_container_down_under_path_with_hook<F, H, P>(
+    scope_root: &Path,
+    name: Option<&str>,
+    output_json: bool,
+    deregister_gateway_routes: F,
+    pre_shutdown: H,
+    post_shutdown: P,
+) -> Result<String, EffigyRuntimeError>
+where
+    F: Fn(&EffectiveContainerPolicy) -> Result<Vec<String>, EffigyRuntimeError>,
+    H: Fn(&Path, &EffectiveContainerPolicy),
+    P: Fn(&Path, &EffectiveContainerPolicy),
+{
+    let environments =
+        filter_running_environments_for_scope(discover_running_environments()?, scope_root, name);
+    run_container_down_environments(
+        environments,
+        output_json,
+        deregister_gateway_routes,
+        pre_shutdown,
+        post_shutdown,
+    )
+}
+
+/// Stops every discovered environment in turn. `pre_shutdown` runs before
+/// compose is touched (host supervisors must stop first) and `post_shutdown`
+/// runs once the environment is down, so a caller that owns per-stack runtime
+/// state (for example the persistent-owner marker) can clear it.
+fn run_container_down_environments<F, H, P>(
+    environments: Vec<crate::read::DiscoveredRunningEnvironment>,
+    output_json: bool,
+    deregister_gateway_routes: F,
+    pre_shutdown: H,
+    post_shutdown: P,
+) -> Result<String, EffigyRuntimeError>
+where
+    F: Fn(&EffectiveContainerPolicy) -> Result<Vec<String>, EffigyRuntimeError>,
+    H: Fn(&Path, &EffectiveContainerPolicy),
+    P: Fn(&Path, &EffectiveContainerPolicy),
+{
     let mut stopped = Vec::new();
 
     for environment in environments {
@@ -120,64 +172,7 @@ where
             }),
         )?;
         let removed_gateway_domains = deregister_gateway_routes(&policy)?;
-        stopped.push(StoppedContainerEnvironment {
-            repo_root: environment.repo_root,
-            container: policy.name.clone(),
-            project_name: policy.project_name.clone(),
-            profile: policy.profile.clone(),
-            removed_gateway_domains,
-            left_running_shared_services: policy
-                .shared_services
-                .iter()
-                .map(|service| service.service_name.clone())
-                .collect(),
-            runtime_was_running: runtime_running,
-        });
-    }
-
-    render_container_down_global_report(&stopped, output_json)
-}
-
-pub fn run_container_down_under_path_with_hook<F, H>(
-    scope_root: &Path,
-    name: Option<&str>,
-    output_json: bool,
-    deregister_gateway_routes: F,
-    pre_shutdown: H,
-) -> Result<String, EffigyRuntimeError>
-where
-    F: Fn(&EffectiveContainerPolicy) -> Result<Vec<String>, EffigyRuntimeError>,
-    H: Fn(&Path, &EffectiveContainerPolicy),
-{
-    let environments =
-        filter_running_environments_for_scope(discover_running_environments()?, scope_root, name);
-    let mut stopped = Vec::new();
-
-    for environment in environments {
-        let repo_root = Path::new(&environment.repo_root);
-        let policy = environment.policy;
-        let runtime_running = runtime_backend_is_running(&policy, repo_root)
-            .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
-        pre_shutdown(repo_root, &policy);
-        if runtime_running {
-            shutdown_container_with_manager_plan(repo_root, &policy)?;
-        }
-        let _manager_report = lifecycle_operation_report(
-            repo_root,
-            &policy,
-            ContainerAction::Shutdown,
-            if runtime_running {
-                ContainerRuntimeState::Stopped
-            } else {
-                ContainerRuntimeState::Unknown
-            },
-            Some(if runtime_running {
-                ContainerCleanupResult::Completed
-            } else {
-                ContainerCleanupResult::NotRequested
-            }),
-        )?;
-        let removed_gateway_domains = deregister_gateway_routes(&policy)?;
+        post_shutdown(repo_root, &policy);
         stopped.push(StoppedContainerEnvironment {
             repo_root: environment.repo_root,
             container: policy.name.clone(),

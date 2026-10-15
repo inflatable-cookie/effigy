@@ -57,6 +57,15 @@ fn format_release(output: &mut String, release: &Release) {
         output.push_str(&format!("## [{version}] - {date}\n"));
     }
 
+    // Free prose paragraphs sit directly under the release heading, before any
+    // category section. Blank lines separate paragraphs or the following
+    // category heading.
+    for paragraph in &release.prose {
+        output.push('\n');
+        output.push_str(paragraph);
+        output.push('\n');
+    }
+
     // Categories — sorted in canonical order, empty ones omitted
     let mut sorted_categories: Vec<_> = release
         .categories

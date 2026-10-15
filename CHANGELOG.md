@@ -227,11 +227,28 @@ During v0.x, MINOR bumps may include breaking changes.
   detail queries preserve native failures rather than treating every zero return
   as an absent socket. Permission/unknown observations still refuse, with the
   same ownership checks and readiness deadlines.
+- When a running Colima VM comes back from a restart with containerd and
+  BuildKit stopped, `effigy container up` and container tasks now start those
+  units inside the VM and continue, instead of waiting and then restarting the
+  whole VM, which took down every stack on it and could itself time out.
 - Task locks are published atomically and carry an owner token. A concurrent
   run can no longer see a half-written lock, delete it, and start alongside the
   owner, and a finishing run never removes or refreshes a successor's lock. An
   unparsable lock is reclaimed only after a short grace period, so a lock still
   being written by an older Effigy is not stolen.
+- Container exec preparation gives owned-service inventory and inspection a
+  bounded 15-second window separate from the initial workload probe. Valid
+  Colima stacks no longer exhaust a shared two-second window before exec;
+  explicit caller deadlines and strict immutable-ID ownership checks remain.
+- A container task no longer attaches a 5-minute idle-shutdown lease to a stack
+  you brought up explicitly with `effigy container up`, and a pending lease is
+  dropped when you do. `effigy container down` - including `--global` and the
+  cwd-scoped form - and `effigy container retire` end that persistent ownership,
+  so a later task-started stack is leased and reclaimed again. Previously a task
+  that reused or restarted such a stack could tear the whole stack down five
+  minutes later, and a `down` outside the checkout left a stale owner marker that
+  blocked later leases. The lease notice now names
+  `effigy container up --detach` and `EFFIGY_DISABLE_HOST_CONTAINER_LEASE=1`.
 - `effigy doctor` no longer reports `{ task = "defer …" }` and other builtin
   command references as unresolved tasks, and accepts every top-level manifest
   table (`isolation`, `state`, `deploy`, `data`, `env_schema`, `qa`). A manifest
@@ -366,6 +383,12 @@ During v0.x, MINOR bumps may include breaking changes.
   state file. It records report, ownership, HTTP probe and route observations
   for the failed generation after its report and child are cleaned up. The
   diagnostic is evidence only and does not change ownership or publication.
+- The changelog parser accepts free prose paragraphs inside a release section,
+  directly under a version heading or between category headings, so
+  `effigy release simulate`, `release prepare`, `changelog format` and
+  `changelog extract` work with prose-bearing consumer changelogs. Prose is
+  preserved on format, extraction and release promotion; malformed headings and
+  entries are still rejected.
 
 ## [0.14.1] - 2026-10-08
 

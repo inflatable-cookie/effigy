@@ -201,6 +201,61 @@ fn format_effigy_changelog_removes_empty_sections() {
 }
 
 #[test]
+fn format_keeps_release_prose_before_categories() {
+    let input = "\
+# Changelog
+
+## [Unreleased]
+
+Intro paragraph.
+
+### Added
+- Feature
+
+## [0.1.0] - 2026-03-01
+
+Old note.
+
+### Added
+- Initial release
+";
+    let changelog = parse_changelog(input).expect("should parse");
+    let formatted = format_changelog(&changelog);
+
+    assert!(
+        formatted.contains("## [Unreleased]\n\nIntro paragraph.\n\n### Added"),
+        "{formatted}"
+    );
+    assert!(
+        formatted.contains("## [0.1.0] - 2026-03-01\n\nOld note.\n\n### Added"),
+        "{formatted}"
+    );
+}
+
+#[test]
+fn format_prose_roundtrip_is_idempotent() {
+    let input = "\
+# Changelog
+
+## [Unreleased]
+
+First paragraph line one
+continues on line two.
+
+Second paragraph.
+
+### Added
+- Feature
+";
+    let parsed1 = parse_changelog(input).expect("should parse");
+    let formatted1 = format_changelog(&parsed1);
+    let parsed2 = parse_changelog(&formatted1).expect("should parse formatted");
+    let formatted2 = format_changelog(&parsed2);
+
+    assert_eq!(formatted1, formatted2, "format should be idempotent");
+}
+
+#[test]
 fn format_removes_empty_releases() {
     let input = "\
 # Changelog

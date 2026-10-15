@@ -25,6 +25,14 @@ pub struct Release {
     pub version: Option<semver::Version>,
     /// Date string in `YYYY-MM-DD` format. `None` for Unreleased.
     pub date: Option<String>,
+    /// Free prose paragraphs in this release section.
+    ///
+    /// The Northstar profile allows plain paragraphs directly under a release
+    /// heading and between category headings. Each element is one paragraph;
+    /// a blank line starts the next paragraph and internal line breaks are
+    /// preserved verbatim. Prose is release-note material only: validation and
+    /// bump analysis still count category entries alone.
+    pub prose: Vec<String>,
     /// Categories present in this release (only non-empty categories).
     pub categories: Vec<Category>,
     /// Source line number of the release header.

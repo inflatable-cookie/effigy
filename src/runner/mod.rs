@@ -65,7 +65,7 @@ pub(in crate::runner) use artifact_command::run_artifact;
 pub(in crate::runner) use bundle_command::run_bundle;
 pub(in crate::runner) use changelog_command::run_changelog;
 pub use command_context::command_repo_override_for_context;
-pub(in crate::runner) use container_command::run_container;
+pub(in crate::runner) use container_command::run_container_command;
 pub(in crate::runner) use contracts_command::run_contracts;
 pub(in crate::runner) use defer_command::run_defer;
 pub(crate) use deferral::{
