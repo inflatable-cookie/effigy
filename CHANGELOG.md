@@ -7,6 +7,15 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- Workspace handoff verifies the host-selected installed service catalog pack
+  after selected-workspace activation or recreation, for the workspace user, including when the Linux binary is already current.
+  Empty guests receive validated retained content without needing its original
+  source checkout or network access; matching packs avoid copy/install.
+  Different or unknown guest selections and changed or unhealthy inputs refuse
+  before task execution and preserve the guest store. Guarded local
+  `service pack install --prepare-content` pins content without replacing an
+  existing selection. Project/user override precedence and bounded handoff
+  privacy, time and output limits remain unchanged.
 - Secret-free versioned refusal accounting for bounded container transport
   refusals (task 159). Every bounded transport refusal payload now carries a
   `refusal_observations` block, additive in `effigy.container.bounded-exec.v1`

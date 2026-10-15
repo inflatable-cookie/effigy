@@ -203,7 +203,36 @@ pub fn install_pack(
 ) -> Result<PackInstallReport, PackError> {
     let staging = staging_dir(store)?;
     let guard = StagingGuard(staging.clone());
-    let outcome = run_transaction(store, acquirer, source, effigy_version, &staging);
+    let outcome = run_transaction(store, acquirer, source, effigy_version, &staging, None);
+    drop(guard);
+    outcome
+}
+
+/// Prepare exact workspace content only while guest selection and retained
+/// content are absent. The guard is checked under the same lock as activation;
+/// explicit baseline selections and concurrent installs are preserved.
+pub fn install_pack_for_workspace(
+    store: &PackStore,
+    source: &PackCandidateSource,
+    effigy_version: &str,
+    expected_content: &str,
+) -> Result<PackInstallReport, PackError> {
+    parse_oci_digest(expected_content)?;
+    if !matches!(source, PackCandidateSource::Local { .. }) {
+        return Err(PackError::WorkspacePreparationRefused {
+            reason: "workspace preparation requires retained local content",
+        });
+    }
+    let staging = staging_dir(store)?;
+    let guard = StagingGuard(staging.clone());
+    let outcome = run_transaction(
+        store,
+        &LocalPackAcquirer,
+        source,
+        effigy_version,
+        &staging,
+        Some(expected_content),
+    );
     drop(guard);
     outcome
 }
@@ -214,6 +243,7 @@ fn run_transaction(
     source: &PackCandidateSource,
     effigy_version: &str,
     staging: &Path,
+    expected_content: Option<&str>,
 ) -> Result<PackInstallReport, PackError> {
     // 1. Acquire into the staging area. Never into the live install tree, and
     //    deliberately outside the durable-store lock: this is the slow step.
@@ -233,6 +263,24 @@ fn run_transaction(
     //    install cannot race the landing or lose this record's lineage.
     let _lock = store.lock()?;
     let install_dir = store.install_dir(&record.install_id);
+    if let Some(expected) = expected_content {
+        if content_id != expected {
+            return Err(PackError::WorkspacePreparationRefused {
+                reason: "candidate content differs from the pinned host pack",
+            });
+        }
+        // `exists` follows symlinks and hides unsupported state paths. Only
+        // definite absence authorizes automatic preparation.
+        if !matches!(std::fs::symlink_metadata(store.state_path()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound)
+            || store.load()? != PackStoreState::default()
+            || !workspace_install_store_is_empty(store)?
+        {
+            return Err(PackError::WorkspacePreparationRefused {
+                reason: "guest selection or retained install already exists; inspect service pack status and explicitly install the intended pack",
+            });
+        }
+    }
     let stored_content = land_content(store, staging, &pack_root, &install_dir, &record)?;
 
     let replaced = store.load()?.active;
@@ -243,6 +291,22 @@ fn run_transaction(
         state,
         stored_content,
     })
+}
+
+// A missing state document does not make orphaned content an empty store.
+// Never adopt, replace or delete such content during automatic preparation.
+fn workspace_install_store_is_empty(store: &PackStore) -> Result<bool, PackError> {
+    let installs = store.root().join("installs");
+    match std::fs::symlink_metadata(&installs) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(true),
+        Err(error) => Err(PackError::io(&installs, &error)),
+        Ok(metadata) if !metadata.is_dir() || metadata.file_type().is_symlink() => Ok(false),
+        Ok(_) => {
+            let mut entries =
+                std::fs::read_dir(&installs).map_err(|error| PackError::io(&installs, &error))?;
+            Ok(entries.next().is_none())
+        }
+    }
 }
 
 /// Put validated content at `install_dir`, verifying anything already there.

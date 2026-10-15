@@ -19,11 +19,11 @@ use effigy_artifacts::{
     OrasCliArtifactAdapter,
 };
 use effigy_catalog::pack::{
-    ensure_official_channel_published, install_pack, official_channel_tag_reference,
-    parse_oci_digest, plan_official_update, select_pack, verified_active_digest,
-    InstalledPackRecord, LocalPackAcquirer, OfficialPackChannel, PackAcquireRequest,
-    PackAcquisition, PackCandidateAcquirer, PackCandidateSource, PackError, PackSelection,
-    PackSelectionReason, PackStore, PackStoreState, StoredContentOutcome,
+    ensure_official_channel_published, install_pack, install_pack_for_workspace,
+    official_channel_tag_reference, parse_oci_digest, plan_official_update, select_pack,
+    verified_active_digest, InstalledPackRecord, LocalPackAcquirer, OfficialPackChannel,
+    PackAcquireRequest, PackAcquisition, PackCandidateAcquirer, PackCandidateSource, PackError,
+    PackSelection, PackSelectionReason, PackStore, PackStoreState, StoredContentOutcome,
 };
 use effigy_cli::{ServicePackInstallSource, ServicePackSubcommand};
 use effigy_doctor::{check_id, DoctorFinding, DoctorSeverity};
@@ -95,7 +95,24 @@ pub(super) fn run_service_pack(
 ) -> Result<String, RunnerError> {
     match subcommand {
         ServicePackSubcommand::Status => run_status(output_json),
-        ServicePackSubcommand::Install { source } => {
+        ServicePackSubcommand::Install {
+            source,
+            prepare_content: Some(content),
+        } => {
+            let ServicePackInstallSource::Path { path } = source else {
+                return Err(RunnerError::task_invocation(
+                    "workspace catalog preparation requires --path",
+                ));
+            };
+            let candidate = PackCandidateSource::local(path).map_err(pack_error)?;
+            install_pack_for_workspace(&require_store()?, &candidate, effigy_version(), &content)
+                .map_err(pack_error)?;
+            run_status(output_json)
+        }
+        ServicePackSubcommand::Install {
+            source,
+            prepare_content: None,
+        } => {
             let adapter = OrasCliArtifactAdapter::default();
             run_install(&source, &OciPackAcquirer::new(&adapter), output_json)
         }

@@ -49,6 +49,7 @@ fn parse_service_pack_install_accepts_an_oci_reference_or_a_path() {
         cmd,
         service_pack(
             ServicePackSubcommand::Install {
+                prepare_content: None,
                 source: ServicePackInstallSource::Oci {
                     reference: "oci://packs.invalid/effigy/default-catalog@sha256:abc".to_owned(),
                 },
@@ -69,6 +70,7 @@ fn parse_service_pack_install_accepts_an_oci_reference_or_a_path() {
         cmd,
         service_pack(
             ServicePackSubcommand::Install {
+                prepare_content: None,
                 source: ServicePackInstallSource::Path {
                     path: PathBuf::from("./catalog-pack"),
                 },
@@ -1702,4 +1704,44 @@ fn parse_named_container_data_seed_is_rejected() {
     assert!(err
         .to_string()
         .contains("`effigy container web data seed` is not supported"));
+}
+
+#[test]
+fn parse_service_pack_workspace_preparation_requires_a_local_candidate() {
+    let command = parse_command(
+        [
+            "service",
+            "pack",
+            "install",
+            "--path",
+            "retained-pack",
+            "--prepare-content",
+            "sha256:canonical-content-is-validated-by-the-installer",
+            "--json",
+        ]
+        .map(str::to_owned),
+    )
+    .expect("parse guarded local preparation");
+    assert!(matches!(
+        command,
+        Command::Service(ServiceArgs {
+            subcommand: ServiceSubcommand::Pack(ServicePackSubcommand::Install {
+                prepare_content: Some(_),
+                source: ServicePackInstallSource::Path { .. },
+            }),
+            ..
+        })
+    ));
+    assert!(parse_command(
+        [
+            "service",
+            "pack",
+            "install",
+            "oci://example.invalid/pack@sha256:abc",
+            "--prepare-content",
+            "sha256:abc",
+        ]
+        .map(str::to_owned)
+    )
+    .is_err());
 }

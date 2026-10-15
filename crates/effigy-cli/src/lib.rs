@@ -878,7 +878,11 @@ pub enum ServicePackSubcommand {
     /// Report the active selection, lineage, and health.
     Status,
     /// Install an explicit candidate and activate it after validation.
-    Install { source: ServicePackInstallSource },
+    Install {
+        source: ServicePackInstallSource,
+        /// Guarded workspace preparation: exact content and no prior selection.
+        prepare_content: Option<String>,
+    },
     /// Resolve the official `stable` channel and install that digest.
     Update,
     /// Select the previous validated installed pack.

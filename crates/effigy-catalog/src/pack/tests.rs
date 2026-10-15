@@ -2188,3 +2188,86 @@ fn recovery_refuses_a_state_path_that_is_not_a_regular_file() {
         "the original path was disturbed"
     );
 }
+
+#[test]
+fn workspace_pack_preparation_pins_content_and_preserves_all_existing_selections() {
+    let fixture = tempfile::tempdir().expect("fixture");
+    let candidate = candidate_pack(fixture.path(), "private", "1.2.0", ">=0.1", 5432);
+    let source = PackCandidateSource::local(&candidate).expect("candidate");
+    let expected = content_id(&candidate).expect("identity");
+    let store = store_in(&fixture.path().join("guest"));
+    let wrong = format!("sha256:{}", "0".repeat(64));
+    super::install::install_pack_for_workspace(&store, &source, EFFIGY_VERSION, &wrong)
+        .expect_err("wrong content must not activate");
+    assert!(!store.state_path().exists());
+    let report =
+        super::install::install_pack_for_workspace(&store, &source, EFFIGY_VERSION, &expected)
+            .expect("empty guest receives exact validated content");
+    assert_eq!(report.installed.content_id, expected);
+    let before = std::fs::read(store.state_path()).expect("state");
+    super::install::install_pack_for_workspace(&store, &source, EFFIGY_VERSION, &expected)
+        .expect_err("even a matching prior selection needs verified no-op, not install");
+    assert_eq!(std::fs::read(store.state_path()).expect("state"), before);
+    store
+        .commit(&PackStoreState::default())
+        .expect("explicit baseline");
+    let before = std::fs::read(store.state_path()).expect("baseline state");
+    super::install::install_pack_for_workspace(&store, &source, EFFIGY_VERSION, &expected)
+        .expect_err("explicit baseline is preserved");
+    assert_eq!(
+        std::fs::read(store.state_path()).expect("baseline state"),
+        before
+    );
+    assert!(store.install_dir(&report.installed.install_id).is_dir());
+    // A crashed install can leave content without any selection document.
+    // Automatic preparation must not adopt or repair that unknown install.
+    std::fs::remove_file(store.state_path()).expect("remove only owned fixture state");
+    let retained = store.install_dir(&report.installed.install_id);
+    let retained_identity = content_id(&retained).expect("retained identity");
+    super::install::install_pack_for_workspace(&store, &source, EFFIGY_VERSION, &expected)
+        .expect_err("occupied retained install remains held without state");
+    assert!(!store.state_path().exists());
+    assert_eq!(
+        content_id(&retained).expect("held identity"),
+        retained_identity
+    );
+    let other = candidate_pack(fixture.path(), "private", "1.3.0", ">=0.1", 5432);
+    let other_identity = content_id(&other).expect("other identity");
+    super::install::install_pack_for_workspace(
+        &store,
+        &PackCandidateSource::local(other).expect("other source"),
+        EFFIGY_VERSION,
+        &other_identity,
+    )
+    .expect_err("unreferenced different content is also an unknown store");
+    assert!(!store.state_path().exists());
+    assert_eq!(
+        content_id(&retained).expect("held identity"),
+        retained_identity
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn workspace_pack_preparation_refuses_unknown_state_and_existing_install_paths() {
+    use std::os::unix::fs::symlink;
+    let fixture = tempfile::tempdir().expect("fixture");
+    let candidate = candidate_pack(fixture.path(), "private", "1.2.0", ">=0.1", 5432);
+    let source = PackCandidateSource::local(&candidate).expect("candidate");
+    let expected = content_id(&candidate).expect("identity");
+    let store = store_in(&fixture.path().join("guest"));
+    std::fs::create_dir_all(store.root()).expect("store");
+    let sibling = fixture.path().join("sibling-state");
+    write(&sibling, "unrelated sibling bytes");
+    symlink(&sibling, store.state_path()).expect("fixture-only state link");
+    super::install::install_pack_for_workspace(&store, &source, EFFIGY_VERSION, &expected)
+        .expect_err("unsupported state remains held");
+    assert_eq!(
+        std::fs::read_to_string(&sibling).expect("sibling"),
+        "unrelated sibling bytes"
+    );
+    assert!(std::fs::symlink_metadata(store.state_path())
+        .expect("state link")
+        .file_type()
+        .is_symlink());
+}

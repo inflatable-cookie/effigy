@@ -422,6 +422,29 @@
 # private fake backends under a forced-exit nextest profile; no runtime,
 # Reference, Acow, gateway or service is started. No live Colima instance is
 # started.
+# Selected installed service-pack parity, entirely private fake transport.
+"test:workspace:catalog-handoff" = [
+  { id = "catalog-handoff-unit", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-catalog -p effigy-cli --lib --filterset 'test(workspace_catalog) | test(workspace_pack_) | test(parse_service_pack_) | test(workspace::tests::) | test(workspace_session::tests::) | test(exec_command::tests::) | test(bounded_exec::) | test(pack::tests::)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
+  "cargo build --bin effigy",
+  { task = "test:workspace:catalog-handoff:private" },
+]
+"test:workspace:catalog-handoff:selection" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(workspace_catalog)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 600000 }
+"test:workspace:catalog-handoff:build" = "cargo build --bin effigy"
+"test:workspace:catalog-handoff:private" = { run = "python3 tests/scripts/workspace-catalog-handoff.py ./target/debug/effigy", timeout_ms = 600000 }
+
+"test:workspace:catalog-handoff:routes" = { run = "python3 tests/scripts/workspace-catalog-handoff.py ./target/debug/effigy --handoffs", timeout_ms = 600000 }
+
+"test:workspace:catalog-handoff:refusals" = { run = "python3 tests/scripts/workspace-catalog-handoff.py ./target/debug/effigy --refusals", timeout_ms = 600000 }
+"test:workspace:catalog-handoff:guard" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-catalog --lib --filterset 'test(workspace_pack_preparation_pins_content)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 600000 }
+
+"test:workspace:catalog-handoff:identity" = { run = "python3 tests/scripts/workspace-catalog-handoff.py ./target/debug/effigy home-after-copy user-after-copy", timeout_ms = 600000 }
+
+"fmt:workspace:catalog-handoff" = "rustfmt --edition 2021 --config skip_children=true crates/effigy-catalog/src/pack.rs crates/effigy-catalog/src/pack/error.rs crates/effigy-catalog/src/pack/install.rs crates/effigy-catalog/src/pack/tests.rs crates/effigy-cli/src/lib.rs crates/effigy-cli/src/command_parsing_runtime.rs crates/effigy-cli/src/help/topics/service.rs src/runner/service_command/pack.rs src/runner/system_command.rs src/runner/system_command/workspace_provisioning.rs src/runner/system_command/workspace_catalog.rs src/runner/system_command/workspace_catalog/tests.rs src/tests/lib_tests_parse_tests/catalog_and_container_option_tests.rs"
+"check:workspace:catalog-handoff" = [
+  "cargo check -p effigy -p effigy-catalog -p effigy-cli --all-targets --profile test",
+  "cargo clippy -p effigy -p effigy-catalog -p effigy-cli --all-targets -- -D warnings",
+  { task = "fmt:check" },
+]
 "test:container:bounded-exec" = [
   { id = "bounded-exec-parser", run = "cargo test -p effigy-cli --lib command_parsing::container::tests:: -- --nocapture", timeout_ms = 600000 },
   { id = "bounded-exec-reader", run = "cargo test -p effigy --lib exec_command::bounded:: -- --nocapture", timeout_ms = 600000 },
