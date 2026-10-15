@@ -7,6 +7,12 @@ use effigy_cli::{DeferArgs, TaskInvocation};
 use effigy_context::{CapturedEnv, EffigyRuntimeContext};
 use effigy_execution::{ExecutionEnvironmentPlan, ExecutionSurface, TaskExecutionRequestBuilder};
 
+fn fake_app_full_id(root: &std::path::Path) -> String {
+    let policy =
+        effigy_containers::load_container_policy(root, Some("web")).expect("fixture policy");
+    effigy_gateway::ports::sha256_hex(format!("{}-app-1", policy.project_name).as_bytes())
+}
+
 fn setup_fake_docker_deferral_runtime(
     root: &std::path::Path,
     service_running: bool,
@@ -374,7 +380,7 @@ base = { type = "path", dir = "bundles/php-library" }
         "expected docker compose exec, got {log}"
     );
     assert!(
-        log.contains("app sh -lc"),
+        log.contains(&format!("{} sh -lc", fake_app_full_id(&root))),
         "expected workspace service exec, got {log}"
     );
     assert!(
@@ -705,12 +711,15 @@ shared_root = "{}"
         "removed recursive -fR chown must stay gone, got {log}"
     );
     assert!(
-        !log.contains("exec -T -u 0 app sh -lc"),
+        !log.contains(&format!("exec -u 0 {} sh -lc", fake_app_full_id(&repo))),
         "permission prep must use argument arrays instead of a root login shell, got {log}"
     );
-    let identity_probe = r#"exec -T -u 0 app sh -c uid="$(id -u "$1")" && gid="$(id -g "$1")""#;
+    let identity_probe = format!(
+        r#"exec -u 0 {} sh -c uid="$(id -u "$1")" && gid="$(id -g "$1")""#,
+        fake_app_full_id(&repo)
+    );
     assert!(
-        log.contains(identity_probe),
+        log.contains(&identity_probe),
         "expected combined numeric workspace identity probe before prep, got {log}"
     );
     assert!(
@@ -728,8 +737,10 @@ shared_root = "{}"
         "expected bulk no-deref chown of isolated vendor as resolved uid:gid, got {log}"
     );
     assert!(
-        log.contains("exec -T -u 501:20 app sh -c while [ \"$#\" -ge 2 ]; do")
-            && log.contains("[ ! -r \"$path\" ] || [ ! -w \"$path\" ]")
+        log.contains(&format!(
+            "exec -u 501:20 {} sh -c while [ \"$#\" -ge 2 ]; do",
+            fake_app_full_id(&repo)
+        )) && log.contains("[ ! -r \"$path\" ] || [ ! -w \"$path\" ]")
             && log.contains(&format!("{vendor} yes")),
         "expected batched non-root read/write probe of isolated vendor, got {log}"
     );
@@ -742,7 +753,7 @@ shared_root = "{}"
     let probe_at = log
         .find(&format!("{vendor} yes"))
         .expect("access probe marker");
-    let deferred = "exec -T -w /workspace-root/zest -u dev";
+    let deferred = "exec -i -w /workspace-root/zest -u dev";
     let deferred_at = log.find(deferred).unwrap_or_else(|| {
         panic!("expected deferred workspace exec as dev user after prep, got {log}")
     });

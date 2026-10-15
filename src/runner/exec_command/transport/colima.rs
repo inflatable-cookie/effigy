@@ -38,19 +38,17 @@ pub(super) type FormatArgs = dyn Fn(&[OsString]) -> String;
 
 pub(super) struct ColimaExecAdapters<'a> {
     pub(super) parse_compose_exec_args: &'a ParseComposeExec,
-    pub(super) run_command_capture_allow_failure: &'a CaptureCommand,
     pub(super) run_command_capture_allow_failure_with_stdin: &'a CaptureCommandWithStdin,
     pub(super) format_args: &'a FormatArgs,
 }
 
-/// One Colima direct-exec request: its output shape, label, optional stdin and
-/// the caller's absolute deadline (if any). Bundled so the deadline travels
-/// with the capture mode instead of widening the call signature.
+/// One Colima exec request carries the verified binding, capture mode and
+/// optional stdin. Capture adapters retain the caller's absolute deadline.
 pub(super) struct ColimaDirectExecRequest<'a> {
+    pub(super) binding: &'a effigy_containers::exec::VerifiedComposeContainer,
     pub(super) capture: bool,
     pub(super) label: &'a str,
     pub(super) stdin_file: Option<&'a Path>,
-    pub(super) deadline: Option<Instant>,
 }
 
 pub(super) fn run_colima_direct_exec(
@@ -61,27 +59,24 @@ pub(super) fn run_colima_direct_exec(
     adapters: ColimaExecAdapters<'_>,
 ) -> Result<Output, RunnerError> {
     let ColimaDirectExecRequest {
+        binding,
         capture,
         label,
         stdin_file,
-        deadline,
     } = request;
     let ColimaExecAdapters {
         parse_compose_exec_args,
-        run_command_capture_allow_failure,
         run_command_capture_allow_failure_with_stdin,
         format_args,
     } = adapters;
     let parsed = parse_compose_exec_args(compose_exec_args)?;
-    let resolved = resolve_colima_direct_exec_invocation(
-        repo_root,
+    let resolved = colima_direct_exec_args(
         policy,
         &parsed,
         stdin_file.is_some() || !capture,
-        deadline,
-        run_command_capture_allow_failure,
-        format_args,
-    )?;
+        OsString::from(binding.id()),
+    );
+
     if capture {
         return run_command_capture_allow_failure_with_stdin(
             repo_root,
@@ -134,6 +129,7 @@ pub(super) fn run_colima_direct_exec(
     })
 }
 
+#[cfg(test)]
 fn resolve_colima_direct_exec_invocation(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
@@ -152,6 +148,20 @@ fn resolve_colima_direct_exec_invocation(
         format_args,
     )?;
 
+    Ok(colima_direct_exec_args(
+        policy,
+        parsed,
+        attach_stdin,
+        container_id,
+    ))
+}
+
+fn colima_direct_exec_args(
+    policy: &EffectiveContainerPolicy,
+    parsed: &ParsedComposeExec,
+    attach_stdin: bool,
+    container_id: OsString,
+) -> Vec<OsString> {
     let mut args = vec![
         OsString::from("nerdctl"),
         OsString::from("--profile"),
@@ -179,7 +189,7 @@ fn resolve_colima_direct_exec_invocation(
     }
     args.push(container_id);
     args.extend(parsed.command.iter().cloned());
-    Ok(args)
+    args
 }
 
 pub(super) fn resolve_compose_service_container_id(

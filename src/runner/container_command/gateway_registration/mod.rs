@@ -75,6 +75,15 @@ pub(in crate::runner) fn register_gateway_routes_for_container_with_context(
     policy: &EffectiveContainerPolicy,
     admitted: Option<&crate::runner::host_container_lease::DetachedActivationContext>,
 ) -> Result<Vec<RegisteredGatewayRoute>, RunnerError> {
+    register_gateway_routes_for_verified_container(repo_root, policy, admitted, None)
+}
+
+pub(in crate::runner) fn register_gateway_routes_for_verified_container(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    admitted: Option<&crate::runner::host_container_lease::DetachedActivationContext>,
+    binding: Option<&effigy_containers::exec::VerifiedComposeContainer>,
+) -> Result<Vec<RegisteredGatewayRoute>, RunnerError> {
     if let Some(context) = admitted {
         context.verify(repo_root, policy, true)?;
     }
@@ -83,6 +92,9 @@ pub(in crate::runner) fn register_gateway_routes_for_container_with_context(
     publication_test_control(PublicationStage::AfterProbe);
     if let Some(context) = admitted {
         context.verify(repo_root, policy, true)?;
+    }
+    if let Some(binding) = binding {
+        binding.reverify(repo_root, policy, Instant::now() + Duration::from_secs(2))?;
     }
     let mut routes = resolve_gateway_routes_against_rows(repo_root, policy, &rows)?;
     let project_alias_routes =

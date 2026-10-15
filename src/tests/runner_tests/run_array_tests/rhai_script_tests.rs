@@ -455,7 +455,8 @@ run = [{ rhai = "scripts/dispatch.rhai" }]
 #[test]
 fn run_manifest_task_run_array_rhai_steps_support_container_helpers() {
     let _guard = lock_test();
-    let root = temp_workspace("run-array-rhai-container-helpers");
+    let temp = tempfile::tempdir().expect("fresh private runtime fixture");
+    let root = fs::canonicalize(temp.path()).expect("canonical private fixture");
     write_container_fixture(&root);
     let bin_dir = install_fake_container_runtime(&root);
     write_executable(
@@ -519,12 +520,10 @@ fn run_manifest_task_run_array_rhai_steps_support_container_helpers() {
 
     let args_log = fs::read_to_string(&docker_args).expect("read docker args");
     assert!(args_log.contains(" up -d"), "got: {args_log}");
+    assert!(args_log.contains("exec -w /workspace"), "got: {args_log}");
     assert!(
-        args_log.contains("exec -T -w /workspace"),
-        "got: {args_log}"
-    );
-    assert!(
-        args_log.contains("app sh -lc") && args_log.contains("printf helper-shell"),
+        args_log.contains(&format!("{} sh -lc", "a".repeat(64)))
+            && args_log.contains("printf helper-shell"),
         "got: {args_log}"
     );
     assert!(

@@ -781,7 +781,9 @@ pub(super) fn ensure_local_linux_workspace_effigy_artifact_bounded(
         resolve_local_workspace_effigy_freshness_anchor(host_binary, effigy_repo_root);
     let install_identity = workspace_effigy_local_install_identity(&freshness_anchor)?;
 
-    if linux_workspace_effigy_artifact_is_current(&artifact_path, target, &install_identity) {
+    if !linux_workspace_artifact_lock_path(effigy_repo_root).exists()
+        && linux_workspace_effigy_artifact_is_current(&artifact_path, target, &install_identity)
+    {
         return bind_verified_linux_workspace_effigy_artifact(&artifact_path, &install_identity);
     }
     if wait_for_in_progress_linux_workspace_artifact_build_bounded(
@@ -798,6 +800,7 @@ pub(super) fn ensure_local_linux_workspace_effigy_artifact_bounded(
         "building linux effigy artifact for workspace container access",
         false,
     );
+    let previous_digest = linux_workspace_artifact_digest_bounded(&artifact_path, policy, budget)?;
     let started = std::time::SystemTime::now();
     let built = run_linux_workspace_effigy_artifact_build_bounded(
         host_binary,
@@ -806,7 +809,11 @@ pub(super) fn ensure_local_linux_workspace_effigy_artifact_bounded(
         policy,
         budget,
     )?;
-    if built && linux_workspace_artifact_produced_since(&artifact_path, target, started) {
+    if built
+        && linux_workspace_artifact_produced_since(&artifact_path, target, started)
+        && linux_workspace_artifact_digest_bounded(&artifact_path, policy, budget)?
+            .is_some_and(|digest| Some(digest) != previous_digest)
+    {
         return bind_verified_linux_workspace_effigy_artifact(&artifact_path, &install_identity);
     }
     if !built
@@ -829,10 +836,11 @@ pub(super) fn ensure_local_linux_workspace_effigy_artifact_bounded(
         budget,
         BoundedCommandPhase::WorkspacePreparation,
         "workspace_preparation_failed",
-        if built {
-            "bounded container command build left no current workspace artifact; rebuild with EFFIGY_LINUX_RELEASE_TRIPLE=<target> effigy workspace:linux:artifact"
-        } else {
-            "bounded container command could not refresh the stale workspace artifact; rebuild with EFFIGY_LINUX_RELEASE_TRIPLE=<target> effigy workspace:linux:artifact"
+        match (built, target) {
+            (true, LinuxWorkspaceTarget::X86_64Gnu) => "bounded container command build left no current workspace artifact; rebuild with EFFIGY_LINUX_RELEASE_TRIPLE=x86_64-unknown-linux-gnu effigy workspace:linux:artifact",
+            (true, LinuxWorkspaceTarget::Aarch64Gnu) => "bounded container command build left no current workspace artifact; rebuild with EFFIGY_LINUX_RELEASE_TRIPLE=aarch64-unknown-linux-gnu effigy workspace:linux:artifact",
+            (false, LinuxWorkspaceTarget::X86_64Gnu) => "bounded container command could not refresh the stale workspace artifact; rebuild with EFFIGY_LINUX_RELEASE_TRIPLE=x86_64-unknown-linux-gnu effigy workspace:linux:artifact",
+            (false, LinuxWorkspaceTarget::Aarch64Gnu) => "bounded container command could not refresh the stale workspace artifact; rebuild with EFFIGY_LINUX_RELEASE_TRIPLE=aarch64-unknown-linux-gnu effigy workspace:linux:artifact",
         },
         None,
     ))
@@ -975,7 +983,9 @@ pub(super) fn ensure_local_linux_workspace_effigy_artifact(
 
     // Only an artifact bound to the current host identity is handed off. Stale,
     // unknown, or wrong-target bytes are never reused to avoid a rebuild.
-    if linux_workspace_effigy_artifact_is_current(&artifact_path, target, &install_identity) {
+    if !linux_workspace_artifact_lock_path(effigy_repo_root).exists()
+        && linux_workspace_effigy_artifact_is_current(&artifact_path, target, &install_identity)
+    {
         return bind_verified_linux_workspace_effigy_artifact(&artifact_path, &install_identity);
     }
     if wait_for_in_progress_linux_workspace_artifact_build(
@@ -990,9 +1000,19 @@ pub(super) fn ensure_local_linux_workspace_effigy_artifact(
         "building linux effigy artifact for workspace container access",
         false,
     );
+    let previous_digest =
+        linux_workspace_artifact_digest(&artifact_path, || true).map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "cannot inspect previous workspace artifact output: {error}"
+            ))
+        })?;
     let started = std::time::SystemTime::now();
     match run_linux_workspace_effigy_artifact_build(host_binary, effigy_repo_root, target) {
-        Ok(()) if linux_workspace_artifact_produced_since(&artifact_path, target, started) => {
+        Ok(())
+            if linux_workspace_artifact_produced_since(&artifact_path, target, started)
+                && linux_workspace_artifact_digest(&artifact_path, || true)
+                    .is_ok_and(|digest| digest.is_some() && digest != previous_digest) =>
+        {
             bind_verified_linux_workspace_effigy_artifact(&artifact_path, &install_identity)
         }
         Ok(()) => Err(RunnerError::task_invocation(format!(
@@ -1054,9 +1074,74 @@ pub(super) fn linux_workspace_effigy_artifact_is_current(
 ) -> bool {
     artifact_path.is_file()
         && linux_workspace_effigy_rehearsal_receipt_matches_target(artifact_path, target)
+        && read_trimmed_identity_file(&workspace_effigy_active_version_file(artifact_path))
+            .as_deref()
+            == Some(effigy_core::build_info::active_version().as_str())
         && read_trimmed_identity_file(&workspace_effigy_install_identity_file(artifact_path))
             .as_deref()
             == Some(expected_identity.trim())
+}
+
+/// An in-memory comparison rejects unchanged output. This digest never becomes
+/// an install identity or provenance receipt, and current reuse does not hash.
+fn linux_workspace_artifact_digest(
+    artifact_path: &Path,
+    mut within_deadline: impl FnMut() -> bool,
+) -> std::io::Result<Option<[u8; 32]>> {
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+    let mut file = match std::fs::File::open(artifact_path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let mut digest = Sha256::new();
+    let mut bytes = [0; 64 * 1024];
+    loop {
+        if !within_deadline() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "artifact inspection deadline expired",
+            ));
+        }
+        let read = file.read(&mut bytes)?;
+        if read == 0 {
+            return Ok(Some(digest.finalize().into()));
+        }
+        digest.update(&bytes[..read]);
+    }
+}
+
+fn linux_workspace_artifact_digest_bounded(
+    artifact_path: &Path,
+    policy: &EffectiveContainerPolicy,
+    budget: &BoundedCommandBudget,
+) -> Result<Option<[u8; 32]>, RunnerError> {
+    linux_workspace_artifact_digest(artifact_path, || budget.remaining_time().is_some()).map_err(
+        |error| {
+            if error.kind() == std::io::ErrorKind::TimedOut {
+                bounded_failure_error(
+                    policy,
+                    &policy.primary_service,
+                    budget,
+                    budget.boundary_refusal(
+                        BoundedCommandPhase::WorkspacePreparation,
+                        BoundedCaptureFailure::Deadline,
+                    ),
+                )
+            } else {
+                bounded_phase_error(
+                    policy,
+                    &policy.primary_service,
+                    budget,
+                    BoundedCommandPhase::WorkspacePreparation,
+                    "workspace_preparation_failed",
+                    "bounded container command could not inspect workspace artifact output",
+                    None,
+                )
+            }
+        },
+    )
 }
 
 /// A successful build only counts when it rewrote the artifact and its receipt
@@ -1069,7 +1154,11 @@ pub(super) fn linux_workspace_artifact_produced_since(
     let written = std::fs::metadata(artifact_path)
         .and_then(|metadata| metadata.modified())
         .is_ok_and(|modified| modified >= started);
-    written && linux_workspace_effigy_rehearsal_receipt_matches_target(artifact_path, target)
+    written
+        && read_trimmed_identity_file(&workspace_effigy_active_version_file(artifact_path))
+            .as_deref()
+            == Some(effigy_core::build_info::active_version().as_str())
+        && linux_workspace_effigy_rehearsal_receipt_matches_target(artifact_path, target)
 }
 
 pub(super) fn read_trimmed_identity_file(path: &Path) -> Option<String> {
@@ -1135,9 +1224,6 @@ pub(super) fn wait_for_in_progress_linux_workspace_artifact_build(
     }
     let deadline = std::time::Instant::now() + LINUX_WORKSPACE_ARTIFACT_LOCK_WAIT_TIMEOUT;
     loop {
-        if linux_workspace_effigy_artifact_is_current(artifact_path, target, expected_identity) {
-            return Ok(true);
-        }
         if std::time::Instant::now() >= deadline {
             return Err(RunnerError::task_invocation(format!(
                 "timed out waiting for in-progress linux workspace artifact build in `{}` to finish; lock `{}` is still present",
@@ -1181,9 +1267,6 @@ fn wait_for_in_progress_linux_workspace_artifact_build_bounded(
                 ),
             ));
         };
-        if linux_workspace_effigy_artifact_is_current(artifact_path, target, expected_identity) {
-            return Ok(true);
-        }
         if std::time::Instant::now() >= wait_deadline {
             return Err(bounded_phase_error(
                 policy,
@@ -1424,6 +1507,8 @@ pub(super) fn linux_workspace_release_cache_is_current(
     install_identity: &str,
 ) -> bool {
     cache_path.is_file()
+        && read_trimmed_identity_file(&workspace_effigy_active_version_file(cache_path)).as_deref()
+            == Some(effigy_core::build_info::active_version().as_str())
         && read_trimmed_identity_file(&workspace_effigy_install_identity_file(cache_path))
             .as_deref()
             == Some(install_identity)

@@ -25,8 +25,9 @@ pub use implementation::{
     list_running_compose_containers_for_policy_with_timeout,
     list_running_compose_containers_for_profile, list_running_compose_containers_profiled,
     run_compose_capture, run_compose_invocation_capture, run_compose_invocation_capture_with_env,
-    run_docker_capture, shutdown_container, verify_owned_running_compose_rows, ContainerExecError,
-    RunningComposeContainerInventory, RuntimeInventoryFailure,
+    run_docker_capture, shutdown_container, verify_owned_running_compose_identities,
+    verify_owned_running_compose_rows, ContainerExecError, RunningComposeContainerInventory,
+    RuntimeInventoryFailure, VerifiedComposeContainer,
 };
 pub use parse::{
     compose_status_is_running, parse_running_compose_containers, RunningComposeContainer,

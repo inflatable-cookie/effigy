@@ -217,7 +217,11 @@ During v0.x, MINOR bumps may include breaking changes.
   download justifies them. Download-mode cache entries are reused only when their
   identity names this release. Existing timestamps and file presence no longer
   qualify an artifact. The offline hint no longer recommends reusing the
-  incompatible artifact.
+  incompatible artifact. Reuse also requires the current active-version
+  sidecar. A successful build that only touches unchanged old bytes is refused;
+  the temporary digest comparison grants no provenance. Concurrent preparation
+  checks final metadata after the build lock releases, and bounded refusals
+  name the actual target-specific rebuild command.
 - Direct `compose_file` containers carry the same checkout and scope identity
   labels as generated containers, rendered as a Compose override beside the
   repo-owned file. The owned-binding check is unchanged. Existing unlabelled
@@ -226,7 +230,10 @@ During v0.x, MINOR bumps may include breaking changes.
 - Direct `compose_file` exec readiness now runs the owned-binding check before
   its probe and before any recovery restart. An unlabelled, foreign or wrong-checkout
   primary service is neither exec'd nor restarted, and the up reports not
-  exec-ready.
+  exec-ready. Readiness retains the inspected full ID through ordinary native
+  Docker/nerdctl exec and registration, refusing replacement before effects.
+  Builtin container suites also render verified ID-targeted exec. Separate
+  inspect/exec observations do not promise an atomic remote transaction.
 - Detached activation errors now retain a bounded `activation_stage` alongside
   partial/unavailable status, without exposing raw backend output or arguments.
 - Detached reconciliation refuses a running stack whose original admission

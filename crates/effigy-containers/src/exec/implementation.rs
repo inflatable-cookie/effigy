@@ -321,12 +321,73 @@ mod compose_binding_label_tests {
     }
 }
 
+/// An inspected binding. Fields are private so only strict inspection can mint it.
+/// Reverification is still required before an effect; this is not a remote lock.
+#[derive(Debug, Clone)]
+pub struct VerifiedComposeContainer {
+    row: RunningComposeContainer,
+    id: String,
+    checkout: std::path::PathBuf,
+    scope: Option<String>,
+    profile: String,
+    backend: crate::compose::ComposeBackend,
+}
+
+impl VerifiedComposeContainer {
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    pub fn service(&self) -> Option<&str> {
+        self.row.service.as_deref()
+    }
+
+    pub fn reverify(
+        &self,
+        repo_root: &Path,
+        policy: &EffectiveContainerPolicy,
+        deadline: Instant,
+    ) -> Result<(), ContainerExecError> {
+        let current = verify_owned_running_compose_identities(
+            repo_root,
+            policy,
+            std::slice::from_ref(&self.row),
+            deadline,
+        )?;
+        if current.len() == 1
+            && current[0].id == self.id
+            && current[0].checkout == self.checkout
+            && current[0].scope == self.scope
+            && current[0].profile == self.profile
+            && current[0].backend == self.backend
+        {
+            return Ok(());
+        }
+        Err(ContainerExecError::Failure {
+            command: "inspect owned binding".to_owned(),
+            code: None,
+            stdout: String::new(),
+            stderr: "binding unavailable: container full ID or checkout/scope/backend binding changed before effect".to_owned(),
+        })
+    }
+}
+
 pub fn verify_owned_running_compose_rows(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     rows: &[RunningComposeContainer],
     deadline: Instant,
 ) -> Result<Vec<RunningComposeContainer>, ContainerExecError> {
+    verify_owned_running_compose_identities(repo_root, policy, rows, deadline)
+        .map(|verified| verified.into_iter().map(|binding| binding.row).collect())
+}
+
+pub fn verify_owned_running_compose_identities(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    rows: &[RunningComposeContainer],
+    deadline: Instant,
+) -> Result<Vec<VerifiedComposeContainer>, ContainerExecError> {
     let mut verified = Vec::new();
     let declared = super::restart_recovery::declared_service_names(&policy.compose_files)?;
     let canonical = repo_root
@@ -448,7 +509,14 @@ pub fn verify_owned_running_compose_rows(
                 }
             }
         }
-        verified.push(current);
+        verified.push(VerifiedComposeContainer {
+            row: current,
+            id: identity.id,
+            checkout: canonical.clone(),
+            scope: scope_token.as_deref().map(|scope| scope.trim().to_owned()),
+            profile: policy.profile.clone(),
+            backend: crate::compose::resolve_compose_backend_for_repo(repo_root, policy),
+        });
     }
     Ok(verified)
 }

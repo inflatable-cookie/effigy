@@ -11,7 +11,7 @@
 use super::rhai_script_tests::{install_fake_container_runtime, write_executable};
 use crate::contract_test_support::lock_test;
 use crate::runner::tests::prelude::execution::run_manifest_task_with_cwd;
-use crate::runner::tests::prelude::{fs, temp_workspace, write_manifest};
+use crate::runner::tests::prelude::{fs, write_manifest};
 use effigy_cli::TaskInvocation;
 
 /// Fake `docker`. The label state lives in `$EFFIGY_TEST_BUILDER_STATE_DIR`.
@@ -23,21 +23,23 @@ proj="${EFFIGY_TEST_FAKE_PROJECT:-fixture-builder-dev}"
 cname="$proj-$svc-1"
 printf "%s\n" "$*" >> "$EFFIGY_TEST_DOCKER_ARGS_FILE"
 state="$EFFIGY_TEST_BUILDER_STATE_DIR"
+mode="${EFFIGY_TEST_BUILDER_MODE:-applied}"
 subcmd=""
 for arg in "$@"; do
   case "$arg" in
-    up|down|ps|logs|exec|kill|inspect)
+    up|down|ps|logs|exec|kill|inspect|info)
       subcmd="$arg"
       break
       ;;
   esac
 done
 case "$subcmd" in
+  info) exit 0 ;;
   up)
     ovr=""
     for arg in "$@"; do
       case "$arg" in
-        *ownership.compose.yml) ovr="$arg" ;;
+        *ownership.compose.yml|*.effigy-compose.generated.yml) ovr="$arg" ;;
       esac
     done
     mode="${EFFIGY_TEST_BUILDER_MODE:-applied}"
@@ -51,6 +53,7 @@ case "$subcmd" in
       if [ "$mode" = "foreign_scope" ]; then
         scope="foreign-scope-token"
       fi
+      if [ "$mode" = "wrong_project" ]; then printf foreign-project > "$state/project"; fi
       printf "checkout=%s\n" "$checkout" >> "$state/labels"
       printf "scope=%s\n" "$scope" >> "$state/labels"
     fi
@@ -61,8 +64,14 @@ case "$subcmd" in
     if [ -f "$state/running" ]; then
       printf "%s\tUp 1 second\t\t%s\t\t%s\tFalse\n" "$cname" "$proj" "$svc"
     fi
+    if [ -f "$state/sibling.json" ]; then
+      printf "fixture-sibling-dev-sibling-1\tUp 1 second\t\tfixture-sibling-dev\t\tsibling\tFalse\n"
+    fi
     ;;
   inspect)
+    for arg in "$@"; do
+      if [ "$arg" = "fixture-sibling-dev-sibling-1" ] && [ -f "$state/sibling.json" ]; then cat "$state/sibling.json"; exit 0; fi
+    done
     count=0
     if [ -f "$state/inspects" ]; then
       count=$(cat "$state/inspects")
@@ -70,7 +79,7 @@ case "$subcmd" in
     count=$((count + 1))
     printf "%s\n" "$count" > "$state/inspects"
     id_char="a"
-    if [ "${EFFIGY_TEST_BUILDER_MODE:-applied}" = "changing" ] && [ "$count" -gt 1 ]; then
+    if { [ "$mode" = "changing" ] && [ "$count" -gt 1 ]; } || [ -f "$state/replaced" ]; then
       id_char="b"
     fi
     id=$(printf "%064d" 0 | tr 0 "$id_char")
@@ -80,6 +89,9 @@ case "$subcmd" in
       checkout=$(sed -n 's/^checkout=//p' "$state/labels")
       scope=$(sed -n 's/^scope=//p' "$state/labels")
     fi
+    if [ "$mode" = changing_scope ] && [ "$count" -gt 1 ]; then scope=foreign-scope-token; fi
+    if [ "$mode" = changing_checkout ] && [ "$count" -gt 1 ]; then checkout=/elsewhere/checkout; fi
+    if [ -f "$state/project" ]; then proj=$(cat "$state/project"); fi
     extra=""
     if [ -n "$checkout" ]; then
       extra="$extra,\"com.effigy.checkout\":\"$checkout\""
@@ -90,6 +102,32 @@ case "$subcmd" in
     printf '[{"Id":"%s","Name":"/%s","State":{"Status":"running","Running":true},"Config":{"Labels":{"com.docker.compose.project":"%s","com.docker.compose.service":"%s","com.docker.compose.oneoff":"False"%s}},"Mounts":[],"NetworkSettings":{"Ports":{}}}]\n' "$id" "$cname" "$proj" "$svc" "$extra"
     ;;
   exec)
+    printf '%s\0' "$@" > "$state/native-argv"
+    # Only native full-ID execution is admitted. Compose service/name execution
+    # is the original counterexample and deliberately fails this fake backend.
+    while [ "$1" != exec ]; do shift; done
+    shift
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        -i|-t) shift ;;
+        -w|-u|-e) shift 2 ;;
+        *) target="$1"; shift; break ;;
+      esac
+    done
+    if [ "$mode" = literal ] && [ "$1" = printf ]; then cat > "$state/stdin"; fi
+    expected=$(printf "%064d" 0 | tr 0 a)
+    if [ -f "$state/replaced" ]; then expected=$(printf "%064d" 0 | tr 0 b); fi
+    if [ "$mode" = "replace_at_exec" ] && [ "$1" != true ]; then
+      : > "$state/replaced"
+      expected=$(printf "%064d" 0 | tr 0 b)
+    fi
+    if [ "$target" != "$expected" ]; then exit 1; fi
+    if [ "$1" = true ]; then
+      printf '%s\n' "$target" >> "$state/readiness"
+      if [ "$mode" = "replace_after_readiness" ] || [ -f "$state/arm-replacement" ]; then : > "$state/replaced"; fi
+    else
+      printf '%s\n' "$target" "$@" >> "$state/effects"
+    fi
     printf "exec-ok\n"
     ;;
   down)
@@ -113,13 +151,18 @@ fs::write_file("shell.txt", shell);
 "#;
 
 struct BuilderOutcome {
+    _temp: tempfile::TempDir,
     result: Result<(), String>,
     docker_args: String,
     root: std::path::PathBuf,
 }
 
 fn run_direct_builder_activation(label: &str, mode: &str) -> BuilderOutcome {
-    let root = temp_workspace(&format!("direct-builder-activation-{label}"));
+    let temp = tempfile::Builder::new()
+        .prefix(&format!("effigy-builder-{label}-"))
+        .tempdir()
+        .expect("fresh private root");
+    let root = fs::canonicalize(temp.path()).expect("canonical private root");
     fs::create_dir_all(root.join("infra/release")).expect("mkdir compose dir");
     fs::write(
         root.join("infra/release/docker-compose.yml"),
@@ -127,7 +170,21 @@ fn run_direct_builder_activation(label: &str, mode: &str) -> BuilderOutcome {
     )
     .expect("write compose");
     fs::create_dir_all(root.join("scripts")).expect("mkdir script dir");
-    fs::write(root.join("scripts/builder.rhai"), BUILDER_SCRIPT).expect("write rhai script");
+    let script = if mode == "literal" {
+        r#"container::up("builder", true);
+let result = container::exec("builder", ["printf", "%s", "space and $literal; untouched"], #{"stdin_file": path::join(repo_root, "input.txt"), "cwd": repo_root, "env": #{"PAYLOAD": "a b;$raw"}});
+if !result["success"] { throw("literal exec failed"); }
+"#.to_owned()
+    } else if mode == "replace_before_exec" {
+        BUILDER_SCRIPT.replace(
+            "let shell =",
+            "fs::write_file(\"state/arm-replacement\", \"armed\");\nlet shell =",
+        )
+    } else {
+        BUILDER_SCRIPT.to_owned()
+    };
+    fs::write(root.join("scripts/builder.rhai"), script).expect("write rhai script");
+    fs::write(root.join("input.txt"), "owned stdin bytes").unwrap();
     write_manifest(
         &root.join("effigy.toml"),
         r#"[tasks.validate]
@@ -153,9 +210,81 @@ detach_timeout_secs = 1
 mounts = ["./:/workspace"]
 "#,
     );
+    if mode == "generated" {
+        let manifest = fs::read_to_string(root.join("effigy.toml"))
+            .unwrap()
+            .replace("compose_file = \"infra/release/docker-compose.yml\"\n", "")
+            .replace(
+                "[containers.builder.host]\nmounts = [\"./:/workspace\"]",
+                "",
+            );
+        fs::write(root.join("effigy.toml"), format!("{manifest}\n[containers.builder.services.builder]\ncatalog = \"workspace-rust-bun\"\n")).unwrap();
+    }
+    let _gateway =
+        crate::runner::gateway_command::set_test_gateway_home(&root.join("gateway-home"));
     let state_dir = root.join("state");
     fs::create_dir_all(&state_dir).expect("mkdir state");
+    let sibling = serde_json::json!([{
+        "Id": "c".repeat(64), "Name": "/fixture-sibling-dev-sibling-1",
+        "State": {"Status": "running", "Running": true},
+        "Config": {"Labels": {"com.docker.compose.project": "fixture-sibling-dev",
+            "com.docker.compose.service": "sibling", "com.docker.compose.oneoff": "False", "com.effigy.checkout": root}},
+        "Mounts": [{"Type": "volume", "Name": "fixture-sibling-cache", "Source": root.join("sibling-state"), "Destination": "/cache"}],
+        "NetworkSettings": {"Ports": {}}
+    }]).to_string();
+    let sibling_path = state_dir.join("sibling.json");
+    fs::write(&sibling_path, &sibling).unwrap();
+    let sibling_root = root.join("sibling-state");
+    fs::create_dir_all(&sibling_root).unwrap();
+    let sibling_data = sibling_root.join("volume-data");
+    let sibling_lease =
+        root.join("lease-home/runtime/host-container-leases/dev/fixture-sibling-dev/sibling.json");
+    fs::create_dir_all(sibling_lease.parent().unwrap()).unwrap();
+    fs::write(&sibling_data, "retained volume bytes").unwrap();
+    let sibling_lease_bytes = serde_json::json!({
+        "schema": "effigy.host-container-lease.v1", "schema_version": 1,
+        "token": "retained-sibling-generation", "container_name": "sibling",
+        "profile": "dev", "project_name": "fixture-sibling-dev", "expires_at_epoch_ms": u64::MAX,
+    })
+    .to_string();
+    fs::write(&sibling_lease, &sibling_lease_bytes).unwrap();
+    let routes_path = crate::runner::gateway_command::gateway_dir()
+        .unwrap()
+        .join("routes.json");
+    let mut routes = effigy_gateway::routes::RouteTable::new();
+    routes.upsert(effigy_gateway::routes::Route {
+        domain: "sibling.fixture.test".to_owned(),
+        target: Some("127.0.0.1:34567".to_owned()),
+        dns_ip: None,
+        tcp_port: None,
+        tcp_target: None,
+        source: effigy_gateway::routes::RouteSource::Container,
+        project: sibling_root.display().to_string(),
+        scope: None,
+        tls: false,
+        managed_listener: None,
+        registered: chrono::Utc::now(),
+    });
+    routes.save(&routes_path).unwrap();
+    let routes_before = fs::read(&routes_path).unwrap();
     let bin_dir = install_fake_container_runtime(&root);
+    write_executable(
+        &bin_dir.join("colima"),
+        r#"#!/bin/sh
+set -eu
+case "$1" in
+  status) printf 'INFO[0000] status: Running\n' ;;
+  start) exit 0 ;;
+  ssh) exit 0 ;;
+  nerdctl)
+    while [ "$1" != -- ]; do shift; done
+    shift
+    exec "$(dirname "$0")/docker" "$@"
+    ;;
+  *) exit 1 ;;
+esac
+"#,
+    );
     write_executable(&bin_dir.join("docker"), FAKE_DOCKER);
     let docker_args = root.join("docker-args.log");
     let colima_args = root.join("colima-args.log");
@@ -168,7 +297,17 @@ mounts = ["./:/workspace"]
     );
     let _env = crate::contract_test_support::EnvGuard::set_many(&[
         ("PATH", Some(path)),
-        ("EFFIGY_COMPOSE_BACKEND", Some("docker".to_owned())),
+        (
+            "EFFIGY_COMPOSE_BACKEND",
+            Some(
+                if mode == "nerdctl" {
+                    "colima"
+                } else {
+                    "docker"
+                }
+                .to_owned(),
+            ),
+        ),
         (
             "EFFIGY_TEST_DOCKER_ARGS_FILE",
             Some(docker_args.display().to_string()),
@@ -205,8 +344,28 @@ mounts = ["./:/workspace"]
     )
     .map(|_| ())
     .map_err(|error| error.to_string());
+    assert_eq!(
+        fs::read_to_string(&sibling_path).unwrap(),
+        sibling,
+        "sibling ID and running state changed"
+    );
+    assert_eq!(
+        fs::read_to_string(&sibling_data).unwrap(),
+        "retained volume bytes"
+    );
+    assert_eq!(
+        fs::read_to_string(&sibling_lease).unwrap(),
+        sibling_lease_bytes
+    );
+    assert_eq!(
+        fs::read(&routes_path).unwrap(),
+        routes_before,
+        "sibling route changed"
+    );
     let docker_args = fs::read_to_string(&docker_args).unwrap_or_default();
+    let result = result.map_err(|error| format!("{error}\nprivate runtime trace:\n{docker_args}"));
     BuilderOutcome {
+        _temp: temp,
         result,
         docker_args,
         root,
@@ -227,7 +386,10 @@ fn direct_builder_without_ports_activates_and_execs_with_current_checkout_labels
         outcome.docker_args
     );
     assert!(
-        outcome.docker_args.contains("exec -T"),
+        outcome
+            .docker_args
+            .lines()
+            .any(|line| line.starts_with("exec ")),
         "the owned builder must receive exec: {}",
         outcome.docker_args
     );
@@ -248,7 +410,11 @@ fn direct_builder_refuses_exec_when_checkout_label_names_another_checkout() {
         .expect_err("wrong checkout label must refuse before exec");
     assert!(is_owned_binding_refusal(&error), "{error}");
     assert!(
-        !outcome.docker_args.contains("exec -T") && !outcome.docker_args.contains(" restart"),
+        !outcome
+            .docker_args
+            .lines()
+            .any(|line| line.starts_with("exec "))
+            && !outcome.docker_args.contains(" restart"),
         "no exec may run for a foreign checkout: {}",
         outcome.docker_args
     );
@@ -264,7 +430,11 @@ fn direct_builder_refuses_exec_for_unlabelled_preexisting_container() {
         .expect_err("an unlabelled preexisting builder must not be adopted");
     assert!(is_owned_binding_refusal(&error), "{error}");
     assert!(
-        !outcome.docker_args.contains("exec -T") && !outcome.docker_args.contains(" restart"),
+        !outcome
+            .docker_args
+            .lines()
+            .any(|line| line.starts_with("exec "))
+            && !outcome.docker_args.contains(" restart"),
         "no exec may run for an unlabelled container: {}",
         outcome.docker_args
     );
@@ -280,7 +450,11 @@ fn direct_builder_refuses_exec_for_foreign_scope_label() {
         .expect_err("a foreign scope label must refuse before exec");
     assert!(is_owned_binding_refusal(&error), "{error}");
     assert!(
-        !outcome.docker_args.contains("exec -T") && !outcome.docker_args.contains(" restart"),
+        !outcome
+            .docker_args
+            .lines()
+            .any(|line| line.starts_with("exec "))
+            && !outcome.docker_args.contains(" restart"),
         "no exec may run for a foreign scope: {}",
         outcome.docker_args
     );
@@ -294,4 +468,133 @@ fn is_owned_binding_refusal(error: &str) -> bool {
         || error.contains("ownership")
         || error.contains("not exec-ready")
         || error.contains("not verified as owned")
+}
+
+#[test]
+fn direct_builder_full_id_replacement_refuses_before_probe_or_restart() {
+    let _lock = lock_test();
+    let outcome = run_direct_builder_activation("changing", "changing");
+    let error = outcome
+        .result
+        .expect_err("a changed full ID must not be adopted");
+    assert!(is_owned_binding_refusal(&error), "{error}");
+    assert!(!outcome
+        .docker_args
+        .lines()
+        .any(|line| line.starts_with("exec ")));
+    assert!(!outcome.docker_args.contains("restart"));
+}
+
+#[test]
+fn direct_builder_replacement_after_readiness_refuses_publication() {
+    let _lock = lock_test();
+    let outcome = run_direct_builder_activation("after-readiness", "replace_after_readiness");
+    let error = outcome
+        .result
+        .expect_err("readiness cannot authorize a successor");
+    assert!(is_owned_binding_refusal(&error), "{error}");
+    assert!(
+        outcome.root.join("state/readiness").is_file(),
+        "original ID was ready"
+    );
+    assert!(!outcome.root.join("state/effects").exists());
+    assert!(!outcome.docker_args.contains("restart"));
+}
+
+#[test]
+fn direct_builder_replacement_between_readiness_and_exec_has_no_successor_effect() {
+    let _lock = lock_test();
+    let outcome = run_direct_builder_activation("before-exec", "replace_before_exec");
+    let error = outcome
+        .result
+        .expect_err("final exec must retain its readiness ID");
+    assert!(is_owned_binding_refusal(&error), "{error}");
+    assert!(outcome.root.join("state/replaced").is_file());
+    assert!(!outcome.root.join("state/effects").exists());
+    assert!(!outcome.docker_args.contains("restart"));
+}
+
+#[test]
+fn direct_builder_replacement_after_final_inspect_cannot_redirect_native_exec() {
+    let _lock = lock_test();
+    let outcome = run_direct_builder_activation("at-exec", "replace_at_exec");
+    outcome
+        .result
+        .expect_err("deleted original ID must fail without executing in successor");
+    assert!(outcome.root.join("state/replaced").is_file());
+    assert!(!outcome.root.join("state/effects").exists());
+}
+
+#[test]
+fn generated_builder_without_ports_uses_the_same_verified_native_exec_path() {
+    let _lock = lock_test();
+    let outcome = run_direct_builder_activation("generated", "generated");
+    outcome
+        .result
+        .expect("generated service must activate without a guessed route");
+    let effects = fs::read_to_string(outcome.root.join("state/effects")).unwrap();
+    assert!(effects.contains(&"a".repeat(64)));
+    assert!(effects.contains("printf builder-shell"));
+}
+
+#[test]
+fn nerdctl_builder_without_ports_targets_the_verified_full_id() {
+    let _lock = lock_test();
+    let outcome = run_direct_builder_activation("nerdctl", "nerdctl");
+    outcome
+        .result
+        .expect("native nerdctl exec must use the inspected ID");
+    let effects = fs::read_to_string(outcome.root.join("state/effects")).unwrap();
+    assert!(effects.contains(&"a".repeat(64)));
+    assert!(effects.contains("printf builder-shell"));
+}
+
+#[test]
+fn native_builder_exec_preserves_literal_argv_and_stdin() {
+    let _lock = lock_test();
+    let outcome = run_direct_builder_activation("literal", "literal");
+    outcome.result.expect("captured native exec");
+    let argv = fs::read(outcome.root.join("state/native-argv")).unwrap();
+    let argv = argv
+        .split(|byte| *byte == 0)
+        .map(|arg| String::from_utf8_lossy(arg).into_owned())
+        .collect::<Vec<_>>();
+    assert!(
+        argv.iter().any(|arg| arg == "-i"),
+        "stdin must be attached: {argv:?}"
+    );
+    assert!(
+        !argv.iter().any(|arg| arg == "-t"),
+        "captured exec must not request TTY: {argv:?}"
+    );
+    assert!(argv.windows(4).any(|args| args
+        == [
+            "a".repeat(64),
+            "printf".to_owned(),
+            "%s".to_owned(),
+            "space and $literal; untouched".to_owned()
+        ]));
+    assert_eq!(
+        fs::read_to_string(outcome.root.join("state/stdin")).unwrap(),
+        "owned stdin bytes"
+    );
+}
+
+#[test]
+fn direct_builder_wrong_project_or_changing_owner_refuses_before_effects() {
+    let _lock = lock_test();
+    for mode in ["wrong_project", "changing_scope", "changing_checkout"] {
+        let outcome = run_direct_builder_activation(mode, mode);
+        let error = outcome.result.expect_err("changed ownership must refuse");
+        assert!(is_owned_binding_refusal(&error), "{error}");
+        assert!(
+            !outcome
+                .docker_args
+                .lines()
+                .any(|line| line.starts_with("exec ")),
+            "{mode}: {}",
+            outcome.docker_args
+        );
+        assert!(!outcome.docker_args.contains("restart"));
+    }
 }

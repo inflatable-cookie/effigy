@@ -190,16 +190,14 @@ mod drift_tests {
     /// Private direct-Compose checkout with a no-port builder. Only the manifest
     /// and compose file are written, and the fresh directory is never a real repo.
     fn direct_builder_checkout(label: &str) -> PathBuf {
-        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let root = std::env::temp_dir()
+        let root = tempfile::Builder::new()
+            .prefix(&format!("effigy-admission-{label}-"))
+            .tempdir()
+            .expect("fresh private admission fixture")
+            .keep();
+        let root = root
             .canonicalize()
-            .expect("canonical temp dir")
-            .join(format!(
-                "effigy-admission-drift-{label}-{}-{}",
-                std::process::id(),
-                COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-            ));
-        let _ = std::fs::remove_dir_all(&root);
+            .expect("canonical private admission fixture");
         std::fs::create_dir_all(root.join("infra/release")).expect("mkdir compose dir");
         std::fs::write(
             root.join("infra/release/docker-compose.yml"),

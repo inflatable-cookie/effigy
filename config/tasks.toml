@@ -183,20 +183,20 @@
   { task = "test:containers:activation-compatibility:cli" },
 ]
 "test:containers:activation-compatibility:runner" = [
-  { id = "activation-deferral-context", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(deferral_tests::token_and_implicit_tests::run_manifest_task_php_app)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
+  { id = "activation-deferral-context", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(deferral_tests::token_and_implicit_tests::run_manifest_task_php_app)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
 ]
 "test:containers:activation-compatibility:cli" = [
-  { id = "activation-attached-cli", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests --filterset 'test(cli_container_attached_stream_session_reports_operator_overview) | test(cli_container_attached_session_stops_environment_on_sigint) | test(cli_container_attached_session_terminates_log_process_group) | test(cli_container_falls_back_to_colima_nerdctl_when_docker_is_missing) | test(cli_container_up_detached_starts_colima_and_reports_ready) | test(cli_container_shell_command_runs_via_sh_lc) | test(cli_container_status_) | test(cli_container_data_) | test(cli_container_cache_) | test(cli_container_reset_) | test(cli_container_retire_named_) | test(cli_generated_container_status_) | test(cli_container_rejects_mounts_) | test(cli_container_attached_session_handles_sigint_during_startup) | test(cli_workspace_binding_handoff_stops_environment_after_return)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
+  { id = "activation-attached-cli", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests --filterset 'test(cli_container_attached_stream_session_reports_operator_overview) | test(cli_container_attached_session_stops_environment_on_sigint) | test(cli_container_attached_session_terminates_log_process_group) | test(cli_container_falls_back_to_colima_nerdctl_when_docker_is_missing) | test(cli_container_up_detached_starts_colima_and_reports_ready) | test(cli_container_shell_command_runs_via_sh_lc) | test(cli_container_status_) | test(cli_container_data_) | test(cli_container_cache_) | test(cli_container_reset_) | test(cli_container_retire_named_) | test(cli_generated_container_status_) | test(cli_container_rejects_mounts_) | test(cli_container_attached_session_handles_sigint_during_startup) | test(cli_workspace_binding_handoff_stops_environment_after_return)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
 ]
 "check:supply-chain" = { run = "cargo deny check", timeout_ms = 240000 }
 "test:containers:partial-startup" = [
-  { id = "partial-startup-lifecycle", run = "cargo nextest run --config-file tests/config/deadline-marker-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(container_command::lifecycle::tests::)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
-  { id = "partial-startup-pipes", run = "cargo nextest run --config-file tests/config/deadline-marker-nextest.toml --user-config-file none -p effigy-containers --lib --filterset 'test(detached_capture_tests::) | test(exec::process::tests::)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
+  { id = "partial-startup-lifecycle", run = "cargo nextest run --config-file tests/config/deadline-marker-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(container_command::lifecycle::tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
+  { id = "partial-startup-pipes", run = "cargo nextest run --config-file tests/config/deadline-marker-nextest.toml --user-config-file none -p effigy-containers --lib --filterset 'test(detached_capture_tests::) | test(exec::process::tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
   { task = "test:containers:partial-startup:private-cli" },
   { task = "test:gateway:registration-loopback" },
 ]
 "test:containers:partial-startup:private-cli" = [
-  { id = "partial-startup-private-cli", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests --filterset 'test(partial_startup_tests::)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
+  { id = "partial-startup-private-cli", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests --filterset 'test(partial_startup_tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
 ]
 "check:containers:partial-startup" = [
   "cargo check -p effigy -p effigy-containers -p effigy-runtime -p effigy-cli --all-targets",
@@ -644,11 +644,26 @@
 # ownership override. Private fresh fixtures and fake builder hosts only; no
 # engine, VM, live artifact, or real builder container is touched.
 "test:workspace:artifact-freshness" = [
-  { id = "workspace-artifact-provisioning", run = "cargo test -p effigy --lib runner::system_command::workspace::tests:: -- --nocapture", timeout_ms = 600000 },
-  { id = "direct-compose-ownership-override", run = "cargo test -p effigy-containers --lib direct_compose_ownership_override -- --nocapture", timeout_ms = 240000 },
-  { id = "rhai-container-helper-admission", run = "cargo test -p effigy --lib run_manifest_task_run_array_rhai_steps_support_container_helpers -- --nocapture", timeout_ms = 600000 },
-  { id = "direct-builder-no-port-activation", run = "cargo test -p effigy --lib direct_builder_activation_tests:: -- --nocapture", timeout_ms = 600000 },
-  { id = "direct-compose-admission-drift", run = "cargo test -p effigy-containers --lib policy::admission::drift_tests:: -- --nocapture", timeout_ms = 600000 },
+  { id = "workspace-artifact-provisioning", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(runner::system_command::workspace::tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
+  { task = "test:workspace:artifact-admission" },
+  { task = "test:workspace:artifact-activation" },
+]
+"test:workspace:artifact-admission" = [
+  { id = "direct-compose-ownership-admission", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib --filterset 'test(direct_compose_ownership_override) | test(policy::admission::drift_tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
+]
+"test:workspace:artifact-activation" = [
+  { id = "readiness-and-affected-callers", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(nested_container_target_tests::) | test(container_runtime_prep::tests::) | test(exec_command::tests::) | test(exec_command::transport::colima::tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
+  { task = "test:workspace:artifact-builder" },
+  { task = "test:workspace:artifact-owner-integrations" },
+]
+"test:workspace:artifact-owner-integrations" = [
+  { id = "bound-owner-integrations", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(container_command::support::tests::) | test(container_command::secret_env::tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
+]
+"test:workspace:artifact-full-id" = [
+  { id = "full-id-replacement", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(direct_builder_full_id_replacement_refuses_before_probe_or_restart)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
+]
+"test:workspace:artifact-builder" = [
+  { id = "builder-activation", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(direct_builder_activation_tests::) | test(run_manifest_task_run_array_rhai_steps_support_container_helpers)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
 ]
 "check:workspace:artifact-freshness" = [
   "cargo check -p effigy-containers -p effigy --lib --tests --bins --profile test",
