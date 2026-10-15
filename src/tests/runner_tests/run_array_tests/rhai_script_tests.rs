@@ -455,9 +455,16 @@ run = [{ rhai = "scripts/dispatch.rhai" }]
 #[test]
 fn run_manifest_task_run_array_rhai_steps_support_container_helpers() {
     let _guard = lock_test();
-    let root = temp_workspace("run-array-rhai-container-helpers");
+    let temp = tempfile::tempdir().expect("fresh private runtime fixture");
+    let root = fs::canonicalize(temp.path()).expect("canonical private fixture");
     write_container_fixture(&root);
     let bin_dir = install_fake_container_runtime(&root);
+    write_executable(
+        &bin_dir.join("docker"),
+        super::direct_builder_activation_tests::FAKE_DOCKER,
+    );
+    let builder_state = root.join("builder-state");
+    fs::create_dir_all(&builder_state).expect("mkdir builder state");
     let docker_args = root.join("docker-args.log");
     let colima_args = root.join("colima-args.log");
     let colima_state = root.join("colima-running");
@@ -486,6 +493,20 @@ fn run_manifest_task_run_array_rhai_steps_support_container_helpers() {
             "EFFIGY_TEST_LOG_FOLLOW_FILE",
             Some(log_follow.display().to_string()),
         ),
+        (
+            "EFFIGY_TEST_BUILDER_STATE_DIR",
+            Some(builder_state.display().to_string()),
+        ),
+        ("EFFIGY_TEST_BUILDER_MODE", Some("applied".to_owned())),
+        ("EFFIGY_TEST_FAKE_SERVICE", Some("app".to_owned())),
+        (
+            "EFFIGY_TEST_FAKE_PROJECT",
+            Some("fixture-web-dev".to_owned()),
+        ),
+        (
+            "EFFIGY_TEST_HOST_CONTAINER_LEASE_HOME",
+            Some(root.join("lease-home").display().to_string()),
+        ),
     ]);
 
     run_manifest_task_with_cwd(
@@ -499,12 +520,10 @@ fn run_manifest_task_run_array_rhai_steps_support_container_helpers() {
 
     let args_log = fs::read_to_string(&docker_args).expect("read docker args");
     assert!(args_log.contains(" up -d"), "got: {args_log}");
+    assert!(args_log.contains("exec -w /workspace"), "got: {args_log}");
     assert!(
-        args_log.contains("exec -T -w /workspace"),
-        "got: {args_log}"
-    );
-    assert!(
-        args_log.contains("app sh -lc") && args_log.contains("printf helper-shell"),
+        args_log.contains(&format!("{} sh -lc", "a".repeat(64)))
+            && args_log.contains("printf helper-shell"),
         "got: {args_log}"
     );
     assert!(
@@ -548,7 +567,11 @@ run = [{ rhai = "scripts/write-host-file.rhai" }]
 
 fn write_container_fixture(root: &std::path::Path) {
     fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
-    fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("write compose");
+    fs::write(
+        root.join("infra/dev/docker-compose.yml"),
+        "services:\n  app:\n    image: example\n",
+    )
+    .expect("write compose");
     fs::create_dir_all(root.join("scripts")).expect("mkdir script dir");
     fs::write(
         root.join("scripts/container-helpers.rhai"),
@@ -591,7 +614,7 @@ mounts = ["./:/workspace"]
     );
 }
 
-fn install_fake_container_runtime(root: &std::path::Path) -> std::path::PathBuf {
+pub(super) fn install_fake_container_runtime(root: &std::path::Path) -> std::path::PathBuf {
     let bin_dir = root.join("bin");
     fs::create_dir_all(&bin_dir).expect("mkdir bin");
     let colima = bin_dir.join("colima");
@@ -658,7 +681,7 @@ esac
 }
 
 #[cfg(unix)]
-fn write_executable(path: &std::path::Path, body: &str) {
+pub(super) fn write_executable(path: &std::path::Path, body: &str) {
     fs::write(path, body).expect("write executable");
     let mut perms = fs::metadata(path).expect("metadata").permissions();
     perms.set_mode(0o755);

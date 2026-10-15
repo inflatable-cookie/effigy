@@ -219,12 +219,42 @@ Backend status:
 
 Effigy ownership:
 
-- shared runtime-prep probes real exec readiness and restarts the primary
-  service once before failing
+- shared runtime-prep verifies full container ID, project, declared service,
+  non-oneoff/running status, canonical checkout and exact scope before probing
+- readiness returns an internal inspected binding. Mount probes and ordinary
+  shell/task exec retain that binding, reverify the expected full ID and owner,
+  and use native Docker or nerdctl exec against the full ID. Builtin suite
+  rendering obtains and reverifies its own readiness binding before rendering
+  native ID-targeted exec. No service-name cache authorizes these execs.
+- a missing/foreign binding or replacement refuses before exec or recovery;
+  a known owned primary may be restarted once by its verified ID. Legacy
+  dependent-service recovery retains its declared dependency selection.
+- argv, workdir, user, environment, capture/TTY and stdin-file behavior survive
+  native transport. Unsupported exec options refuse rather than being dropped.
+- inspections and remote exec are separate observations, not an atomic remote
+  transaction. A replacement after final inspect cannot redirect ID-targeted
+  exec into the successor; the old ID can fail. In-place label/state changes
+  after the final observation and remote cancellation are not guaranteed.
+- the existing deadline-aware diagnosis/permission transport retains its
+  observation sequencing and budgets. Doctor does not gain a workload-readiness
+  prerequisite or restart authority from this change.
 
 Target compatibility case:
 
 - `runtime_prep_recovers_exec_readiness_after_recreate`
+- `direct_builder_activation_tests` exercises direct and generated no-port,
+  no-route activation through policy admission, readiness, registration and
+  native exec, including replacement and sibling-state preservation.
+
+Direct Compose labels come from the supported ownership override, never from a
+hardcoded checkout in the builder YAML. A preexisting unlabelled builder stays
+unavailable; a plain retry cannot adopt its running inputs. The operator must
+first verify the exact selected container's full ID, project/service, checkout
+bind and retained data, then explicitly stop that selected scope with
+`effigy container linux-release down` and recreate it with
+`effigy container linux-release up --detach` (or the artifact task). Neither
+operation is performed by a diagnostic or this source qualification. Do not
+apply these example names to another project or use broad cleanup.
 
 ### Container-local TCP alias visibility
 

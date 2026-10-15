@@ -341,8 +341,15 @@ pub(crate) fn resolve_compose_source(
         } else {
             infer_direct_compose_host_ports(&compose_file, project_name)?
         };
+        let ownership_override = render_direct_compose_ownership_override(
+            repo_root,
+            container_name,
+            &compose_file,
+            config,
+            admission,
+        )?;
         return Ok((
-            vec![compose_file],
+            vec![compose_file, ownership_override],
             display,
             Vec::new(),
             effective_ports,
@@ -511,6 +518,85 @@ pub(crate) fn resolve_compose_source(
         effective_ports,
         shared_services,
     ))
+}
+
+/// Direct `compose_file` containers carry the same checkout and scope identity
+/// labels as generated ones. Effigy renders them through a Compose override next
+/// to the repo-owned file, so the repo file is not edited. The override only
+/// labels services the direct file already declares.
+fn render_direct_compose_ownership_override(
+    repo_root: &Path,
+    container_name: &str,
+    compose_file: &Path,
+    config: &ManifestContainerConfig,
+    admission: Option<&mut crate::policy::admission::PolicyAdmission>,
+) -> Result<PathBuf, ContainerPolicyError> {
+    let source =
+        std::fs::read_to_string(compose_file).map_err(|error| ContainerPolicyError::Read {
+            path: compose_file.to_path_buf(),
+            error,
+        })?;
+    let value: YamlValue = serde_yaml::from_str(&source).map_err(|error| {
+        ContainerPolicyError::TaskInvocation(format!(
+            "compose file {} is invalid YAML: {error}",
+            compose_file.display()
+        ))
+    })?;
+    let checkout = repo_root
+        .canonicalize()
+        .unwrap_or_else(|_| repo_root.to_path_buf());
+    let mut labels = serde_yaml::Mapping::new();
+    labels.insert(
+        YamlValue::String(CHECKOUT_LABEL.to_owned()),
+        YamlValue::String(checkout.display().to_string()),
+    );
+    if let Some(token) = runtime_scope_token(repo_root, config) {
+        labels.insert(
+            YamlValue::String(SCOPE_LABEL.to_owned()),
+            YamlValue::String(token),
+        );
+    }
+    let mut services = serde_yaml::Mapping::new();
+    if let Some(declared) = value.get("services").and_then(YamlValue::as_mapping) {
+        for name in declared.keys() {
+            let mut service = serde_yaml::Mapping::new();
+            service.insert(
+                YamlValue::String("labels".to_owned()),
+                YamlValue::Mapping(labels.clone()),
+            );
+            services.insert(name.clone(), YamlValue::Mapping(service));
+        }
+    }
+    let mut document = serde_yaml::Mapping::new();
+    document.insert(
+        YamlValue::String("services".to_owned()),
+        YamlValue::Mapping(services),
+    );
+    let rendered = serde_yaml::to_string(&YamlValue::Mapping(document)).map_err(|error| {
+        ContainerPolicyError::TaskInvocation(format!(
+            "failed to serialize direct compose ownership override for `{container_name}`: {error}"
+        ))
+    })?;
+    // Admission keys derived artifacts by the canonical checkout (the policy
+    // load canonicalizes its root), so write under that path. A symlinked
+    // temp or checkout root would otherwise never match its recorded key.
+    let dir = checkout.join(GENERATED_RUNTIME_COMPOSE_DIR);
+    std::fs::create_dir_all(&dir).map_err(|error| ContainerPolicyError::Read {
+        path: dir.clone(),
+        error,
+    })?;
+    let path = dir.join(format!("{container_name}.ownership.compose.yml"));
+    if let Some(guard) = admission.as_deref() {
+        guard.before_render_write(&path, rendered.as_bytes())?;
+    }
+    std::fs::write(&path, rendered.as_bytes()).map_err(|error| ContainerPolicyError::Read {
+        path: path.clone(),
+        error,
+    })?;
+    if let Some(guard) = admission {
+        guard.record_rendered(&path, rendered.as_bytes())?;
+    }
+    Ok(path)
 }
 
 fn validate_scoped_direct_compose(
@@ -2009,5 +2095,52 @@ services:
             assert_ne!(assigned[0], assigned[1]);
             assert_ne!(assigned[0], "8080:80");
         });
+    }
+
+    #[test]
+    fn direct_compose_ownership_override_labels_declared_services_only() {
+        let root = std::env::temp_dir().join(format!(
+            "effigy-direct-ownership-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("infra")).expect("mkdir repo");
+        let compose = root.join("infra/docker-compose.yml");
+        std::fs::write(
+            &compose,
+            "services:\n  builder:\n    image: example\n  sidecar:\n    image: example\n",
+        )
+        .expect("write compose");
+        let config: ManifestContainerConfig =
+            serde_yaml::from_str("compose_file: infra/docker-compose.yml").expect("config");
+
+        let path = render_direct_compose_ownership_override(
+            &root,
+            "linux-release",
+            &compose,
+            &config,
+            None,
+        )
+        .expect("render override");
+        let rendered: YamlValue =
+            serde_yaml::from_str(&std::fs::read_to_string(&path).expect("read override"))
+                .expect("parse override");
+        let checkout = root
+            .canonicalize()
+            .expect("canonical root")
+            .display()
+            .to_string();
+
+        for service in ["builder", "sidecar"] {
+            assert_eq!(
+                rendered["services"][service]["labels"][CHECKOUT_LABEL].as_str(),
+                Some(checkout.as_str())
+            );
+        }
+        assert!(rendered["services"].get("undeclared").is_none());
+        assert!(path.ends_with(".effigy/runtime/compose/linux-release.ownership.compose.yml"));
     }
 }

@@ -235,6 +235,7 @@ pub(super) fn install_primary_service_tcp_alias_hosts(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     routes: &[RegisteredGatewayRoute],
+    binding: &effigy_containers::exec::VerifiedComposeContainer,
 ) -> Result<Vec<String>, RunnerError> {
     let pairs = tcp_alias_host_pairs(policy, routes);
     if pairs.is_empty() {
@@ -260,7 +261,14 @@ pub(super) fn install_primary_service_tcp_alias_hosts(
         "docker compose exec tcp alias hosts",
     )
     .map_err(RunnerError::from)?;
-    effigy_runtime::signals::run_compose_plan_capture(policy, &plan).map_err(RunnerError::from)?;
+    let output = crate::runner::exec_command::run_verified_compose_exec_plan(
+        policy, &plan, binding, true, None, None,
+    )?;
+    if !output.status.success() {
+        return Err(RunnerError::task_invocation(
+            "verified TCP alias installation failed",
+        ));
+    }
 
     Ok(pairs
         .into_iter()
@@ -271,9 +279,10 @@ pub(super) fn install_primary_service_tcp_alias_hosts(
 pub(in crate::runner) fn reconcile_primary_service_tcp_alias_hosts(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
+    binding: &effigy_containers::exec::VerifiedComposeContainer,
 ) -> Result<Vec<String>, RunnerError> {
     let routes = resolve_gateway_tcp_alias_routes_for_container(repo_root, policy)?;
-    install_primary_service_tcp_alias_hosts(repo_root, policy, &routes)
+    install_primary_service_tcp_alias_hosts(repo_root, policy, &routes, binding)
 }
 
 fn tcp_alias_host_pairs(

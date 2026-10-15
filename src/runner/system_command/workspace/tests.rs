@@ -1,5 +1,6 @@
 use super::*;
 use crate::contract_test_support::EnvGuard;
+use crate::runner::exec_command::BoundedCommandBudget;
 use crate::runner::interactive_session::{
     classify_interactive_session_ownership, InteractiveSessionIntent,
 };
@@ -9,12 +10,14 @@ use crate::runner::runtime_session_context::{
 use crate::runner::system_command::workspace_provisioning::persist_effigy_source_repo_root;
 use crate::runner::system_command::workspace_provisioning::{
     configured_effigy_repo_root, configured_linux_workspace_artifact_source,
-    discover_effigy_repo_root, ensure_linux_workspace_effigy_artifact,
-    ensure_local_linux_workspace_effigy_artifact, expected_workspace_effigy_install_identity,
-    linux_workspace_artifact_lock_path, linux_workspace_artifact_offline_hint,
-    linux_workspace_effigy_artifact_is_reusable, linux_workspace_effigy_artifact_needs_refresh,
+    describe_linux_workspace_artifact_refusal, discover_effigy_repo_root,
+    ensure_linux_workspace_effigy_artifact, ensure_local_linux_workspace_effigy_artifact,
+    ensure_local_linux_workspace_effigy_artifact_bounded,
+    expected_workspace_effigy_install_identity, linux_workspace_artifact_lock_path,
+    linux_workspace_artifact_offline_hint, linux_workspace_effigy_artifact_is_current,
     linux_workspace_effigy_cache_path, linux_workspace_effigy_release_url,
-    plan_workspace_permission_prep, read_trimmed_workspace_effigy_active_version,
+    linux_workspace_release_cache_is_current, plan_workspace_permission_prep,
+    read_trimmed_identity_file, read_trimmed_workspace_effigy_active_version,
     render_workspace_effigy_install_command, render_workspace_effigy_staging_path,
     resolve_local_effigy_repo_root_from_paths, resolve_local_workspace_effigy_freshness_anchor,
     run_linux_workspace_effigy_artifact_build, sibling_effigy_repo_root,
@@ -174,200 +177,626 @@ container = { image = "node:22", mount = "./:/workspace" }
     );
 }
 
-#[test]
-fn linux_artifact_refreshes_when_missing_or_older_than_host_binary() {
-    let root = std::env::temp_dir().join(format!(
-        "effigy-linux-artifact-refresh-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("time")
-            .as_nanos()
-    ));
-    std::fs::create_dir_all(&root).expect("mkdir root");
-    let host = root.join("effigy-host");
-    let artifacts_dir = root.join("artifacts");
-    std::fs::create_dir_all(&artifacts_dir).expect("mkdir artifacts");
-    let artifact = artifacts_dir.join("effigy-linux");
-    let receipt = artifacts_dir.join("rehearsal.txt");
-    std::fs::write(&host, "host").expect("write host");
+use std::path::Path;
 
-    assert!(linux_workspace_effigy_artifact_needs_refresh(
-        &host,
-        &artifact,
-        LinuxWorkspaceTarget::X86_64Gnu,
-    ));
-
-    std::fs::write(&artifact, "artifact").expect("write artifact");
-    std::fs::write(
-        &receipt,
-        "release_triple=x86_64-unknown-linux-gnu\ncompleted_at=2026-04-27T00:00:00Z\n",
-    )
-    .expect("write receipt");
-    assert!(!linux_workspace_effigy_artifact_needs_refresh(
-        &host,
-        &artifact,
-        LinuxWorkspaceTarget::X86_64Gnu,
-    ));
-
-    std::thread::sleep(std::time::Duration::from_millis(10));
-    std::fs::write(&host, "host-new").expect("rewrite host");
-    assert!(linux_workspace_effigy_artifact_needs_refresh(
-        &host,
-        &artifact,
-        LinuxWorkspaceTarget::X86_64Gnu,
-    ));
-}
-
-#[test]
-fn linux_artifact_refreshes_when_rehearsal_receipt_is_missing_or_wrong_target() {
-    let root = std::env::temp_dir().join(format!(
-        "effigy-linux-artifact-receipt-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("time")
-            .as_nanos()
-    ));
-    let artifacts_dir = root.join("artifacts");
-    std::fs::create_dir_all(&artifacts_dir).expect("mkdir artifacts");
-    let host = root.join("effigy-host");
-    let artifact = artifacts_dir.join("effigy-linux");
-    let receipt = artifacts_dir.join("rehearsal.txt");
-    std::fs::write(&host, "host").expect("write host");
-    std::fs::write(&artifact, "artifact").expect("write artifact");
-
-    assert!(linux_workspace_effigy_artifact_needs_refresh(
-        &host,
-        &artifact,
-        LinuxWorkspaceTarget::X86_64Gnu,
-    ));
-
-    std::fs::write(
-        &receipt,
-        "release_triple=aarch64-unknown-linux-gnu\ncompleted_at=2026-04-27T00:00:00Z\n",
-    )
-    .expect("write wrong-target receipt");
-    assert!(linux_workspace_effigy_artifact_needs_refresh(
-        &host,
-        &artifact,
-        LinuxWorkspaceTarget::X86_64Gnu,
-    ));
-}
-
-#[test]
-fn linux_artifact_is_reusable_when_file_and_receipt_match_even_if_stale() {
-    let root = std::env::temp_dir().join(format!(
-        "effigy-linux-artifact-reusable-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("time")
-            .as_nanos()
-    ));
-    let artifacts_dir = root.join("artifacts");
-    std::fs::create_dir_all(&artifacts_dir).expect("mkdir artifacts");
-    let host = root.join("effigy-host");
-    let artifact = artifacts_dir.join("effigy-linux");
-    let receipt = artifacts_dir.join("rehearsal.txt");
-    std::fs::write(&host, "host").expect("write host");
-    std::fs::write(&artifact, "artifact").expect("write artifact");
-    std::fs::write(
-        &receipt,
-        "release_triple=x86_64-unknown-linux-gnu\ncompleted_at=2026-04-27T00:00:00Z\n",
-    )
-    .expect("write receipt");
-    std::thread::sleep(std::time::Duration::from_millis(10));
-    std::fs::write(&host, "host-new").expect("rewrite host");
-
-    assert!(linux_workspace_effigy_artifact_needs_refresh(
-        &host,
-        &artifact,
-        LinuxWorkspaceTarget::X86_64Gnu,
-    ));
-    assert!(linux_workspace_effigy_artifact_is_reusable(
-        &artifact,
-        LinuxWorkspaceTarget::X86_64Gnu,
-    ));
-}
-
-#[test]
-fn reused_stale_linux_artifact_preserves_existing_install_identity() {
-    let root = std::env::temp_dir().join(format!(
-        "effigy-linux-artifact-preserve-identity-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("time")
-            .as_nanos()
-    ));
+/// Fresh repo-shaped fixture, exclusively owned by this test invocation.
+fn linux_artifact_fixture(label: &str) -> std::path::PathBuf {
+    let root = tempfile::Builder::new()
+        .prefix(&format!("effigy-artifact-{label}-"))
+        .tempdir()
+        .expect("fresh private artifact fixture")
+        .keep();
     std::fs::create_dir_all(root.join("config")).expect("mkdir config");
-    std::fs::create_dir_all(root.join("target/debug")).expect("mkdir debug");
     std::fs::write(root.join("effigy.toml"), "").expect("write manifest");
     std::fs::write(root.join("config/tasks.toml"), "").expect("write tasks");
     std::fs::write(root.join("config/containers.toml"), "").expect("write containers");
+    root
+}
 
-    let host = root.join("target/debug/effigy");
-    let artifacts_dir = root.join(".effigy/linux-release/artifacts");
-    std::fs::create_dir_all(&artifacts_dir).expect("mkdir artifacts");
-    let artifact = artifacts_dir.join("effigy-x86_64-unknown-linux-gnu");
-    let receipt = artifacts_dir.join("rehearsal.txt");
-    std::fs::write(&artifact, "stale-artifact").expect("write artifact");
+/// Writes an artifact with an optional identity sidecar. The receipt names the
+/// x86_64 target and the version sidecar is a deliberately old value.
+fn write_linux_artifact(artifact: &Path, bytes: &str, identity: Option<&str>) {
+    std::fs::create_dir_all(artifact.parent().expect("artifacts dir")).expect("mkdir artifacts");
+    std::fs::write(artifact, bytes).expect("write artifact");
+    write_linux_artifact_receipt(artifact, LinuxWorkspaceTarget::X86_64Gnu.release_triple());
     std::fs::write(
-        &receipt,
-        "release_triple=x86_64-unknown-linux-gnu\ncompleted_at=2026-04-27T00:00:00Z\n",
-    )
-    .expect("write receipt");
-    let prior_identity = "local:v0.0.0:stale-prior-identity";
-    std::fs::write(
-        workspace_effigy_install_identity_file(&artifact),
-        format!("{prior_identity}\n"),
-    )
-    .expect("write prior identity");
-    std::fs::write(
-        workspace_effigy_active_version_file(&artifact),
+        workspace_effigy_active_version_file(artifact),
         "v0.0.0-stale\n",
     )
-    .expect("write prior version");
+    .expect("write version");
+    if let Some(identity) = identity {
+        std::fs::write(
+            workspace_effigy_install_identity_file(artifact),
+            format!("{identity}\n"),
+        )
+        .expect("write identity");
+    }
+}
 
-    std::thread::sleep(std::time::Duration::from_millis(10));
-    std::fs::write(&host, "host-newer").expect("write newer host");
+fn write_current_linux_artifact(artifact: &Path, bytes: &str, identity: &str) {
+    write_linux_artifact(artifact, bytes, Some(identity));
+    std::fs::write(
+        workspace_effigy_active_version_file(artifact),
+        effigy_core::build_info::active_version(),
+    )
+    .unwrap();
+}
 
-    assert!(linux_workspace_effigy_artifact_needs_refresh(
+fn write_linux_artifact_receipt(artifact: &Path, triple: &str) {
+    std::fs::write(
+        artifact
+            .parent()
+            .expect("artifacts dir")
+            .join("rehearsal.txt"),
+        format!("release_triple={triple}\ncompleted_at=2026-10-15T00:00:00Z\n"),
+    )
+    .expect("write receipt");
+}
+
+/// Private fake host. Its body is the whole shell program, so each test chooses
+/// exactly what the supported build does: fresh output, stale output, or failure.
+fn fake_effigy_host(root: &Path, body: &str) -> std::path::PathBuf {
+    let host = root.join("effigy-host");
+    std::fs::write(
         &host,
-        &artifact,
-        LinuxWorkspaceTarget::X86_64Gnu,
-    ));
+        format!(
+            "#!/bin/sh\nset -eu\nEFFIGY_FIXTURE_ACTIVE_VERSION={}\n{body}\n",
+            effigy_core::shell::shell_quote(&effigy_core::build_info::active_version())
+        ),
+    )
+    .expect("write host");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&host).expect("stat host").permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&host, perms).expect("chmod host");
+    }
+    host
+}
 
-    let returned =
+const FRESH_X86_BUILD: &str = r#"touch built.marker
+[ "$1" = "workspace:linux:artifact" ] || exit 2
+mkdir -p .effigy/linux-release/artifacts
+printf 'fresh-bytes\n' > .effigy/linux-release/artifacts/effigy-x86_64-unknown-linux-gnu
+printf '%s\n' "$EFFIGY_FIXTURE_ACTIVE_VERSION" > .effigy/linux-release/artifacts/effigy-x86_64-unknown-linux-gnu.active-version
+printf 'release_triple=x86_64-unknown-linux-gnu\ncompleted_at=2026-10-15T00:00:00Z\n' > .effigy/linux-release/artifacts/rehearsal.txt"#;
+
+const STALE_IDENTITY: &str = "local:v0.0.0:1:1";
+
+#[test]
+fn linux_artifact_current_identity_reuses_without_build() {
+    let root = linux_artifact_fixture("reuse");
+    let host = fake_effigy_host(&root, "touch built.marker\nexit 9");
+    let expected = workspace_effigy_local_install_identity(&host).expect("host identity");
+    let artifact = root.join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
+    write_current_linux_artifact(&artifact, "current-bytes", &expected);
+
+    let resolved =
         ensure_local_linux_workspace_effigy_artifact(&host, &root, LinuxWorkspaceTarget::X86_64Gnu)
-            .expect("reuse stale artifact");
-    assert_eq!(returned, artifact);
+            .expect("reuse current artifact");
 
-    let preserved = std::fs::read_to_string(workspace_effigy_install_identity_file(&artifact))
-        .expect("read preserved identity");
-    assert_eq!(preserved.trim(), prior_identity);
-
-    let host_identity = workspace_effigy_local_install_identity(&host).expect("host identity");
-    assert_ne!(preserved.trim(), host_identity);
-    assert_ne!(
-        std::fs::read_to_string(workspace_effigy_active_version_file(&artifact))
-            .expect("read preserved version")
-            .trim(),
-        effigy_core::build_info::active_version()
+    assert_eq!(resolved, artifact);
+    assert!(
+        !root.join("built.marker").exists(),
+        "a current artifact must not start a build"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&artifact).expect("read artifact"),
+        "current-bytes"
     );
 }
 
 #[test]
-fn linux_artifact_offline_hint_names_hub_images_and_reuse_path() {
-    let artifact = std::path::Path::new("/tmp/effigy-x86_64-unknown-linux-gnu");
+fn linux_artifact_matching_identity_cannot_overwrite_stale_or_missing_version() {
+    for version in [Some("v0.0.0-stale"), None] {
+        let root = linux_artifact_fixture("version-mismatch");
+        let host = fake_effigy_host(&root, "exit 9");
+        let expected = workspace_effigy_local_install_identity(&host).unwrap();
+        let artifact = root.join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
+        write_linux_artifact(&artifact, "old bytes", Some(&expected));
+        let sidecar = workspace_effigy_active_version_file(&artifact);
+        if version.is_none() {
+            std::fs::remove_file(&sidecar).unwrap();
+        }
+        ensure_local_linux_workspace_effigy_artifact(&host, &root, LinuxWorkspaceTarget::X86_64Gnu)
+            .expect_err("matching identity cannot bless a conflicting/unknown version");
+        assert_eq!(read_trimmed_identity_file(&sidecar).as_deref(), version);
+        assert_eq!(std::fs::read_to_string(&artifact).unwrap(), "old bytes");
+    }
+}
+
+#[test]
+fn linux_artifact_newer_host_rebuilds_and_binds_fresh_identity() {
+    let root = linux_artifact_fixture("newer-host");
+    let host = fake_effigy_host(&root, "exit 9");
+    let old_identity = workspace_effigy_local_install_identity(&host).expect("old identity");
+    let artifact = root.join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
+    write_linux_artifact(&artifact, "old-bytes", Some(&old_identity));
+
+    std::thread::sleep(std::time::Duration::from_millis(10));
+    let host = fake_effigy_host(&root, FRESH_X86_BUILD);
+    let new_identity = workspace_effigy_local_install_identity(&host).expect("new identity");
+    assert_ne!(old_identity, new_identity);
+
+    let resolved =
+        ensure_local_linux_workspace_effigy_artifact(&host, &root, LinuxWorkspaceTarget::X86_64Gnu)
+            .expect("rebuild stale artifact");
+
+    assert_eq!(resolved, artifact);
+    assert_eq!(
+        std::fs::read_to_string(&artifact).expect("read artifact"),
+        "fresh-bytes\n"
+    );
+    assert_eq!(
+        read_trimmed_identity_file(&workspace_effigy_install_identity_file(&artifact)).as_deref(),
+        Some(new_identity.as_str())
+    );
+    assert_eq!(
+        read_trimmed_identity_file(&workspace_effigy_active_version_file(&artifact)).as_deref(),
+        Some(effigy_core::build_info::active_version().as_str())
+    );
+}
+
+#[test]
+fn linux_artifact_successful_build_without_fresh_output_is_refused() {
+    let root = linux_artifact_fixture("exit-zero");
+    let host = fake_effigy_host(&root, "touch built.marker\nexit 0");
+    let artifact = root.join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
+    write_linux_artifact(&artifact, "old-bytes", Some(STALE_IDENTITY));
+    std::thread::sleep(std::time::Duration::from_millis(10));
+
+    let error =
+        ensure_local_linux_workspace_effigy_artifact(&host, &root, LinuxWorkspaceTarget::X86_64Gnu)
+            .expect_err("exit zero without fresh output must not hand off");
+
+    assert!(root.join("built.marker").exists(), "the build must run");
+    let message = error.to_string();
+    assert!(
+        message.contains("did not produce a current artifact"),
+        "{message}"
+    );
+    assert!(message.contains("rebuild with `EFFIGY_LINUX_RELEASE_TRIPLE=x86_64-unknown-linux-gnu effigy workspace:linux:artifact`"), "{message}");
+    assert_eq!(
+        read_trimmed_identity_file(&workspace_effigy_install_identity_file(&artifact)).as_deref(),
+        Some(STALE_IDENTITY)
+    );
+    assert_eq!(
+        read_trimmed_identity_file(&workspace_effigy_active_version_file(&artifact)).as_deref(),
+        Some("v0.0.0-stale")
+    );
+}
+
+#[test]
+fn linux_artifact_touched_old_bytes_are_refused_in_ordinary_and_bounded_preparation() {
+    for bounded in [false, true] {
+        let root = linux_artifact_fixture("touched-old-output");
+        let host = fake_effigy_host(
+            &root,
+            r#"touch .effigy/linux-release/artifacts/effigy-x86_64-unknown-linux-gnu
+printf '%s\n' "$EFFIGY_FIXTURE_ACTIVE_VERSION" > .effigy/linux-release/artifacts/effigy-x86_64-unknown-linux-gnu.active-version
+exit 0"#,
+        );
+        let artifact = root.join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
+        write_linux_artifact(&artifact, "unchanged old bytes", Some(STALE_IDENTITY));
+        let policy = test_policy();
+        let origin = std::time::Instant::now();
+        let mut budget = BoundedCommandBudget::new(
+            origin,
+            origin + std::time::Duration::from_secs(60),
+            4096,
+            4096,
+        );
+        let result = if bounded {
+            ensure_local_linux_workspace_effigy_artifact_bounded(
+                &host,
+                &root,
+                LinuxWorkspaceTarget::X86_64Gnu,
+                &policy,
+                &mut budget,
+            )
+        } else {
+            ensure_local_linux_workspace_effigy_artifact(
+                &host,
+                &root,
+                LinuxWorkspaceTarget::X86_64Gnu,
+            )
+        };
+        result
+            .expect_err("touch, version rewrite and successful exit cannot bless unchanged bytes");
+        assert_eq!(
+            read_trimmed_identity_file(&workspace_effigy_install_identity_file(&artifact))
+                .as_deref(),
+            Some(STALE_IDENTITY)
+        );
+        assert_eq!(
+            std::fs::read_to_string(&artifact).unwrap(),
+            "unchanged old bytes"
+        );
+    }
+}
+
+#[test]
+fn linux_artifact_in_progress_build_rechecks_final_metadata_in_both_paths() {
+    for bounded in [false, true] {
+        let root = linux_artifact_fixture("in-progress-final");
+        let host = fake_effigy_host(&root, "exit 9");
+        let expected = workspace_effigy_local_install_identity(&host).unwrap();
+        let artifact = root.join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
+        write_current_linux_artifact(&artifact, "transient bytes", &expected);
+        let lock = linux_workspace_artifact_lock_path(&root);
+        std::fs::create_dir_all(lock.parent().unwrap()).unwrap();
+        std::fs::write(&lock, "owned writer").unwrap();
+        let writer_artifact = artifact.clone();
+        let writer = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            std::fs::write(
+                workspace_effigy_install_identity_file(&writer_artifact),
+                STALE_IDENTITY,
+            )
+            .unwrap();
+            std::fs::remove_file(lock).unwrap();
+        });
+        let policy = test_policy();
+        let origin = std::time::Instant::now();
+        let mut budget = BoundedCommandBudget::new(
+            origin,
+            origin + std::time::Duration::from_secs(10),
+            4096,
+            4096,
+        );
+        let result = if bounded {
+            ensure_local_linux_workspace_effigy_artifact_bounded(
+                &host,
+                &root,
+                LinuxWorkspaceTarget::X86_64Gnu,
+                &policy,
+                &mut budget,
+            )
+        } else {
+            ensure_local_linux_workspace_effigy_artifact(
+                &host,
+                &root,
+                LinuxWorkspaceTarget::X86_64Gnu,
+            )
+        };
+        writer.join().expect("settle owned build writer");
+        result.expect_err("transient current metadata while locked cannot authorize handoff");
+        assert_eq!(
+            read_trimmed_identity_file(&workspace_effigy_install_identity_file(&artifact))
+                .as_deref(),
+            Some(STALE_IDENTITY)
+        );
+    }
+}
+
+#[test]
+fn bounded_linux_artifact_success_without_valid_output_refuses_without_rebinding() {
+    for body in [
+        "exit 0",
+        "rm .effigy/linux-release/artifacts/effigy-x86_64-unknown-linux-gnu\nexit 0",
+        r#"printf 'new bytes' > .effigy/linux-release/artifacts/effigy-x86_64-unknown-linux-gnu
+printf '%s\n' "$EFFIGY_FIXTURE_ACTIVE_VERSION" > .effigy/linux-release/artifacts/effigy-x86_64-unknown-linux-gnu.active-version
+printf 'release_triple=aarch64-unknown-linux-gnu\n' > .effigy/linux-release/artifacts/rehearsal.txt"#,
+    ] {
+        let root = linux_artifact_fixture("bounded-invalid-output");
+        let host = fake_effigy_host(&root, body);
+        let artifact = root.join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
+        write_linux_artifact(&artifact, "old bytes", Some(STALE_IDENTITY));
+        let origin = std::time::Instant::now();
+        let mut budget = BoundedCommandBudget::new(
+            origin,
+            origin + std::time::Duration::from_secs(10),
+            4096,
+            4096,
+        );
+        let error = ensure_local_linux_workspace_effigy_artifact_bounded(
+            &host,
+            &root,
+            LinuxWorkspaceTarget::X86_64Gnu,
+            &test_policy(),
+            &mut budget,
+        )
+        .expect_err("exit zero is insufficient without current target output");
+        let message = error.to_string();
+        assert!(message.contains("EFFIGY_LINUX_RELEASE_TRIPLE=x86_64-unknown-linux-gnu effigy workspace:linux:artifact"), "{message}");
+        assert!(!message.contains(&root.display().to_string()), "{message}");
+        assert_eq!(
+            read_trimmed_identity_file(&workspace_effigy_install_identity_file(&artifact))
+                .as_deref(),
+            Some(STALE_IDENTITY)
+        );
+    }
+}
+
+#[test]
+fn linux_artifact_wrong_target_build_output_is_refused() {
+    let root = linux_artifact_fixture("wrong-target");
+    let host = fake_effigy_host(
+        &root,
+        r#"touch built.marker
+mkdir -p .effigy/linux-release/artifacts
+printf 'fresh-bytes\n' > .effigy/linux-release/artifacts/effigy-x86_64-unknown-linux-gnu
+printf 'release_triple=aarch64-unknown-linux-gnu\ncompleted_at=2026-10-15T00:00:00Z\n' > .effigy/linux-release/artifacts/rehearsal.txt"#,
+    );
+    let artifact = root.join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
+    write_linux_artifact(&artifact, "old-bytes", Some(STALE_IDENTITY));
+    std::thread::sleep(std::time::Duration::from_millis(10));
+
+    let error =
+        ensure_local_linux_workspace_effigy_artifact(&host, &root, LinuxWorkspaceTarget::X86_64Gnu)
+            .expect_err("wrong-target receipt must not hand off");
+
+    let message = error.to_string();
+    assert!(
+        message.contains("did not produce a current artifact"),
+        "{message}"
+    );
+    assert!(message.contains("names another target"), "{message}");
+}
+
+#[test]
+fn linux_artifact_failed_build_never_reuses_stale_bytes() {
+    let root = linux_artifact_fixture("failed-build");
+    let host = fake_effigy_host(&root, "touch built.marker\nexit 3");
+    let artifact = root.join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
+    write_linux_artifact(&artifact, "old-bytes", Some(STALE_IDENTITY));
+
+    let error =
+        ensure_local_linux_workspace_effigy_artifact(&host, &root, LinuxWorkspaceTarget::X86_64Gnu)
+            .expect_err("failed build must refuse stale bytes");
+
+    let message = error.to_string();
+    assert!(message.contains("is not current"), "{message}");
+    assert!(
+        message.contains(&format!("artifact identity `{STALE_IDENTITY}`")),
+        "{message}"
+    );
+    assert!(
+        message.contains(&format!(
+            "host version `{}`",
+            effigy_core::build_info::active_version()
+        )),
+        "{message}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&artifact).expect("read artifact"),
+        "old-bytes"
+    );
+    assert_eq!(
+        read_trimmed_identity_file(&workspace_effigy_install_identity_file(&artifact)).as_deref(),
+        Some(STALE_IDENTITY)
+    );
+}
+
+#[test]
+fn linux_artifact_unlabelled_bytes_are_never_stamped_current() {
+    let root = linux_artifact_fixture("unlabelled");
+    let host = fake_effigy_host(&root, "touch built.marker\nexit 3");
+    let artifact = root.join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
+    write_linux_artifact(&artifact, "unknown-bytes", None);
+
+    let error =
+        ensure_local_linux_workspace_effigy_artifact(&host, &root, LinuxWorkspaceTarget::X86_64Gnu)
+            .expect_err("unlabelled bytes must not hand off");
+
+    assert!(error.to_string().contains("artifact identity `unknown`"));
+    assert!(!workspace_effigy_install_identity_file(&artifact).exists());
+    assert_eq!(
+        read_trimmed_identity_file(&workspace_effigy_active_version_file(&artifact)).as_deref(),
+        Some("v0.0.0-stale")
+    );
+}
+
+#[test]
+fn linux_artifact_is_current_only_by_identity_and_receipt_not_timestamps() {
+    let root = linux_artifact_fixture("identity-only");
+    let host = fake_effigy_host(&root, "exit 9");
+    let expected = workspace_effigy_local_install_identity(&host).expect("host identity");
+    let artifact = root.join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
+    let target = LinuxWorkspaceTarget::X86_64Gnu;
+
+    write_linux_artifact(&artifact, "bytes", Some(STALE_IDENTITY));
+    std::thread::sleep(std::time::Duration::from_millis(10));
+    // A freshly rewritten file with an unmatched identity is still stale.
+    write_linux_artifact(&artifact, "bytes", Some(STALE_IDENTITY));
+    assert!(!linux_workspace_effigy_artifact_is_current(
+        &artifact, target, &expected
+    ));
+
+    write_current_linux_artifact(&artifact, "bytes", &expected);
+    assert!(linux_workspace_effigy_artifact_is_current(
+        &artifact, target, &expected
+    ));
+
+    write_linux_artifact_receipt(&artifact, LinuxWorkspaceTarget::Aarch64Gnu.release_triple());
+    assert!(!linux_workspace_effigy_artifact_is_current(
+        &artifact, target, &expected
+    ));
+}
+
+#[test]
+fn linux_artifact_refusal_reports_versions_identities_and_rebuild_command() {
+    let root = linux_artifact_fixture("refusal");
+    let artifact = root.join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
+    write_linux_artifact(&artifact, "bytes", None);
+
+    let detail = describe_linux_workspace_artifact_refusal(
+        &artifact,
+        LinuxWorkspaceTarget::X86_64Gnu,
+        "local:v9.9.9:2:3",
+        &root,
+    );
+
+    assert!(
+        detail.contains("host identity `local:v9.9.9:2:3`"),
+        "{detail}"
+    );
+    assert!(detail.contains("artifact identity `unknown`"), "{detail}");
+    assert!(
+        detail.contains("artifact version `v0.0.0-stale`"),
+        "{detail}"
+    );
+    assert!(
+        detail.contains(&format!(
+            "host version `{}`",
+            effigy_core::build_info::active_version()
+        )),
+        "{detail}"
+    );
+    assert!(
+        detail.contains("rehearsal receipt matches target"),
+        "{detail}"
+    );
+    assert!(
+        detail.contains(
+            "EFFIGY_LINUX_RELEASE_TRIPLE=x86_64-unknown-linux-gnu effigy workspace:linux:artifact"
+        ),
+        "{detail}"
+    );
+}
+
+#[test]
+fn linux_artifact_offline_hint_recommends_only_supported_recovery() {
+    let refusal =
+        "linux workspace artifact `/x/effigy` is not current for `x86_64-unknown-linux-gnu`";
     let hinted = linux_workspace_artifact_offline_hint(
         crate::runner::error::RunnerError::task_invocation("build failed"),
-        artifact,
+        refusal,
     );
     let message = hinted.to_string();
     assert!(message.contains("build failed"));
+    assert!(message.contains(refusal));
     assert!(message.contains("ubuntu:22.04"));
     assert!(message.contains("effigy-linux-release-builder"));
-    assert!(message.contains(artifact.to_string_lossy().as_ref()));
     assert!(message.contains(EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV));
     assert!(message.contains("download"));
+    assert!(!message.contains("Reuse a cached artifact"));
+}
+
+#[test]
+fn linux_release_cache_is_current_only_when_identity_names_this_release() {
+    let root = linux_artifact_fixture("release-cache");
+    let cache = root.join("effigy-x86_64-unknown-linux-gnu");
+    std::fs::write(&cache, "downloaded-bytes").expect("write cache");
+    let release = workspace_effigy_release_install_identity();
+
+    assert!(!linux_workspace_release_cache_is_current(&cache, &release));
+    std::fs::write(
+        workspace_effigy_install_identity_file(&cache),
+        "release:v0.0.0\n",
+    )
+    .expect("write other identity");
+    assert!(!linux_workspace_release_cache_is_current(&cache, &release));
+    std::fs::write(
+        workspace_effigy_install_identity_file(&cache),
+        format!("{release}\n"),
+    )
+    .expect("write release identity");
+    assert!(!linux_workspace_release_cache_is_current(&cache, &release));
+    std::fs::write(
+        workspace_effigy_active_version_file(&cache),
+        effigy_core::build_info::active_version(),
+    )
+    .unwrap();
+    assert!(linux_workspace_release_cache_is_current(&cache, &release));
+}
+
+#[test]
+fn bounded_linux_artifact_current_identity_reuses_without_build() {
+    let root = linux_artifact_fixture("bounded-reuse");
+    let host = fake_effigy_host(&root, "touch built.marker\nexit 9");
+    let expected = workspace_effigy_local_install_identity(&host).expect("host identity");
+    let artifact = root.join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
+    write_current_linux_artifact(&artifact, "current-bytes", &expected);
+    let policy = test_policy();
+    let origin = std::time::Instant::now();
+    let mut budget = BoundedCommandBudget::new(
+        origin,
+        origin + std::time::Duration::from_secs(60),
+        1024 * 1024,
+        1024 * 1024,
+    );
+
+    let resolved = ensure_local_linux_workspace_effigy_artifact_bounded(
+        &host,
+        &root,
+        LinuxWorkspaceTarget::X86_64Gnu,
+        &policy,
+        &mut budget,
+    )
+    .expect("reuse current artifact");
+
+    assert_eq!(resolved, artifact);
+    assert!(!root.join("built.marker").exists());
+}
+
+#[test]
+fn bounded_linux_artifact_rebuilds_stale_identity_with_fresh_output() {
+    let root = linux_artifact_fixture("bounded-rebuild");
+    let host = fake_effigy_host(&root, FRESH_X86_BUILD);
+    let artifact = root.join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
+    write_linux_artifact(&artifact, "old-bytes", Some(STALE_IDENTITY));
+    std::thread::sleep(std::time::Duration::from_millis(10));
+    let policy = test_policy();
+    let origin = std::time::Instant::now();
+    let mut budget = BoundedCommandBudget::new(
+        origin,
+        origin + std::time::Duration::from_secs(60),
+        1024 * 1024,
+        1024 * 1024,
+    );
+
+    let resolved = ensure_local_linux_workspace_effigy_artifact_bounded(
+        &host,
+        &root,
+        LinuxWorkspaceTarget::X86_64Gnu,
+        &policy,
+        &mut budget,
+    )
+    .expect("bounded rebuild");
+
+    assert_eq!(resolved, artifact);
+    assert_eq!(
+        std::fs::read_to_string(&artifact).expect("read artifact"),
+        "fresh-bytes\n"
+    );
+}
+
+#[test]
+fn bounded_linux_artifact_refuses_stale_bytes_with_static_recovery() {
+    let root = linux_artifact_fixture("bounded-stale");
+    let host = fake_effigy_host(&root, "touch built.marker\nexit 3");
+    let artifact = root.join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
+    write_linux_artifact(&artifact, "old-bytes", Some(STALE_IDENTITY));
+    let policy = test_policy();
+    let origin = std::time::Instant::now();
+    let mut budget = BoundedCommandBudget::new(
+        origin,
+        origin + std::time::Duration::from_secs(60),
+        1024 * 1024,
+        1024 * 1024,
+    );
+
+    let error = ensure_local_linux_workspace_effigy_artifact_bounded(
+        &host,
+        &root,
+        LinuxWorkspaceTarget::X86_64Gnu,
+        &policy,
+        &mut budget,
+    )
+    .expect_err("stale bytes must be refused");
+
+    let message = error.to_string();
+    assert!(
+        message.contains("could not refresh the stale workspace artifact"),
+        "{message}"
+    );
+    assert!(!message.contains(&root.display().to_string()), "{message}");
+    assert_eq!(
+        std::fs::read_to_string(&artifact).expect("read artifact"),
+        "old-bytes"
+    );
 }
 
 #[test]
@@ -464,6 +893,8 @@ fn wait_for_in_progress_linux_workspace_artifact_build_reuses_completed_artifact
     std::fs::create_dir_all(freshness_anchor.parent().expect("anchor parent"))
         .expect("mkdir target");
     std::fs::write(&freshness_anchor, "host").expect("write host");
+    let expected_identity =
+        workspace_effigy_local_install_identity(&freshness_anchor).expect("anchor identity");
     let artifact = artifacts_dir.join("effigy-x86_64-unknown-linux-gnu");
     let receipt = artifacts_dir.join("rehearsal.txt");
     let lock_path = linux_workspace_artifact_lock_path(&root);
@@ -473,9 +904,20 @@ fn wait_for_in_progress_linux_workspace_artifact_build_reuses_completed_artifact
     let lock_path_clone = lock_path.clone();
     let artifact_clone = artifact.clone();
     let receipt_clone = receipt.clone();
-    std::thread::spawn(move || {
+    let expected_identity_clone = expected_identity.clone();
+    let writer = std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(50));
         std::fs::write(&artifact_clone, "artifact").expect("write artifact");
+        std::fs::write(
+            workspace_effigy_install_identity_file(&artifact_clone),
+            format!("{expected_identity_clone}\n"),
+        )
+        .expect("write identity");
+        std::fs::write(
+            workspace_effigy_active_version_file(&artifact_clone),
+            effigy_core::build_info::active_version(),
+        )
+        .unwrap();
         std::fs::write(
             &receipt_clone,
             "release_triple=x86_64-unknown-linux-gnu\ncompleted_at=2026-06-09T00:00:00Z\n",
@@ -486,12 +928,12 @@ fn wait_for_in_progress_linux_workspace_artifact_build_reuses_completed_artifact
 
     let reused = wait_for_in_progress_linux_workspace_artifact_build(
         &root,
-        &freshness_anchor,
+        &expected_identity,
         &artifact,
         LinuxWorkspaceTarget::X86_64Gnu,
     )
     .expect("wait succeeds");
-
+    writer.join().expect("settle owned writer");
     assert!(reused);
 }
 
@@ -510,11 +952,13 @@ fn wait_for_in_progress_linux_workspace_artifact_build_returns_false_without_loc
     std::fs::create_dir_all(freshness_anchor.parent().expect("anchor parent"))
         .expect("mkdir target");
     std::fs::write(&freshness_anchor, "host").expect("write host");
+    let expected_identity =
+        workspace_effigy_local_install_identity(&freshness_anchor).expect("anchor identity");
     let artifact = artifacts_dir.join("effigy-x86_64-unknown-linux-gnu");
 
     let reused = wait_for_in_progress_linux_workspace_artifact_build(
         &root,
-        &freshness_anchor,
+        &expected_identity,
         &artifact,
         LinuxWorkspaceTarget::X86_64Gnu,
     )
@@ -621,6 +1065,16 @@ fn workspace_artifact_source_download_bypasses_discoverable_local_repo() {
     std::fs::create_dir_all(cache_path.parent().expect("cache parent"))
         .expect("mkdir cache parent");
     std::fs::write(&cache_path, "downloaded-artifact").expect("write cache artifact");
+    std::fs::write(
+        workspace_effigy_install_identity_file(&cache_path),
+        format!("{}\n", workspace_effigy_release_install_identity()),
+    )
+    .expect("write cache identity");
+    std::fs::write(
+        workspace_effigy_active_version_file(&cache_path),
+        effigy_core::build_info::active_version(),
+    )
+    .unwrap();
 
     let _env = EnvGuard::set_many(&[(
         EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV,
@@ -682,6 +1136,11 @@ fn resolve_local_effigy_repo_root_ignores_cached_download_artifact_in_auto_mode(
     std::fs::create_dir_all(cache_path.parent().expect("cache parent"))
         .expect("mkdir cache parent");
     std::fs::write(&cache_path, "downloaded-artifact").expect("write cache artifact");
+    std::fs::write(
+        workspace_effigy_install_identity_file(&cache_path),
+        format!("{}\n", workspace_effigy_release_install_identity()),
+    )
+    .expect("write cache identity");
 
     let _env = EnvGuard::set_many(&[(EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV, None)]);
     let resolved = resolve_local_effigy_repo_root_from_paths(&workspace, None, None);

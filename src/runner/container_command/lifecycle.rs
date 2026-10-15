@@ -521,15 +521,18 @@ fn complete_container_up_runtime_integrations(
     } else {
         ensure_primary_service_exec_ready_for_runtime(repo_root, policy, &working_dir)
     };
-    if let Err(error) = exec_ready {
-        if plan.attach_mode == EffectiveAttachMode::Detached {
-            return Err(detached_partial_activation_error(policy, error, None));
+    let binding = match exec_ready {
+        Ok(binding) => binding,
+        Err(error) => {
+            if plan.attach_mode == EffectiveAttachMode::Detached {
+                return Err(detached_partial_activation_error(policy, error, None));
+            }
+            let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, policy);
+            return Err(finish_container_up_failure(error, cleanup_result));
         }
-        let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, policy);
-        return Err(finish_container_up_failure(error, cleanup_result));
-    }
+    };
     if let Err(error) =
-        materialize_container_secret_runtime(repo_root, policy, &plan.secret_runtime)
+        materialize_container_secret_runtime(repo_root, policy, &plan.secret_runtime, &binding)
     {
         if plan.attach_mode == EffectiveAttachMode::Detached {
             return Err(detached_partial_activation_error(policy, error, None));
@@ -538,10 +541,11 @@ fn complete_container_up_runtime_integrations(
         return Err(finish_container_up_failure(error, cleanup_result));
     }
     let gateway_routes =
-        match super::gateway_registration::register_gateway_routes_for_container_with_context(
+        match super::gateway_registration::register_gateway_routes_for_verified_container(
             repo_root,
             policy,
             plan.admitted_context.as_ref(),
+            Some(&binding),
         ) {
             Ok(routes) => routes,
             Err(error) => {
@@ -555,16 +559,17 @@ fn complete_container_up_runtime_integrations(
                 ));
             }
         };
-    let tcp_alias_host_notes = match reconcile_primary_service_tcp_alias_hosts(repo_root, policy) {
-        Ok(notes) => notes,
-        Err(error) => {
-            if plan.attach_mode == EffectiveAttachMode::Detached {
-                return Err(detached_partial_activation_error(policy, error, None));
+    let tcp_alias_host_notes =
+        match reconcile_primary_service_tcp_alias_hosts(repo_root, policy, &binding) {
+            Ok(notes) => notes,
+            Err(error) => {
+                if plan.attach_mode == EffectiveAttachMode::Detached {
+                    return Err(detached_partial_activation_error(policy, error, None));
+                }
+                let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, policy);
+                return Err(finish_container_up_failure(error, cleanup_result));
             }
-            let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, policy);
-            return Err(finish_container_up_failure(error, cleanup_result));
-        }
-    };
+        };
 
     let mut warnings = plan.warnings.clone();
     let managed_host_listeners = match start_host_processes_for_container(repo_root, policy) {

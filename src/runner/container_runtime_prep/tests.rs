@@ -400,7 +400,7 @@ fn runtime_prep_runs_sibling_service_recovery_before_exec_and_alias_reconciliati
         },
         {
             let events = Arc::clone(&events);
-            move || {
+            move |_| {
                 events
                     .lock()
                     .expect("events lock")
@@ -533,7 +533,7 @@ fn runtime_prep_reconciles_container_local_tcp_aliases_after_exec_readiness() {
         },
         {
             let events = Arc::clone(&events);
-            move || {
+            move |_| {
                 events
                     .lock()
                     .expect("events lock")
@@ -785,7 +785,7 @@ fn runtime_prep_surfaces_alias_reconciliation_failure_after_exec_recovery() {
         },
         {
             let events = Arc::clone(&events);
-            move || {
+            move |_| {
                 events
                     .lock()
                     .expect("events lock")
@@ -825,7 +825,7 @@ fn exec_readiness_recovery_restarts_once_then_accepts_longer_probe_window() {
             let probes = Arc::clone(&probes);
             move |timeout| {
                 probes.lock().expect("probes lock").push(timeout);
-                timeout == Duration::from_secs(15)
+                Ok((timeout == Duration::from_secs(15)).then_some(()))
             }
         },
         {
@@ -854,7 +854,7 @@ fn exec_readiness_recovery_fails_when_probe_never_recovers() {
     let error = ensure_primary_service_exec_ready_with_recovery_using(
         &policy,
         working_dir,
-        |_timeout| false,
+        |_timeout| Ok(None::<()>),
         {
             let restarted = Arc::clone(&restarted);
             move || {

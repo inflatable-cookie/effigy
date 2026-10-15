@@ -7,6 +7,12 @@ use effigy_cli::{DeferArgs, TaskInvocation};
 use effigy_context::{CapturedEnv, EffigyRuntimeContext};
 use effigy_execution::{ExecutionEnvironmentPlan, ExecutionSurface, TaskExecutionRequestBuilder};
 
+fn fake_app_full_id(root: &std::path::Path) -> String {
+    let policy =
+        effigy_containers::load_container_policy(root, Some("web")).expect("fixture policy");
+    effigy_gateway::ports::sha256_hex(format!("{}-app-1", policy.project_name).as_bytes())
+}
+
 fn setup_fake_docker_deferral_runtime(
     root: &std::path::Path,
     service_running: bool,
@@ -374,7 +380,7 @@ base = { type = "path", dir = "bundles/php-library" }
         "expected docker compose exec, got {log}"
     );
     assert!(
-        log.contains("app sh -lc"),
+        log.contains(&format!("{} sh -lc", fake_app_full_id(&root))),
         "expected workspace service exec, got {log}"
     );
     assert!(
@@ -742,7 +748,7 @@ shared_root = "{}"
     let probe_at = log
         .find(&format!("{vendor} yes"))
         .expect("access probe marker");
-    let deferred = "exec -T -w /workspace-root/zest -u dev";
+    let deferred = "exec -i -w /workspace-root/zest -u dev";
     let deferred_at = log.find(deferred).unwrap_or_else(|| {
         panic!("expected deferred workspace exec as dev user after prep, got {log}")
     });

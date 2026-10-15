@@ -353,6 +353,21 @@ Behavior:
 - open workspace shell
 - do package or maintenance work inside Linux
 - on shell exit, prompt to bring the system down and default the answer to yes
+- if the handoff refuses a stale Linux workspace artifact, the refusal names the
+  host and artifact versions, the target, and the rebuild command, for example
+  `EFFIGY_LINUX_RELEASE_TRIPLE=aarch64-unknown-linux-gnu effigy workspace:linux:artifact`.
+  Run that from the Effigy checkout, then retry `effigy workspace`.
+- current local reuse requires matching install identity, active version and
+  target receipt. Successful rebuilds must produce changed output and the
+  current version; touching old bytes or exiting zero leaves handoff refused.
+  The temporary content comparison rejects unchanged output and does not attest
+  source or create distribution provenance. The same checks apply to bounded
+  preparation, whose recovery command names the actual target and retains its
+  original deadline and cumulative output limits. An in-progress build is
+  checked again after its lock releases.
+- an existing unlabelled direct-Compose builder cannot be adopted by retrying
+  `up`. See [the scoped recovery boundary](../knowledge/contracts/006-compose-backend-compatibility.md#primary-service-exec-readiness)
+  before explicitly stopping and recreating a verified selected builder.
 
 ### Manual substrate control
 

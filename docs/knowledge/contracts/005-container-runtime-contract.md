@@ -77,6 +77,25 @@ loaded workspace mount spec for this `up`; it does not refresh that spec in a
 way that could recreate the running service just to apply an optional mount.
 No creation-time mount decision is reported for that existing service.
 
+Direct `compose_file` containers get the same checkout identity as generated
+ones. Effigy renders a Compose override next to the repo-owned file, at
+`.effigy/runtime/compose/<container>.ownership.compose.yml`. It labels each
+service the file declares with `com.effigy.checkout` (the canonical checkout)
+and, when the checkout has a runtime scope token, `com.effigy.scope`. The repo
+file is not edited, and the override adds labels to no service the file does not
+declare. Owned-binding checks still require exact full-ID, project, declared
+service, non-one-off, running, checkout and scope matches. A container created
+before this override has no checkout label, so those checks refuse it and it is
+not adopted. Compose applies label changes on its next `up`, which recreates the
+affected service. That `up` is the supported recovery for an existing unlabelled
+direct container. Diagnostics name it but never perform it.
+
+Exec readiness applies the same owned-binding check before any probe. The
+readiness probe and the recovery restart run only after the running primary
+service passes it. An unlabelled, foreign or wrong-checkout primary is neither
+exec'd nor restarted; the up reports not exec-ready. The shell and task exec
+that follow are gated by that readiness boundary.
+
 The up diagnostic and detached JSON report describe only the Compose create
 spec decision and whether the Compose up command succeeded. They identify
 included or absent source/target pairs and report runtime mount verification as

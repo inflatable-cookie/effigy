@@ -152,7 +152,7 @@ pub(in crate::runner) fn run_compose_exec_with_options(
         args: resolved_args,
         label: label.to_owned(),
     };
-    run_compose_exec_plan_with_deadline(policy, &plan, capture, stdin_file, deadline)
+    run_owned_compose_exec_plan_with_deadline(policy, &plan, capture, stdin_file, deadline)
 }
 
 pub(in crate::runner) fn run_compose_exec_plan_with_options(
@@ -161,17 +161,56 @@ pub(in crate::runner) fn run_compose_exec_plan_with_options(
     capture: bool,
     stdin_file: Option<&Path>,
 ) -> Result<Output, RunnerError> {
-    run_compose_exec_plan_with_deadline(policy, plan, capture, stdin_file, None)
+    run_owned_compose_exec_plan_with_deadline(policy, plan, capture, stdin_file, None)
 }
 
-pub(in crate::runner) fn run_compose_exec_plan_with_deadline(
+fn run_owned_compose_exec_plan_with_deadline(
     policy: &EffectiveContainerPolicy,
     plan: &ContainerComposeInvocationPlan,
     capture: bool,
     stdin_file: Option<&Path>,
     deadline: Option<Instant>,
 ) -> Result<Output, RunnerError> {
+    let parsed = parse_compose_exec_args(&plan.args)?;
+    let working_dir = parsed
+        .working_dir
+        .as_deref()
+        .map(Path::new)
+        .unwrap_or(Path::new("/"));
+    let binding = crate::runner::container_runtime_prep::verify_service_exec_ready(
+        &plan.repo_root,
+        policy,
+        &parsed.service,
+        working_dir,
+        deadline.unwrap_or_else(|| Instant::now() + Duration::from_secs(2)),
+    )?;
+    run_verified_compose_exec_plan(policy, plan, &binding, capture, stdin_file, deadline)
+}
+
+/// Readiness and the subsequent effect share an inspected full ID. Native exec
+/// targets that ID, never a mutable service/name or the Colima name cache.
+pub(in crate::runner) fn run_verified_compose_exec_plan(
+    policy: &EffectiveContainerPolicy,
+    plan: &ContainerComposeInvocationPlan,
+    binding: &effigy_containers::exec::VerifiedComposeContainer,
+    capture: bool,
+    stdin_file: Option<&Path>,
+    deadline: Option<Instant>,
+) -> Result<Output, RunnerError> {
+    let parsed = parse_compose_exec_args(&plan.args)?;
+    if binding.service() != Some(parsed.service.as_str()) {
+        return Err(RunnerError::task_invocation(
+            "verified exec service changed",
+        ));
+    }
     if plan.backend_id == BackendId::colima_nerdctl() {
+        binding
+            .reverify(
+                &plan.repo_root,
+                policy,
+                deadline.unwrap_or_else(|| Instant::now() + Duration::from_secs(2)),
+            )
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
         return colima::run_colima_direct_exec(
             &plan.repo_root,
             policy,
@@ -180,13 +219,10 @@ pub(in crate::runner) fn run_compose_exec_plan_with_deadline(
                 capture,
                 label: &plan.label,
                 stdin_file,
-                deadline,
             },
+            OsStr::new(binding.id()),
             colima::ColimaExecAdapters {
                 parse_compose_exec_args: &parse_compose_exec_args,
-                run_command_capture_allow_failure: &move |root, program, args| {
-                    run_command_capture_until(root, program, args, None, deadline)
-                },
                 run_command_capture_allow_failure_with_stdin: &move |root, program, args, stdin| {
                     run_command_capture_until(root, program, args, stdin, deadline)
                 },
@@ -194,7 +230,72 @@ pub(in crate::runner) fn run_compose_exec_plan_with_deadline(
             },
         );
     }
+    let (program, args) = verified_native_exec_invocation(
+        policy,
+        plan,
+        binding,
+        stdin_file.is_some() || !capture,
+        deadline,
+    )?;
+    let plan = ContainerComposeInvocationPlan {
+        program,
+        args,
+        ..plan.clone()
+    };
 
+    run_exec_process_plan(&plan, capture, stdin_file, deadline)
+}
+
+/// Existing deadline-aware diagnosis/permission transport. It does not acquire
+/// workload readiness or restart authority. Workload entry points above use the
+/// verified binding path; diagnosis keeps its original bounded observation cost.
+pub(in crate::runner) fn run_compose_exec_plan_with_deadline(
+    policy: &EffectiveContainerPolicy,
+    plan: &ContainerComposeInvocationPlan,
+    capture: bool,
+    stdin_file: Option<&Path>,
+    deadline: Option<Instant>,
+) -> Result<Output, RunnerError> {
+    if plan.backend_id == BackendId::colima_nerdctl() {
+        let parsed = parse_compose_exec_args(&plan.args)?;
+        let container_id = colima::resolve_compose_service_container_id(
+            &plan.repo_root,
+            policy,
+            &parsed.service,
+            deadline,
+            &move |root, program, args| {
+                run_command_capture_until(root, program, args, None, deadline)
+            },
+            &format_args,
+        )?;
+        return colima::run_colima_direct_exec(
+            &plan.repo_root,
+            policy,
+            &plan.args,
+            colima::ColimaDirectExecRequest {
+                capture,
+                label: &plan.label,
+                stdin_file,
+            },
+            &container_id,
+            colima::ColimaExecAdapters {
+                parse_compose_exec_args: &parse_compose_exec_args,
+                run_command_capture_allow_failure_with_stdin: &move |root, program, args, stdin| {
+                    run_command_capture_until(root, program, args, stdin, deadline)
+                },
+                format_args: &format_args,
+            },
+        );
+    }
+    run_exec_process_plan(plan, capture, stdin_file, deadline)
+}
+
+fn run_exec_process_plan(
+    plan: &ContainerComposeInvocationPlan,
+    capture: bool,
+    stdin_file: Option<&Path>,
+    deadline: Option<Instant>,
+) -> Result<Output, RunnerError> {
     if capture {
         return run_command_capture_until(
             &plan.repo_root,
@@ -233,6 +334,50 @@ pub(in crate::runner) fn run_compose_exec_plan_with_deadline(
         stdout: Vec::new(),
         stderr: Vec::new(),
     })
+}
+
+pub(super) fn verified_native_exec_invocation(
+    policy: &EffectiveContainerPolicy,
+    plan: &ContainerComposeInvocationPlan,
+    binding: &effigy_containers::exec::VerifiedComposeContainer,
+    attach_stdin: bool,
+    deadline: Option<Instant>,
+) -> Result<(OsString, Vec<OsString>), RunnerError> {
+    let parsed = parse_compose_exec_args(&plan.args)?;
+    if binding.service() != Some(parsed.service.as_str()) {
+        return Err(RunnerError::task_invocation(
+            "verified exec service changed",
+        ));
+    }
+    binding.reverify(
+        &plan.repo_root,
+        policy,
+        deadline.unwrap_or_else(|| Instant::now() + Duration::from_secs(2)),
+    )?;
+    let mut args = vec![OsString::from("exec")];
+    if attach_stdin {
+        args.push(OsString::from("-i"));
+    }
+    if parsed.tty {
+        args.push(OsString::from("-t"));
+    }
+    if let Some(dir) = parsed.working_dir {
+        args.extend([OsString::from("-w"), dir]);
+    }
+    if let Some(user) = parsed.user {
+        args.extend([OsString::from("-u"), user]);
+    }
+    for env in parsed.env {
+        args.extend([OsString::from("-e"), env]);
+    }
+    args.push(OsString::from(binding.id()));
+    args.extend(parsed.command);
+    let mut detection = ContainerBackendDetection::from_env_and_path();
+    detection.backend_override = Some(plan.backend_id.clone());
+    let (program, args) = ContainerManager::defaults()
+        .runtime_process_invocation(&detection, &plan.profile, "docker", &args)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    Ok((program, args))
 }
 
 fn active_backend_id_for_policy(repo_root: &Path, policy: &EffectiveContainerPolicy) -> BackendId {
@@ -418,17 +563,17 @@ pub(super) fn parse_compose_exec_args(args: &[OsString]) -> Result<ParsedCompose
         let value = arg.to_string_lossy();
         if service.is_none() {
             match value.as_ref() {
-                "-T" => {
+                "-T" | "--tty=false" => {
                     tty = false;
                     continue;
                 }
-                "-w" => {
+                "-w" | "--workdir" => {
                     working_dir = Some(iter.next().cloned().ok_or_else(|| {
                         RunnerError::task_invocation("missing exec working directory")
                     })?);
                     continue;
                 }
-                "-u" => {
+                "-u" | "--user" => {
                     user = Some(
                         iter.next()
                             .cloned()
@@ -436,7 +581,7 @@ pub(super) fn parse_compose_exec_args(args: &[OsString]) -> Result<ParsedCompose
                     );
                     continue;
                 }
-                "-e" => {
+                "-e" | "--env" => {
                     env.push(
                         iter.next().cloned().ok_or_else(|| {
                             RunnerError::task_invocation("missing exec env value")
@@ -445,7 +590,9 @@ pub(super) fn parse_compose_exec_args(args: &[OsString]) -> Result<ParsedCompose
                     continue;
                 }
                 _ if value.starts_with('-') => {
-                    continue;
+                    return Err(RunnerError::task_invocation(
+                        "unsupported verified exec option",
+                    ));
                 }
                 _ => {
                     service = Some(value.into_owned());
@@ -663,7 +810,8 @@ pub(in crate::runner) fn probe_container_capabilities(
     for check in standard_probe_spec().checks {
         let mut args = compose_args(policy, ["exec", "-T", service]);
         args.extend(check.command.iter().cloned().map(OsString::from));
-        let output = run_command_capture_allow_failure_with_policy(repo_root, policy, &args)?;
+        let output =
+            run_compose_exec(repo_root, policy, &args, true, "container capability probe")?;
         results.insert(
             check.description,
             ProbeResult {
@@ -705,15 +853,6 @@ pub(in crate::runner) fn append_color_exec_env(args: &mut Vec<OsString>, tty: bo
             args.push(OsString::from(format!("{key}={value}")));
         }
     }
-}
-
-fn run_command_capture_allow_failure_with_policy(
-    repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
-    args: &[OsString],
-) -> Result<Output, RunnerError> {
-    let (program, resolved_args) = compose_invocation_for_repo(repo_root, policy, args);
-    run_command_capture_allow_failure(repo_root, OsStr::new(program), &resolved_args)
 }
 
 fn format_args(args: &[OsString]) -> String {

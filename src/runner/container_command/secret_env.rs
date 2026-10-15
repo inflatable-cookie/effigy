@@ -11,7 +11,7 @@ use effigy_manifest::{
 };
 
 use crate::runner::error::RunnerError;
-use crate::runner::exec_command::run_compose_exec_plan_with_options;
+use crate::runner::exec_command::run_verified_compose_exec_plan;
 use crate::runner::manifest::{load_task_manifest, TASK_MANIFEST_FILE};
 
 #[derive(Debug)]
@@ -149,6 +149,7 @@ pub(super) fn materialize_container_secret_runtime(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     runtime: &ResolvedContainerSecretRuntime,
+    binding: &effigy_containers::exec::VerifiedComposeContainer,
 ) -> Result<(), RunnerError> {
     if runtime.delivery != ManifestContainerSecretDelivery::RuntimeFiles || runtime.env.is_empty() {
         return Ok(());
@@ -167,6 +168,7 @@ pub(super) fn materialize_container_secret_runtime(
         policy,
         &format!("mkdir -p {dir}", dir = shell_quote(runtime_dir)),
         "prepare container secret runtime dir",
+        binding,
     )?;
 
     let runtime_env = TempSecretFile::write(
@@ -184,6 +186,7 @@ pub(super) fn materialize_container_secret_runtime(
         &runtime_env.path,
         runtime_env_path.as_str(),
         "write container secret runtime env",
+        binding,
     )?;
     write_file_into_primary_service(
         repo_root,
@@ -191,6 +194,7 @@ pub(super) fn materialize_container_secret_runtime(
         &runtime_json.path,
         runtime_json_path.as_str(),
         "write container secret runtime json",
+        binding,
     )?;
 
     let workspace_user = policy.workspace_user.as_deref().unwrap_or("dev");
@@ -208,6 +212,7 @@ pub(super) fn materialize_container_secret_runtime(
             runtime_json = shell_quote(runtime_json_path.as_str()),
         ),
         "finalize container secret runtime files",
+        binding,
     )?;
 
     Ok(())
@@ -254,6 +259,7 @@ fn run_primary_service_shell_command(
     policy: &EffectiveContainerPolicy,
     command: &str,
     label: &str,
+    binding: &effigy_containers::exec::VerifiedComposeContainer,
 ) -> Result<(), RunnerError> {
     let plan = effigy_runtime::container_manager::compose_invocation_plan_from_tail_args(
         repo_root,
@@ -270,7 +276,7 @@ fn run_primary_service_shell_command(
         label,
     )
     .map_err(RunnerError::from)?;
-    let output = run_compose_exec_plan_with_options(policy, &plan, true, None)?;
+    let output = run_verified_compose_exec_plan(policy, &plan, binding, true, None, None)?;
     if output.status.success() {
         return Ok(());
     }
@@ -288,6 +294,7 @@ fn write_file_into_primary_service(
     host_source: &Path,
     container_dest: &str,
     label: &str,
+    binding: &effigy_containers::exec::VerifiedComposeContainer,
 ) -> Result<(), RunnerError> {
     let plan = effigy_runtime::container_manager::compose_invocation_plan_from_tail_args(
         repo_root,
@@ -304,7 +311,8 @@ fn write_file_into_primary_service(
         label,
     )
     .map_err(RunnerError::from)?;
-    let output = run_compose_exec_plan_with_options(policy, &plan, true, Some(host_source))?;
+    let output =
+        run_verified_compose_exec_plan(policy, &plan, binding, true, Some(host_source), None)?;
     if output.status.success() {
         return Ok(());
     }

@@ -216,6 +216,33 @@ During v0.x, MINOR bumps may include breaking changes.
   0.14.x releases without changing the support floor.
 
 ### Fixed
+- Workspace handoff never reuses a stale Linux workspace artifact. A prepared
+  artifact is current only when its identity sidecar matches the host identity
+  and its rehearsal receipt names the target. A stale, unknown, or wrong-target
+  artifact is rebuilt through `workspace:linux:artifact`, or the handoff refuses
+  before copy or exec with the known host/artifact versions and identities and
+  the target-specific rebuild command. A build that exits successfully without
+  writing fresh output is refused, and sidecars are bound only after a build or
+  download justifies them. Download-mode cache entries are reused only when their
+  identity names this release. Existing timestamps and file presence no longer
+  qualify an artifact. The offline hint no longer recommends reusing the
+  incompatible artifact. Reuse also requires the current active-version
+  sidecar. A successful build that only touches unchanged old bytes is refused;
+  the temporary digest comparison grants no provenance. Concurrent preparation
+  checks final metadata after the build lock releases, and bounded refusals
+  name the actual target-specific rebuild command.
+- Direct `compose_file` containers carry the same checkout and scope identity
+  labels as generated containers, rendered as a Compose override beside the
+  repo-owned file. The owned-binding check is unchanged. Existing unlabelled
+  direct containers are refused, not adopted, until a Compose `up` recreates them
+  with the labels.
+- Direct `compose_file` exec readiness now runs the owned-binding check before
+  its probe and before any recovery restart. An unlabelled, foreign or wrong-checkout
+  primary service is neither exec'd nor restarted, and the up reports not
+  exec-ready. Readiness retains the inspected full ID through ordinary native
+  Docker/nerdctl exec and registration, refusing replacement before effects.
+  Builtin container suites also render verified ID-targeted exec. Separate
+  inspect/exec observations do not promise an atomic remote transaction.
 - A root-owned shared gateway on macOS now verifies managed listener
   exclusivity against the listener owner's processes instead of only root's,
   so user-owned managed listener routes no longer return 503.

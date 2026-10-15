@@ -42,6 +42,7 @@ pub(in crate::runner) use transport::{
     append_color_exec_env, copy_file_into_service, copy_file_into_service_bounded,
     probe_container_capabilities, run_command_capture_until, run_compose_exec,
     run_compose_exec_plan_with_deadline, run_compose_exec_plan_with_options,
+    run_verified_compose_exec_plan,
 };
 #[cfg(not(test))]
 pub(in crate::runner) use transport::{capture_command_until, CommandCaptureError};
@@ -555,11 +556,26 @@ pub(in crate::runner) fn render_container_suite_command(
         &target.service,
         &mapped_cwd,
     );
+    let binding = crate::runner::container_runtime_prep::verify_service_exec_ready(
+        &target.root,
+        &policy,
+        &target.service,
+        &working_dir,
+        std::time::Instant::now() + std::time::Duration::from_secs(2),
+    )?;
+    let plan = effigy_runtime::container_manager::compose_invocation_plan_from_tail_args(
+        &target.root,
+        &policy,
+        exec_args,
+        effigy_containers::ContainerAction::Exec,
+        "container suite exec",
+    )
+    .map_err(RunnerError::from)?;
     let (program, compose_args) =
-        effigy_containers::compose::compose_invocation_for_repo(&target.root, &policy, &exec_args);
+        transport::verified_native_exec_invocation(&policy, &plan, &binding, false, None)?;
     let mut rendered = format!("cd {}", shell_quote(&target.root.display().to_string()));
     rendered.push_str(" && ");
-    rendered.push_str(&shell_quote(program));
+    rendered.push_str(&shell_quote(&program.to_string_lossy()));
     for arg in compose_args {
         rendered.push(' ');
         rendered.push_str(&shell_quote(&arg.to_string_lossy()));

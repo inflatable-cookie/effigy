@@ -43,17 +43,11 @@ pub(super) fn ensure_runtime_exec_readiness_stage(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     working_dir: &Path,
-) -> Result<(), RunnerError> {
-    ensure_runtime_exec_readiness_stage_using(
-        repo_root,
-        policy,
-        working_dir,
-        |repo_root, policy, working_dir| {
-            ensure_primary_service_exec_ready_for_runtime(repo_root, policy, working_dir)
-        },
-    )
+) -> Result<effigy_containers::exec::VerifiedComposeContainer, RunnerError> {
+    ensure_primary_service_exec_ready_for_runtime(repo_root, policy, working_dir)
 }
 
+#[cfg(test)]
 pub(super) fn ensure_runtime_exec_readiness_stage_using(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
@@ -66,9 +60,10 @@ pub(super) fn ensure_runtime_exec_readiness_stage_using(
 pub(super) fn reconcile_runtime_aliases_stage(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
+    binding: &effigy_containers::exec::VerifiedComposeContainer,
 ) -> Result<(), RunnerError> {
     reconcile_runtime_aliases_stage_using(repo_root, policy, |repo_root, policy| {
-        reconcile_primary_service_tcp_alias_hosts(repo_root, policy).map(|_| ())
+        reconcile_primary_service_tcp_alias_hosts(repo_root, policy, binding).map(|_| ())
     })
 }
 

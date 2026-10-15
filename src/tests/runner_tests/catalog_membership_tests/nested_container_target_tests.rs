@@ -16,8 +16,8 @@ use crate::runner::error::RunnerError;
 use crate::runner::execute::api::run_manifest_task_with_cwd;
 use crate::runner::tests::prelude::TaskInvocation;
 use crate::runner::tests::prelude::{
-    assert_task_invocation_error_contains, lock_test, run_builtin_ok, temp_workspace,
-    write_manifest, write_root_manifest,
+    assert_task_invocation_error_contains, lock_test, run_builtin_ok, write_manifest,
+    write_root_manifest,
 };
 use effigy_cli::Command;
 use effigy_context::EffigyRuntimeContext;
@@ -109,6 +109,7 @@ run = "printf pen-suite"
 "#;
 
 struct NestedContainerFixture {
+    _temp: tempfile::TempDir,
     root: PathBuf,
     cattle: PathBuf,
     _env: EnvGuard,
@@ -176,6 +177,34 @@ if [ "$1" = compose ]; then
   done
   exit 0
 fi
+if [ "$1" = inspect ]; then
+  case "$2" in
+    cattle-a1b2) id=$(printf '%064d' 0 | tr 0 a); cname=cattle-a1b2; project=cattle-grid-cattle; service=cattle; checkout='{cattle}' ;;
+    workspace-a1b2) id=$(printf '%064d' 0 | tr 0 b); cname=workspace-a1b2; project=root-workspace; service=workspace; checkout='{root}' ;;
+    *) exit 1 ;;
+  esac
+  printf '[{{"Id":"%s","Name":"/%s","State":{{"Status":"running","Running":true}},"Config":{{"Labels":{{"com.docker.compose.project":"%s","com.docker.compose.service":"%s","com.docker.compose.oneoff":"False","com.effigy.checkout":"%s"}}}},"NetworkSettings":{{"Ports":{{}}}}}}]\n' "$id" "$cname" "$project" "$service" "$checkout"
+  exit 0
+fi
+if [ "$1" = exec ]; then
+  shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -i|-t) shift ;;
+      -w|-u|-e) shift 2 ;;
+      *) id="$1"; shift; break ;;
+    esac
+  done
+  case "$id" in
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa) service=cattle ;;
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb) service=workspace ;;
+    *) printf 'exec did not target a verified full ID\n' >&2; exit 1 ;;
+  esac
+  printf 'native:exec:%s:%s\n' "$service" "$*" >> "$log"
+  if [ "$1" = which ]; then exit 1; fi
+  if [ "$1" = sh ] && [ "$2" = -lc ]; then sh -lc "$3"; exit $?; fi
+  exit 0
+fi
 if [ "$1" = ps ]; then
   shift
   while [ $# -gt 0 ]; do
@@ -222,7 +251,11 @@ exit 0
 fn nested_container_fixture(name: &str) -> NestedContainerFixture {
     // Canonicalize so plan payloads and catalog roots compare equal on macOS
     // symlinked temp directories (/var -> /private/var).
-    let root = fs::canonicalize(temp_workspace(name)).expect("canonicalize fixture root");
+    let temp = tempfile::Builder::new()
+        .prefix(name)
+        .tempdir()
+        .expect("fresh private fixture");
+    let root = fs::canonicalize(temp.path()).expect("canonicalize fixture root");
     write_root_manifest(&root, ROOT_MANIFEST);
     write_compose(&root, "workspace");
     let cattle = root.join("cattle-grid");
@@ -247,6 +280,7 @@ fn nested_container_fixture(name: &str) -> NestedContainerFixture {
         ),
     ]);
     NestedContainerFixture {
+        _temp: temp,
         root,
         cattle,
         _env: env,
@@ -299,7 +333,7 @@ fn root_qualified_nested_container_task_executes_in_declared_container() {
 
     let log = docker_log(&fixture);
     assert!(
-        log.contains("compose:exec:cattle:sh -lc printf cattle-check"),
+        log.contains("native:exec:cattle:sh -lc printf cattle-check"),
         "nested task did not exec in the declared cattle container: {log}"
     );
     assert!(
@@ -311,7 +345,7 @@ fn root_qualified_nested_container_task_executes_in_declared_container() {
         "nested task fell back to the root workspace compose project: {log}"
     );
     assert!(
-        !log.contains("compose:exec:workspace:"),
+        !log.contains("native:exec:workspace:"),
         "nested task exec reached the root workspace service: {log}"
     );
 }
@@ -332,7 +366,7 @@ fn child_scope_nested_container_task_still_executes_in_declared_container() {
 
     let log = docker_log(&fixture);
     assert!(
-        log.contains("compose:exec:cattle:sh -lc printf cattle-check"),
+        log.contains("native:exec:cattle:sh -lc printf cattle-check"),
         "child scope task did not exec in the declared cattle container: {log}"
     );
 }
@@ -346,7 +380,7 @@ fn root_declared_host_task_stays_on_host() {
 
     let log = docker_log(&fixture);
     assert!(
-        !log.contains("compose:exec"),
+        !log.contains("compose:exec") && !log.contains("native:exec"),
         "host task reached a container: {log}"
     );
 }
@@ -363,7 +397,7 @@ fn nested_task_without_own_target_falls_back_to_the_workspace_runtime() {
 
     let log = docker_log(&fixture);
     assert!(
-        log.contains("compose:exec:workspace:sh -lc printf pen-vet"),
+        log.contains("native:exec:workspace:sh -lc printf pen-vet"),
         "ancestor fallback task did not exec in the root workspace container: {log}"
     );
 }
@@ -371,7 +405,8 @@ fn nested_task_without_own_target_falls_back_to_the_workspace_runtime() {
 #[test]
 fn nested_container_task_without_any_declared_target_fails_before_execution() {
     let _lock = lock_test();
-    let root = temp_workspace("nested-no-target-anywhere-fails");
+    let temp = tempfile::tempdir().expect("fresh private fixture");
+    let root = temp.path().to_path_buf();
     write_root_manifest(
         &root,
         r#"[catalog]
@@ -458,7 +493,7 @@ fn builtin_nested_test_selection_executes_in_declared_container() {
 
     let log = docker_log(&fixture);
     assert!(
-        log.contains("compose:exec:cattle:sh -lc printf cattle-suite"),
+        log.contains("native:exec:cattle:sh -lc printf cattle-suite"),
         "builtin nested test suite did not exec in the declared cattle container: {log}"
     );
     assert!(
@@ -510,11 +545,11 @@ fn builtin_host_target_suites_stay_on_host_while_container_target_routes() {
     );
     let log = docker_log(&fixture);
     assert!(
-        log.contains("compose:exec:cattle:sh -lc printf cattle-suite"),
+        log.contains("native:exec:cattle:sh -lc printf cattle-suite"),
         "cattle suite did not exec in the declared container: {log}"
     );
     assert!(
-        !log.contains("compose:exec:sty:"),
+        !log.contains("native:exec:sty:"),
         "pen suite execed in the pen containers registry without a declared runtime target: {log}"
     );
 }

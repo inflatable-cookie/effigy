@@ -296,19 +296,39 @@ pub(in crate::runner) fn prepare_container_exec_runtime(
         },
         || {
             recover_exited_owned_compose_services(repo_root, policy).map(|_| ())?;
-            ensure_runtime_exec_readiness_stage(repo_root, policy, &working_dir)?;
+            let binding = ensure_runtime_exec_readiness_stage(repo_root, policy, &working_dir)?;
             if effigy_core::worktree_scope::load_or_create(repo_root)
                 .map_err(|error| {
                     RunnerError::task_invocation(format!("cannot identify checkout scope: {error}"))
                 })?
                 .is_some()
             {
-                verify_live_checkout_mount(repo_root, policy, &working_dir)?;
-                refresh_changed_cargo_inputs(repo_root, policy, &working_dir)?;
+                verify_live_checkout_mount(repo_root, policy, &working_dir, &binding)?;
+                refresh_changed_cargo_inputs(repo_root, policy, &working_dir, &binding)?;
             }
-            Ok(())
+            Ok(binding)
         },
-        || reconcile_runtime_aliases_stage(repo_root, policy),
+        |binding| reconcile_runtime_aliases_stage(repo_root, policy, &binding),
+    )
+}
+
+fn run_verified_prep_capture(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    binding: &effigy_containers::exec::VerifiedComposeContainer,
+    args: &[std::ffi::OsString],
+    label: &str,
+) -> Result<std::process::Output, RunnerError> {
+    let plan = effigy_runtime::container_manager::compose_invocation_plan_from_tail_args(
+        repo_root,
+        policy,
+        args.to_vec(),
+        effigy_containers::ContainerAction::Exec,
+        label,
+    )
+    .map_err(RunnerError::from)?;
+    crate::runner::exec_command::run_verified_compose_exec_plan(
+        policy, &plan, binding, true, None, None,
     )
 }
 
@@ -316,6 +336,7 @@ fn refresh_changed_cargo_inputs(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     working_dir: &Path,
+    binding: &effigy_containers::exec::VerifiedComposeContainer,
 ) -> Result<(), RunnerError> {
     refresh_changed_cargo_inputs_using(repo_root, |changed| {
         for batch in changed.chunks(128) {
@@ -331,9 +352,10 @@ fn refresh_changed_cargo_inputs(
                 "--".to_owned(),
             ];
             args.extend(batch.iter().map(|path| path.to_string_lossy().into_owned()));
-            run_compose_capture(
+            run_verified_prep_capture(
                 repo_root,
                 policy,
+                binding,
                 &compose_args(policy, args.iter().map(String::as_str)),
                 "refresh changed Cargo inputs",
             )
@@ -392,6 +414,7 @@ fn verify_live_checkout_mount(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     working_dir: &Path,
+    binding: &effigy_containers::exec::VerifiedComposeContainer,
 ) -> Result<(), RunnerError> {
     verify_live_checkout_mount_using(
         repo_root,
@@ -410,8 +433,14 @@ fn verify_live_checkout_mount(
                     probe_path,
                 ],
             );
-            let output = run_compose_capture(repo_root, policy, &args, "checkout mount read probe")
-                .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+            let output = run_verified_prep_capture(
+                repo_root,
+                policy,
+                binding,
+                &args,
+                "checkout mount read probe",
+            )
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
             Ok(output.stdout)
         },
         |probe_path| {
@@ -429,8 +458,14 @@ fn verify_live_checkout_mount(
                     probe_path,
                 ],
             );
-            run_compose_capture(repo_root, policy, &args, "checkout mount write probe")
-                .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+            run_verified_prep_capture(
+                repo_root,
+                policy,
+                binding,
+                &args,
+                "checkout mount write probe",
+            )
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
             Ok(())
         },
     )
@@ -502,12 +537,26 @@ pub(in crate::runner) fn ensure_primary_service_exec_ready_for_runtime(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     working_dir: &Path,
-) -> Result<(), RunnerError> {
+) -> Result<effigy_containers::exec::VerifiedComposeContainer, RunnerError> {
+    let binding = verified_service_binding(
+        repo_root,
+        policy,
+        &policy.primary_service,
+        Instant::now() + Duration::from_secs(2),
+    )?;
     ensure_primary_service_exec_ready_with_recovery_using(
         policy,
         working_dir,
-        |timeout| probe_primary_service_exec_ready(repo_root, policy, working_dir, timeout),
-        || restart_primary_service(repo_root, policy),
+        |timeout| {
+            probe_verified_service_exec_ready(
+                repo_root,
+                policy,
+                working_dir,
+                &binding,
+                Instant::now() + timeout,
+            )
+        },
+        || restart_primary_service(repo_root, policy, &binding),
     )
 }
 
@@ -517,28 +566,29 @@ pub(in crate::runner) fn verify_primary_service_exec_ready_for_reconciliation(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     working_dir: &Path,
-) -> Result<(), RunnerError> {
-    if probe_primary_service_exec_ready(repo_root, policy, working_dir, Duration::from_secs(2)) {
-        Ok(())
-    } else {
-        Err(RunnerError::container_runtime_exec_not_ready(
-            policy,
-            working_dir,
-        ))
-    }
+) -> Result<effigy_containers::exec::VerifiedComposeContainer, RunnerError> {
+    verify_service_exec_ready(
+        repo_root,
+        policy,
+        &policy.primary_service,
+        working_dir,
+        Instant::now() + Duration::from_secs(2),
+    )
 }
 
-fn ensure_primary_service_exec_ready_with_recovery_using(
+fn ensure_primary_service_exec_ready_with_recovery_using<T>(
     policy: &EffectiveContainerPolicy,
     working_dir: &Path,
-    mut probe: impl FnMut(Duration) -> bool,
+    mut probe: impl FnMut(Duration) -> Result<Option<T>, RunnerError>,
     mut restart: impl FnMut() -> Result<(), RunnerError>,
-) -> Result<(), RunnerError> {
-    if probe(Duration::from_secs(2)) {
-        return Ok(());
+) -> Result<T, RunnerError> {
+    if let Some(binding) = probe(Duration::from_secs(2))? {
+        return Ok(binding);
     }
-    if restart().is_ok() && probe(Duration::from_secs(15)) {
-        return Ok(());
+    if restart().is_ok() {
+        if let Some(binding) = probe(Duration::from_secs(15))? {
+            return Ok(binding);
+        }
     }
     Err(RunnerError::container_runtime_exec_not_ready(
         policy,
@@ -546,53 +596,110 @@ fn ensure_primary_service_exec_ready_with_recovery_using(
     ))
 }
 
-fn run_runtime_prep_steps(
+fn run_runtime_prep_steps<T>(
     prepare_mounts: impl FnOnce() -> Result<(), RunnerError>,
     compose_up: impl FnOnce(),
-    ensure_exec_ready: impl FnOnce() -> Result<(), RunnerError>,
-    reconcile_aliases: impl FnOnce() -> Result<(), RunnerError>,
+    ensure_exec_ready: impl FnOnce() -> Result<T, RunnerError>,
+    reconcile_aliases: impl FnOnce(T) -> Result<(), RunnerError>,
 ) -> Result<(), RunnerError> {
     // The routing decision only checks whether the primary service is running.
     // Sibling services may still be missing after a failed compose bring-up.
     prepare_mounts()?;
     compose_up();
-    ensure_exec_ready()?;
-    reconcile_aliases()?;
+    let binding = ensure_exec_ready()?;
+    reconcile_aliases(binding)?;
     Ok(())
 }
 
-fn probe_primary_service_exec_ready(
+fn verified_service_binding(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    service: &str,
+    deadline: Instant,
+) -> Result<effigy_containers::exec::VerifiedComposeContainer, RunnerError> {
+    let rows = effigy_containers::exec::list_running_compose_containers_for_policy_with_deadline(
+        repo_root,
+        policy,
+        Some(deadline),
+    )?;
+    // A selected-service operation must not probe or mutate its siblings.
+    let selected = rows
+        .into_iter()
+        .filter(|row| row.service.as_deref() == Some(service))
+        .collect::<Vec<_>>();
+    let mut bindings = effigy_containers::exec::verify_owned_running_compose_identities(
+        repo_root, policy, &selected, deadline,
+    )?;
+    if bindings.len() != 1 {
+        return Err(RunnerError::task_invocation(
+            "binding unavailable: expected one owned running service",
+        ));
+    }
+    Ok(bindings.remove(0))
+}
+
+pub(in crate::runner) fn verify_service_exec_ready(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    service: &str,
+    working_dir: &Path,
+    deadline: Instant,
+) -> Result<effigy_containers::exec::VerifiedComposeContainer, RunnerError> {
+    let binding = verified_service_binding(repo_root, policy, service, deadline)?;
+    probe_verified_service_exec_ready(repo_root, policy, working_dir, &binding, deadline)?
+        .ok_or_else(|| RunnerError::container_runtime_exec_not_ready(policy, working_dir))
+}
+
+fn probe_verified_service_exec_ready(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     working_dir: &Path,
-    timeout: Duration,
-) -> bool {
-    let working_dir_str = working_dir.to_string_lossy().into_owned();
-    let probe_args = compose_args(
+    binding: &effigy_containers::exec::VerifiedComposeContainer,
+    deadline: Instant,
+) -> Result<Option<effigy_containers::exec::VerifiedComposeContainer>, RunnerError> {
+    let args = compose_args(
         policy,
         [
             "exec",
             "-T",
             "-w",
-            working_dir_str.as_str(),
-            policy.primary_service.as_str(),
+            &working_dir.to_string_lossy(),
+            binding
+                .service()
+                .ok_or_else(|| RunnerError::task_invocation("verified service missing"))?,
             "true",
         ],
     );
-    let started = Instant::now();
+    let plan = effigy_runtime::container_manager::compose_invocation_plan_from_tail_args(
+        repo_root,
+        policy,
+        args,
+        effigy_containers::ContainerAction::Exec,
+        "container exec readiness probe",
+    )
+    .map_err(RunnerError::from)?;
     loop {
-        if let Ok(output) = run_compose_capture(
-            repo_root,
-            policy,
-            &probe_args,
-            "container exec readiness probe",
-        ) {
-            if output.status.success() {
-                return true;
-            }
+        if Instant::now() >= deadline {
+            return Ok(None);
         }
-        if started.elapsed() >= timeout {
-            return false;
+        // Ownership failure is terminal: never restart or adopt a successor.
+        let output = match crate::runner::exec_command::run_verified_compose_exec_plan(
+            policy,
+            &plan,
+            binding,
+            true,
+            None,
+            Some(deadline),
+        ) {
+            Ok(output) => output,
+            Err(_) if Instant::now() >= deadline => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        if output.status.success() {
+            return Ok(Some(binding.clone()));
+        }
+        if Instant::now() >= deadline {
+            return Ok(None);
         }
         std::thread::sleep(Duration::from_millis(250));
     }
@@ -601,9 +708,50 @@ fn probe_primary_service_exec_ready(
 fn restart_primary_service(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
+    binding: &effigy_containers::exec::VerifiedComposeContainer,
 ) -> Result<(), RunnerError> {
+    binding.reverify(repo_root, policy, Instant::now() + Duration::from_secs(15))?;
     restart_primary_service_using(repo_root, policy, |repo_root, policy, args, label| {
-        Ok(run_compose_capture(repo_root, policy, args, label)?)
+        binding.reverify(repo_root, policy, Instant::now() + Duration::from_secs(15))?;
+        let service = args
+            .last()
+            .and_then(|arg| arg.to_str())
+            .ok_or_else(|| RunnerError::task_invocation("restart service missing"))?;
+        let selected = if service == policy.primary_service {
+            binding.clone()
+        } else {
+            verified_service_binding(
+                repo_root,
+                policy,
+                service,
+                Instant::now() + Duration::from_secs(15),
+            )?
+        };
+        let native = [
+            std::ffi::OsString::from("restart"),
+            std::ffi::OsString::from(selected.id()),
+        ];
+        let plan = effigy_runtime::container_manager::runtime_invocation_plan(
+            repo_root,
+            policy,
+            "docker",
+            &native,
+            effigy_containers::ContainerAction::Exec,
+            label,
+        )
+        .map_err(RunnerError::from)?;
+        selected.reverify(repo_root, policy, Instant::now() + Duration::from_secs(15))?;
+        let output = crate::runner::exec_command::run_command_capture_until(
+            repo_root,
+            &plan.program,
+            &plan.args,
+            None,
+            Some(Instant::now() + Duration::from_secs(15)),
+        )?;
+        if !output.status.success() {
+            return Err(RunnerError::task_invocation("owned service restart failed"));
+        }
+        Ok(output)
     })
 }
 
