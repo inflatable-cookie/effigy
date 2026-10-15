@@ -155,7 +155,7 @@ version = "16"
             ),
         )
         .expect("manifest");
-        fs::write(root.join("state.json"),json!({"active":false,"identity":format!("stack{i}"),"id":format!("{:064x}",i+1),"port":port,"mode":"ready","volume":true,"checkout":root}).to_string()).expect("transport state");
+        fs::write(root.join("state.json"),json!({"active":false,"identity":format!("stack{i}"),"id":format!("{:064x}",i+1),"port":port,"container_port":port,"mode":"ready","volume":true,"checkout":root}).to_string()).expect("transport state");
         fs::write(root.join("data"), format!("private-data-{i}")).expect("data marker");
         fs::write(root.join("lease-sentinel"), format!("private-lease-{i}"))
             .expect("lease sibling marker");
@@ -1160,7 +1160,7 @@ if args and args[0]=='ps':
   s=json.load(open(p))
   if not s['active'] or not selected(s): continue
   if '{{.Names}}' in args: print(s['project']+'-db-1')
-  elif '--format' in args: print(s['project']+'-db-1\tUp 1 minute\t127.0.0.1:'+str(s['port'])+'->'+str(s['port'])+'/tcp\t'+s['project']+'\t'+s['checkout']+'\t'+('undeclared' if s['mode']=='orphan' else 'db')+'\tfalse')
+  elif '--format' in args: print(s['project']+'-db-1\tUp 1 minute\t127.0.0.1:'+str(s['port'])+'->'+str(s['container_port'])+'/tcp\t'+s['project']+'\t'+s['checkout']+'\t'+('undeclared' if s['mode']=='orphan' else 'db')+'\tfalse')
  sys.exit(0)
 if args and args[0]=='inspect':
  labels={'com.docker.compose.project':state['project'],'com.docker.compose.service':'db','com.docker.compose.oneoff':'false','com.docker.compose.project.working_dir':str(cwd)}
@@ -1174,7 +1174,7 @@ if args and args[0]=='inspect':
  if mode=='foreign': labels['com.docker.compose.project']='foreign-project'
  if mode=='oneoff': labels['com.docker.compose.oneoff']='true'
  if mode=='drift': labels['com.docker.compose.project.working_dir']=str(root)
- print(json.dumps([{'Id':state['id'] if mode!='unknown' else 'short','Name':'/'+state['project']+'-db-1','State':{'Status':'running' if mode!='stopped' else 'exited','Running':mode!='stopped'},'Config':{'Labels':labels},'Mounts':[],'NetworkSettings':{'Ports':{str(state['port'])+'/tcp':[{'HostIp':'127.0.0.1','HostPort':str(state['port'])}]}}}]))
+ print(json.dumps([{'Id':state['id'] if mode!='unknown' else 'short','Name':'/'+state['project']+'-db-1','State':{'Status':'running' if mode!='stopped' else 'exited','Running':mode!='stopped'},'Config':{'Labels':labels},'Mounts':[],'NetworkSettings':{'Ports':{str(state['container_port'])+'/tcp':[{'HostIp':'127.0.0.1','HostPort':str(state['port'])}]}}}]))
  sys.exit(0)
 if args and args[0]=='network': sys.exit(0)
 if args and args[0]=='volume':
