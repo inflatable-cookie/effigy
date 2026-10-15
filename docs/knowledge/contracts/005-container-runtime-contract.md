@@ -1126,6 +1126,65 @@ This is the required shared contract for warm non-shell container reuse.
 Task-shaped requests should reach this contract through
 `TaskExecutionRequestBuilder` and a resolved execution plan.
 
+## Selected service pack at workspace handoff
+
+After actual selected-workspace activation (including recreation), workspace
+binary preparation also prepares the host-selected compatible installed
+**service** catalog pack before opening a shell or handing a task to the guest
+policy loader. A receipt from a previous guest generation is never reused. Both ordinary and bounded paths enforce this after
+an already-current binary probe; executable identity does not establish pack
+parity. Task catalog members (including a member named `silo`) never supply
+service fragments.
+
+The host pins the existing typed selection, installed record and verified
+content before binary preparation. It snapshots only that retained install,
+revalidates the snapshot and rechecks selection/content across transport.
+The original local source checkout and a registry are unnecessary. An unhealthy,
+incompatible, corrupt or changing selected host pack refuses handoff rather
+than claiming baseline fallback is equivalent. A host with no active pack keeps
+its existing baseline behavior without installing guest content.
+
+For a selected pack, preparation pins the selected Compose service container ID
+from a fresh `ps -q` and rechecks it around every guest command/copy. Missing,
+ambiguous or changed target identity refuses before handoff; this preserves the
+existing backend ownership checks and does not grant adoption authority.
+Every preparation command uses the declared workspace user
+and HOME and checks the effective uid/HOME before reading guest state. Missing
+identity or home configuration refuses. Actual guest `service pack status`
+verification must prove pack identity, version, schema, compatibility and exact
+content under that home. A verified match performs no guest copy or install.
+Only an empty guest selection may receive the snapshot through the existing
+validator and atomic installer. `service pack install --path <DIR>
+--prepare-content <sha256:DIGEST>` checks the expected content and definite
+absence of prior selection under the activation lock; explicit baseline,
+unknown state, a concurrent install, or any unreferenced retained content is preserved
+and refused. This guarded mode never repairs existing content.
+
+Exit zero alone is insufficient: preparation verifies the resulting status and
+re-reads guest selection before dispatch. Partial copy, failed installation,
+malformed or mismatched status, wrong identity/home and changed source refuse
+before the requested task or shell. Recovery names `service pack status` and an
+explicit supported `service pack install --path <retained-pack>` inside the
+workspace; automatic preparation never resets a selection.
+
+Host snapshots have an owned temporary-directory lifetime spanning the copy and
+verification. Guest staging requires a successful exclusive mkdir as the
+workspace user. Verified installation permits removing only that new staging, followed by a
+final selection probe before handoff. Failed or uncertain effects before that
+cleanup leave staging held. Neither guest store
+lineage nor sibling content is deleted. The bounded path uses the caller's
+original deadline, cumulative stream limits and workspace-preparation phase
+accounting; transport refusals preserve the existing structural observations.
+No captured stdout/stderr, arbitrary argv/env, source paths or raw transport
+errors are inserted into catalog mismatch messages.
+
+This guarantees installed-pack parity, not whole-environment parity. Mounted
+project overrides and guest user overrides retain normal precedence; host user
+overrides, configuration, HOME and credentials are not transferred. No channel
+refresh, registry acquisition, binary rebuild or network update is implied by
+pack preparation. Private production-path controls live behind
+`test:workspace:catalog-handoff` and `check:workspace:catalog-handoff`.
+
 ## Workspace identity and disposable build paths
 
 When a container declares `workspace_user`, these entry paths must prepare

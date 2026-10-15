@@ -259,6 +259,32 @@ pub(super) fn ensure_workspace_effigy_available_for_policy(
     if std::env::var_os("EFFIGY_TEST_SKIP_WORKSPACE_EFFIGY_HANDOFF").is_some() {
         return Ok(());
     }
+    let catalog = super::workspace_catalog::HostCatalog::pin()
+        .map_err(|reason| super::workspace_catalog::catalog_refusal(policy, None, reason))?;
+    ensure_workspace_binary_available_for_policy(workspace_repo_root, policy, repo_override)?;
+    catalog.prepare(workspace_repo_root, policy, None)
+}
+
+pub(super) fn ensure_workspace_effigy_available_for_policy_bounded(
+    workspace_repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    budget: &mut BoundedCommandBudget,
+) -> Result<(), RunnerError> {
+    let catalog = super::workspace_catalog::HostCatalog::pin().map_err(|reason| {
+        super::workspace_catalog::catalog_refusal(policy, Some(budget), reason)
+    })?;
+    ensure_workspace_binary_available_for_policy_bounded(workspace_repo_root, policy, budget)?;
+    catalog.prepare(workspace_repo_root, policy, Some(budget))
+}
+
+pub(super) fn ensure_workspace_binary_available_for_policy(
+    workspace_repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    repo_override: Option<PathBuf>,
+) -> Result<(), RunnerError> {
+    if std::env::var_os("EFFIGY_TEST_SKIP_WORKSPACE_EFFIGY_HANDOFF").is_some() {
+        return Ok(());
+    }
     let expected_install_identity =
         expected_workspace_effigy_install_identity(workspace_repo_root)?;
     if let Some(expected_identity) = expected_install_identity.as_deref() {
@@ -327,7 +353,7 @@ pub(super) fn ensure_workspace_effigy_available_for_policy(
     Ok(())
 }
 
-pub(super) fn ensure_workspace_effigy_available_for_policy_bounded(
+pub(super) fn ensure_workspace_binary_available_for_policy_bounded(
     workspace_repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     budget: &mut BoundedCommandBudget,

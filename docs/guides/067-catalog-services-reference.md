@@ -102,8 +102,9 @@ unchanged. A pack cannot widen the fragment schema.
 
 ### Acquisition rules
 
-- Installation is always explicit. Ordinary catalog use never fetches, checks
-  for updates, or touches the network.
+- Registry acquisition and updates are explicit. Ordinary catalog lookup never
+  fetches, checks for updates, or touches the network. Workspace handoff may
+  prepare the already selected host pack locally as described below.
 - `effigy service pack update` is the official no-argument path. It inspects
   the compiled `stable` channel on
   `ghcr.io/inflatable-cookie/effigy-catalog-pack`, then sends only the resolved
@@ -130,6 +131,54 @@ unchanged. A pack cannot widen the fragment schema.
 - Landing and activation are serialized across processes by an advisory lock on
   the store, so concurrent installs cannot lose each other's lineage.
   Acquisition itself stays outside the lock.
+
+### Workspace pack preparation
+
+After actual selected-workspace activation or recreation, host handoff prepares
+the selected compatible installed service pack for the declared workspace user
+before guest policy resolution or task/shell execution. Previous guest receipts
+are not cached; fresh selected-container ID checks around preparation refuse a
+changed or ambiguous target. It snapshots the verified retained install, not its original source
+path, so a removed source checkout and offline use are supported. An
+already-current Linux binary still requires pack verification. No active host
+pack preserves the existing compiled-baseline behavior.
+
+An actually verified matching guest pack needs no copy or install. Empty guest
+state uses the normal validator and atomic store with this guarded local mode:
+
+```sh
+effigy service pack install --path <DIR> --prepare-content sha256:<DIGEST> --json
+```
+
+The digest is the unpacked `content_id` shown by host `service pack status`,
+not the OCI artifact digest. The flag requires `--path`, checks exact content,
+and refuses an existing selection (including explicit baseline) or unreferenced
+retained installs under the store lock before landing or activation. With `--json`, guarded installation returns
+the verified `effigy.service.pack.status.v1` payload. Normal explicit installation without this
+flag retains its existing selection and repair behavior.
+
+Unknown, differing or unhealthy guest selection refuses handoff and is kept.
+Inspect `effigy service pack status` inside the workspace as its declared user,
+then deliberately install the desired retained content with
+`effigy service pack install --path <retained-pack>`. The handoff diagnostic
+names the required host content identity. Rebuilding a matching executable does
+not add an optional pack fragment. `[catalog.members]` contains task catalogs;
+it does not install similarly named service fragments.
+
+Preparation verifies uid, HOME, compatibility and resulting content, rechecks
+host selection across transfer, and refuses malformed responses or changed
+inputs before dispatch. Host snapshots are temporary owned directories; guest
+staging is created exclusively as the workspace user and cleaned after verified
+installation, before the final selection probe. Failures or uncertain effects
+before that cleanup leave staging held. Existing guest
+content and sibling files are preserved. Bounded handoffs share their original
+cumulative deadline/output limits and keep captured channels private.
+
+This does not promise all host and guest configuration matches. Mounted project
+overrides and guest user overrides still win; host user overrides, config and
+credentials are not transferred. The selected pack must support the guest
+Effigy version and an explicit workspace user/home must be available. No
+registry freshness check or network update runs on handoff.
 
 ### Retention
 

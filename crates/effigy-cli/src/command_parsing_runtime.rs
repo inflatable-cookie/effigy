@@ -370,11 +370,20 @@ where
     let mut output_json = false;
     let mut path: Option<PathBuf> = None;
     let mut reference: Option<String> = None;
+    let mut prepare_content = None;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
             "--json" => output_json = true,
+            "--prepare-content" => {
+                prepare_content = Some(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--prepare-content".to_owned(),
+                    },
+                )?);
+            }
             "--path" => {
                 let value = next_required_value(
                     &mut args,
@@ -408,8 +417,14 @@ where
         }
     };
 
+    if prepare_content.is_some() && !matches!(source, ServicePackInstallSource::Path { .. }) {
+        return Err(unknown_argument("--prepare-content requires --path"));
+    }
     Ok(Command::Service(ServiceArgs {
-        subcommand: ServiceSubcommand::Pack(ServicePackSubcommand::Install { source }),
+        subcommand: ServiceSubcommand::Pack(ServicePackSubcommand::Install {
+            source,
+            prepare_content,
+        }),
         repo_override,
         output_json,
     }))

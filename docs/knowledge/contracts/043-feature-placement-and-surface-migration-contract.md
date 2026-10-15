@@ -191,6 +191,13 @@ publicly exposes `service pack update`. Raising that floor requires an explicit
 support-policy change before channel movement; parallel compatibility channels
 remain unplanned until a real floor change requires them.
 
+Workspace preparation may transport the already selected compatible installed
+pack locally to an empty workspace-user store. It reuses selection, validation
+and the atomic installer, pins exact retained content and refuses differing or
+unknown guest selections. This is neither registry acquisition nor a channel
+update. The [workspace handoff contract](005-container-runtime-contract.md#selected-service-pack-at-workspace-handoff)
+owns its ordering, identity, refusal and override-parity limits.
+
 ### Canonical Source And Generated Snapshot
 
 - The dedicated source repository has one canonical release root, `pack/`,

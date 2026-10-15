@@ -124,6 +124,7 @@ tokio = { version = "1", features = ["rt-multi-thread"] }
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls"] }
 minijinja = "2"
 rpassword = "7"
+tempfile = "3"
 
 [dev-dependencies]
 base64 = "0.22"
@@ -136,4 +137,3 @@ tokio = { version = "1", features = ["net"] }
 effigy-containers = { path = "crates/effigy-containers", features = ["test-support"] }
 # The managed gateway auto-start PTY proof uses a real private pseudo-terminal.
 nix = { version = "0.31", default-features = false, features = ["term"] }
-tempfile = "3"

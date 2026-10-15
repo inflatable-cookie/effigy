@@ -167,6 +167,10 @@ pub enum PackError {
     #[error("previous catalog pack `{install_id}` is no longer present in the store")]
     RollbackTargetMissing { install_id: String },
 
+    /// Automatic workspace preparation must never replace existing selection.
+    #[error("workspace catalog preparation refused: {reason}")]
+    WorkspacePreparationRefused { reason: &'static str },
+
     /// Filesystem failure inside the store.
     #[error("catalog pack store I/O failure at {path}: {reason}")]
     Io { path: PathBuf, reason: String },

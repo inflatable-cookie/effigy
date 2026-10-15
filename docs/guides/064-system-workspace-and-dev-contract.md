@@ -121,6 +121,32 @@ Host-dispatched tasks bound to that workspace run as its declared user and
 home. They do not run as root or leave root-owned files in bind-mounted
 workspace volumes for the later `dev` handoff to trip over.
 
+### Selected catalog pack before handoff
+
+After activating the selected workspace, including any recreation, and before
+opening its shell or handing a host-routed task to the guest, Effigy verifies that the workspace user selects the same installed service pack
+as the host. This still runs when the Linux executable is already current.
+An empty guest receives verified bytes from the host's retained install; the
+original pack checkout need not be mounted and no update or registry fetch runs.
+An already matching guest is verified without another copy or installation.
+Verification from an earlier container is not cached; a changed container ID
+during preparation refuses before handoff.
+
+A differing, explicit baseline or unknown guest selection is preserved and
+handoff stops. Inspect `effigy service pack status` as the configured workspace
+user, then explicitly install the intended content with
+`effigy service pack install --path <retained-pack>` inside the workspace.
+An absent optional service fragment cannot be supplied by rebuilding an already
+matching binary or by a similarly named task catalog member.
+
+The guarantee covers the installed pack. Project overrides and guest user
+overrides retain their normal precedence; host user overrides and credentials
+are not copied. Without an active host pack, existing baseline behavior stays
+unchanged. Failed or uncertain transfers before verified staging cleanup retain that
+staging for inspection and never reset the guest store. See the
+[catalog pack reference](067-catalog-services-reference.md#workspace-pack-preparation)
+for the guarded installer and limits.
+
 ### `effigy dev`
 
 `dev` keeps its historic meaning:
