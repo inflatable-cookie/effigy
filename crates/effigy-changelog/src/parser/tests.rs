@@ -411,6 +411,154 @@ fn ascii_release_separator_still_parses() {
 }
 
 #[test]
+fn parse_prose_under_unreleased() {
+    let input = "\
+# Changelog
+
+## [Unreleased]
+
+The next release restructures how the CLI parses release sections.
+
+### Fixed
+- Fix release output
+";
+    let changelog = parse_changelog(input).expect("prose under Unreleased should parse");
+
+    let release = &changelog.releases[0];
+    assert_eq!(
+        release.prose,
+        vec!["The next release restructures how the CLI parses release sections."]
+    );
+    assert_eq!(release.categories.len(), 1);
+    assert_eq!(
+        release.categories[0].entries[0].description,
+        "Fix release output"
+    );
+}
+
+#[test]
+fn parse_prose_under_released_version() {
+    let input = "\
+# Changelog
+
+## [Unreleased]
+
+### Added
+- New feature
+
+## [0.2.0] - 2026-03-09
+
+This release ships the parser rewrite.
+
+### Fixed
+- Correct behavior
+";
+    let changelog = parse_changelog(input).expect("prose under a released version should parse");
+
+    let released = changelog.find_version("0.2.0").expect("version is present");
+    assert_eq!(
+        released.prose,
+        vec!["This release ships the parser rewrite."]
+    );
+    assert_eq!(released.categories.len(), 1);
+    assert_eq!(released.categories[0].kind, CategoryKind::Fixed);
+}
+
+#[test]
+fn parse_prose_between_categories() {
+    let input = "\
+# Changelog
+
+## [Unreleased]
+
+### Added
+- First
+
+The paragraph sits between two category headings.
+
+### Fixed
+- Second
+";
+    let changelog = parse_changelog(input).expect("prose between categories should parse");
+
+    let release = &changelog.releases[0];
+    assert_eq!(
+        release.prose,
+        vec!["The paragraph sits between two category headings."]
+    );
+    assert_eq!(release.categories.len(), 2);
+    assert_eq!(release.categories[0].kind, CategoryKind::Added);
+    assert_eq!(release.categories[0].entries[0].description, "First");
+    assert_eq!(release.categories[1].kind, CategoryKind::Fixed);
+    assert_eq!(release.categories[1].entries[0].description, "Second");
+}
+
+#[test]
+fn parse_multi_paragraph_prose() {
+    let input = "\
+# Changelog
+
+## [Unreleased]
+
+First paragraph line one
+continues on line two.
+
+Second paragraph.
+
+### Added
+- Feature
+";
+    let changelog = parse_changelog(input).expect("multi-paragraph prose should parse");
+
+    assert_eq!(
+        changelog.releases[0].prose,
+        vec![
+            "First paragraph line one\ncontinues on line two.",
+            "Second paragraph.",
+        ]
+    );
+}
+
+#[test]
+fn prose_does_not_swallow_malformed_headings() {
+    let input = "# Changelog\n\n## [Unreleased]\n\nProse.\n\n#### Details\n";
+    let err = parse_changelog(input).unwrap_err();
+    match err {
+        ChangelogError::Parse { errors } => {
+            assert!(
+                errors
+                    .iter()
+                    .any(|error| error.message.contains("unexpected content")),
+                "a malformed heading must still be rejected: {errors:?}"
+            );
+        }
+        _ => panic!("expected Parse error"),
+    }
+}
+
+#[test]
+fn prose_accepts_emphasis_and_bullet_like_lines() {
+    let input = "\
+# Changelog
+
+## [Unreleased]
+
+**Note:** this release restructures the parser.
+-not a bullet, just a wrapped prose line.
+
+### Added
+- Feature
+";
+    let changelog = parse_changelog(input).expect("prose should parse");
+
+    assert_eq!(
+        changelog.releases[0].prose,
+        vec!["**Note:** this release restructures the parser.\n-not a bullet, just a wrapped prose line."]
+    );
+    assert_eq!(changelog.releases[0].categories.len(), 1);
+}
+
+#[test]
 fn long_non_ascii_headers_do_not_panic_when_truncated() {
     // Truncation used to slice at a byte offset, which panics on a multi-byte
     // boundary. The em dash sits right at the 60-character limit here.

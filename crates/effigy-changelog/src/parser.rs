@@ -56,6 +56,9 @@ struct Parser<'a> {
     current_release: Option<Release>,
     // Current category being built
     current_category: Option<Category>,
+    // Whether the last release-level content was a prose paragraph that the
+    // next prose line continues. A blank line or structural line resets it.
+    prose_paragraph_open: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -71,6 +74,7 @@ impl<'a> Parser<'a> {
             errors: Vec::new(),
             current_release: None,
             current_category: None,
+            prose_paragraph_open: false,
         }
     }
 
@@ -147,11 +151,13 @@ impl<'a> Parser<'a> {
 
     fn handle_in_release(&mut self, trimmed: &str, line: &str) {
         if trimmed.is_empty() {
+            self.prose_paragraph_open = false;
             return;
         }
 
         // New release header?
         if let Some(release) = try_parse_release_header(trimmed, self.line_num()) {
+            self.prose_paragraph_open = false;
             self.finalize_category();
             self.finalize_release();
             self.current_release = Some(release);
@@ -161,6 +167,7 @@ impl<'a> Parser<'a> {
 
         // Category header?
         if let Some(cat_name) = trimmed.strip_prefix("### ") {
+            self.prose_paragraph_open = false;
             let cat_name = cat_name.trim();
             if let Some(kind) = CategoryKind::parse_name(cat_name) {
                 self.finalize_category();
@@ -193,6 +200,7 @@ impl<'a> Parser<'a> {
 
         // Link reference? Check if we've entered the link references section
         if let Some(link) = try_parse_link_reference(trimmed, self.line_num()) {
+            self.prose_paragraph_open = false;
             self.finalize_category();
             self.finalize_release();
             self.links.push(link);
@@ -210,28 +218,39 @@ impl<'a> Parser<'a> {
             return;
         }
 
-        // Unexpected content
-        if !trimmed.starts_with("## ") {
-            // Could be malformed — try to give a helpful message
-            if try_parse_link_reference(trimmed, self.line_num()).is_none() {
-                self.errors.push(ParseDiagnostic {
-                    line: self.line_num(),
-                    message: format!("unexpected content: {}", truncate_for_display(line, 60)),
-                });
-            }
-        } else {
+        // A malformed `## ` line is a release-header problem, not prose.
+        if trimmed.starts_with("## ") {
             self.errors
                 .push(release_header_diagnostic(trimmed, self.line_num()));
+            return;
         }
+
+        // Any other heading-like line is still malformed structure, not prose.
+        if trimmed.starts_with('#') {
+            self.errors.push(ParseDiagnostic {
+                line: self.line_num(),
+                message: format!("unexpected content: {}", truncate_for_display(line, 60)),
+            });
+            return;
+        }
+
+        // Free prose paragraph: allowed directly under a release heading and
+        // between category headings. Bump analysis still counts entries only.
+        // A valid bullet outside a category is already rejected above; any
+        // other non-heading line, including a bullet-looking line without the
+        // required space, is prose.
+        self.push_release_prose(trimmed, line);
     }
 
     fn handle_in_category(&mut self, trimmed: &str, line: &str) {
         if trimmed.is_empty() {
+            self.prose_paragraph_open = false;
             return;
         }
 
         // New release header?
         if let Some(release) = try_parse_release_header(trimmed, self.line_num()) {
+            self.prose_paragraph_open = false;
             self.finalize_category();
             self.finalize_release();
             self.current_release = Some(release);
@@ -241,6 +260,7 @@ impl<'a> Parser<'a> {
 
         // New category header?
         if let Some(cat_name) = trimmed.strip_prefix("### ") {
+            self.prose_paragraph_open = false;
             let cat_name = cat_name.trim();
             if let Some(kind) = CategoryKind::parse_name(cat_name) {
                 self.finalize_category();
@@ -271,6 +291,7 @@ impl<'a> Parser<'a> {
 
         // Link reference?
         if let Some(link) = try_parse_link_reference(trimmed, self.line_num()) {
+            self.prose_paragraph_open = false;
             self.finalize_category();
             self.finalize_release();
             self.links.push(link);
@@ -311,14 +332,51 @@ impl<'a> Parser<'a> {
             return;
         }
 
-        // Unexpected content
-        self.errors.push(ParseDiagnostic {
-            line: self.line_num(),
-            message: format!(
-                "unexpected content in category: {}",
-                truncate_for_display(line, 60)
-            ),
-        });
+        // Any other heading-like line stays malformed structure, not prose.
+        if trimmed.starts_with('#') {
+            self.errors.push(ParseDiagnostic {
+                line: self.line_num(),
+                message: format!(
+                    "unexpected content in category: {}",
+                    truncate_for_display(line, 60)
+                ),
+            });
+            return;
+        }
+
+        // Free prose paragraph between category headings. It belongs to the
+        // release, so close the open category before recording it.
+        self.finalize_category();
+        self.prose_paragraph_open = false;
+        self.state = State::InRelease;
+        self.push_release_prose(trimmed, line);
+    }
+
+    /// Record a free prose line on the release currently being built.
+    ///
+    /// Consecutive prose lines with no blank line between them stay in one
+    /// paragraph; a blank line or any structural line starts a new one. Prose
+    /// that arrives after the link references has no release to belong to and
+    /// stays an error.
+    fn push_release_prose(&mut self, trimmed: &str, line: &str) {
+        let Some(release) = self.current_release.as_mut() else {
+            self.errors.push(ParseDiagnostic {
+                line: self.line_num(),
+                message: format!("unexpected content: {}", truncate_for_display(line, 60)),
+            });
+            return;
+        };
+
+        if self.prose_paragraph_open {
+            if let Some(paragraph) = release.prose.last_mut() {
+                paragraph.push('\n');
+                paragraph.push_str(trimmed);
+                return;
+            }
+        }
+
+        release.prose.push(trimmed.to_owned());
+        self.prose_paragraph_open = true;
     }
 
     fn consume_link_references(&mut self) {
@@ -375,6 +433,7 @@ fn try_parse_release_header(trimmed: &str, line_num: usize) -> Option<Release> {
             return Some(Release {
                 version: None,
                 date: None,
+                prose: Vec::new(),
                 categories: Vec::new(),
                 line: line_num,
             });
@@ -399,6 +458,7 @@ fn try_parse_release_header(trimmed: &str, line_num: usize) -> Option<Release> {
     Some(Release {
         version: Some(version),
         date: Some(date_str.to_owned()),
+        prose: Vec::new(),
         categories: Vec::new(),
         line: line_num,
     })
