@@ -921,6 +921,58 @@ fn initial_tag_current_version_closes_after_the_first_changelog_release() {
 }
 
 #[test]
+fn release_context_accepts_free_prose_in_release_sections() {
+    let root = write_initial_release_repo("prose-sections", false);
+    fs::write(
+        root.join("CHANGELOG.md"),
+        "# Changelog\n\n## [Unreleased]\n\nThe next release adds prose support.\n\n### Fixed\n- Follow-up\n\n## [0.1.0] - 2026-08-05\n\nReleased with a prose note.\n\n### Added\n- Initial release\n",
+    )
+    .expect("changelog");
+
+    let context = load_release_context(&root).expect("release context");
+
+    assert!(
+        !context
+            .blockers
+            .iter()
+            .any(|blocker| blocker.contains("changelog")),
+        "prose must not block the release context: {:?}",
+        context.blockers
+    );
+    assert_eq!(context.next_version, Some(semver::Version::new(0, 1, 1)));
+}
+
+#[test]
+fn render_prepared_changelog_keeps_unreleased_prose() {
+    let parsed = effigy_changelog::parse(
+        "# Changelog\n\n## [Unreleased]\n\nA paragraph about the next release.\n\n### Fixed\n- Fix release output\n\n## [0.2.4] - 2026-03-10\n\n### Fixed\n- Prior fix\n",
+    )
+    .expect("parse changelog");
+
+    let rendered = super::render_prepared_changelog_contents(
+        &parsed,
+        &semver::Version::new(0, 2, 5),
+        "2026-03-11",
+    )
+    .expect("render changelog");
+
+    let released = rendered
+        .find("## [0.2.5] - 2026-03-11")
+        .expect("released heading");
+    let prose = rendered
+        .find("A paragraph about the next release.")
+        .expect("prose preserved");
+    let category = rendered[released..]
+        .find("### Fixed")
+        .expect("category preserved")
+        + released;
+    assert!(
+        released < prose && prose < category,
+        "prose should stay under the promoted release: {rendered}"
+    );
+}
+
+#[test]
 fn gate_helpers_return_expected_defaults() {
     let blockers = gate_blockers(&[GateResult {
         name: "qa".to_owned(),

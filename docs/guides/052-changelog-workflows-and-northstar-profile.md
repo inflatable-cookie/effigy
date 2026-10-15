@@ -72,6 +72,8 @@ Expected shape:
 
 ## [Unreleased]
 
+A release section may also carry a free prose paragraph.
+
 ### Added
 - New capability
 
@@ -93,6 +95,9 @@ Key rules:
 - categories use fixed headings such as `Breaking`, `Added`, `Changed`,
   `Deprecated`, `Removed`, `Fixed`, `Security`
 - entries are bullet items
+- a release section may carry free prose paragraphs directly under the version
+  heading or between category headings; `format` and `extract` keep them, and
+  they do not change the suggested bump
 - empty or malformed sections are treated as diagnostics, not ignored silently
 
 ## 3) Command Workflows
@@ -170,7 +175,7 @@ effigy changelog extract CHANGELOG.md --version Unreleased
 Behavior:
 
 - prints only the body for that version
-- keeps category headings and entries
+- keeps free prose paragraphs, category headings, and entries
 - omits the outer release heading
 - exits non-zero if the requested version is missing or empty
 

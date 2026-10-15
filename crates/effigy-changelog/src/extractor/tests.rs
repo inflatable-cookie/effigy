@@ -85,6 +85,35 @@ fn extract_excludes_empty_categories() {
 }
 
 #[test]
+fn extract_includes_release_prose() {
+    let input = "\
+# Changelog
+
+## [Unreleased]
+
+Intro paragraph.
+
+### Added
+- Upcoming feature
+";
+    let changelog = parse_changelog(input).expect("should parse");
+
+    let notes = extract_version(&changelog, "Unreleased").expect("should extract");
+    assert_eq!(notes, "Intro paragraph.\n\n### Added\n- Upcoming feature\n");
+}
+
+#[test]
+fn extract_prose_only_release_returns_prose() {
+    let input = "# Changelog\n\n## [Unreleased]\n\nOnly prose, no categories.\n";
+    let changelog = parse_changelog(input).expect("should parse");
+
+    assert_eq!(
+        extract_version(&changelog, "Unreleased").as_deref(),
+        Some("Only prose, no categories.\n")
+    );
+}
+
+#[test]
 fn extract_empty_unreleased_returns_none() {
     let input = "\
 # Changelog

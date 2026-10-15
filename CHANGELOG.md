@@ -361,6 +361,12 @@ During v0.x, MINOR bumps may include breaking changes.
   state file. It records report, ownership, HTTP probe and route observations
   for the failed generation after its report and child are cleaned up. The
   diagnostic is evidence only and does not change ownership or publication.
+- The changelog parser accepts free prose paragraphs inside a release section,
+  directly under a version heading or between category headings, so
+  `effigy release simulate`, `release prepare`, `changelog format` and
+  `changelog extract` work with prose-bearing consumer changelogs. Prose is
+  preserved on format, extraction and release promotion; malformed headings and
+  entries are still rejected.
 
 ## [0.14.1] - 2026-10-08
 

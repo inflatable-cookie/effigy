@@ -84,12 +84,15 @@ pub fn render_prepared_changelog_contents(
     };
     let mut updated = parsed.clone();
     let unreleased_categories = updated.releases[unreleased_index].categories.clone();
+    let unreleased_prose = updated.releases[unreleased_index].prose.clone();
     updated.releases[unreleased_index].categories.clear();
+    updated.releases[unreleased_index].prose.clear();
     updated.releases.insert(
         unreleased_index + 1,
         changelog::Release {
             version: Some(next_version.clone()),
             date: Some(release_date.to_owned()),
+            prose: unreleased_prose,
             categories: unreleased_categories,
             line: 0,
         },
