@@ -54,12 +54,56 @@ pub(in crate::runner) fn refresh_host_container_lease_for_task_activation(
     if host_container_lease_disabled() {
         return Ok(false);
     }
+    // A stack admitted by detached `container up` is persistent: a task that
+    // reuses or restarts it must not attach an idle-shutdown lease, and an
+    // older lease no longer applies.
+    if detached_owner_recorded(repo_root, policy) {
+        clear_host_container_lease(repo_root, policy)?;
+        return Ok(false);
+    }
     let had_active_lease = has_active_host_container_lease(repo_root, policy)?;
     if had_active_lease || !system_was_running {
         refresh_host_container_lease(repo_root, policy)?;
         return Ok(true);
     }
     Ok(false)
+}
+
+fn detached_owner_recorded(repo_root: &Path, policy: &EffectiveContainerPolicy) -> bool {
+    persistent_owner_path(repo_root, policy).is_file()
+}
+
+/// An explicit `effigy container up` that left the stack running owns it
+/// persistently. Task activation never writes this; `container down` clears it.
+pub(in crate::runner) fn mark_persistent_container_owner(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<(), RunnerError> {
+    fs::create_dir_all(host_container_lease_dir(repo_root, policy))
+        .map_err(|error| RunnerError::task_invocation_failed_write(repo_root, error))?;
+    let path = persistent_owner_path(repo_root, policy);
+    fs::write(&path, b"")
+        .map_err(|error| RunnerError::task_invocation_failed_write(&path, error))?;
+    clear_host_container_lease(repo_root, policy)
+}
+
+pub(in crate::runner) fn clear_persistent_container_owner(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<(), RunnerError> {
+    let path = persistent_owner_path(repo_root, policy);
+    match fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(RunnerError::task_invocation_failed_write(&path, error)),
+    }
+}
+
+fn persistent_owner_path(repo_root: &Path, policy: &EffectiveContainerPolicy) -> PathBuf {
+    host_container_lease_dir(repo_root, policy).join(format!(
+        "{}.persistent",
+        sanitize_lease_path_component(&policy.name)
+    ))
 }
 
 pub(super) fn refresh_host_container_lease(
@@ -101,7 +145,7 @@ pub(in crate::runner) fn emit_host_container_lease_notice(container_name: &str) 
     let color_enabled =
         resolve_color_enabled(OutputMode::from_env(), std::io::stderr().is_terminal());
     eprintln!(
-        "{} temporary container lease active for `{container_name}`; idle shutdown in {timeout} unless reused or kept up explicitly",
+        "{} temporary container lease active for `{container_name}`; idle shutdown in {timeout} unless reused. Run `effigy container up --detach` to keep it running, or set {DISABLE_HOST_CONTAINER_LEASE_ENV}=1",
         style_text(color_enabled, Theme::default().label, "[info]")
     );
 }
@@ -423,6 +467,11 @@ fn reap_host_container_lease(
             ));
             continue;
         }
+        // The stack gained a persistent detached owner while this lease ran.
+        if detached_owner_recorded(repo_root, &policy) {
+            clear_host_container_lease(repo_root, &policy)?;
+            return Ok(());
+        }
         if is_primary_service_running(repo_root, &policy)? {
             let _ = shutdown_container(repo_root, &policy);
         }
@@ -447,12 +496,53 @@ fn load_host_container_lease(
 }
 
 fn host_container_lease_dir(repo_root: &Path, policy: &EffectiveContainerPolicy) -> PathBuf {
+    host_container_lease_dir_for(repo_root, &policy.profile, &policy.project_name)
+}
+
+fn host_container_lease_dir_for(repo_root: &Path, profile: &str, project_name: &str) -> PathBuf {
     if let Some(home) = host_container_lease_home_dir() {
         return home
-            .join(sanitize_lease_path_component(&policy.profile))
-            .join(sanitize_lease_path_component(&policy.project_name));
+            .join(sanitize_lease_path_component(profile))
+            .join(sanitize_lease_path_component(project_name));
     }
     repo_root.join(HOST_CONTAINER_LEASE_FALLBACK_DIR)
+}
+
+/// Ends persistent ownership for every container in a retired project scope.
+/// `retire` works from a scope record and does not know each container name, so
+/// it clears every `<name>.persistent` marker under the scope's profile/project
+/// lease directory.
+pub(in crate::runner) fn clear_persistent_container_owners_for_scope(
+    repo_root: &Path,
+    profiles: &[String],
+    project_names: &[String],
+) -> Result<(), RunnerError> {
+    for profile in profiles {
+        for project_name in project_names {
+            let dir = host_container_lease_dir_for(repo_root, profile, project_name);
+            let entries = match fs::read_dir(&dir) {
+                Ok(entries) => entries,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(RunnerError::task_invocation_failed_read(&dir, error)),
+            };
+            for entry in entries {
+                let entry =
+                    entry.map_err(|error| RunnerError::task_invocation_failed_read(&dir, error))?;
+                let path = entry.path();
+                if path.extension().and_then(|value| value.to_str()) != Some("persistent") {
+                    continue;
+                }
+                match fs::remove_file(&path) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => {
+                        return Err(RunnerError::task_invocation_failed_write(&path, error));
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn host_container_lease_path(repo_root: &Path, policy: &EffectiveContainerPolicy) -> PathBuf {
@@ -625,6 +715,49 @@ mod tests {
     }
 
     #[test]
+    fn task_activation_never_leases_a_detached_owned_stack() {
+        let repo_root = std::env::temp_dir().join(format!(
+            "effigy-host-lease-detached-owner-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&repo_root).expect("mkdir repo");
+        let lease_home = repo_root.join("lease-home");
+        std::fs::create_dir_all(&lease_home).expect("mkdir lease home");
+        let _env = crate::contract_test_support::EnvGuard::set_many(&[
+            (
+                "EFFIGY_TEST_HOST_CONTAINER_LEASE_HOME",
+                Some(lease_home.display().to_string()),
+            ),
+            (
+                "EFFIGY_DISABLE_HOST_CONTAINER_LEASE_REAPER",
+                Some("1".to_owned()),
+            ),
+        ]);
+        let policy = test_policy();
+        // An earlier task lease, then an explicit `container up` takes over.
+        super::refresh_host_container_lease(&repo_root, &policy).expect("earlier lease");
+        super::mark_persistent_container_owner(&repo_root, &policy)
+            .expect("explicit container up owns the stack");
+
+        for system_was_running in [false, true] {
+            let refreshed = refresh_host_container_lease_for_task_activation(
+                &repo_root,
+                &policy,
+                system_was_running,
+            )
+            .expect("refresh lease");
+            assert!(!refreshed, "a detached-owned stack is never leased");
+        }
+        assert!(
+            !super::host_container_lease_path(&repo_root, &policy).exists(),
+            "the earlier temporary lease no longer applies"
+        );
+    }
+
+    #[test]
     fn task_activation_skips_lease_refresh_when_disabled_by_env() {
         let repo_root = std::env::temp_dir().join(format!(
             "effigy-host-lease-disabled-{}",
@@ -655,5 +788,171 @@ mod tests {
             refresh_host_container_lease_for_task_activation(&repo_root, &test_policy(), false)
                 .expect("refresh lease");
         assert!(!refreshed);
+    }
+
+    fn reaper_fixture(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+        let repo_root = std::env::temp_dir().join(format!(
+            "effigy-host-lease-reaper-{name}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&repo_root).expect("mkdir repo");
+        std::fs::write(
+            repo_root.join("effigy.toml"),
+            "[containers]\ndefault = \"web\"\n\n[containers.web]\ncompose_file = \"docker-compose.yml\"\nprimary_service = \"app\"\n",
+        )
+        .expect("write manifest");
+        std::fs::write(
+            repo_root.join("docker-compose.yml"),
+            "services:\n  app:\n    image: alpine:latest\n",
+        )
+        .expect("write compose");
+        let lease_home = repo_root.join("lease-home");
+        std::fs::create_dir_all(&lease_home).expect("mkdir lease home");
+        (repo_root, lease_home)
+    }
+
+    fn write_expired_lease(
+        repo_root: &std::path::Path,
+        policy: &effigy_containers::EffectiveContainerPolicy,
+        token: &str,
+    ) {
+        let lease = super::HostContainerLease {
+            schema: super::host_container_lease_schema(),
+            schema_version: super::host_container_lease_schema_version(),
+            token: token.to_owned(),
+            container_name: policy.name.clone(),
+            profile: policy.profile.clone(),
+            project_name: policy.project_name.clone(),
+            expires_at_epoch_ms: 0,
+        };
+        let path = super::host_container_lease_path(repo_root, policy);
+        std::fs::create_dir_all(path.parent().expect("lease dir")).expect("mkdir lease dir");
+        std::fs::write(
+            &path,
+            serde_json::to_string_pretty(&lease).expect("encode lease"),
+        )
+        .expect("write lease");
+    }
+
+    fn lease_env(lease_home: &std::path::Path) -> crate::contract_test_support::EnvGuard {
+        crate::contract_test_support::EnvGuard::set_many(&[
+            (
+                "EFFIGY_TEST_HOST_CONTAINER_LEASE_HOME",
+                Some(lease_home.display().to_string()),
+            ),
+            (
+                "EFFIGY_DISABLE_HOST_CONTAINER_LEASE_REAPER",
+                Some("1".to_owned()),
+            ),
+        ])
+    }
+
+    /// A stopped liveness script: the reaper records every probe it issues, so
+    /// an empty operation list proves it never reached the teardown path.
+    fn stopped_liveness_script() -> crate::runner::scripted_doctor::ScriptedGuard {
+        use crate::runner::scripted_doctor::{install, ScriptedAnswer, ScriptedPhase};
+        install(Box::new(|request| match request.phase {
+            ScriptedPhase::ColimaStatus => ScriptedAnswer::ok("status: Stopped\n"),
+            _ => ScriptedAnswer::failed(127, "unexpected scripted launch"),
+        }))
+    }
+
+    #[test]
+    fn reaper_skips_persistently_owned_stack_before_probing_liveness() {
+        use crate::runner::scripted_doctor::ScriptedPhase;
+
+        let (repo_root, lease_home) = reaper_fixture("persistent");
+        let _env = lease_env(&lease_home);
+        let policy = effigy_containers::load_container_policy(&repo_root, None).expect("policy");
+        let token = "explicit-up-generation";
+        write_expired_lease(&repo_root, &policy, token);
+        super::mark_persistent_container_owner(&repo_root, &policy).expect("mark owner");
+        let script = stopped_liveness_script();
+
+        super::run_host_container_lease_reaper_for_tests(&repo_root, &policy.name, token)
+            .expect("reaper returns without stopping the owned stack");
+
+        assert!(
+            !super::host_container_lease_path(&repo_root, &policy).exists(),
+            "the stale task lease no longer applies"
+        );
+        assert!(
+            super::persistent_owner_path(&repo_root, &policy).exists(),
+            "the explicit owner marker survives the reaper"
+        );
+        assert!(
+            script.runtime().operations().is_empty(),
+            "an explicitly owned stack must not be probed for teardown"
+        );
+        assert!(script
+            .runtime()
+            .operations_for(ScriptedPhase::ColimaStatus)
+            .is_empty());
+    }
+
+    #[test]
+    fn retiring_a_scope_clears_only_its_persistent_owners() {
+        let (repo_root, lease_home) = reaper_fixture("retire-scope");
+        let _env = lease_env(&lease_home);
+        let policy = effigy_containers::load_container_policy(&repo_root, None).expect("policy");
+        super::mark_persistent_container_owner(&repo_root, &policy).expect("mark scoped owner");
+        let root = super::detached_admission_marker_root(&repo_root);
+        let unrelated = root
+            .join(&policy.profile)
+            .join("unretired-project")
+            .join("web.persistent");
+        std::fs::create_dir_all(unrelated.parent().expect("dir")).expect("mkdir");
+        std::fs::write(&unrelated, b"").expect("write unrelated marker");
+
+        super::clear_persistent_container_owners_for_scope(
+            &repo_root,
+            std::slice::from_ref(&policy.profile),
+            std::slice::from_ref(&policy.project_name),
+        )
+        .expect("clear retired scope owners");
+
+        assert!(
+            !super::persistent_owner_path(&repo_root, &policy).exists(),
+            "the retired scope loses persistent ownership"
+        );
+        assert!(
+            unrelated.exists(),
+            "an unrelated project's marker is untouched"
+        );
+    }
+
+    #[test]
+    fn reaper_still_probes_and_clears_a_task_started_stack() {
+        use crate::runner::scripted_doctor::ScriptedPhase;
+
+        let (repo_root, lease_home) = reaper_fixture("task-started");
+        let _env = lease_env(&lease_home);
+        let policy = effigy_containers::load_container_policy(&repo_root, None).expect("policy");
+        let token = "task-generation";
+        write_expired_lease(&repo_root, &policy, token);
+        let script = stopped_liveness_script();
+
+        super::run_host_container_lease_reaper_for_tests(&repo_root, &policy.name, token)
+            .expect("reaper reclaims the expired task lease");
+
+        assert!(
+            !super::host_container_lease_path(&repo_root, &policy).exists(),
+            "the expired lease is cleared"
+        );
+        assert!(
+            !super::persistent_owner_path(&repo_root, &policy).exists(),
+            "a task-started stack never gains persistent ownership"
+        );
+        assert_eq!(
+            script
+                .runtime()
+                .operations_for(ScriptedPhase::ColimaStatus)
+                .len(),
+            1,
+            "a task-started stack is probed before teardown"
+        );
     }
 }
