@@ -211,14 +211,28 @@ mounts = ["./:/workspace"]
 "#,
     );
     if mode == "generated" {
+        let catalog = root.join("infra/dev/catalog/private-builder");
+        fs::create_dir_all(&catalog).unwrap();
+        fs::write(
+            catalog.join("service.toml"),
+            r#"[service]
+name = "private-builder"
+description = "Private no-port builder fixture"
+[capabilities]
+exec_target = true
+shell = "/bin/sh"
+"#,
+        )
+        .unwrap();
+        fs::write(catalog.join("compose.fragment.yml"), "services:\n  {{ service_name }}:\n    image: fixture:private\n    working_dir: /workspace\n    volumes:\n      - {{ repo_root }}:/workspace\n").unwrap();
         let manifest = fs::read_to_string(root.join("effigy.toml"))
             .unwrap()
             .replace("compose_file = \"infra/release/docker-compose.yml\"\n", "")
             .replace(
-                "[containers.builder.host]\nmounts = [\"./:/workspace\"]",
-                "",
+                "primary_service = \"builder\"",
+                "primary_service = \"builder\"\nworking_dir = \"/workspace\"",
             );
-        fs::write(root.join("effigy.toml"), format!("{manifest}\n[containers.builder.services.builder]\ncatalog = \"workspace-rust-bun\"\n")).unwrap();
+        fs::write(root.join("effigy.toml"), format!("{manifest}\n[containers.builder.services.builder]\ncatalog = \"private-builder\"\n")).unwrap();
     }
     let _gateway =
         crate::runner::gateway_command::set_test_gateway_home(&root.join("gateway-home"));

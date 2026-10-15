@@ -1093,6 +1093,18 @@ def selected(s):
  r=record(s)
  labels={'com.docker.compose.project':s.get('project',''),'com.effigy.project':s.get('project',''),'com.effigy.scope':r['token'] if r else ''}
  return all(labels.get(f.split('=',1)[0])==f.split('=',1)[1] for f in filters)
+if args and args[0]=='exec':
+ i=1
+ while i<len(args):
+  if args[i] in ['-i','-t']: i+=1
+  elif args[i] in ['-w','-u','-e']: i+=2
+  elif args[i].startswith('-'): sys.exit(19)
+  else: break
+ if i>=len(args) or args[i]!=state['id']: sys.exit(23)
+ if mode=='exec-fail': sys.exit(18)
+ with socket.create_connection(('127.0.0.1',state['port']),timeout=1) as c:
+  c.sendall(b'production-exec\n');assert c.makefile('rb').readline()==(state['identity']+':production-exec\n').encode()
+ sys.exit(0)
 if args and args[0]=='compose':
  sub=next((a for a in args if a in ['up','exec','restart','down','ps']),None)
  if sub=='up':
