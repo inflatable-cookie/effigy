@@ -414,12 +414,48 @@ fn parse_container_retire_is_supported() {
             subcommand: ContainerSubcommand::Retire {
                 name: None,
                 scope: Some("abcdef0123456789abcdef0123456789".to_owned()),
+                dead: false,
                 yes: true,
             },
             repo_override: None,
             output_json: true,
         })
     );
+}
+
+#[test]
+fn parse_container_retire_dead_selects_missing_checkouts() {
+    let cmd = parse_command(vec![
+        "container".to_owned(),
+        "retire".to_owned(),
+        "--dead".to_owned(),
+        "--yes".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Container(ContainerArgs {
+            subcommand: ContainerSubcommand::Retire {
+                name: None,
+                scope: None,
+                dead: true,
+                yes: true,
+            },
+            repo_override: None,
+            output_json: false,
+        })
+    );
+    let error = parse_command(vec![
+        "container".to_owned(),
+        "retire".to_owned(),
+        "--dead".to_owned(),
+        "--scope".to_owned(),
+        "abcdef0123456789abcdef0123456789".to_owned(),
+    ])
+    .expect_err("--dead and --scope are exclusive");
+    assert!(error
+        .to_string()
+        .contains("cannot be combined with `--scope`"));
 }
 
 #[test]

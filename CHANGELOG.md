@@ -7,6 +7,10 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- `effigy container retire --dead` retires every recorded runtime scope whose
+  checkout no longer exists, such as worktrees removed without running their
+  teardown, through the ordinary retirement path. It previews the scopes when
+  run without a terminal or `--yes`, and is safe to schedule with `--yes`.
 - Workspace handoff verifies the host-selected installed service catalog pack
   after selected-workspace activation or recreation, for the workspace user, including when the Linux binary is already current.
   Empty guests receive validated retained content without needing its original
