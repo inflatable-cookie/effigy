@@ -342,6 +342,9 @@ routes; an explicit route for the same domain wins. `target_host` takes a
 `host:port` target and cannot be combined with `service` in one route. Linked
 worktrees that do not share runtime identity rewrite the declared apex to
 `<apex>-w<host-key>.<tld>` so HTTP routes and TCP aliases stay one set.
+Generated TCP aliases and `container hosts` cookie domains use the first
+resolved route's domain by default; `containers.<name>.dns.base_domain` can
+override that apex without changing HTTP route names.
 `effigy container hosts` exposes that map. The primary checkout keeps declared
 names. Consumer apps still feed those names into public URLs, origins, cookies
 and selectors; see Queue lead `af3ab7c7-b631-4d4f-9da7-f2949ded82f3`

@@ -394,6 +394,21 @@ fn validate_dns_routes(
     container_name: &str,
     dns: &crate::config_sections::ManifestContainerDnsConfig,
 ) -> Result<(), ManifestError> {
+    if let Some(base_domain) = dns.base_domain.as_deref() {
+        validate_dns_domain_name(
+            manifest_path,
+            base_domain,
+            &format!("containers.{container_name}.dns.base_domain"),
+        )?;
+        if base_domain.trim().trim_end_matches('.').split('.').count() < 2 {
+            return Err(ManifestError::Compose {
+                path: manifest_path.to_path_buf(),
+                detail: format!(
+                    "containers.{container_name}.dns.base_domain must contain at least two labels"
+                ),
+            });
+        }
+    }
     if let Some(defaults) = dns.domain_defaults.as_ref() {
         if defaults.service.is_some() && defaults.target_host.is_some() {
             return Err(ManifestError::Compose {
@@ -919,6 +934,7 @@ routes = [{ domain = "a.test", target_host = "127.0.0.1:99999" }]
 primary_service = "app"
 
 [containers.web.dns]
+base_domain = "acme.test"
 domains = ["a.test"]
 domain_defaults = { tls = true, target_host = "127.0.0.1:8080" }
 "#,
@@ -926,6 +942,24 @@ domain_defaults = { tls = true, target_host = "127.0.0.1:8080" }
         manifest
             .validate(Path::new("/tmp/effigy.toml"))
             .expect("expected valid manifest");
+    }
+
+    #[test]
+    fn dns_base_domain_must_contain_at_least_two_labels() {
+        let manifest = parse(
+            r#"
+[containers.web]
+primary_service = "app"
+
+[containers.web.dns]
+base_domain = "localhost"
+"#,
+        );
+        let detail = err(&manifest);
+        assert!(
+            detail.contains("base_domain must contain at least two labels"),
+            "got: {detail}"
+        );
     }
 
     #[test]

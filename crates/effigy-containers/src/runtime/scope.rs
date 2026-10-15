@@ -397,6 +397,7 @@ mod tests {
             project_name: "app-dev-wt-abcdef012345".to_owned(),
             primary_service: "app".to_owned(),
             dns_domain: Some("app-wabcdef01.test".to_owned()),
+            dns_base_domain: None,
             dns_tls: true,
             dns_port: Some(80),
             dns_routes: vec![EffectiveDnsRoute {
@@ -439,6 +440,7 @@ mod tests {
                 &[],
                 Some("abcdef0123456789abcdef0123456789"),
                 false,
+                None,
             );
             let record = ScopeRecord::from_policy(
                 &policy,
@@ -473,8 +475,8 @@ mod tests {
             worker.dns_routes[0].domain = "jobs.app-wabcdef01.test".to_owned();
             worker.dns_routes[0].declared_domain = "jobs.app.test".to_owned();
             let token = "abcdef0123456789abcdef0123456789";
-            let web_map = build_host_map(&web.dns_routes, &[], &[], Some(token), false);
-            let worker_map = build_host_map(&worker.dns_routes, &[], &[], Some(token), false);
+            let web_map = build_host_map(&web.dns_routes, &[], &[], Some(token), false, None);
+            let worker_map = build_host_map(&worker.dns_routes, &[], &[], Some(token), false, None);
             upsert(&ScopeRecord::from_policy(
                 &web, token, "abcdef01", &web_map, false,
             ))
@@ -517,6 +519,7 @@ mod tests {
             &[],
             Some("abcdef0123456789abcdef0123456789"),
             true,
+            None,
         );
         let record = ScopeRecord::from_policy(
             &policy,
@@ -544,6 +547,7 @@ mod tests {
             &[],
             Some("abcdef0123456789abcdef0123456789"),
             false,
+            None,
         );
         let record = ScopeRecord::from_policy(
             &policy,
@@ -574,8 +578,8 @@ mod tests {
             jobs.project_name = "app-jobs-wt-abcdef012345".to_owned();
             jobs.dns_routes[0].domain = "jobs.app-wabcdef01.test".to_owned();
             let token = "abcdef0123456789abcdef0123456789";
-            let web_map = build_host_map(&web.dns_routes, &[], &[], Some(token), false);
-            let jobs_map = build_host_map(&jobs.dns_routes, &[], &[], Some(token), false);
+            let web_map = build_host_map(&web.dns_routes, &[], &[], Some(token), false, None);
+            let jobs_map = build_host_map(&jobs.dns_routes, &[], &[], Some(token), false, None);
             let web_record = ScopeRecord::from_policy(&web, token, "abcdef01", &web_map, false);
             let jobs_record = ScopeRecord::from_policy(&jobs, token, "abcdef01", &jobs_map, false);
             std::thread::scope(|scope| {
@@ -631,6 +635,7 @@ mod tests {
             &[],
             Some("abcdef0123456789abcdef0123456789"),
             false,
+            None,
         );
         let record = ScopeRecord::from_policy(
             &policy,

@@ -123,13 +123,15 @@ pub fn build_host_map(
     shared_services: &[SharedServiceBinding],
     token: Option<&str>,
     shared_runtime_identity: bool,
+    base_domain: Option<&str>,
 ) -> EffectiveHostMap {
     let rewrite_key = token
         .filter(|_| !shared_runtime_identity)
         .and_then(host_key);
-    let declared_base = dns_routes
-        .first()
-        .map(|route| route.declared().to_owned())
+    let declared_base = base_domain
+        .map(str::trim)
+        .map(str::to_owned)
+        .or_else(|| dns_routes.first().map(|route| route.declared().to_owned()))
         .filter(|domain| domain.split('.').filter(|part| !part.is_empty()).count() >= 2);
     let effective_base = match (declared_base.as_deref(), rewrite_key) {
         (Some(declared), Some(key)) => Some(rewrite_declared_host(declared, key)),
@@ -284,6 +286,7 @@ mod tests {
             &[],
             None,
             false,
+            None,
         );
         assert_eq!(map.kind, HostScopeKind::Primary);
         assert_eq!(map.effective_base.as_deref(), Some("acowtancy.test"));
@@ -296,6 +299,48 @@ mod tests {
         assert_eq!(map.routes[1].effective, "admin.acowtancy.test");
         assert_eq!(map.routes[2].kind, HostRouteKind::Tcp);
         assert_eq!(map.routes[2].effective, "postgres.acowtancy.test");
+    }
+
+    #[test]
+    fn explicit_base_domain_sets_cookie_and_tcp_alias_apex() {
+        let token = "abcdef0123456789abcdef0123456789";
+        let map = build_host_map(
+            &[http("s3.acme.test", true, Some("web"))],
+            &[EffectiveServiceAlias {
+                service: "db".to_owned(),
+                domain_label: "postgres".to_owned(),
+                container_port: 5432,
+            }],
+            &[],
+            Some(token),
+            false,
+            Some("acme.test"),
+        );
+
+        assert_eq!(map.declared_base.as_deref(), Some("acme.test"));
+        assert_eq!(map.cookie_domain(), Some("acme-wabcdef01.test"));
+        assert_eq!(map.routes[0].effective, "s3.acme-wabcdef01.test");
+        assert_eq!(map.routes[1].declared, "postgres.acme.test");
+        assert_eq!(map.routes[1].effective, "postgres.acme-wabcdef01.test");
+    }
+
+    #[test]
+    fn cookie_and_tcp_alias_apex_default_to_first_route_domain() {
+        let map = build_host_map(
+            &[http("s3.acme.test", true, Some("web"))],
+            &[EffectiveServiceAlias {
+                service: "db".to_owned(),
+                domain_label: "postgres".to_owned(),
+                container_port: 5432,
+            }],
+            &[],
+            None,
+            false,
+            None,
+        );
+
+        assert_eq!(map.cookie_domain(), Some("s3.acme.test"));
+        assert_eq!(map.routes[1].effective, "postgres.s3.acme.test");
     }
 
     #[test]
@@ -325,6 +370,7 @@ mod tests {
             }],
             Some(token),
             false,
+            None,
         );
         assert_eq!(map.kind, HostScopeKind::Worktree);
         assert_eq!(map.host_key.as_deref(), Some("abcdef01"));
@@ -361,6 +407,7 @@ mod tests {
             &[],
             Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
             false,
+            None,
         );
         let second = build_host_map(
             &[http("app.test", false, None)],
@@ -368,6 +415,7 @@ mod tests {
             &[],
             Some("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
             false,
+            None,
         );
         assert_eq!(first.routes[0].effective, "app-waaaaaaaa.test");
         assert_eq!(second.routes[0].effective, "app-wbbbbbbbb.test");
@@ -382,6 +430,7 @@ mod tests {
             &[],
             Some("cccccccccccccccccccccccccccccccc"),
             true,
+            None,
         );
         assert_eq!(map.effective_base.as_deref(), Some("app.test"));
         assert_eq!(map.routes[0].effective, "app.test");
@@ -397,6 +446,7 @@ mod tests {
             &[],
             Some(token),
             false,
+            None,
         )
         .with_scope_kind(HostScopeKind::EphemeralClone);
         assert_eq!(map.kind, HostScopeKind::EphemeralClone);

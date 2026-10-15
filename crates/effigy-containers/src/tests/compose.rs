@@ -1858,7 +1858,7 @@ services:
 }
 
 #[test]
-fn generated_compose_runtime_dns_override_includes_project_and_alias_domains() {
+fn generated_compose_runtime_dns_override_uses_explicit_alias_base_domain() {
     let _lock = crate::test_env_lock();
     let root = temp_repo("generated-compose-route-parity");
     fs::write(
@@ -1871,9 +1871,10 @@ default = "stack"
 primary_service = "workspace"
 
 [containers.stack.dns]
+base_domain = "acme.test"
 routes = [
-  { domain = "acme.test", tls = false, service = "workspace" },
-  { domain = "api.acme.test", tls = false, service = "workspace", port = 41001 },
+  { domain = "s3.acme.test", tls = false, service = "workspace" },
+  { domain = "api.s3.acme.test", tls = false, service = "workspace", port = 41001 },
 ]
 
 [containers.stack.services.workspace]
@@ -1894,17 +1895,17 @@ catalog = "mailpit"
     assert_eq!(policy.compose_files.len(), 2);
     let dns_override = fs::read_to_string(&policy.compose_files[1]).expect("read dns override");
     assert!(
-        dns_override.contains("\"acme.test:192.168.5.2\""),
-        "dns override should include base project domain: {dns_override}"
+        dns_override.contains("\"s3.acme.test:192.168.5.2\""),
+        "dns override should include first route domain: {dns_override}"
     );
     assert!(
-        dns_override.contains("\"api.acme.test:192.168.5.2\""),
+        dns_override.contains("\"api.s3.acme.test:192.168.5.2\""),
         "dns override should include explicit subdomain routes: {dns_override}"
     );
     assert!(
         dns_override.contains("postgres:\n    dns:")
             && dns_override.contains("\"postgres.acme.test\""),
-        "dns override should include postgres network alias domains: {dns_override}"
+        "dns override should use the configured alias base domain for postgres: {dns_override}"
     );
     assert!(
         dns_override.contains("mailpit:\n    dns:") && dns_override.contains("\"smtp.acme.test\""),

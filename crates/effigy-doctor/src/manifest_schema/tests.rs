@@ -580,6 +580,7 @@ compose_file = "infra/dev/docker-compose.yml"
 primary_service = "app"
 
 [containers.web.dns]
+base_domain = "acme.test"
 routes = [{ domain = "clientname.test", tls = true, port = 4173 }]
 "#,
     )
@@ -685,6 +686,32 @@ routes = [{ domain = "clientname.test", port = "web" }]
         "expected dns port finding, got: {:?}",
         sink.findings
     );
+}
+
+#[test]
+fn validate_manifest_schema_rejects_non_string_container_dns_base_domain() {
+    let manifest: Value = toml::from_str(
+        r#"
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+
+[containers.web.dns]
+base_domain = 42
+"#,
+    )
+    .expect("parse manifest");
+
+    let mut sink = TestSink::default();
+    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
+
+    assert!(sink
+        .findings
+        .iter()
+        .any(|finding| finding.evidence.contains("containers.web.dns.base_domain")));
 }
 
 #[test]

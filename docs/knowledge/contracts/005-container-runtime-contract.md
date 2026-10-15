@@ -670,6 +670,9 @@ hosts such as `mail.app.test` stay under that apex. The primary checkout keeps
 declared names. `effigy container hosts` returns declared and effective names,
 origins, cookie domain and WebAuthn relying-party id. Effigy registers those
 effective names on the gateway. It does not rewrite application configuration.
+For a container manifest, `dns.base_domain` overrides the first resolved DNS
+route as the declared apex for generated TCP aliases and the reported cookie
+domain; the same checkout-scoping rule applies to that configured apex.
 
 Owned mutable resources for that generation carry `com.effigy.scope`,
 `com.effigy.project`, or the exact Compose project label. `effigy container

@@ -33,6 +33,7 @@ pub struct EffectiveContainerPolicy {
     pub project_name: String,
     pub primary_service: String,
     pub dns_domain: Option<String>,
+    pub dns_base_domain: Option<String>,
     pub dns_tls: bool,
     pub dns_port: Option<u16>,
     pub dns_routes: Vec<EffectiveDnsRoute>,
