@@ -44,6 +44,26 @@ if 'up' in args:
         (root / 'recreated').touch()
         log({'phase': 'recreate', 'old': old, 'new': 'b' * 64})
     sys.exit(0)
+if 'inspect' in args:
+    # Owned-binding verification inspects the listed service container.
+    print(json.dumps([{
+        'Id': (root / 'generation').read_text(),
+        'Name': '/catalog-web-app-1',
+        'State': {'Status': 'running', 'Running': True},
+        'Config': {'Labels': {
+            'com.docker.compose.project': 'catalog-web',
+            'com.docker.compose.service': 'app',
+            'com.docker.compose.oneoff': 'False',
+            'com.docker.compose.project.working_dir': str(root / 'repo'),
+        }},
+        'NetworkSettings': {'Ports': {}},
+    }]))
+    sys.exit(0)
+if 'ps' in args and '--no-trunc' in args and '--format' in args:
+    # Bounded owned-service listing: full ID, status, oneoff, working dir,
+    # checkout and scope labels.
+    print((root / 'generation').read_text() + '\tUp\tFalse\t' + str(root / 'repo') + '\t\t')
+    sys.exit(0)
 if 'ps' in args:
     if '-q' in args:
         print((root / 'generation').read_text())
@@ -167,6 +187,11 @@ if 'effigy-perm-access-batch' in command:
     for value in values[::2]:
         assert value.startswith(str(root)) or value == '/data', value
         print('ready')
+    sys.exit(0)
+if user == '0' and command[:2] == ['chown', '-R']:
+    # Ownership handoff of the copied staging tree to the workspace user.
+    assert command[2] == str(os.getuid()) and command[3].startswith('/tmp/effigy-catalog-'), command
+    log({'phase': 'chown'})
     sys.exit(0)
 if len(command) == 3 and command[:2] == ['sh', '-lc'] and command[2].startswith('id -u '):
     assert str(os.getuid()) in command[2]
@@ -361,7 +386,7 @@ class Fixture:
         child = shlex_quote(BINARY) + ' --json exec /usr/bin/printf catalog-child-ok'
         args = ['container', 'web', 'shell', '--command', child]
         if bounded:
-            args += ['--bounded', '--deadline-ms', '1000' if mode == 'deadline' else '10000', '--stdout-limit-bytes', str(stdout_limit),
+            args += ['--bounded', '--deadline-ms', '3000' if mode == 'deadline' else '10000', '--stdout-limit-bytes', str(stdout_limit),
                      '--stderr-limit-bytes', str(stderr_limit), '--json']
         return self.cli(self.host, args, {'FIXTURE_MODE': mode})
 
@@ -391,7 +416,7 @@ def success(root, bounded, backend):
     code, stdout, stderr = fixture.handoff(bounded)
     assert code == 0 and 'catalog-child-ok' in stdout, (code, stdout, stderr, fixture.events())
     events = fixture.events()
-    assert events.index('copy') < events.index('install') < events.index('task'), events
+    assert events.index('copy') < events.index('chown') < events.index('install') < events.index('task'), events
     assert events.count('binary-current') == 1, events
     assert events.count('copy') == 1 and events.count('install') == 1, events
     code, stdout, stderr = fixture.cli(fixture.guest, ['service', 'pack', 'status', '--json'])

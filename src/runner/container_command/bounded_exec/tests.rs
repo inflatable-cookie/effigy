@@ -143,6 +143,7 @@ exit 0
 
 const PUBLIC_FAKE_BACKEND: &str = r#"#!/bin/sh
 args="$*"
+FAKE_ID=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 case "$FAKE_BOUNDED_MODE:$args" in
     runtime-hang:*ps*|launch-blocked-discovery:*ps*)
         printf '%s\n' "$$" > "$FAKE_BOUNDED_PID_FILE"
@@ -172,6 +173,10 @@ if [ "$FAKE_BOUNDED_MODE" = "remove-before-command" ]; then
     esac
 fi
 case "$args" in
+    *"ps --no-trunc"*)
+        printf '%s\tUp 1 minute\tFalse\t%s\t\t\n' "$FAKE_ID" "$FAKE_BOUNDED_REPO"
+        exit 0
+        ;;
     *"ps --format"*)
         printf 'demo-web-app-1\tUp\t\tdemo-web\t%s\tapp\tfalse\n' "$FAKE_BOUNDED_REPO"
         exit 0
@@ -227,7 +232,7 @@ case "$args" in
         ;;
     *"main-command"*)
         case "$args" in
-            *"-w /workspace"*"-u dev"*"HOME=/home/dev"*"app sh -lc"*) ;;
+            *"-w /workspace"*"-u dev"*"HOME=/home/dev"*"$FAKE_ID sh -lc"*) ;;
             *)
                 printf 'selection-mismatch'
                 exit 91
@@ -385,6 +390,7 @@ fn run_json(
             repo_root,
             policy,
             service: "app",
+            target_id: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
             working_dir: Some(Path::new("/workspace")),
             command,
             output_json: true,
@@ -633,8 +639,8 @@ fn guarded_public_entry_child() {
             assert_eq!(value["stdout_bytes"], "command-only".len());
             assert_eq!(value["attempts"], 1);
             assert_eq!(
-                value["preparation"]["captures"], 3,
-                "public command must include the bounded workspace identity probe"
+                value["preparation"]["captures"], 4,
+                "public command must include the owned-service listing and the bounded workspace identity probe"
             );
             let preparation_stdout = value["preparation"]["retained"]["stdout_bytes"]
                 .as_u64()
@@ -678,8 +684,8 @@ fn guarded_public_entry_child() {
             let details = failure_details(&error);
             assert_eq!(details["failure"], "workspace_preparation_failed");
             assert_eq!(details["phase"], "workspace_preparation");
-            assert_eq!(details["preparation"]["captures"], 4);
-            // This phase failure is decided about four spawned-and-completed
+            assert_eq!(details["preparation"]["captures"], 5);
+            // This phase failure is decided about five spawned-and-completed
             // captures; it is not a transport refusal, so it must not claim
             // any refusal observations (not_attempted would be false here).
             assert!(
@@ -704,7 +710,7 @@ fn guarded_public_entry_child() {
             assert_eq!(details["phase"], "command_execution");
             assert_eq!(details["attempts"], 2);
             assert_eq!(details["workspace_user_fallback"], true);
-            assert_eq!(details["preparation"]["captures"], 3);
+            assert_eq!(details["preparation"]["captures"], 4);
             assert!(!final_marker.exists());
         }
         "remove-before-command" => {
@@ -785,7 +791,7 @@ fn public_entry_bounds_discovery_preparation_and_fallback_on_the_full_path() {
             backend: "docker",
             identity: &identity,
             deadline_ms: 8_000,
-            stdout_limit: 256,
+            stdout_limit: 512,
         },
     );
     // The public Colima path guard requires a host-shared repo path. The
@@ -802,7 +808,7 @@ fn public_entry_bounds_discovery_preparation_and_fallback_on_the_full_path() {
             backend: "colima",
             identity: &identity,
             deadline_ms: 8_000,
-            stdout_limit: 256,
+            stdout_limit: 512,
         },
     );
 }
@@ -820,6 +826,12 @@ fn public_failure_case(mode: &str) -> GuardedPublicOutcome {
         repo.display()
     )
     .len() as u64
+        + format!(
+            "{}\tUp 1 minute\tFalse\t{}\t\t\n",
+            "0123456789abcdef".repeat(4),
+            repo.display()
+        )
+        .len() as u64
         + identity.len() as u64
         + 3
         + 80;
@@ -841,7 +853,7 @@ fn public_failure_case(mode: &str) -> GuardedPublicOutcome {
             stdout_limit: match mode {
                 "fallback-budget" => fallback_limit,
                 "runtime-flood" => 64,
-                "valid-identity" | "remove-before-command" => 256,
+                "valid-identity" | "remove-before-command" => 512,
                 _ => 512,
             },
         },
@@ -1159,6 +1171,7 @@ fn expired_deadline_refuses_without_spawning_the_backend() {
                 repo_root: &repo,
                 policy: &policy,
                 service: "app",
+                target_id: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
                 working_dir: Some(Path::new("/workspace")),
                 command: "plain",
                 output_json: true,
@@ -1259,6 +1272,7 @@ fn refusal_accounting_pre_spawn_expiry_reports_not_attempted_with_unknown_stream
                 repo_root: &repo,
                 policy: &policy,
                 service: "app",
+                target_id: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
                 working_dir: Some(Path::new("/workspace")),
                 command: "plain",
                 output_json: true,

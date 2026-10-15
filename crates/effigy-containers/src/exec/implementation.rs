@@ -1,6 +1,7 @@
 //! Container-domain execution helpers extracted from
 //! `src/runner/container_command.rs`.
 
+use std::collections::BTreeSet;
 use std::ffi::{OsStr, OsString};
 use std::path::Path;
 use std::process::Output;
@@ -382,37 +383,18 @@ pub fn verify_owned_running_compose_rows(
         .map(|verified| verified.into_iter().map(|binding| binding.row).collect())
 }
 
-pub fn verify_owned_running_compose_identities(
+/// Whether every running container of `policy`'s project may be brought under
+/// a fresh activation by this checkout: each must be proven owned by this
+/// checkout and scope, or be a pre-ownership-label container (no checkout,
+/// working-directory or scope label) while this checkout itself is unscoped.
+/// Anything else may belong to another checkout and refuses.
+pub fn running_stack_admits_reactivation(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     rows: &[RunningComposeContainer],
     deadline: Instant,
-) -> Result<Vec<VerifiedComposeContainer>, ContainerExecError> {
-    let mut verified = Vec::new();
-    let declared = super::restart_recovery::declared_service_names(&policy.compose_files)?;
-    let canonical = repo_root
-        .canonicalize()
-        .map_err(|error| ContainerExecError::Launch {
-            command: "verify selected checkout".to_owned(),
-            error,
-        })?;
-    let scope_token = effigy_core::worktree_scope::resolve(repo_root)
-        .map_err(|error| ContainerExecError::Launch {
-            command: "verify selected scope".to_owned(),
-            error,
-        })?
-        .map(|scope| {
-            std::fs::read_to_string(
-                scope
-                    .token_dir
-                    .join(effigy_core::worktree_scope::SCOPE_FILE),
-            )
-        })
-        .transpose()
-        .map_err(|error| ContainerExecError::Launch {
-            command: "verify selected scope token".to_owned(),
-            error,
-        })?;
+) -> Result<(), ContainerExecError> {
+    let ownership = OwnershipContext::resolve(repo_root, policy)?;
     for row in rows
         .iter()
         .filter(|row| row.project_name.as_deref() == Some(&policy.project_name))
@@ -420,29 +402,254 @@ pub fn verify_owned_running_compose_identities(
         if row.oneoff {
             continue;
         }
-        let args = [
-            OsString::from("inspect"),
-            OsString::from(&row.container_name),
-        ];
+        let remaining =
+            super::process::remaining_until_deadline(deadline, "inspect running stack ownership")?;
+        let output = run_runtime_command_capture_for_policy_with_absolute_deadline(
+            repo_root,
+            policy,
+            &inspect_owned_binding_args(row),
+            "inspect running stack ownership",
+            deadline,
+            remaining,
+        )?;
+        if ownership
+            .verify_inspected(repo_root, policy, row, &output.stdout)
+            .is_ok()
+            || ownership.is_legacy_unlabelled(&output.stdout)
+        {
+            continue;
+        }
+        return Err(ContainerExecError::Failure {
+            command: "inspect running stack ownership".to_owned(),
+            code: None,
+            stdout: String::new(),
+            stderr: format!(
+                "running container `{}` is not proven to belong to this checkout",
+                row.container_name
+            ),
+        });
+    }
+    Ok(())
+}
+
+pub fn verify_owned_running_compose_identities(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    rows: &[RunningComposeContainer],
+    deadline: Instant,
+) -> Result<Vec<VerifiedComposeContainer>, ContainerExecError> {
+    let ownership = OwnershipContext::resolve(repo_root, policy)?;
+    let mut verified = Vec::new();
+    for row in rows
+        .iter()
+        .filter(|row| row.project_name.as_deref() == Some(&policy.project_name))
+    {
+        if row.oneoff {
+            continue;
+        }
         let remaining =
             super::process::remaining_until_deadline(deadline, "inspect owned binding")?;
         let output = run_runtime_command_capture_for_policy_with_absolute_deadline(
             repo_root,
             policy,
-            &args,
+            &inspect_owned_binding_args(row),
             "inspect owned binding",
             deadline,
             remaining,
         )?;
+        verified.push(ownership.verify_inspected(repo_root, policy, row, &output.stdout)?);
+    }
+    Ok(verified)
+}
+
+const OWNED_SERVICE_LISTING_FORMAT: &str = "{{.ID}}\t{{.Status}}\t{{.Label \"com.docker.compose.oneoff\"}}\t{{.Label \"com.docker.compose.project.working_dir\"}}\t{{.Label \"com.effigy.checkout\"}}\t{{.Label \"com.effigy.scope\"}}";
+
+/// Runtime `ps` arguments listing the containers of one project service with
+/// the fields [`OwnershipContext::verify_listed_service`] checks.
+pub fn owned_service_listing_args(
+    policy: &EffectiveContainerPolicy,
+    service: &str,
+) -> Vec<OsString> {
+    [
+        "ps".to_owned(),
+        "--no-trunc".to_owned(),
+        "--filter".to_owned(),
+        format!("label=com.docker.compose.project={}", policy.project_name),
+        "--filter".to_owned(),
+        format!("label=com.docker.compose.service={service}"),
+        "--format".to_owned(),
+        OWNED_SERVICE_LISTING_FORMAT.to_owned(),
+    ]
+    .into_iter()
+    .map(OsString::from)
+    .collect()
+}
+
+/// Runtime arguments that inspect one listed container for ownership checks.
+fn inspect_owned_binding_args(row: &RunningComposeContainer) -> [OsString; 2] {
+    [
+        OsString::from("inspect"),
+        OsString::from(&row.container_name),
+    ]
+}
+
+/// The selected checkout's identity, resolved once and compared against each
+/// inspected container. Callers that must account every runtime capture (the
+/// bounded command path) run `inspect` themselves and pass its output to
+/// [`OwnershipContext::verify_inspected`].
+pub struct OwnershipContext {
+    declared: BTreeSet<String>,
+    canonical: std::path::PathBuf,
+    scope_token: Option<String>,
+}
+
+impl OwnershipContext {
+    pub fn resolve(
+        repo_root: &Path,
+        policy: &EffectiveContainerPolicy,
+    ) -> Result<Self, ContainerExecError> {
+        let declared = super::restart_recovery::declared_service_names(&policy.compose_files)?;
+        let canonical = repo_root
+            .canonicalize()
+            .map_err(|error| ContainerExecError::Launch {
+                command: "verify selected checkout".to_owned(),
+                error,
+            })?;
+        let scope_token = effigy_core::worktree_scope::resolve(repo_root)
+            .map_err(|error| ContainerExecError::Launch {
+                command: "verify selected scope".to_owned(),
+                error,
+            })?
+            .map(|scope| {
+                std::fs::read_to_string(
+                    scope
+                        .token_dir
+                        .join(effigy_core::worktree_scope::SCOPE_FILE),
+                )
+            })
+            .transpose()
+            .map_err(|error| ContainerExecError::Launch {
+                command: "verify selected scope token".to_owned(),
+                error,
+            })?;
+        Ok(Self {
+            declared,
+            canonical,
+            scope_token,
+        })
+    }
+
+    /// A container created before Effigy labelled ownership: no checkout,
+    /// working-directory or scope label at all. Only an unscoped checkout may
+    /// treat one as its own, matching what earlier releases did.
+    fn is_legacy_unlabelled(&self, inspect_stdout: &[u8]) -> bool {
+        if self.scope_token.is_some() {
+            return false;
+        }
+        let Ok(raw) = serde_json::from_slice::<serde_json::Value>(inspect_stdout) else {
+            return false;
+        };
+        let Some(labels) = raw
+            .as_array()
+            .and_then(|records| records.first())
+            .and_then(|record| record.get("Config"))
+            .and_then(|config| config.get("Labels"))
+            .and_then(|labels| labels.as_object())
+        else {
+            return false;
+        };
+        ![
+            "com.docker.compose.project.working_dir",
+            crate::runtime::scope::CHECKOUT_LABEL,
+            crate::runtime::scope::SCOPE_LABEL,
+        ]
+        .iter()
+        .any(|label| labels.contains_key(*label))
+    }
+
+    /// Whether a container's checkout label and scope label name this
+    /// checkout and scope.
+    fn owns(&self, checkout: Option<&str>, scope: Option<&str>) -> bool {
+        let scope_matches = match (self.scope_token.as_deref(), scope) {
+            (None, None) => true,
+            (Some(token), Some(value)) => !token.trim().is_empty() && value == token.trim(),
+            _ => false,
+        };
+        scope_matches
+            && checkout
+                .and_then(|path| Path::new(path).canonicalize().ok())
+                .as_ref()
+                == Some(&self.canonical)
+    }
+
+    /// Prove that an [`owned_service_listing_args`] listing holds exactly one
+    /// running, non-oneoff `service` container of this checkout and scope, and
+    /// return its full ID. Callers that must keep runtime captures small (the
+    /// bounded command path) use this instead of a full `inspect`.
+    pub fn verify_listed_service(
+        &self,
+        service: &str,
+        listing_stdout: &[u8],
+    ) -> Result<String, ContainerExecError> {
+        let refuse = |reason: &str| ContainerExecError::Failure {
+            command: "list owned service".to_owned(),
+            code: None,
+            stdout: String::new(),
+            stderr: format!("binding unavailable: {reason}"),
+        };
+        if !self.declared.contains(service) {
+            return Err(refuse(
+                "service is not declared by the selected Compose files",
+            ));
+        }
+        let listing = String::from_utf8_lossy(listing_stdout);
+        let mut rows = listing.lines().filter(|line| !line.trim().is_empty());
+        let row = rows
+            .next()
+            .ok_or_else(|| refuse("no running container for the service"))?;
+        if rows.next().is_some() {
+            return Err(refuse("more than one container for the service"));
+        }
+        let fields = row.split('\t').map(str::trim).collect::<Vec<_>>();
+        let [id, status, oneoff, working_dir, checkout, scope] = fields[..] else {
+            return Err(refuse("service listing is malformed"));
+        };
+        // Listings print an empty string for an absent label.
+        fn present(value: &str) -> Option<&str> {
+            Some(value).filter(|value| !value.is_empty())
+        }
+        let oneoff = matches!(oneoff.to_ascii_lowercase().as_str(), "true" | "1" | "yes");
+        if id.len() != 64
+            || !id.bytes().all(|byte| byte.is_ascii_hexdigit())
+            || !super::parse::compose_status_is_running(status)
+            || oneoff
+            || !self.owns(present(working_dir).or(present(checkout)), present(scope))
+        {
+            return Err(refuse(
+                "full-ID/oneoff/running/checkout/scope ownership changed or is unknown",
+            ));
+        }
+        Ok(id.to_owned())
+    }
+
+    /// Prove that `inspect_stdout` describes `row` as a running, non-oneoff
+    /// service of this checkout and scope.
+    pub fn verify_inspected(
+        &self,
+        repo_root: &Path,
+        policy: &EffectiveContainerPolicy,
+        row: &RunningComposeContainer,
+        inspect_stdout: &[u8],
+    ) -> Result<VerifiedComposeContainer, ContainerExecError> {
         let raw: serde_json::Value =
-            serde_json::from_slice(&output.stdout).map_err(|_| ContainerExecError::Failure {
+            serde_json::from_slice(inspect_stdout).map_err(|_| ContainerExecError::Failure {
                 command: "inspect owned binding".to_owned(),
                 code: None,
                 stdout: String::new(),
                 stderr: "binding unavailable: inspect JSON is invalid".to_owned(),
             })?;
         let identity = super::healthcheck_timer::parse_inspected_container_identity(
-            &String::from_utf8_lossy(&output.stdout),
+            &String::from_utf8_lossy(inspect_stdout),
         )
         .map_err(|_| ContainerExecError::Failure {
             command: "inspect owned binding".to_owned(),
@@ -455,29 +662,21 @@ pub fn verify_owned_running_compose_identities(
             .and_then(|record| record.get("Config"))
             .and_then(|config| config.get("Labels"));
         let (working_dir, oneoff_label_ok) = compose_binding_labels(labels);
-        let inspected_scope = labels.and_then(|labels| labels.get("com.effigy.scope"));
+        let inspected_scope = labels
+            .and_then(|labels| labels.get(crate::runtime::scope::SCOPE_LABEL))
+            .map(|value| value.as_str().unwrap_or_default());
         let owned = identity.name == row.container_name
-            && match (scope_token.as_deref(), inspected_scope) {
-                (None, None) => true,
-                (Some(token), Some(value)) => {
-                    !token.trim().is_empty() && value.as_str() == Some(token.trim())
-                }
-                _ => false,
-            }
+            && self.owns(working_dir, inspected_scope)
             && identity.project.as_deref() == Some(policy.project_name.as_str())
             && identity.service == row.service
             && identity
                 .service
                 .as_ref()
-                .is_some_and(|service| declared.contains(service))
+                .is_some_and(|service| self.declared.contains(service))
             && identity.running
             && super::parse::compose_status_is_running(&identity.status)
             && !identity.oneoff
-            && oneoff_label_ok
-            && working_dir
-                .and_then(|path| Path::new(path).canonicalize().ok())
-                .as_ref()
-                == Some(&canonical);
+            && oneoff_label_ok;
         if !owned {
             return Err(ContainerExecError::Failure { command: "inspect owned binding".to_owned(), code: None, stdout: String::new(), stderr: "binding unavailable: full-ID/project/service/oneoff/running/checkout ownership changed or is unknown".to_owned() });
         }
@@ -509,16 +708,18 @@ pub fn verify_owned_running_compose_identities(
                 }
             }
         }
-        verified.push(VerifiedComposeContainer {
+        Ok(VerifiedComposeContainer {
             row: current,
             id: identity.id,
-            checkout: canonical.clone(),
-            scope: scope_token.as_deref().map(|scope| scope.trim().to_owned()),
+            checkout: self.canonical.clone(),
+            scope: self
+                .scope_token
+                .as_deref()
+                .map(|scope| scope.trim().to_owned()),
             profile: policy.profile.clone(),
             backend: crate::compose::resolve_compose_backend_for_repo(repo_root, policy),
-        });
+        })
     }
-    Ok(verified)
 }
 
 pub fn list_compose_containers_for_project_including_stopped(

@@ -262,19 +262,25 @@ pub(super) fn ensure_workspace_effigy_available_for_policy(
     let catalog = super::workspace_catalog::HostCatalog::pin()
         .map_err(|reason| super::workspace_catalog::catalog_refusal(policy, None, reason))?;
     ensure_workspace_binary_available_for_policy(workspace_repo_root, policy, repo_override)?;
-    catalog.prepare(workspace_repo_root, policy, None)
+    catalog.prepare(workspace_repo_root, policy)
 }
 
 pub(super) fn ensure_workspace_effigy_available_for_policy_bounded(
     workspace_repo_root: &Path,
     policy: &EffectiveContainerPolicy,
+    target_id: &str,
     budget: &mut BoundedCommandBudget,
 ) -> Result<(), RunnerError> {
     let catalog = super::workspace_catalog::HostCatalog::pin().map_err(|reason| {
         super::workspace_catalog::catalog_refusal(policy, Some(budget), reason)
     })?;
-    ensure_workspace_binary_available_for_policy_bounded(workspace_repo_root, policy, budget)?;
-    catalog.prepare(workspace_repo_root, policy, Some(budget))
+    ensure_workspace_binary_available_for_policy_bounded(
+        workspace_repo_root,
+        policy,
+        target_id,
+        budget,
+    )?;
+    catalog.prepare_bounded(workspace_repo_root, policy, target_id, budget)
 }
 
 pub(super) fn ensure_workspace_binary_available_for_policy(
@@ -356,6 +362,7 @@ pub(super) fn ensure_workspace_binary_available_for_policy(
 pub(super) fn ensure_workspace_binary_available_for_policy_bounded(
     workspace_repo_root: &Path,
     policy: &EffectiveContainerPolicy,
+    target_id: &str,
     budget: &mut BoundedCommandBudget,
 ) -> Result<(), RunnerError> {
     let expected_install_identity =
@@ -394,6 +401,7 @@ pub(super) fn ensure_workspace_binary_available_for_policy_bounded(
         workspace_repo_root,
         policy,
         policy.primary_service.as_str(),
+        target_id,
         &artifact,
         &staging_path,
         budget,
@@ -407,6 +415,7 @@ pub(super) fn ensure_workspace_binary_available_for_policy_bounded(
             workspace_repo_root,
             policy,
             policy.primary_service.as_str(),
+            target_id,
             &active_version_source,
             &active_version_staging_path,
             budget,
@@ -421,6 +430,7 @@ pub(super) fn ensure_workspace_binary_available_for_policy_bounded(
             workspace_repo_root,
             policy,
             policy.primary_service.as_str(),
+            target_id,
             &install_identity_source,
             &install_identity_staging_path,
             budget,

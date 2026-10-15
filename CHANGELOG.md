@@ -268,6 +268,28 @@ During v0.x, MINOR bumps may include breaking changes.
   second no longer overwrite each other.
 - Container secret runtime files are staged on the host in an exclusively
   created, owner-only temporary file.
+- `effigy container up --detach`, container tasks, `effigy exec` and gateway
+  route publication no longer fail intermittently with "not exec-ready" on
+  Colima. Readiness again treats its 2s/15s windows as retry windows rather than
+  hard limits that killed in-flight probes, and owned-binding checks allow for
+  Colima's per-call SSH hop.
+- Detached `container up` applies changed manifest inputs to a stack whose last
+  activation completed, and adopts running stacks started by v0.14.1 or by a
+  container task, once every running container is proven to belong to this
+  checkout. Recorded partial activations keep refusing changed inputs, and
+  containers that may belong to another checkout are never recreated.
+- `container shell --bounded` verifies, inside its budget, that the selected
+  service container belongs to this checkout, then runs the command and copies
+  workspace artifacts to that exact container. On Colima it previously could
+  copy into another service's container.
+- Workspace catalog handoff works on Colima: it identifies the workspace
+  container by Compose labels (nerdctl's `compose ps -q <service>` lists the
+  whole project) and stages the pack inside the checkout, which Colima mounts,
+  instead of the host temp directory, which it does not. The copied pack is
+  handed to the workspace user, since runtime `cp` creates it as root and its
+  cleanup would otherwise fail. Copy failures now report their cause.
+- A stopped service reports "container service `<name>` is not running" with
+  the `container up` command again, instead of "binding unavailable".
 - Workspace handoff never reuses a stale Linux workspace artifact. A prepared
   artifact is current only when its identity sidecar matches the host identity
   and its rehearsal receipt names the target. A stale, unknown, or wrong-target

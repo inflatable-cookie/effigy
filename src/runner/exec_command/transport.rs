@@ -429,64 +429,19 @@ pub(in crate::runner) fn copy_file_into_service(
     Ok(())
 }
 
+/// Copy one host file into the verified container `target_id` inside the
+/// bounded budget. The caller proved ownership of `target_id`; resolving the
+/// service again here could select a different container.
 pub(in crate::runner) fn copy_file_into_service_bounded(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     service: &str,
+    target_id: &str,
     host_source: &Path,
     container_dest: &str,
     budget: &mut BoundedCommandBudget,
 ) -> Result<(), RunnerError> {
-    let id_args = compose_args(policy, ["ps", "-q", service]);
-    let id_plan = effigy_runtime::container_manager::compose_invocation_plan_from_args(
-        repo_root,
-        policy,
-        id_args,
-        effigy_containers::ContainerAction::Status,
-        "runtime ps",
-    )
-    .map_err(|_| {
-        bounded_phase_error(
-            policy,
-            service,
-            budget,
-            BoundedCommandPhase::WorkspacePreparation,
-            "workspace_preparation_failed",
-            "bounded container command could not resolve workspace service identity",
-            None,
-        )
-    })?;
-    let id_capture = budget
-        .run_plan(&id_plan, BoundedCommandPhase::WorkspacePreparation)
-        .map_err(|failure| bounded_failure_error(policy, service, budget, failure))?;
-    if !id_capture.status.success() {
-        return Err(bounded_phase_error(
-            policy,
-            service,
-            budget,
-            BoundedCommandPhase::WorkspacePreparation,
-            "workspace_preparation_failed",
-            "bounded container command could not resolve workspace service identity",
-            id_capture.status.code(),
-        ));
-    }
-    let id_output = String::from_utf8_lossy(&id_capture.stdout);
-    let container_id = id_output
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty())
-        .ok_or_else(|| {
-            bounded_phase_error(
-                policy,
-                service,
-                budget,
-                BoundedCommandPhase::WorkspacePreparation,
-                "workspace_preparation_failed",
-                "bounded container command could not resolve workspace service identity",
-                None,
-            )
-        })?
-        .to_owned();
+    let container_id = target_id;
     let copy_args = [
         OsString::from("cp"),
         host_source.as_os_str().to_os_string(),

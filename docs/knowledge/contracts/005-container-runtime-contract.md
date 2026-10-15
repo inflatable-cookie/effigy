@@ -193,9 +193,29 @@ write, and the resulting file must match its renderer bytes afterward. Creation
 refresh verifies the retained declaration rather than capturing a new baseline.
 Marked reconciliation also verifies its original marker inputs before any
 materialization. Attached and unrelated data preparation retain legacy behavior.
-A running stack without that original admission refuses detached reconciliation;
-current inputs cannot establish a replacement baseline. If recording failed,
-JSON recovery is null and human advice grants no retry authority. Detached JSON
+A recorded *partial* activation reconciles only against its original admission;
+changed inputs refuse until `effigy container down`. A *completed* activation
+writes a completion marker beside its record. When its inputs later change, or
+when a running stack has no record at all (a stack started by an earlier
+release, by a container task, or whose record write failed), detached `up`
+first proves that every running project container belongs to this checkout and
+scope, then retires the stale record and admits the current inputs with an
+ordinary Compose up. Containers with no checkout, working-directory or scope
+label count as this checkout's only when the checkout itself is unscoped, which
+matches earlier releases. Anything not proven refuses with no Compose up,
+restart or publication, and names `container down` for the owner.
+
+Operator ruling (Tom, 2026-10-15, v0.15.0 pre-release audit): "Restore for
+complete stacks". Detached `up` must not refuse a complete stack whose inputs
+changed or that predates the admission record; the strict no-adopt refusal stays
+only for recorded partial activations.
+
+Exec readiness keeps v0.14.1's soft budget: the 2-second and 15-second windows
+decide whether another probe attempt starts, and each attempt (ownership
+re-inspection plus exec) gets its own 10-second bound. Owned-binding
+verification likewise allows 10 seconds, because VM-backed runtimes such as
+Colima route every call through an SSH hop. A caller-supplied deadline (bounded
+commands) stays absolute. Detached JSON
 retains closed-vocabulary managed-listener readiness observations (including HTTP
 status mismatch) without copying backend output, process names or arguments.
 Inventory, exec readiness and exposure failures retain partial/unavailable
@@ -203,8 +223,8 @@ state and do not tear down or restart running services. Reconciliation with
 `effigy container up --detach` verifies the exact canonical source/context and
 fresh owned full-ID bindings before registering exposure; missing primary,
 changed/legacy markers and unavailable observations refuse without Compose up.
-The context persists as the detached owner after success; only the selected
-temporary task lease is cleared. Explicit `container down` clears that context
+The context persists as the detached owner after success, marked complete; only
+the selected temporary task lease is cleared. Explicit `container down` clears that context
 and keeps volumes. Attached bring-up keeps its existing cleanup policy.
 
 Detached JSON failures contain bounded structural details: state, phase,

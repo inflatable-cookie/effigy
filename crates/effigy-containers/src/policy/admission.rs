@@ -13,7 +13,7 @@ pub struct PolicyAdmission {
     marker: Option<Value>,
 }
 fn refusal() -> ContainerPolicyError {
-    ContainerPolicyError::TaskInvocation("detached preparation refused: original declaration, identity or Compose input changed/unavailable; no activation or publication authorized".to_owned())
+    ContainerPolicyError::TaskInvocation("detached preparation refused: the container declaration, identity or Compose input changed while it was being admitted, or its admission record is unreadable; nothing was activated or published. Retry `effigy container up --detach`; if this persists, run `effigy container down` first".to_owned())
 }
 fn fingerprint(path: &Path) -> Result<Option<String>, ContainerPolicyError> {
     match std::fs::read(path) {

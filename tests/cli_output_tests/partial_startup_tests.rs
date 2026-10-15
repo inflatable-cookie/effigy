@@ -586,14 +586,45 @@ fn private_manifest_detached_preparation_failure_retains_unavailable_state() {
 }
 
 #[test]
-fn private_missing_admission_never_rebaselines_running_stack() {
+fn private_completed_activation_applies_changed_inputs() {
+    let mut fixture = Fixture::new();
+    let first = fixture.run(0, &["container", "up", "--detach", "--json"]);
+    assert!(first.status.success(), "{first:?}");
+    let manifest = fixture.stacks[0].root.join("effigy.toml");
+    let mut changed = fs::read(&manifest).unwrap();
+    changed.extend_from_slice(b"\n# edited while the stack runs\n");
+    fs::write(&manifest, changed).unwrap();
+
+    let applied = fixture.run(0, &["container", "up", "--detach", "--json"]);
+    assert!(applied.status.success(), "{applied:?}");
+    let ups = fs::read_to_string(fixture.stacks[0].root.join("commands.jsonl"))
+        .unwrap()
+        .lines()
+        .filter(|line| {
+            serde_json::from_str::<Vec<String>>(line)
+                .unwrap()
+                .iter()
+                .any(|arg| arg == "up")
+        })
+        .count();
+    assert_eq!(ups, 2, "changed inputs run a fresh compose up");
+    for i in 1..3 {
+        fixture.probe(i);
+    }
+}
+
+#[test]
+fn private_unrecorded_owned_running_stack_reactivates_with_current_inputs() {
+    // A running stack without an admission record (here its record write
+    // failed; in practice also stacks started by an earlier release or by a
+    // container task) is this checkout's, so a detached `up` applies the
+    // current inputs instead of refusing.
     let mut fixture = Fixture::new();
     fixture.set(0, "mode", json!("marker-write-fail"));
     let failed = fixture.run(0, &["container", "up", "--detach", "--json"]);
     assert!(!failed.status.success(), "{failed:?}");
     let result: Value = serde_json::from_slice(&failed.stdout).expect("partial JSON");
     assert_eq!(result["error"]["details"]["state"], "partial");
-    assert!(result["error"]["details"]["recovery"].is_null());
     assert!(fixture.state(0)["active"].as_bool().unwrap());
     let blocked = fixture
         .root
@@ -602,49 +633,23 @@ fn private_missing_admission_never_rebaselines_running_stack() {
     fs::remove_file(&blocked).expect("remove exclusively owned write fault");
     fixture.set(0, "mode", json!("ready"));
     let manifest = fixture.stacks[0].root.join("effigy.toml");
-    let original = fs::read(&manifest).unwrap();
-    let mut changed = original.clone();
+    let mut changed = fs::read(&manifest).unwrap();
     changed.extend_from_slice(b"\n# changed after unrecorded launch\n");
     fs::write(&manifest, changed).unwrap();
-    for json_output in [true, false] {
-        let args = if json_output {
-            vec!["container", "up", "--detach", "--json"]
-        } else {
-            vec!["container", "up", "--detach"]
-        };
-        let refused = fixture.run(0, &args);
-        assert!(!refused.status.success(), "{refused:?}");
-        if json_output {
-            let result: Value = serde_json::from_slice(&refused.stdout).unwrap();
-            assert!(result["error"]["details"]["recovery"].is_null());
-        } else {
-            assert!(String::from_utf8_lossy(&refused.stderr)
-                .contains("original detached admission is missing"));
-            assert!(!String::from_utf8_lossy(&refused.stderr)
-                .contains("reconcile with `effigy container up --detach`"));
-        }
-        fixture.assert_no_recreation(0);
-        assert!(!blocked.exists(), "retry must not mint admission");
-        assert!(!fixture
-            .root
-            .path()
-            .join("home/.effigy/gateway/routes.json")
-            .exists());
-        for i in 0..3 {
-            fixture.probe(i);
-        }
-        assert_eq!(
-            fs::read_to_string(fixture.stacks[0].root.join("data")).unwrap(),
-            "private-data-0"
-        );
+
+    let reactivated = fixture.run(0, &["container", "up", "--detach", "--json"]);
+    assert!(reactivated.status.success(), "{reactivated:?}");
+    assert!(
+        blocked.is_dir(),
+        "the fresh activation records its admission"
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.stacks[0].root.join("data")).unwrap(),
+        "private-data-0"
+    );
+    for i in 1..3 {
+        fixture.probe(i);
     }
-    fs::write(manifest, original).unwrap();
-    assert!(!fixture
-        .run(0, &["container", "up", "--detach"])
-        .status
-        .success());
-    fixture.assert_no_recreation(0);
-    assert!(!blocked.exists());
 }
 
 #[test]

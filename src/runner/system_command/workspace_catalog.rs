@@ -14,8 +14,8 @@ use serde_json::Value;
 
 use crate::runner::container_command::{bounded_failure_error, bounded_phase_error};
 use crate::runner::exec_command::{
-    copy_file_into_service, copy_file_into_service_bounded, BoundedCommandBudget,
-    BoundedCommandPhase,
+    copy_file_into_service, copy_file_into_service_bounded, BoundedCapture, BoundedCommandBudget,
+    BoundedCommandPhase, BoundedScopedCaptureFailure,
 };
 use crate::runner::service_command::effigy_version;
 
@@ -76,15 +76,36 @@ impl HostCatalog {
         &self,
         repo_root: &Path,
         policy: &EffectiveContainerPolicy,
-        budget: Option<&mut BoundedCommandBudget>,
     ) -> Result<(), RunnerError> {
-        let mut transport = CatalogTransport {
+        self.prepare_with(CatalogTransport {
             repo_root,
             policy,
-            budget,
+            budget: None,
             failure: None,
+            verified_target: None,
             target: None,
-        };
+        })
+    }
+
+    /// Bounded preparation for the verified workspace container `target_id`.
+    pub(super) fn prepare_bounded(
+        &self,
+        repo_root: &Path,
+        policy: &EffectiveContainerPolicy,
+        target_id: &str,
+        budget: &mut BoundedCommandBudget,
+    ) -> Result<(), RunnerError> {
+        self.prepare_with(CatalogTransport {
+            repo_root,
+            policy,
+            budget: Some(budget),
+            failure: None,
+            verified_target: Some(target_id),
+            target: None,
+        })
+    }
+
+    fn prepare_with(&self, mut transport: CatalogTransport<'_>) -> Result<(), RunnerError> {
         self.prepare_using(&mut transport).map_err(|reason| {
             let identity = self
                 .selection
@@ -109,7 +130,14 @@ impl HostCatalog {
             return Ok(());
         };
         let guard = identity_guard(transport.policy)?;
-        transport.target = Some(transport.selected_target()?);
+        let selected = transport.selected_target()?;
+        if transport
+            .verified_target
+            .is_some_and(|verified| verified != selected)
+        {
+            return Err("selected workspace changed during catalog preparation; no task was started; retry against the activated workspace");
+        }
+        transport.target = Some(selected);
         let status = transport.run(&format!(
             "{guard}; exec /usr/local/bin/effigy service pack status --json"
         ))?;
@@ -119,9 +147,14 @@ impl HostCatalog {
         }
         // Snapshot the retained install, never its original source checkout.
         // The owned tempdir stays alive until every copy/install/probe completes.
+        // Stage inside the checkout: VM-backed runtimes such as Colima mount the
+        // checkout but not the host's system temp directory.
+        let staging_parent = transport.repo_root.join(".effigy/tmp");
+        std::fs::create_dir_all(&staging_parent)
+            .map_err(|_| "could not create private host catalog staging")?;
         let snapshot = tempfile::Builder::new()
             .prefix("effigy-workspace-catalog-")
-            .tempdir()
+            .tempdir_in(&staging_parent)
             .map_err(|_| "could not create private host catalog staging")?;
         let payload = snapshot.path().join("pack");
         copy_tree(&self.retained_root(record)?, &payload)
@@ -145,6 +178,14 @@ impl HostCatalog {
             shell_quote(&staging)
         ))?;
         transport.copy(&payload, &format!("{staging}/pack"))?;
+        // Runtime `cp` creates the copied tree as root; hand it to the workspace
+        // user so its install and the cleanup below run without root.
+        let workspace_user = transport
+            .policy
+            .workspace_user
+            .clone()
+            .ok_or("workspace catalog user is unavailable")?;
+        transport.run_as_root(&["chown", "-R", &workspace_user, &format!("{staging}/pack")])?;
         verify_installed_pack(&payload, record, effigy_version()).map_err(|_| {
             "host catalog snapshot changed during transport; retry workspace preparation"
         })?;
@@ -272,6 +313,8 @@ struct CatalogTransport<'a> {
     policy: &'a EffectiveContainerPolicy,
     budget: Option<&'a mut BoundedCommandBudget>,
     failure: Option<RunnerError>,
+    /// Container the bounded caller already proved it owns.
+    verified_target: Option<&'a str>,
     target: Option<String>,
 }
 
@@ -281,11 +324,25 @@ impl CatalogTransport<'_> {
     }
 
     fn selected_target(&mut self) -> Result<String, &'static str> {
-        let args = effigy_containers::compose::compose_args(
-            self.policy,
-            ["ps", "-q", self.policy.primary_service.as_str()],
-        );
-        let raw = self.capture(args, effigy_containers::ContainerAction::Status)?;
+        // nerdctl's `compose ps -q <service>` ignores the service and lists the
+        // whole project, so select the primary by its Compose labels instead.
+        let args = [
+            "ps".to_owned(),
+            "-q".to_owned(),
+            "--no-trunc".to_owned(),
+            "--filter".to_owned(),
+            format!(
+                "label=com.docker.compose.project={}",
+                self.policy.project_name
+            ),
+            "--filter".to_owned(),
+            format!(
+                "label=com.docker.compose.service={}",
+                self.policy.primary_service
+            ),
+        ]
+        .map(OsString::from);
+        let raw = self.capture_runtime(&args)?;
         let text = std::str::from_utf8(&raw)
             .map_err(|_| "workspace catalog target identity is malformed")?;
         let mut lines = text.lines().filter(|line| !line.trim().is_empty());
@@ -336,76 +393,143 @@ impl CatalogTransport<'_> {
             OsString::from(command),
         ]);
         self.check_target()?;
-        let output = self.capture(args, effigy_containers::ContainerAction::Exec)?;
+        let output = self.capture_exec(args)?;
         self.check_target()?;
         Ok(output)
     }
 
-    fn capture(
-        &mut self,
-        args: Vec<OsString>,
-        action: effigy_containers::ContainerAction,
-    ) -> Result<Vec<u8>, &'static str> {
+    /// Run one fixed argv as root in the selected workspace, without a shell.
+    fn run_as_root(&mut self, argv: &[&str]) -> Result<Vec<u8>, &'static str> {
+        let mut args = effigy_containers::compose::compose_args(
+            self.policy,
+            [
+                "exec",
+                "-T",
+                "-u",
+                "0",
+                self.policy.primary_service.as_str(),
+            ],
+        );
+        args.extend(argv.iter().map(OsString::from));
+        self.check_target()?;
+        let output = self.capture_exec(args)?;
+        self.check_target()?;
+        Ok(output)
+    }
+
+    /// Run one Compose exec, inside the bounded budget when one governs this
+    /// preparation.
+    fn capture_exec(&mut self, args: Vec<OsString>) -> Result<Vec<u8>, &'static str> {
         if let Some(budget) = self.budget.as_deref_mut() {
             let plan = effigy_runtime::container_manager::compose_invocation_plan_from_args(
                 self.repo_root,
                 self.policy,
                 args,
-                action,
+                effigy_containers::ContainerAction::Exec,
                 "workspace catalog preparation",
             )
             .map_err(|_| "could not resolve workspace catalog preparation")?;
-            let output = budget
-                .run_plan(&plan, BoundedCommandPhase::WorkspacePreparation)
-                .map_err(|failure| {
-                    // Preserve the original failure accounting at the caller.
-                    self.failure = Some(bounded_failure_error(
-                        self.policy,
-                        &self.policy.primary_service,
-                        budget,
-                        failure,
-                    ));
-                    "workspace catalog transport exceeded its original bounds"
-                })?;
-            if !output.status.success() {
-                self.failure = Some(bounded_phase_error(
-                    self.policy, &self.policy.primary_service, budget,
-                    BoundedCommandPhase::WorkspacePreparation, "workspace_catalog_mismatch",
-                    "guest catalog preparation failed; selection was not certified; inspect `effigy service pack status` as the configured workspace user",
-                    output.status.code(),
-                ));
-                return Err("guest catalog preparation failed");
-            }
-            Ok(output.stdout)
-        } else {
-            let output = if matches!(action, effigy_containers::ContainerAction::Status) {
-                // Inventory is a Compose command, not Colima's direct-exec
-                // route. Keep ordinary exec on that existing backend seam.
-                let (program, resolved) = effigy_containers::compose::compose_invocation_for_repo(
-                    self.repo_root, self.policy, &args,
-                );
-                crate::runner::exec_command::run_command_capture_until(
-                    self.repo_root, std::ffi::OsStr::new(program), &resolved, None, None,
-                )
-            } else {
-                crate::runner::exec_command::run_compose_exec(
-                    self.repo_root, self.policy, &args, true, "workspace catalog preparation",
-                )
-            }.map_err(|_| "workspace catalog transport failed; inspect the configured workspace user and service")?;
-            if !output.status.success() {
-                return Err("guest catalog preparation failed; selection was not certified; inspect `effigy service pack status` as the configured workspace user");
-            }
-            Ok(output.stdout)
+            let result = budget.run_plan(&plan, BoundedCommandPhase::WorkspacePreparation);
+            return self.finish_bounded(result);
         }
+        let output = crate::runner::exec_command::run_compose_exec(
+            self.repo_root,
+            self.policy,
+            &args,
+            true,
+            "workspace catalog preparation",
+        )
+        .map_err(|_| {
+            "workspace catalog transport failed; inspect the configured workspace user and service"
+        })?;
+        if !output.status.success() {
+            return Err("guest catalog preparation failed; selection was not certified; inspect `effigy service pack status` as the configured workspace user");
+        }
+        Ok(output.stdout)
+    }
+
+    /// Capture a runtime-level (not Compose) command, inside the bounded budget
+    /// when one governs this preparation.
+    fn capture_runtime(&mut self, args: &[OsString]) -> Result<Vec<u8>, &'static str> {
+        let plan = effigy_runtime::container_manager::runtime_invocation_plan(
+            self.repo_root,
+            self.policy,
+            "docker",
+            args,
+            effigy_containers::ContainerAction::Status,
+            "workspace catalog target",
+        )
+        .map_err(|_| "could not resolve workspace catalog target")?;
+        if let Some(budget) = self.budget.as_deref_mut() {
+            let result = budget.run_command(
+                &plan.repo_root,
+                plan.program.as_os_str(),
+                &plan.args,
+                None,
+                &[],
+                BoundedCommandPhase::WorkspacePreparation,
+            );
+            return self.finish_bounded(result);
+        }
+        let output = crate::runner::exec_command::run_command_capture_until(
+            self.repo_root,
+            plan.program.as_os_str(),
+            &plan.args,
+            None,
+            None,
+        )
+        .map_err(|_| "workspace catalog target lookup failed")?;
+        if !output.status.success() {
+            return Err("workspace catalog target lookup failed");
+        }
+        Ok(output.stdout)
+    }
+
+    fn finish_bounded(
+        &mut self,
+        result: Result<BoundedCapture, BoundedScopedCaptureFailure>,
+    ) -> Result<Vec<u8>, &'static str> {
+        let budget = self
+            .budget
+            .as_deref()
+            .ok_or("workspace catalog transport lost its bounded budget")?;
+        let output = match result {
+            Ok(output) => output,
+            Err(failure) => {
+                // Preserve the original failure accounting at the caller.
+                self.failure = Some(bounded_failure_error(
+                    self.policy,
+                    &self.policy.primary_service,
+                    budget,
+                    failure,
+                ));
+                return Err("workspace catalog transport exceeded its original bounds");
+            }
+        };
+        if !output.status.success() {
+            self.failure = Some(bounded_phase_error(
+                self.policy, &self.policy.primary_service, budget,
+                BoundedCommandPhase::WorkspacePreparation, "workspace_catalog_mismatch",
+                "guest catalog preparation failed; selection was not certified; inspect `effigy service pack status` as the configured workspace user",
+                output.status.code(),
+            ));
+            return Err("guest catalog preparation failed");
+        }
+        Ok(output.stdout)
     }
 
     fn copy(&mut self, source: &Path, destination: &str) -> Result<(), &'static str> {
         self.check_target()?;
         if let Some(budget) = self.budget.as_deref_mut() {
+            let target = self
+                .target
+                .as_deref()
+                .ok_or("workspace catalog target is unavailable")?;
             copy_file_into_service_bounded(
                 self.repo_root,
                 self.policy,
                 &self.policy.primary_service,
+                target,
                 source,
                 destination,
                 budget,
@@ -422,7 +546,8 @@ impl CatalogTransport<'_> {
                 source,
                 destination,
             )
-            .map_err(|_| {
+            .map_err(|error| {
+                self.failure = Some(error);
                 "workspace catalog copy failed; new staging is retained and no task was started"
             })
         }?;
