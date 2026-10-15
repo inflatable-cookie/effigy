@@ -8,7 +8,7 @@ use super::super::drafts_command::run_drafts;
 use super::super::run_artifact;
 use super::super::run_bundle;
 use super::super::run_changelog;
-use super::super::run_container;
+use super::super::run_container_command;
 use super::super::run_contracts;
 use super::super::run_defer;
 use super::super::run_demo;
@@ -93,7 +93,7 @@ pub(super) fn run_command_with_cwd(cmd: Command, cwd: &Path) -> Result<String, R
         Command::Skill(args) => run_skill(args),
         Command::Docs(args) => run_docs(args),
         Command::Contracts(args) => run_contracts(args),
-        Command::Container(args) => run_container(args),
+        Command::Container(args) => run_container_command(args),
         Command::Bootstrap(args) => {
             super::super::bootstrap_command::run_bootstrap_with_cwd(args, cwd.to_path_buf())
         }

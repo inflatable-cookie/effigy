@@ -1150,6 +1150,11 @@ Contract:
 - if Effigy auto-started the runtime, or the runtime was already under an
   active task lease, Effigy refreshes the host-container lease
 - default lease timeout is 5 minutes unless configured otherwise
+- a stack that an explicit `effigy container up` left running is persistently
+  owned: task activation never leases it, the reaper never shuts it down, and
+  only an explicit teardown ends that ownership - every `effigy container down`
+  form that stops the stack (`--global` and cwd-scoped included) and
+  `effigy container retire` once it removes the scope
 - lease reuse must not depend on whether the request came from deferral or
   explicit task routing
 
