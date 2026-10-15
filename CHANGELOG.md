@@ -227,6 +227,10 @@ During v0.x, MINOR bumps may include breaking changes.
   owner, and a finishing run never removes or refreshes a successor's lock. An
   unparsable lock is reclaimed only after a short grace period, so a lock still
   being written by an older Effigy is not stolen.
+- Container exec preparation gives owned-service inventory and inspection a
+  bounded 15-second window separate from the initial workload probe. Valid
+  Colima stacks no longer exhaust a shared two-second window before exec;
+  explicit caller deadlines and strict immutable-ID ownership checks remain.
 - `effigy doctor` no longer reports `{ task = "defer …" }` and other builtin
   command references as unresolved tasks, and accepts every top-level manifest
   table (`isolation`, `state`, `deploy`, `data`, `env_schema`, `qa`). A manifest

@@ -61,14 +61,24 @@ case "$subcmd" in
     printf "compose-up\n"
     ;;
   ps)
+    if [ -f "$state/delay-binding" ]; then sleep 1.2; fi
     if [ -f "$state/running" ]; then
       printf "%s\tUp 1 second\t\t%s\t\t%s\tFalse\n" "$cname" "$proj" "$svc"
+    fi
+    if [ -f "$state/delay-binding" ]; then
+      for sibling in dbgate mailpit silo; do
+        printf "%s-%s-1\tUp 1 second\t\t%s\t\t%s\tFalse\n" "$proj" "$sibling" "$proj" "$sibling"
+      done
     fi
     if [ -f "$state/sibling.json" ]; then
       printf "fixture-sibling-dev-sibling-1\tUp 1 second\t\tfixture-sibling-dev\t\tsibling\tFalse\n"
     fi
     ;;
   inspect)
+    if [ -f "$state/delay-binding" ]; then
+      sleep 0.9
+      printf '%s\n' "$*" >> "$state/delayed-inspects"
+    fi
     for arg in "$@"; do
       if [ "$arg" = "fixture-sibling-dev-sibling-1" ] && [ -f "$state/sibling.json" ]; then cat "$state/sibling.json"; exit 0; fi
     done
@@ -91,6 +101,7 @@ case "$subcmd" in
     fi
     if [ "$mode" = changing_scope ] && [ "$count" -gt 1 ]; then scope=foreign-scope-token; fi
     if [ "$mode" = changing_checkout ] && [ "$count" -gt 1 ]; then checkout=/elsewhere/checkout; fi
+    if [ "$mode" = delayed_foreign ] && [ -f "$state/delay-binding" ]; then checkout=/elsewhere/checkout; fi
     if [ -f "$state/project" ]; then proj=$(cat "$state/project"); fi
     extra=""
     if [ -n "$checkout" ]; then
@@ -175,6 +186,11 @@ fn run_direct_builder_activation(label: &str, mode: &str) -> BuilderOutcome {
 let result = container::exec("builder", ["printf", "%s", "space and $literal; untouched"], #{"stdin_file": path::join(repo_root, "input.txt"), "cwd": repo_root, "env": #{"PAYLOAD": "a b;$raw"}});
 if !result["success"] { throw("literal exec failed"); }
 "#.to_owned()
+    } else if mode.starts_with("delayed_") {
+        BUILDER_SCRIPT.replace(
+            "let shell =",
+            "fs::write_file(\"state/delay-binding\", \"armed\");\nlet shell =",
+        )
     } else if mode == "replace_before_exec" {
         BUILDER_SCRIPT.replace(
             "let shell =",
@@ -210,6 +226,14 @@ detach_timeout_secs = 1
 mounts = ["./:/workspace"]
 "#,
     );
+    if mode.starts_with("delayed_") {
+        let compose = root.join("infra/release/docker-compose.yml");
+        let mut content = fs::read_to_string(&compose).unwrap();
+        for sibling in ["dbgate", "mailpit", "silo"] {
+            content.push_str(&format!("  {sibling}:\n    image: example\n"));
+        }
+        fs::write(compose, content).unwrap();
+    }
     if mode == "generated" {
         let catalog = root.join("infra/dev/catalog/private-builder");
         fs::create_dir_all(&catalog).unwrap();
@@ -314,7 +338,7 @@ esac
         (
             "EFFIGY_COMPOSE_BACKEND",
             Some(
-                if mode == "nerdctl" {
+                if mode == "nerdctl" || mode.starts_with("delayed_") {
                     "colima"
                 } else {
                     "docker"
@@ -349,15 +373,29 @@ esac
         ),
     ]);
 
-    let result = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "validate".to_owned(),
-            args: Vec::new(),
-        },
-        root.clone(),
-    )
-    .map(|_| ())
-    .map_err(|error| error.to_string());
+    let result = if mode == "expired_binding" {
+        let policy = effigy_containers::load_container_policy(&root, Some("builder"))
+            .expect("private declared policy");
+        crate::runner::container_runtime_prep::verify_service_exec_ready(
+            &root,
+            &policy,
+            "builder",
+            std::path::Path::new("/workspace"),
+            Some(std::time::Instant::now() - std::time::Duration::from_secs(1)),
+        )
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+    } else {
+        run_manifest_task_with_cwd(
+            &TaskInvocation {
+                name: "validate".to_owned(),
+                args: Vec::new(),
+            },
+            root.clone(),
+        )
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+    };
     assert_eq!(
         fs::read_to_string(&sibling_path).unwrap(),
         sibling,
@@ -561,6 +599,53 @@ fn nerdctl_builder_without_ports_targets_the_verified_full_id() {
     let effects = fs::read_to_string(outcome.root.join("state/effects")).unwrap();
     assert!(effects.contains(&"a".repeat(64)));
     assert!(effects.contains("printf builder-shell"));
+}
+
+#[test]
+fn delayed_nerdctl_binding_preserves_verification_and_reaches_exact_id_exec() {
+    let _lock = lock_test();
+    let outcome = run_direct_builder_activation("delayed-owned", "delayed_owned");
+    outcome
+        .result
+        .expect("valid transport hops must fit the owned-verification budget");
+    let effects = fs::read_to_string(outcome.root.join("state/effects")).unwrap();
+    assert!(effects.contains(&"a".repeat(64)));
+    let inspects = fs::read_to_string(outcome.root.join("state/delayed-inspects")).unwrap();
+    assert!(!inspects.is_empty());
+    for sibling in ["dbgate", "mailpit", "silo"] {
+        assert!(
+            !inspects.contains(sibling),
+            "unselected sibling inspected: {inspects}"
+        );
+    }
+    assert!(!outcome.docker_args.contains("restart"));
+}
+
+#[test]
+fn delayed_nerdctl_binding_still_refuses_foreign_checkout_without_restart() {
+    let _lock = lock_test();
+    let outcome = run_direct_builder_activation("delayed-foreign", "delayed_foreign");
+    let error = outcome
+        .result
+        .expect_err("slow foreign inspection must refuse");
+    assert!(is_owned_binding_refusal(&error), "{error}");
+    assert!(!outcome.root.join("state/effects").exists());
+    assert!(!outcome.docker_args.contains("restart"));
+}
+
+#[test]
+fn delayed_nerdctl_binding_preserves_explicit_expired_caller_deadline() {
+    let _lock = lock_test();
+    let outcome = run_direct_builder_activation("expired-binding", "expired_binding");
+    let error = outcome
+        .result
+        .expect_err("caller deadline must not get a fresh allowance");
+    assert!(error.contains("timed out"), "{error}");
+    assert!(
+        outcome.docker_args.is_empty(),
+        "expired verification spawned: {}",
+        outcome.docker_args
+    );
 }
 
 #[test]

@@ -42,6 +42,11 @@ use crate::runner::error::RunnerError;
 use crate::runner::host_container_lease::refresh_host_container_lease_for_task_activation;
 use crate::runner::runtime_session_context::{LeaseRefreshPolicy, RuntimeSessionContext};
 
+// Inventory and strict inspection require separate runtime transport hops. They
+// must not consume the short workload probe's execution window. Explicit caller
+// deadlines still bound both phases without being extended.
+pub(in crate::runner) const OWNED_EXEC_VERIFICATION_TIMEOUT: Duration = Duration::from_secs(15);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::runner) struct ContainerTaskActivation {
     pub(in crate::runner) system_was_running: bool,
@@ -542,7 +547,7 @@ pub(in crate::runner) fn ensure_primary_service_exec_ready_for_runtime(
         repo_root,
         policy,
         &policy.primary_service,
-        Instant::now() + Duration::from_secs(2),
+        Instant::now() + OWNED_EXEC_VERIFICATION_TIMEOUT,
     )?;
     ensure_primary_service_exec_ready_with_recovery_using(
         policy,
@@ -572,7 +577,7 @@ pub(in crate::runner) fn verify_primary_service_exec_ready_for_reconciliation(
         policy,
         &policy.primary_service,
         working_dir,
-        Instant::now() + Duration::from_secs(2),
+        None,
     )
 }
 
@@ -643,11 +648,22 @@ pub(in crate::runner) fn verify_service_exec_ready(
     policy: &EffectiveContainerPolicy,
     service: &str,
     working_dir: &Path,
-    deadline: Instant,
+    deadline: Option<Instant>,
 ) -> Result<effigy_containers::exec::VerifiedComposeContainer, RunnerError> {
-    let binding = verified_service_binding(repo_root, policy, service, deadline)?;
-    probe_verified_service_exec_ready(repo_root, policy, working_dir, &binding, deadline)?
-        .ok_or_else(|| RunnerError::container_runtime_exec_not_ready(policy, working_dir))
+    let binding = verified_service_binding(
+        repo_root,
+        policy,
+        service,
+        deadline.unwrap_or_else(|| Instant::now() + OWNED_EXEC_VERIFICATION_TIMEOUT),
+    )?;
+    probe_verified_service_exec_ready(
+        repo_root,
+        policy,
+        working_dir,
+        &binding,
+        deadline.unwrap_or_else(|| Instant::now() + Duration::from_secs(2)),
+    )?
+    .ok_or_else(|| RunnerError::container_runtime_exec_not_ready(policy, working_dir))
 }
 
 fn probe_verified_service_exec_ready(
