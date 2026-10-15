@@ -1,5 +1,4 @@
 use std::ffi::OsString;
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use effigy_containers::ContainerAction;
@@ -336,32 +335,31 @@ fn container_secret_env_name(name: &str) -> String {
         .collect()
 }
 
+/// Host-side staging for one secret runtime file. Created exclusively with an
+/// unpredictable name and owner-only mode before any secret byte is written;
+/// removed on drop.
 struct TempSecretFile {
+    // Held so the file lives until the copy completes.
+    _file: tempfile::NamedTempFile,
     path: PathBuf,
 }
 
 impl TempSecretFile {
     fn write(label: &str, bytes: &[u8]) -> Result<Self, RunnerError> {
-        let path = std::env::temp_dir().join(format!(
-            "effigy-container-secret-runtime-{label}-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_err(|error| RunnerError::task_invocation(error.to_string()))?
-                .as_nanos()
-        ));
-        fs::write(&path, bytes).map_err(|error| {
+        use std::io::Write;
+        let failure = |error: std::io::Error| {
             RunnerError::task_invocation(format!(
-                "failed to write temporary container secret file {}: {error}",
-                path.display()
+                "failed to write temporary container secret file: {error}"
             ))
-        })?;
-        Ok(Self { path })
-    }
-}
-
-impl Drop for TempSecretFile {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.path);
+        };
+        let mut file = tempfile::Builder::new()
+            .prefix(&format!("effigy-container-secret-runtime-{label}-"))
+            .tempfile()
+            .map_err(failure)?;
+        file.write_all(bytes).map_err(failure)?;
+        file.flush().map_err(failure)?;
+        let path = file.path().to_path_buf();
+        Ok(Self { _file: file, path })
     }
 }
 

@@ -181,3 +181,48 @@ fn cli_selector_plan_does_not_run_deferral_fallback() {
         marker.display()
     );
 }
+
+#[test]
+fn cli_selector_plan_describes_workspace_shell_task_without_run() {
+    let root = temp_workspace("cli-plan-workspace-shell");
+    fs::write(
+        root.join("docker-compose.yml"),
+        "services:\n  app:\n    image: busybox\n",
+    )
+    .expect("write compose file");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "docker-compose.yml"
+primary_service = "app"
+
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
+
+[tasks.dev]
+workspace = "app"
+"#,
+    )
+    .expect("write manifest");
+
+    let output = run_json_cli_command(&root, &["dev", "--plan"]);
+    let stdout = String::from_utf8(output.stdout.clone()).expect("utf8 stdout");
+    let stderr = String::from_utf8(output.stderr.clone()).expect("utf8 stderr");
+    assert!(
+        output.status.success(),
+        "a run-less workspace task plans its shell, stdout={stdout}\nstderr={stderr}"
+    );
+    let parsed: Value = serde_json::from_str(&stdout).expect("json parse");
+    assert_eq!(parsed["result"]["executed"], false);
+    assert_eq!(parsed["result"]["command"], "workspace shell");
+}
