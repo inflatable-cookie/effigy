@@ -327,6 +327,10 @@ Behavior:
 - open workspace shell
 - do package or maintenance work inside Linux
 - on shell exit, prompt to bring the system down and default the answer to yes
+- if the handoff refuses a stale Linux workspace artifact, the refusal names the
+  host and artifact versions, the target, and the rebuild command, for example
+  `EFFIGY_LINUX_RELEASE_TRIPLE=aarch64-unknown-linux-gnu effigy workspace:linux:artifact`.
+  Run that from the Effigy checkout, then retry `effigy workspace`.
 
 ### Manual substrate control
 

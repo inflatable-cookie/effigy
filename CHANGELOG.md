@@ -207,6 +207,22 @@ During v0.x, MINOR bumps may include breaking changes.
   0.14.x releases without changing the support floor.
 
 ### Fixed
+- Workspace handoff never reuses a stale Linux workspace artifact. A prepared
+  artifact is current only when its identity sidecar matches the host identity
+  and its rehearsal receipt names the target. A stale, unknown, or wrong-target
+  artifact is rebuilt through `workspace:linux:artifact`, or the handoff refuses
+  before copy or exec with the known host/artifact versions and identities and
+  the target-specific rebuild command. A build that exits successfully without
+  writing fresh output is refused, and sidecars are bound only after a build or
+  download justifies them. Download-mode cache entries are reused only when their
+  identity names this release. Existing timestamps and file presence no longer
+  qualify an artifact. The offline hint no longer recommends reusing the
+  incompatible artifact.
+- Direct `compose_file` containers carry the same checkout and scope identity
+  labels as generated containers, rendered as a Compose override beside the
+  repo-owned file. The owned-binding check is unchanged. Existing unlabelled
+  direct containers are refused, not adopted, until a Compose `up` recreates them
+  with the labels.
 - Detached activation errors now retain a bounded `activation_stage` alongside
   partial/unavailable status, without exposing raw backend output or arguments.
 - Detached reconciliation refuses a running stack whose original admission
