@@ -206,11 +206,6 @@ pub fn list_running_compose_containers_for_policy(
     )
 }
 
-/// Deadline-aware compose `ps` probe. One caller-visible monotonic deadline is
-/// converted to a per-spawn remainder, so a preceding liveness probe consumes
-/// the same budget instead of granting this probe a fresh timeout. An expired
-/// deadline never spawns; timeouts stay `unavailable` (distinct from stopped or
-/// clean) and the bounded doctor path never triggers a Colima runtime repair.
 /// Runtime `ps` arguments listing one Compose project's containers. The label
 /// filter keeps the runtime from enumerating every container in a shared VM;
 /// callers still filter the parsed rows by project as the authority.
@@ -228,6 +223,11 @@ fn project_ps_args(project_name: &str, include_stopped: bool) -> Vec<OsString> {
     args
 }
 
+/// Deadline-aware compose `ps` probe. One caller-visible monotonic deadline is
+/// converted to a per-spawn remainder, so a preceding liveness probe consumes
+/// the same budget instead of granting this probe a fresh timeout. An expired
+/// deadline never spawns; timeouts stay `unavailable` (distinct from stopped or
+/// clean) and the bounded doctor path never triggers a Colima runtime repair.
 pub fn list_running_compose_containers_for_policy_with_deadline(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
