@@ -17,6 +17,8 @@ effigy --json <catalog-or-root-task>
 ```
 
 When JSON mode is active, CLI preamble output is suppressed and output is pure JSON.
+`effigy changelog extract` also omits the presentation banner when stdout is not a
+terminal, so redirected release notes contain only the extracted changelog.
 `--json` is an output format, never a planning or safety flag:
 `effigy --json <selector>` still runs the task. Use `effigy --json <selector> --plan`
 to inspect the resolved command without executing it.
