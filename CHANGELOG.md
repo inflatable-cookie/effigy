@@ -222,11 +222,6 @@ During v0.x, MINOR bumps may include breaking changes.
   1.2.0.
 
 ### Fixed
-- macOS managed-listener inspection accepts a successful empty descriptor list
-  from a live same-user process, instead of failing with stale errno. Socket
-  detail queries preserve native failures rather than treating every zero return
-  as an absent socket. Permission/unknown observations still refuse, with the
-  same ownership checks and readiness deadlines.
 - When a running Colima VM comes back from a restart with containerd and
   BuildKit stopped, `effigy container up` and container tasks now start those
   units inside the VM and continue, instead of waiting and then restarting the
@@ -240,6 +235,11 @@ During v0.x, MINOR bumps may include breaking changes.
   bounded 15-second window separate from the initial workload probe. Valid
   Colima stacks no longer exhaust a shared two-second window before exec;
   explicit caller deadlines and strict immutable-ID ownership checks remain.
+- macOS managed-listener inspection accepts a successful empty descriptor list
+  from a live same-user process, instead of failing with stale errno. Socket
+  detail queries preserve native failures rather than treating every zero return
+  as an absent socket. Permission/unknown observations still refuse, with the
+  same ownership checks and readiness deadlines.
 - A container task no longer attaches a 5-minute idle-shutdown lease to a stack
   you brought up explicitly with `effigy container up`, and a pending lease is
   dropped when you do. `effigy container down` - including `--global` and the
