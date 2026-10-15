@@ -595,6 +595,49 @@ fn unsupported_bullet_marker_at_release_level_is_rejected() {
 }
 
 #[test]
+fn unsupported_bullet_marker_in_continuation_is_rejected() {
+    let input = "\
+# Changelog
+
+## [Unreleased]
+
+### Added
+- Supported entry
+  + Unsupported nested bullet item.
+";
+    let err = parse_changelog(input).unwrap_err();
+    match err {
+        ChangelogError::Parse { errors } => {
+            assert_eq!(errors.len(), 1, "expected one error, got: {errors:?}");
+            assert_eq!(errors[0].line, 7);
+            assert!(
+                errors[0].message.contains("unsupported entry marker"),
+                "{}",
+                errors[0].message
+            );
+        }
+        _ => panic!("expected Parse error"),
+    }
+}
+
+#[test]
+fn unsupported_ordered_marker_in_continuation_is_rejected() {
+    let input =
+        "# Changelog\n\n## [Unreleased]\n\n### Added\n- Supported entry\n  1. Nested ordered item\n";
+    let err = parse_changelog(input).unwrap_err();
+    match err {
+        ChangelogError::Parse { errors } => {
+            assert!(
+                errors[0].message.contains("unsupported entry marker"),
+                "{}",
+                errors[0].message
+            );
+        }
+        _ => panic!("expected Parse error"),
+    }
+}
+
+#[test]
 fn prose_accepts_emphasis_and_bullet_like_lines() {
     let input = "\
 # Changelog

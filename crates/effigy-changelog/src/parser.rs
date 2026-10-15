@@ -324,6 +324,14 @@ impl<'a> Parser<'a> {
 
         // Continuation line (indented)?
         if (line.starts_with("  ") || line.starts_with('\t')) && !trimmed.is_empty() {
+            // An indented unsupported list marker is malformed nested entry
+            // syntax, not opaque continuation text. Accepted `- `/`* `
+            // markers and other indented text stay continuation content.
+            if unsupported_list_marker(trimmed) {
+                self.errors
+                    .push(unsupported_entry_diagnostic(line, self.line_num()));
+                return;
+            }
             if let Some(ref mut cat) = self.current_category {
                 if let Some(last_entry) = cat.entries.last_mut() {
                     last_entry.continuation_lines.push(trimmed.to_owned());
