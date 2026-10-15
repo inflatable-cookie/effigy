@@ -25,7 +25,7 @@ That's it. If the repo uses Effigy, you already know how to work in it.
 
 **After:** `effigy test` runs everything. `effigy dev` starts your whole local stack. `effigy demo run login-smoke` proves the login flow still works. `effigy release prepare` cuts a release without you touching version files. One command from any directory.
 
-Effigy is not another task runner. It is a **repo runtime** — the layer between you and the chaos of modern polyglot repos. It is also **agent-native**: the manifest is self-describing, every command speaks JSON, and an AI agent can discover the repo surface, inspect code, execute work, and validate changes through one structured CLI.
+Effigy is not another task runner. It is a **repo runtime** — the layer between you and the chaos of modern polyglot repos. It is also **agent-native**: the manifest is self-describing, non-interactive commands speak JSON, and an AI agent can discover the repo surface, inspect code, execute work, and validate changes through one structured CLI.
 
 ---
 
@@ -342,7 +342,7 @@ No more hand-editing `package.json` and `CHANGELOG.md` and hoping you didn't mis
 
 ### JSON Output for CI
 
-Every command speaks JSON:
+Every non-interactive command speaks JSON (`workspace` and interactive `container shell` have no JSON form):
 
 ```bash
 effigy --json tasks | jq -r '.result.catalog_tasks[].task'

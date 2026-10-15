@@ -383,7 +383,7 @@ fn render_container_help_shows_runtime_options() {
         .contains("effigy container data seed --db-seed app=oci://ghcr.io/acme/private-data:uat"));
     assert!(rendered.contains("effigy container web reset --keep-data"));
     assert!(rendered.contains(
-        "interactive workspace/shell exits now ask whether to bring the environment down"
+        "Leaving an interactive workspace or shell asks whether to bring the environment down"
     ));
 }
 

@@ -159,7 +159,9 @@ This is the right surface for ambiguity and repo health, not a default greeting.
 ## JSON for everything
 
 Append `--json` (or prefix with `effigy --json <command>`) to get an
-`effigy.command.v1` envelope from any command. See `json-envelope.md`.
+`effigy.command.v1` envelope from any non-interactive command (`workspace` and
+interactive `container shell` have no JSON form; use `container <NAME> shell
+--command … --bounded --json` for a finite command). See `json-envelope.md`.
 
 ## Bootstrap from outside the repo
 

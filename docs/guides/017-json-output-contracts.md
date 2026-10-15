@@ -202,6 +202,12 @@ Operator workflow and recovery: [`077-local-dependency-linking.md`](077-local-de
 - `effigy.container.hosts.v1`
 - `effigy.container.retire.v1`
 - `effigy.container.retire-dead.v1` (`container retire --dead --json`)
+- `effigy.container.ports.v1` (`container ports status|reclaim`)
+- `effigy.container.bounded-exec.v1` (`container <NAME> shell --bounded --json`)
+- `effigy.container-partial-activation.v2` (detached `container up` failure details)
+- `effigy.host_run.request-status.v1` (`tasks request status`)
+- `effigy.host_run.request-follow.v1` (`tasks request follow`)
+- `effigy.docs.qualified.resolution.v1` (`docs qualified resolve`)
 - `effigy.state-stack.lineage.v1`
 - `effigy.state-stack.apply.v1`
 

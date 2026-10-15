@@ -136,9 +136,10 @@ Use when:
 ### Release and distribute Effigy-managed software
 
 Read:
+- [`085-v0.15.0-consumer-migration.md`](085-v0.15.0-consumer-migration.md)
+  before upgrading an Effigy consumer from v0.14.1 to v0.15.0
 - [`083-v0.14.0-consumer-migration.md`](083-v0.14.0-consumer-migration.md)
-- [`084-qualified-docs-execution.md`](084-qualified-docs-execution.md)
-  before upgrading an Effigy consumer from v0.13.1 to the proposed v0.14.0
+  for the earlier v0.13.1 to v0.14.0 step
 - [`051-release-orchestration.md`](051-release-orchestration.md) for the
   release cut workflow
 - [`062-distribution-system-guide.md`](062-distribution-system-guide.md) for
@@ -245,6 +246,7 @@ This section is inventory, not a recommended reading order.
 - [`080-host-wide-validation-admission.md`](080-host-wide-validation-admission.md)
 - [`081-bounded-qa-groups-workflow.md`](081-bounded-qa-groups-workflow.md)
 - [`082-owned-run-supervision-workflow.md`](082-owned-run-supervision-workflow.md)
+- [`084-qualified-docs-execution.md`](084-qualified-docs-execution.md)
 - [`068-rhai-host-surface-audit.md`](068-rhai-host-surface-audit.md)
 - [`069-workspace-host-integration.md`](069-workspace-host-integration.md)
 - [`070-per-machine-overlays-and-external-mounts.md`](070-per-machine-overlays-and-external-mounts.md)
@@ -273,6 +275,7 @@ Deprecated but still link-stable:
 ### Distribution and Adoption
 
 - [`047-agent-and-cross-repo-adoption.md`](047-agent-and-cross-repo-adoption.md)
+- [`085-v0.15.0-consumer-migration.md`](085-v0.15.0-consumer-migration.md)
 - [`083-v0.14.0-consumer-migration.md`](083-v0.14.0-consumer-migration.md)
 - [`049-ci-binary-distribution-and-release-protocol.md`](049-ci-binary-distribution-and-release-protocol.md)
 - [`056-northstar-effigy-consumer-repo-contract.md`](056-northstar-effigy-consumer-repo-contract.md)
