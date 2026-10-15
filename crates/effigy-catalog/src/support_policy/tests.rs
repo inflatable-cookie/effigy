@@ -49,6 +49,13 @@ fn expected_required_versions(current: &Version) -> Vec<Version> {
             version("0.14.0"),
             version("0.14.1"),
         ],
+        "0.15.0" => vec![
+            version("0.13.0"),
+            version("0.13.1"),
+            version("0.14.0"),
+            version("0.14.1"),
+            version("0.15.0"),
+        ],
         other => panic!("update the committed support expectation for Effigy {other}"),
     }
 }

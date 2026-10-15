@@ -787,6 +787,8 @@ fn run_git_bounded(
                     }),
                 );
             }
+            #[cfg(not(all(unix, debug_assertions)))]
+            let _ = error;
             return Ok(None);
         }
     };
@@ -1065,12 +1067,16 @@ fn terminate_git_tree(
     if let Some(evidence) = evidence {
         evidence.record_signal("TERM", target.as_raw(), &term);
     }
+    #[cfg(not(debug_assertions))]
+    let _ = term;
     std::thread::sleep(std::time::Duration::from_millis(500));
     let kill_result = kill(target, Signal::SIGKILL);
     #[cfg(debug_assertions)]
     if let Some(evidence) = evidence {
         evidence.record_signal("KILL", target.as_raw(), &kill_result);
     }
+    #[cfg(not(debug_assertions))]
+    let _ = kill_result;
 }
 
 #[cfg(not(unix))]

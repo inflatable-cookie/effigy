@@ -206,3 +206,66 @@ run_in = "host"
         "doctor should accept docs sequence steps and compact rhai tasks, got {unexpected:?}"
     );
 }
+
+#[test]
+fn cli_doctor_accepts_builtin_references_and_manifest_top_level_keys() {
+    let root = temp_workspace("cli-doctor-builtin-refs");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[isolation]
+paths = ["vendor"]
+
+[defer]
+run = "printf deferred {request} {args}"
+
+[tasks.release]
+run = [{ task = "defer release" }]
+
+[tasks.broken]
+run = [{ task = "missing-task" }]
+"#,
+    )
+    .expect("write manifest");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .args(["--json", "doctor", "--repo"])
+        .arg(&root)
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("run doctor");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: Value = serde_json::from_str(&stdout).expect("json parse");
+    let report = if parsed["ok"] == true {
+        &parsed["result"]
+    } else {
+        &parsed["error"]["details"]
+    };
+    let findings = report["findings"].as_array().cloned().unwrap_or_default();
+    let evidence_for = |check: &str| {
+        findings
+            .iter()
+            .filter(|finding| finding["check_id"] == check)
+            .map(|finding| finding["evidence"].as_str().unwrap_or("").to_owned())
+            .collect::<Vec<_>>()
+    };
+
+    assert!(
+        evidence_for("manifest.schema.unsupported_key").is_empty(),
+        "`[isolation]` and `[defer]` are manifest keys: {findings:?}"
+    );
+    let references = evidence_for("tasks.references.resolve");
+    assert!(
+        references
+            .iter()
+            .all(|evidence| !evidence.contains("`defer release`")),
+        "`defer` is a builtin command: {references:?}"
+    );
+    assert!(
+        references
+            .iter()
+            .any(|evidence| evidence.contains("`missing-task`")),
+        "unknown task references must still be reported: {references:?}"
+    );
+}

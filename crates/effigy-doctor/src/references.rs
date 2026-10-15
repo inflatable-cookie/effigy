@@ -74,12 +74,11 @@ impl<'a, 'b> ReferenceChecker<'a, 'b> {
             }
         };
 
-        if task_references::is_builtin_selector(&selector.task_name) {
-            return;
-        }
-
+        // Manifest tasks win over builtins of the same name, so resolve first and
+        // only accept a builtin command when no catalog task matches.
         let selection = match select_catalog_and_task(&selector, self.catalogs, reference_cwd) {
             Ok(selection) => selection,
+            Err(_) if task_references::is_builtin_selector(&selector.task_name) => return,
             Err(error) => {
                 task_references::add_unresolved_reference(
                     self.state,

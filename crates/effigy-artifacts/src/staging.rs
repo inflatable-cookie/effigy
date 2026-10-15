@@ -155,10 +155,34 @@ pub fn stage_oci_artifact(
     })?;
 
     let mut staged_files = Vec::with_capacity(request.primary_files.len());
+    let pulled_root = request.pulled_root.canonicalize().ok();
     for primary_file in &request.primary_files {
+        // Pull reports are untrusted input: a staged path must stay inside both
+        // the pull directory and the staging directory.
+        let contained = primary_file.components().all(|component| {
+            matches!(
+                component,
+                std::path::Component::Normal(_) | std::path::Component::CurDir
+            )
+        });
+        if !contained || primary_file.as_os_str().is_empty() {
+            return Err(ArtifactStagingError::UnsafePulledPath {
+                path: primary_file.clone(),
+            });
+        }
         let source_path = resolve_local_path(&request.pulled_root, primary_file);
         if !source_path.is_file() {
             return Err(ArtifactStagingError::SourceNotFile { path: source_path });
+        }
+        let inside_pull_root = source_path
+            .canonicalize()
+            .ok()
+            .zip(pulled_root.as_ref())
+            .is_some_and(|(source, root)| source.starts_with(root));
+        if !inside_pull_root {
+            return Err(ArtifactStagingError::UnsafePulledPath {
+                path: primary_file.clone(),
+            });
         }
         let staged_payload = staged_root.join(primary_file);
         copy_file(&source_path, &staged_payload)?;
