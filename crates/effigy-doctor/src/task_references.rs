@@ -4,10 +4,9 @@ use crate::contracts::{check_id, remediation};
 use crate::FindingSink;
 
 pub fn is_builtin_selector(task_name: &str) -> bool {
-    matches!(
-        task_name,
-        "help" | "config" | "doctor" | "docs" | "test" | "tasks"
-    )
+    effigy_core::builtin_tasks::BUILTIN_TASKS
+        .iter()
+        .any(|(name, _)| *name == task_name)
 }
 
 pub fn add_invalid_reference_syntax(
@@ -73,12 +72,14 @@ mod tests {
     use super::is_builtin_selector;
 
     #[test]
-    fn builtin_selector_accepts_docs_and_existing_names() {
+    fn builtin_selector_follows_published_builtin_catalog() {
         assert!(is_builtin_selector("docs"));
         assert!(is_builtin_selector("doctor"));
         assert!(is_builtin_selector("test"));
         assert!(is_builtin_selector("tasks"));
+        assert!(is_builtin_selector("defer"));
+        assert!(is_builtin_selector("deploy"));
         assert!(!is_builtin_selector("qa"));
-        assert!(!is_builtin_selector("deploy"));
+        assert!(!is_builtin_selector("sync:db"));
     }
 }

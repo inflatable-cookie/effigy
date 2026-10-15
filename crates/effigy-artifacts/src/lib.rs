@@ -352,4 +352,40 @@ mod tests {
 
         assert_eq!(error.to_string(), "artifact has no primary files to stage");
     }
+
+    #[test]
+    fn rejects_oci_stage_paths_that_escape_the_pull_directory() {
+        let repo = temp_dir();
+        let pulled_root = repo.join("pulled");
+        fs::create_dir_all(&pulled_root).expect("mkdir pulled root");
+        fs::write(repo.join("outside.sql"), b"outside").expect("write outside file");
+        fs::write(pulled_root.join("inside.sql"), b"inside").expect("write inside file");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(repo.join("outside.sql"), pulled_root.join("link.sql"))
+            .expect("symlink outside file");
+
+        let mut escapes = vec![PathBuf::from("../outside.sql"), repo.join("outside.sql")];
+        if cfg!(unix) {
+            escapes.push(PathBuf::from("link.sql"));
+        }
+        for escape in escapes {
+            let parsed = ArtifactSourceRef::parse("oci://ghcr.io/acowtancy/legacy:latest")
+                .expect("parse ref");
+            let ArtifactSourceRef::Oci(oci) = parsed else {
+                panic!("expected oci source");
+            };
+            let request = OciArtifactStagingRequest::new(
+                oci,
+                pulled_root.clone(),
+                default_local_artifact_root(&repo),
+                vec![escape.clone()],
+                ArtifactKind::AppSpecific,
+            );
+            let error = stage_oci_artifact(&request).expect_err("reject escaping path");
+            assert!(
+                error.to_string().contains("escapes its pull directory"),
+                "{escape:?}: {error}"
+            );
+        }
+    }
 }

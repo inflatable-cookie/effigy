@@ -669,6 +669,25 @@ impl PlannedCommand {
     }
 }
 
+/// Whether the root Cargo package opts out of registry publication
+/// (`publish = false` or `publish = []`).
+fn registry_publish_disabled(repo_root: &Path) -> bool {
+    let Ok(contents) = std::fs::read_to_string(repo_root.join("Cargo.toml")) else {
+        return false;
+    };
+    let Ok(manifest) = contents.parse::<toml::Table>() else {
+        return false;
+    };
+    match manifest
+        .get("package")
+        .and_then(|package| package.get("publish"))
+    {
+        Some(toml::Value::Boolean(publish)) => !publish,
+        Some(toml::Value::Array(registries)) => registries.is_empty(),
+        _ => false,
+    }
+}
+
 struct FirstPublishPlan {
     crate_bin: PathBuf,
     homebrew_executed: bool,
@@ -714,35 +733,57 @@ fn build_first_publish_plan(
     }
 
     let crate_install_root = work_dir.join("crates-install-root");
+    // A package that is never published to a registry is proven from its tag;
+    // a registry lookup would fail or, worse, install an unrelated same-named
+    // crate.
+    let (install_label, install_args) = if registry_publish_disabled(repo_root) {
+        (
+            "git tag".to_owned(),
+            vec![
+                "install".to_owned(),
+                "--git".to_owned(),
+                repo_url.to_owned(),
+                "--tag".to_owned(),
+                tag.to_owned(),
+                distribution_policy.package_name.clone(),
+                "--locked".to_owned(),
+                "--root".to_owned(),
+                crate_install_root.display().to_string(),
+                "--force".to_owned(),
+            ],
+        )
+    } else {
+        (
+            distribution_policy.registry_label.clone(),
+            vec![
+                "install".to_owned(),
+                distribution_policy.package_name.clone(),
+                "--version".to_owned(),
+                crate_version.to_owned(),
+                "--locked".to_owned(),
+                "--root".to_owned(),
+                crate_install_root.display().to_string(),
+                "--force".to_owned(),
+            ],
+        )
+    };
     let install_step = PlannedCommand::new(
-        format!(
-            "{} install validation ({crate_version})",
-            distribution_policy.registry_label
-        ),
+        format!("{install_label} install validation ({crate_version})"),
         "cargo",
-        vec![
-            "install".to_owned(),
-            distribution_policy.package_name.clone(),
-            "--version".to_owned(),
-            crate_version.to_owned(),
-            "--locked".to_owned(),
-            "--root".to_owned(),
-            crate_install_root.display().to_string(),
-            "--force".to_owned(),
-        ],
+        install_args,
     );
 
     let crate_bin = crate_install_root
         .join("bin")
         .join(&distribution_policy.binary_name);
     let mut post_install_steps = vec![PlannedCommand::new(
-        format!("{} binary help", distribution_policy.registry_label),
+        format!("{install_label} binary help"),
         crate_bin.display().to_string(),
         vec!["--help".to_owned()],
     )];
     if distribution_policy.verify_binary_json_tasks {
         post_install_steps.push(PlannedCommand::new(
-            format!("{} binary json tasks", distribution_policy.registry_label),
+            format!("{install_label} binary json tasks"),
             crate_bin.display().to_string(),
             vec!["--json".to_owned(), "tasks".to_owned()],
         ));
@@ -775,7 +816,7 @@ fn build_first_publish_plan(
         homebrew_steps.push(PlannedCommand::new(
             "homebrew upgrade",
             "brew",
-            vec!["upgrade".to_owned(), "effigy".to_owned()],
+            vec!["upgrade".to_owned(), brew_formula.to_owned()],
         ));
         (true, "executed".to_owned(), homebrew_steps)
     };

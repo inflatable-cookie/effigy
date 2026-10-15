@@ -49,8 +49,17 @@ fn render_resolved_selector_plan(
     preflight: &ExecutionPreflight,
     selection: &effigy_manifest::TaskSelection<'_>,
 ) -> Result<String, RunnerError> {
-    let command = plan_command_shape(preflight, selection)?;
     let runtime = plan_runtime_target(preflight, selection)?;
+    // Mirrors execution: a run-less task bound to a named container opens that
+    // workspace's shell instead of running a command.
+    let opens_workspace_shell = selection.task.run.is_none()
+        && selection.task.mode.as_deref() != Some("tui")
+        && matches!(runtime, Some(PlannedRuntimeTarget::Container { .. }));
+    let command = if opens_workspace_shell {
+        "workspace shell".to_owned()
+    } else {
+        plan_command_shape(preflight, selection)?
+    };
     render_task_plan(
         preflight.output_json,
         &preflight.selector,
