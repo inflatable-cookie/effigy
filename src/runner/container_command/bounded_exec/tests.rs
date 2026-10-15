@@ -295,6 +295,16 @@ fn public_fixture(name: &str, workspace_identity: bool) -> (tempfile::TempDir, P
         .expect("mkdir isolated release cache");
     fs::write(&release_cache, b"private fake release artifact")
         .expect("seed isolated release cache");
+    // The isolated child uses this fixed package version, so its private
+    // cache must carry both identities required by the current release path.
+    let version = effigy_core::build_info::package_version();
+    fs::write(release_cache.with_extension("active-version"), version)
+        .expect("seed isolated release version");
+    fs::write(
+        release_cache.with_extension("install-identity"),
+        format!("release:v{version}"),
+    )
+    .expect("seed isolated release identity");
     fs::write(
         repo_root.join("docker-compose.yml"),
         "services:\n  app:\n    image: busybox\n",
@@ -504,6 +514,10 @@ fn run_guarded_public_case(
         .env("PATH", path)
         .env("HOME", home)
         .env("EFFIGY_COMPOSE_BACKEND", backend)
+        .env(
+            "EFFIGY_ACTIVE_VERSION",
+            effigy_core::build_info::package_version(),
+        )
         .env("EFFIGY_WORKSPACE_EFFIGY_ARTIFACT_SOURCE", "download")
         .stdin(Stdio::null())
         .stdout(Stdio::from(child_stdout))
