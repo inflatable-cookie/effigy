@@ -43,9 +43,14 @@ pub(in crate::runner) fn resolve_lock_wait_ms(explicit: Option<u64>) -> Result<u
     }
 }
 
+/// An unparsable lock younger than this may still be mid-write by a release
+/// that publishes non-atomically; only an older one is treated as abandoned.
+const UNPARSABLE_LOCK_GRACE: Duration = Duration::from_secs(2);
+
 #[derive(Debug)]
 pub(in crate::runner) struct LockGuard {
     path: PathBuf,
+    token: String,
     stop_heartbeat: Option<Sender<()>>,
     heartbeat_thread: Option<JoinHandle<()>>,
 }
@@ -58,11 +63,14 @@ impl Drop for LockGuard {
         if let Some(handle) = self.heartbeat_thread.take() {
             let _ = handle.join();
         }
-        let _ = fs::remove_file(&self.path);
+        // Never remove a lock that a successor now owns.
+        if owns_lock(&self.path, &self.token) {
+            let _ = fs::remove_file(&self.path);
+        }
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct LockRecord {
     scope: String,
     pid: u32,
@@ -73,6 +81,81 @@ struct LockRecord {
     hostname: Option<String>,
     #[serde(default)]
     workspace_root: Option<String>,
+    /// Identifies the guard that published this record, so heartbeat, release
+    /// and stale cleanup only touch the record they mean to.
+    #[serde(default)]
+    owner_token: Option<String>,
+}
+
+fn new_owner_token() -> String {
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    format!(
+        "{}-{}-{}",
+        std::process::id(),
+        stale::now_epoch_ms(),
+        COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    )
+}
+
+fn owns_lock(path: &Path, token: &str) -> bool {
+    files::read_lock_record(path).is_ok_and(|record| record.owner_token.as_deref() == Some(token))
+}
+
+/// Publish `body` at `path` only if no lock exists, without ever exposing a
+/// partially written record: the bytes go to a private sibling first and are
+/// hard-linked into place, which fails if `path` already exists.
+fn publish_new_lock(path: &Path, body: &[u8]) -> std::io::Result<bool> {
+    let staged = files::staging_path(path);
+    fs::write(&staged, body)?;
+    let linked = fs::hard_link(&staged, path);
+    let _ = fs::remove_file(&staged);
+    match linked {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
+        // Filesystems without hard links keep the exclusive-create fallback.
+        Err(_) => match OpenOptions::new().create_new(true).write(true).open(path) {
+            Ok(mut file) => file.write_all(body).map(|()| true),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
+            Err(error) => Err(error),
+        },
+    }
+}
+
+/// Remove a lock judged stale only if it still holds exactly that record.
+fn remove_if_unchanged(path: &Path, judged: &LockRecord) {
+    if files::read_lock_record(path).is_ok_and(|current| current == *judged) {
+        let _ = fs::remove_file(path);
+    }
+}
+
+/// Remove an unparsable lock only if it still holds exactly the judged bytes.
+/// A successor's just-published complete record has different bytes, so the
+/// comparison refuses to unlink it; two reclaimers racing the same corrupt
+/// record still serialize on the unlink, and the loser retries against the
+/// winner's fresh lock.
+fn remove_unparsable_if_unchanged(path: &Path, judged: &[u8]) -> bool {
+    // The judged bytes were already deemed corrupt; if they now parse, a
+    // successor published between the judge and the re-read.
+    if serde_json::from_slice::<LockRecord>(judged).is_ok() {
+        return false;
+    }
+    match fs::read(path) {
+        Ok(current) if current == judged => {
+            if !unparsable_lock_is_abandoned(path) {
+                return false;
+            }
+            fs::remove_file(path).is_ok()
+        }
+        _ => false,
+    }
+}
+
+fn unparsable_lock_is_abandoned(path: &Path) -> bool {
+    fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .ok()
+        .and_then(|modified| modified.elapsed().ok())
+        .is_some_and(|age| age >= UNPARSABLE_LOCK_GRACE)
 }
 
 pub(in crate::runner) fn acquire_scopes(
@@ -163,6 +246,7 @@ fn acquire_scope_lock(
     let path = locks_root.join(scope.file_name());
     let scope_label = scope.label();
     let now = stale::now_epoch_ms();
+    let token = new_owner_token();
     let record = LockRecord {
         scope: scope_label.clone(),
         pid: std::process::id(),
@@ -170,6 +254,7 @@ fn acquire_scope_lock(
         heartbeat_at_epoch_ms: now,
         hostname: stale::lock_hostname(),
         workspace_root: Some(workspace_root.display().to_string()),
+        owner_token: Some(token.clone()),
     };
     let body = serde_json::to_vec(&record)
         .map_err(|error| RunnerError::Ui(format!("failed to encode lock record: {error}")))?;
@@ -177,18 +262,21 @@ fn acquire_scope_lock(
     let deadline = wait_started_at + Duration::from_millis(wait_timeout_ms);
 
     loop {
-        match OpenOptions::new().create_new(true).write(true).open(&path) {
-            Ok(mut file) => {
-                file.write_all(&body)
-                    .map_err(|error| files::task_lock_io(path.clone(), error))?;
-                return Ok(LockGuard::new(path.clone(), record));
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+        match publish_new_lock(&path, &body) {
+            Ok(true) => return Ok(LockGuard::new(path.clone(), record, token)),
+            Ok(false) => {
                 let existing = match files::read_lock_record(&path) {
                     Ok(record) => Some(record),
+                    // Unparsable: abandoned once old enough, otherwise held.
+                    // Reclaim only the judged bytes so a successor's
+                    // just-published lock is never unlinked.
                     Err(RunnerError::TaskInvocation(_)) => {
-                        let _ = files::remove_lock_file(&path);
-                        continue;
+                        if unparsable_lock_is_abandoned(&path) {
+                            let judged = fs::read(&path).unwrap_or_default();
+                            remove_unparsable_if_unchanged(&path, &judged);
+                            continue;
+                        }
+                        None
                     }
                     Err(RunnerError::TaskLockIo { error, .. })
                         if error.kind() == std::io::ErrorKind::NotFound =>
@@ -199,7 +287,7 @@ fn acquire_scope_lock(
                 };
                 if let Some(existing_record) = existing.as_ref() {
                     if stale::lock_is_stale(existing_record) {
-                        let _ = files::remove_lock_file(&path);
+                        remove_if_unchanged(&path, existing_record);
                         continue;
                     }
                 }
@@ -243,9 +331,10 @@ fn elapsed_wait_ms(started_at: Instant) -> u64 {
 }
 
 impl LockGuard {
-    fn new(path: PathBuf, record: LockRecord) -> Self {
+    fn new(path: PathBuf, record: LockRecord, token: String) -> Self {
         let (stop_tx, stop_rx) = mpsc::channel();
         let heartbeat_path = path.clone();
+        let heartbeat_token = token.clone();
         let heartbeat_thread = thread::spawn(move || {
             let mut record = record;
             loop {
@@ -253,11 +342,27 @@ impl LockGuard {
                 {
                     Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => return,
                     Err(mpsc::RecvTimeoutError::Timeout) => {
+                        // A lost lock stays lost: never overwrite a successor.
+                        if !owns_lock(&heartbeat_path, &heartbeat_token) {
+                            return;
+                        }
                         record.heartbeat_at_epoch_ms = stale::now_epoch_ms();
                         let Ok(body) = serde_json::to_vec(&record) else {
                             return;
                         };
-                        if fs::write(&heartbeat_path, body).is_err() {
+                        let staged = files::staging_path(&heartbeat_path);
+                        if fs::write(&staged, body).is_err() {
+                            let _ = fs::remove_file(&staged);
+                            return;
+                        }
+                        // Refuse to replace a successor: a reclaim that landed
+                        // after the pre-write check must not be overwritten.
+                        if !owns_lock(&heartbeat_path, &heartbeat_token) {
+                            let _ = fs::remove_file(&staged);
+                            return;
+                        }
+                        if fs::rename(&staged, &heartbeat_path).is_err() {
+                            let _ = fs::remove_file(&staged);
                             return;
                         }
                     }
@@ -266,8 +371,100 @@ impl LockGuard {
         });
         Self {
             path,
+            token,
             stop_heartbeat: Some(stop_tx),
             heartbeat_thread: Some(heartbeat_thread),
         }
+    }
+}
+
+#[cfg(test)]
+mod ownership_tests {
+    use super::*;
+
+    fn scope() -> LockScope {
+        LockScope::Task("ownership".to_owned())
+    }
+
+    fn lock_path(root: &Path) -> PathBuf {
+        root.join(LOCKS_DIR).join(scope().file_name())
+    }
+
+    #[test]
+    fn published_lock_is_complete_and_names_its_owner() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let guard = acquire_scopes(root.path(), &[scope()]).expect("acquire");
+        let record = files::read_lock_record(&lock_path(root.path())).expect("complete record");
+        assert_eq!(record.owner_token.as_deref(), Some(guard[0].token.as_str()));
+        let leftovers = fs::read_dir(root.path().join(LOCKS_DIR))
+            .expect("locks dir")
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "tmp"))
+            .count();
+        assert_eq!(leftovers, 0, "staging files are removed after publishing");
+    }
+
+    #[test]
+    fn released_guard_never_removes_a_successors_lock() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let guard = acquire_scopes(root.path(), &[scope()]).expect("acquire");
+        let path = lock_path(root.path());
+        let mut successor = files::read_lock_record(&path).expect("record");
+        successor.owner_token = Some("successor".to_owned());
+        fs::write(&path, serde_json::to_vec(&successor).unwrap()).expect("successor takes over");
+
+        drop(guard);
+
+        let survivor = files::read_lock_record(&path).expect("successor lock survives");
+        assert_eq!(survivor.owner_token.as_deref(), Some("successor"));
+    }
+
+    #[test]
+    fn fresh_unparsable_lock_is_held_not_deleted() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let path = lock_path(root.path());
+        fs::create_dir_all(path.parent().unwrap()).expect("locks dir");
+        fs::write(&path, b"{\"scope\":").expect("partial record mid-write");
+
+        let error =
+            acquire_scopes(root.path(), &[scope()]).expect_err("a fresh partial lock is held");
+        assert!(
+            matches!(error, RunnerError::TaskLockConflict(_)),
+            "{error:?}"
+        );
+        assert!(
+            path.exists(),
+            "a possibly in-progress lock must not be deleted"
+        );
+    }
+
+    #[test]
+    fn unparsable_reclaim_never_removes_a_successors_complete_lock() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let path = lock_path(root.path());
+        fs::create_dir_all(path.parent().unwrap()).expect("locks dir");
+        // Judge corrupt bytes, then let a successor publish before the
+        // reclaim runs: the judged bytes must not unlink the new record.
+        let judged = b"{invalid".to_vec();
+        let _successor = acquire_scopes(root.path(), &[scope()]).expect("successor publishes");
+        assert!(!remove_unparsable_if_unchanged(&path, &judged));
+        files::read_lock_record(&path).expect("successor lock survives reclaim");
+    }
+
+    #[test]
+    fn abandoned_unparsable_lock_is_reclaimed() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let path = lock_path(root.path());
+        fs::create_dir_all(path.parent().unwrap()).expect("locks dir");
+        fs::write(&path, b"{invalid").expect("corrupt record");
+        let old = std::time::SystemTime::now() - UNPARSABLE_LOCK_GRACE * 2;
+        fs::File::options()
+            .write(true)
+            .open(&path)
+            .and_then(|file| file.set_modified(old))
+            .expect("age the corrupt record");
+
+        let guard = acquire_scopes(root.path(), &[scope()]).expect("reclaim");
+        assert_eq!(guard.len(), 1);
     }
 }

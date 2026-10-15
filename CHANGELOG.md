@@ -181,6 +181,10 @@ During v0.x, MINOR bumps may include breaking changes.
   endpoints, or trust behavior change.
 
 ### Changed
+- `[defer]` templates receive `{args}` and `{request}` shell-quoted, the same
+  way task `{args}` are: an argument containing spaces stays one word and shell
+  syntax in an argument is not interpreted. A template that relied on an
+  argument being split or evaluated must now do that itself.
 - Managed host listener routes publish to the shared operator gateway when no
   `EFFIGY_GATEWAY_PRIVATE_STATE_ROOT` is set, instead of refusing. Private
   roots keep their existing validation; route ownership and generation checks
@@ -218,6 +222,11 @@ During v0.x, MINOR bumps may include breaking changes.
   1.2.0.
 
 ### Fixed
+- Task locks are published atomically and carry an owner token. A concurrent
+  run can no longer see a half-written lock, delete it, and start alongside the
+  owner, and a finishing run never removes or refreshes a successor's lock. An
+  unparsable lock is reclaimed only after a short grace period, so a lock still
+  being written by an older Effigy is not stolen.
 - `effigy doctor` no longer reports `{ task = "defer …" }` and other builtin
   command references as unresolved tasks, and accepts every top-level manifest
   table (`isolation`, `state`, `deploy`, `data`, `env_schema`, `qa`). A manifest

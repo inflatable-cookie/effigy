@@ -189,6 +189,13 @@ run = "printf ok"
     );
 
     write_lock_files(&root, &[("task-dev.lock", "{invalid-json")]);
+    // A fresh unparsable record may still be mid-write; only an aged one is
+    // abandoned and reclaimed.
+    std::fs::File::options()
+        .write(true)
+        .open(root.join(".effigy/locks/task-dev.lock"))
+        .and_then(|file| file.set_modified(SystemTime::now() - std::time::Duration::from_secs(5)))
+        .expect("age invalid lock record");
 
     let out = run_dev(&root, &[]).expect("invalid lock record should be reclaimed");
 
