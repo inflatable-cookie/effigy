@@ -421,6 +421,10 @@ impl CatalogTransport<'_> {
     /// preparation.
     fn capture_exec(&mut self, args: Vec<OsString>) -> Result<Vec<u8>, &'static str> {
         if let Some(budget) = self.budget.as_deref_mut() {
+            let target = self
+                .target
+                .clone()
+                .ok_or("workspace catalog target is unavailable")?;
             let plan = effigy_runtime::container_manager::compose_invocation_plan_from_args(
                 self.repo_root,
                 self.policy,
@@ -429,7 +433,28 @@ impl CatalogTransport<'_> {
                 "workspace catalog preparation",
             )
             .map_err(|_| "could not resolve workspace catalog preparation")?;
-            let result = budget.run_plan(&plan, BoundedCommandPhase::WorkspacePreparation);
+            // Bounded preparation targets the container whose ownership the
+            // caller already verified; the Compose service alias can name a
+            // replacement that this preparation must not touch.
+            let exec_args = crate::runner::exec_command::verified_target_exec_args(&plan, &target)
+                .map_err(|_| "could not resolve workspace catalog preparation")?;
+            let plan = effigy_runtime::container_manager::runtime_invocation_plan(
+                self.repo_root,
+                self.policy,
+                "docker",
+                &exec_args,
+                effigy_containers::ContainerAction::Exec,
+                "workspace catalog preparation",
+            )
+            .map_err(|_| "could not resolve workspace catalog preparation")?;
+            let result = budget.run_command(
+                &plan.repo_root,
+                plan.program.as_os_str(),
+                &plan.args,
+                None,
+                &[],
+                BoundedCommandPhase::WorkspacePreparation,
+            );
             return self.finish_bounded(result);
         }
         let output = crate::runner::exec_command::run_compose_exec(

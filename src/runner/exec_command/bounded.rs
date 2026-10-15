@@ -36,8 +36,6 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use effigy_containers::ContainerComposeInvocationPlan;
-
 use super::transport::resolve_host_program;
 
 #[cfg(unix)]
@@ -451,28 +449,12 @@ impl BoundedCommandBudget {
         (!remaining.is_zero()).then_some(remaining)
     }
 
-    /// Run one resolved compose plan within the remaining budget and account
+    /// Run one resolved command plan within the remaining budget and account
     /// its retained bytes cumulatively for the selected phase.
     ///
-    /// The plan program and argv are executed exactly as resolved. In
-    /// particular, the bounded command path does not use Colima's legacy
-    /// direct-exec resolver; bounded preparation captures are explicit calls
-    /// through this same budgeted reader.
-    pub(in crate::runner) fn run_plan(
-        &mut self,
-        plan: &ContainerComposeInvocationPlan,
-        phase: BoundedCommandPhase,
-    ) -> Result<BoundedCapture, BoundedScopedCaptureFailure> {
-        self.run_command(
-            &plan.repo_root,
-            plan.program.as_os_str(),
-            &plan.args,
-            None,
-            &[],
-            phase,
-        )
-    }
-
+    /// Callers must have proved which container the plan targets: the bounded
+    /// workspace preparation path converts its Compose plan to runtime
+    /// arguments for the verified container ID before reaching this call.
     pub(in crate::runner) fn run_command(
         &mut self,
         repo_root: &Path,
@@ -1409,13 +1391,27 @@ mod tests {
         );
         let plan = plan_for(Path::new("."), &program, &args);
         budget
-            .run_plan(&plan, BoundedCommandPhase::CommandExecution)
+            .run_command(
+                &plan.repo_root,
+                plan.program.as_os_str(),
+                &plan.args,
+                None,
+                &[],
+                BoundedCommandPhase::CommandExecution,
+            )
             .expect("first attempt");
         assert_eq!(budget.stdout_retained(), 3);
         let (_dir2, program2, args2) = test_command("printf 'de'");
         let plan2 = plan_for(Path::new("."), &program2, &args2);
         let error = budget
-            .run_plan(&plan2, BoundedCommandPhase::CommandExecution)
+            .run_command(
+                &plan2.repo_root,
+                plan2.program.as_os_str(),
+                &plan2.args,
+                None,
+                &[],
+                BoundedCommandPhase::CommandExecution,
+            )
             .expect_err("second attempt must respect the remaining budget");
         assert!(matches!(
             error,

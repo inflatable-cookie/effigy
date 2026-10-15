@@ -191,7 +191,7 @@
 "check:supply-chain" = { run = "cargo deny check", timeout_ms = 240000 }
 "test:containers:partial-startup" = [
   { id = "partial-startup-lifecycle", run = "cargo nextest run --config-file tests/config/deadline-marker-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(container_command::lifecycle::tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
-  { id = "partial-startup-pipes", run = "cargo nextest run --config-file tests/config/deadline-marker-nextest.toml --user-config-file none -p effigy-containers --lib --filterset 'test(detached_capture_tests::) | test(exec::process::tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
+  { id = "partial-startup-pipes", run = "cargo nextest run --config-file tests/config/deadline-marker-nextest.toml --user-config-file none -p effigy-containers --lib --filterset 'test(detached_capture_tests::) | test(exec::process::tests::) | test(legacy_admission_tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
   { task = "test:containers:partial-startup:private-cli" },
   { task = "test:gateway:registration-loopback" },
 ]

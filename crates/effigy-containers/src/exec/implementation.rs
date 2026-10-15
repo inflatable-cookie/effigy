@@ -322,6 +322,123 @@ mod compose_binding_label_tests {
     }
 }
 
+#[cfg(test)]
+mod legacy_admission_tests {
+    use std::collections::BTreeSet;
+    use std::path::PathBuf;
+
+    use effigy_manifest::{
+        ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerSecretDelivery,
+        ManifestContainerShutdownMode, ManifestContainerStartup,
+    };
+    use serde_json::{json, Value};
+
+    use super::{OwnershipContext, RunningComposeContainer};
+    use crate::{EffectiveComposeSource, EffectiveContainerPolicy};
+
+    fn policy(project: &str) -> EffectiveContainerPolicy {
+        EffectiveContainerPolicy {
+            repo_root: PathBuf::from("/repo"),
+            name: "web".to_owned(),
+            driver: ManifestContainerDriver::Colima,
+            startup: ManifestContainerStartup::Detached,
+            profile: "effigy".to_owned(),
+            compose_source: EffectiveComposeSource::Direct,
+            compose_files: vec![],
+            compose_file_display: "direct".to_owned(),
+            managed_volumes: vec![],
+            shared_services: vec![],
+            project_name: project.to_owned(),
+            primary_service: "app".to_owned(),
+            dns_domain: None,
+            dns_tls: false,
+            dns_port: None,
+            dns_routes: vec![],
+            service_aliases: vec![],
+            declared_ports: vec![],
+            ports_declared_explicitly: false,
+            declared_mounts: vec![],
+            declared_media_mounts: vec![],
+            pull_production_hook: None,
+            health_check: None,
+            health_timeout_secs: 60,
+            secret_delivery: ManifestContainerSecretDelivery::ComposeEnv,
+            secret_runtime_dir: None,
+            source_secret_runtime_for_deferrals: false,
+            workspace_user: None,
+            workspace_home: None,
+            on_task_exit: ManifestContainerOnTaskExit::Stop,
+            shutdown: ManifestContainerShutdownMode::Graceful,
+            detach_timeout_secs: 10,
+            host_processes: vec![],
+        }
+    }
+
+    fn unscoped_context() -> OwnershipContext {
+        OwnershipContext {
+            declared: BTreeSet::from(["app".to_owned()]),
+            canonical: PathBuf::from("/repo"),
+            scope_token: None,
+        }
+    }
+
+    fn listed_row() -> RunningComposeContainer {
+        RunningComposeContainer {
+            container_name: "acme-app-1".to_owned(),
+            status: "Up 1 minute".to_owned(),
+            ports: vec![],
+            project_name: Some("acme".to_owned()),
+            working_dir: Some("/repo".to_owned()),
+            service: Some("app".to_owned()),
+            oneoff: false,
+        }
+    }
+
+    fn inspect(project: &str, labels: &Value) -> Vec<u8> {
+        let mut merged = json!({
+            "com.docker.compose.project": project,
+            "com.docker.compose.service": "app",
+            "com.docker.compose.oneoff": "false",
+        });
+        for (key, value) in labels.as_object().expect("labels object") {
+            merged[key] = value.clone();
+        }
+        serde_json::to_vec(&json!([{
+            "Id": "a".repeat(64),
+            "Name": "/acme-app-1",
+            "State": {"Status": "running", "Running": true},
+            "Config": {"Labels": merged},
+        }]))
+        .expect("inspect json")
+    }
+
+    #[test]
+    fn legacy_unlabelled_admission_still_requires_this_project() {
+        let context = unscoped_context();
+        let row = listed_row();
+        let policy = policy("acme");
+        // A pre-label container of this project and service is admitted.
+        assert!(context.admits_legacy_unlabelled(&policy, &row, &inspect("acme", &json!({}))));
+        // A mismatched inspected project is never admitted by label absence.
+        assert!(!context.admits_legacy_unlabelled(&policy, &row, &inspect("foreign", &json!({}))));
+        // An ownership label restores the strict checkout/scope proof.
+        assert!(!context.admits_legacy_unlabelled(
+            &policy,
+            &row,
+            &inspect(
+                "acme",
+                &json!({"com.docker.compose.project.working_dir": "/elsewhere"})
+            )
+        ));
+        // A one-off container is never admitted.
+        assert!(!context.admits_legacy_unlabelled(
+            &policy,
+            &row,
+            &inspect("acme", &json!({"com.docker.compose.oneoff": "true"}))
+        ));
+    }
+}
+
 /// An inspected binding. Fields are private so only strict inspection can mint it.
 /// Reverification is still required before an effect; this is not a remote lock.
 #[derive(Debug, Clone)]
@@ -415,7 +532,7 @@ pub fn running_stack_admits_reactivation(
         if ownership
             .verify_inspected(repo_root, policy, row, &output.stdout)
             .is_ok()
-            || ownership.is_legacy_unlabelled(&output.stdout)
+            || ownership.admits_legacy_unlabelled(policy, row, &output.stdout)
         {
             continue;
         }
@@ -539,32 +656,71 @@ impl OwnershipContext {
         })
     }
 
-    /// A container created before Effigy labelled ownership: no checkout,
-    /// working-directory or scope label at all. Only an unscoped checkout may
-    /// treat one as its own, matching what earlier releases did.
-    fn is_legacy_unlabelled(&self, inspect_stdout: &[u8]) -> bool {
+    /// Whether this inspected container is a pre-ownership-label container:
+    /// no checkout, working-directory or scope label at all. Only an unscoped
+    /// checkout may treat one as its own, matching what earlier releases did.
+    /// The listed identity is still verified: absent ownership labels relax
+    /// only the checkout/scope proof, never the container's identity.
+    fn admits_legacy_unlabelled(
+        &self,
+        policy: &EffectiveContainerPolicy,
+        row: &RunningComposeContainer,
+        inspect_stdout: &[u8],
+    ) -> bool {
         if self.scope_token.is_some() {
             return false;
         }
         let Ok(raw) = serde_json::from_slice::<serde_json::Value>(inspect_stdout) else {
             return false;
         };
-        let Some(labels) = raw
+        let labels_value = raw
             .as_array()
             .and_then(|records| records.first())
             .and_then(|record| record.get("Config"))
-            .and_then(|config| config.get("Labels"))
-            .and_then(|labels| labels.as_object())
-        else {
+            .and_then(|config| config.get("Labels"));
+        let Some(labels) = labels_value.and_then(|labels| labels.as_object()) else {
             return false;
         };
-        ![
+        if [
             "com.docker.compose.project.working_dir",
             crate::runtime::scope::CHECKOUT_LABEL,
             crate::runtime::scope::SCOPE_LABEL,
         ]
         .iter()
         .any(|label| labels.contains_key(*label))
+        {
+            return false;
+        }
+        let Ok(identity) = super::healthcheck_timer::parse_inspected_container_identity(
+            &String::from_utf8_lossy(inspect_stdout),
+        ) else {
+            return false;
+        };
+        let (_, oneoff_label_ok) = compose_binding_labels(labels_value);
+        self.inspected_identity_matches(policy, row, &identity, oneoff_label_ok)
+    }
+
+    /// The identity fields every admitted container must satisfy regardless of
+    /// checkout or scope labels: the listed container's name, the selected
+    /// project, a declared service, running and not one-off.
+    fn inspected_identity_matches(
+        &self,
+        policy: &EffectiveContainerPolicy,
+        row: &RunningComposeContainer,
+        identity: &super::healthcheck_timer::InspectedContainerIdentity,
+        oneoff_label_ok: bool,
+    ) -> bool {
+        identity.name == row.container_name
+            && identity.project.as_deref() == Some(policy.project_name.as_str())
+            && identity.service == row.service
+            && identity
+                .service
+                .as_ref()
+                .is_some_and(|service| self.declared.contains(service))
+            && identity.running
+            && super::parse::compose_status_is_running(&identity.status)
+            && !identity.oneoff
+            && oneoff_label_ok
     }
 
     /// Whether a container's checkout label and scope label name this
@@ -665,18 +821,8 @@ impl OwnershipContext {
         let inspected_scope = labels
             .and_then(|labels| labels.get(crate::runtime::scope::SCOPE_LABEL))
             .map(|value| value.as_str().unwrap_or_default());
-        let owned = identity.name == row.container_name
-            && self.owns(working_dir, inspected_scope)
-            && identity.project.as_deref() == Some(policy.project_name.as_str())
-            && identity.service == row.service
-            && identity
-                .service
-                .as_ref()
-                .is_some_and(|service| self.declared.contains(service))
-            && identity.running
-            && super::parse::compose_status_is_running(&identity.status)
-            && !identity.oneoff
-            && oneoff_label_ok;
+        let owned = self.inspected_identity_matches(policy, row, &identity, oneoff_label_ok)
+            && self.owns(working_dir, inspected_scope);
         if !owned {
             return Err(ContainerExecError::Failure { command: "inspect owned binding".to_owned(), code: None, stdout: String::new(), stderr: "binding unavailable: full-ID/project/service/oneoff/running/checkout ownership changed or is unknown".to_owned() });
         }

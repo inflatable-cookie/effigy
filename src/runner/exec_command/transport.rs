@@ -381,6 +381,37 @@ pub(super) fn verified_native_exec_invocation(
     Ok((program, args))
 }
 
+/// Runtime exec arguments that target an already-verified container ID.
+///
+/// Bounded workspace preparation builds Compose `exec` tail arguments with the
+/// service alias (its own discovery already proved which container owns the
+/// service). This converts them for the runtime: the alias becomes
+/// `target_id`, Compose's `-T` is dropped and the remaining options and
+/// command are preserved, so every effect targets the verified container
+/// instead of a mutable service name.
+pub(in crate::runner) fn verified_target_exec_args(
+    plan: &ContainerComposeInvocationPlan,
+    target_id: &str,
+) -> Result<Vec<OsString>, RunnerError> {
+    let parsed = parse_compose_exec_args(&plan.args)?;
+    let mut args = vec![OsString::from("exec")];
+    if parsed.tty {
+        args.push(OsString::from("-t"));
+    }
+    if let Some(dir) = parsed.working_dir {
+        args.extend([OsString::from("-w"), dir]);
+    }
+    if let Some(user) = parsed.user {
+        args.extend([OsString::from("-u"), user]);
+    }
+    for env in parsed.env {
+        args.extend([OsString::from("-e"), env]);
+    }
+    args.push(OsString::from(target_id));
+    args.extend(parsed.command);
+    Ok(args)
+}
+
 fn active_backend_id_for_policy(repo_root: &Path, policy: &EffectiveContainerPolicy) -> BackendId {
     match resolve_compose_backend_for_repo(repo_root, policy) {
         ComposeBackend::Docker => BackendId::docker_compose(),

@@ -371,6 +371,7 @@ pub(super) fn ensure_workspace_binary_available_for_policy_bounded(
         let installed_identity = probe_installed_workspace_effigy_active_version_bounded(
             workspace_repo_root,
             policy,
+            target_id,
             budget,
         )?;
         if workspace_effigy_install_is_current(installed_identity.as_deref(), expected_identity) {
@@ -378,7 +379,8 @@ pub(super) fn ensure_workspace_binary_available_for_policy_bounded(
         }
     }
 
-    let target = probe_workspace_linux_target_bounded(workspace_repo_root, policy, budget)?;
+    let target =
+        probe_workspace_linux_target_bounded(workspace_repo_root, policy, target_id, budget)?;
     let artifact = ensure_linux_workspace_effigy_artifact_bounded(
         workspace_repo_root,
         target,
@@ -443,6 +445,7 @@ pub(super) fn ensure_workspace_binary_available_for_policy_bounded(
     let install_result = run_workspace_effigy_install_bounded(
         workspace_repo_root,
         policy,
+        target_id,
         &staging_path,
         active_version
             .as_ref()
@@ -512,6 +515,7 @@ pub(super) fn probe_installed_workspace_effigy_active_version(
 fn run_workspace_compose_capture_bounded(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
+    target_id: &str,
     args: Vec<OsString>,
     budget: &mut BoundedCommandBudget,
 ) -> Result<BoundedCapture, RunnerError> {
@@ -533,8 +537,48 @@ fn run_workspace_compose_capture_bounded(
             None,
         )
     })?;
+    // Bounded preparation targets the container whose ownership the caller
+    // already verified; the Compose service alias can name a replacement.
+    let exec_args = crate::runner::exec_command::verified_target_exec_args(&plan, target_id)
+        .map_err(|_| {
+            bounded_phase_error(
+                policy,
+                policy.primary_service.as_str(),
+                budget,
+                BoundedCommandPhase::WorkspacePreparation,
+                "workspace_preparation_failed",
+                "bounded container command could not resolve workspace preparation",
+                None,
+            )
+        })?;
+    let plan = effigy_runtime::container_manager::runtime_invocation_plan(
+        repo_root,
+        policy,
+        "docker",
+        &exec_args,
+        effigy_containers::ContainerAction::Exec,
+        "workspace preparation",
+    )
+    .map_err(|_| {
+        bounded_phase_error(
+            policy,
+            policy.primary_service.as_str(),
+            budget,
+            BoundedCommandPhase::WorkspacePreparation,
+            "workspace_preparation_failed",
+            "bounded container command could not resolve workspace preparation",
+            None,
+        )
+    })?;
     budget
-        .run_plan(&plan, BoundedCommandPhase::WorkspacePreparation)
+        .run_command(
+            &plan.repo_root,
+            plan.program.as_os_str(),
+            &plan.args,
+            None,
+            &[],
+            BoundedCommandPhase::WorkspacePreparation,
+        )
         .map_err(|failure| {
             bounded_failure_error(policy, policy.primary_service.as_str(), budget, failure)
         })
@@ -543,6 +587,7 @@ fn run_workspace_compose_capture_bounded(
 fn probe_installed_workspace_effigy_active_version_bounded(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
+    target_id: &str,
     budget: &mut BoundedCommandBudget,
 ) -> Result<Option<String>, RunnerError> {
     let mut args = effigy_containers::compose::compose_args(
@@ -554,7 +599,7 @@ fn probe_installed_workspace_effigy_active_version_bounded(
         shell_quote(CONTAINER_WORKSPACE_EFFIGY_INSTALL_IDENTITY_PATH),
         shell_quote(CONTAINER_WORKSPACE_EFFIGY_ACTIVE_VERSION_PATH)
     )));
-    let output = run_workspace_compose_capture_bounded(repo_root, policy, args, budget)?;
+    let output = run_workspace_compose_capture_bounded(repo_root, policy, target_id, args, budget)?;
     if !output.status.success() {
         return Ok(None);
     }
@@ -613,6 +658,7 @@ pub(super) fn run_workspace_effigy_install(
 fn run_workspace_effigy_install_bounded(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
+    target_id: &str,
     staging_path: &str,
     active_version_staging_path: Option<&str>,
     install_identity_staging_path: Option<&str>,
@@ -628,7 +674,7 @@ fn run_workspace_effigy_install_bounded(
         active_version_staging_path,
         install_identity_staging_path,
     )));
-    let output = run_workspace_compose_capture_bounded(repo_root, policy, args, budget)?;
+    let output = run_workspace_compose_capture_bounded(repo_root, policy, target_id, args, budget)?;
     if output.status.success() {
         return Ok(());
     }
@@ -721,6 +767,7 @@ pub(super) fn probe_workspace_linux_target(
 fn probe_workspace_linux_target_bounded(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
+    target_id: &str,
     budget: &mut BoundedCommandBudget,
 ) -> Result<LinuxWorkspaceTarget, RunnerError> {
     let mut args = effigy_containers::compose::compose_args(
@@ -728,7 +775,7 @@ fn probe_workspace_linux_target_bounded(
         ["exec", "-T", policy.primary_service.as_str(), "sh", "-lc"],
     );
     args.push(OsString::from("uname -m"));
-    let output = run_workspace_compose_capture_bounded(repo_root, policy, args, budget)?;
+    let output = run_workspace_compose_capture_bounded(repo_root, policy, target_id, args, budget)?;
     if !output.status.success() {
         return Err(bounded_phase_error(
             policy,

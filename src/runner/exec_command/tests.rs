@@ -19,6 +19,7 @@ use crate::runner::exec_command::transport::{
 use crate::runner::exec_command::{
     activate_exec_surface_with, determine_routed_task_exec_strategy,
     routed_task_exec_requires_workspace_effigy, strategy_requires_workspace_effigy_install,
+    verified_target_exec_args,
 };
 use crate::runner::runtime_session_context::{
     with_runtime_session_context, LeaseRefreshPolicy, RuntimeSessionContext,
@@ -380,6 +381,55 @@ fn parse_compose_exec_args_defaults_to_tty_when_not_disabled() {
 
     assert!(parsed.tty);
     assert_eq!(parsed.service, "workspace");
+}
+
+#[test]
+fn verified_target_exec_args_replace_service_alias_with_verified_id() {
+    let target = "a".repeat(64);
+    let plan = effigy_containers::ContainerComposeInvocationPlan {
+        backend_id: effigy_containers::BackendId::docker_compose(),
+        repo_root: PathBuf::from("/repo"),
+        profile: "effigy".to_owned(),
+        action: effigy_containers::ContainerAction::Exec,
+        program: OsString::from("docker"),
+        args: [
+            "compose",
+            "-f",
+            "compose.yml",
+            "-p",
+            "demo-web",
+            "exec",
+            "-T",
+            "-u",
+            "1000",
+            "-e",
+            "HOME=/home/dev",
+            "app",
+            "sh",
+            "-c",
+            "mkdir -m 700 /tmp/effigy-catalog-fixture",
+        ]
+        .map(OsString::from)
+        .to_vec(),
+        label: "workspace catalog preparation".to_owned(),
+    };
+    let args = verified_target_exec_args(&plan, &target).expect("runtime exec args");
+    assert_eq!(
+        args,
+        [
+            "exec",
+            "-u",
+            "1000",
+            "-e",
+            "HOME=/home/dev",
+            target.as_str(),
+            "sh",
+            "-c",
+            "mkdir -m 700 /tmp/effigy-catalog-fixture",
+        ]
+        .map(OsString::from)
+        .to_vec()
+    );
 }
 
 #[test]

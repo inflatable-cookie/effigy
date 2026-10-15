@@ -688,6 +688,17 @@ pub(in crate::runner) fn verify_service_exec_ready(
     .ok_or_else(|| RunnerError::container_runtime_exec_not_ready(policy, working_dir))
 }
 
+/// Whether a new readiness attempt may start at `now`. The retry window, and
+/// the caller's absolute deadline when it owns one, gate every attempt; an
+/// attempt already running keeps its own [`EXEC_READY_ATTEMPT_TIMEOUT`].
+fn readiness_attempt_open(
+    now: Instant,
+    retry_until: Instant,
+    hard_deadline: Option<Instant>,
+) -> bool {
+    now < retry_until && hard_deadline.is_none_or(|deadline| now < deadline)
+}
+
 /// Probe exec readiness until `retry_until`. An attempt already running is
 /// allowed to finish within [`EXEC_READY_ATTEMPT_TIMEOUT`]; only
 /// `hard_deadline`, when the caller owns one, cuts an attempt short.
@@ -722,7 +733,12 @@ fn probe_verified_service_exec_ready(
     .map_err(RunnerError::from)?;
     loop {
         let now = Instant::now();
-        if hard_deadline.is_some_and(|deadline| now >= deadline) {
+        // The retry window gates starting a new attempt: a short attempt that
+        // finishes just before `retry_until` may not sleep past it and spawn
+        // again. An attempt already running is still bounded by its own
+        // attempt deadline and, when the caller owns one, the absolute
+        // deadline.
+        if !readiness_attempt_open(now, retry_until, hard_deadline) {
             return Ok(None);
         }
         let attempt_deadline = hard_deadline.map_or(now + EXEC_READY_ATTEMPT_TIMEOUT, |deadline| {
