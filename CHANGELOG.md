@@ -251,6 +251,8 @@ During v0.x, MINOR bumps may include breaking changes.
   minutes later, and a `down` outside the checkout left a stale owner marker that
   blocked later leases. The lease notice now names
   `effigy container up --detach` and `EFFIGY_DISABLE_HOST_CONTAINER_LEASE=1`.
+- Redirected `effigy changelog extract` output omits the presentation banner, so
+  extracted release notes contain only the selected changelog content.
 - `effigy doctor` no longer reports `{ task = "defer …" }` and other builtin
   command references as unresolved tasks, and accepts every top-level manifest
   table (`isolation`, `state`, `deploy`, `data`, `env_schema`, `qa`). A manifest
