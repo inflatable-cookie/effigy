@@ -434,8 +434,10 @@ fn build_deferred_command(
     deferral: &DeferredCommand,
     repo_root: &Path,
 ) -> Result<String, RunnerError> {
-    let args_rendered = runtime_args.passthrough.join(" ");
-    let request_rendered = task.name.clone();
+    // Each argument stays one word with its shell syntax inert, matching how
+    // ordinary task `{args}` are rendered.
+    let args_rendered = crate::runner::util::render_passthrough_args(&runtime_args.passthrough);
+    let request_rendered = shell_quote(&task.name);
     let repo_rendered = shell_quote(&repo_root.display().to_string());
     Ok(deferral
         .template

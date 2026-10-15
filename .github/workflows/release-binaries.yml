@@ -8,6 +8,11 @@ on:
         description: Existing annotated release tag to build and publish
         required: true
         type: string
+      skip_homebrew:
+        description: Publish without updating the Homebrew tap (record why in release evidence)
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -34,6 +39,16 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
+
+      - name: Require the Homebrew tap token before publishing
+        if: ${{ !inputs.skip_homebrew }}
+        env:
+          TOKEN: ${{ secrets.EFFIGY_TAP_GH_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::error::EFFIGY_TAP_GH_TOKEN is missing; Homebrew would stay on the previous release. Restore the secret, or re-dispatch with skip_homebrew and record why."
+            exit 1
+          fi
 
       - name: Validate release tag
         shell: bash
@@ -149,8 +164,6 @@ jobs:
     name: Create GitHub Release
     needs: build
     runs-on: ubuntu-latest
-    outputs:
-      has-tap-token: ${{ steps.check-token.outputs.has-token }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -210,20 +223,11 @@ jobs:
             ./scripts/release-assets.sh publish changelog "$TAG" "$VERSION" artifacts release-notes.md
           fi
 
-      - name: Check for Homebrew tap token
-        id: check-token
-        env:
-          TOKEN: ${{ secrets.EFFIGY_TAP_GH_TOKEN }}
-        run: |
-          if [ -n "$TOKEN" ]; then
-            echo "has-token=true" >> "$GITHUB_OUTPUT"
-          fi
-
   homebrew:
     name: Update Homebrew tap
     needs: release
     runs-on: ubuntu-latest
-    if: needs.release.outputs.has-tap-token == 'true'
+    if: ${{ !inputs.skip_homebrew }}
     steps:
       - name: Compute binary SHA256 hashes
         id: hashes
