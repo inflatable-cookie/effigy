@@ -231,6 +231,10 @@ During v0.x, MINOR bumps may include breaking changes.
   owner, and a finishing run never removes or refreshes a successor's lock. An
   unparsable lock is reclaimed only after a short grace period, so a lock still
   being written by an older Effigy is not stolen.
+- Container exec preparation gives owned-service inventory and inspection a
+  bounded 15-second window separate from the initial workload probe. Valid
+  Colima stacks no longer exhaust a shared two-second window before exec;
+  explicit caller deadlines and strict immutable-ID ownership checks remain.
 - A container task no longer attaches a 5-minute idle-shutdown lease to a stack
   you brought up explicitly with `effigy container up`, and a pending lease is
   dropped when you do. `effigy container down` - including `--global` and the
