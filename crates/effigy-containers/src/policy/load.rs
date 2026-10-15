@@ -222,6 +222,9 @@ pub fn load_admitted_container_policy(
         root.join(format!(
             ".effigy/runtime/compose/{name}.workspace.compose.yml"
         )),
+        root.join(format!(
+            ".effigy/runtime/compose/{name}.ownership.compose.yml"
+        )),
         root.join(format!(".effigy/runtime/dns/{name}.compose.override.yml")),
     ];
     artifacts.extend(declarations.iter().cloned());

@@ -346,6 +346,7 @@ pub(crate) fn resolve_compose_source(
             container_name,
             &compose_file,
             config,
+            admission,
         )?;
         return Ok((
             vec![compose_file, ownership_override],
@@ -528,6 +529,7 @@ fn render_direct_compose_ownership_override(
     container_name: &str,
     compose_file: &Path,
     config: &ManifestContainerConfig,
+    admission: Option<&mut crate::policy::admission::PolicyAdmission>,
 ) -> Result<PathBuf, ContainerPolicyError> {
     let source =
         std::fs::read_to_string(compose_file).map_err(|error| ContainerPolicyError::Read {
@@ -581,10 +583,16 @@ fn render_direct_compose_ownership_override(
         error,
     })?;
     let path = dir.join(format!("{container_name}.ownership.compose.yml"));
-    std::fs::write(&path, rendered).map_err(|error| ContainerPolicyError::Read {
+    if let Some(guard) = admission.as_deref() {
+        guard.before_render_write(&path, rendered.as_bytes())?;
+    }
+    std::fs::write(&path, rendered.as_bytes()).map_err(|error| ContainerPolicyError::Read {
         path: path.clone(),
         error,
     })?;
+    if let Some(guard) = admission {
+        guard.record_rendered(&path, rendered.as_bytes())?;
+    }
     Ok(path)
 }
 
@@ -2106,9 +2114,14 @@ services:
         let config: ManifestContainerConfig =
             serde_yaml::from_str("compose_file: infra/docker-compose.yml").expect("config");
 
-        let path =
-            render_direct_compose_ownership_override(&root, "linux-release", &compose, &config)
-                .expect("render override");
+        let path = render_direct_compose_ownership_override(
+            &root,
+            "linux-release",
+            &compose,
+            &config,
+            None,
+        )
+        .expect("render override");
         let rendered: YamlValue =
             serde_yaml::from_str(&std::fs::read_to_string(&path).expect("read override"))
                 .expect("parse override");
