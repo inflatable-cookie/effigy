@@ -181,6 +181,10 @@ During v0.x, MINOR bumps may include breaking changes.
   endpoints, or trust behavior change.
 
 ### Changed
+- `[defer]` templates receive `{args}` and `{request}` shell-quoted, the same
+  way task `{args}` are: an argument containing spaces stays one word and shell
+  syntax in an argument is not interpreted. A template that relied on an
+  argument being split or evaluated must now do that itself.
 - Managed host listener routes publish to the shared operator gateway when no
   `EFFIGY_GATEWAY_PRIVATE_STATE_ROOT` is set, instead of refusing. Private
   roots keep their existing validation; route ownership and generation checks
@@ -210,10 +214,12 @@ During v0.x, MINOR bumps may include breaking changes.
   Administrator identity and lifecycle handoffs provide visible operator
   guidance and bounded waits; after a timeout, check gateway status before
   retrying because privileged completion may be unknown.
-- The compiled catalog baseline now tracks catalog-pack v1.1.2
-  (`ghcr.io/inflatable-cookie/effigy-catalog-pack@sha256:c7ed52c19ff498c0e4fe28eb33adf629fc96d9594962b95df3040b8a452c6d3d`) with
-  compatibility `>=0.13, <0.15`, admitting the supported Effigy 0.13.x and
-  0.14.x releases without changing the support floor.
+- The compiled catalog baseline now tracks catalog-pack v1.2.0
+  (`ghcr.io/inflatable-cookie/effigy-catalog-pack@sha256:7f34c21acce23033d5972868df13a9b061dab995b50b38adb954f7a1d1b5ef5b`)
+  with compatibility `>=0.13, <0.16`, admitting Effigy 0.13 through 0.15, and
+  adds the `silo` S3-compatible object storage service. Installed packs from
+  1.1.2 or earlier reject 0.15: run `effigy service pack update` to move to
+  1.2.0.
 
 ### Fixed
 - macOS managed-listener inspection accepts a successful empty descriptor list
@@ -221,6 +227,11 @@ During v0.x, MINOR bumps may include breaking changes.
   detail queries preserve native failures rather than treating every zero return
   as an absent socket. Permission/unknown observations still refuse, with the
   same ownership checks and readiness deadlines.
+- Task locks are published atomically and carry an owner token. A concurrent
+  run can no longer see a half-written lock, delete it, and start alongside the
+  owner, and a finishing run never removes or refreshes a successor's lock. An
+  unparsable lock is reclaimed only after a short grace period, so a lock still
+  being written by an older Effigy is not stolen.
 - `effigy doctor` no longer reports `{ task = "defer …" }` and other builtin
   command references as unresolved tasks, and accepts every top-level manifest
   table (`isolation`, `state`, `deploy`, `data`, `env_schema`, `qa`). A manifest

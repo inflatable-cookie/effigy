@@ -304,6 +304,13 @@ fn run_manifest_task_defers_when_task_missing_with_token_support() {
             args: &["--watch"],
         },
         DeferredTaskCase {
+            workspace: "defer-args-stay-literal-words",
+            defer_run: "set -- {args}; test $# = 2 && case $1 in 'two words') ;; *) exit 1;; esac && case $2 in '$(echo injected)') ;; *) exit 1;; esac",
+            defer_run_in: None,
+            request: "unknown-task",
+            args: &["two words", "$(echo injected)"],
+        },
+        DeferredTaskCase {
             workspace: "defer-either-falls-back-to-host",
             defer_run: "test {request} = 'unknown-task' && test {args} = '--watch'",
             defer_run_in: Some("either"),
@@ -397,7 +404,7 @@ base = { type = "path", dir = "bundles/php-library" }
     );
     assert!(
         log.contains(
-            "\"${COMPOSER_HOME:-$HOME/.config/composer}/vendor/bin/effigy\" missing-task --watch"
+            "\"${COMPOSER_HOME:-$HOME/.config/composer}/vendor/bin/effigy\" 'missing-task' '--watch'"
         ),
         "expected deferred command in container exec, got {log}"
     );
@@ -450,7 +457,7 @@ base = { type = "path", dir = "bundles/php-library" }
 
     let docker = fs::read_to_string(&docker_log).expect("read fake docker log");
     assert!(
-        docker.contains("\"${COMPOSER_HOME:-$HOME/.config/composer}/vendor/bin/effigy\" missing-task --watch"),
+        docker.contains("\"${COMPOSER_HOME:-$HOME/.config/composer}/vendor/bin/effigy\" 'missing-task' '--watch'"),
         "expected handoff-local deferral to invoke composer-home effigy inside container, got {docker}"
     );
 }
@@ -543,7 +550,7 @@ base = { type = "path", dir = "bundles/php-library" }
     let docker = fs::read_to_string(&docker_log).expect("read fake docker log");
     assert!(
         docker.contains(
-            "\"${COMPOSER_HOME:-$HOME/.config/composer}/vendor/bin/effigy\" missing-task --watch"
+            "\"${COMPOSER_HOME:-$HOME/.config/composer}/vendor/bin/effigy\" 'missing-task' '--watch'"
         ),
         "expected composer-home effigy path in handoff-local deferral command, got {docker}"
     );

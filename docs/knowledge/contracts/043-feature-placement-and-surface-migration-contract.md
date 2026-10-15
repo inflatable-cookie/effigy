@@ -405,6 +405,26 @@ regeneration proofs remain in place. Unrelated fixture provenance, the support
 floor, active user pack selection, and explicit-update semantics are
 unchanged.
 
+### Catalog v1.2.0 baseline adoption — 2026-10-15
+
+Tom approved publishing catalog pack v1.2.0 ("Happy for you to publish the
+catalog pack") and chose to adopt it as Effigy 0.15's compiled baseline
+("Adopt 1.2.0", v0.15.0 pre-release thread). This deliberately ships `silo` as a
+built-in service; it does not record Silo acceptance for Underlay, which stays
+with the bundle owner (contract 005).
+
+The artifact is
+`ghcr.io/inflatable-cookie/effigy-catalog-pack@sha256:7f34c21acce23033d5972868df13a9b061dab995b50b38adb954f7a1d1b5ef5b`,
+source `588125bd68ad0c86106eb68b7c11d8c60be3fc86`, annotated `v1.2.0` tag
+object `06704bdad8247ea2b6a414a77bf77bba58cf768e`, content identity
+`sha256:539d63cf709110748902bd01a5cd6c5a359ca3636ffffaa87ddb95dff1125dd1`,
+published with a digest-bound attestation and promoted to `stable`. The
+snapshot is the anonymously pulled tree: 44 files and 95,527 bytes. Against
+v1.1.2 it adds the `silo` service and changes `pack.toml` (version 1.2.0,
+compatibility `>=0.13, <0.16`); every other asset is byte-identical. The range
+admits 0.13.0 through 0.15.0 and rejects 0.12.1 and 0.16.0. The support floor,
+active user pack selection and explicit-update semantics are unchanged.
+
 ### Underlay development profiles and host listeners — 2026-10-09
 
 Tom authorized planning and promotion of the Underlay development-profile

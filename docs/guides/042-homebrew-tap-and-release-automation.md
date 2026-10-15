@@ -89,10 +89,13 @@ for macOS (arm64, x86_64) and Linux (x86_64).
 ## 6) Automation
 
 Implemented as the `homebrew` job in `.github/workflows/release-binaries.yml`:
-- trigger: runs after the `release` job succeeds (tag push `v*`)
-- guard: `if: needs.release.outputs.has-tap-token == 'true'` (the `release` job
-  checks `EFFIGY_TAP_GH_TOKEN` at step level and exports an output; `secrets`
-  context is not available in job-level `if` conditions)
+- trigger: runs after the `release` job succeeds in the manually dispatched
+  workflow for an existing annotated tag
+- guard: the `gates` job fails before anything is published when
+  `EFFIGY_TAP_GH_TOKEN` is missing, so a release never silently leaves the tap
+  on the previous version. To publish without the tap on purpose, dispatch with
+  `skip_homebrew: true` and record why in the release evidence; the `homebrew`
+  job then does not run.
 - steps:
   1. Download macOS and Linux binaries from the just-created GitHub Release
   2. Compute SHA256 hashes via `curl | sha256sum`
