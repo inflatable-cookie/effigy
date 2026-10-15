@@ -437,6 +437,22 @@ Local S3-compatible object storage and console.
 - Gateway: eligible for HTTPS app-facing routes (for example `https://s3.<host>`
   and `https://minio.<host>`) plus a TCP loopback alias for the raw S3 port.
 
+### `silo`
+
+Local S3-compatible object storage from PGSTY Silo, a maintained MinIO fork.
+Use it where new work would otherwise pick `minio`.
+
+- Image: digest-pinned `docker.io/pgsty/silo:RELEASE.2026-09-16T00-00-00Z`
+  (override via `image`).
+- Parameters: `image`, `root_user` (`"minioadmin"`), `root_password`
+  (`"minioadmin"`), `api_port` (`9000`), `console_port` (`9001`).
+- Exposed ports: S3 API on `9000`, console on `9001`.
+- Volume: persistent `data` volume at `/data`.
+- Healthcheck: `mc ready local` (the image ships `mc`).
+- Shell target: yes (`/bin/sh`).
+- Gateway: eligible for HTTPS app-facing routes plus a TCP loopback alias
+  (`s3`) for the raw S3 port.
+
 ### `elasticsearch`
 
 Elasticsearch search engine.
@@ -584,7 +600,8 @@ the environment declares `[containers.<name>.dns]`:
 
 - `postgres` (`5432`), `dbgate` (`3000`), `pgweb` (`8081`), `mariadb` (`3306`),
   `redis` (`6379`), `memcached` (`11211`), `mailpit` (`1025`, `8025`),
-  `minio` (`9000`, `9001`), `elasticsearch` (`9200`), `phpmyadmin` (`80`),
+  `minio` (`9000`, `9001`), `silo` (`9000`, `9001`), `elasticsearch` (`9200`),
+  `phpmyadmin` (`80`),
   `nginx` (`80`), `workspace-rust-bun` (via `host_ports`).
 
 See [`063-container-system-guide.md`](063-container-system-guide.md) for

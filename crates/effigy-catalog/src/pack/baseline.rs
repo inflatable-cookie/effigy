@@ -619,15 +619,15 @@ mod tests {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(BASELINE_LOCK_FILE)
     }
 
-    /// Identity facts of the accepted `v1.1.2` artifact, pinned here so a
+    /// Identity facts of the accepted `v1.2.0` artifact, pinned here so a
     /// future baseline bump must deliberately update both the lock and these
     /// markers together.
     const PINNED_CONTENT_IDENTITY: &str =
-        "sha256:f65724ad5eef245fe4f2e6c3e831f1761b415daba8d8a5d4744d30341a6af022";
+        "sha256:539d63cf709110748902bd01a5cd6c5a359ca3636ffffaa87ddb95dff1125dd1";
     const PINNED_OCI_MANIFEST_DIGEST: &str =
-        "sha256:c7ed52c19ff498c0e4fe28eb33adf629fc96d9594962b95df3040b8a452c6d3d";
-    const PINNED_FILE_COUNT: usize = 42;
-    const PINNED_BYTE_COUNT: u64 = 93_849;
+        "sha256:7f34c21acce23033d5972868df13a9b061dab995b50b38adb954f7a1d1b5ef5b";
+    const PINNED_FILE_COUNT: usize = 44;
+    const PINNED_BYTE_COUNT: u64 = 95_527;
 
     /// Provenance of isolated fixture packs. These stay on `1.0.1` so fixture
     /// composition does not depend on the committed baseline version.
@@ -643,17 +643,17 @@ mod tests {
         }
     }
 
-    /// Provenance of the accepted `v1.1.2` publication recorded in the
+    /// Provenance of the accepted `v1.2.0` publication recorded in the
     /// committed lock.
     fn committed_provenance() -> BaselineSource {
         BaselineSource {
             source_repository: BASELINE_SOURCE_REPOSITORY.to_owned(),
-            source_commit: "bffcd0d8446286c49609c5b4659fe1d6f5d69c0f".to_owned(),
-            source_created: "2026-10-07T16:26:24Z".to_owned(),
-            source_tag: "v1.1.2".to_owned(),
-            source_tag_object: "e0b8c8bdb74cccf7b61f6ff4b8ccf8b67f1c713a".to_owned(),
+            source_commit: "588125bd68ad0c86106eb68b7c11d8c60be3fc86".to_owned(),
+            source_created: "2026-10-15T18:51:41Z".to_owned(),
+            source_tag: "v1.2.0".to_owned(),
+            source_tag_object: "06704bdad8247ea2b6a414a77bf77bba58cf768e".to_owned(),
             pack_id: "effigy-default-catalog".to_owned(),
-            pack_version: "1.1.2".to_owned(),
+            pack_version: "1.2.0".to_owned(),
         }
     }
 
@@ -712,13 +712,13 @@ mod tests {
     fn committed_snapshot_compatibility_covers_supported_releases() {
         let manifest = PackManifest::load(&committed_snapshot_dir()).expect("committed manifest");
 
-        for version in ["0.13.0", "0.13.1", "0.14.0", "0.14.1"] {
+        for version in ["0.13.0", "0.13.1", "0.14.0", "0.14.1", "0.15.0"] {
             assert!(
                 manifest.accepts_effigy(version),
                 "compiled baseline rejects supported Effigy {version}"
             );
         }
-        for version in ["0.12.1", "0.15.0"] {
+        for version in ["0.12.1", "0.16.0"] {
             assert!(
                 !manifest.accepts_effigy(version),
                 "compiled baseline unexpectedly accepts Effigy {version}"
