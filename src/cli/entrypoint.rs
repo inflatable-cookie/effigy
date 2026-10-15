@@ -238,10 +238,7 @@ pub fn run_and_render_command(context: &CliExecutionContext<'_>, command: Comman
                 let _ = renderer.text(&output);
             }
             let output_is_empty = output.trim().is_empty();
-            if (!task_stdout_owned || !output_is_empty)
-                && !clean_machine_output
-                && (output_is_empty || stdout_is_terminal)
-            {
+            if (!task_stdout_owned || !output_is_empty) && !clean_machine_output {
                 let _ = renderer.text("");
             }
         }
