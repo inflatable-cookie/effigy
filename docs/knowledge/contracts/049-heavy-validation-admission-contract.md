@@ -310,3 +310,48 @@ data cleanup or migration is part of rollback or retirement.
 Run stop/logs commands, group `hard_timeout_ms`, workflow changes, releases,
 automatic VM starts, forced restarts, and live cleanup remain outside this
 contract.
+
+## Workspace fixture admission qualification
+
+`test:workspace:artifact-parent` qualifies the complete maintained
+`test:workspace:artifact-freshness` composition and the executable catalog-handoff
+route/refusal matrix under real private scheduler admissions, one per maintained
+member. The integration
+harness walks the actual task manifest; a composition check refuses membership
+drift. Catalog pack/parser/selection/session tests and bounded process-reader
+tests retain the full ordinary catalog-handoff covering. Those unit helpers do
+not enter the scheduler; shared workspace/exec cases also run in the artifact
+parent members. The harness retains exact compiled nextest membership, each
+terminal case result, command exit codes and the private settlement under a unique
+`.effigy/reports/fixture-family/workspace-*` directory. Each member stays within
+the existing test deadline; the parent selector runs all members without
+fail-fast. An absent member, incomplete result set or any failure prevents
+success. Assertion failures do not stop later independent members. Unavailable
+runners and incomplete result sets fail qualification; nextest retains its
+existing forced-exit, timeout and leak policy. Zero retries remain unchanged. Run ordinary covering selectors first to compile their
+constituents, including the fresh CLI prerequisite used by managed helpers.
+
+Fixture placement follows the actual execution boundary:
+
+| Maintained member | Fixture ownership and admission boundary |
+| --- | --- |
+| Artifact provisioning | Artifact/cache/identity files and private fake builder executables; fake executables do not re-enter the scheduler. Invalid-output and expiry oracles remain refusing. |
+| Artifact admission | Rendered Compose labels and policy drift fixtures; no task entrypoint. External roots remain valid inspection inputs. |
+| Artifact activation | Nested catalog tasks use the existing canonical checkout-contained workspace owner. Runtime-preparation, exec transport and mount probes use private fake operations; outside mount/sibling inputs remain negative oracles. |
+| Artifact builder | Direct-builder Rhai tasks and the shared container-helper task enter the real task runner. Their fresh canonical roots are checkout-contained and removed by their existing owners. Full-ID replacement, foreign siblings and ownership refusals remain asserted. |
+| Owner integrations and diagnostics | Fake secret/exec/backend and permission/doctor probes retain ordinary coverage; runnable deferral callers use the checkout-contained workspace owner. |
+| Managed callers | All stream and TUI case-table helpers use the existing workspace owner. The container-bound Rhai setup also uses that owner before real task entry; canonicalization alone does not admit an external directory. |
+| Gateway callers | All four managed-host tests own checkout-contained temporary roots, including their disposable Git worktrees, listeners, gateway state and foreign sentinels. Host CLI calls preserve the inherited scheduler state path across isolated `HOME` changes. The existing `EFFIGY_TEST_CONTAINERS_HOME` seam selects that same owned home for test-support binaries. |
+| CLI callers | The partial-startup family uses its existing checkout-contained owner and exercises actual CLI entry with private transports. |
+| Catalog handoff | Selection/pack/parser/session/exec tests retain their complete ordinary covering. The Python route/refusal matrix owns a checkout-contained temporary root and preserves inherited host authority and its original state path. The existing test-support home seam follows each host/guest `HOME`; actual guest transport continues to strip host credentials. |
+
+The catalog fake engine keeps the host client's authority on the host side.
+Its simulated guest starts from private adapter controls and the declared exec
+environment; it rejects forwarded parent credentials. Copying the entire host
+client environment into a fake guest does not model a container boundary.
+
+The separate forged, expired and outside-root token control still validates
+real refusal before effects. Moving positive execution fixtures never widens a
+parent token, changes admission policy, or converts an outside-root negative
+oracle into a positive one. These proofs qualify private fixtures only; they
+do not publish or qualify an operational Linux artifact or consumer stack.

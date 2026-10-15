@@ -424,7 +424,7 @@
 # started.
 # Selected installed service-pack parity, entirely private fake transport.
 "test:workspace:catalog-handoff" = [
-  { id = "catalog-handoff-unit", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-catalog -p effigy-cli --lib --filterset 'test(workspace_catalog) | test(workspace_pack_) | test(parse_service_pack_) | test(workspace::tests::) | test(workspace_session::tests::) | test(exec_command::tests::) | test(bounded_exec::) | test(pack::tests::)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
+  { id = "catalog-handoff-unit", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-catalog -p effigy-cli --lib --filterset 'test(workspace_catalog) | test(workspace_pack_) | test(parse_service_pack_) | test(workspace::tests::) | test(workspace_session::tests::) | test(exec_command::tests::) | test(bounded_exec::) | test(pack::tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
   "cargo build --bin effigy",
   { task = "test:workspace:catalog-handoff:private" },
 ]
@@ -667,25 +667,41 @@
 # ownership override. Private fresh fixtures and fake builder hosts only; no
 # engine, VM, live artifact, or real builder container is touched.
 "test:workspace:artifact-freshness" = [
-  { id = "workspace-artifact-provisioning", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(runner::system_command::workspace::tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
+  { task = "test:workspace:catalog-handoff:build" },
+  { task = "test:workspace:artifact-provisioning" },
   { task = "test:workspace:artifact-admission" },
   { task = "test:workspace:artifact-activation" },
 ]
 # Existing pinned private Queue route: authenticated fixture execution plus
 # forged, expired and outside-root refusal controls. No live scheduler state.
+"test:workspace:artifact-provisioning" = [
+  { id = "workspace-artifact-provisioning", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(runner::system_command::workspace::tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
+]
 "test:workspace:artifact-parent" = [
+  { task = "test:workspace:catalog-handoff:build" },
   { id = "artifact-private-parent-and-controls", run = "bash tests/scripts/fixture-parent-isolation.sh workspace", timeout_ms = 600000 },
 ]
 "test:workspace:artifact-admission" = [
   { id = "direct-compose-ownership-admission", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib --filterset 'test(direct_compose_ownership_override) | test(policy::admission::drift_tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
 ]
-"test:workspace:artifact-activation" = [
+"test:workspace:artifact-readiness" = [
   { id = "readiness-and-affected-callers", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(nested_container_target_tests::) | test(container_runtime_prep::tests::) | test(exec_command::tests::) | test(exec_command::transport::colima::tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
+]
+"test:workspace:artifact-activation" = [
+  { task = "test:workspace:artifact-readiness" },
   { task = "test:workspace:artifact-builder" },
   { task = "test:workspace:artifact-owner-integrations" },
   { task = "test:workspace:artifact-diagnostics" },
   { task = "test:workspace:artifact-managed-callers" },
   { task = "test:workspace:artifact-gateway-callers" },
+  { task = "test:workspace:artifact-cli-callers" },
+]
+"test:workspace:artifact-parent:runner".admission = "heavy"
+"test:workspace:artifact-parent:runner".run = [
+  { id = "complete-workspace-family", run = "python3 tests/scripts/fixture-parent-workspace.py {args}", timeout_ms = 600000 },
+]
+"test:workspace:artifact-cli-callers" = [
+  { id = "partial-startup-cli-callers", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests --filterset 'test(partial_startup_tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
 ]
 "test:workspace:artifact-gateway-callers" = [
   { id = "owned-gateway-container-callers", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_host_)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },

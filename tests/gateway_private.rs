@@ -15,6 +15,20 @@ use serde_json::Value;
 
 const EFFIGY: &str = env!("CARGO_BIN_EXE_effigy");
 
+// Managed CLI entrypoints inherit the authenticated checkout parent.
+fn managed_host_fixture() -> tempfile::TempDir {
+    let checkout = fs::canonicalize(env!("CARGO_MANIFEST_DIR")).expect("checkout root");
+    let parent = fs::canonicalize(checkout.join("crates")).expect("fixture parent");
+    assert!(
+        parent.starts_with(&checkout),
+        "fixture parent escaped checkout"
+    );
+    tempfile::Builder::new()
+        .prefix("effigy-parent-fixtures-gateway-")
+        .tempdir_in(parent)
+        .expect("owned contained managed host fixture")
+}
+
 #[cfg(unix)]
 #[test]
 fn private_gateway_shutdown_handles_owned_term_int_and_inherited_ignore() {
@@ -670,7 +684,7 @@ fn private_gateway_cli_serves_verified_https_and_isolates_concurrent_instances()
 
 #[test]
 fn managed_host_dependent_replacement_preserves_routes_and_scope_teardown() {
-    let fixture = tempfile::tempdir().expect("fresh managed listener fixture");
+    let fixture = managed_host_fixture();
     let effects = HostEffectSentinels::new(fixture.path());
     let docker_dir = std::env::split_paths(&effects.env_path)
         .next()
@@ -1577,7 +1591,7 @@ fn start_managed_listener_gateway(
 #[test]
 fn managed_host_listeners_scoped_host_routes_follow_checkout_identity() {
     const DECLARED_HOST: &str = "api.acme.test";
-    let fixture = tempfile::tempdir().expect("fresh scoped listener fixture");
+    let fixture = managed_host_fixture();
     let effects = HostEffectSentinels::new(fixture.path());
     let docker_dir = std::env::split_paths(&effects.env_path)
         .next()
@@ -2016,7 +2030,7 @@ fn managed_listener_fixture_child() {
 /// claim with no proven owner. Unobserved phases stay unknown.
 #[test]
 fn managed_host_readiness_terminal_failure_retains_phase_evidence() {
-    let fixture = tempfile::tempdir().expect("fresh readiness failure fixture");
+    let fixture = managed_host_fixture();
     let effects = HostEffectSentinels::new(fixture.path());
     let docker_dir = std::env::split_paths(&effects.env_path)
         .next()
@@ -2475,6 +2489,15 @@ fn container_command(checkout: &Path, cleanup: &ManagedContainerCleanup) -> Comm
         "Config": {"Labels": labels}, "NetworkSettings": {"Ports": {}},
     });
     let mut command = Command::new(EFFIGY);
+    if std::env::var_os("HOST_RUN_TOKEN").is_some() {
+        let state = std::env::var_os("EFFIGY_HOST_RUN_ROOT")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                PathBuf::from(std::env::var_os("HOME").expect("original scheduler home"))
+                    .join(".local/state/host-run")
+            });
+        command.env("EFFIGY_HOST_RUN_ROOT", state);
+    }
     command
         .env("FAKE_OWNED_CONTAINER", proof.to_string())
         .env(
@@ -2484,6 +2507,7 @@ fn container_command(checkout: &Path, cleanup: &ManagedContainerCleanup) -> Comm
         .args(["container", "web"])
         .current_dir(checkout)
         .env("HOME", &cleanup.home)
+        .env("EFFIGY_TEST_CONTAINERS_HOME", cleanup.home.join(".effigy"))
         .env("PATH", &cleanup.effects_path)
         .env("EFFIGY_COMPOSE_BACKEND", "docker")
         .env(
@@ -3300,7 +3324,7 @@ impl Drop for GatewayCleanup<'_> {
 /// environment outside the reserved allowlist is never written.
 #[test]
 fn managed_host_transitions_record_selected_causes_and_reserved_assignments() {
-    let fixture = tempfile::tempdir().expect("fresh managed transition fixture");
+    let fixture = managed_host_fixture();
     let effects = HostEffectSentinels::new(fixture.path());
     let docker_dir = std::env::split_paths(&effects.env_path)
         .next()

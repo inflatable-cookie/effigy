@@ -10,7 +10,7 @@ std::thread_local! {
     static TEST_FIXTURE_ROOT: RefCell<Option<tempfile::TempDir>> = const { RefCell::new(None) };
 }
 
-fn test_fixture_parent() -> PathBuf {
+pub(super) fn test_fixture_parent() -> PathBuf {
     let checkout = fs::canonicalize(env!("CARGO_MANIFEST_DIR"))
         .expect("canonicalize the Effigy checkout for test fixtures");
     // Keep package fixtures inside the authenticated checkout so inherited

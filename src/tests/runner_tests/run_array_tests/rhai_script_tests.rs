@@ -455,8 +455,8 @@ run = [{ rhai = "scripts/dispatch.rhai" }]
 #[test]
 fn run_manifest_task_run_array_rhai_steps_support_container_helpers() {
     let _guard = lock_test();
-    let temp = tempfile::tempdir().expect("fresh private runtime fixture");
-    let root = fs::canonicalize(temp.path()).expect("canonical private fixture");
+    let root = fs::canonicalize(temp_workspace("run-array-rhai-container-helpers"))
+        .expect("canonical private fixture");
     write_container_fixture(&root);
     let bin_dir = install_fake_container_runtime(&root);
     write_executable(
