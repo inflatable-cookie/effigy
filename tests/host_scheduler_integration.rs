@@ -1533,6 +1533,16 @@ fn assert_reviewed_private_queue_checkout() {
 
 fn fixture_runner_test_binary(repo_root: &Path) -> PathBuf {
     let required = [
+        "runner::tests::catalog_membership_tests::nested_container_target_tests::root_qualified_nested_container_task_executes_in_declared_container",
+        "runner::tests::catalog_membership_tests::nested_container_target_tests::child_scope_nested_container_task_still_executes_in_declared_container",
+        "runner::tests::catalog_membership_tests::nested_container_target_tests::root_declared_host_task_stays_on_host",
+        "runner::tests::catalog_membership_tests::nested_container_target_tests::nested_task_without_own_target_falls_back_to_the_workspace_runtime",
+        "runner::tests::catalog_membership_tests::nested_container_target_tests::nested_container_task_without_any_declared_target_fails_before_execution",
+        "runner::tests::catalog_membership_tests::nested_container_target_tests::selector_plans_expose_the_resolved_runtime_target",
+        "runner::tests::catalog_membership_tests::nested_container_target_tests::builtin_nested_test_selection_executes_in_declared_container",
+        "runner::tests::catalog_membership_tests::nested_container_target_tests::builtin_test_plan_exposes_nested_declared_runtime",
+        "runner::tests::catalog_membership_tests::nested_container_target_tests::builtin_host_target_suites_stay_on_host_while_container_target_routes",
+        "runner::system_command::workspace::tests::bounded_linux_artifact_success_without_valid_output_refuses_without_rebinding",
         "runner::state_command::tests::state_fixture_old_placement_refuses_all_four_execution_paths",
         "runner::state_command::tests::state_capture_executes_named_and_inline_tasks_with_context",
         "runner::cache_tests::builtin::cache_builtin_inspect_and_invalidate_paths_are_available",

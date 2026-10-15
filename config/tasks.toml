@@ -671,6 +671,11 @@
   { task = "test:workspace:artifact-admission" },
   { task = "test:workspace:artifact-activation" },
 ]
+# Existing pinned private Queue route: authenticated fixture execution plus
+# forged, expired and outside-root refusal controls. No live scheduler state.
+"test:workspace:artifact-parent" = [
+  { id = "artifact-private-parent-and-controls", run = "bash tests/scripts/fixture-parent-isolation.sh workspace", timeout_ms = 600000 },
+]
 "test:workspace:artifact-admission" = [
   { id = "direct-compose-ownership-admission", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib --filterset 'test(direct_compose_ownership_override) | test(policy::admission::drift_tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
 ]
