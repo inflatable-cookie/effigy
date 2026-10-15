@@ -537,6 +537,64 @@ fn prose_does_not_swallow_malformed_headings() {
 }
 
 #[test]
+fn unsupported_bullet_marker_in_category_is_rejected() {
+    let input = "\
+# Changelog
+
+## [Unreleased]
+
+### Added
+- Supported entry
++ Unsupported bullet item.
+";
+    let err = parse_changelog(input).unwrap_err();
+    match err {
+        ChangelogError::Parse { errors } => {
+            assert_eq!(errors.len(), 1, "expected one error, got: {errors:?}");
+            assert_eq!(errors[0].line, 7);
+            assert!(
+                errors[0].message.contains("unsupported entry marker"),
+                "{}",
+                errors[0].message
+            );
+        }
+        _ => panic!("expected Parse error"),
+    }
+}
+
+#[test]
+fn unsupported_ordered_marker_is_rejected() {
+    let input = "# Changelog\n\n## [Unreleased]\n\n### Added\n1. Ordered item\n";
+    let err = parse_changelog(input).unwrap_err();
+    match err {
+        ChangelogError::Parse { errors } => {
+            assert!(
+                errors[0].message.contains("unsupported entry marker"),
+                "{}",
+                errors[0].message
+            );
+        }
+        _ => panic!("expected Parse error"),
+    }
+}
+
+#[test]
+fn unsupported_bullet_marker_at_release_level_is_rejected() {
+    let input = "# Changelog\n\n## [Unreleased]\n\n+ Not an entry.\n";
+    let err = parse_changelog(input).unwrap_err();
+    match err {
+        ChangelogError::Parse { errors } => {
+            assert!(
+                errors[0].message.contains("unsupported entry marker"),
+                "{}",
+                errors[0].message
+            );
+        }
+        _ => panic!("expected Parse error"),
+    }
+}
+
+#[test]
 fn prose_accepts_emphasis_and_bullet_like_lines() {
     let input = "\
 # Changelog

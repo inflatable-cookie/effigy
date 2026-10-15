@@ -218,6 +218,13 @@ impl<'a> Parser<'a> {
             return;
         }
 
+        // Any other Markdown list item is a malformed entry, not prose.
+        if unsupported_list_marker(trimmed) {
+            self.errors
+                .push(unsupported_entry_diagnostic(line, self.line_num()));
+            return;
+        }
+
         // A malformed `## ` line is a release-header problem, not prose.
         if trimmed.starts_with("## ") {
             self.errors
@@ -323,6 +330,13 @@ impl<'a> Parser<'a> {
                     return;
                 }
             }
+        }
+
+        // Any other Markdown list item is a malformed entry, not prose.
+        if unsupported_list_marker(trimmed) {
+            self.errors
+                .push(unsupported_entry_diagnostic(line, self.line_num()));
+            return;
         }
 
         // A malformed `## ` line is a release-header problem, not stray prose.
@@ -519,6 +533,45 @@ fn non_ascii_release_separator(trimmed: &str) -> Option<char> {
     }
     let separator = inner[close_bracket + 1..].trim_start().chars().next()?;
     is_dash_like(separator).then_some(separator)
+}
+
+/// Whether `trimmed` opens a Markdown list item the Northstar profile does not
+/// accept as a changelog entry.
+///
+/// Entries use `- ` or `* `. CommonMark also treats `+`, and ordered markers
+/// such as `1.` or `1)`, as list items. Routing those lines into release prose
+/// would let malformed entry syntax pass validation, so they stay errors. The
+/// marker must be followed by a space, a tab, or end of line, which keeps
+/// ordinary paragraphs such as `**Note:** ...` or `-like word` as prose.
+fn unsupported_list_marker(trimmed: &str) -> bool {
+    if matches!(trimmed, "+" | "-" | "*") || trimmed.starts_with("+ ") || trimmed.starts_with("+\t")
+    {
+        return true;
+    }
+
+    // CommonMark ordered list markers are 1-9 ASCII digits followed by `.` or
+    // `)` and then a space, a tab, or the end of the line.
+    let digits = trimmed.chars().take_while(|c| c.is_ascii_digit()).count();
+    if !(1..=9).contains(&digits) {
+        return false;
+    }
+    let rest = &trimmed[digits..];
+    let Some(after) = rest.strip_prefix('.').or_else(|| rest.strip_prefix(')')) else {
+        return false;
+    };
+    after.is_empty() || after.starts_with(' ') || after.starts_with('\t')
+}
+
+/// Diagnostic for a line that opens a Markdown list item the profile does not
+/// accept as an entry.
+fn unsupported_entry_diagnostic(line: &str, line_num: usize) -> ParseDiagnostic {
+    ParseDiagnostic {
+        line: line_num,
+        message: format!(
+            "unsupported entry marker (entries must use `- ` or `* `): {}",
+            truncate_for_display(line, 60)
+        ),
+    }
 }
 
 /// Whether `c` is dash-like enough to be mistaken for the ASCII `-` separator.
