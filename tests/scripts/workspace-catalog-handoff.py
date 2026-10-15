@@ -98,17 +98,17 @@ if 'cp' in args:
         sys.exit(9)
     shutil.copytree(source, destination)
     if mode == 'partial-copy':
-        (destination / 'silo/compose.fragment.yml').unlink()
+        (destination / 'warehouse/compose.fragment.yml').unlink()
     if mode == 'changed-copy':
-        (destination / 'silo/compose.fragment.yml').write_text('image: changed:latest\n')
+        (destination / 'warehouse/compose.fragment.yml').write_text('image: changed:latest\n')
     if mode == 'target-drift':
         (root / 'generation').write_text('b' * 64)
     if mode == 'host-content-drift':
         status = json.loads((root / 'host-home/.effigy/catalog-packs/v1/state.json').read_text())
         retained = root / 'host-home/.effigy/catalog-packs/v1/installs' / status['active']
-        (retained / 'silo/compose.fragment.yml').write_text('image: changed:latest\n')
+        (retained / 'warehouse/compose.fragment.yml').write_text('image: changed:latest\n')
     if mode == 'snapshot-drift':
-        (pathlib.Path(source) / 'silo/compose.fragment.yml').write_text('image: changed:latest\n')
+        (pathlib.Path(source) / 'warehouse/compose.fragment.yml').write_text('image: changed:latest\n')
     sys.exit(0)
 if 'status' in args and '--profile' in args:
     print('colima running')
@@ -137,6 +137,7 @@ while i < len(args) and args[i].startswith('-'):
     elif flag not in ('-T', '-t', '-i'):
         raise RuntimeError('unknown exec flag ' + flag)
 service = args[i]; command = args[i+1:]
+log({'phase': 'exec-target', 'target': service, 'command': ' '.join(command)})
 assert service in ('app', 'a' * 64, 'b' * 64, 'catalog-web-app-1')
 joined = ' '.join(command)
 if 'effigy.install-identity' in joined:
@@ -266,7 +267,11 @@ def write(path, content):
     path.write_text(content)
 
 
-def run(command, env, cwd, timeout=20):
+# The covering selector shares this host with every other task's admission-
+# controlled run, so a single CLI invocation needs a timeout well above its
+# uncontended cost. A real hang is still caught here and by the selector's own
+# budget; 20s previously aborted the matrix under ordinary host load.
+def run(command, env, cwd, timeout=120):
     child = subprocess.Popen(command, env=env, cwd=cwd, stdin=subprocess.DEVNULL,
                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
     try:
@@ -335,13 +340,13 @@ class Fixture:
             [containers.web.services.app]
             catalog = "pgweb"
             [containers.web.services.minio]
-            catalog = "silo"
+            catalog = "warehouse"
         '''))
         write(self.repo / 'effigy.toml', textwrap.dedent(f'''\
             [catalog]
             alias = "private-handoff"
             [catalog.members]
-            silo = "task-silo"
+            warehouse = "task-warehouse"
             [bundle]
             base = {{ type = "path", dir = "bundle" }}
             [systems]
@@ -354,7 +359,7 @@ class Fixture:
             home = {json.dumps(str(self.guest))}
             working_dir = {json.dumps(str(self.repo))}
         '''))
-        write(self.repo / 'task-silo/effigy.toml', '[catalog]\nalias = "silo"\n[tasks]\nunrelated = "true"\n')
+        write(self.repo / 'task-warehouse/effigy.toml', '[catalog]\nalias = "warehouse"\n[tasks]\nunrelated = "true"\n')
         write(self.host / '.effigy/catalog/host-only/service.toml', '[service]\nname = "host-only"\ndescription = "must not transfer"\n')
         write(self.host / '.effigy/catalog/host-only/compose.fragment.yml', 'image: private:host-only\n')
         write(self.host / '.credentials', 'SECRET_HOST_CREDENTIAL')
@@ -369,8 +374,8 @@ class Fixture:
     @staticmethod
     def make_pack(root, version):
         write(root / 'pack.toml', f'schema_version = 1\n[pack]\nid = "private-service-catalog"\nversion = "{version}"\n[compatibility]\neffigy = ">=0.13, <0.15"\n')
-        write(root / 'silo/service.toml', '[service]\nname = "silo"\ndescription = "private non-baseline service"\n')
-        write(root / 'silo/compose.fragment.yml', 'services:\n  {{ service_name }}:\n    image: private-silo:1\n')
+        write(root / 'warehouse/service.toml', '[service]\nname = "warehouse"\ndescription = "private non-baseline service"\n')
+        write(root / 'warehouse/compose.fragment.yml', 'services:\n  {{ service_name }}:\n    image: private-warehouse:1\n')
 
     def cli(self, home, args, extra=None):
         env = dict(self.env, HOME=str(home), EFFIGY_TEST_CONTAINERS_HOME=str(home / '.effigy'))
@@ -386,7 +391,7 @@ class Fixture:
         child = shlex_quote(BINARY) + ' --json exec /usr/bin/printf catalog-child-ok'
         args = ['container', 'web', 'shell', '--command', child]
         if bounded:
-            args += ['--bounded', '--deadline-ms', '3000' if mode == 'deadline' else '10000', '--stdout-limit-bytes', str(stdout_limit),
+            args += ['--bounded', '--deadline-ms', '3000' if mode == 'deadline' else '120000', '--stdout-limit-bytes', str(stdout_limit),
                      '--stderr-limit-bytes', str(stderr_limit), '--json']
         return self.cli(self.host, args, {'FIXTURE_MODE': mode})
 
@@ -406,9 +411,9 @@ def success(root, bounded, backend):
     fixture = Fixture(root)
     fixture.env['EFFIGY_COMPOSE_BACKEND'] = backend
     # The actual guest policy loader must fail before pack preparation, even
-    # though the unrelated task catalog member is also called silo.
+    # though the unrelated task catalog member is also called warehouse.
     code, stdout, stderr = fixture.cli(fixture.guest, ['--json', 'exec', '/usr/bin/true'])
-    assert code != 0 and 'silo' in stdout + stderr, (stdout, stderr)
+    assert code != 0 and 'warehouse' in stdout + stderr, (stdout, stderr)
     assert not fixture.events(), fixture.events()
     host_code, host_stdout, host_stderr = fixture.cli(fixture.host, ['service', 'pack', 'status', '--json'])
     host_status = json.loads(host_stdout)['result']
@@ -436,6 +441,12 @@ def success(root, bounded, backend):
         payload = json.loads(stdout)['result']
         assert payload['preparation']['captures'] > 3, payload
         assert payload['retained']['stdout_bytes'] > payload['stdout_bytes'], payload
+        # Every bounded preparation effect must target the verified full ID;
+        # the Compose service alias may name a replacement container.
+        targets = [json.loads(line)['target']
+                   for line in (root / 'transport.jsonl').read_text().splitlines()
+                   if json.loads(line)['phase'] == 'exec-target']
+        assert targets and 'app' not in targets, targets
 
 
 def recreation(root):
@@ -460,7 +471,7 @@ def baseline(root, explicit):
         code, stdout, stderr = fixture.cli(fixture.host, ['service', 'pack', 'reset'])
         assert code == 0, (stdout, stderr)
     export = fixture.repo / 'bundle/export.toml'
-    export.write_text(export.read_text().replace('catalog = "silo"', 'catalog = "postgres"'))
+    export.write_text(export.read_text().replace('catalog = "warehouse"', 'catalog = "postgres"'))
     code, stdout, stderr = fixture.handoff(True)
     assert code == 0 and 'catalog-child-ok' in stdout, (stdout, stderr, fixture.events())
     assert not any(event in fixture.events() for event in ['copy', 'install', 'status', 'stage']), fixture.events()
@@ -481,7 +492,7 @@ def refusal(root, mode, bounded=True):
             code, stdout, stderr = fixture.cli(fixture.guest, ['service', 'pack', 'install', '--path', str(other)])
             if mode == 'corrupt-guest':
                 install = next((fixture.guest / '.effigy/catalog-packs/v1/installs').iterdir())
-                write(install / 'silo/compose.fragment.yml', 'image: tampered:latest\n')
+                write(install / 'warehouse/compose.fragment.yml', 'image: tampered:latest\n')
             if mode == 'incompatible-guest':
                 data = json.loads(state.read_text())
                 data['installs'][0]['requires_effigy'] = '>=99'
@@ -498,7 +509,7 @@ def refusal(root, mode, bounded=True):
         data = json.loads(host_state.read_text())
         if mode == 'corrupt-host':
             retained = fixture.host / '.effigy/catalog-packs/v1/installs' / data['active']
-            write(retained / 'silo/compose.fragment.yml', 'image: tampered:latest\n')
+            write(retained / 'warehouse/compose.fragment.yml', 'image: tampered:latest\n')
         elif mode == 'incompatible-host':
             data['installs'][0]['requires_effigy'] = '>=99'
             write(host_state, json.dumps(data))
