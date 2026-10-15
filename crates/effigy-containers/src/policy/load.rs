@@ -68,6 +68,7 @@ pub fn register_container_runtime_scope(
         &policy.shared_services,
         Some(&token),
         shared_runtime_identity,
+        policy.dns_base_domain.as_deref(),
     );
     let record = ScopeRecord::from_policy(policy, &token, key, &host_map, shared_runtime_identity);
     upsert_scope_record(&record).map_err(|error| ContainerPolicyError::Read {
@@ -523,6 +524,7 @@ fn build_effective_policy(
         }
     }
     let dns = config.dns.as_ref().cloned().unwrap_or_default();
+    let dns_base_domain = dns.base_domain.clone();
     let mut dns_routes = Vec::new();
     for route in dns.resolved_routes() {
         if route.domain.trim().is_empty() {
@@ -546,8 +548,18 @@ fn build_effective_policy(
         apply_scope_to_routes(&mut dns_routes, key);
     }
     let service_aliases = effective_service_aliases(repo_root, config)?;
+    let runtime_dns_base_domain = dns_base_domain.as_deref().map(|base_domain| {
+        runtime_host_key.map_or_else(
+            || base_domain.to_owned(),
+            |key| rewrite_declared_host(base_domain, key),
+        )
+    });
     if driver == ManifestContainerDriver::Colima {
-        let runtime_routes = runtime_route_domains(&dns_routes, &service_aliases);
+        let runtime_routes = runtime_route_domains(
+            &dns_routes,
+            &service_aliases,
+            runtime_dns_base_domain.as_deref(),
+        );
         materialize_runtime_dns_override(
             repo_root,
             name,
@@ -585,6 +597,7 @@ fn build_effective_policy(
         project_name,
         primary_service,
         dns_domain: dns_routes.first().map(|route| route.domain.clone()),
+        dns_base_domain,
         dns_tls: dns_routes.first().is_some_and(|route| route.tls),
         dns_port: dns_routes.first().and_then(|route| route.port),
         dns_routes,

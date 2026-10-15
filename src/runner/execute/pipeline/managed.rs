@@ -1523,6 +1523,7 @@ mod tests {
             project_name: "stack".to_owned(),
             primary_service: "workspace".to_owned(),
             dns_domain: None,
+            dns_base_domain: None,
             dns_tls: false,
             dns_port: None,
             dns_routes: vec![],

@@ -250,6 +250,7 @@ fn test_policy(compose_source: EffectiveComposeSource) -> EffectiveContainerPoli
         project_name: "demo".to_owned(),
         primary_service: "app".to_owned(),
         dns_domain: None,
+        dns_base_domain: None,
         dns_tls: false,
         dns_port: None,
         dns_routes: vec![],

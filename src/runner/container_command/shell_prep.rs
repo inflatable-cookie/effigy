@@ -612,6 +612,7 @@ working_dir = "/var/www/contact-patch"
             project_name: "demo-web-dev".to_owned(),
             primary_service: "app".to_owned(),
             dns_domain: None,
+            dns_base_domain: None,
             dns_tls: false,
             dns_port: None,
             dns_routes: vec![],

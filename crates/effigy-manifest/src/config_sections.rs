@@ -628,6 +628,7 @@ compose_file = "infra/dev/docker-compose.yml"
 primary_service = "app"
 
 [containers.web.dns]
+base_domain = "acme.test"
 routes = [
   { domain = "clientname.test", tls = true, port = 4173, service = "app" }
 ]
@@ -643,6 +644,7 @@ routes = [
             .dns
             .as_ref()
             .expect("dns config");
+        assert_eq!(dns.base_domain.as_deref(), Some("acme.test"));
         assert_eq!(dns.routes.len(), 1);
         assert_eq!(dns.routes[0].domain, "clientname.test");
         assert_eq!(dns.routes[0].tls, Some(true));

@@ -11,6 +11,9 @@ During v0.x, MINOR bumps may include breaking changes.
   checkout no longer exists, such as worktrees removed without running their
   teardown, through the ordinary retirement path. It previews the scopes when
   run without a terminal or `--yes`, and is safe to schedule with `--yes`.
+- Optional `[containers.<name>.dns].base_domain` selects the apex for generated
+  TCP service aliases and the `container hosts` cookie domain. When omitted,
+  the first resolved DNS route continues to supply that apex.
 - Workspace handoff verifies the host-selected installed service catalog pack
   after selected-workspace activation or recreation, for the workspace user, including when the Linux binary is already current.
   Empty guests receive validated retained content without needing its original
@@ -226,11 +229,19 @@ During v0.x, MINOR bumps may include breaking changes.
   1.2.0.
 
 ### Fixed
+- When a running Colima VM comes back from a restart with containerd and
+  BuildKit stopped, `effigy container up` and container tasks now start those
+  units inside the VM and continue, instead of waiting and then restarting the
+  whole VM, which took down every stack on it and could itself time out.
 - Task locks are published atomically and carry an owner token. A concurrent
   run can no longer see a half-written lock, delete it, and start alongside the
   owner, and a finishing run never removes or refreshes a successor's lock. An
   unparsable lock is reclaimed only after a short grace period, so a lock still
   being written by an older Effigy is not stolen.
+- Container exec preparation gives owned-service inventory and inspection a
+  bounded 15-second window separate from the initial workload probe. Valid
+  Colima stacks no longer exhaust a shared two-second window before exec;
+  explicit caller deadlines and strict immutable-ID ownership checks remain.
 - A container task no longer attaches a 5-minute idle-shutdown lease to a stack
   you brought up explicitly with `effigy container up`, and a pending lease is
   dropped when you do. `effigy container down` - including `--global` and the

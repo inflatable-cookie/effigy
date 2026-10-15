@@ -362,6 +362,10 @@ pub enum ManifestContainerSecretDelivery {
 #[derive(Debug, Clone, serde::Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct ManifestContainerDnsConfig {
+    /// Apex used for generated TCP aliases and the container host-map cookie
+    /// domain. Defaults to the first resolved route's domain.
+    #[serde(default)]
+    pub base_domain: Option<String>,
     #[serde(default)]
     pub routes: Vec<ManifestContainerDnsRouteConfig>,
     /// Sugar: a flat list of domain names that expand into routes

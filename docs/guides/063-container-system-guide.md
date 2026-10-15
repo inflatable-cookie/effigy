@@ -716,8 +716,12 @@ Use this with `effigy.local.toml` for per-machine mounts.
 `effigy container up` means:
 
 1. ensure the selected runtime is usable; for Colima containerd, Effigy waits
-   for profile-scoped `nerdctl info` and BuildKit workers, and can repair a
-   running but incomplete profile once
+   for profile-scoped `nerdctl info` and BuildKit workers. If a running
+   profile's runtime stays unavailable (for example after the VM restarted
+   outside Colima's boot provisioning and came back with containerd and
+   BuildKit stopped), Effigy first starts those units inside the VM and
+   reports it; only if that fails does it repair the profile once by
+   restarting it
 2. bring the compose environment up
 3. inspect owned Compose projects including stopped containers and `start`
    currently declared services that are still `Exited` or `Created`; this
@@ -1175,6 +1179,23 @@ Safety rules:
 TCP catalog services such as postgres, mariadb, redis, and memcached also get
 deterministic loopback aliases. That means host and container code can use the
 same stable names without hand-written `/etc/hosts` edits.
+
+By default, generated TCP aliases and the `container hosts` cookie apex use
+the first resolved `[containers.<name>.dns]` route's domain. Set `base_domain`
+when that route is a subdomain and service aliases should use a higher apex.
+For example, with a first route of `s3.acme.test`, setting
+`base_domain = "acme.test"` gives the postgres service the alias
+`postgres.acme.test` and reports `acme.test` as `cookie_domain`. This setting
+does not change the declared HTTP routes.
+
+```toml
+[containers.web.dns]
+base_domain = "acme.test"
+routes = [
+  { domain = "s3.acme.test", tls = true },
+  { domain = "app.s3.acme.test", tls = true },
+]
+```
 
 ### Private gateway for disposable consumers
 

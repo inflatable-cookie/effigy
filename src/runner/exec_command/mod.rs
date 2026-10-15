@@ -561,7 +561,7 @@ pub(in crate::runner) fn render_container_suite_command(
         &policy,
         &target.service,
         &working_dir,
-        std::time::Instant::now() + std::time::Duration::from_secs(2),
+        None,
     )?;
     let plan = effigy_runtime::container_manager::compose_invocation_plan_from_tail_args(
         &target.root,

@@ -34,6 +34,7 @@ pub(crate) mod test_support {
             project_name: format!("{name}-project"),
             primary_service: "app".to_owned(),
             dns_domain: None,
+            dns_base_domain: None,
             dns_tls: false,
             dns_port: None,
             dns_routes: vec![],
