@@ -364,6 +364,10 @@ domain = "frontend.example.test"
 tls = true
 ```
 
+Listener routes go to the shared gateway, so browsers reach them like any
+other container route. Set `EFFIGY_GATEWAY_PRIVATE_STATE_ROOT` to publish them
+to a private gateway instead (see below).
+
 `container up --detach --json` returns each ready listener's actual address,
 internal URL, public URL, generation and state-file path. A linked worktree
 or marked ephemeral clone publishes its checkout-scoped name, so the same

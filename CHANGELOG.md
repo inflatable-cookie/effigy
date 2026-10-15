@@ -6,6 +6,12 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Changed
+- Managed host listener routes publish to the shared operator gateway when no
+  `EFFIGY_GATEWAY_PRIVATE_STATE_ROOT` is set, instead of refusing. Private
+  roots keep their existing validation; route ownership and generation checks
+  are unchanged.
+
 ### Added
 - Secret-free versioned refusal accounting for bounded container transport
   refusals (task 159). Every bounded transport refusal payload now carries a
