@@ -137,6 +137,13 @@ owned listener that passes the declared HTTP readiness request receives a
 gateway route. A successful HTTP response, open-port probe, free-port check,
 or report by itself cannot publish a route.
 
+Routes publish to the caller's private gateway when
+`EFFIGY_GATEWAY_PRIVATE_STATE_ROOT` selects one, and otherwise to the shared
+operator gateway. A private root keeps its ownership and permission checks on
+every use; the shared gateway directory is the operator's own state and is not
+validated as a private root. Route claims, generation binding and owner-checked
+withdrawal are the same in both.
+
 Dependencies use `depends_on` and must name a declared managed listener. They
 start after that listener is ready. A dependent process receives
 `EFFIGY_MANAGED_HOST_<NAME>_INTERNAL_URL`, `_PUBLIC_URL`, `_STATE_FILE`, and

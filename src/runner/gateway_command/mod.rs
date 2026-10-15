@@ -1559,6 +1559,11 @@ pub(in crate::runner) fn gateway_dir() -> Result<PathBuf, RunnerError> {
             .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
         return Ok(root);
     }
+    standard_gateway_dir()
+}
+
+/// The shared operator gateway directory, ignoring any private root.
+pub(in crate::runner) fn standard_gateway_dir() -> Result<PathBuf, RunnerError> {
     #[cfg(test)]
     {
         let home = TEST_GATEWAY_HOME

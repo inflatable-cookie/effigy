@@ -172,6 +172,10 @@ During v0.x, MINOR bumps may include breaking changes.
   endpoints, or trust behavior change.
 
 ### Changed
+- Managed host listener routes publish to the shared operator gateway when no
+  `EFFIGY_GATEWAY_PRIVATE_STATE_ROOT` is set, instead of refusing. Private
+  roots keep their existing validation; route ownership and generation checks
+  are unchanged.
 - Host-admitted standard direct-command tasks bound to a container now execute
   their resolved command through mapped container exec instead of re-entering
   Effigy inside the container. Selector resolution, parent validation, locks,

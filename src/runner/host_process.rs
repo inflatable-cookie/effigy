@@ -194,7 +194,7 @@ pub(in crate::runner) fn validate_host_process_preflight(
     for process in &ordered {
         resolve_host_process_cwd(&checkout_root, process)?;
     }
-    let listener_root = private_gateway_root(policy)?;
+    let listener_root = listener_gateway_root(policy)?;
     if let Some(root) = listener_root {
         let route_table = root.join("routes.json");
         let project_path = checkout_root.display().to_string();
@@ -250,7 +250,7 @@ pub(in crate::runner) fn start_host_processes_for_container(
 
     validate_host_process_preflight(repo_root, policy)?;
 
-    let listener_root = private_gateway_root(policy)?;
+    let listener_root = listener_gateway_root(policy)?;
     let route_table = listener_root
         .as_deref()
         .map(|root| root.join("routes.json"));
@@ -728,7 +728,12 @@ fn host_process_spec_path(dir: &Path, name: &str) -> PathBuf {
     dir.join(format!("{}.spec.json", sanitize(name)))
 }
 
-fn private_gateway_root(policy: &EffectiveContainerPolicy) -> Result<Option<PathBuf>, RunnerError> {
+/// Gateway state root that receives managed listener routes: the caller's
+/// validated private root when `EFFIGY_GATEWAY_PRIVATE_STATE_ROOT` is set,
+/// otherwise the shared operator gateway.
+fn listener_gateway_root(
+    policy: &EffectiveContainerPolicy,
+) -> Result<Option<PathBuf>, RunnerError> {
     if !policy
         .host_processes
         .iter()
@@ -736,16 +741,18 @@ fn private_gateway_root(policy: &EffectiveContainerPolicy) -> Result<Option<Path
     {
         return Ok(None);
     }
-    let Some(root) = std::env::var_os(effigy_gateway::private_state::PRIVATE_STATE_ROOT_ENV) else {
-        return Err(RunnerError::task_invocation(format!(
-            "managed host listener routes require `{}` to select a caller-owned private gateway state root",
-            effigy_gateway::private_state::PRIVATE_STATE_ROOT_ENV
-        )));
-    };
-    let root = PathBuf::from(root);
-    effigy_gateway::private_state::validate_root(&root)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    Ok(Some(root))
+    super::gateway_command::gateway_dir().map(Some)
+}
+
+/// Re-check a recorded listener root before use. Private roots keep their
+/// ownership and permission checks; the shared gateway directory is the
+/// operator's own state and is not a caller-owned private root.
+fn validate_listener_gateway_root(root: &Path) -> Result<(), RunnerError> {
+    if root == super::gateway_command::standard_gateway_dir()? {
+        return Ok(());
+    }
+    effigy_gateway::private_state::validate_root(root)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))
 }
 
 fn managed_host_process_owner(
@@ -2994,10 +3001,9 @@ fn publish_managed_listener_route(
     owner: &ManagedListenerRouteOwner,
 ) -> Result<(), RunnerError> {
     let root = spec.gateway_root.as_deref().ok_or_else(|| {
-        RunnerError::task_invocation("managed listener route has no private gateway state root")
+        RunnerError::task_invocation("managed listener route has no gateway state root")
     })?;
-    effigy_gateway::private_state::validate_root(root)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    validate_listener_gateway_root(root)?;
     let route_table_path = root.join("routes.json");
     let address = owner.address.parse::<SocketAddr>().map_err(|_| {
         RunnerError::task_invocation("managed host listener owner has an invalid address")
@@ -3019,10 +3025,9 @@ fn prepare_managed_listener_route(
     listener: &EffectiveManagedHostListener,
 ) -> Result<(), RunnerError> {
     let root = spec.gateway_root.as_deref().ok_or_else(|| {
-        RunnerError::task_invocation("managed listener route has no private gateway state root")
+        RunnerError::task_invocation("managed listener route has no gateway state root")
     })?;
-    effigy_gateway::private_state::validate_root(root)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    validate_listener_gateway_root(root)?;
     if listener.route_tls {
         super::gateway_command::ensure_gateway_tls_cert(&listener.route_domain)?;
     }
@@ -3033,7 +3038,7 @@ fn listener_route_table_path(spec: &HostProcessRuntimeSpec) -> Result<PathBuf, R
     spec.gateway_root
         .as_deref()
         .map(|root| root.join("routes.json"))
-        .ok_or_else(|| RunnerError::task_invocation("private gateway root is unavailable"))
+        .ok_or_else(|| RunnerError::task_invocation("listener gateway root is unavailable"))
 }
 
 fn write_listener_state(path: &Path, state: HostListenerState) -> Result<(), RunnerError> {
@@ -3869,6 +3874,24 @@ fn nix_signal_child_group_kill_after(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn host_process_listener_root_accepts_shared_gateway_and_checks_private_roots() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let shared =
+            super::super::gateway_command::standard_gateway_dir().expect("shared gateway dir");
+        validate_listener_gateway_root(&shared).expect("shared gateway is not a private root");
+
+        let loose = tempfile::tempdir().expect("fixture dir");
+        let loose_root = loose.path().canonicalize().expect("canonical fixture");
+        fs::set_permissions(&loose_root, fs::Permissions::from_mode(0o755))
+            .expect("loosen fixture");
+        assert!(
+            validate_listener_gateway_root(&loose_root).is_err(),
+            "a non-shared root must still pass private-root validation"
+        );
+    }
     use crate::runner::host_transition_evidence::read_transition_evidence;
 
     #[test]
