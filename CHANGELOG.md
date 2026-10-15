@@ -229,8 +229,12 @@ During v0.x, MINOR bumps may include breaking changes.
   being written by an older Effigy is not stolen.
 - A container task no longer attaches a 5-minute idle-shutdown lease to a stack
   you brought up explicitly with `effigy container up`, and a pending lease is
-  dropped when you do. Previously a task that reused or restarted such a stack
-  could tear the whole stack down five minutes later. The lease notice now names
+  dropped when you do. `effigy container down` - including `--global` and the
+  cwd-scoped form - and `effigy container retire` end that persistent ownership,
+  so a later task-started stack is leased and reclaimed again. Previously a task
+  that reused or restarted such a stack could tear the whole stack down five
+  minutes later, and a `down` outside the checkout left a stale owner marker that
+  blocked later leases. The lease notice now names
   `effigy container up --detach` and `EFFIGY_DISABLE_HOST_CONTAINER_LEASE=1`.
 - `effigy doctor` no longer reports `{ task = "defer …" }` and other builtin
   command references as unresolved tasks, and accepts every top-level manifest

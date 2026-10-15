@@ -807,6 +807,9 @@ pub(super) fn run_container_down_command(
                     repo_root, policy,
                 );
             },
+            |repo_root, policy| {
+                let _ = clear_persistent_container_owner(repo_root, policy);
+            },
         )
         .map_err(Into::into);
     }
@@ -824,6 +827,9 @@ pub(super) fn run_container_down_command(
                 let _ = crate::runner::host_process::stop_host_processes_for_container(
                     repo_root, policy,
                 );
+            },
+            |repo_root, policy| {
+                let _ = clear_persistent_container_owner(repo_root, policy);
             },
         )
         .map_err(Into::into),
@@ -960,8 +966,17 @@ fn run_container_down_adapter(
     )
     .map_err(RunnerError::from)?;
     clear_partial_activation(repo_root, &policy)?;
-    crate::runner::host_container_lease::clear_persistent_container_owner(repo_root, &policy)?;
+    clear_persistent_container_owner(repo_root, &policy)?;
     Ok(output)
+}
+
+/// Every `container down` that stops a stack ends its persistent ownership, so a
+/// later task-started stack is leased and reaped again.
+fn clear_persistent_container_owner(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<(), RunnerError> {
+    crate::runner::host_container_lease::clear_persistent_container_owner(repo_root, policy)
 }
 
 pub(in crate::runner) fn run_container_reset_adapter(
@@ -1241,7 +1256,7 @@ mod tests {
         detached_partial_activation_error, exec_operation_plan, gateway_registration_failure,
         lifecycle_operation_plan, partial_activation_recorded, partial_reconcile_skips_compose_up,
         primary_service_is_running, refresh_workspace_mounts_for_creation,
-        resolve_workspace_mounts_for_creation, run_container_eject,
+        resolve_workspace_mounts_for_creation, run_container_down_command, run_container_eject,
         start_runtime_after_scope_registration, RunnerError,
     };
     use crate::runner::container_command::support::{
@@ -1961,5 +1976,160 @@ primary_service = "app"
         assert!(rendered.contains("reconcile mark could not be recorded (read-only lease home)"));
         assert!(rendered.contains("do not re-run `effigy container up`"));
         assert!(!rendered.contains("Re-run `effigy container up --detach`"));
+    }
+
+    /// A repo whose only running environment is a Compose stack that a fake
+    /// `docker` reports as up, so a real `container down` path (discovery,
+    /// runtime check, compose down) runs without touching a live runtime.
+    struct FakeDownFixture {
+        _temp: tempfile::TempDir,
+        repo_root: PathBuf,
+        parent: PathBuf,
+        project: String,
+        _env: crate::contract_test_support::EnvGuard,
+    }
+
+    impl FakeDownFixture {
+        fn new() -> Self {
+            use std::os::unix::fs::PermissionsExt;
+
+            let temp = tempfile::tempdir().expect("temporary fixture root");
+            let parent = temp.path().to_path_buf();
+            let repo_root = parent.join("repo");
+            fs::create_dir_all(&repo_root).expect("mkdir repo");
+            let project = "effigy-down-fixture".to_owned();
+            fs::write(
+                repo_root.join("effigy.toml"),
+                format!(
+                    "[containers]\ndefault = \"web\"\n\n[containers.web]\ncompose_file = \"docker-compose.yml\"\nprimary_service = \"app\"\nproject_name = \"{project}\"\n"
+                ),
+            )
+            .expect("write manifest");
+            fs::write(
+                repo_root.join("docker-compose.yml"),
+                "services:\n  app:\n    image: alpine:latest\n",
+            )
+            .expect("write compose");
+
+            let bin = parent.join("bin");
+            fs::create_dir_all(&bin).expect("mkdir bin");
+            let docker = bin.join("docker");
+            fs::write(
+                &docker,
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$EFFIGY_TEST_DOCKER_LOG\"\nfor arg in \"$@\"; do\n  if [ \"$arg\" = \"--format\" ]; then\n    printf 'web-app\\tUp 1 minute\\t\\t%s\\t%s\\tapp\\tFalse\\n' \"$EFFIGY_TEST_PROJECT\" \"$EFFIGY_TEST_WORKDIR\"\n    exit 0\n  fi\ndone\nexit 0\n",
+            )
+            .expect("write fake docker");
+            let mut perms = fs::metadata(&docker)
+                .expect("stat fake docker")
+                .permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(&docker, perms).expect("chmod fake docker");
+            // `command_exists("colima")` also probes well-known install
+            // directories, so shadow the host CLI with a fake that reports no
+            // profiles instead of listing the developer's real VMs.
+            let colima = bin.join("colima");
+            fs::write(&colima, "#!/bin/sh\nexit 0\n").expect("write fake colima");
+            let mut perms = fs::metadata(&colima)
+                .expect("stat fake colima")
+                .permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(&colima, perms).expect("chmod fake colima");
+
+            let lease_home = parent.join("lease-home");
+            fs::create_dir_all(&lease_home).expect("mkdir lease home");
+            let home = parent.join("home");
+            fs::create_dir_all(&home).expect("mkdir fake home");
+            let env = crate::contract_test_support::EnvGuard::set_many(&[
+                ("PATH", Some(bin.display().to_string())),
+                ("HOME", Some(home.display().to_string())),
+                ("DOCKER_HOST", Some("tcp://127.0.0.1:1".to_owned())),
+                ("EFFIGY_COMPOSE_BACKEND", Some("docker".to_owned())),
+                (
+                    "EFFIGY_TEST_HOST_CONTAINER_LEASE_HOME",
+                    Some(lease_home.display().to_string()),
+                ),
+                (
+                    "EFFIGY_TEST_DOCKER_LOG",
+                    Some(parent.join("docker.log").display().to_string()),
+                ),
+                ("EFFIGY_TEST_PROJECT", Some(project.clone())),
+                ("EFFIGY_TEST_WORKDIR", Some(repo_root.display().to_string())),
+            ]);
+            FakeDownFixture {
+                _temp: temp,
+                repo_root,
+                parent,
+                project,
+                _env: env,
+            }
+        }
+
+        fn policy(&self) -> EffectiveContainerPolicy {
+            load_container_policy(&self.repo_root, None).expect("fixture policy")
+        }
+
+        fn marker_path(&self, policy: &EffectiveContainerPolicy) -> PathBuf {
+            crate::runner::host_container_lease::detached_admission_marker_root(&self.repo_root)
+                .join(&policy.profile)
+                .join(&policy.project_name)
+                .join(format!("{}.persistent", policy.name))
+        }
+
+        fn mark_owned(&self, policy: &EffectiveContainerPolicy) {
+            crate::runner::host_container_lease::mark_persistent_container_owner(
+                &self.repo_root,
+                policy,
+            )
+            .expect("mark explicit owner");
+            assert!(self.marker_path(policy).exists());
+        }
+
+        fn docker_log(&self) -> String {
+            fs::read_to_string(self.parent.join("docker.log")).unwrap_or_default()
+        }
+    }
+
+    #[test]
+    fn global_container_down_clears_persistent_owner_marker() {
+        let fixture = FakeDownFixture::new();
+        let policy = fixture.policy();
+        fixture.mark_owned(&policy);
+
+        run_container_down_command(None, None, true, false).expect("global down succeeds");
+
+        assert!(
+            !fixture.marker_path(&policy).exists(),
+            "global down must end persistent ownership: {}",
+            fixture.docker_log()
+        );
+        assert!(
+            fixture.docker_log().contains("compose"),
+            "the fake stack was actually torn down: {}",
+            fixture.docker_log()
+        );
+        assert_eq!(policy.project_name, fixture.project);
+    }
+
+    #[test]
+    fn cwd_scoped_container_down_clears_persistent_owner_marker() {
+        let fixture = FakeDownFixture::new();
+        let policy = fixture.policy();
+        fixture.mark_owned(&policy);
+
+        crate::contract_test_support::with_cwd(&fixture.parent, || {
+            run_container_down_command(None, None, false, false)
+        })
+        .expect("cwd-scoped down succeeds");
+
+        assert!(
+            !fixture.marker_path(&policy).exists(),
+            "cwd-scoped down must end persistent ownership: {}",
+            fixture.docker_log()
+        );
+        assert!(
+            fixture.docker_log().contains("compose"),
+            "the fake stack was actually torn down: {}",
+            fixture.docker_log()
+        );
     }
 }

@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use effigy_catalog::volumes::{
     inspect_volumes_command, parse_inspect_volume_metadata_list_strict,
@@ -121,6 +121,14 @@ fn retire_one_record(record: &ScopeRecord, output_json: bool) -> Result<String, 
     let remaining = remaining_after(&record, &observe_scope(&record, &live)?);
     let record_removed = remaining.is_empty() && stopped.is_empty();
     if record_removed {
+        // The stack is gone, so its persistent ownership ends. Retire works
+        // from the scope record and does not know each container name, so clear
+        // every marker under the scope's profile/project lease directories.
+        let _ = crate::runner::host_container_lease::clear_persistent_container_owners_for_scope(
+            Path::new(&record.checkout),
+            &record.observation_profiles(),
+            &record.project_names,
+        );
         remove_scope_record(&record.token)
             .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     }

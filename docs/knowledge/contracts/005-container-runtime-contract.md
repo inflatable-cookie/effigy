@@ -1140,7 +1140,9 @@ Contract:
 - default lease timeout is 5 minutes unless configured otherwise
 - a stack that an explicit `effigy container up` left running is persistently
   owned: task activation never leases it, the reaper never shuts it down, and
-  only `effigy container down` ends that ownership
+  only an explicit teardown ends that ownership - every `effigy container down`
+  form that stops the stack (`--global` and cwd-scoped included) and
+  `effigy container retire` once it removes the scope
 - lease reuse must not depend on whether the request came from deferral or
   explicit task routing
 

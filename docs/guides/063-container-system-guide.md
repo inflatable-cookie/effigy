@@ -893,7 +893,11 @@ Default lease behavior:
   session
 - an explicit `effigy container up` that leaves the stack running makes it
   persistent: later tasks that reuse or restart it never attach a lease, and
-  any earlier lease is dropped. `effigy container down` ends that ownership.
+  any earlier lease is dropped. Every `effigy container down` that stops the
+  stack ends that ownership - the checkout form, `--global`, and the
+  cwd-scoped form - as does `effigy container retire` once it removes the
+  scope. A stale owner marker never blocks a later task-started stack from
+  being leased and reclaimed.
 - the notice that announces a lease names `effigy container up --detach` and
   `EFFIGY_DISABLE_HOST_CONTAINER_LEASE=1` as the ways to keep the stack
 
