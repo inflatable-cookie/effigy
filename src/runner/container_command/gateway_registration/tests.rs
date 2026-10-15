@@ -41,6 +41,7 @@ fn test_policy() -> EffectiveContainerPolicy {
         project_name: "demo-web-dev".to_owned(),
         primary_service: "app".to_owned(),
         dns_domain: Some("clientname.test".to_owned()),
+        dns_base_domain: None,
         dns_tls: true,
         dns_port: None,
         dns_routes: vec![effigy_containers::EffectiveDnsRoute {

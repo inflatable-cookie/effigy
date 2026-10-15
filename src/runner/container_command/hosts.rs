@@ -40,6 +40,7 @@ pub(super) fn scoped_host_map(
         &policy.shared_services,
         token,
         shared,
+        policy.dns_base_domain.as_deref(),
     );
     add_managed_listener_routes(&mut host_map, &policy.host_processes);
     let kind = worktree_scope::scope_kind(repo_root)

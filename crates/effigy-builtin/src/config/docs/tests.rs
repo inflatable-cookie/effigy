@@ -1,7 +1,16 @@
 use super::{
-    docs_policy_graph_lines, package_manager_lines, tasks_canonical_lines, test_section_lines,
-    ConfigDocProfile,
+    containers_lines, docs_policy_graph_lines, package_manager_lines, tasks_canonical_lines,
+    test_section_lines, ConfigDocProfile,
 };
+
+#[test]
+fn containers_reference_documents_optional_dns_base_domain() {
+    let reference = containers_lines(ConfigDocProfile::Reference);
+
+    assert!(reference.contains(&"# Optional TCP alias and container-host cookie apex."));
+    assert!(reference.contains(&"# Defaults to the first DNS route's domain."));
+    assert!(reference.contains(&"# base_domain = \"project.test\""));
+}
 
 #[test]
 fn docs_policy_graph_profile_lines_are_repository_neutral() {

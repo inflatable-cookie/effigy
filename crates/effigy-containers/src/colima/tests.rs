@@ -382,6 +382,7 @@ fn test_policy(profile: &str) -> EffectiveContainerPolicy {
         project_name: "test-project".to_string(),
         primary_service: "app".to_string(),
         dns_domain: None,
+        dns_base_domain: None,
         dns_tls: false,
         dns_port: None,
         dns_routes: vec![],

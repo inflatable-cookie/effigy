@@ -1149,6 +1149,23 @@ TCP catalog services such as postgres, mariadb, redis, and memcached also get
 deterministic loopback aliases. That means host and container code can use the
 same stable names without hand-written `/etc/hosts` edits.
 
+By default, generated TCP aliases and the `container hosts` cookie apex use
+the first resolved `[containers.<name>.dns]` route's domain. Set `base_domain`
+when that route is a subdomain and service aliases should use a higher apex.
+For example, with a first route of `s3.acme.test`, setting
+`base_domain = "acme.test"` gives the postgres service the alias
+`postgres.acme.test` and reports `acme.test` as `cookie_domain`. This setting
+does not change the declared HTTP routes.
+
+```toml
+[containers.web.dns]
+base_domain = "acme.test"
+routes = [
+  { domain = "s3.acme.test", tls = true },
+  { domain = "app.s3.acme.test", tls = true },
+]
+```
+
 ### Private gateway for disposable consumers
 
 Use private mode when a disposable checkout needs real HTTPS without changing

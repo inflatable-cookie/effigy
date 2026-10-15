@@ -228,8 +228,9 @@ fn validate_container_dns(context: &mut SchemaContext<'_, '_>, base_path: &str, 
         context,
         &path,
         table,
-        &["routes", "domains", "domain_defaults"],
+        &["base_domain", "routes", "domains", "domain_defaults"],
     );
+    validate_string_field(context, &path, table.get("base_domain"), "base_domain");
     if let Some(domains) = table.get("domains") {
         match domains.as_array() {
             Some(entries) => {

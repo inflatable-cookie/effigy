@@ -167,12 +167,13 @@ impl RuntimeDnsOverrideRoutes {
 pub(crate) fn runtime_route_domains(
     dns_routes: &[EffectiveDnsRoute],
     service_aliases: &[EffectiveServiceAlias],
+    base_domain: Option<&str>,
 ) -> RuntimeDnsOverrideRoutes {
     let mut host_gateway_domains = std::collections::BTreeSet::new();
     let mut service_alias_domains = BTreeMap::<String, Vec<String>>::new();
-    let base_domain = dns_routes
-        .first()
-        .and_then(|route| base_domain_from_route(&route.domain));
+    let base_domain = base_domain
+        .or_else(|| dns_routes.first().map(|route| route.domain.as_str()))
+        .and_then(base_domain_from_route);
 
     for route in dns_routes {
         let domain = route.domain.trim();
@@ -255,4 +256,54 @@ fn render_runtime_dns_override(
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn route(domain: &str) -> EffectiveDnsRoute {
+        EffectiveDnsRoute {
+            domain: domain.to_owned(),
+            declared_domain: domain.to_owned(),
+            tls: false,
+            port: None,
+            service: None,
+            target_host: None,
+        }
+    }
+
+    fn alias() -> EffectiveServiceAlias {
+        EffectiveServiceAlias {
+            service: "postgres".to_owned(),
+            domain_label: "postgres".to_owned(),
+            container_port: 5432,
+        }
+    }
+
+    #[test]
+    fn runtime_alias_uses_explicit_base_domain() {
+        let routes = [route("s3.acme.test")];
+        let aliases = [alias()];
+
+        let runtime_routes = runtime_route_domains(&routes, &aliases, Some("acme.test"));
+
+        assert_eq!(
+            runtime_routes.service_alias_domains.get("postgres"),
+            Some(&vec!["postgres.acme.test".to_owned()])
+        );
+    }
+
+    #[test]
+    fn runtime_alias_defaults_to_first_route_domain() {
+        let routes = [route("s3.acme.test"), route("api.s3.acme.test")];
+        let aliases = [alias()];
+
+        let runtime_routes = runtime_route_domains(&routes, &aliases, None);
+
+        assert_eq!(
+            runtime_routes.service_alias_domains.get("postgres"),
+            Some(&vec!["postgres.s3.acme.test".to_owned()])
+        );
+    }
 }

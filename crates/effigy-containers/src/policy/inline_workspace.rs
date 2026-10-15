@@ -88,6 +88,7 @@ pub fn load_inline_workspace_container_policy(
         )?,
         primary_service: "workspace".to_owned(),
         dns_domain: None,
+        dns_base_domain: None,
         dns_tls: false,
         dns_port: None,
         dns_routes: Vec::new(),

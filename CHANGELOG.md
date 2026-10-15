@@ -7,6 +7,9 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- Optional `[containers.<name>.dns].base_domain` selects the apex for generated
+  TCP service aliases and the `container hosts` cookie domain. When omitted,
+  the first resolved DNS route continues to supply that apex.
 - Workspace handoff verifies the host-selected installed service catalog pack
   after selected-workspace activation or recreation, for the workspace user, including when the Linux binary is already current.
   Empty guests receive validated retained content without needing its original
