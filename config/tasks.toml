@@ -656,6 +656,10 @@
   { task = "test:workspace:artifact-builder" },
   { task = "test:workspace:artifact-owner-integrations" },
   { task = "test:workspace:artifact-diagnostics" },
+  { task = "test:workspace:artifact-managed-callers" },
+]
+"test:workspace:artifact-managed-callers" = [
+  { id = "managed-container-callers", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(managed_stream_tests::) | test(managed_tui_tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
 ]
 "test:workspace:artifact-diagnostics" = [
   { id = "unchanged-diagnosis-and-permission-transport", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(doctor_ports::tests::) | test(deferral_tests::token_and_implicit_tests::run_manifest_task_php_app)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },

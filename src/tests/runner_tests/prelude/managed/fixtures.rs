@@ -19,14 +19,83 @@ pub(in crate::runner::tests) fn install_fake_container_runtime(root: &Path) -> E
 
     let docker = bin_dir.join("docker");
     let docker_log = root.join("fake-docker.log");
-    fs::write(
-        &docker,
-        format!(
-            "#!/bin/sh\nlog='{}'\nprintf 'docker:%s\\n' \"$*\" >> \"$log\"\nif [ \"$1\" = compose ]; then\n  shift\n  while [ $# -gt 0 ]; do\n    case \"$1\" in\n      -f|-p)\n        shift 2\n        ;;\n      up)\n        printf 'compose:up\\n' >> \"$log\"\n        exit 0\n        ;;\n      down)\n        printf 'compose:down\\n' >> \"$log\"\n        exit 0\n        ;;\n      ps)\n        printf 'compose:ps\\n' >> \"$log\"\n        printf 'NAME STATUS\\n'\n        exit 0\n        ;;\n      exec)\n        shift\n        service=''\n        while [ $# -gt 0 ]; do\n          case \"$1\" in\n            -T|--tty=false)\n              shift\n              ;;\n            -w|--workdir|-u|--user|-e|--env)\n              shift 2\n              ;;\n            --)\n              shift\n              ;;\n            -*)\n              shift\n              ;;\n            *)\n              service=\"$1\"\n              shift\n              break\n              ;;\n          esac\n        done\n        printf 'compose:exec:%s:%s\\n' \"$service\" \"$*\" >> \"$log\"\n        if [ \"$1\" = sh ] && [ \"$2\" = -lc ] && [ \"$3\" = true ]; then\n          exit 0\n        fi\n        if [ \"$1\" = sh ] && [ \"$2\" = -lc ]; then\n          cmd=\"$3\"\n          if [ -n \"$EFFIGY_TEST_FAKE_CONTAINER_ROOT\" ]; then\n            cmd=$(printf '%s' \"$cmd\" | sed \"s#/workspace/#$EFFIGY_TEST_FAKE_CONTAINER_ROOT/#g\")\n          fi\n          if [ -n \"$EFFIGY_TEST_FAKE_CONTAINER_EFFIGY\" ]; then\n            cmd=$(printf '%s' \"$cmd\" | sed \"s#/usr/local/bin/effigy#$EFFIGY_TEST_FAKE_CONTAINER_EFFIGY#g\")\n          fi\n          sh -lc \"$cmd\"\n          exit $?\n        fi\n        exec \"$@\"\n        ;;\n      *)\n        shift\n        ;;\n    esac\n  done\nfi\nexit 0\n",
-            docker_log.display()
-        ),
-    )
-    .expect("write fake docker");
+    let proof_path = root.join("owned-container.json");
+    fs::write(&proof_path, "null").expect("seed private inventory");
+    let script = r#"#!/bin/sh
+log=@LOG@
+proof=@PROOF@
+printf 'docker:%s\n' "$*" >> "$log"
+if [ "$1" = ps ]; then
+  case "$*" in
+    *--format*) python3 - "$proof" <<'PYPROOF'
+import json,sys
+r=json.load(open(sys.argv[1]))
+if r:
+ p=r['Config']['Labels']; print(r['Name'].lstrip('/')+'\tUp 1 minute\t\t'+p['com.docker.compose.project']+'\t'+p['com.effigy.checkout']+'\t'+p['com.docker.compose.service']+'\tFalse')
+PYPROOF
+      ;;
+  esac
+  exit 0
+fi
+if [ "$1" = inspect ]; then
+  python3 - "$proof" "$2" <<'PYPROOF'
+import json,sys
+r=json.load(open(sys.argv[1]))
+if not r or sys.argv[2] not in [r['Id'],r['Name'].lstrip('/')]: sys.exit(1)
+print(json.dumps([r]))
+PYPROOF
+  exit $?
+fi
+native=0
+if [ "$1" = exec ]; then
+  native=1
+  shift
+else
+  [ "$1" = compose ] || exit 0
+  shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -f|-p) shift 2 ;;
+      up|down|ps) printf 'compose:%s\n' "$1" >> "$log"; exit 0 ;;
+      exec) shift; break ;;
+      *) shift ;;
+    esac
+  done
+fi
+service=''
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -T|--tty=false|-i|-t|--) shift ;;
+    -e|--env) export "$2"; shift 2 ;;
+    -w|--workdir|-u|--user) shift 2 ;;
+    -*) exit 1 ;;
+    *) service="$1"; shift; break ;;
+  esac
+done
+if [ "$native" = 1 ]; then
+  expected=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["Id"])' "$proof")
+  [ "$service" = "$expected" ] || exit 1
+  service=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["Config"]["Labels"]["com.docker.compose.service"])' "$proof")
+  printf 'native:exec:%s:%s\n' "$service" "$*" >> "$log"
+else
+  printf 'compose:exec:%s:%s\n' "$service" "$*" >> "$log"
+fi
+if [ "$1" = sh ] && [ "${2:-}" = -lc ]; then
+  cmd="$3"
+  if [ -n "${EFFIGY_TEST_FAKE_CONTAINER_ROOT:-}" ]; then
+    cmd=$(printf '%s' "$cmd" | sed "s#/workspace/#$EFFIGY_TEST_FAKE_CONTAINER_ROOT/#g")
+  fi
+  if [ -n "${EFFIGY_TEST_FAKE_CONTAINER_EFFIGY:-}" ]; then
+    cmd=$(printf '%s' "$cmd" | sed "s#/usr/local/bin/effigy#$EFFIGY_TEST_FAKE_CONTAINER_EFFIGY#g")
+  fi
+  sh -lc "$cmd"
+  exit $?
+fi
+exec "$@"
+"#
+        .replace("@LOG@", &effigy_core::shell::shell_quote(&docker_log.display().to_string()))
+        .replace("@PROOF@", &effigy_core::shell::shell_quote(&proof_path.display().to_string()));
+    fs::write(&docker, script).expect("write fake docker");
     let mut perms = fs::metadata(&docker)
         .expect("stat fake docker")
         .permissions();
@@ -50,10 +119,39 @@ pub(in crate::runner::tests) fn install_fake_container_runtime(root: &Path) -> E
     fs::set_permissions(&colima, perms).expect("chmod fake colima");
 
     let old_path = std::env::var("PATH").ok().unwrap_or_default();
-    EnvGuard::set_many(&[
+    let guard = EnvGuard::set_many(&[
         ("PATH", Some(format!("{}:{old_path}", bin_dir.display()))),
         ("EFFIGY_COMPOSE_BACKEND", Some("docker".to_owned())),
-    ])
+        (
+            "EFFIGY_TEST_CONTAINERS_HOME",
+            Some(root.join(".effigy").display().to_string()),
+        ),
+    ]);
+    if let Ok(policy) = effigy_containers::load_container_policy(root, None) {
+        let checkout = root.canonicalize().expect("canonical fixture checkout");
+        let mut labels = serde_json::json!({
+            "com.docker.compose.project": policy.project_name,
+            "com.docker.compose.service": policy.primary_service,
+            "com.docker.compose.oneoff": "False",
+            "com.effigy.checkout": checkout,
+        });
+        if let Some(scope) = effigy_core::worktree_scope::resolve(root).expect("fixture scope") {
+            let token = fs::read_to_string(
+                scope
+                    .token_dir
+                    .join(effigy_core::worktree_scope::SCOPE_FILE),
+            )
+            .expect("fixture scope token");
+            labels["com.effigy.scope"] = serde_json::json!(token.trim());
+        }
+        let proof = serde_json::json!({
+            "Id": "a".repeat(64), "Name": format!("/{}-{}-1", policy.project_name, policy.primary_service),
+            "State": {"Status": "running", "Running": true},
+            "Config": {"Labels": labels}, "NetworkSettings": {"Ports": {}},
+        });
+        fs::write(proof_path, proof.to_string()).expect("owned private inspect evidence");
+    }
+    guard
 }
 
 pub(in crate::runner::tests) fn write_catalogs_with_tasks(

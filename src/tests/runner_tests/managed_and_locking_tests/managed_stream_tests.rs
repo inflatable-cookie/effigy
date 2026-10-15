@@ -496,7 +496,8 @@ fn run_manifest_task_managed_stream_executes_rhai_setup_in_process() {
 fn run_manifest_task_managed_stream_container_bound_rhai_setup_routes_before_process_launch() {
     let _guard = lock_test();
     let _env = managed_stream_env();
-    let root = crate::runner::tests::prelude::temp_workspace("managed-stream-container-rhai-setup");
+    let temp = tempfile::tempdir().expect("private managed workload fixture");
+    let root = fs::canonicalize(temp.path()).expect("canonical private workload");
     setup_managed_stream_container_rhai_setup(&root);
     let _runtime = install_fake_container_runtime(&root);
     let fake_effigy = write_fake_effigy(&root);
@@ -510,7 +511,7 @@ fn run_manifest_task_managed_stream_container_bound_rhai_setup_routes_before_pro
     let docker_log =
         fs::read_to_string(root.join("fake-docker.log")).expect("read fake docker log");
     assert!(
-        docker_log.contains("compose:exec:app:sh -lc"),
+        docker_log.contains("native:exec:app:sh -lc"),
         "expected routed container exec setup, got: {docker_log}"
     );
     let nested_log =
