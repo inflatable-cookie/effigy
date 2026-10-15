@@ -453,6 +453,41 @@ fn live_path() -> Result<PathBuf, ContainerPolicyError> {
         })
 }
 
+/// Free default-size ranges at or below which registry capacity is at or
+/// near exhaustion for the `container status` breadcrumb: at zero the next
+/// new-project range allocation fails, at one a single further project
+/// exhausts the registry.
+const NEAR_EXHAUSTION_FREE_RANGES: usize = 1;
+
+/// One-line text breadcrumb pointing to `effigy container ports status` when
+/// registry capacity is at or near exhaustion.
+///
+/// The registry is read without the lock and capacity is computed in memory
+/// only: no allocation, no recovery planning, no path or port probes, and no
+/// files are created. Returns `None` while capacity is comfortable, and also
+/// when the registry cannot be read — a read-only status must not fail, or
+/// invent a capacity claim, over an unreadable registry.
+pub fn port_capacity_note() -> Option<String> {
+    let registry = PortRegistry::load(&live_path().ok()?).ok()?;
+    let capacity = registry.capacity();
+    if capacity.allocatable_ranges > NEAR_EXHAUSTION_FREE_RANGES {
+        return None;
+    }
+    let state = match capacity.allocatable_ranges {
+        0 => format!(
+            "capacity is exhausted (no free {}-port ranges remain)",
+            capacity.range
+        ),
+        _ => format!(
+            "capacity is low (1 free {}-port range remains)",
+            capacity.range
+        ),
+    };
+    Some(format!(
+        "[note] generated-container port registry {state}; run `effigy container ports status` for capacity and reclaim candidates"
+    ))
+}
+
 /// Read-only status: performs no writes and takes no registry lock.
 pub fn port_status() -> Result<PortRecoveryReport, ContainerPolicyError> {
     report_at(

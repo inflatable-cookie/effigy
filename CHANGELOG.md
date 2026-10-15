@@ -7,6 +7,12 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- Ordinary `effigy container status` output prints a one-line text note
+  pointing to `effigy container ports status` when the machine-wide
+  generated-container port registry is at or near exhaustion (zero or one
+  free 100-port range). The note reads the registry without the lock and
+  computes capacity only, with no allocation, recovery planning or probes;
+  the `effigy.container.status.v1` JSON schema is unchanged.
 - Optional `[containers.<name>.dns].base_domain` selects the apex for generated
   TCP service aliases and the `container hosts` cookie domain. When omitted,
   the first resolved DNS route continues to supply that apex.

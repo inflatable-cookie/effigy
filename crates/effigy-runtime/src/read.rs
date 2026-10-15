@@ -16,8 +16,8 @@ use effigy_containers::{
     validate_compose_backend_runtime, validate_container_policy,
 };
 use effigy_containers::{
-    stats_global_report, status_global_report, ContainerStatsAllEntry, ContainerStatsService,
-    ContainerStatusService, EffectiveContainerPolicy,
+    port_capacity_note, stats_global_report, status_global_report, ContainerStatsAllEntry,
+    ContainerStatsService, ContainerStatusService, EffectiveContainerPolicy,
 };
 use effigy_containers::{ContainerAction, ContainerRuntimeState};
 use effigy_containers::{
@@ -102,6 +102,11 @@ pub fn run_container_status(
     annotate_warning_lines(&mut report, &colima_profile_warnings(&policy, repo_root));
     if let Some(warning) = primary_service_exec_warning {
         annotate_warning_lines(&mut report, &[warning]);
+    }
+    // Text-only discoverability breadcrumb; the status JSON schema is unchanged.
+    if let Some(note) = port_capacity_note() {
+        report.success_text.push('\n');
+        report.success_text.push_str(&note);
     }
     Ok(render_container_report(report, output_json))
 }

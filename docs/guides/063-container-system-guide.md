@@ -1539,6 +1539,13 @@ report includes free range capacity before and after the planned reclaim. The
 plan digest is over the decisions. `--apply` recomputes the plan under the
 registry lock and refuses to write if the digest differs from the reviewed one.
 
+When registry capacity is at or near exhaustion (zero or one free 100-port
+range), ordinary `effigy container status` output ends with a one-line text
+note pointing to `effigy container ports status`. The note is discoverability
+only: it reads the registry without the lock and computes capacity, performs
+no allocation, recovery planning or probes, and leaves the status JSON schema
+unchanged.
+
 An entry is reclaimed only when all of these hold:
 
 - its project path is definitely missing: the leaf is absent and its parent
