@@ -417,6 +417,16 @@ pub fn process_listening_endpoints(pid: u32) -> Result<Vec<GatewayEndpoint>, std
 /// `endpoint`. A managed route requires exactly one owner; `SO_REUSEPORT` or a
 /// wildcard listener shared with a foreign process is refused.
 pub fn listening_process_ids(endpoint: &GatewayEndpoint) -> Result<Vec<u32>, std::io::Error> {
+    listening_process_ids_for_owner(endpoint, None)
+}
+
+/// Listener owners for `endpoint` among processes owned by `owner_uid`, or by
+/// the effective user when `None`. A root-owned shared gateway verifies a
+/// user's managed listener by scanning that user's processes, not root's.
+fn listening_process_ids_for_owner(
+    endpoint: &GatewayEndpoint,
+    owner_of: Option<u32>,
+) -> Result<Vec<u32>, std::io::Error> {
     if endpoint.transport != GatewayTransport::Tcp {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
@@ -436,16 +446,23 @@ pub fn listening_process_ids(endpoint: &GatewayEndpoint) -> Result<Vec<u32>, std
             format!("local process inventory is not UTF-8: {error}"),
         )
     })?;
-    let effective_uid = nix::unistd::Uid::effective().as_raw();
-    let mut owners = Vec::new();
+    let mut rows = Vec::new();
     for row in rendered.lines() {
-        let Some((pid, uid)) = parse_process_inventory_row(row) else {
+        let Some(parsed) = parse_process_inventory_row(row) else {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 "local process inventory contains an invalid PID or UID",
             ));
         };
-        if pid == 0 || uid != effective_uid {
+        rows.push(parsed);
+    }
+    let scanned_uid = match owner_of {
+        Some(expected_pid) => scanned_owner_uid(&rows, expected_pid)?,
+        None => nix::unistd::Uid::effective().as_raw(),
+    };
+    let mut owners = Vec::new();
+    for (pid, uid) in rows {
+        if pid == 0 || uid != scanned_uid {
             continue;
         }
         let endpoints = match process_listening_endpoints(pid) {
@@ -491,7 +508,7 @@ pub fn verify_process_listener_exclusive(
     }
     #[cfg(target_os = "macos")]
     {
-        let owners = listening_process_ids(endpoint)?;
+        let owners = listening_process_ids_for_owner(endpoint, Some(pid))?;
         if owners.as_slice() == [pid] {
             Ok(())
         } else {
@@ -552,6 +569,26 @@ fn parse_ps_integer(token: &str, signed: bool) -> Option<i64> {
         return None;
     }
     token.parse::<i64>().ok()
+}
+
+/// UID whose processes an exclusivity scan inspects: the expected listener's
+/// owner. A non-root gateway may only scan its own user's processes, so a
+/// listener owned by anyone else is refused rather than inspected.
+fn scanned_owner_uid(rows: &[(u32, u32)], expected_pid: u32) -> Result<u32, std::io::Error> {
+    let effective_uid = nix::unistd::Uid::effective().as_raw();
+    let Some(&(_, owner_uid)) = rows.iter().find(|(pid, _)| *pid == expected_pid) else {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("managed listener process {expected_pid} is not running"),
+        ));
+    };
+    if effective_uid != 0 && owner_uid != effective_uid {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            format!("managed listener process {expected_pid} belongs to another user"),
+        ));
+    }
+    Ok(owner_uid)
 }
 
 fn process_has_disappeared(error: &std::io::Error) -> bool {
@@ -737,6 +774,31 @@ pub fn is_hex64(value: &str) -> bool {
 #[cfg(test)]
 mod legacy_recovery_tests {
     use super::*;
+
+    /// The exclusivity scan follows the listener's owner: the caller's own
+    /// processes always, and another user's only when the gateway is root.
+    #[test]
+    fn exclusivity_scan_uses_the_listener_owner_uid() {
+        let me = nix::unistd::Uid::effective().as_raw();
+        let other = me.wrapping_add(1);
+        let rows = [(10, me), (20, other)];
+        assert_eq!(scanned_owner_uid(&rows, 10).expect("own listener"), me);
+        assert_eq!(
+            scanned_owner_uid(&rows, 30)
+                .expect_err("missing pid")
+                .kind(),
+            std::io::ErrorKind::NotFound
+        );
+        let foreign = scanned_owner_uid(&rows, 20);
+        if me == 0 {
+            assert_eq!(foreign.expect("root scans the owner's processes"), other);
+        } else {
+            assert_eq!(
+                foreign.expect_err("non-root refuses another user").kind(),
+                std::io::ErrorKind::PermissionDenied
+            );
+        }
+    }
 
     /// Signed `-2` and unsigned `4294967294` are one kernel UID. A row printed
     /// in signed form must compare equal to an effective UID of that value, and
