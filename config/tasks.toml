@@ -448,7 +448,7 @@
 "test:container:bounded-exec" = [
   { id = "bounded-exec-parser", run = "cargo test -p effigy-cli --lib command_parsing::container::tests:: -- --nocapture", timeout_ms = 600000 },
   { id = "bounded-exec-reader", run = "cargo test -p effigy --lib exec_command::bounded:: -- --nocapture", timeout_ms = 600000 },
-  { id = "bounded-exec-public-entry", run = "cargo nextest run --config-file tests/config/deadline-marker-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(bounded_exec::) and not test(refusal_accounting)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
+  { id = "bounded-exec-public-entry", run = "cargo nextest run --config-file tests/config/deadline-marker-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(bounded_exec::) and not test(refusal_accounting)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
   { id = "bounded-exec-default-path", run = "cargo test -p effigy --lib container_command::lifecycle::tests:: -- --nocapture", timeout_ms = 600000 },
   { id = "bounded-exec-help", run = "cargo test -p effigy --lib render_container_help -- --nocapture", timeout_ms = 600000 },
 ]
@@ -466,7 +466,7 @@
 # Nextest terminates slow/leaking tests; an independent 12s harness guard cleans
 # exact-owned fake clients. Fake `colima`/`docker` only; no live runtime.
 "proof:container:bounded-exec" = [
-  { id = "bounded-exec-production-proof", run = "cargo nextest run --config-file tests/config/deadline-marker-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(bounded_exec::) and not test(refusal_accounting)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
+  { id = "bounded-exec-production-proof", run = "cargo nextest run --config-file tests/config/deadline-marker-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(bounded_exec::) and not test(refusal_accounting)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
 ]
 "check:container:bounded-exec" = [
   { id = "bounded-exec-compile", run = "cargo check -p effigy-cli -p effigy-runtime -p effigy --all-targets --profile test", timeout_ms = 600000 },
