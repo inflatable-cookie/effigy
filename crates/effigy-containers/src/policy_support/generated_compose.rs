@@ -577,7 +577,10 @@ fn render_direct_compose_ownership_override(
             "failed to serialize direct compose ownership override for `{container_name}`: {error}"
         ))
     })?;
-    let dir = repo_root.join(GENERATED_RUNTIME_COMPOSE_DIR);
+    // Admission keys derived artifacts by the canonical checkout (the policy
+    // load canonicalizes its root), so write under that path. A symlinked
+    // temp or checkout root would otherwise never match its recorded key.
+    let dir = checkout.join(GENERATED_RUNTIME_COMPOSE_DIR);
     std::fs::create_dir_all(&dir).map_err(|error| ContainerPolicyError::Read {
         path: dir.clone(),
         error,

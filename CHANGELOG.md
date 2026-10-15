@@ -223,6 +223,10 @@ During v0.x, MINOR bumps may include breaking changes.
   repo-owned file. The owned-binding check is unchanged. Existing unlabelled
   direct containers are refused, not adopted, until a Compose `up` recreates them
   with the labels.
+- Direct `compose_file` exec readiness now runs the owned-binding check before
+  its probe and before any recovery restart. An unlabelled, foreign or wrong-checkout
+  primary service is neither exec'd nor restarted, and the up reports not
+  exec-ready.
 - Detached activation errors now retain a bounded `activation_stage` alongside
   partial/unavailable status, without exposing raw backend output or arguments.
 - Detached reconciliation refuses a running stack whose original admission

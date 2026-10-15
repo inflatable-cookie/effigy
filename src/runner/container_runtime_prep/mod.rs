@@ -561,6 +561,33 @@ fn run_runtime_prep_steps(
     Ok(())
 }
 
+/// True only when the running primary service passes the strict owned-binding
+/// check (exact full ID, project, declared service, non-one-off, running, and
+/// checkout and scope identity). Any listing or verification failure is not ready.
+fn primary_service_ownership_verified(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    deadline: Instant,
+) -> bool {
+    let Ok(rows) =
+        effigy_containers::exec::list_running_compose_containers_for_policy_with_deadline(
+            repo_root,
+            policy,
+            Some(deadline),
+        )
+    else {
+        return false;
+    };
+    effigy_containers::exec::verify_owned_running_compose_rows(repo_root, policy, &rows, deadline)
+        .is_ok_and(|verified| {
+            verified.iter().any(|row| {
+                row.service.as_deref() == Some(policy.primary_service.as_str())
+                    && !row.oneoff
+                    && effigy_containers::exec::compose_status_is_running(&row.status)
+            })
+        })
+}
+
 fn probe_primary_service_exec_ready(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
@@ -581,14 +608,19 @@ fn probe_primary_service_exec_ready(
     );
     let started = Instant::now();
     loop {
-        if let Ok(output) = run_compose_capture(
-            repo_root,
-            policy,
-            &probe_args,
-            "container exec readiness probe",
-        ) {
-            if output.status.success() {
-                return true;
+        // Never exec into a primary service before its full identity is verified
+        // as owned by this checkout, project and service. An unlabelled or foreign
+        // container stays unprobed; the bounded wait then reports not ready.
+        if primary_service_ownership_verified(repo_root, policy, started + timeout) {
+            if let Ok(output) = run_compose_capture(
+                repo_root,
+                policy,
+                &probe_args,
+                "container exec readiness probe",
+            ) {
+                if output.status.success() {
+                    return true;
+                }
             }
         }
         if started.elapsed() >= timeout {
@@ -602,6 +634,18 @@ fn restart_primary_service(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> Result<(), RunnerError> {
+    // Recovery may only restart a primary service verified as owned. An
+    // unverified container is never mutated, and the caller reports not ready.
+    if !primary_service_ownership_verified(
+        repo_root,
+        policy,
+        Instant::now() + Duration::from_secs(15),
+    ) {
+        return Err(RunnerError::task_invocation(format!(
+            "container `{}` primary service is not verified as owned by this checkout; no restart ran",
+            policy.name
+        )));
+    }
     restart_primary_service_using(repo_root, policy, |repo_root, policy, args, label| {
         Ok(run_compose_capture(repo_root, policy, args, label)?)
     })

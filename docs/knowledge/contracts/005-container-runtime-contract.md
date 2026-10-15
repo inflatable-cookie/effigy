@@ -90,6 +90,12 @@ not adopted. Compose applies label changes on its next `up`, which recreates the
 affected service. That `up` is the supported recovery for an existing unlabelled
 direct container. Diagnostics name it but never perform it.
 
+Exec readiness applies the same owned-binding check before any probe. The
+readiness probe and the recovery restart run only after the running primary
+service passes it. An unlabelled, foreign or wrong-checkout primary is neither
+exec'd nor restarted; the up reports not exec-ready. The shell and task exec
+that follow are gated by that readiness boundary.
+
 The up diagnostic and detached JSON report describe only the Compose create
 spec decision and whether the Compose up command succeeded. They identify
 included or absent source/target pairs and report runtime mount verification as
