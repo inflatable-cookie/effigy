@@ -7,7 +7,7 @@ publish = false
 description = "Trusted client for the Nucleus host-run protocol"
 
 [dependencies]
-base64 = "0.22"
+base64 = "0.23"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
 effigy-process = { path = "../effigy-process" }
 fs2 = "0.4"
