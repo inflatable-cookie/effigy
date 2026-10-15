@@ -16,8 +16,8 @@ use crate::runner::error::RunnerError;
 use crate::runner::execute::api::run_manifest_task_with_cwd;
 use crate::runner::tests::prelude::TaskInvocation;
 use crate::runner::tests::prelude::{
-    assert_task_invocation_error_contains, lock_test, run_builtin_ok, write_manifest,
-    write_root_manifest,
+    assert_task_invocation_error_contains, lock_test, run_builtin_ok, temp_workspace,
+    write_manifest, write_root_manifest,
 };
 use effigy_cli::Command;
 use effigy_context::EffigyRuntimeContext;
@@ -109,7 +109,6 @@ run = "printf pen-suite"
 "#;
 
 struct NestedContainerFixture {
-    _temp: tempfile::TempDir,
     root: PathBuf,
     cattle: PathBuf,
     _env: EnvGuard,
@@ -251,11 +250,7 @@ exit 0
 fn nested_container_fixture(name: &str) -> NestedContainerFixture {
     // Canonicalize so plan payloads and catalog roots compare equal on macOS
     // symlinked temp directories (/var -> /private/var).
-    let temp = tempfile::Builder::new()
-        .prefix(name)
-        .tempdir()
-        .expect("fresh private fixture");
-    let root = fs::canonicalize(temp.path()).expect("canonicalize fixture root");
+    let root = fs::canonicalize(temp_workspace(name)).expect("canonicalize fixture root");
     write_root_manifest(&root, ROOT_MANIFEST);
     write_compose(&root, "workspace");
     let cattle = root.join("cattle-grid");
@@ -280,7 +275,6 @@ fn nested_container_fixture(name: &str) -> NestedContainerFixture {
         ),
     ]);
     NestedContainerFixture {
-        _temp: temp,
         root,
         cattle,
         _env: env,
@@ -405,8 +399,7 @@ fn nested_task_without_own_target_falls_back_to_the_workspace_runtime() {
 #[test]
 fn nested_container_task_without_any_declared_target_fails_before_execution() {
     let _lock = lock_test();
-    let temp = tempfile::tempdir().expect("fresh private fixture");
-    let root = temp.path().to_path_buf();
+    let root = temp_workspace("nested-container-without-target");
     write_root_manifest(
         &root,
         r#"[catalog]

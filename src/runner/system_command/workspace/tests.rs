@@ -1,6 +1,6 @@
 use super::*;
 use crate::contract_test_support::EnvGuard;
-use crate::runner::exec_command::BoundedCommandBudget;
+use crate::runner::exec_command::{BoundedCommandBudget, BoundedCommandPhase};
 use crate::runner::interactive_session::{
     classify_interactive_session_ownership, InteractiveSessionIntent,
 };
@@ -472,17 +472,73 @@ fn linux_artifact_in_progress_build_rechecks_final_metadata_in_both_paths() {
 
 #[test]
 fn bounded_linux_artifact_success_without_valid_output_refuses_without_rebinding() {
-    for body in [
-        "exit 0",
-        "rm .effigy/linux-release/artifacts/effigy-x86_64-unknown-linux-gnu\nexit 0",
-        r#"printf 'new bytes' > .effigy/linux-release/artifacts/effigy-x86_64-unknown-linux-gnu
-printf '%s\n' "$EFFIGY_FIXTURE_ACTIVE_VERSION" > .effigy/linux-release/artifacts/effigy-x86_64-unknown-linux-gnu.active-version
-printf 'release_triple=aarch64-unknown-linux-gnu\n' > .effigy/linux-release/artifacts/rehearsal.txt"#,
+    for (case, body, expected_bytes, receipt_target) in [
+        ("unchanged", ":", Some("old bytes"), "x86_64-unknown-linux-gnu"),
+        (
+            "removed",
+            "rm .effigy/linux-release/artifacts/effigy-x86_64-unknown-linux-gnu",
+            None,
+            "x86_64-unknown-linux-gnu",
+        ),
+        (
+            "wrong-target",
+            "printf 'new bytes' > .effigy/linux-release/artifacts/effigy-x86_64-unknown-linux-gnu\nprintf 'release_triple=aarch64-unknown-linux-gnu\\n' > .effigy/linux-release/artifacts/rehearsal.txt",
+            Some("new bytes"),
+            "aarch64-unknown-linux-gnu",
+        ),
     ] {
-        let root = linux_artifact_fixture("bounded-invalid-output");
-        let host = fake_effigy_host(&root, body);
+        let fixture = tempfile::Builder::new()
+            .prefix("effigy-bounded-invalid-output-")
+            .tempdir()
+            .expect("owned private artifact fixture");
+        let root = fixture.path();
+        let host = fake_effigy_host(
+            root,
+            &format!(
+                r#"if [ "$1" = --fixture-ready ]; then
+  printf 'fixture-ready'
+  exit 0
+fi
+[ "$1" = workspace:linux:artifact ]
+[ "$EFFIGY_LINUX_RELEASE_TRIPLE" = x86_64-unknown-linux-gnu ]
+printf 'started\n' >> build.trace
+{body}
+printf 'completed\n' >> build.trace"#,
+            ),
+        );
         let artifact = root.join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
-        write_linux_artifact(&artifact, "old bytes", Some(STALE_IDENTITY));
+        // A matching version does not authorize stale identity or wrong-target
+        // output. Neither readiness nor the build may rewrite either sidecar.
+        write_current_linux_artifact(&artifact, "old bytes", STALE_IDENTITY);
+
+        // Separate cold fixture startup from the refusal oracle. The retained
+        // original failure expired at 10.679s before proving any matrix branch.
+        // Like the discovery fixtures, establish readiness through the same
+        // bounded transport first; the actual build still has its original 10s
+        // budget, starts a new process and must finish its exact branch.
+        let readiness_origin = std::time::Instant::now();
+        let mut readiness = BoundedCommandBudget::new(
+            readiness_origin,
+            readiness_origin + std::time::Duration::from_secs(30),
+            4096,
+            4096,
+        );
+        let ready = readiness
+            .run_command(
+                root,
+                host.as_os_str(),
+                &["--fixture-ready".into()],
+                None,
+                &[],
+                BoundedCommandPhase::WorkspacePreparation,
+            )
+            .expect("private fake build host must become ready");
+        assert!(ready.status.success(), "{case}: readiness failed");
+        assert_eq!(ready.stdout, b"fixture-ready");
+        assert!(ready.stderr.is_empty());
+        assert!(!root.join("build.trace").exists());
+        eprintln!("{case}: cold fixture readiness {:?}", readiness_origin.elapsed());
+
         let origin = std::time::Instant::now();
         let mut budget = BoundedCommandBudget::new(
             origin,
@@ -492,20 +548,57 @@ printf 'release_triple=aarch64-unknown-linux-gnu\n' > .effigy/linux-release/arti
         );
         let error = ensure_local_linux_workspace_effigy_artifact_bounded(
             &host,
-            &root,
+            root,
             LinuxWorkspaceTarget::X86_64Gnu,
             &test_policy(),
             &mut budget,
         )
         .expect_err("exit zero is insufficient without current target output");
-        let message = error.to_string();
-        assert!(message.contains("EFFIGY_LINUX_RELEASE_TRIPLE=x86_64-unknown-linux-gnu effigy workspace:linux:artifact"), "{message}");
-        assert!(!message.contains(&root.display().to_string()), "{message}");
         assert_eq!(
-            read_trimmed_identity_file(&workspace_effigy_install_identity_file(&artifact))
-                .as_deref(),
-            Some(STALE_IDENTITY)
+            std::fs::read_to_string(root.join("build.trace")).expect("build progress"),
+            "started\ncompleted\n",
+            "{case}: the real bounded build must complete exactly once: {error}"
         );
+        let message = error.to_string();
+        let RunnerError::BoundedExecFailure { json_details, .. } = error else {
+            panic!("{case}: expected structured bounded refusal: {message}");
+        };
+        let details: serde_json::Value = serde_json::from_str(&json_details).expect("refusal JSON");
+        assert_eq!(details["failure"], "workspace_preparation_failed", "{case}");
+        assert_eq!(details["phase"], "workspace_preparation", "{case}");
+        assert_eq!(details["preparation"]["captures"], 1, "{case}");
+        assert!(message.contains("build left no current workspace artifact"), "{case}: {message}");
+        assert!(message.contains("EFFIGY_LINUX_RELEASE_TRIPLE=x86_64-unknown-linux-gnu effigy workspace:linux:artifact"), "{case}: {message}");
+        assert!(!message.contains(&root.display().to_string()), "{message}");
+        assert_eq!(std::fs::read_to_string(&artifact).ok().as_deref(), expected_bytes, "{case}");
+        assert!(std::fs::read_to_string(artifact.parent().unwrap().join("rehearsal.txt"))
+            .expect("receipt").contains(&format!("release_triple={receipt_target}\n")), "{case}");
+        assert_eq!(
+            read_trimmed_identity_file(&workspace_effigy_install_identity_file(&artifact)).as_deref(),
+            Some(STALE_IDENTITY),
+            "{case}"
+        );
+        assert_eq!(
+            read_trimmed_identity_file(&workspace_effigy_active_version_file(&artifact)).as_deref(),
+            Some(effigy_core::build_info::active_version().as_str()),
+            "{case}"
+        );
+
+        // Genuine expiry remains a separate refusal: no second build can run
+        // with an already expired original budget, even after fixture readiness.
+        let expired_origin = std::time::Instant::now() - std::time::Duration::from_secs(1);
+        let mut expired = BoundedCommandBudget::new(expired_origin, expired_origin, 4096, 4096);
+        let error = ensure_local_linux_workspace_effigy_artifact_bounded(
+            &host, root, LinuxWorkspaceTarget::X86_64Gnu, &test_policy(), &mut expired,
+        ).expect_err("expired preparation must refuse before another build");
+        let RunnerError::BoundedExecFailure { json_details, .. } = error else {
+            panic!("{case}: expected structured deadline refusal: {error}");
+        };
+        let details: serde_json::Value = serde_json::from_str(&json_details).expect("deadline JSON");
+        assert_eq!(details["failure"], "deadline", "{case}");
+        assert_eq!(details["phase"], "workspace_preparation", "{case}");
+        assert_eq!(expired.preparation_captures(), 0, "{case}");
+        assert_eq!(std::fs::read_to_string(root.join("build.trace")).unwrap(), "started\ncompleted\n");
     }
 }
 
