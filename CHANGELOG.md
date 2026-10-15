@@ -234,6 +234,9 @@ During v0.x, MINOR bumps may include breaking changes.
   Docker/nerdctl exec and registration, refusing replacement before effects.
   Builtin container suites also render verified ID-targeted exec. Separate
   inspect/exec observations do not promise an atomic remote transaction.
+- A root-owned shared gateway on macOS now verifies managed listener
+  exclusivity against the listener owner's processes instead of only root's,
+  so user-owned managed listener routes no longer return 503.
 - Detached activation errors now retain a bounded `activation_stage` alongside
   partial/unavailable status, without exposing raw backend output or arguments.
 - Detached reconciliation refuses a running stack whose original admission
