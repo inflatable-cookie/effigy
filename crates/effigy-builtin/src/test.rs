@@ -63,7 +63,8 @@ pub(super) fn try_run_builtin_test(
     check_js_hydration(&runnable, resolved_root)?;
     reject_unusable_suite_runtimes(&runnable)?;
     let max_parallel = planning::builtin_test_max_parallel(catalogs, resolved_root);
-    let should_tui = execution::should_run_builtin_test_tui(flags.tui, runnable.len());
+    let should_tui =
+        execution::should_run_builtin_test_tui(flags.tui, runnable.len(), flags.output_json);
     let results = if should_tui {
         execution::run_builtin_test_targets_tui(ports, runnable)?
     } else {

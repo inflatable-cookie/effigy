@@ -6,30 +6,8 @@ pub(super) fn validate_top_level_keys(
     context: &mut SchemaContext<'_, '_>,
     table: &toml::map::Map<String, Value>,
 ) {
-    let allowed_top = [
-        "manifest",
-        "catalog",
-        "bundle",
-        "defer",
-        "demos",
-        "docs_policy",
-        "task_defaults",
-        "bootstrap",
-        "containers",
-        "systems",
-        "distribution",
-        "env",
-        "package_manager",
-        "release",
-        "scan",
-        "secrets",
-        "shell",
-        "test",
-        "tasks",
-        "drafts",
-    ];
     for key in table.keys() {
-        if !allowed_top.contains(&key.as_str()) {
+        if !effigy_manifest::MANIFEST_TOP_LEVEL_KEYS.contains(&key.as_str()) {
             context.unsupported_key(key);
         }
     }

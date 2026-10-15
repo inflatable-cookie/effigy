@@ -47,7 +47,8 @@ pub(crate) fn render_builtin_test_plan(
     runnable_count: usize,
     flags: BuiltinTestCliFlags,
 ) -> Result<String, BuiltinError> {
-    let runtime_mode = if should_run_builtin_test_tui(flags.tui, runnable_count) {
+    let runtime_mode = if should_run_builtin_test_tui(flags.tui, runnable_count, flags.output_json)
+    {
         "tui"
     } else {
         "text"

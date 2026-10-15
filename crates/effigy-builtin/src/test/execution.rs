@@ -21,8 +21,14 @@ mod cargo_env;
 static NEXT_TEST_INVOCATION_GENERATION: AtomicU64 = AtomicU64::new(1);
 static NEXT_TEST_CHILD_GENERATION: AtomicU64 = AtomicU64::new(1);
 
-pub(super) fn should_run_builtin_test_tui(force_tui: bool, suite_count: usize) -> bool {
-    if !(std::io::stdin().is_terminal() && std::io::stdout().is_terminal()) {
+pub(super) fn should_run_builtin_test_tui(
+    force_tui: bool,
+    suite_count: usize,
+    output_json: bool,
+) -> bool {
+    // JSON output is a machine contract: the TUI would interleave terminal
+    // control output with the payload on stdout.
+    if output_json || !(std::io::stdin().is_terminal() && std::io::stdout().is_terminal()) {
         return false;
     }
     force_tui || suite_count > 1

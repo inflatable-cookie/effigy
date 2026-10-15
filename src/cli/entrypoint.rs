@@ -249,18 +249,6 @@ pub fn run_and_render_command(context: &CliExecutionContext<'_>, command: Comman
                 std::process::exit(scheduler_exit.unwrap_or(1));
             }
             let exit_code = scheduler_exit.unwrap_or(1);
-            if context.emit_json_envelope
-                && matches!(err, crate::runner::RunnerError::HostRequestFailure { .. })
-            {
-                emit_json_envelope_error(
-                    exit_code,
-                    context.command_kind,
-                    context.command_name,
-                    "RunnerError",
-                    &err.to_string(),
-                    err.json_error_details().map(parse_json_or_string),
-                );
-            }
             if context.emit_json_envelope {
                 emit_json_envelope_error(
                     exit_code,
@@ -276,16 +264,6 @@ pub fn run_and_render_command(context: &CliExecutionContext<'_>, command: Comman
                 if context.suppress_header {
                     std::process::exit(1);
                 }
-            }
-            if context.emit_json_envelope {
-                emit_json_envelope_error(
-                    1,
-                    context.command_kind,
-                    context.command_name,
-                    "RunnerError",
-                    &err.to_string(),
-                    None,
-                );
             }
             let mut err_renderer = PlainRenderer::stderr(context.output_mode);
             let _ = err_renderer.error_block(&MessageBlock::new("Task failed", err.to_string()));

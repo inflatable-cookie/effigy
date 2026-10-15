@@ -139,6 +139,38 @@ impl std::fmt::Display for ManifestError {
 
 impl std::error::Error for ManifestError {}
 
+/// Top-level tables an `effigy.toml` may declare: the composition-only
+/// `[manifest]` section plus every [`TaskManifest`] field. Schema consumers
+/// such as doctor read this list instead of keeping their own copy.
+pub const MANIFEST_TOP_LEVEL_KEYS: &[&str] = &[
+    "manifest",
+    "catalog",
+    "bundle",
+    "defer",
+    "env",
+    "data",
+    "state",
+    "deploy",
+    "test",
+    "package_manager",
+    "scan",
+    "shell",
+    "env_schema",
+    "secrets",
+    "docs_policy",
+    "task_defaults",
+    "bootstrap",
+    "isolation",
+    "containers",
+    "systems",
+    "distribution",
+    "release",
+    "demos",
+    "tasks",
+    "drafts",
+    "qa",
+];
+
 #[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskManifest {
@@ -1174,5 +1206,29 @@ route = { domain = "two.example.test" }
 "#,
         );
         assert!(err(&manifest).contains("dependency cycle"));
+    }
+}
+
+#[cfg(test)]
+mod top_level_keys_tests {
+    use super::{TaskManifest, MANIFEST_TOP_LEVEL_KEYS};
+    use std::collections::BTreeSet;
+
+    #[test]
+    fn top_level_keys_match_task_manifest_fields() {
+        let error = toml::from_str::<TaskManifest>("__effigy_probe = 1")
+            .expect_err("unknown top-level key must be rejected")
+            .to_string();
+        let expected = error
+            .split_once("expected one of")
+            .map(|(_, fields)| fields)
+            .unwrap_or_else(|| panic!("unexpected serde error shape: {error}"));
+        let fields: BTreeSet<&str> = expected.split('`').skip(1).step_by(2).collect();
+        let declared: BTreeSet<&str> = MANIFEST_TOP_LEVEL_KEYS
+            .iter()
+            .copied()
+            .filter(|key| *key != "manifest")
+            .collect();
+        assert_eq!(declared, fields);
     }
 }

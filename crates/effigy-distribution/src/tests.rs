@@ -278,6 +278,63 @@ fn first_publish_plan_includes_homebrew_steps_when_available() {
     assert_eq!(plan.homebrew_steps[2].args, vec!["--json", "tasks"]);
 }
 
+#[test]
+fn first_publish_plan_installs_unpublished_package_from_its_tag() {
+    let repo_root = temp_repo("unpublished-proof");
+    fs::write(
+        repo_root.join("Cargo.toml"),
+        "[package]\nname = \"effigy\"\nversion = \"0.7.1\"\npublish = false\n",
+    )
+    .expect("write cargo manifest");
+    let request = FirstPublishRequest {
+        repo_root: &repo_root,
+        distribution_policy: &default_distribution_policy(),
+        tag: "v0.7.1",
+        crate_version: "0.7.1",
+        repo_url: "https://example.test/repo.git",
+        brew_formula: "acme/tap/effigy",
+        skip_homebrew: false,
+        artifacts_dir: Path::new("/tmp/artifacts"),
+        work_dir: Path::new("/tmp/work"),
+        effigy_bin: Path::new("/tmp/bin/effigy"),
+        output_json: false,
+    };
+
+    let plan = build_first_publish_plan(&request, true);
+    assert_eq!(
+        plan.install_step.label,
+        "git tag install validation (0.7.1)"
+    );
+    assert_eq!(
+        &plan.install_step.args[..6],
+        [
+            "install",
+            "--git",
+            "https://example.test/repo.git",
+            "--tag",
+            "v0.7.1",
+            "effigy"
+        ]
+    );
+    assert!(!plan.install_step.args.iter().any(|arg| arg == "--version"));
+    assert_eq!(
+        plan.homebrew_steps.last().expect("upgrade step").args,
+        vec!["upgrade", "acme/tap/effigy"]
+    );
+
+    fs::write(
+        repo_root.join("Cargo.toml"),
+        "[package]\nname = \"effigy\"\nversion = \"0.7.1\"\n",
+    )
+    .expect("write publishable cargo manifest");
+    let plan = build_first_publish_plan(&request, true);
+    assert_eq!(
+        &plan.install_step.args[..3],
+        ["install", "effigy", "--version"]
+    );
+    let _ = fs::remove_dir_all(&repo_root);
+}
+
 fn default_distribution_policy() -> EffectiveDistributionPolicy {
     EffectiveDistributionPolicy {
         manifest_adopted: false,

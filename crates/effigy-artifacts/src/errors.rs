@@ -36,6 +36,11 @@ pub enum ArtifactStagingError {
     SourceNotFile {
         path: PathBuf,
     },
+    /// A pulled file path that is absolute, climbs with `..`, or resolves
+    /// outside the pull directory.
+    UnsafePulledPath {
+        path: PathBuf,
+    },
     NoPrimaryFiles,
     CreateDir {
         path: PathBuf,
@@ -70,6 +75,11 @@ impl fmt::Display for ArtifactStagingError {
             Self::SourceNotFile { path } => {
                 write!(f, "artifact source is not a file: {}", path.display())
             }
+            Self::UnsafePulledPath { path } => write!(
+                f,
+                "pulled artifact path escapes its pull directory: {}",
+                path.display()
+            ),
             Self::NoPrimaryFiles => write!(f, "artifact has no primary files to stage"),
             Self::CreateDir { path, error } => {
                 write!(

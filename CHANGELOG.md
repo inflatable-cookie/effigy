@@ -221,6 +221,25 @@ During v0.x, MINOR bumps may include breaking changes.
   detail queries preserve native failures rather than treating every zero return
   as an absent socket. Permission/unknown observations still refuse, with the
   same ownership checks and readiness deadlines.
+- `effigy doctor` no longer reports `{ task = "defer …" }` and other builtin
+  command references as unresolved tasks, and accepts every top-level manifest
+  table (`isolation`, `state`, `deploy`, `data`, `env_schema`, `qa`). A manifest
+  task that shares a builtin's name is still validated as a task.
+- `effigy <task> --plan` describes a run-less task bound to a named container as
+  `workspace shell`, matching what running it does, instead of failing with
+  "missing `run` command".
+- `effigy release proof` installs a `publish = false` package from its git tag
+  instead of attempting a registry install that fails, or could resolve an
+  unrelated crate of the same name. The Homebrew upgrade step now upgrades the
+  configured formula rather than `effigy`.
+- OCI artifact staging refuses pulled file paths that are absolute, climb with
+  `..`, or resolve (including through a symlink) outside the pull directory.
+- `effigy test --json` never opens the interactive test TUI, so its output stays
+  a single JSON document on an interactive terminal.
+- Task-status history records from two runs of one task that finish in the same
+  second no longer overwrite each other.
+- Container secret runtime files are staged on the host in an exclusively
+  created, owner-only temporary file.
 - Workspace handoff never reuses a stale Linux workspace artifact. A prepared
   artifact is current only when its identity sidecar matches the host identity
   and its rehearsal receipt names the target. A stale, unknown, or wrong-target

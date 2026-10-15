@@ -281,7 +281,16 @@ fn paths_for(
     timestamp: &str,
     state: TaskStatusState,
 ) -> TaskStatusStoragePaths {
-    task_status_storage_paths(repo_root, key, timestamp, state_slug(state))
+    // Timestamps have one-second precision. The process ID and sub-second
+    // clock keep two runs of one task that end in the same second from
+    // replacing each other's history record.
+    let slug = format!(
+        "{}-{}-{:09}",
+        state_slug(state),
+        std::process::id(),
+        Utc::now().timestamp_subsec_nanos()
+    );
+    task_status_storage_paths(repo_root, key, timestamp, &slug)
 }
 
 fn state_slug(state: TaskStatusState) -> &'static str {
