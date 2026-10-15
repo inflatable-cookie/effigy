@@ -216,6 +216,11 @@ During v0.x, MINOR bumps may include breaking changes.
   0.14.x releases without changing the support floor.
 
 ### Fixed
+- macOS managed-listener inspection accepts a successful empty descriptor list
+  from a live same-user process, instead of failing with stale errno. Socket
+  detail queries preserve native failures rather than treating every zero return
+  as an absent socket. Permission/unknown observations still refuse, with the
+  same ownership checks and readiness deadlines.
 - Workspace handoff never reuses a stale Linux workspace artifact. A prepared
   artifact is current only when its identity sidecar matches the host identity
   and its rehearsal receipt names the target. A stale, unknown, or wrong-target

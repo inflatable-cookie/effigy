@@ -402,6 +402,23 @@ UID. Any other malformed or out-of-range row fails the inventory closed. Other
 platforms fail closed when process or kernel socket ownership cannot be
 proved. `target_host` routes remain static external targets and do not gain
 managed-child ownership.
+The macOS `PROC_PIDLISTFDS` data query distinguishes a successful empty list
+from libproc's zero-on-error result by clearing and immediately capturing the
+calling thread's errno. A live descriptorless same-user process does not make
+an otherwise exclusive listener unverifiable. Permission and unknown errors,
+partial records and out-of-bounds results still refuse inspection. Socket-detail
+queries require one complete fixed-size record: a zero result preserves the
+native error, and only the existing exact `EBADF`/`ESRCH` race policy can skip
+a vanished descriptor or process. Readiness deadlines, UID selection, listener
+identity/ancestry checks and repeated exclusivity verification do not change.
+The return contracts are pinned to Apple XNU
+[`proc_pidfdlist`](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/proc_info.c)
+and the public
+[`libproc` wrappers](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/libsyscall/wrappers/libproc/libproc.c).
+Private native controls retain a genuinely descriptorless owned child through
+the production exclusivity scan, preserve invalid-descriptor errors and settle
+that exact child before returning. This counterexample does not establish the
+cause of historical CI failures whose native inspection error was not retained.
 Existing container defaults and non-listener host-process behavior are
 unchanged; core does not select a framework or add a built-in dev verb.
 
