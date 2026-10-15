@@ -152,7 +152,7 @@ pub(in crate::runner) fn run_compose_exec_with_options(
         args: resolved_args,
         label: label.to_owned(),
     };
-    run_compose_exec_plan_with_deadline(policy, &plan, capture, stdin_file, deadline)
+    run_owned_compose_exec_plan_with_deadline(policy, &plan, capture, stdin_file, deadline)
 }
 
 pub(in crate::runner) fn run_compose_exec_plan_with_options(
@@ -161,10 +161,10 @@ pub(in crate::runner) fn run_compose_exec_plan_with_options(
     capture: bool,
     stdin_file: Option<&Path>,
 ) -> Result<Output, RunnerError> {
-    run_compose_exec_plan_with_deadline(policy, plan, capture, stdin_file, None)
+    run_owned_compose_exec_plan_with_deadline(policy, plan, capture, stdin_file, None)
 }
 
-pub(in crate::runner) fn run_compose_exec_plan_with_deadline(
+fn run_owned_compose_exec_plan_with_deadline(
     policy: &EffectiveContainerPolicy,
     plan: &ContainerComposeInvocationPlan,
     capture: bool,
@@ -216,11 +216,11 @@ pub(in crate::runner) fn run_verified_compose_exec_plan(
             policy,
             &plan.args,
             colima::ColimaDirectExecRequest {
-                binding,
                 capture,
                 label: &plan.label,
                 stdin_file,
             },
+            OsStr::new(binding.id()),
             colima::ColimaExecAdapters {
                 parse_compose_exec_args: &parse_compose_exec_args,
                 run_command_capture_allow_failure_with_stdin: &move |root, program, args, stdin| {
@@ -243,6 +243,59 @@ pub(in crate::runner) fn run_verified_compose_exec_plan(
         ..plan.clone()
     };
 
+    run_exec_process_plan(&plan, capture, stdin_file, deadline)
+}
+
+/// Existing deadline-aware diagnosis/permission transport. It does not acquire
+/// workload readiness or restart authority. Workload entry points above use the
+/// verified binding path; diagnosis keeps its original bounded observation cost.
+pub(in crate::runner) fn run_compose_exec_plan_with_deadline(
+    policy: &EffectiveContainerPolicy,
+    plan: &ContainerComposeInvocationPlan,
+    capture: bool,
+    stdin_file: Option<&Path>,
+    deadline: Option<Instant>,
+) -> Result<Output, RunnerError> {
+    if plan.backend_id == BackendId::colima_nerdctl() {
+        let parsed = parse_compose_exec_args(&plan.args)?;
+        let container_id = colima::resolve_compose_service_container_id(
+            &plan.repo_root,
+            policy,
+            &parsed.service,
+            deadline,
+            &move |root, program, args| {
+                run_command_capture_until(root, program, args, None, deadline)
+            },
+            &format_args,
+        )?;
+        return colima::run_colima_direct_exec(
+            &plan.repo_root,
+            policy,
+            &plan.args,
+            colima::ColimaDirectExecRequest {
+                capture,
+                label: &plan.label,
+                stdin_file,
+            },
+            &container_id,
+            colima::ColimaExecAdapters {
+                parse_compose_exec_args: &parse_compose_exec_args,
+                run_command_capture_allow_failure_with_stdin: &move |root, program, args, stdin| {
+                    run_command_capture_until(root, program, args, stdin, deadline)
+                },
+                format_args: &format_args,
+            },
+        );
+    }
+    run_exec_process_plan(plan, capture, stdin_file, deadline)
+}
+
+fn run_exec_process_plan(
+    plan: &ContainerComposeInvocationPlan,
+    capture: bool,
+    stdin_file: Option<&Path>,
+    deadline: Option<Instant>,
+) -> Result<Output, RunnerError> {
     if capture {
         return run_command_capture_until(
             &plan.repo_root,

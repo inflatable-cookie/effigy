@@ -235,6 +235,9 @@ Effigy ownership:
   transaction. A replacement after final inspect cannot redirect ID-targeted
   exec into the successor; the old ID can fail. In-place label/state changes
   after the final observation and remote cancellation are not guaranteed.
+- the existing deadline-aware diagnosis/permission transport retains its
+  observation sequencing and budgets. Doctor does not gain a workload-readiness
+  prerequisite or restart authority from this change.
 
 Target compatibility case:
 

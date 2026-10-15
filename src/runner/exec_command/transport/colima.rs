@@ -42,10 +42,10 @@ pub(super) struct ColimaExecAdapters<'a> {
     pub(super) format_args: &'a FormatArgs,
 }
 
-/// One Colima exec request carries the verified binding, capture mode and
-/// optional stdin. Capture adapters retain the caller's absolute deadline.
+/// One Colima exec request carries capture mode and optional stdin. The caller
+/// selects its target before this transport; workload callers pass a verified
+/// full ID. Capture adapters retain the caller's absolute deadline.
 pub(super) struct ColimaDirectExecRequest<'a> {
-    pub(super) binding: &'a effigy_containers::exec::VerifiedComposeContainer,
     pub(super) capture: bool,
     pub(super) label: &'a str,
     pub(super) stdin_file: Option<&'a Path>,
@@ -56,10 +56,10 @@ pub(super) fn run_colima_direct_exec(
     policy: &EffectiveContainerPolicy,
     compose_exec_args: &[OsString],
     request: ColimaDirectExecRequest<'_>,
+    container_id: &std::ffi::OsStr,
     adapters: ColimaExecAdapters<'_>,
 ) -> Result<Output, RunnerError> {
     let ColimaDirectExecRequest {
-        binding,
         capture,
         label,
         stdin_file,
@@ -74,7 +74,7 @@ pub(super) fn run_colima_direct_exec(
         policy,
         &parsed,
         stdin_file.is_some() || !capture,
-        OsString::from(binding.id()),
+        container_id.to_os_string(),
     );
 
     if capture {

@@ -711,15 +711,12 @@ shared_root = "{}"
         "removed recursive -fR chown must stay gone, got {log}"
     );
     assert!(
-        !log.contains(&format!("exec -u 0 {} sh -lc", fake_app_full_id(&repo))),
+        !log.contains("exec -T -u 0 app sh -lc"),
         "permission prep must use argument arrays instead of a root login shell, got {log}"
     );
-    let identity_probe = format!(
-        r#"exec -u 0 {} sh -c uid="$(id -u "$1")" && gid="$(id -g "$1")""#,
-        fake_app_full_id(&repo)
-    );
+    let identity_probe = r#"exec -T -u 0 app sh -c uid="$(id -u "$1")" && gid="$(id -g "$1")""#;
     assert!(
-        log.contains(&identity_probe),
+        log.contains(identity_probe),
         "expected combined numeric workspace identity probe before prep, got {log}"
     );
     assert!(
@@ -737,10 +734,8 @@ shared_root = "{}"
         "expected bulk no-deref chown of isolated vendor as resolved uid:gid, got {log}"
     );
     assert!(
-        log.contains(&format!(
-            "exec -u 501:20 {} sh -c while [ \"$#\" -ge 2 ]; do",
-            fake_app_full_id(&repo)
-        )) && log.contains("[ ! -r \"$path\" ] || [ ! -w \"$path\" ]")
+        log.contains("exec -T -u 501:20 app sh -c while [ \"$#\" -ge 2 ]; do")
+            && log.contains("[ ! -r \"$path\" ] || [ ! -w \"$path\" ]")
             && log.contains(&format!("{vendor} yes")),
         "expected batched non-root read/write probe of isolated vendor, got {log}"
     );

@@ -655,6 +655,10 @@
   { id = "readiness-and-affected-callers", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(nested_container_target_tests::) | test(container_runtime_prep::tests::) | test(exec_command::tests::) | test(exec_command::transport::colima::tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
   { task = "test:workspace:artifact-builder" },
   { task = "test:workspace:artifact-owner-integrations" },
+  { task = "test:workspace:artifact-diagnostics" },
+]
+"test:workspace:artifact-diagnostics" = [
+  { id = "unchanged-diagnosis-and-permission-transport", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(doctor_ports::tests::) | test(deferral_tests::token_and_implicit_tests::run_manifest_task_php_app)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
 ]
 "test:workspace:artifact-owner-integrations" = [
   { id = "bound-owner-integrations", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(container_command::support::tests::) | test(container_command::secret_env::tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
