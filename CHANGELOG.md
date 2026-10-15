@@ -222,6 +222,10 @@ During v0.x, MINOR bumps may include breaking changes.
   1.2.0.
 
 ### Fixed
+- When a running Colima VM comes back from a restart with containerd and
+  BuildKit stopped, `effigy container up` and container tasks now start those
+  units inside the VM and continue, instead of waiting and then restarting the
+  whole VM, which took down every stack on it and could itself time out.
 - Task locks are published atomically and carry an owner token. A concurrent
   run can no longer see a half-written lock, delete it, and start alongside the
   owner, and a finishing run never removes or refreshes a successor's lock. An

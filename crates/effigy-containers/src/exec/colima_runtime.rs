@@ -32,6 +32,9 @@ const COLIMA_RUNTIME_PROBE_INTERVAL: Duration = Duration::from_millis(500);
 const COLIMA_STATUS_TIMEOUT: Duration = Duration::from_secs(30);
 const COLIMA_STOP_TIMEOUT: Duration = Duration::from_secs(45);
 const COLIMA_STOP_SETTLE_TIMEOUT: Duration = Duration::from_secs(10);
+/// Bound for starting stopped runtime units inside a running VM, and for the
+/// readiness re-check that follows, before falling back to a VM restart.
+const COLIMA_UNIT_START_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ColimaRecoveryReport {
@@ -57,6 +60,7 @@ pub fn ensure_colima_running(
             COLIMA_RUNNING_PROFILE_GRACE,
             COLIMA_RUNTIME_READY_TIMEOUT,
             |timeout| wait_for_colima_runtime_ready(policy, repo_root, timeout),
+            || start_colima_runtime_units(policy, repo_root),
             || repair_colima_runtime(policy, repo_root),
         );
     }
@@ -84,11 +88,21 @@ fn ensure_running_profile_runtime_ready(
     grace: Duration,
     recovery_timeout: Duration,
     mut wait_for_runtime: impl FnMut(Duration) -> Result<(), String>,
+    mut start_units: impl FnMut() -> Result<(), String>,
     mut repair: impl FnMut() -> Result<(), ContainerExecError>,
 ) -> Result<bool, ContainerExecError> {
     match wait_for_runtime(grace) {
         Ok(()) => Ok(false),
         Err(readiness_error) => {
+            // A VM restarted outside Colima's boot provisioning can come back
+            // Running with containerd and BuildKit stopped. Starting the units
+            // recovers it without restarting the VM and every stack on it.
+            if start_units().is_ok() && wait_for_runtime(COLIMA_UNIT_START_TIMEOUT).is_ok() {
+                eprintln!(
+                    "[info] Colima was running with containerd/BuildKit stopped; started them inside the VM without restarting it"
+                );
+                return Ok(true);
+            }
             repair().map_err(|recovery_error| {
                 runtime_readiness_recovery_error(&readiness_error, &recovery_error)
             })?;
@@ -551,6 +565,33 @@ pub(super) fn run_runtime_command_capture_for_policy_allow_failure_with_timeout(
         label,
         timeout,
     )
+}
+
+/// Start containerd and BuildKit inside a running Colima VM.
+fn start_colima_runtime_units(
+    policy: &EffectiveContainerPolicy,
+    repo_root: &Path,
+) -> Result<(), String> {
+    let args = [
+        "ssh",
+        "--profile",
+        policy.profile.as_str(),
+        "--",
+        "sudo",
+        "systemctl",
+        "start",
+        "containerd",
+        "buildkit",
+    ];
+    run_command_capture_with_timeout(
+        repo_root,
+        "colima",
+        &args,
+        "Colima runtime unit start",
+        COLIMA_UNIT_START_TIMEOUT,
+    )
+    .map(|_| ())
+    .map_err(|error| error.to_string())
 }
 
 pub(super) fn repair_colima_runtime(
@@ -1055,6 +1096,7 @@ mod tests {
                 wait_timeouts.push(timeout);
                 Ok(())
             },
+            || panic!("a ready profile never starts units"),
             || {
                 repairs += 1;
                 Ok(())
@@ -1082,6 +1124,7 @@ mod tests {
                     Ok(())
                 }
             },
+            || Err("units would not start".to_owned()),
             || {
                 repairs += 1;
                 Ok(())
@@ -1090,8 +1133,40 @@ mod tests {
         .expect("repaired profile should pass runtime readiness");
 
         assert!(started);
-        assert_eq!(attempts, 2);
+        assert_eq!(
+            attempts, 2,
+            "a failed unit start goes straight to the VM repair"
+        );
         assert_eq!(repairs, 1);
+    }
+
+    #[test]
+    fn stopped_runtime_units_are_started_without_restarting_the_vm() {
+        let mut attempts = 0;
+        let mut unit_starts = 0;
+        let started = ensure_running_profile_runtime_ready(
+            Duration::from_secs(30),
+            Duration::from_secs(90),
+            |timeout| {
+                attempts += 1;
+                if attempts == 1 {
+                    Err("containerd socket missing".to_owned())
+                } else {
+                    assert_eq!(timeout, COLIMA_UNIT_START_TIMEOUT);
+                    Ok(())
+                }
+            },
+            || {
+                unit_starts += 1;
+                Ok(())
+            },
+            || panic!("starting the units recovered the runtime; the VM must not restart"),
+        )
+        .expect("unit start recovers the runtime");
+
+        assert!(started);
+        assert_eq!(unit_starts, 1);
+        assert_eq!(attempts, 2);
     }
 
     #[test]
