@@ -1830,8 +1830,11 @@ services:
 
     let policy = load_container_policy(&root, None).expect("policy");
 
-    assert_eq!(policy.compose_files.len(), 2);
-    let dns_override = fs::read_to_string(&policy.compose_files[1]).expect("read dns override");
+    assert_eq!(policy.compose_files.len(), 3);
+    assert!(policy.compose_files[0].ends_with("infra/dev/docker-compose.yml"));
+    assert!(policy.compose_files[1].ends_with(".effigy/runtime/compose/web.ownership.compose.yml"));
+    assert!(policy.compose_files[2].ends_with(".effigy/runtime/dns/web.compose.override.yml"));
+    let dns_override = fs::read_to_string(&policy.compose_files[2]).expect("read dns override");
     assert!(
         dns_override.contains("app:\n    dns:"),
         "dns override should target app service: {dns_override}"
