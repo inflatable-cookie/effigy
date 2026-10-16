@@ -35,6 +35,7 @@ mod cache;
 mod closeout;
 mod data;
 mod gateway_registration;
+mod handover;
 mod hosts;
 mod lifecycle;
 mod ports;

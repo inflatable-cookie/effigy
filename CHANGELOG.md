@@ -7,15 +7,32 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- Switching between a checkout's container and hybrid environments is one
+  preflighted handover. `container up` of one environment while another
+  environment of the same checkout and scope is live first evaluates
+  everything that could refuse — foreign route claims, loopback allocation,
+  manifest, policy, ownership and backend validation — before changing
+  anything, then brings the live conflicting environment down with the
+  ordinary `container down` semantics (managed host processes and listeners
+  stopped, gateway routes withdrawn, containers stopped, all volumes kept),
+  then starts the requested environment. This works in both directions and
+  replaces both the data-services-only stop and the former live
+  same-checkout listener refusal: a handover refuses only when stopping the
+  other environment itself fails, names it, and leaves it recoverable by its
+  own `up` or `down`. The stop is recorded, so an environment whose services
+  a handover stopped restarts with a plain `up` instead of refusing an
+  unknown partial state; genuinely unknown partial state still refuses.
+  Environments without `data_from` and without colliding routes behave as
+  before, and foreign checkouts, scopes and stacks are never touched.
 - `data_from` on `[containers.<env>]` lets a container environment borrow
   another environment's service data volumes. Services present in both
   environments with the same catalog entry mount the owner environment's
   named volumes for the same checkout and worktree scope — bundle hybrid
   (`dev`) and the container profile (`dev:container`) see one database and
   one bucket per checkout, and switching between them is seamless. `up` of
-  either environment first stops the other's shared data services and prints
-  one line naming the handover; a failed stop refuses instead of racing for
-  the volumes. Borrowed volumes are declared `external` in the generated
+  either environment hands the other live environment over whole (data kept)
+  and prints one line naming the handover; a failed stop refuses instead of
+  racing for the volumes. Borrowed volumes are declared `external` in the generated
   Compose, so `reset`, `reset --wipe-data`, `retire`, `retire --dead` and
   `ports reclaim` never delete or claim the owner's data — retirement records
   list them as retained, never owned. Environments without `data_from` keep
@@ -280,9 +297,9 @@ During v0.x, MINOR bumps may include breaking changes.
   managed listener hands over a gateway route published by the same checkout
   and scope in one locked transaction, and container registration takes the
   domain back once that listener generation is no longer live. A still-live
-  managed listener is a real conflict and refuses with the running managed
-  process and `effigy container down` as the remedy; another checkout or scope
-  still refuses, and container teardown no longer removes a handed-over route.
+  managed listener is resolved by the whole-environment handover, and
+  another checkout or scope still refuses; container teardown no longer
+  removes a handed-over route.
 - Automatic local Linux artifact rebuilds now use the stable managed builder
   project `effigy-artifact-builder-v1`, preserving checkout/worktree isolation.
   Ambiguous legacy builders and their admissions/caches remain untouched; no

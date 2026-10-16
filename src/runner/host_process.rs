@@ -194,20 +194,37 @@ pub(in crate::runner) fn validate_host_process_preflight(
     for process in &ordered {
         resolve_host_process_cwd(&checkout_root, process)?;
     }
-    let listener_root = listener_gateway_root(policy)?;
-    if let Some(root) = listener_root {
-        let route_table = root.join("routes.json");
-        let project_path = checkout_root.display().to_string();
-        for process in ordered.iter().filter(|process| process.listener.is_some()) {
-            let listener = process.listener.as_ref().expect("filtered listener");
-            check_managed_listener_route_claim(
-                &route_table,
-                &project_path,
-                &listener.route_domain,
-                &managed_host_process_owner(&project_path, policy, process)?,
-            )
-            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-        }
+    listener_gateway_root(policy)?;
+    Ok(())
+}
+
+/// Refuse a managed-listener route claim this checkout may not take. Runs in
+/// the environment-handover stage, after same-checkout conflicts were handed
+/// over, so a live sibling environment never reaches this as a refusal.
+pub(in crate::runner) fn validate_host_process_listener_route_claims(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<(), RunnerError> {
+    if policy.host_processes.is_empty() {
+        return Ok(());
+    }
+    let Some(listener_root) = listener_gateway_root(policy)? else {
+        return Ok(());
+    };
+    let route_table = listener_root.join("routes.json");
+    let project_path = repo_root.canonicalize().map_err(|error| {
+        RunnerError::task_invocation(format!("failed to resolve checkout: {error}"))
+    })?;
+    let ordered = order_host_processes(&policy.host_processes)?;
+    for process in ordered.iter().filter(|process| process.listener.is_some()) {
+        let listener = process.listener.as_ref().expect("filtered listener");
+        check_managed_listener_route_claim(
+            &route_table,
+            &project_path.display().to_string(),
+            &listener.route_domain,
+            &managed_host_process_owner(&project_path.display().to_string(), policy, process)?,
+        )
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     }
     Ok(())
 }

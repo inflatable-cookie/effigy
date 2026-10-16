@@ -20,6 +20,7 @@ use effigy_gateway::loopback::{
     project_loopback_identity, reserved_loopback_ips_for_other_projects, shared_loopback_identity,
     LoopbackRegistry,
 };
+use effigy_gateway::managed_listener::verify_managed_listener_owner;
 use effigy_gateway::registration::{
     check_claim, check_container_claim, container_teardown_covers, owned_by, project_scope,
 };
@@ -79,6 +80,144 @@ pub(in crate::runner) fn register_gateway_routes_for_container_with_context(
     admitted: Option<&crate::runner::host_container_lease::DetachedActivationContext>,
 ) -> Result<Vec<RegisteredGatewayRoute>, RunnerError> {
     register_gateway_routes_for_verified_container(repo_root, policy, admitted, None)
+}
+
+/// One gateway domain this environment will claim when it activates, with the
+/// shared-service project that backs it when the claim comes from a shared
+/// service binding. Two environments of one checkout sharing the same backing
+/// shared-service project never conflict on that domain; everything else does.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::runner) struct DeclaredRouteClaim {
+    pub(in crate::runner) domain: String,
+    pub(in crate::runner) shared_project: Option<String>,
+}
+
+/// The gateway domains this environment's activation would claim, resolved
+/// from the effective policy alone: DNS routes, managed listener routes,
+/// service aliases and shared-service bindings. No runtime or route-table
+/// state is read.
+pub(in crate::runner) fn declared_route_claims(
+    policy: &EffectiveContainerPolicy,
+) -> Vec<DeclaredRouteClaim> {
+    let mut claims: Vec<DeclaredRouteClaim> = Vec::new();
+    let push = |claims: &mut Vec<DeclaredRouteClaim>, claim: DeclaredRouteClaim| {
+        if !claims
+            .iter()
+            .any(|existing| existing.domain == claim.domain)
+        {
+            claims.push(claim);
+        }
+    };
+    for route in &policy.dns_routes {
+        push(
+            &mut claims,
+            DeclaredRouteClaim {
+                domain: route.domain.clone(),
+                shared_project: None,
+            },
+        );
+    }
+    for process in &policy.host_processes {
+        if let Some(listener) = &process.listener {
+            push(
+                &mut claims,
+                DeclaredRouteClaim {
+                    domain: listener.route_domain.clone(),
+                    shared_project: None,
+                },
+            );
+        }
+    }
+    if let Some(base_domain) = project_base_domain(policy) {
+        for alias in &policy.service_aliases {
+            push(
+                &mut claims,
+                DeclaredRouteClaim {
+                    domain: format!("{}.{}", alias.domain_label, base_domain),
+                    shared_project: None,
+                },
+            );
+        }
+        for shared in &policy.shared_services {
+            push(
+                &mut claims,
+                DeclaredRouteClaim {
+                    domain: format!("{}.{}", shared.domain_label, base_domain),
+                    shared_project: Some(shared.project_name.clone()),
+                },
+            );
+        }
+    }
+    claims
+}
+
+/// A live same-checkout managed-listener route standing on one of the
+/// caller's declared domains. `environment` is the owner environment's
+/// manifest name parsed from the stable listener owner token.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::runner) struct LiveListenerConflict {
+    pub(in crate::runner) environment: String,
+    pub(in crate::runner) domain: String,
+}
+
+/// Preflight every gateway claim this activation would make, before any
+/// handover or Compose effect:
+///
+/// - a route held by another checkout, scope or a non-container source
+///   refuses exactly as registration would, with no effects;
+/// - a route held by a live managed listener of this same checkout and scope
+///   is returned as a handover conflict instead of a refusal;
+/// - the alias and shared-service loopback addresses are allocated here, so
+///   an exhausted pool refuses before either environment changes.
+pub(in crate::runner) fn preflight_route_claims(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<Vec<LiveListenerConflict>, RunnerError> {
+    let claims = declared_route_claims(policy);
+    let route_table_path = gateway_route_table_path()?;
+    let project_path = repo_root.display().to_string();
+    let scope = gateway_project_scope(&project_path)?;
+    let mut conflicts = Vec::new();
+    if !claims.is_empty() {
+        let _lock = RouteTableLock::acquire(&route_table_path)
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+        let table = load_gateway_route_table(&route_table_path)?;
+        for claim in &claims {
+            let Some(existing) = table.lookup(&claim.domain) else {
+                continue;
+            };
+            check_claim(existing, &project_path, scope.as_deref()).map_err(|error| {
+                RunnerError::gateway_route_registration(
+                    "preflight",
+                    &claim.domain,
+                    error.to_string(),
+                )
+            })?;
+            if !owned_by(existing, &project_path, scope.as_deref()) {
+                continue;
+            }
+            if let Some(owner) = existing.managed_listener.as_ref() {
+                if verify_managed_listener_owner(owner).is_ok() {
+                    conflicts.push(LiveListenerConflict {
+                        environment: managed_listener_owner_environment(&owner.owner)
+                            .unwrap_or_else(|| owner.owner.clone()),
+                        domain: claim.domain.clone(),
+                    });
+                }
+            }
+        }
+    }
+    // Allocate alias and shared-service loopback addresses now: an exhausted
+    // pool must refuse before a handover stops anything.
+    let alias_routes = resolve_gateway_service_alias_routes(repo_root, policy, true, None)?;
+    resolve_gateway_shared_service_alias_routes(repo_root, policy, true, &alias_routes)?;
+    Ok(conflicts)
+}
+
+/// The environment name inside a stable managed-listener owner token
+/// (`scope|environment|profile|process`), or `None` for a legacy shape.
+pub(in crate::runner) fn managed_listener_owner_environment(owner: &str) -> Option<String> {
+    owner.split('|').nth(1).map(str::to_owned)
 }
 
 pub(in crate::runner) fn register_gateway_routes_for_verified_container(

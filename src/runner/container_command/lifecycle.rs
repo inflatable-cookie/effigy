@@ -161,7 +161,7 @@ fn run_container_up_inner(
     reject_conflicting_container_up_modes(attach, detach)?;
 
     operation.stage = Some("preparation");
-    let plan = prepare_container_up(repo_root, name, attach, detach, operation)?;
+    let mut plan = prepare_container_up(repo_root, name, attach, detach, operation)?;
     operation.active = plan.attach_mode == EffectiveAttachMode::Detached;
     operation.admitted = plan
         .admitted_context
@@ -179,7 +179,26 @@ fn run_container_up_inner(
             &plan.policy,
         )?;
     }
-    if !partial_activation_reconcile_pending(repo_root, &plan)? {
+    let reconcile_only = partial_activation_reconcile_pending(repo_root, &plan)?;
+    operation.stage = Some("environment_handover");
+    let handed_over = super::handover::hand_over_conflicting_environments(
+        repo_root,
+        &plan.policy,
+        deregister_runtime_gateway_routes,
+    )?;
+    if plan.attach_mode == EffectiveAttachMode::Attached {
+        for note in &handed_over {
+            println!("{note}");
+        }
+    }
+    plan.handover_notes.extend(handed_over);
+    // With same-checkout conflicts handed over, a listener claim can only
+    // refuse for a route this checkout may never take.
+    crate::runner::host_process::validate_host_process_listener_route_claims(
+        repo_root,
+        &plan.policy,
+    )?;
+    if !reconcile_only {
         operation.stage = Some("compose_activation");
         if let Some(closeout) = run_container_up_compose(repo_root, &plan)? {
             return Ok(closeout);
@@ -380,12 +399,6 @@ fn prepare_container_up(
     };
     validate_container_policy(repo_root, &policy)?;
     validate_compose_backend_runtime(repo_root, &policy)?;
-    let handover_notes = hand_over_volume_data_services(repo_root, &policy)?;
-    if attach_mode == EffectiveAttachMode::Attached {
-        for note in &handover_notes {
-            println!("{note}");
-        }
-    }
     let _manager_report = effigy_runtime::container_manager::lifecycle_operation_report(
         repo_root,
         &policy,
@@ -418,103 +431,11 @@ fn prepare_container_up(
         attach_mode,
         colima_started,
         shared_service_notes,
-        handover_notes,
+        handover_notes: Vec::new(),
         workspace_mount_decisions,
         up_plan,
         admitted_context,
     })
-}
-
-/// Prepare a `data_from` environment for activation.
-///
-/// 1. Ensure every borrowed volume exists, so Compose's `external` volume
-///    entries resolve even on a fresh checkout where the owner environment
-///    has not run yet. Creation is idempotent and never touches an existing
-///    volume's data.
-/// 2. Stop each peer environment's shared data services that are still
-///    running, so both environments never hold the same volumes at once.
-///    Stopping is a `compose stop` against the peer's project; a failure
-///    refuses the activation instead of racing for the volumes.
-///
-/// Returns one note line per handover that actually moved a running
-/// service.
-fn hand_over_volume_data_services(
-    repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
-) -> Result<Vec<String>, RunnerError> {
-    for command in effigy_containers::borrowed_volume_ensure_commands(policy)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?
-    {
-        let args = command
-            .args
-            .iter()
-            .map(std::ffi::OsString::from)
-            .collect::<Vec<_>>();
-        let plan = effigy_runtime::container_manager::runtime_invocation_plan(
-            repo_root,
-            policy,
-            command.program.as_str(),
-            &args,
-            ContainerAction::Shutdown,
-            &command.description,
-        )
-        .map_err(RunnerError::from)?;
-        effigy_runtime::signals::run_runtime_plan_capture(&plan).map_err(|error| {
-            RunnerError::task_invocation(format!(
-                "cannot prepare borrowed data volumes for `{}`: {error}",
-                policy.name
-            ))
-        })?;
-    }
-    let mut notes = Vec::new();
-    for handover in effigy_containers::plan_volume_data_handover(policy) {
-        let running =
-            effigy_containers::exec::list_running_compose_containers_for_project_with_deadline(
-                repo_root,
-                policy,
-                &handover.project_name,
-                Some(std::time::Instant::now() + std::time::Duration::from_secs(15)),
-            )
-            .map_err(|error| {
-                RunnerError::task_invocation(format!(
-                    "cannot inspect `{}` data services before handover: {error}",
-                    handover.environment
-                ))
-            })?;
-        let active = running
-            .iter()
-            .filter(|row| !row.oneoff)
-            .filter(|row| effigy_containers::exec::compose_status_is_running(&row.status))
-            .filter_map(|row| row.service.clone())
-            .filter(|service| handover.services.contains(service))
-            .collect::<std::collections::BTreeSet<_>>();
-        if active.is_empty() {
-            continue;
-        }
-        let services = active.into_iter().collect::<Vec<_>>();
-        let mut tail = vec![std::ffi::OsString::from("stop")];
-        tail.extend(services.iter().map(std::ffi::OsString::from));
-        let stop_plan = effigy_runtime::container_manager::compose_invocation_plan_for_project(
-            repo_root,
-            policy,
-            &handover.project_name,
-            tail,
-            ContainerAction::Shutdown,
-            "docker compose stop",
-        )
-        .map_err(RunnerError::from)?;
-        effigy_runtime::signals::run_compose_plan_capture(policy, &stop_plan).map_err(|error| {
-            RunnerError::task_invocation(format!(
-                "cannot hand over {} data service{} of `{}` (project `{}`): {error}",
-                services.join(", "),
-                if services.len() == 1 { "" } else { "s" },
-                handover.environment,
-                handover.project_name
-            ))
-        })?;
-        notes.push(handover.note);
-    }
-    Ok(notes)
 }
 
 fn refresh_workspace_mounts_for_creation(
@@ -812,12 +733,34 @@ fn partial_activation_reconcile_pending(
         })?;
     let running = effigy_containers::exec::verify_owned_running_compose_rows(repo_root, &plan.policy, &running, deadline)
         .map_err(|_| RunnerError::task_invocation("partial activation reconciliation unavailable: current full-ID ownership/bindings could not be verified. No services were recreated"))?;
-    if partial_reconcile_skips_compose_up(&plan.policy, &running) {
+    reconcile_partial_activation(repo_root, &plan.policy, &running)
+}
+
+/// Decide what a recorded partial activation does next: a verified running
+/// primary reconciles without `compose up`; a handover-stopped environment
+/// restarts with `compose up`; anything else is genuinely unknown state and
+/// refuses.
+fn reconcile_partial_activation(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    running: &[RunningComposeContainer],
+) -> Result<bool, RunnerError> {
+    if partial_reconcile_skips_compose_up(policy, running) {
+        // A healthy reconcile also resolves any handover stop recorded for
+        // this environment.
+        crate::runner::host_container_lease::clear_environment_handover_record(repo_root, policy)?;
         return Ok(true);
+    }
+    // A handover that stopped this environment's services is a known state,
+    // not an unknown partial failure: restart with Compose up.
+    if crate::runner::host_container_lease::environment_handover_recorded(repo_root, policy)?
+        .is_some()
+    {
+        return Ok(false);
     }
     Err(RunnerError::task_invocation(format!(
         "partially activated container `{}` has no verified running primary; reconciliation unavailable. No compose up, restart or teardown ran. Inspect the selected scope with `effigy container status`; retry `effigy container up --detach` after the owned primary is running, or explicitly stop with `effigy container down`",
-        plan.policy.name
+        policy.name
     )))
 }
 
@@ -1377,12 +1320,13 @@ mod tests {
     use super::{
         annotate_workspace_extra_mount_decisions, clear_partial_activation,
         detached_partial_activation_error, exec_operation_plan, gateway_registration_failure,
-        hand_over_volume_data_services, lifecycle_operation_plan, partial_activation_recorded,
-        partial_reconcile_skips_compose_up, primary_service_is_running,
+        lifecycle_operation_plan, partial_activation_recorded, partial_reconcile_skips_compose_up,
+        primary_service_is_running, reconcile_partial_activation,
         refresh_workspace_mounts_for_creation, resolve_workspace_mounts_for_creation,
         run_container_down_command, run_container_eject, start_runtime_after_scope_registration,
         RunnerError,
     };
+    use crate::runner::container_command::handover::hand_over_conflicting_environments;
     use crate::runner::container_command::support::{
         annotate_left_running_shared_services, annotate_shared_service_notes,
     };
@@ -2092,6 +2036,72 @@ primary_service = "app"
     }
 
     #[test]
+    fn reconcile_restarts_an_environment_a_handover_stopped() {
+        let (temp, _lease_home) = isolated_lease_home();
+        let policy = test_policy(Vec::new());
+        let stopped = [running_row("db", false), running_row("app", false)]
+            .into_iter()
+            .map(|mut row| {
+                row.status = "Exited (0) 3 minutes ago".to_owned();
+                row
+            })
+            .collect::<Vec<_>>();
+
+        let error = reconcile_partial_activation(temp.path(), &policy, &stopped)
+            .expect_err("an unknown stopped partial state refuses");
+        assert!(
+            error
+                .to_string()
+                .contains("has no verified running primary; reconciliation unavailable"),
+            "{error}"
+        );
+
+        record_partial_activation(temp.path(), &policy).expect("record partial activation");
+        crate::runner::host_container_lease::record_environment_handover(
+            temp.path(),
+            &policy,
+            "stack",
+            "shared data services (data_from)",
+        )
+        .expect("record handover");
+        // The recorded handover makes the stopped state known: restart.
+        assert!(
+            !reconcile_partial_activation(temp.path(), &policy, &stopped)
+                .expect("a handover-stopped state restarts"),
+            "restart means compose up runs"
+        );
+    }
+
+    #[test]
+    fn a_healthy_reconcile_resolves_a_recorded_handover_stop() {
+        let (temp, _lease_home) = isolated_lease_home();
+        let policy = test_policy(Vec::new());
+        record_partial_activation(temp.path(), &policy).expect("record partial activation");
+        crate::runner::host_container_lease::record_environment_handover(
+            temp.path(),
+            &policy,
+            "stack",
+            "gateway domains app.test",
+        )
+        .expect("record handover");
+
+        assert!(
+            reconcile_partial_activation(temp.path(), &policy, &[running_row("app", false)])
+                .expect("healthy reconcile"),
+            "a running primary reconciles without compose up"
+        );
+        assert!(
+            crate::runner::host_container_lease::environment_handover_recorded(
+                temp.path(),
+                &policy,
+            )
+            .expect("handover record readable")
+            .is_none(),
+            "the resolved handover stop is cleared"
+        );
+    }
+
+    #[test]
     fn detached_partial_error_withholds_retry_when_mark_cannot_be_recorded() {
         let policy = test_policy(Vec::new());
         let rendered = detached_partial_activation_error(
@@ -2310,7 +2320,7 @@ catalog = "postgres"
             let docker = bin.join("docker");
             fs::write(
                 &docker,
-                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$EFFIGY_TEST_DOCKER_LOG\"\nfor arg in \"$@\"; do\n  if [ \"$arg\" = \"--format\" ]; then\n    printf 'dev-db\\t%s\\t\\t%s\\t%s\\tdb\\tFalse\\n' \"$EFFIGY_TEST_PEER_STATUS\" \"$EFFIGY_TEST_PEER_PROJECT\" \"$EFFIGY_TEST_WORKDIR\"\n    exit 0\n  fi\ndone\ncase \"$*\" in\n  *\" stop \"*)\n    if [ \"$EFFIGY_TEST_STOP_FAILS\" = \"1\" ]; then\n      echo stop refused >&2\n      exit 3\n    fi\n    ;;\nesac\nexit 0\n",
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$EFFIGY_TEST_DOCKER_LOG\"\nfor arg in \"$@\"; do\n  if [ \"$arg\" = \"--format\" ]; then\n    printf 'dev-db\\t%s\\t\\t%s\\t%s\\tdb\\tFalse\\n' \"$EFFIGY_TEST_PEER_STATUS\" \"$EFFIGY_TEST_PEER_PROJECT\" \"$EFFIGY_TEST_WORKDIR\"\n    exit 0\n  fi\ndone\ncase \"$*\" in\n  *\" stop \"*|*\" down \"*)\n    if [ \"$EFFIGY_TEST_STOP_FAILS\" = \"1\" ]; then\n      echo teardown refused >&2\n      exit 3\n    fi\n    ;;\nesac\nexit 0\n",
             )
             .expect("write fake docker");
             let mut perms = fs::metadata(&docker)
@@ -2360,17 +2370,19 @@ catalog = "postgres"
     }
 
     #[test]
-    fn up_of_borrower_hands_over_owner_data_services() {
+    fn up_of_borrower_hands_over_whole_owner_environment() {
         let fixture = DataFromFixture::new("acowtancy-dev", "Up 1 minute");
         let hybrid = fixture.policy("hybrid");
 
-        let notes = hand_over_volume_data_services(&fixture.repo_root, &hybrid)
-            .expect("borrower handover succeeds");
+        let notes =
+            hand_over_conflicting_environments(&fixture.repo_root, &hybrid, |_| Ok(Vec::new()))
+                .expect("borrower handover succeeds");
 
         let log = fixture.docker_log();
         assert_eq!(notes.len(), 1, "one line for one handover: {log}");
         assert!(
-            notes[0].contains("handing over db data volume from `dev` to `hybrid`"),
+            notes[0].contains("stopping environment `dev`")
+                && notes[0].contains("shared data services (data_from)"),
             "{}",
             notes[0]
         );
@@ -2383,23 +2395,29 @@ catalog = "postgres"
             "the owner's volume name is ensured: {log}"
         );
         assert!(
-            log.contains("-p acowtancy-dev") && log.contains(" stop db"),
-            "the owner's data service is stopped in the owner's project: {log}"
+            log.contains("-p acowtancy-dev") && log.contains(" down"),
+            "the owner environment comes down whole in its own project: {log}"
+        );
+        assert!(
+            !log.contains(" down -v"),
+            "the handover never removes volumes: {log}"
         );
     }
 
     #[test]
-    fn up_of_owner_takes_back_data_services_from_borrower() {
+    fn up_of_owner_takes_back_whole_borrower_environment() {
         let fixture = DataFromFixture::new("acowtancy-hybrid", "Up 1 minute");
         let dev = fixture.policy("dev");
 
         let notes =
-            hand_over_volume_data_services(&fixture.repo_root, &dev).expect("owner handover");
+            hand_over_conflicting_environments(&fixture.repo_root, &dev, |_| Ok(Vec::new()))
+                .expect("owner handover");
 
         let log = fixture.docker_log();
         assert_eq!(notes.len(), 1, "one line for one handover: {log}");
         assert!(
-            notes[0].contains("taking back db data volume from `hybrid` to `dev`"),
+            notes[0].contains("stopping environment `hybrid`")
+                && notes[0].contains("shared data services (data_from)"),
             "{}",
             notes[0]
         );
@@ -2408,30 +2426,43 @@ catalog = "postgres"
             "the owner borrows nothing and creates no volumes: {log}"
         );
         assert!(
-            log.contains("-p acowtancy-hybrid") && log.contains(" stop db"),
-            "the borrower's data service is stopped in the borrower's project: {log}"
+            log.contains("-p acowtancy-hybrid") && log.contains(" down"),
+            "the borrower environment comes down whole in its own project: {log}"
         );
     }
 
     #[test]
-    fn up_refuses_when_peer_data_service_stop_fails() {
+    fn up_refuses_when_peer_environment_stop_fails_and_stays_recoverable() {
         let fixture = DataFromFixture::new("acowtancy-dev", "Up 1 minute");
         let _fail = crate::contract_test_support::EnvGuard::set_many(&[(
             "EFFIGY_TEST_STOP_FAILS",
             Some("1".to_owned()),
         )]);
         let hybrid = fixture.policy("hybrid");
+        let dev = fixture.policy("dev");
 
-        let error = hand_over_volume_data_services(&fixture.repo_root, &hybrid)
-            .expect_err("a failed stop refuses the activation");
+        let error =
+            hand_over_conflicting_environments(&fixture.repo_root, &hybrid, |_| Ok(Vec::new()))
+                .expect_err("a failed stop refuses the activation");
 
         let rendered = error.to_string();
         assert!(
-            rendered.contains("cannot hand over db data service"),
+            rendered.contains("stopping environment `dev`"),
             "{rendered}"
         );
-        assert!(rendered.contains("`dev`"), "{rendered}");
-        assert!(rendered.contains("acowtancy-dev"), "{rendered}");
+        assert!(rendered.contains("failed"), "{rendered}");
+        assert!(rendered.contains("recovers from"), "{rendered}");
+        // The handover record lands before the effect, so the stopped-at
+        // environment restarts with a plain `up`.
+        assert!(
+            crate::runner::host_container_lease::environment_handover_recorded(
+                &fixture.repo_root,
+                &dev,
+            )
+            .expect("handover record readable")
+            .is_some(),
+            "the failed handover records the stop for recovery"
+        );
     }
 
     #[test]
@@ -2439,14 +2470,15 @@ catalog = "postgres"
         let fixture = DataFromFixture::new("acowtancy-dev", "Exited (0) 2 minutes ago");
         let hybrid = fixture.policy("hybrid");
 
-        let notes = hand_over_volume_data_services(&fixture.repo_root, &hybrid)
-            .expect("handover succeeds without a running peer");
+        let notes =
+            hand_over_conflicting_environments(&fixture.repo_root, &hybrid, |_| Ok(Vec::new()))
+                .expect("handover succeeds without a running peer");
 
         let log = fixture.docker_log();
         assert!(notes.is_empty(), "no handover line without a running peer");
         assert!(
-            !log.contains(" stop "),
-            "no stop runs for an already-stopped peer: {log}"
+            !log.contains(" down "),
+            "no teardown runs for an already-stopped peer: {log}"
         );
         assert!(
             log.contains("volume create"),

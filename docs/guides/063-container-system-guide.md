@@ -381,11 +381,17 @@ manual route cleanup. When a listener claims a gateway domain that the same
 checkout and scope already published as a container route, Effigy hands the
 route over in one locked transaction, and the container environment may keep
 running. Starting the container environment again takes the domain back once
-the recorded listener generation is no longer live. A listener that is still
-live is a real conflict: the run refuses and names the running managed process,
-and `effigy container down` stops it. Another checkout or worktree generation
-still refuses, and stopping the old container environment never removes the
-handed-over listener route.
+the recorded listener generation is no longer live. Starting either
+environment while a conflicting environment of the same checkout and scope is
+live is one preflighted handover: Effigy first checks everything that could
+refuse (foreign route claims, loopback allocation, manifest, policy and
+ownership validation), then brings the live environment down whole — host
+processes and listeners stopped, routes withdrawn, containers stopped, data
+kept — and starts the requested one, printing one line naming the handover.
+The handover refuses only when stopping the live environment itself fails,
+and the stopped environment restarts with a plain `up`. Another checkout or
+worktree generation still refuses, and stopping the old container
+environment never removes the handed-over listener route.
 
 `container up --detach --json` returns each ready listener's actual address,
 internal URL, public URL, generation and state-file path. A linked worktree
@@ -528,9 +534,9 @@ A container environment can borrow another environment's service data volumes
 with `data_from`. Services that both environments declare with the same name
 and the same catalog entry mount the named environment's volumes — one
 Postgres, one MinIO bucket per checkout. Switching between the two
-environments hands the data over automatically: `container up` stops the
-other environment's shared data services first and prints one line naming
-the handover, with no refusal.
+environments hands the other live environment over whole: `container up`
+brings it down with data kept before starting the requested one and prints
+one line naming the handover, with no refusal.
 
 The hybrid shape from a bundle `dev` profile plus its container twin is the
 canonical example:
