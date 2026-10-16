@@ -439,6 +439,22 @@ A failed or unclear result keeps the hold in place and is reported to effigy-a6.
 Until the condition passes, do not execute, tag, dispatch publication workflows
 or publish.
 
+#### Seamless route migration required before the adoption proof
+
+Later on 2026-10-16, Tom ruled in the effigy-a6 thread:
+
+> "This needs a fix in effigy to handle it seamlessly - no errors or refusals unless it fails".
+
+This requires the reviewed container-to-hybrid gateway route migration fix
+tracked by task `2f66e3c4-7893-4b6f-9933-ddf86bdaf786` in the v0.15.0
+candidate. The hold now requires both that fix's normal reviewed merge and a
+passing Acowtancy adoption proof on a local build containing it. Earlier proofs
+without the fix do not satisfy that condition. No fresh release prepare starts
+until this proof passes; execution, tagging and publication remain held too.
+The existing consumer owner admits and runs the proof. The ruling grants no
+consumer retry, reset, install or runtime authority to the release owner and
+waives no ownership, independent-review or CI requirement.
+
 Lifting the hold resumes decision `0116369e` version 2 with no gate waiver:
 fresh hosted CI on current clean, pushed main, a fresh prepare with all seven
 configured gates, then the supported tag, binary publication and isolated
