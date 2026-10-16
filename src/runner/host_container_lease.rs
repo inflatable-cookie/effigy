@@ -22,6 +22,7 @@ const HOST_CONTAINER_LEASE_SCHEMA: &str = "effigy.host-container-lease.v1";
 const DEFAULT_HOST_CONTAINER_LEASE_TIMEOUT_SECS: u64 = 300;
 const DISABLE_HOST_CONTAINER_LEASE_ENV: &str = "EFFIGY_DISABLE_HOST_CONTAINER_LEASE";
 const PARTIAL_ACTIVATION_SCHEMA: &str = "effigy.container-partial-activation.v2";
+const HANDOVER_RECORD_SCHEMA: &str = "effigy.container-handover.v1";
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct HostContainerLease {
@@ -477,18 +478,115 @@ pub(in crate::runner) fn clear_partial_activation(
     policy: &EffectiveContainerPolicy,
 ) -> Result<(), RunnerError> {
     remove_if_present(&activation_complete_path(repo_root, policy))?;
-    remove_if_present(&partial_activation_path(repo_root, policy))
+    remove_if_present(&partial_activation_path(repo_root, policy))?;
+    remove_if_present(&handover_record_path(repo_root, policy))
 }
 
 /// Record that the admitted detached activation finished readiness and
 /// publication, so later changed inputs may start a fresh admission instead
-/// of being refused as partial-activation drift.
+/// of being refused as partial-activation drift. A completed activation also
+/// resolves any handover stop recorded for this environment.
 pub(in crate::runner) fn mark_detached_activation_complete(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> Result<(), RunnerError> {
+    remove_if_present(&handover_record_path(repo_root, policy))?;
     let path = activation_complete_path(repo_root, policy);
     fs::write(&path, b"").map_err(|error| RunnerError::task_invocation_failed_write(&path, error))
+}
+
+/// Record, before a handover stops this environment, that the stop was a
+/// deliberate handover to another environment of the same checkout. A later
+/// `up` reads it to restart normally instead of refusing an unknown partial
+/// state; `down` and a completed activation clear it.
+pub(in crate::runner) fn record_environment_handover(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    stopped_by: &str,
+    detail: &str,
+) -> Result<(), RunnerError> {
+    let scope = effigy_core::worktree_scope::resolve(repo_root)
+        .map_err(|error| RunnerError::task_invocation_failed_read(repo_root, error))?
+        .map(|scope| {
+            fs::read_to_string(
+                scope
+                    .token_dir
+                    .join(effigy_core::worktree_scope::SCOPE_FILE),
+            )
+        })
+        .transpose()
+        .map_err(|error| RunnerError::task_invocation_failed_read(repo_root, error))?;
+    let record = serde_json::json!({
+        "schema": HANDOVER_RECORD_SCHEMA,
+        "scope_token": scope,
+        "repo_root": fs::canonicalize(repo_root)
+            .map_err(|error| RunnerError::task_invocation_failed_read(repo_root, error))?,
+        "container_name": policy.name,
+        "profile": policy.profile,
+        "project_name": policy.project_name,
+        "stopped_by": stopped_by,
+        "detail": detail,
+        "recorded_at": chrono::Utc::now().to_rfc3339(),
+    });
+    fs::create_dir_all(host_container_lease_dir(repo_root, policy))
+        .map_err(|error| RunnerError::task_invocation_failed_write(repo_root, error))?;
+    let path = handover_record_path(repo_root, policy);
+    fs::write(
+        &path,
+        serde_json::to_string_pretty(&record)
+            .map_err(|error| RunnerError::host_container_lease_encode(error.to_string()))?,
+    )
+    .map_err(|error| RunnerError::task_invocation_failed_write(&path, error))
+}
+
+/// The recorded handover stop for this environment, when one is still
+/// unresolved. A record whose context no longer matches this checkout's scope
+/// or identity is stale and reads as absent.
+pub(in crate::runner) fn environment_handover_recorded(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<Option<serde_json::Value>, RunnerError> {
+    let path = handover_record_path(repo_root, policy);
+    let raw = match fs::read_to_string(&path) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(RunnerError::task_invocation_failed_read(&path, error)),
+    };
+    let record: serde_json::Value = serde_json::from_str(&raw)
+        .map_err(|error| RunnerError::task_invocation_failed_parse(&path, error))?;
+    if record.get("schema").and_then(|value| value.as_str()) != Some(HANDOVER_RECORD_SCHEMA)
+        || record
+            .get("container_name")
+            .and_then(|value| value.as_str())
+            != Some(&policy.name)
+        || record.get("project_name").and_then(|value| value.as_str())
+            != Some(policy.project_name.as_str())
+    {
+        return Ok(None);
+    }
+    let scope = effigy_core::worktree_scope::resolve(repo_root)
+        .map_err(|error| RunnerError::task_invocation_failed_read(repo_root, error))?
+        .map(|scope| {
+            fs::read_to_string(
+                scope
+                    .token_dir
+                    .join(effigy_core::worktree_scope::SCOPE_FILE),
+            )
+        })
+        .transpose()
+        .map_err(|error| RunnerError::task_invocation_failed_read(repo_root, error))?;
+    if record.get("scope_token").and_then(|value| value.as_str()) != scope.as_deref() {
+        return Ok(None);
+    }
+    Ok(Some(record))
+}
+
+/// Drop a resolved handover record; absence is fine.
+pub(in crate::runner) fn clear_environment_handover_record(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<(), RunnerError> {
+    remove_if_present(&handover_record_path(repo_root, policy))
 }
 
 /// An activation attempt in progress is partial until it completes, whether it
@@ -518,6 +616,13 @@ fn activation_complete_path(repo_root: &Path, policy: &EffectiveContainerPolicy)
 fn partial_activation_path(repo_root: &Path, policy: &EffectiveContainerPolicy) -> PathBuf {
     host_container_lease_dir(repo_root, policy).join(format!(
         "{}.partial.json",
+        sanitize_lease_path_component(&policy.name)
+    ))
+}
+
+fn handover_record_path(repo_root: &Path, policy: &EffectiveContainerPolicy) -> PathBuf {
+    host_container_lease_dir(repo_root, policy).join(format!(
+        "{}.handover.json",
         sanitize_lease_path_component(&policy.name)
     ))
 }

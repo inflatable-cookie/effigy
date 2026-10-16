@@ -2669,20 +2669,39 @@ impl Drop for ManagedContainerCleanup {
             );
         }
         for checkout in &self.checkouts {
-            let mut child = container_command(checkout, self);
-            child
-                .args(["down", "--json"])
-                .stdout(Stdio::null())
-                .stderr(Stdio::null());
-            if let Ok(mut child) = child.spawn() {
-                let _ = child.wait();
+            // Best-effort: down every declared environment, so manifests with
+            // several environments still leave nothing running behind.
+            let environments =
+                effigy_manifest::load_task_manifest_with_inspection(&checkout.join("effigy.toml"))
+                    .map(|loaded| {
+                        loaded
+                            .manifest
+                            .containers
+                            .iter()
+                            .flat_map(|containers| containers.environments.keys().cloned())
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+            for environment in environments {
+                let mut child = container_command_for_env(checkout, self, &environment);
+                child
+                    .args(["down", "--json"])
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null());
+                if let Ok(mut child) = child.spawn() {
+                    let _ = child.wait();
+                }
             }
         }
     }
 }
 
-fn container_command(checkout: &Path, cleanup: &ManagedContainerCleanup) -> Command {
-    let policy = effigy_containers::load_container_policy(checkout, Some("web"))
+fn container_command_for_env(
+    checkout: &Path,
+    cleanup: &ManagedContainerCleanup,
+    environment: &str,
+) -> Command {
+    let policy = effigy_containers::load_container_policy(checkout, Some(environment))
         .expect("private declared container policy");
     let mut labels = serde_json::json!({
         "com.docker.compose.project": policy.project_name,
@@ -2721,7 +2740,7 @@ fn container_command(checkout: &Path, cleanup: &ManagedContainerCleanup) -> Comm
             "FAKE_OWNED_ACTIVE",
             checkout.join(".effigy/private-fake-active"),
         )
-        .args(["container", "web"])
+        .args(["container", environment])
         .current_dir(checkout)
         .env("HOME", &cleanup.home)
         .env("EFFIGY_TEST_CONTAINERS_HOME", cleanup.home.join(".effigy"))
@@ -2738,6 +2757,10 @@ fn container_command(checkout: &Path, cleanup: &ManagedContainerCleanup) -> Comm
         .env("FOREIGN_CAROOT", &cleanup.foreign_ca)
         .env("FAKE_DOCKER_LOG", &cleanup.docker_log);
     command
+}
+
+fn container_command(checkout: &Path, cleanup: &ManagedContainerCleanup) -> Command {
+    container_command_for_env(checkout, cleanup, "web")
 }
 
 fn spawn_container_cli(
@@ -3845,4 +3868,410 @@ fn app_line(state: &Value, generation: &str) -> String {
         state["internal_url"].as_str().unwrap(),
         state["public_url"].as_str().unwrap()
     )
+}
+
+/// Switching between a checkout's container and hybrid environments is one
+/// preflighted handover: the live environment comes down whole (containers,
+/// listener routes, data kept) before the requested environment starts, in
+/// both directions, three round trips, with no refusal and no orphan routes.
+/// A foreign route owner still refuses before any effect.
+#[test]
+fn container_hybrid_environment_switch_hands_the_whole_environment_over() {
+    let fixture = managed_host_fixture();
+    let effects = HostEffectSentinels::new(fixture.path());
+    let docker_dir = std::env::split_paths(&effects.env_path)
+        .next()
+        .expect("sentinel PATH directory");
+    let docker_log = fixture.path().join("docker-fixture.log");
+    write_switch_fake_docker(&docker_dir.join("docker"));
+
+    let home = fixture.path().join("home");
+    fs::create_dir(&home).expect("fixture home");
+    let foreign_ca = fixture.path().join("foreign-ca");
+    fs::create_dir(&foreign_ca).expect("foreign CA sentinel");
+    let mut gateway_cleanup = GatewayCleanup::new(&effects, &foreign_ca);
+    let (private_gateway, _https_address) =
+        start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut gateway_cleanup);
+    let routes_path = private_gateway.join("routes.json");
+
+    let checkout = fixture.path().join("checkout");
+    fs::create_dir(&checkout).expect("switch checkout");
+    fs::write(
+        checkout.join("compose.yml"),
+        "services:\n  app:\n    image: fixture\n    ports:\n      - \"127.0.0.1:48081:80\"\n",
+    )
+    .expect("write fixture compose file");
+    fs::write(
+        checkout.join("effigy.toml"),
+        "[containers]\ndefault = \"stack\"\n",
+    )
+    .expect("seed manifest before git commit");
+    git(&checkout, &["init", "--initial-branch=main"]);
+    git(&checkout, &["config", "user.name", "Switch Fixture"]);
+    git(
+        &checkout,
+        &["config", "user.email", "switch-fixture@example.invalid"],
+    );
+    git(&checkout, &["add", "compose.yml", "effigy.toml"]);
+    git(&checkout, &["commit", "-m", "fixture base"]);
+    let checkout = checkout.canonicalize().expect("canonical switch checkout");
+
+    let control = fixture.path().join("switch-control");
+    fs::create_dir(&control).expect("listener control directory");
+    let child_binary = std::env::current_exe().expect("integration test binary");
+    let listener_env = format!(
+        "FIXTURE_BINARY = {}\nFIXTURE_BODY = \"hybrid-body\"\nFIXTURE_PREVIOUS_PORT_FILE = {}\nFIXTURE_RESTART_FILE = {}\nFIXTURE_PAUSED_FILE = {}\nFIXTURE_CONTINUE_FILE = {}\nFIXTURE_READINESS_REFUSED_FILE = {}\n",
+        toml_quote(&child_binary.display().to_string()),
+        toml_quote(&control.join("previous-port").display().to_string()),
+        toml_quote(&control.join("restart").display().to_string()),
+        toml_quote(&control.join("listener-paused").display().to_string()),
+        toml_quote(&control.join("continue-exit").display().to_string()),
+        toml_quote(&control.join("readiness-refused").display().to_string()),
+    );
+    let manifest = format!(
+        "[containers]\ndefault = \"stack\"\n\n\
+[containers.stack]\ndriver = \"colima\"\nprofile = \"switch\"\ncompose_file = \"compose.yml\"\nprimary_service = \"app\"\nworking_dir = \"/workspace\"\n\n\
+[containers.stack.dns]\nroutes = [{{ domain = \"switch.test\", port = 80, service = \"app\" }}]\n\n\
+[containers.hybrid]\ndriver = \"colima\"\nprofile = \"switch\"\ncompose_file = \"compose.yml\"\nprimary_service = \"app\"\nworking_dir = \"/workspace\"\n\n\
+[[containers.hybrid.host_processes]]\nname = \"app\"\nrun = \"exec \\\"$FIXTURE_BINARY\\\" --ignored --exact managed_listener_fixture_child --nocapture\"\nrestart = \"never\"\n\n\
+[containers.hybrid.host_processes.env]\n{listener_env}\n\
+[containers.hybrid.host_processes.listener]\nbind = \"127.0.0.1:0\"\n\n\
+[containers.hybrid.host_processes.listener.readiness]\npath = \"/health\"\nstatus = 200\ntimeout_secs = 20\n\n\
+[containers.hybrid.host_processes.listener.route]\ndomain = \"switch.test\"\n"
+    );
+    fs::write(checkout.join("effigy.toml"), manifest).expect("write switch manifest");
+
+    let stack_project = effigy_containers::load_container_policy(&checkout, Some("stack"))
+        .expect("stack policy")
+        .project_name;
+    let hybrid_project = effigy_containers::load_container_policy(&checkout, Some("hybrid"))
+        .expect("hybrid policy")
+        .project_name;
+    // The scope token must exist before the proofs are written, so the
+    // ownership labels match what the activation flow resolves later.
+    // A primary checkout is unscoped: like the shared fixture helpers, the
+    // proof carries the scope label only when this checkout resolves one.
+    let scope_token = effigy_core::worktree_scope::load_or_create(&checkout)
+        .expect("checkout scope")
+        .map(|token| token.trim().to_owned());
+    let state = fixture.path().join("switch-docker-state");
+    fs::create_dir(&state).expect("switch docker state directory");
+    for project in [&stack_project, &hybrid_project] {
+        let container = format!("{project}-app-1");
+        fs::write(
+            state.join(format!("ps-{project}.txt")),
+            format!(
+                "{container}\tUp 1 minute\t127.0.0.1:48081->80/tcp\t{project}\t{}\tapp\tFalse\n",
+                checkout.display()
+            ),
+        )
+        .expect("write ps row");
+        let labels = serde_json::json!({
+            "com.docker.compose.project": project,
+            "com.docker.compose.service": "app",
+            "com.docker.compose.oneoff": "False",
+            "com.effigy.checkout": checkout,
+        });
+        let labels = if let Some(token) = &scope_token {
+            let mut labels = labels.as_object().expect("labels object").clone();
+            labels.insert(
+                "com.effigy.scope".to_owned(),
+                serde_json::Value::String(token.clone()),
+            );
+            serde_json::Value::Object(labels)
+        } else {
+            labels
+        };
+        let proof = serde_json::json!([{
+            "Id": "a".repeat(64),
+            "Name": format!("/{container}"),
+            "State": {"Status": "running", "Running": true},
+            "Config": {"Labels": labels},
+            "NetworkSettings": {"Ports": {
+                "80/tcp": [{"HostIp": "127.0.0.1", "HostPort": "48081"}]
+            }},
+        }]);
+        fs::write(
+            state.join(format!("inspect-{container}.json")),
+            serde_json::to_vec(&proof).expect("proof json"),
+        )
+        .expect("write owned proof");
+    }
+
+    let cleanup = ManagedContainerCleanup {
+        checkouts: vec![checkout.clone()],
+        home: home.clone(),
+        private_gateway: private_gateway.clone(),
+        foreign_ca: foreign_ca.clone(),
+        effects_path: effects.env_path.clone(),
+        mkcert: effects.private_mkcert.clone(),
+        effect_log: effects.log.clone(),
+        mkcert_calls: effects.mkcert_calls.clone(),
+        docker_log: docker_log.clone(),
+    };
+
+    let container = |env: &str| {
+        let policy = effigy_containers::load_container_policy(&checkout, Some(env))
+            .expect("switch env policy");
+        let mut command = Command::new(EFFIGY);
+        command
+            .env("FAKE_OWNED_STATE", &state)
+            .args(["container", env])
+            .current_dir(&checkout)
+            .env("HOME", &cleanup.home)
+            .env("EFFIGY_TEST_CONTAINERS_HOME", cleanup.home.join(".effigy"))
+            .env("PATH", &cleanup.effects_path)
+            .env("EFFIGY_COMPOSE_BACKEND", "docker")
+            .env(
+                effigy_gateway::private_state::PRIVATE_STATE_ROOT_ENV,
+                &cleanup.private_gateway,
+            )
+            .env("EFFIGY_GATEWAY_MKCERT_BIN", &cleanup.mkcert)
+            .env("EFFECT_LOG", &cleanup.effect_log)
+            .env("MKCERT_CALLS", &cleanup.mkcert_calls)
+            .env("CAROOT", &cleanup.foreign_ca)
+            .env("FOREIGN_CAROOT", &cleanup.foreign_ca)
+            .env("FAKE_DOCKER_LOG", &cleanup.docker_log);
+        let _ = policy;
+        command
+    };
+    let switch_up = |env: &str| {
+        let output = container(env)
+            .args(["up", "--detach"])
+            .output()
+            .expect("run switch container up");
+        assert!(
+            output.status.success(),
+            "`container {env} up --detach` must succeed without refusal: stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    };
+    let active = |project: &str| state.join(format!("active-{project}")).exists();
+    let route_source = |domain: &str| {
+        RouteTable::load(&routes_path)
+            .expect("route table")
+            .lookup(domain)
+            .map(|route| route.source)
+    };
+    let route_owner_environment = |domain: &str| -> Option<String> {
+        RouteTable::load(&routes_path)
+            .expect("route table")
+            .lookup(domain)
+            .and_then(|route| route.managed_listener.clone())
+            .map(|owner| owner.owner)
+    };
+
+    // Round trips: stack (container) live -> hybrid up -> stack up, three times.
+    for _round in 1..=3 {
+        let stack_up = switch_up("stack");
+        assert!(
+            !stack_up.contains("[handover]"),
+            "the first bring-up has nothing to hand over: {stack_up}"
+        );
+        assert!(active(&stack_project), "stack's containers are live");
+        assert_eq!(
+            route_source("switch.test"),
+            Some(RouteSource::Container),
+            "stack holds the domain as a container route"
+        );
+
+        // Hybrid up hands the whole stack environment over: containers stopped,
+        // container route taken by the listener, data kept.
+        let hybrid_up = switch_up("hybrid");
+        assert_eq!(
+            hybrid_up.matches("[handover]").count(),
+            1,
+            "one handover line: {hybrid_up}"
+        );
+        assert!(
+            hybrid_up.contains("stopping environment `stack`"),
+            "{hybrid_up}"
+        );
+        assert!(
+            !active(&stack_project),
+            "the handed-over stack containers are stopped"
+        );
+        assert!(active(&hybrid_project), "hybrid's containers are live");
+        assert_eq!(
+            route_source("switch.test"),
+            Some(RouteSource::Task),
+            "the live hybrid listener holds the domain"
+        );
+        assert!(
+            route_owner_environment("switch.test")
+                .expect("managed listener owner")
+                .ends_with("|hybrid|switch|app"),
+            "the listener owner names the hybrid environment"
+        );
+
+        // Stack up takes the domain back from the live listener without
+        // refusing: the whole hybrid environment is handed over first.
+        let back = switch_up("stack");
+        assert_eq!(
+            back.matches("[handover]").count(),
+            1,
+            "one handover line: {back}"
+        );
+        assert!(back.contains("stopping environment `hybrid`"), "{back}");
+        assert!(
+            !active(&hybrid_project),
+            "the handed-over hybrid containers are stopped"
+        );
+        assert!(active(&stack_project), "stack's containers are live again");
+        assert_eq!(
+            route_source("switch.test"),
+            Some(RouteSource::Container),
+            "stack holds the domain again, with no orphan listener route"
+        );
+    }
+
+    // The handover keeps every volume: no `-v` teardown ever ran.
+    let log = fs::read_to_string(&docker_log).expect("docker fixture log");
+    assert!(
+        !log.contains(" down -v") && !log.contains("down --volumes"),
+        "the handover never removes volumes: {log}"
+    );
+    assert!(
+        log.contains(&format!("-p {stack_project}")),
+        "the stack project was torn down in its own project: {log}"
+    );
+    assert!(
+        log.contains(&format!("-p {hybrid_project}")),
+        "the hybrid project was torn down in its own project: {log}"
+    );
+
+    // A foreign checkout holding the domain refuses before any effect: both
+    // environments stay exactly as they were.
+    let foreign = fixture.path().join("foreign-checkout");
+    fs::create_dir_all(&foreign).expect("foreign checkout dir");
+    let foreign_scope = effigy_core::worktree_scope::load_or_create(&foreign)
+        .expect("foreign scope")
+        .unwrap_or_else(|| "main".to_owned());
+    let _keep_foreign_scope = foreign_scope;
+    effigy_gateway::registration::deregister_route(
+        &routes_path,
+        "switch.test",
+        &checkout.display().to_string(),
+    )
+    .expect("drop stack's route for the foreign fixture");
+    effigy_gateway::registration::register_route(
+        &routes_path,
+        &effigy_gateway::registration::RouteRegistration {
+            domain: "switch.test".to_owned(),
+            target: Some("127.0.0.1:49999".to_owned()),
+            dns_ip: None,
+            tcp_port: None,
+            tcp_target: None,
+            tls: false,
+            project_path: foreign.display().to_string(),
+            source: RouteSource::Container,
+        },
+    )
+    .expect("register foreign route");
+    let refused = container("hybrid")
+        .args(["up", "--detach"])
+        .output()
+        .expect("run refused hybrid up");
+    assert!(
+        !refused.status.success(),
+        "a foreign route owner must refuse: {} {}",
+        String::from_utf8_lossy(&refused.stdout),
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    let rendered = format!(
+        "{}{}",
+        String::from_utf8_lossy(&refused.stdout),
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert!(
+        rendered.contains("switch.test"),
+        "the refusal names the held domain: {rendered}"
+    );
+    assert!(
+        active(&stack_project),
+        "the refused handover leaves the live environment untouched"
+    );
+    assert!(
+        !active(&hybrid_project),
+        "the refused handover starts nothing"
+    );
+
+    // Leave the checkout stopped: idempotent downs stop any live environment.
+    for env in ["stack", "hybrid"] {
+        let _ = container(env)
+            .args(["down", "--json"])
+            .output()
+            .expect("run switch container down");
+    }
+}
+
+/// A per-project fake Docker adapter: each environment's containers are live
+/// only while its `active-<project>` marker exists, `compose up`/`down`
+/// maintain the markers, and `ps` reports the project's owned container with a
+/// published loopback port for gateway route readiness.
+fn write_switch_fake_docker(path: &Path) {
+    fs::write(
+        path,
+        r#"#!/bin/sh
+set -eu
+printf '%s\n' "$*" >> "$FAKE_DOCKER_LOG"
+state="$FAKE_OWNED_STATE"
+project_from_filters() {
+  requested=""
+  for arg in "$@"; do
+    case "$arg" in
+      label=com.docker.compose.project=*) requested="${arg#label=com.docker.compose.project=}" ;;
+    esac
+  done
+  printf '%s' "$requested"
+}
+if [ "${1-}" = ps ]; then
+  requested=$(project_from_filters "$@")
+  if [ -n "$requested" ] && [ -f "$state/active-$requested" ]; then
+    cat "$state/ps-$requested.txt"
+  fi
+  exit 0
+elif [ "${1-}" = inspect ]; then
+  [ -f "$state/inspect-${2-}.json" ] && cat "$state/inspect-${2-}.json"
+  exit 0
+elif [ "${1-}" = exec ]; then
+  shift
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      -i|-t|--tty=false) shift ;;
+      -w|-e|-u|--user|--env|--workdir) shift 2 ;;
+      *) break ;;
+    esac
+  done
+  [ "${1-}" = aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ] || exit 96
+  exit 0
+elif [ "${1-}" = compose ]; then
+  shift
+  project=""
+  while [ "$#" -gt 1 ]; do
+    case "$1" in
+      -f) shift 2 ;;
+      -p) project="$2"; shift 2 ;;
+      --*) shift ;;
+      *) break ;;
+    esac
+  done
+  case "${1-}" in
+    up) : > "$state/active-$project" ;;
+    down) rm -f "$state/active-$project" ;;
+    ps) printf '[]\n' ;;
+  esac
+fi
+exit 0
+"#,
+    )
+    .expect("write disposable switch Docker adapter");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+            .expect("make switch fake Docker executable");
+    }
 }

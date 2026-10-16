@@ -706,17 +706,32 @@ therefore refuses a second live worktree until the consumer supplies distinct
 domains. The route table never silently moves a live sibling's domain.
 
 A checkout may switch between its container environment and hybrid managed
-listener mode in either direction. A managed listener claiming a domain held by
-a `source = container` route from the same checkout and scope replaces it with
-the listener route in the same locked transaction, and the container
-environment may keep running. Container registration takes the domain back once
-the recorded managed listener generation is no longer live, decided by the
-existing managed-listener availability and ownership checks. A managed listener
-generation that is still live is a real conflict: the claim refuses and names
-the running managed process and `effigy container down`. Another checkout,
-another scope or a live worktree generation still refuses. Container teardown
-removes only `source = container` routes owned by the caller, so stopping the
-old container environment cannot remove a handed-over listener route.
+listener mode in either direction, and between any two of its environments,
+as one preflighted handover. Before any effect, `container up` of the
+incoming environment evaluates everything that could refuse: route claims,
+loopback allocation, manifest, policy, ownership and backend validation. A
+route held by another checkout, scope or a non-container source refuses with
+no effects. When another environment of the same checkout and scope is live
+and conflicts — the pair shares data volumes through `data_from`, or the
+incoming environment's route claims collide with the live environment's
+declared claims — the live environment comes down whole with the ordinary
+`container down` semantics: managed host processes and listeners stopped,
+routes withdrawn, Compose containers stopped, all volumes kept, scope
+records cleared. One line names the handed-over environment and what moved.
+The handover refuses only when stopping that environment itself fails; it
+then names the failure and leaves the environment recoverable by its own
+`up` or `down`. The stop is recorded beside the environment's lease before
+the first effect, so its next `up` restarts it instead of refusing an
+unknown partial state; a recorded handover resolved by a healthy reconcile
+or a down is cleared, and genuinely unknown partial state still refuses. A
+managed listener claiming a domain held by a `source = container` route from
+the same checkout and scope replaces it with the listener route in the same
+locked transaction, and the container environment may keep running.
+Container registration takes the domain back once the recorded managed
+listener generation is no longer live, decided by the existing
+managed-listener availability and ownership checks. Container teardown
+removes only `source = container` routes owned by the caller, so stopping
+the old container environment cannot remove a handed-over listener route.
 
 ## Shared service data volumes (`data_from`)
 
@@ -745,12 +760,11 @@ exists — creation is idempotent and never touches an existing volume's data �
 so a fresh checkout can bring up the borrowing environment first.
 
 The two linked environments must never run their shared data services against
-the same volumes at once. `container up` of either environment first stops the
-other environment's shared data services that are still running (a `compose
-stop` against the other environment's project, same checkout and scope), then
-prints one line naming what it handed over. There is no refusal for a running
-sibling — switching is seamless; only a failed stop refuses the activation, and
-it names the environment, project and failure.
+the same volumes at once. `container up` of either environment first brings
+the other live environment down whole (its shared data services stop with it,
+data kept), then prints one line naming what it handed over. There is no
+refusal for a running sibling — switching is seamless; only a failed stop
+refuses the activation, and it names the environment, project and failure.
 
 Data safety is absolute in the borrowing direction. `container reset` and
 `reset --wipe-data` classify only owned volumes, so borrowed volumes are never
