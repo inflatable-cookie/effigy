@@ -192,6 +192,21 @@ fs::write_file(
     "fn adapter() { let _ = compose_args(policy, [\"exec\"]); }\n",
 );
 
+// The repaired runner callers are not newly allowed adapters. Reintroducing
+// their original bypasses must still be rejected by the unchanged guard.
+fs::write_file(
+    path::join(runner, "container_command/shell_prep.rs"),
+    "fn bypass() { let _ = resolve_compose_backend_for_repo(root, policy); }\n",
+);
+fs::write_file(
+    path::join(runner, "host_container_lease.rs"),
+    "fn bypass() { let _ = ComposeBackend::Docker; }\n",
+);
+fs::write_file(
+    path::join(runner, "system_command/workspace_catalog.rs"),
+    "fn bypass() { let _ = compose_args(policy, [\"exec\"]); }\n",
+);
+
 let runner_root = path::join(fixture, "src/runner");
 let runtime_root = path::join(fixture, "crates/effigy-runtime/src");
 let cwd_roots = [runner_root];
@@ -205,6 +220,8 @@ let backend_hits = unexpected_matches(fixture, shared_roots, backend_pattern, gl
 expect_allowed("backend", backend_hits, "src/runner/doctor_ports.rs");
 expect_allowed("backend", backend_hits, "src/runner/exec_command/transport.rs");
 expect_rejected("backend", backend_hits, "src/runner/execute/pipeline/standard.rs");
+expect_rejected("backend", backend_hits, "src/runner/container_command/shell_prep.rs");
+expect_rejected("backend", backend_hits, "src/runner/host_container_lease.rs");
 
 let raw_hits = unexpected_matches(fixture, shared_roots, raw_pattern, glob, raw_allow);
 expect_allowed("raw runtime", raw_hits, "src/runner/doctor_ports.rs");
@@ -218,6 +235,7 @@ expect_allowed("compose_args", compose_hits, "src/runner/system_command/workspac
 expect_rejected("compose_args", compose_hits, "src/runner/execute/pipeline/standard.rs");
 expect_rejected("compose_args", compose_hits, "src/runner/doctor_ports.rs");
 expect_rejected("compose_args", compose_hits, "src/runner/system_command/workspace_permissions.rs");
+expect_rejected("compose_args", compose_hits, "src/runner/system_command/workspace_catalog.rs");
 
 fs::remove(fixture);
 log("[ok] runtime/container drift-guard positive and negative controls");

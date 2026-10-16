@@ -15,7 +15,7 @@ use effigy_containers::{
         compose_args, compose_invocation_for_repo, resolve_compose_backend_for_repo,
         resolve_host_cli_program, ComposeBackend,
     },
-    EffectiveContainerPolicy,
+    ContainerAction, EffectiveContainerPolicy,
 };
 use effigy_containers::{
     BackendId, ContainerBackendDetection, ContainerComposeInvocationPlan, ContainerManager,
@@ -111,6 +111,78 @@ fn append_task_exec_env(
         args.push(OsString::from("-e"));
         args.push(OsString::from(format!("{key}={value}")));
     }
+}
+
+/// Backend-specific runtime discovery belongs to this transport adapter. The
+/// caller's existing bounded budget owns every capture and failure observation.
+pub(in crate::runner) fn runtime_backend_is_running_bounded(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    budget: &mut BoundedCommandBudget,
+) -> Result<bool, RunnerError> {
+    if effigy_containers::compose::resolve_compose_backend_for_repo(repo_root, policy)
+        == effigy_containers::compose::ComposeBackend::ColimaNerdctl
+    {
+        let command = effigy_containers::colima::colima_status_command(policy);
+        let args = command
+            .args
+            .into_iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+        let capture = budget
+            .run_command(
+                repo_root,
+                std::ffi::OsStr::new(&command.program),
+                &args,
+                None,
+                &[],
+                BoundedCommandPhase::RuntimeDiscovery,
+            )
+            .map_err(|failure| {
+                bounded_failure_error(policy, &policy.primary_service, budget, failure)
+            })?;
+        if !capture.status.success() {
+            return Ok(false);
+        }
+        return Ok(effigy_containers::colima::parse_colima_running(
+            &String::from_utf8_lossy(&capture.stdout),
+            &String::from_utf8_lossy(&capture.stderr),
+        ));
+    }
+
+    let args = [OsString::from("ps")];
+    let plan = effigy_runtime::container_manager::runtime_invocation_plan(
+        repo_root,
+        policy,
+        "docker",
+        &args,
+        ContainerAction::Status,
+        "runtime ps",
+    )
+    .map_err(|_| {
+        bounded_phase_error(
+            policy,
+            &policy.primary_service,
+            budget,
+            BoundedCommandPhase::RuntimeDiscovery,
+            "runtime_discovery_failed",
+            "bounded container command could not resolve runtime discovery",
+            None,
+        )
+    })?;
+    let capture = budget
+        .run_command(
+            &plan.repo_root,
+            plan.program.as_os_str(),
+            &plan.args,
+            None,
+            &[],
+            BoundedCommandPhase::RuntimeDiscovery,
+        )
+        .map_err(|failure| {
+            bounded_failure_error(policy, &policy.primary_service, budget, failure)
+        })?;
+    Ok(capture.status.success())
 }
 
 pub(in crate::runner) fn run_compose_exec(
@@ -410,6 +482,18 @@ pub(in crate::runner) fn verified_target_exec_args(
     args.push(OsString::from(target_id));
     args.extend(parsed.command);
     Ok(args)
+}
+
+/// Preserve the legacy partial-activation identity strings independently of
+/// presentation labels (Colima is displayed as "containerd" to operators).
+pub(in crate::runner) fn runtime_backend_identity_for_policy(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> &'static str {
+    match resolve_compose_backend_for_repo(repo_root, policy) {
+        ComposeBackend::Docker => "docker",
+        ComposeBackend::ColimaNerdctl => "colima-nerdctl",
+    }
 }
 
 fn active_backend_id_for_policy(repo_root: &Path, policy: &EffectiveContainerPolicy) -> BackendId {

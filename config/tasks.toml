@@ -1122,6 +1122,12 @@
 ]
 
 # Architecture drift guards
+"test:release:runtime-drift-routing" = [
+  { task = "qa:architecture:runtime-container-drift" },
+  { task = "test:architecture:runtime-container-drift-controls" },
+  { task = "test:workspace:catalog-handoff" },
+  { id = "partial-activation-markers", run = "cargo nextest run --config-file tests/config/deadline-marker-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(container_command::lifecycle::tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
+]
 "qa:architecture:runtime-container-drift" = { rhai = "scripts/check-runtime-container-drift.rhai" }
 # Private fixture proof of path-scoped allowances and rejected production
 # bypasses, including production tokens in the same file as a legitimate

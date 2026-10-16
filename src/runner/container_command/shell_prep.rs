@@ -17,7 +17,9 @@ use crate::runner::container_command::support::{
 };
 use crate::runner::container_command::{bounded_failure_error, bounded_phase_error};
 use crate::runner::error::RunnerError;
-use crate::runner::exec_command::{BoundedCommandBudget, BoundedCommandPhase};
+use crate::runner::exec_command::{
+    runtime_backend_is_running_bounded, BoundedCommandBudget, BoundedCommandPhase,
+};
 use crate::runner::system_command::ensure_workspace_effigy_available_for_policy;
 
 const DOCKER_PS_FORMAT: &str = "{{.Names}}\t{{.Status}}\t{{.Ports}}\t{{.Label \"com.docker.compose.project\"}}\t{{.Label \"com.docker.compose.project.working_dir\"}}\t{{.Label \"com.docker.compose.service\"}}\t{{.Label \"com.docker.compose.oneoff\"}}";
@@ -153,76 +155,6 @@ fn verify_bounded_service_binding(
                 "bounded container command found no single running container of the selected service owned by this checkout",
             )
         })
-}
-
-fn runtime_backend_is_running_bounded(
-    repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
-    budget: &mut BoundedCommandBudget,
-) -> Result<bool, RunnerError> {
-    if effigy_containers::compose::resolve_compose_backend_for_repo(repo_root, policy)
-        == effigy_containers::compose::ComposeBackend::ColimaNerdctl
-    {
-        let command = effigy_containers::colima::colima_status_command(policy);
-        let args = command
-            .args
-            .into_iter()
-            .map(OsString::from)
-            .collect::<Vec<_>>();
-        let capture = budget
-            .run_command(
-                repo_root,
-                std::ffi::OsStr::new(&command.program),
-                &args,
-                None,
-                &[],
-                BoundedCommandPhase::RuntimeDiscovery,
-            )
-            .map_err(|failure| {
-                bounded_failure_error(policy, &policy.primary_service, budget, failure)
-            })?;
-        if !capture.status.success() {
-            return Ok(false);
-        }
-        return Ok(effigy_containers::colima::parse_colima_running(
-            &String::from_utf8_lossy(&capture.stdout),
-            &String::from_utf8_lossy(&capture.stderr),
-        ));
-    }
-
-    let args = [OsString::from("ps")];
-    let plan = effigy_runtime::container_manager::runtime_invocation_plan(
-        repo_root,
-        policy,
-        "docker",
-        &args,
-        ContainerAction::Status,
-        "runtime ps",
-    )
-    .map_err(|_| {
-        bounded_phase_error(
-            policy,
-            &policy.primary_service,
-            budget,
-            BoundedCommandPhase::RuntimeDiscovery,
-            "runtime_discovery_failed",
-            "bounded container command could not resolve runtime discovery",
-            None,
-        )
-    })?;
-    let capture = budget
-        .run_command(
-            &plan.repo_root,
-            plan.program.as_os_str(),
-            &plan.args,
-            None,
-            &[],
-            BoundedCommandPhase::RuntimeDiscovery,
-        )
-        .map_err(|failure| {
-            bounded_failure_error(policy, &policy.primary_service, budget, failure)
-        })?;
-    Ok(capture.status.success())
 }
 
 fn validate_running_container_runtime_match_bounded(

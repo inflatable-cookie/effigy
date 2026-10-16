@@ -175,3 +175,20 @@ Review this architecture when a new execution surface, runtime backend,
 container operation, data source, or Rhai host API bypasses the existing
 request/plan/adapter seams. Update [contract 015](../contracts/015-runtime-operation-pipeline-contract.md)
 when ownership itself changes.
+
+
+### Bounded discovery and catalog preparation
+
+The existing `exec_command/transport.rs` adapter owns bounded runtime liveness
+capture and the legacy partial-activation backend identity key. Preflight and
+lease bookkeeping consume those adapter results; they do not select a backend
+again. The discovery body, original budget, phase, failure mapping and Colima
+status parsing remain the same. Identity keys stay `docker` and
+`colima-nerdctl`, distinct from operator-facing display labels.
+
+Workspace catalog preparation supplies an exec tail to the existing manager
+or transport normalizer, which supplies Compose files and project once. Both
+bounded and ordinary paths retain their existing command execution and target
+checks. The drift guard and its allowance patterns are unchanged; private
+controls prove that backend branching or Compose assembly reintroduced at any
+of these three runner callers is still refused.
