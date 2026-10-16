@@ -358,6 +358,7 @@ where
     let mut repo_override: Option<PathBuf> = None;
     let mut output_json = false;
     let mut yes = false;
+    let mut dead = false;
     let mut scope: Option<String> = None;
 
     while let Some(arg) = args.next() {
@@ -365,6 +366,7 @@ where
             "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
             "--json" => output_json = true,
             "--yes" => yes = true,
+            "--dead" => dead = true,
             "--scope" => {
                 scope = Some(next_required_value(
                     &mut args,
@@ -384,8 +386,19 @@ where
         ));
     }
 
+    if dead && scope.is_some() {
+        return Err(CliParseError::InvalidArguments(
+            "`effigy container retire --dead` selects every recorded scope whose checkout is gone; it cannot be combined with `--scope`".to_owned(),
+        ));
+    }
+
     Ok(Command::Container(ContainerArgs {
-        subcommand: ContainerSubcommand::Retire { name, scope, yes },
+        subcommand: ContainerSubcommand::Retire {
+            name,
+            scope,
+            dead,
+            yes,
+        },
         repo_override,
         output_json,
     }))

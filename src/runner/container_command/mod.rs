@@ -228,13 +228,29 @@ pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, Ru
         ContainerSubcommand::Ports { subcommand } => {
             ports::run_container_ports(&subcommand, args.output_json)
         }
-        ContainerSubcommand::Retire { name, scope, yes } => retire::run_container_retire(
-            args.repo_override.clone(),
-            name.as_deref(),
-            scope.as_deref(),
+        ContainerSubcommand::Retire {
+            name,
+            scope,
+            dead,
             yes,
-            args.output_json,
-        ),
+        } => {
+            if dead {
+                if name.is_some() {
+                    return Err(RunnerError::task_invocation(
+                        "`effigy container <NAME> retire --dead` is unsupported; `--dead` covers every recorded scope",
+                    ));
+                }
+                retire::run_container_retire_dead(yes, args.output_json)
+            } else {
+                retire::run_container_retire(
+                    args.repo_override.clone(),
+                    name.as_deref(),
+                    scope.as_deref(),
+                    yes,
+                    args.output_json,
+                )
+            }
+        }
     }
 }
 

@@ -1028,6 +1028,8 @@ pub enum ContainerSubcommand {
     Retire {
         name: Option<String>,
         scope: Option<String>,
+        /// Retire every recorded scope whose checkout no longer exists.
+        dead: bool,
         yes: bool,
     },
     Ports {

@@ -201,6 +201,7 @@ Operator workflow and recovery: [`077-local-dependency-linking.md`](077-local-de
 - `effigy.artifact.capture.v1`
 - `effigy.container.hosts.v1`
 - `effigy.container.retire.v1`
+- `effigy.container.retire-dead.v1` (`container retire --dead --json`)
 - `effigy.state-stack.lineage.v1`
 - `effigy.state-stack.apply.v1`
 

@@ -7,6 +7,10 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- `effigy container retire --dead` retires every recorded runtime scope whose
+  checkout no longer exists, such as worktrees removed without running their
+  teardown, through the ordinary retirement path. It previews the scopes when
+  run without a terminal or `--yes`, and is safe to schedule with `--yes`.
 - Optional `[containers.<name>.dns].base_domain` selects the apex for generated
   TCP service aliases and the `container hosts` cookie domain. When omitted,
   the first resolved DNS route continues to supply that apex.
