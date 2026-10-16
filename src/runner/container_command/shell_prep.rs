@@ -3,7 +3,10 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use effigy_containers::{
-    exec::{runtime_backend_is_running, selected_backend_label},
+    exec::{
+        owned_service_listing_args, runtime_backend_is_running, selected_backend_label,
+        OwnershipContext,
+    },
     load_container_exec_working_dir, load_container_policy, validate_compose_backend_runtime,
     validate_container_policy, ContainerAction, EffectiveContainerPolicy,
 };
@@ -43,12 +46,21 @@ pub(super) fn resolve_container_shell_session(
     Ok((policy, service, working_dir))
 }
 
+/// A resolved bounded shell session and the owned container it will target.
+pub(super) struct BoundedShellSession {
+    pub policy: EffectiveContainerPolicy,
+    pub service: String,
+    pub working_dir: Option<PathBuf>,
+    /// Full ID of the owned container every bounded effect targets.
+    pub target_id: String,
+}
+
 pub(super) fn resolve_container_shell_session_bounded(
     repo_root: &Path,
     name: Option<&str>,
     service: Option<&str>,
     budget: &mut BoundedCommandBudget,
-) -> Result<(EffectiveContainerPolicy, String, Option<PathBuf>), RunnerError> {
+) -> Result<BoundedShellSession, RunnerError> {
     let policy = load_container_policy(repo_root, name)?;
     validate_container_policy(repo_root, &policy)?;
     validate_compose_backend_runtime(repo_root, &policy)?;
@@ -63,9 +75,84 @@ pub(super) fn resolve_container_shell_session_bounded(
     let service = service
         .unwrap_or(policy.primary_service.as_str())
         .to_owned();
+    let target_id = verify_bounded_service_binding(repo_root, &policy, &service, budget)?;
     let working_dir =
         resolve_container_exec_working_dir_for_service(repo_root, name, &policy, &service)?;
-    Ok((policy, service, working_dir))
+    Ok(BoundedShellSession {
+        policy,
+        service,
+        working_dir,
+        target_id,
+    })
+}
+
+/// Prove inside the budget that exactly one running container of `service`
+/// belongs to this checkout and scope, and return its full ID. A compact
+/// label listing keeps this inside small caller stream budgets, where a full
+/// `inspect` would not fit.
+fn verify_bounded_service_binding(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    service: &str,
+    budget: &mut BoundedCommandBudget,
+) -> Result<String, RunnerError> {
+    let discovery_error =
+        |budget: &BoundedCommandBudget, failure: &'static str, message: &'static str| {
+            bounded_phase_error(
+                policy,
+                service,
+                budget,
+                BoundedCommandPhase::RuntimeDiscovery,
+                failure,
+                message,
+                None,
+            )
+        };
+    let plan = effigy_runtime::container_manager::runtime_invocation_plan(
+        repo_root,
+        policy,
+        "docker",
+        &owned_service_listing_args(policy, service),
+        ContainerAction::Status,
+        "list owned service",
+    )
+    .map_err(|_| {
+        discovery_error(
+            budget,
+            "runtime_discovery_failed",
+            "bounded container command could not resolve the owned service listing",
+        )
+    })?;
+    let capture = budget
+        .run_command(
+            &plan.repo_root,
+            plan.program.as_os_str(),
+            &plan.args,
+            None,
+            &[],
+            BoundedCommandPhase::RuntimeDiscovery,
+        )
+        .map_err(|failure| bounded_failure_error(policy, service, budget, failure))?;
+    if !capture.status.success() {
+        return Err(bounded_phase_error(
+            policy,
+            service,
+            budget,
+            BoundedCommandPhase::RuntimeDiscovery,
+            "runtime_discovery_failed",
+            "bounded container command could not list the selected service",
+            capture.status.code(),
+        ));
+    }
+    OwnershipContext::resolve(repo_root, policy)
+        .and_then(|ownership| ownership.verify_listed_service(service, &capture.stdout))
+        .map_err(|_| {
+            discovery_error(
+                budget,
+                "runtime_identity_mismatch",
+                "bounded container command found no single running container of the selected service owned by this checkout",
+            )
+        })
 }
 
 fn runtime_backend_is_running_bounded(
@@ -238,13 +325,14 @@ pub(super) fn maybe_refresh_workspace_effigy_for_shell_bounded(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     service: &str,
+    target_id: &str,
     budget: &mut BoundedCommandBudget,
 ) -> Result<(), RunnerError> {
     if !service_requires_workspace_effigy_refresh(policy, service) {
         return Ok(());
     }
     crate::runner::system_command::ensure_workspace_effigy_available_for_policy_bounded(
-        repo_root, policy, budget,
+        repo_root, policy, target_id, budget,
     )
 }
 

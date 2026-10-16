@@ -172,6 +172,12 @@ fn run_container_up_inner(
     }
 
     operation.stage = Some("reconciliation_inventory");
+    if plan.attach_mode == EffectiveAttachMode::Detached {
+        crate::runner::host_container_lease::mark_detached_activation_pending(
+            repo_root,
+            &plan.policy,
+        )?;
+    }
     if !partial_activation_reconcile_pending(repo_root, &plan)? {
         operation.stage = Some("compose_activation");
         if let Some(closeout) = run_container_up_compose(repo_root, &plan)? {
@@ -212,6 +218,12 @@ fn run_container_up_inner(
     // Retain admitted context as the detached owner across later reconciliation.
     operation.stage = Some("persistent_owner");
     clear_host_container_lease(repo_root, &plan.policy)?;
+    if plan.attach_mode == EffectiveAttachMode::Detached {
+        crate::runner::host_container_lease::mark_detached_activation_complete(
+            repo_root,
+            &plan.policy,
+        )?;
+    }
 
     render_container_up_result(repo_root, &plan, health, integrations, output_json)
 }
@@ -256,6 +268,12 @@ fn prepare_container_up(
                 }));
     operation.active = declared_detached;
     let (mut policy, mut preparation_admission) = if declared_detached {
+        // A record of an earlier admission whose inputs have changed since is
+        // retired here, before admission compares against it.
+        crate::runner::host_container_lease::retire_stale_detached_admission(
+            repo_root,
+            &load_container_policy(repo_root, name)?,
+        )?;
         let (policy, admission) = effigy_containers::policy::load::load_admitted_container_policy(
             repo_root,
             name,
@@ -674,6 +692,16 @@ fn partial_activation_reconcile_pending(
     if let Some(context) = &plan.admitted_context {
         context.verify(repo_root, &plan.policy, recorded || context.marker_required)?;
     }
+    // Without a record (a stack from an earlier release, a task-started stack,
+    // or one whose stale record was retired) `compose up` applies the current
+    // inputs, once any running containers are proven to be this checkout's.
+    if !recorded {
+        crate::runner::host_container_lease::ensure_running_stack_admits_reactivation(
+            repo_root,
+            &plan.policy,
+        )?;
+        return Ok(false);
+    }
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
     let running =
         effigy_containers::exec::list_running_compose_containers_for_policy_with_deadline(repo_root, &plan.policy, Some(deadline)).map_err(|error| {
@@ -682,12 +710,6 @@ fn partial_activation_reconcile_pending(
                 plan.policy.name
             ))
         })?;
-    if !recorded {
-        if running.is_empty() {
-            return Ok(false);
-        }
-        return Err(RunnerError::task_invocation("partial activation reconciliation unavailable: original detached admission is missing for the running stack. Current inputs cannot be adopted. No compose up, restart, teardown or publication ran"));
-    }
     let running = effigy_containers::exec::verify_owned_running_compose_rows(repo_root, &plan.policy, &running, deadline)
         .map_err(|_| RunnerError::task_invocation("partial activation reconciliation unavailable: current full-ID ownership/bindings could not be verified. No services were recreated"))?;
     if partial_reconcile_skips_compose_up(&plan.policy, &running) {

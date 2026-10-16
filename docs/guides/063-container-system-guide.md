@@ -186,6 +186,14 @@ returns after expiry refuses before the next phase or user command is spawned.
 Synchronous local filesystem calls cannot be interrupted mid-call; the shared
 deadline is checked before the next external operation and at phase boundaries.
 
+Discovery also proves which container the command will reach: one compact,
+budgeted runtime listing must show exactly one running, non-oneoff container of
+the selected service whose checkout and scope labels name this checkout. Every
+later effect (workspace artifact and catalog copies, and the command itself)
+targets that container by full ID, so a same-named project in another checkout
+is never used. The listing is one extra preparation capture of roughly a
+hundred bytes.
+
 Workspace identity refresh keeps the existing primary-service repair selection,
 but the bounded runtime may refuse a repair that the plain shell would have
 more time to complete. The repair uses the operation's remaining deadline and

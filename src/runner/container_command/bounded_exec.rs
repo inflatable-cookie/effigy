@@ -24,6 +24,7 @@
 //! Remote cancellation stays unverified: terminating the owned host client
 //! group proves nothing about a remote container process.
 
+use std::ffi::OsString;
 use std::io::Write;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -104,20 +105,26 @@ fn run_container_shell_bounded_with_deadline(
         ));
     }
 
-    let (policy, service, working_dir) =
-        resolve_container_shell_session_bounded(repo_root, name, service, &mut budget)?;
+    let session = resolve_container_shell_session_bounded(repo_root, name, service, &mut budget)?;
+    let (policy, service, working_dir) = (&session.policy, &session.service, &session.working_dir);
     if Instant::now() >= deadline {
         return Err(deadline_refusal(
-            Some((&policy, service.as_str())),
+            Some((policy, service.as_str())),
             &limits,
             &budget,
             BoundedCommandPhase::RuntimeDiscovery,
         ));
     }
-    maybe_refresh_workspace_effigy_for_shell_bounded(repo_root, &policy, &service, &mut budget)?;
+    maybe_refresh_workspace_effigy_for_shell_bounded(
+        repo_root,
+        policy,
+        service,
+        &session.target_id,
+        &mut budget,
+    )?;
     if Instant::now() >= deadline {
         return Err(deadline_refusal(
-            Some((&policy, service.as_str())),
+            Some((policy, service.as_str())),
             &limits,
             &budget,
             BoundedCommandPhase::WorkspacePreparation,
@@ -127,8 +134,9 @@ fn run_container_shell_bounded_with_deadline(
     run_bounded_command_with_budget(
         BoundedCommandRequest {
             repo_root,
-            policy: &policy,
-            service: &service,
+            policy,
+            service,
+            target_id: &session.target_id,
             working_dir: working_dir.as_deref(),
             command,
             output_json,
@@ -143,6 +151,8 @@ pub(in crate::runner) struct BoundedCommandRequest<'a> {
     pub repo_root: &'a Path,
     pub policy: &'a EffectiveContainerPolicy,
     pub service: &'a str,
+    /// Full ID of the container whose ownership discovery verified.
+    pub target_id: &'a str,
     pub working_dir: Option<&'a Path>,
     pub command: &'a str,
     pub output_json: bool,
@@ -181,6 +191,7 @@ fn run_bounded_command_with_budget(
         repo_root,
         policy,
         service,
+        target_id,
         working_dir,
         command,
         output_json,
@@ -190,6 +201,7 @@ fn run_bounded_command_with_budget(
         repo_root,
         policy,
         service,
+        target_id,
         working_dir,
         command,
         optimistic.as_ref(),
@@ -208,6 +220,7 @@ fn run_bounded_command_with_budget(
             repo_root,
             policy,
             service,
+            target_id,
             working_dir,
             command,
             None,
@@ -231,27 +244,54 @@ fn run_bounded_command_with_budget(
     render.into_result(capture)
 }
 
+// Each argument is a distinct part of one attempt; bundling them would only
+// move the same fields into a single-use struct.
+#[allow(clippy::too_many_arguments)]
 fn run_attempt(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     service: &str,
+    target_id: &str,
     working_dir: Option<&Path>,
     command: &str,
     identity: Option<&ResolvedWorkspaceExecIdentity>,
     budget: &mut BoundedCommandBudget,
 ) -> Result<BoundedCapture, RunnerError> {
-    let args = build_container_shell_args(service, Some(command), working_dir, "/bin/sh", identity);
-    let plan = effigy_runtime::container_manager::compose_invocation_plan_from_tail_args(
+    let args = verified_exec_args(
+        build_container_shell_args(service, Some(command), working_dir, "/bin/sh", identity),
+        target_id,
+    );
+    let plan = effigy_runtime::container_manager::runtime_invocation_plan(
         repo_root,
         policy,
-        args,
+        "docker",
+        &args,
         ContainerAction::Shell,
-        "docker compose exec",
+        "runtime exec",
     )
     .map_err(RunnerError::from)?;
     budget
-        .run_plan(&plan, BoundedCommandPhase::CommandExecution)
+        .run_command(
+            &plan.repo_root,
+            plan.program.as_os_str(),
+            &plan.args,
+            None,
+            &[],
+            BoundedCommandPhase::CommandExecution,
+        )
         .map_err(|failure| bounded_failure_error(policy, service, budget, failure))
+}
+
+/// Turn Compose exec tail arguments (`exec -T [opts] <service> sh -lc <cmd>`)
+/// into runtime exec arguments for the verified container. Runtime exec has no
+/// TTY unless asked, so Compose's `-T` is dropped.
+fn verified_exec_args(mut args: Vec<OsString>, target_id: &str) -> Vec<OsString> {
+    if args.get(1).is_some_and(|arg| arg == "-T") {
+        args.remove(1);
+    }
+    let service_index = args.len() - 4;
+    args[service_index] = OsString::from(target_id);
+    args
 }
 
 fn optimistic_workspace_identity(

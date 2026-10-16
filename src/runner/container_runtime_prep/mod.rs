@@ -4,6 +4,14 @@ use std::time::{Duration, Instant};
 #[cfg(unix)]
 use std::{fs, os::unix::fs::PermissionsExt};
 
+/// Bound for one exec readiness attempt: ownership re-inspection plus the probe
+/// exec itself. The readiness window only decides whether to start another
+/// attempt; it never cuts off an attempt that is already running.
+const EXEC_READY_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Retry window for callers that need a ready binding but supply no deadline.
+const EXEC_READY_RETRY_WINDOW: Duration = Duration::from_secs(2);
+
 mod gateway;
 mod lease;
 mod prep;
@@ -552,13 +560,14 @@ pub(in crate::runner) fn ensure_primary_service_exec_ready_for_runtime(
     ensure_primary_service_exec_ready_with_recovery_using(
         policy,
         working_dir,
-        |timeout| {
+        |window| {
             probe_verified_service_exec_ready(
                 repo_root,
                 policy,
                 working_dir,
                 &binding,
-                Instant::now() + timeout,
+                Instant::now() + window,
+                None,
             )
         },
         || restart_primary_service(repo_root, policy, &binding),
@@ -632,6 +641,12 @@ fn verified_service_binding(
         .into_iter()
         .filter(|row| row.service.as_deref() == Some(service))
         .collect::<Vec<_>>();
+    if selected.is_empty() {
+        return Err(RunnerError::task_invocation(format!(
+            "container service `{service}` is not running; start it with `effigy container up {}`",
+            policy.name
+        )));
+    }
     let mut bindings = effigy_containers::exec::verify_owned_running_compose_identities(
         repo_root, policy, &selected, deadline,
     )?;
@@ -643,6 +658,11 @@ fn verified_service_binding(
     Ok(bindings.remove(0))
 }
 
+/// Verify the owned binding for `service` and wait until it accepts exec.
+///
+/// A caller `deadline` is absolute and bounds every step. Without one, binding
+/// verification and each probe attempt get their own bounds and readiness
+/// retries for [`EXEC_READY_RETRY_WINDOW`].
 pub(in crate::runner) fn verify_service_exec_ready(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
@@ -656,22 +676,39 @@ pub(in crate::runner) fn verify_service_exec_ready(
         service,
         deadline.unwrap_or_else(|| Instant::now() + OWNED_EXEC_VERIFICATION_TIMEOUT),
     )?;
+    let retry_until = deadline.unwrap_or_else(|| Instant::now() + EXEC_READY_RETRY_WINDOW);
     probe_verified_service_exec_ready(
         repo_root,
         policy,
         working_dir,
         &binding,
-        deadline.unwrap_or_else(|| Instant::now() + Duration::from_secs(2)),
+        retry_until,
+        deadline,
     )?
     .ok_or_else(|| RunnerError::container_runtime_exec_not_ready(policy, working_dir))
 }
 
+/// Whether a new readiness attempt may start at `now`. The retry window, and
+/// the caller's absolute deadline when it owns one, gate every attempt; an
+/// attempt already running keeps its own [`EXEC_READY_ATTEMPT_TIMEOUT`].
+fn readiness_attempt_open(
+    now: Instant,
+    retry_until: Instant,
+    hard_deadline: Option<Instant>,
+) -> bool {
+    now < retry_until && hard_deadline.is_none_or(|deadline| now < deadline)
+}
+
+/// Probe exec readiness until `retry_until`. An attempt already running is
+/// allowed to finish within [`EXEC_READY_ATTEMPT_TIMEOUT`]; only
+/// `hard_deadline`, when the caller owns one, cuts an attempt short.
 fn probe_verified_service_exec_ready(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     working_dir: &Path,
     binding: &effigy_containers::exec::VerifiedComposeContainer,
-    deadline: Instant,
+    retry_until: Instant,
+    hard_deadline: Option<Instant>,
 ) -> Result<Option<effigy_containers::exec::VerifiedComposeContainer>, RunnerError> {
     let args = compose_args(
         policy,
@@ -695,9 +732,18 @@ fn probe_verified_service_exec_ready(
     )
     .map_err(RunnerError::from)?;
     loop {
-        if Instant::now() >= deadline {
+        let now = Instant::now();
+        // The retry window gates starting a new attempt: a short attempt that
+        // finishes just before `retry_until` may not sleep past it and spawn
+        // again. An attempt already running is still bounded by its own
+        // attempt deadline and, when the caller owns one, the absolute
+        // deadline.
+        if !readiness_attempt_open(now, retry_until, hard_deadline) {
             return Ok(None);
         }
+        let attempt_deadline = hard_deadline.map_or(now + EXEC_READY_ATTEMPT_TIMEOUT, |deadline| {
+            deadline.min(now + EXEC_READY_ATTEMPT_TIMEOUT)
+        });
         // Ownership failure is terminal: never restart or adopt a successor.
         let output = match crate::runner::exec_command::run_verified_compose_exec_plan(
             policy,
@@ -705,16 +751,16 @@ fn probe_verified_service_exec_ready(
             binding,
             true,
             None,
-            Some(deadline),
+            Some(attempt_deadline),
         ) {
             Ok(output) => output,
-            Err(_) if Instant::now() >= deadline => return Ok(None),
+            Err(_) if Instant::now() >= attempt_deadline.min(retry_until) => return Ok(None),
             Err(error) => return Err(error),
         };
         if output.status.success() {
             return Ok(Some(binding.clone()));
         }
-        if Instant::now() >= deadline {
+        if Instant::now() >= retry_until {
             return Ok(None);
         }
         std::thread::sleep(Duration::from_millis(250));

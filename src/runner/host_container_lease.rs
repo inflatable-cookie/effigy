@@ -257,6 +257,8 @@ pub(in crate::runner) fn record_admitted_partial_activation(
         .map_err(|error| RunnerError::task_invocation_failed_write(repo_root, error))?;
     let encoded = serde_json::to_string_pretty(&admitted.value)
         .map_err(|error| RunnerError::host_container_lease_encode(error.to_string()))?;
+    // A new admission stays partial until its activation completes.
+    remove_if_present(&activation_complete_path(repo_root, policy))?;
     let path = partial_activation_path(repo_root, policy);
     use std::io::Write;
     let mut file = match fs::OpenOptions::new()
@@ -287,6 +289,66 @@ pub(in crate::runner) fn record_partial_activation(
     let marker_path = partial_activation_path(repo_root, policy);
     fs::write(&marker_path, encoded)
         .map_err(|error| RunnerError::task_invocation_failed_write(&marker_path, error))
+}
+
+/// Drop a recorded detached admission whose inputs have since changed, once
+/// every running container of the project is proven to belong to this
+/// checkout. The next activation then admits the current inputs afresh.
+pub(in crate::runner) fn retire_stale_detached_admission(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<(), RunnerError> {
+    let marker_path = partial_activation_path(repo_root, policy);
+    let raw = match fs::read_to_string(&marker_path) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(RunnerError::task_invocation_failed_read(
+                &marker_path,
+                error,
+            ))
+        }
+    };
+    let recorded = serde_json::from_str::<serde_json::Value>(&raw).ok();
+    if recorded.is_some() && recorded == partial_activation_context(repo_root, policy).ok() {
+        return Ok(());
+    }
+    // A partial activation is reconciled only against its original inputs.
+    if !activation_complete_path(repo_root, policy).is_file() {
+        return Err(RunnerError::task_invocation(format!(
+            "container `{}` has a partial detached activation recorded against different inputs; it is not reconciled with the current declaration. Nothing was started, recreated or published. Run `effigy container down`, then `effigy container up --detach` to activate the current inputs",
+            policy.name
+        )));
+    }
+    ensure_running_stack_admits_reactivation(repo_root, policy)?;
+    clear_partial_activation(repo_root, policy)
+}
+
+/// Refuse a fresh `compose up` over any project container this checkout cannot
+/// prove is its own, running or stopped, so another checkout's stack is never
+/// started, recreated or replaced.
+pub(in crate::runner) fn ensure_running_stack_admits_reactivation(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<(), RunnerError> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    let refusal = |reason: String| {
+        RunnerError::task_invocation(format!(
+            "container `{}` cannot be re-activated: {reason}. Nothing was started, recreated or published. If these containers belong to this checkout, run `effigy container down`, then `effigy container up --detach`; otherwise stop the other checkout's stack first",
+            policy.name
+        ))
+    };
+    // Include stopped rows: a project-wide `compose up` can start or recreate a
+    // stopped declared sibling, so its ownership must be proven too.
+    let rows =
+        effigy_containers::exec::list_compose_containers_for_policy_including_stopped_with_deadline(
+            repo_root,
+            policy,
+            Some(deadline),
+        )
+        .map_err(|error| refusal(format!("project containers could not be listed ({error})")))?;
+    effigy_containers::exec::running_stack_admits_reactivation(repo_root, policy, &rows, deadline)
+        .map_err(|error| refusal(error.to_string()))
 }
 
 pub(in crate::runner) fn partial_activation_recorded(
@@ -380,15 +442,43 @@ pub(in crate::runner) fn clear_partial_activation(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> Result<(), RunnerError> {
-    let marker_path = partial_activation_path(repo_root, policy);
-    match fs::remove_file(&marker_path) {
+    remove_if_present(&activation_complete_path(repo_root, policy))?;
+    remove_if_present(&partial_activation_path(repo_root, policy))
+}
+
+/// Record that the admitted detached activation finished readiness and
+/// publication, so later changed inputs may start a fresh admission instead
+/// of being refused as partial-activation drift.
+pub(in crate::runner) fn mark_detached_activation_complete(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<(), RunnerError> {
+    let path = activation_complete_path(repo_root, policy);
+    fs::write(&path, b"").map_err(|error| RunnerError::task_invocation_failed_write(&path, error))
+}
+
+/// An activation attempt in progress is partial until it completes, whether it
+/// runs Compose up or reconciles an existing record.
+pub(in crate::runner) fn mark_detached_activation_pending(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<(), RunnerError> {
+    remove_if_present(&activation_complete_path(repo_root, policy))
+}
+
+fn remove_if_present(path: &Path) -> Result<(), RunnerError> {
+    match fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(RunnerError::task_invocation_failed_write(
-            &marker_path,
-            error,
-        )),
+        Err(error) => Err(RunnerError::task_invocation_failed_write(path, error)),
     }
+}
+
+fn activation_complete_path(repo_root: &Path, policy: &EffectiveContainerPolicy) -> PathBuf {
+    host_container_lease_dir(repo_root, policy).join(format!(
+        "{}.complete",
+        sanitize_lease_path_component(&policy.name)
+    ))
 }
 
 fn partial_activation_path(repo_root: &Path, policy: &EffectiveContainerPolicy) -> PathBuf {

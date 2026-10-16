@@ -3,7 +3,7 @@ use super::{
     ensure_exec_container_running_with, ensure_primary_service_exec_ready_with_recovery_using,
     ensure_runtime_exec_readiness_stage_using, ensure_runtime_gateway_readiness_stage_using,
     ensure_runtime_running_stage, parse_bind_mount_host_path, prepare_host_bind_mount_dirs,
-    prepare_runtime_mounts_stage, reconcile_runtime_aliases_stage_using,
+    prepare_runtime_mounts_stage, readiness_attempt_open, reconcile_runtime_aliases_stage_using,
     refresh_changed_cargo_inputs_using, refresh_runtime_lease_stage, restart_primary_service_using,
     run_runtime_compose_up_stage, run_runtime_prep_steps, runtime_activation_plan_from_request,
     runtime_activation_report_for_result, service_depends_on_primary, validate_policy_runtime,
@@ -810,6 +810,34 @@ fn runtime_prep_surfaces_alias_reconciliation_failure_after_exec_recovery() {
             "reconcile-aliases"
         ]
     );
+}
+
+#[test]
+fn exec_readiness_recovery_retry_window_gates_every_new_attempt() {
+    use std::time::Instant;
+    let now = Instant::now();
+    let retry_until = now + Duration::from_secs(2);
+    assert!(readiness_attempt_open(now, retry_until, None));
+    // A short first attempt that ends before the window but whose 250ms sleep
+    // lands past it must not spawn another attempt.
+    assert!(!readiness_attempt_open(
+        now + Duration::from_millis(2212),
+        retry_until,
+        None
+    ));
+    assert!(!readiness_attempt_open(retry_until, retry_until, None));
+    // A caller absolute deadline still refuses at or past it.
+    let hard_deadline = now + Duration::from_secs(1);
+    assert!(readiness_attempt_open(
+        now,
+        retry_until,
+        Some(hard_deadline)
+    ));
+    assert!(!readiness_attempt_open(
+        hard_deadline,
+        retry_until,
+        Some(hard_deadline)
+    ));
 }
 
 #[test]

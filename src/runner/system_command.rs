@@ -111,10 +111,11 @@ pub(in crate::runner) fn ensure_workspace_effigy_available_for_policy(
 pub(in crate::runner) fn ensure_workspace_effigy_available_for_policy_bounded(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
+    target_id: &str,
     budget: &mut crate::runner::exec_command::BoundedCommandBudget,
 ) -> Result<(), RunnerError> {
     workspace_provisioning::ensure_workspace_effigy_available_for_policy_bounded(
-        repo_root, policy, budget,
+        repo_root, policy, target_id, budget,
     )
 }
 
