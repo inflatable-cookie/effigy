@@ -1,4 +1,5 @@
 use super::*;
+use effigy_catalog::pack::with_test_effigy_home;
 
 #[test]
 fn run_doctor_default_never_executes_discovered_health_task() {
@@ -12,7 +13,10 @@ fn run_doctor_default_never_executes_discovered_health_task() {
         ),
     );
 
-    let out = run_doctor_task(root, &[]).expect("doctor run");
+    let catalog_home = root.join(".fixture-catalog-home");
+    let out = with_test_effigy_home(&catalog_home, || {
+        run_doctor_task(root, &[]).expect("doctor run")
+    });
 
     assert_output_contains_all(&out, &["No findings."]);
     assert!(!marker.exists(), "fast doctor must not execute health");
@@ -39,7 +43,10 @@ fn run_deep_doctor_executes_discovered_health_task() {
         ),
     );
 
-    let out = run_deep_doctor_task(root, &[]).expect("deep doctor run");
+    let catalog_home = root.join(".fixture-catalog-home");
+    let out = with_test_effigy_home(&catalog_home, || {
+        run_deep_doctor_task(root, &[]).expect("deep doctor run")
+    });
 
     assert_output_contains_all(&out, &["No findings."]);
     assert!(marker.exists(), "deep doctor must execute health");
@@ -660,7 +667,10 @@ fn run_doctor_does_not_flag_missing_graph_index() {
     );
     fs::write(root.join("src/lib.rs"), "pub fn release_graph() {}\n").expect("write rust");
 
-    let out = run_doctor_task(root, &[]).expect("doctor run");
+    let catalog_home = root.join(".fixture-catalog-home");
+    let out = with_test_effigy_home(&catalog_home, || {
+        run_doctor_task(root, &[]).expect("doctor run")
+    });
     assert_output_contains_all(&out, &["No findings."]);
     assert_output_excludes_all(&out, &["graph.index", "graph status --refresh"]);
 }

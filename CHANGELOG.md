@@ -239,6 +239,8 @@ During v0.x, MINOR bumps may include breaking changes.
   1.2.0.
 
 ### Fixed
+- Release checks isolate baseline doctor fixtures from the developer's catalog
+  store, and private catalog-pinning fixtures admit the compiled release version.
 - Effigy-managed service host aliases no longer hang while their mapped
   localhost ports are ready. Compose generation and gateway registration now
   share one loopback-IP reservation covering every other project's

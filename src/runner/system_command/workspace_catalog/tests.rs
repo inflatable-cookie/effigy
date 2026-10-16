@@ -9,8 +9,15 @@ use super::{effigy_version, HostCatalog};
 fn installed_fixture(root: &Path) -> PackStore {
     let source = root.join("source");
     std::fs::create_dir_all(source.join("silo")).expect("fragment directory");
-    std::fs::write(source.join("pack.toml"),
-        "schema_version = 1\n[pack]\nid = \"private-service-catalog\"\nversion = \"1.2.0\"\n[compatibility]\neffigy = \">=0.13, <0.15\"\n").expect("manifest");
+    // These fixtures exercise pinning and drift, not a historical release range.
+    std::fs::write(
+        source.join("pack.toml"),
+        format!(
+            "schema_version = 1\n[pack]\nid = \"private-service-catalog\"\nversion = \"1.2.0\"\n[compatibility]\neffigy = \"={}\"\n",
+            effigy_version()
+        ),
+    )
+    .expect("manifest");
     std::fs::write(
         source.join("silo/service.toml"),
         "[service]\nname = \"silo\"\ndescription = \"private service\"\n",

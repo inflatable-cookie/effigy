@@ -65,6 +65,13 @@
 "dist:preflight:smoke" = "cargo test --test cli_output_tests cli_distribution_artifact_pipeline_smoke_fixture_passes -- --nocapture"
 "test:release:macos-checksums" = "bash tests/scripts/release-macos-checksums.sh"
 
+# Release-profile catalog fixtures and both complete affected doctor modules.
+"test:release:catalog-fixtures" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(workspace_catalog::tests::) | test(doctor_command_tests::core::) | test(doctor_text_output_tests::snapshot_layout_tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 }
+"check:release:catalog-fixtures" = [
+  "cargo check -p effigy -p effigy-catalog --all-targets --profile test",
+  "cargo clippy -p effigy -p effigy-catalog --all-targets -- -D warnings",
+]
+
 # Authorized in-place release preparation. Heavy admission wraps the WHOLE
 # operation (current-source build, prepared-tree gates, prepared state) before
 # any compile or file mutation. The entry point is argv-safe: it fixes the

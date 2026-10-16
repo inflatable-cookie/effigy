@@ -298,3 +298,36 @@ are answered. The sidecar and fail-closed policy satisfy Q-001's required
 correction; publication still requires the release assurance and explicit
 operator authorization above. Passing release checks does not remove the
 disclosed live-test and signal-race limitations.
+
+### v0.15.0 preparation and publication authorization — 2026-10-16
+
+Tom answered "Go for it" to the concrete v0.15.0 proposal from reviewed main
+`ec4130a1d4e6547deaa8aa6a4acae5709206574c`. Operator decision
+`0116369e-b234-4299-a5d0-32cdc3d9e0b4` version 2 records the relayed ruling:
+"Authorize v0.15.0 preparation, tagging, publication and verification after all
+gates pass".
+
+This permits exact-candidate validation CI, the maintained heavy-admitted
+in-place preparation with explicit `--version 0.15.0`, all configured release
+gates and version/catalog/lockfile consistency, supported execution of the
+reviewed prepared state, the new annotated tag, the existing binary publication
+workflow, and tagged isolated install/artifact verification. The default
+PATCH proposal is not the selected MINOR version. The existing public-update
+capability remains `Present` and the 0.13.0 support floor is retained.
+
+It does not permit workflow edits, retagging a failed release, host installation,
+live consumer or gateway migration, or cleanup. Optional dead-scope retirement
+is not a release prerequisite and needs its own actual operator authority.
+Older QA and private artifact receipts remain dated to their original source;
+none substitutes for this candidate's release gates or publication evidence.
+
+### Private catalog fixtures during version preparation
+
+Release gates run against the selected prepared version, including its compiled
+package version. Positive catalog-pinning fixtures admit that exact build; their
+retained-content and source/selection drift assertions remain independent of a
+historical published compatibility range. Baseline doctor fixtures that require
+no findings use the existing scoped catalog-home test override, so operator
+pack selection cannot silently become fixture input. This does not change
+production compatibility validation or suppress unhealthy-pack findings. Host
+pack migration is a separate operator action, not a way to make tests pass.
