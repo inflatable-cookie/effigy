@@ -429,10 +429,11 @@ Reference `dev:test` 161/161 on `v0.15.0+local.7420729.dirty`
 proofs across two builds, not exact-current-main qualification. The dirty
 Reference source was not pinned; a temporary prepare mutation was suggested
 but not established as its cause. Root gateway identity for PID 75179 remained
-unverified. Tom accepted these caveats; no replacement Underlay proof is a
-publication prerequisite.
+unverified. Tom accepted these caveats for those reported builds. At that
+point no replacement Underlay proof was required; the later shared-data ruling
+below requires fresh proofs for the expanded candidate.
 
-The remaining hold condition is a passing Acowtancy adoption proof reported by
+The initial conditional hold required a passing Acowtancy adoption proof reported by
 its existing owner, `2f6b92d1`. Once that authentic result passes, the release
 owner may lift the publication hold without another approval request to Tom.
 A failed or unclear result keeps the hold in place and is reported to effigy-a6.
@@ -454,6 +455,33 @@ until this proof passes; execution, tagging and publication remain held too.
 The existing consumer owner admits and runs the proof. The ruling grants no
 consumer retry, reset, install or runtime authority to the release owner and
 waives no ownership, independent-review or CI requirement.
+
+#### Shared data and stable shared-service identity required in v0.15.0
+
+On 2026-10-16 Tom selected "In v0.15.0" for `data_from`, implementing his
+Underlay ruling "Same DB, same s3, all the services should remain the same".
+A borrowing environment must use the owner environment's service data volumes
+within the same checkout and worktree scope. Activation hands over the data
+services; borrower reset, retirement, dead-scope retirement and port reclamation
+must not delete the owner's volumes. Manifests without `data_from` must retain
+byte-identical output. Task `63a91426-b21b-477a-b46d-d3973f88f143` owns this
+approved implementation.
+
+Tom also selected "Yes, in v0.15.0" for pinning shared-service project naming to
+zero-key SipHash-1-3 rather than an unspecified `DefaultHasher` implementation.
+Existing `effigy-shared-*` names and their volume identities must remain
+byte-identical. Task `636fc8a2-ced4-4fc1-8e29-e444750940b5` owns that approved
+implementation.
+
+The current publication hold requires the route handover, shared-data and
+stable shared-service identity fixes to merge through independent review and
+all seven exact-head CI checks. The Underlay hybrid and Acowtancy adoption
+proofs must then pass on admitted local builds containing all three fixes.
+Earlier proofs remain historical evidence; they do not qualify the expanded
+candidate. Existing consumer owners admit and run these proofs. No prepare,
+execute, tag, publication workflow or publishing starts before those passing
+results. The release owner may lift the hold when these conditions pass without
+another approval request, preserving decision `0116369e` and every release gate.
 
 Lifting the hold resumes decision `0116369e` version 2 with no gate waiver:
 fresh hosted CI on current clean, pushed main, a fresh prepare with all seven
