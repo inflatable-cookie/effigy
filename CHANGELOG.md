@@ -239,6 +239,8 @@ During v0.x, MINOR bumps may include breaking changes.
   1.2.0.
 
 ### Fixed
+- Supervision-initialization fixtures exclude parallel shared-scope installation
+  through the existing signal-proof and environment lock pair.
 - Managed-listener integration fixtures coordinate deliberate route edits with
   lifecycle writers and retain private gateway refusals on HTTPS failure.
 - Release checks isolate baseline doctor fixtures from the developer's catalog

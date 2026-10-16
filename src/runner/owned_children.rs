@@ -980,9 +980,9 @@ fn group_cleanup_disabled_for_test() -> bool {
 /// While set for the current thread, `SignalListener::install` fails at the
 /// requested point so tests can prove an initialization error still terminates
 /// and reaps an already-owned child tree. Callers hold
-/// [`hold_group_cleanup_test_lock`] so no other scope install is active and the
-/// real `SignalListener::install` is reached. Never compiled into a release
-/// build.
+/// [`hold_signal_proof_test_locks`] so ordinary environment-guarded runner
+/// tests cannot install a shared scope before the injected first installation.
+/// Never compiled into a release build.
 #[cfg(all(test, unix))]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum SupervisionInitFailurePointForTest {
@@ -1410,13 +1410,15 @@ mod release_preparation_fixture_supervision_init_tests {
         prefix: &str,
         point: SupervisionInitFailurePointForTest,
         wait: impl FnOnce(Child) -> std::io::Result<()>,
+        before_wait: impl FnOnce(),
     ) {
-        let _signal_proof_lock = super::hold_group_cleanup_test_lock();
+        let _locks = super::hold_signal_proof_test_locks();
         let _inject = inject_supervision_init_failure_for_test(point);
         let mut fixture = TimeoutDescendantFixture::new(prefix);
         fixture.spawn_unrelated_sibling();
         let child = spawn_owned_hang(&fixture);
         let pids = fixture.wait_for_recorded_pids();
+        before_wait();
         let error = wait(child).expect_err("initialization failure must be reported, never hidden");
         assert!(
             error
@@ -1464,6 +1466,73 @@ mod release_preparation_fixture_supervision_init_tests {
         );
     }
 
+    /// Exercise the actual init fixture while a normal runner caller attempts
+    /// to install a scope after the owned child is ready. The old group-only
+    /// guard lets that caller bypass the injected first-install failure.
+    #[test]
+    fn release_preparation_fixture_supervision_init_excludes_parallel_normal_scope_at_wait_boundary(
+    ) {
+        use std::panic::AssertUnwindSafe;
+        use std::sync::mpsc;
+        use std::thread;
+
+        let (scope_tx, scope_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let mut normal = None;
+        let mut queued = None;
+        // Always release/join the competing caller even when the old fixture
+        // bypasses initialization and the original error assertion panics.
+        let proof = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            assert_init_failure_reaps(
+                "effigy-supervision-init-parallel-",
+                SupervisionInitFailurePointForTest::BeforeSignals,
+                |child| {
+                    wait_for_owned_child(
+                        child,
+                        Instant::now() + Duration::from_secs(1),
+                        Duration::from_millis(10),
+                    )
+                    .map(|_| ())
+                },
+                || {
+                    // Start at the observed phase, after this fixture owns its
+                    // locks; time waiting behind other proofs is not a deadline.
+                    let handle = thread::spawn(move || {
+                        let _environment = crate::contract_test_support::lock_test();
+                        let _scope = OwnedChildrenScope::enter().expect("ordinary shared scope");
+                        scope_tx.send(()).expect("report ordinary scope installed");
+                        release_rx
+                            .recv_timeout(Duration::from_secs(10))
+                            .expect("release ordinary scope after init proof");
+                    });
+                    let normal_id = handle.thread().id();
+                    normal = Some(handle);
+                    queued = crate::contract_test_support::test_lock_waiter_position(
+                        normal_id,
+                        Duration::from_secs(2),
+                    );
+                    if queued.is_none() {
+                        scope_rx
+                            .recv_timeout(Duration::from_secs(2))
+                            .expect("old unlocked control installs the competing scope");
+                    }
+                },
+            );
+        }));
+        let _ = release_tx.send(());
+        if let Some(normal) = normal {
+            normal.join().expect("ordinary caller settled");
+        }
+        assert!(
+            proof.is_ok(),
+            "parallel shared scope bypassed the injected initialization failure"
+        );
+        assert!(
+            queued.is_some(),
+            "ordinary caller did not queue behind the init fixture environment guard"
+        );
+    }
+
     #[test]
     fn supervision_init_timed_wait_failure_reaps_owned_tree() {
         assert_init_failure_reaps(
@@ -1477,6 +1546,7 @@ mod release_preparation_fixture_supervision_init_tests {
                 )
                 .map(|_| ())
             },
+            || {},
         );
     }
 
@@ -1486,6 +1556,7 @@ mod release_preparation_fixture_supervision_init_tests {
             "effigy-supervision-init-unbounded-",
             SupervisionInitFailurePointForTest::BeforeSignals,
             |child| wait_for_owned_child_unbounded(child).map(|_| ()),
+            || {},
         );
     }
 
@@ -1495,12 +1566,13 @@ mod release_preparation_fixture_supervision_init_tests {
             "effigy-supervision-init-partial-",
             SupervisionInitFailurePointForTest::AfterSignals,
             |child| wait_for_owned_child_unbounded(child).map(|_| ()),
+            || {},
         );
     }
 
     #[test]
     fn supervision_init_error_leaves_scope_installable() {
-        let _lock = super::hold_group_cleanup_test_lock();
+        let _locks = super::hold_signal_proof_test_locks();
         let inject = inject_supervision_init_failure_for_test(
             SupervisionInitFailurePointForTest::BeforeSignals,
         );
@@ -1530,7 +1602,7 @@ mod release_preparation_fixture_supervision_init_tests {
 
     #[test]
     fn supervision_init_pre_repair_ordering_control_leaks_until_fixture_drop() {
-        let _lock = super::hold_group_cleanup_test_lock();
+        let _locks = super::hold_signal_proof_test_locks();
         let _inject = inject_supervision_init_failure_for_test(
             SupervisionInitFailurePointForTest::BeforeSignals,
         );

@@ -1748,7 +1748,7 @@ mod tests {
         use crate::runner::owned_children::SupervisionInitFailurePointForTest;
         use std::time::Duration;
 
-        let _lock = crate::runner::owned_children::hold_group_cleanup_test_lock();
+        let _locks = crate::runner::owned_children::hold_signal_proof_test_locks();
         let mut fixture = TimeoutDescendantFixture::new("effigy-managed-supervision-init-");
         fixture.spawn_unrelated_sibling();
         let command = fixture.hang_command();

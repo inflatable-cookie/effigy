@@ -349,3 +349,23 @@ edits are a demonstrated race repaired separately, not a proven historical cause
 for that CI refusal. Private HTTPS failure diagnostics now include the fixture's
 gateway stderr. Production ownership checks, deadlines and release gates remain
 unchanged; future candidate evidence must pass in its own right.
+
+### Supervision-initialization fixture exclusion
+
+Initialization-failure proofs must hold the existing combined signal-proof and
+reentrant environment lock from before injection through owned-tree cleanup.
+Holding only the signal-proof lock does not exclude ordinary runner tests,
+which use the environment lock. Such a caller can install the process-wide
+shared scope during fixture readiness, so the next owned wait legitimately
+reuses it without reaching the injected first initialization. Production
+shared-scope reuse and signal behavior are unchanged.
+
+The controlled interleaving uses a private owned child and an ordinary
+scope-owning thread, created at the observed owned-child wait boundary after
+fixture-lock acquisition, so lock-queue time cannot consume its observation
+clock. The native test-lock waiter records the ordinary caller queued until the
+real injected failure, exact-owned cleanup and unrelated sibling proof complete. The old group-only control must fail, with unconditional
+thread settlement. Candidate preparation `31b0634c` at `c780fc69` retained the
+unexpected-success failure, rolled back and settled failed without escaped
+descendants. The precise competing historical thread is unknown; new source
+still requires independent review, candidate CI and every prepared-version gate.
