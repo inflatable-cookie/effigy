@@ -625,7 +625,8 @@ resolution fail before Compose up.
 
 Effigy generates runtime-owned compose output under:
 
-- `.effigy/runtime/compose/.effigy-compose.generated.yml`
+- `.effigy/runtime/compose/<env>.generated.compose.yml` (one payload per
+  environment, with its own regeneration checksum)
 - `.effigy/runtime/compose/.effigy-catalog/<service>/...`
 
 Treat that directory as runtime output, not repo-owned source.

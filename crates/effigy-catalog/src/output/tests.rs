@@ -17,7 +17,7 @@ fn simple_checksum_differs_for_different_input() {
 #[test]
 fn write_and_cache_hit() {
     let dir = tempfile::tempdir().unwrap();
-    let output = ComposeOutput::new(dir.path().to_path_buf());
+    let output = ComposeOutput::new(dir.path().to_path_buf(), "web");
 
     let result = crate::assembly::AssemblyResult {
         compose_yaml: "services:\n  app:\n    image: test\n".to_string(),
@@ -43,7 +43,7 @@ fn write_and_cache_hit() {
 #[test]
 fn write_regenerates_when_rendered_compose_changes_under_same_manifest() {
     let dir = tempfile::tempdir().unwrap();
-    let output = ComposeOutput::new(dir.path().to_path_buf());
+    let output = ComposeOutput::new(dir.path().to_path_buf(), "web");
 
     let first = crate::assembly::AssemblyResult {
         compose_yaml: "services:\n  app:\n    image: test:v1\n".to_string(),
@@ -71,7 +71,7 @@ fn write_regenerates_when_rendered_compose_changes_under_same_manifest() {
 #[test]
 fn write_creates_dockerfiles_and_configs() {
     let dir = tempfile::tempdir().unwrap();
-    let output = ComposeOutput::new(dir.path().to_path_buf());
+    let output = ComposeOutput::new(dir.path().to_path_buf(), "web");
 
     let mut dockerfiles = HashMap::new();
     dockerfiles.insert("app".to_string(), "FROM php:8.3-fpm".to_string());
@@ -97,7 +97,7 @@ fn write_creates_dockerfiles_and_configs() {
 #[test]
 fn write_regenerates_when_dockerfile_changes_under_same_manifest() {
     let dir = tempfile::tempdir().unwrap();
-    let output = ComposeOutput::new(dir.path().to_path_buf());
+    let output = ComposeOutput::new(dir.path().to_path_buf(), "web");
 
     let mut first_dockerfiles = HashMap::new();
     first_dockerfiles.insert("app".to_string(), "FROM php:8.3-fpm".to_string());
@@ -134,7 +134,7 @@ fn write_regenerates_when_dockerfile_changes_under_same_manifest() {
 #[test]
 fn write_regenerates_when_config_changes_under_same_manifest() {
     let dir = tempfile::tempdir().unwrap();
-    let output = ComposeOutput::new(dir.path().to_path_buf());
+    let output = ComposeOutput::new(dir.path().to_path_buf(), "web");
 
     let mut first_configs = HashMap::new();
     first_configs.insert("web.conf".to_string(), "server { return 200; }".to_string());
@@ -167,7 +167,7 @@ fn write_regenerates_when_config_changes_under_same_manifest() {
 #[test]
 fn eject_copies_and_cleans_up() {
     let dir = tempfile::tempdir().unwrap();
-    let output = ComposeOutput::new(dir.path().to_path_buf());
+    let output = ComposeOutput::new(dir.path().to_path_buf(), "web");
 
     let mut dockerfiles = HashMap::new();
     dockerfiles.insert("app".to_string(), "FROM php:8.3-fpm".to_string());
@@ -197,7 +197,7 @@ fn eject_copies_and_cleans_up() {
 
     // Generated files should be cleaned up.
     assert!(!output.generated_compose_path().exists());
-    assert!(!dir.path().join(".effigy-compose.checksum").exists());
+    assert!(!dir.path().join("web.generated.checksum").exists());
     assert!(!dir.path().join(".effigy-catalog").exists());
 
     // Permanent Dockerfile should exist.
@@ -207,7 +207,7 @@ fn eject_copies_and_cleans_up() {
 #[test]
 fn eject_without_generated_file_fails() {
     let dir = tempfile::tempdir().unwrap();
-    let output = ComposeOutput::new(dir.path().to_path_buf());
+    let output = ComposeOutput::new(dir.path().to_path_buf(), "web");
     let result = output.eject();
     assert!(result.is_err());
 }
@@ -216,7 +216,7 @@ fn eject_without_generated_file_fails() {
 fn eject_to_promotes_into_explicit_target_dir() {
     let dir = tempfile::tempdir().unwrap();
     let target = tempfile::tempdir().unwrap();
-    let output = ComposeOutput::new(dir.path().to_path_buf());
+    let output = ComposeOutput::new(dir.path().to_path_buf(), "web");
 
     let mut dockerfiles = HashMap::new();
     dockerfiles.insert("app".to_string(), "FROM php:8.3-fpm".to_string());
@@ -246,7 +246,7 @@ fn eject_to_promotes_into_explicit_target_dir() {
 #[test]
 fn compose_file_args_without_override() {
     let dir = tempfile::tempdir().unwrap();
-    let output = ComposeOutput::new(dir.path().to_path_buf());
+    let output = ComposeOutput::new(dir.path().to_path_buf(), "web");
     let args = output.compose_file_args();
     assert_eq!(args.len(), 2);
     assert_eq!(args[0], "-f");
@@ -257,7 +257,7 @@ fn compose_file_args_with_override() {
     let dir = tempfile::tempdir().unwrap();
     // Create an override file.
     std::fs::write(dir.path().join("compose.override.yml"), "# override").unwrap();
-    let output = ComposeOutput::new(dir.path().to_path_buf());
+    let output = ComposeOutput::new(dir.path().to_path_buf(), "web");
     let args = output.compose_file_args();
     assert_eq!(args.len(), 4);
     assert_eq!(args[2], "-f");

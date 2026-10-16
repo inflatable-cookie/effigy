@@ -9318,7 +9318,7 @@ fn cli_generated_container_status_json_reports_media_mounts() {
         "storage/uploads:/var/www/html/storage/uploads"
     );
     let compose =
-        fs::read_to_string(root.join(".effigy/runtime/compose/.effigy-compose.generated.yml"))
+        fs::read_to_string(root.join(".effigy/runtime/compose/web.generated.compose.yml"))
             .expect("read compose");
     let expected = format!(
         "{}:/var/www/html/storage/uploads",

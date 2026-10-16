@@ -313,7 +313,7 @@
 "test:gateway:route-fixture-transaction" = { run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_host_dependent_replacement_route_edits_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 }
 # Same-checkout container <-> hybrid managed-listener route handover through the
 # production locked transactions, plus one live-listener conflict refusal.
-"test:gateway:route-handover" = { run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(container_hybrid_container_switch_) | test(container_hybrid_environment_switch_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 }
+"test:gateway:route-handover" = { run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(container_hybrid_container_switch_) | test(container_hybrid_environment_switch_) | test(container_scoped_clone_first_listener_up_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 }
 "check:gateway:route-fixture-transaction" = [
   { task = "check:host-process:owned-stop:compile" },
   { task = "check:host-process:owned-stop:lint" },

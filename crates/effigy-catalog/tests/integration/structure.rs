@@ -185,7 +185,7 @@ fn full_pipeline_assemble_write_eject() {
 
     let resolver = bundled_resolver();
     let assembler = ComposeAssembler::new(resolver);
-    let output = ComposeOutput::new(output_dir.clone());
+    let output = ComposeOutput::new(output_dir.clone(), "web");
 
     let services = vec![
         ServiceDeclaration {

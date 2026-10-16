@@ -39,7 +39,7 @@ case "$subcmd" in
     ovr=""
     for arg in "$@"; do
       case "$arg" in
-        *ownership.compose.yml|*.effigy-compose.generated.yml) ovr="$arg" ;;
+        *ownership.compose.yml|*generated.compose.yml) ovr="$arg" ;;
       esac
     done
     mode="${EFFIGY_TEST_BUILDER_MODE:-applied}"

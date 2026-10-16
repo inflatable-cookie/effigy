@@ -274,6 +274,19 @@ During v0.x, MINOR bumps may include breaking changes.
   1.2.0.
 
 ### Fixed
+- A detached `container up` of an environment whose generated Compose input
+  is shared per checkout no longer refuses with "detached activation
+  publication refused" when another environment of the same checkout is
+  materialized first (#196 regression from the #195 handover). Each
+  environment now renders its own generated Compose payload and checksum
+  (`.effigy/runtime/compose/<env>.generated.compose.yml` beside the existing
+  per-environment overrides), so inspecting or handing over a sibling
+  environment never rewrites the requesting environment's admitted Compose
+  inputs between admission and publication. The first detached `up` of a
+  listener environment works again on fresh clones, ephemeral-scoped clones,
+  linked worktrees and primary checkouts, and admission verification stays
+  strict: real drift or a missing marker for a genuinely recorded partial
+  activation still refuses. Eject regenerates the same per-environment path.
 - Shared-service project names (`effigy-shared-<catalog>-<8 hex>`, which also
   name their data volumes) now pin SipHash-1-3 with zero keys, the algorithm
   `DefaultHasher` uses today. Existing names stay byte-identical, and a later

@@ -749,12 +749,12 @@ variant = "default"
         assert!(
             policy
                 .compose_file_display
-                .contains(".effigy-compose.generated.yml"),
+                .contains("web.generated.compose.yml"),
             "display should reference generated compose, got {}",
             policy.compose_file_display
         );
 
-        let compose_path = root.join(".effigy/runtime/compose/.effigy-compose.generated.yml");
+        let compose_path = root.join(".effigy/runtime/compose/web.generated.compose.yml");
         assert_eq!(policy.compose_files[0], compose_path);
         assert!(compose_path.exists(), "generated compose file should exist");
         let dns_override = fs::read_to_string(&policy.compose_files[1]).expect("read dns override");
@@ -961,7 +961,7 @@ variant = "default"
 
         let policy = load_container_policy(&root, None).expect("policy");
         let compose =
-            fs::read_to_string(root.join(".effigy/runtime/compose/.effigy-compose.generated.yml"))
+            fs::read_to_string(root.join(".effigy/runtime/compose/web.generated.compose.yml"))
                 .expect("compose");
 
         assert!(compose.contains("127.0.0.1:18080:80"), "{compose}");
@@ -1009,7 +1009,7 @@ variant = "default"
 
         let policy = load_container_policy(&root, None).expect("policy");
         let compose =
-            fs::read_to_string(root.join(".effigy/runtime/compose/.effigy-compose.generated.yml"))
+            fs::read_to_string(root.join(".effigy/runtime/compose/web.generated.compose.yml"))
                 .expect("compose");
 
         assert!(compose.contains("0.0.0.0:18080:80"), "{compose}");
@@ -1176,7 +1176,7 @@ catalog = "phpmyadmin"
 
         let policy = load_container_policy(&root, None).expect("policy");
         let compose =
-            fs::read_to_string(root.join(".effigy/runtime/compose/.effigy-compose.generated.yml"))
+            fs::read_to_string(root.join(".effigy/runtime/compose/web.generated.compose.yml"))
                 .expect("read generated compose");
 
         let http_ports = policy
@@ -1235,7 +1235,7 @@ catalog = "minio"
 
         let policy = load_container_policy(&root, None).expect("policy");
         let compose =
-            fs::read_to_string(root.join(".effigy/runtime/compose/.effigy-compose.generated.yml"))
+            fs::read_to_string(root.join(".effigy/runtime/compose/stack.generated.compose.yml"))
                 .expect("compose");
 
         assert!(!compose.contains("127.1.0.1:5432:5432"), "{compose}");
@@ -1678,7 +1678,7 @@ variant = "default"
         assert_eq!(shared.container_port, 3306);
 
         let compose =
-            fs::read_to_string(root.join(".effigy/runtime/compose/.effigy-compose.generated.yml"))
+            fs::read_to_string(root.join(".effigy/runtime/compose/web.generated.compose.yml"))
                 .expect("compose");
         assert!(!compose.contains("\n  db:\n"));
         assert!(compose.contains("DB_HOST: host.docker.internal"));
@@ -1693,7 +1693,7 @@ variant = "default"
         assert!(home
             .join("shared-services")
             .join(&shared.project_name)
-            .join(".effigy-compose.generated.yml")
+            .join(format!("{}.generated.compose.yml", shared.project_name))
             .exists());
     });
 }

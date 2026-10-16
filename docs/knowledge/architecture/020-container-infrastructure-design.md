@@ -141,7 +141,10 @@ catalog = "memcached"
 2. Load matching catalog fragments (project-local > user-global > active pack > bundled baseline).
 3. Substitute parameters into fragment templates.
 4. Assemble into a complete compose file.
-5. Write to `.effigy/runtime/compose/.effigy-compose.generated.yml` (gitignored).
+5. Write to `.effigy/runtime/compose/<container>.generated.compose.yml`
+   (gitignored). The generated payload and its checksum are per environment,
+   so resolving one environment never rewrites another environment's
+   generated Compose inputs.
 6. If `.effigy/runtime/compose/compose.override.yml` exists, pass both files
    to Docker Compose (`-f generated.yml -f override.yml`).
 7. Regenerate on manifest change (checksum comparison).

@@ -89,7 +89,7 @@ variant = "default"
     .expect("write manifest");
 
     let policy = load_container_policy(&root, None).expect("policy");
-    let generated = root.join(".effigy/runtime/compose/.effigy-compose.generated.yml");
+    let generated = root.join(".effigy/runtime/compose/web.generated.compose.yml");
     assert!(
         generated.exists(),
         "generated compose should exist before eject"
