@@ -14,7 +14,7 @@ use super::{
     LAUNCHD_JOB_LABEL,
 };
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, UdpSocket};
-use std::os::unix::io::{AsRawFd, IntoRawFd, RawFd};
+use std::os::fd::{AsFd, AsRawFd, FromRawFd, IntoRawFd, OwnedFd, RawFd};
 use std::path::PathBuf;
 
 fn loopback_ephemeral() -> SocketAddr {
@@ -44,14 +44,93 @@ fn into_owned_fd(listener: TcpListener) -> RawFd {
     listener.into_raw_fd()
 }
 
-fn assert_descriptor_closed(fd: RawFd) {
-    // SAFETY: `fd` is a raw fixture descriptor this test transferred to the
-    // adoption boundary; `F_GETFD` only reads its flag word and is expected
-    // to fail with EBADF once the boundary closed it exactly once.
+/// Retain the original socket object while its handed numeric slot can be
+/// closed and reused by another test. The duplicate prevents object-handle ABA.
+struct DescriptorCloseWitness {
+    slot: RawFd,
+    original: OwnedFd,
+}
+
+impl DescriptorCloseWitness {
+    fn new(socket: &impl AsFd) -> Self {
+        Self {
+            slot: socket.as_fd().as_raw_fd(),
+            original: socket
+                .as_fd()
+                .try_clone_to_owned()
+                .expect("retain fixture socket"),
+        }
+    }
+}
+
+fn assert_descriptor_closed(witness: &DescriptorCloseWitness) {
+    // SAFETY: F_DUPFD_CLOEXEC accepts any numeric slot and validates it in the
+    // kernel. Success creates a new descriptor owned exclusively by this call;
+    // it neither adopts nor closes the possibly unrelated original slot.
+    let snapshot = unsafe { libc::fcntl(witness.slot, libc::F_DUPFD_CLOEXEC, 0) };
+    if snapshot < 0 {
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::EBADF),
+            "only an absent descriptor proves closure without an object snapshot"
+        );
+        return;
+    }
+    // SAFETY: successful F_DUPFD_CLOEXEC returned a new, open descriptor with
+    // no other owner and no cleanup requirement beyond close. Only this copy
+    // is consumed; the observed numeric slot remains untouched.
+    let snapshot = unsafe { OwnedFd::from_raw_fd(snapshot) };
+    let stat = nix::sys::stat::fstat(&snapshot).expect("inspect owned descriptor snapshot");
+    if stat.st_mode & libc::S_IFMT == libc::S_IFSOCK {
+        assert_ne!(
+            super::fd_socket_identity(snapshot.as_raw_fd()).expect("snapshot socket identity"),
+            super::fd_socket_identity(witness.original.as_raw_fd())
+                .expect("retained original socket identity"),
+            "refused handed slot still refers to the original socket"
+        );
+    }
+}
+
+/// Closure can reuse the same test-owned slot without making its successor
+/// the handed socket. Keep both objects alive and preserve the successor.
+#[test]
+fn listener_handoff_close_oracle_distinguishes_atomic_owned_slot_reuse() {
+    let (original, _) = listening_socket();
+    let slot: OwnedFd = original.into();
+    let witness = DescriptorCloseWitness::new(&slot);
+    let (successor, successor_addr) = listening_socket();
+    // SAFETY: both descriptors are open and exclusively owned by this test.
+    // dup2 atomically replaces the still-owned slot; there is no close/reopen
+    // gap in which another thread could acquire the destination descriptor.
+    // `slot` remains its sole owner and now closes the duplicated successor.
     assert_eq!(
-        unsafe { libc::fcntl(fd, libc::F_GETFD) },
-        -1,
-        "refused handed descriptor must be closed exactly once"
+        unsafe { libc::dup2(successor.as_raw_fd(), slot.as_raw_fd()) },
+        slot.as_raw_fd()
+    );
+    let old_oracle = std::panic::catch_unwind(|| {
+        // SAFETY: the destination is still an open fixture-owned descriptor.
+        assert_eq!(unsafe { libc::fcntl(slot.as_raw_fd(), libc::F_GETFD) }, -1);
+    });
+    assert!(
+        old_oracle.is_err(),
+        "old numeric-only oracle must reject reuse"
+    );
+    assert_descriptor_closed(&witness);
+    let stream = std::net::TcpStream::connect(successor_addr).expect("connect successor");
+    let (accepted, _) = successor.accept().expect("successor remains usable");
+    drop(accepted);
+    drop(stream);
+}
+
+/// A live original descriptor is a real leak and must still fail the oracle.
+#[test]
+fn listener_handoff_close_oracle_refuses_an_unclosed_original() {
+    let (original, _) = listening_socket();
+    let witness = DescriptorCloseWitness::new(&original);
+    assert!(std::panic::catch_unwind(|| assert_descriptor_closed(&witness)).is_err());
+    assert_eq!(
+        original.local_addr().expect("original remains owned").ip(),
+        IpAddr::V4(Ipv4Addr::LOCALHOST)
     );
 }
 
@@ -129,6 +208,7 @@ fn listener_handoff_adopted_listeners_convert_to_tokio() {
 #[test]
 fn listener_handoff_refuses_wrong_endpoint_and_closes_handed_descriptors() {
     let (actual_listener, actual_addr) = listening_socket();
+    let fd_witness = DescriptorCloseWitness::new(&actual_listener);
     let fd = into_owned_fd(actual_listener);
     let specs = [spec(
         HANDOFF_HTTP_SOCKET_NAME,
@@ -151,7 +231,7 @@ fn listener_handoff_refuses_wrong_endpoint_and_closes_handed_descriptors() {
         }
         other => panic!("expected WrongEndpoint, got {other:?}"),
     }
-    assert_descriptor_closed(fd);
+    assert_descriptor_closed(&fd_witness);
 }
 
 /// An IPv6 socket refuses against the IPv4 loopback contract.
@@ -162,6 +242,7 @@ fn listener_handoff_refuses_wrong_family() {
         0,
     ))
     .expect("ipv6 loopback bind");
+    let fd_witness = DescriptorCloseWitness::new(&listener);
     let fd = into_owned_fd(listener);
     let specs = [spec(HANDOFF_HTTP_SOCKET_NAME, loopback_ephemeral())];
     let error = validate_and_adopt(
@@ -180,7 +261,7 @@ fn listener_handoff_refuses_wrong_family() {
         ),
         "expected WrongFamily, got {error:?}"
     );
-    assert_descriptor_closed(fd);
+    assert_descriptor_closed(&fd_witness);
 }
 
 /// A connected stream socket (not listening) refuses.
@@ -189,6 +270,7 @@ fn listener_handoff_refuses_non_listening_stream_socket() {
     let (listener, addr) = listening_socket();
     let stream = std::net::TcpStream::connect(addr).expect("connect");
     let accepted = listener.accept().expect("accept").0;
+    let fd_witness = DescriptorCloseWitness::new(&accepted);
     let fd = accepted.into_raw_fd();
     drop(stream);
     let specs = [spec(HANDOFF_HTTP_SOCKET_NAME, addr)];
@@ -208,7 +290,7 @@ fn listener_handoff_refuses_non_listening_stream_socket() {
         ),
         "expected NotListening, got {error:?}"
     );
-    assert_descriptor_closed(fd);
+    assert_descriptor_closed(&fd_witness);
     close_owned_fd(listener.into_raw_fd());
 }
 
@@ -216,6 +298,7 @@ fn listener_handoff_refuses_non_listening_stream_socket() {
 #[test]
 fn listener_handoff_refuses_datagram_socket() {
     let socket = UdpSocket::bind(loopback_ephemeral()).expect("udp bind");
+    let fd_witness = DescriptorCloseWitness::new(&socket);
     let fd = socket.into_raw_fd();
     let specs = [spec(HANDOFF_HTTP_SOCKET_NAME, loopback_ephemeral())];
     let error = validate_and_adopt(
@@ -234,19 +317,18 @@ fn listener_handoff_refuses_datagram_socket() {
         ),
         "expected WrongSocketType, got {error:?}"
     );
-    assert_descriptor_closed(fd);
+    assert_descriptor_closed(&fd_witness);
 }
 
 /// The same socket object handed under both names refuses and closes once.
 #[test]
 fn listener_handoff_refuses_duplicate_socket_object() {
     let (listener, addr) = listening_socket();
+    let fd_witness = DescriptorCloseWitness::new(&listener);
     let fd = into_owned_fd(listener);
-    // SAFETY: `fd` is a fixture-owned open descriptor; `dup` creates one
-    // additional descriptor for the same socket object, which the refusal
-    // path must close exactly once each.
-    let duplicate = unsafe { libc::dup(fd) };
-    assert!(duplicate >= 0);
+    let duplicate_owned = fd_witness.original.try_clone().expect("duplicate socket");
+    let duplicate_witness = DescriptorCloseWitness::new(&duplicate_owned);
+    let duplicate = duplicate_owned.into_raw_fd();
     let specs = [
         spec(HANDOFF_HTTP_SOCKET_NAME, addr),
         spec(HANDOFF_HTTPS_SOCKET_NAME, addr),
@@ -270,17 +352,17 @@ fn listener_handoff_refuses_duplicate_socket_object() {
         ),
         "expected DuplicateSocketObject, got {error:?}"
     );
-    assert_descriptor_closed(fd);
-    assert_descriptor_closed(duplicate);
+    assert_descriptor_closed(&fd_witness);
+    assert_descriptor_closed(&duplicate_witness);
 }
 
 /// A missing or duplicated descriptor count for one socket name refuses.
 #[test]
 fn listener_handoff_refuses_missing_or_extra_socket_descriptors() {
     let (listener, addr) = listening_socket();
+    let fd_witness = DescriptorCloseWitness::new(&listener);
     let fd = into_owned_fd(listener);
-    let extra = unsafe { libc::dup(fd) };
-    assert!(extra >= 0);
+    let extra = fd_witness.original.try_clone().expect("extra socket");
     let specs = [
         spec(HANDOFF_HTTP_SOCKET_NAME, addr),
         spec(HANDOFF_HTTPS_SOCKET_NAME, addr),
@@ -299,14 +381,16 @@ fn listener_handoff_refuses_missing_or_extra_socket_descriptors() {
         ),
         "expected count 0 refusal, got {error:?}"
     );
-    assert_descriptor_closed(fd);
-    close_owned_fd(extra);
+    assert_descriptor_closed(&fd_witness);
+    drop(extra);
 
     // Two descriptors for one name refuse before any validation.
     let (listener, addr) = listening_socket();
+    let fd_witness = DescriptorCloseWitness::new(&listener);
     let fd = into_owned_fd(listener);
-    let extra = unsafe { libc::dup(fd) };
-    assert!(extra >= 0);
+    let extra_owned = fd_witness.original.try_clone().expect("extra socket");
+    let extra_witness = DescriptorCloseWitness::new(&extra_owned);
+    let extra = extra_owned.into_raw_fd();
     let specs = [spec(HANDOFF_HTTP_SOCKET_NAME, addr)];
     let error = validate_and_adopt(
         &specs,
@@ -321,14 +405,15 @@ fn listener_handoff_refuses_missing_or_extra_socket_descriptors() {
         ),
         "expected count 2 refusal, got {error:?}"
     );
-    assert_descriptor_closed(fd);
-    assert_descriptor_closed(extra);
+    assert_descriptor_closed(&fd_witness);
+    assert_descriptor_closed(&extra_witness);
 }
 
 /// Root and sudo-environment identities refuse before any descriptor work.
 #[test]
 fn listener_handoff_refuses_root_and_sudo_identities() {
     let (listener, addr) = listening_socket();
+    let fd_witness = DescriptorCloseWitness::new(&listener);
     let fd = into_owned_fd(listener);
     let specs = [spec(HANDOFF_HTTP_SOCKET_NAME, addr)];
     let activated = [(HANDOFF_HTTP_SOCKET_NAME, vec![fd])];
@@ -340,9 +425,10 @@ fn listener_handoff_refuses_root_and_sudo_identities() {
         validate_and_adopt(&specs, &activated, &root).expect_err("root identity must refuse");
     assert!(matches!(error, ListenerHandoffError::RootIdentity));
     // The refusal is fail-closed: the handed descriptor is still closed.
-    assert_descriptor_closed(fd);
+    assert_descriptor_closed(&fd_witness);
 
     let (listener, addr) = listening_socket();
+    let fd_witness = DescriptorCloseWitness::new(&listener);
     let fd = into_owned_fd(listener);
     let sudo = HandoffIdentity {
         effective_uid: 501,
@@ -355,7 +441,7 @@ fn listener_handoff_refuses_root_and_sudo_identities() {
     )
     .expect_err("sudo environment must refuse");
     assert!(matches!(error, ListenerHandoffError::ElevatedInvocation));
-    assert_descriptor_closed(fd);
+    assert_descriptor_closed(&fd_witness);
 }
 
 /// Production adoption refuses outside launchd without binding anything.

@@ -369,3 +369,23 @@ thread settlement. Candidate preparation `31b0634c` at `c780fc69` retained the
 unexpected-success failure, rolled back and settled failed without escaped
 descendants. The precise competing historical thread is unknown; new source
 still requires independent review, candidate CI and every prepared-version gate.
+
+
+### Listener-handoff fixture descriptor ownership
+
+A handed raw descriptor number can be reused after the handoff closes it.
+Post-refusal `F_GETFD` on that number cannot by itself distinguish a leaked
+original socket from an unrelated successor. Closure proofs retain an owned
+socket duplicate before transfer, pinning the original object, then atomically
+duplicate any current slot for read-only identity comparison. Only exact EBADF,
+a proven non-socket or a different socket object establishes release of the
+original slot; unknown inspection remains a failed assertion. Only the owned
+snapshot and witness are closed, never the potentially unrelated observed slot.
+
+Controlled fixtures atomically replace a still-owned descriptor slot and keep
+the successor usable, while a genuinely unclosed original still fails. The
+real handoff refusal family runs together with eight libtest threads. Production
+handoff validation and descriptor cleanup remain unchanged. Preparation
+`61f662d8` at `6bd9af00` failed the numeric-only closure assertion and rolled back;
+its exact historical successor is unknown. New source checks do not qualify the
+prepared 0.15.0 tree or waive any candidate CI or release gate.
