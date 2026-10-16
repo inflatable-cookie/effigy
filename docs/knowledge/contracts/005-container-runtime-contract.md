@@ -198,12 +198,15 @@ changed inputs refuse until `effigy container down`. A *completed* activation
 writes a completion marker beside its record. When its inputs later change, or
 when a running stack has no record at all (a stack started by an earlier
 release, by a container task, or whose record write failed), detached `up`
-first proves that every running project container belongs to this checkout and
-scope, then retires the stale record and admits the current inputs with an
-ordinary Compose up. A container with no checkout, working-directory or scope
-label is adopted only on positive evidence: it must carry this project's exact
-full identity (listed name, project, declared service, running, not one-off) and
-bind-mount this checkout at the policy working directory. Absent labels are not
+first proves that every project container - running or stopped, because a
+project-wide Compose up can start or recreate a stopped declared sibling -
+belongs to this checkout and scope, then retires the stale record and admits
+the current inputs with an ordinary Compose up. A container with no checkout,
+working-directory or scope label is adopted only on positive evidence: it must
+carry this project's exact full identity (listed name, project, declared
+service, running, not one-off) and bind-mount this checkout at the policy
+working directory. A stopped container is proven by its checkout and scope
+labels; an unlabelled stopped container is not proven. Absent labels are not
 proof by themselves. Anything not proven refuses with no Compose up, restart or
 publication, and names `container down` for the owner.
 

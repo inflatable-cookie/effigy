@@ -324,8 +324,9 @@ pub(in crate::runner) fn retire_stale_detached_admission(
     clear_partial_activation(repo_root, policy)
 }
 
-/// Refuse a fresh `compose up` over running containers this checkout cannot
-/// prove are its own, so another checkout's stack is never recreated.
+/// Refuse a fresh `compose up` over any project container this checkout cannot
+/// prove is its own, running or stopped, so another checkout's stack is never
+/// started, recreated or replaced.
 pub(in crate::runner) fn ensure_running_stack_admits_reactivation(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
@@ -337,12 +338,15 @@ pub(in crate::runner) fn ensure_running_stack_admits_reactivation(
             policy.name
         ))
     };
-    let rows = effigy_containers::exec::list_running_compose_containers_for_policy_with_deadline(
-        repo_root,
-        policy,
-        Some(deadline),
-    )
-    .map_err(|error| refusal(format!("running containers could not be listed ({error})")))?;
+    // Include stopped rows: a project-wide `compose up` can start or recreate a
+    // stopped declared sibling, so its ownership must be proven too.
+    let rows =
+        effigy_containers::exec::list_compose_containers_for_policy_including_stopped_with_deadline(
+            repo_root,
+            policy,
+            Some(deadline),
+        )
+        .map_err(|error| refusal(format!("project containers could not be listed ({error})")))?;
     effigy_containers::exec::running_stack_admits_reactivation(repo_root, policy, &rows, deadline)
         .map_err(|error| refusal(error.to_string()))
 }

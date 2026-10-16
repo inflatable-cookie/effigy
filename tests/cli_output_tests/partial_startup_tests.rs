@@ -653,6 +653,38 @@ fn private_unrecorded_owned_running_stack_reactivates_with_current_inputs() {
 }
 
 #[test]
+fn private_foreign_stopped_sibling_refuses_project_wide_reactivation() {
+    // An unrecorded running stack of this checkout must not be re-activated
+    // while the project also has a stopped declared sibling owned by another
+    // checkout: a project-wide Compose up would start or recreate it. The
+    // reactivation gate must inventory stopped containers, not only running
+    // ones, and refuse the unproven sibling.
+    let mut fixture = Fixture::new();
+    fixture.set(0, "mode", json!("marker-write-fail"));
+    let failed = fixture.run(0, &["container", "up", "--detach", "--json"]);
+    assert!(!failed.status.success(), "{failed:?}");
+    assert!(fixture.state(0)["active"].as_bool().unwrap());
+    let blocked = fixture
+        .root
+        .path()
+        .join("home/.effigy/runtime/host-container-leases");
+    fs::remove_file(&blocked).expect("remove exclusively owned write fault");
+    fixture.set(0, "mode", json!("foreign-stopped-sibling"));
+    let manifest = fixture.stacks[0].root.join("effigy.toml");
+    let mut changed = fs::read(&manifest).unwrap();
+    changed.extend_from_slice(b"\n# changed while a foreign stopped sibling exists\n");
+    fs::write(&manifest, changed).unwrap();
+
+    let refused = fixture.run(0, &["container", "up", "--detach"]);
+    assert!(!refused.status.success(), "{refused:?}");
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(stderr.contains("not proven to belong"), "{stderr}");
+    assert!(stderr.contains("container down"), "{stderr}");
+    fixture.assert_no_recreation(0);
+    fixture.probe(0);
+}
+
+#[test]
 fn private_unscoped_inspect_requires_exact_absence() {
     let mut fixture = Fixture::new();
     let output = Command::new("git")
@@ -1166,8 +1198,16 @@ if args and args[0]=='ps':
   if not s['active'] or not selected(s): continue
   if '{{.Names}}' in args: print(s['project']+'-db-1')
   elif '--format' in args: print(s['project']+'-db-1\tUp 1 minute\t127.0.0.1:'+str(s['port'])+'->'+str(s['container_port'])+'/tcp\t'+s['project']+'\t'+s['checkout']+'\t'+('undeclared' if s['mode']=='orphan' else 'db')+'\tfalse')
+ if mode=='foreign-stopped-sibling' and '--format' in args:
+  # A stopped declared sibling of this same project, owned by another
+  # checkout. A project-wide Compose up would start or recreate it.
+  print(state['project']+'-db-2\tExited (0) 5 minutes ago\t\t'+state['project']+'\t'+str(root/'stack1')+'\tdb\tfalse')
  sys.exit(0)
 if args and args[0]=='inspect':
+ requested=args[args.index('inspect')+1]
+ if mode=='foreign-stopped-sibling' and requested.endswith('-db-2'):
+  print(json.dumps([{'Id':'b'*64,'Name':'/'+state['project']+'-db-2','State':{'Status':'exited','Running':False},'Config':{'Labels':{'com.docker.compose.project':state['project'],'com.docker.compose.service':'db','com.docker.compose.oneoff':'false','com.docker.compose.project.working_dir':str(root/'stack1')}},'Mounts':[],'NetworkSettings':{'Ports':{}}}]))
+  sys.exit(0)
  labels={'com.docker.compose.project':state['project'],'com.docker.compose.service':'db','com.docker.compose.oneoff':'false','com.docker.compose.project.working_dir':str(cwd)}
  r=record(state)
  if r: labels['com.effigy.scope']=r['token']

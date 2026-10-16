@@ -275,9 +275,11 @@ During v0.x, MINOR bumps may include breaking changes.
   Colima's per-call SSH hop.
 - Detached `container up` applies changed manifest inputs to a stack whose last
   activation completed, and adopts running stacks started by v0.14.1 or by a
-  container task, once every running container is proven to belong to this
-  checkout. Recorded partial activations keep refusing changed inputs, and
-  containers that may belong to another checkout are never recreated.
+  container task, once every project container, running or stopped, is proven to
+  belong to this checkout. A stopped declared sibling counts because a
+  project-wide Compose up would start or recreate it. Recorded partial
+  activations keep refusing changed inputs, and containers that may belong to
+  another checkout are never recreated.
 - `container shell --bounded` verifies, inside its budget, that the selected
   service container belongs to this checkout, then runs the command and copies
   workspace artifacts to that exact container. On Colima it previously could
