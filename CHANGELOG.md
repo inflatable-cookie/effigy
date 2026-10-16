@@ -243,6 +243,11 @@ During v0.x, MINOR bumps may include breaking changes.
   1.2.0.
 
 ### Fixed
+- Automatic local Linux artifact rebuilds now use the stable managed builder
+  project `effigy-artifact-builder-v1`, preserving checkout/worktree isolation.
+  Ambiguous legacy builders and their admissions/caches remain untouched; no
+  manual reset is required. Future builds reuse the new strictly owned builder.
+  Its separate caches may require downloads and additional disk space.
 - Vault-generation regression coverage uses the production CLI boundary without
   leaking its internal generation marker into parallel Rhai unit tests.
 - Container preflight and workspace catalog preparation use the existing

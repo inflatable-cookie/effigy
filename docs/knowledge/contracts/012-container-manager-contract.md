@@ -166,7 +166,13 @@ for command/result ownership and native limits.
 ### Linux workspace artifact builder execution
 
 The maintained artifact task has a narrow execution-only recovery operation for
-an owned running source-bound builder. It does not readmit changed Compose
+an owned running source-bound builder. Its stable private project base is
+`effigy-artifact-builder-v1`, retaining ordinary checkout/worktree isolation.
+The one-time namespace migration creates a new labelled builder and leaves
+legacy `effigy-linux-release` containers, admissions and caches untouched;
+ambiguous legacy objects are never adopted or executed. Later upgrades reuse
+the same managed project. Separate new caches can cost downloads and disk
+space; no cleanup is required to proceed. It does not readmit changed Compose
 inputs or grant general application recovery authority. The
 [backend compatibility contract](006-compose-backend-compatibility.md) owns its
 identity, bind, locking, deadline and refusal rules.

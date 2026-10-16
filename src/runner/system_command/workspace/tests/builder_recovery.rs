@@ -18,10 +18,17 @@ identity = state / 'identity.json'
 if cmd == 'info': sys.exit(0)
 if cmd == 'ps':
     if mode == 'list_fail': sys.exit(19)
-    if identity.exists():
-        row = json.loads(identity.read_text())[0]
+    if mode == 'malformed_list': print('\tUp\t\t' + os.environ['EFFIGY_RECOVERY_PROJECT'] + '\t\tbuilder\t'); sys.exit(0)
+    records = json.loads(identity.read_text()) if identity.exists() else []
+    legacy = state / 'legacy.json'
+    if legacy.exists(): records += json.loads(legacy.read_text())
+    for row in records:
         labels = row['Config']['Labels']
-        print('%s\tUp 1 second\t\t%s\t\t%s\tFalse' % (row['Name'].lstrip('/'), os.environ['EFFIGY_RECOVERY_PROJECT'], 'builder'))
+        project = labels['com.docker.compose.project'] if row in (json.loads(legacy.read_text()) if legacy.exists() else []) else os.environ['EFFIGY_RECOVERY_PROJECT']
+        if '--filter' in args and args[args.index('--filter')+1] != 'label=com.docker.compose.project=' + project: continue
+        line = '%s\t%s\t\t%s\t%s\t%s\t%s' % (row['Name'].lstrip('/'), 'Up 1 second' if row['State']['Running'] else 'Exited (0)', project, labels.get('com.docker.compose.project.working_dir', ''), labels.get('com.docker.compose.service', ''), labels.get('com.docker.compose.oneoff', ''))
+        print(line)
+        if mode == 'multiple_rows' and project == os.environ['EFFIGY_RECOVERY_PROJECT']: print(line)
     sys.exit(0)
 if cmd == 'inspect':
     if mode == 'inspect_fail': sys.exit(20)
@@ -36,15 +43,21 @@ if cmd == 'inspect':
     if mode == 'remove_marker':
         for marker in (root / 'host-home').rglob('*.partial.json'): marker.unlink()
     if mode == 'replace' and count > 1: row[0]['Id'] = 'b' * 64
+    if mode == 'change_name' and count > 1: row[0]['Name'] = '/successor-builder-1'
+    if mode == 'multiple_inspect': row += row
     if mode == 'change_bind' and count > 1: row[0]['Mounts'][0]['Source'] = str(state)
+    if mode == 'up_inspect_fail': sys.exit(24)
     print(json.dumps(row))
     sys.exit(0)
 if cmd == 'up':
     if mode == 'up_fail': sys.exit(21)
     override = next(a for a in args if a.endswith('ownership.compose.yml'))
     labels = dict(re.findall(r'^\s*(com\.effigy\.[^:]+): (.+)$', pathlib.Path(override).read_text(), re.M))
-    labels.update({'com.docker.compose.project': os.environ['EFFIGY_RECOVERY_PROJECT'], 'com.docker.compose.service': 'builder', 'com.docker.compose.oneoff': 'False'})
-    identity.write_text(json.dumps([{'Id': 'a'*64, 'Name': '/private-builder-1', 'State': {'Running': True, 'Status': 'running'}, 'Config': {'Labels': labels}, 'Mounts': [{'Type': 'bind', 'Source': str(root), 'Destination': '/workspace', 'RW': True}], 'NetworkSettings': {'Ports': {}}}]))
+    labels.update({'com.docker.compose.project': os.environ['EFFIGY_RECOVERY_PROJECT'], 'com.docker.compose.service': 'builder'})
+    if os.environ['EFFIGY_COMPOSE_BACKEND'] == 'docker':
+        labels.update({'com.docker.compose.oneoff': 'False', 'com.docker.compose.project.working_dir': str(root)})
+    if mode == 'up_bad_labels': labels.pop('com.effigy.checkout', None)
+    identity.write_text(json.dumps([{'Id': 'a'*64, 'Name': '/' + os.environ['EFFIGY_RECOVERY_PROJECT'] + '-builder-1', 'State': {'Running': True, 'Status': 'running'}, 'Config': {'Labels': labels}, 'Mounts': [{'Type': 'bind', 'Source': str(root), 'Destination': '/workspace', 'RW': True}], 'NetworkSettings': {'Ports': {}}}]))
     sys.exit(0)
 if cmd == 'exec':
     tail = args[args.index('exec')+1:]
@@ -52,7 +65,10 @@ if cmd == 'exec':
         tail = tail[1:] if tail[0] in ['-i', '-t', '-T'] else tail[2:]
     if tail[0] != 'a'*64: sys.exit(22)
     if tail[1:] == ['true']: sys.exit(0)
-    (state / 'build-effect').write_text('verified build')
+    if len(tail) != 4 or tail[1:3] != ['sh', '-lc']: sys.exit(25)
+    script = tail[3]
+    if not all(part in script for part in ['cargo build --release --bin effigy', 'cd /workspace', 'EFFIGY_ACTIVE_VERSION=', '/workspace/.effigy/linux-release/artifacts/effigy-']): sys.exit(26)
+    (state / 'build-effect').write_text('verified current-source build')
     if mode == 'signal_success':
         (state / 'await-signal').write_text('ready')
         time.sleep(0.8)
@@ -80,6 +96,10 @@ struct Fixture {
 
 impl Fixture {
     fn new(retained: bool, changed: bool, backend: &str) -> Self {
+        Self::with_declaration(retained, changed, backend, true)
+    }
+
+    fn with_declaration(retained: bool, changed: bool, backend: &str, scoped: bool) -> Self {
         let temp = tempfile::Builder::new()
             .prefix("effigy-parent-fixtures-recovery-")
             .tempdir_in(crate::contract_test_support::test_fixture_parent())
@@ -88,9 +108,21 @@ impl Fixture {
         std::fs::create_dir_all(root.join(".git")).unwrap();
         std::fs::write(
             root.join(".git/config"),
-            "[core]\nrepositoryformatversion = 0\n[effigy]\nruntimeScope = ephemeral\n",
+            if scoped {
+                "[core]\nrepositoryformatversion = 0\n[effigy]\nruntimeScope = ephemeral\n"
+            } else {
+                "[core]\nrepositoryformatversion = 0\n"
+            },
         )
         .unwrap();
+        if scoped {
+            // Match the closed owner's project spelling without touching a real checkout.
+            std::fs::write(
+                root.join(".git/effigy-runtime-scope"),
+                "7288dc2b3e8400000000000000000000",
+            )
+            .unwrap();
+        }
         std::fs::create_dir_all(root.join("scripts")).unwrap();
         std::fs::create_dir_all(root.join("state")).unwrap();
         std::fs::create_dir_all(root.join("bin")).unwrap();
@@ -99,21 +131,14 @@ impl Fixture {
             include_str!("../../../../../scripts/build-linux-workspace-artifact.rhai"),
         )
         .unwrap();
-        std::fs::write(root.join("compose.yml"), "services:\n  builder:\n    image: private:fixture\n    working_dir: /workspace\n    volumes:\n      - ./:/workspace\n      - cargo-registry:/root/.cargo/registry\nvolumes:\n  cargo-registry:\n").unwrap();
+        // Exercise the shipped declaration and Compose paths, not a test-only project.
+        let declaration = include_str!("../../../../../config/containers.toml");
+        std::fs::write(root.join("effigy.toml"), format!("[tasks.\"workspace:linux:artifact\"]\nrun = [{{ rhai = \"scripts/build.rhai\" }}]\n{declaration}")).unwrap();
+        let compose = root.join("infra/release/linux/docker-compose.yml");
+        std::fs::create_dir_all(compose.parent().unwrap()).unwrap();
         std::fs::write(
-            root.join("effigy.toml"),
-            r#"[tasks."workspace:linux:artifact"]
-run = [{ rhai = "scripts/build.rhai" }]
-[containers.linux-release]
-driver = "colima"
-startup = "detached"
-profile = "effigy-release"
-compose_file = "compose.yml"
-project_name = "private-builder"
-primary_service = "builder"
-[containers.linux-release.host]
-mounts = ["./:/workspace"]
-"#,
+            compose,
+            include_str!("../../../../../infra/release/linux/docker-compose.yml"),
         )
         .unwrap();
         let bin = root.join("bin");
@@ -121,9 +146,10 @@ mounts = ["./:/workspace"]
         write_executable(
             &bin.join("colima"),
             r#"#!/bin/sh
+printf '%s\n' "$*" >> "$EFFIGY_RECOVERY_ROOT/state/colima-calls"
 case "$1" in
 status) echo 'INFO[0000] status: Running' ;;
-ssh|start) exit 0 ;;
+ssh) exit 0 ;;
 nerdctl) while [ "$1" != -- ]; do shift; done; shift; exec "$(dirname "$0")/docker" "$@" ;;
 *) exit 1 ;;
 esac
@@ -164,7 +190,7 @@ esac
                 .unwrap()
                 .trim());
             }
-            let identity = json!([{"Id": "a".repeat(64), "Name": "/private-builder-1", "State": {"Running": true, "Status": "running"}, "Config": {"Labels": labels}, "Mounts": [{"Type": "bind", "Source": root, "Destination": "/workspace", "RW": true}], "NetworkSettings": {"Ports": {}}}]);
+            let identity = json!([{"Id": "a".repeat(64), "Name": format!("/{}-builder-1", policy.project_name), "State": {"Running": true, "Status": "running"}, "Config": {"Labels": labels}, "Mounts": [{"Type": "bind", "Source": root, "Destination": "/workspace", "RW": true}], "NetworkSettings": {"Ports": {}}}]);
             std::fs::write(root.join("state/identity.json"), identity.to_string()).unwrap();
             crate::runner::host_container_lease::record_partial_activation(&root, &policy).unwrap();
         }
@@ -189,17 +215,7 @@ esac
         }
         let lease_root = root.join("host-home/.effigy/runtime/host-container-leases");
         if retained {
-            fn visit(dir: &Path, files: &mut Vec<(PathBuf, Vec<u8>)>) {
-                for entry in std::fs::read_dir(dir).unwrap() {
-                    let path = entry.unwrap().path();
-                    if path.is_dir() {
-                        visit(&path, files);
-                    } else {
-                        files.push((path.clone(), std::fs::read(path).unwrap()));
-                    }
-                }
-            }
-            visit(&lease_root, &mut preserved);
+            preserve_tree(&lease_root, &mut preserved);
         }
         Self {
             _temp: temp,
@@ -208,6 +224,80 @@ esac
             _env: env,
             preserved,
         }
+    }
+
+    fn retain_legacy(&mut self, kind: &str) {
+        let manifest = self.root.join("effigy.toml");
+        let current = std::fs::read_to_string(&manifest).unwrap();
+        std::fs::write(
+            &manifest,
+            current.replace("effigy-artifact-builder-v1", "effigy-linux-release"),
+        )
+        .unwrap();
+        let legacy =
+            effigy_containers::load_container_policy(&self.root, Some("linux-release")).unwrap();
+        crate::runner::host_container_lease::record_partial_activation(&self.root, &legacy)
+            .unwrap();
+        // The old admission really predates the shipped declaration change.
+        std::fs::write(&manifest, current).unwrap();
+        preserve_tree(
+            &self
+                .root
+                .join("host-home/.effigy/runtime/host-container-leases"),
+            &mut self.preserved,
+        );
+        if kind == "absent" {
+            return;
+        }
+        let mut labels = json!({"com.docker.compose.project": legacy.project_name, "com.docker.compose.service": "builder"});
+        if kind == "labelled" {
+            labels["com.effigy.checkout"] = json!(self.root);
+            labels["com.docker.compose.project.working_dir"] = json!(self.root);
+            labels["com.docker.compose.oneoff"] = json!("False");
+            if let Some(scope) = effigy_core::worktree_scope::resolve(&self.root).unwrap() {
+                labels["com.effigy.scope"] = json!(std::fs::read_to_string(
+                    scope
+                        .token_dir
+                        .join(effigy_core::worktree_scope::SCOPE_FILE)
+                )
+                .unwrap()
+                .trim());
+            }
+        }
+        // A supported nerdctl `compose run --name <project>-builder-1`
+        // counterexample has the same metadata; no absent label proves oneoff=false.
+        let id = if kind == "named_oneoff" {
+            "c".repeat(64)
+        } else {
+            "2f8c5ff844de522282140bc51b634eb1da22df359e701197f0b0016416f41217".to_owned()
+        };
+        let record = json!([{
+            "Id": id, "Name": format!("{}-builder-1", legacy.project_name),
+            "State": {"Status": "running", "Running": true}, "Config": {"Labels": labels},
+            "Mounts": [
+                {"Type": "bind", "Source": self.root, "Destination": "/workspace", "RW": true},
+                {"Type": "volume", "Source": format!("/var/lib/nerdctl/1935db59/volumes/default/{}_cargo-registry/_data", legacy.project_name), "Destination": "/root/.cargo/registry", "RW": true},
+                {"Type": "volume", "Source": format!("/var/lib/nerdctl/1935db59/volumes/default/{}_cargo-git/_data", legacy.project_name), "Destination": "/root/.cargo/git", "RW": true}
+            ], "NetworkSettings": {"Ports": {}}
+        }]);
+        let path = self.root.join("state/legacy.json");
+        std::fs::write(&path, record.to_string()).unwrap();
+        self.preserved.push((path, record.to_string().into_bytes()));
+    }
+
+    fn calls(&self) -> Vec<Vec<String>> {
+        std::fs::read_to_string(self.root.join("state/calls"))
+            .unwrap_or_default()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect()
+    }
+
+    fn activation_count(&self) -> usize {
+        self.calls()
+            .iter()
+            .filter(|args| args.iter().any(|arg| arg == "up"))
+            .count()
     }
 
     fn host(&self) -> PathBuf {
@@ -301,6 +391,43 @@ esac
                 && !trace.contains("\"restart\""),
             "{trace}"
         );
+        for args in self.calls() {
+            assert!(
+                !args.iter().any(|arg| arg.contains("effigy-linux-release")
+                    || arg == "2f8c5ff844de522282140bc51b634eb1da22df359e701197f0b0016416f41217"
+                    || arg == &"c".repeat(64)),
+                "legacy identity was targeted: {args:?}"
+            );
+            if args.iter().any(|arg| arg == "up") {
+                assert!(
+                    args.windows(2).any(|pair| pair
+                        == ["--project-name", self.policy.project_name.as_str()]
+                        || pair == ["-p", self.policy.project_name.as_str()]),
+                    "{args:?}"
+                );
+            }
+        }
+        let colima =
+            std::fs::read_to_string(self.root.join("state/colima-calls")).unwrap_or_default();
+        assert!(
+            !colima
+                .lines()
+                .any(|line| ["start", "stop", "delete", "restart"]
+                    .iter()
+                    .any(|action| line.starts_with(action))),
+            "{colima}"
+        );
+    }
+}
+
+fn preserve_tree(dir: &Path, files: &mut Vec<(PathBuf, Vec<u8>)>) {
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            preserve_tree(&path, files);
+        } else if !files.iter().any(|(saved, _)| saved == &path) {
+            files.push((path.clone(), std::fs::read(path).unwrap()));
+        }
     }
 }
 
@@ -368,6 +495,12 @@ fn foreign_missing_malformed_replaced_and_unbound_builders_refuse_before_build()
         "foreign_scope",
         "foreign_project",
         "foreign_service",
+        "foreign_working_dir",
+        "oneoff",
+        "multiple_rows",
+        "multiple_inspect",
+        "malformed_list",
+        "change_name",
         "unlabelled",
         "bad_id",
         "missing",
@@ -390,6 +523,8 @@ fn foreign_missing_malformed_replaced_and_unbound_builders_refuse_before_build()
             "foreign_scope" => fixture.mutate(|row| row["Config"]["Labels"]["com.effigy.scope"] = json!("foreign-scope")),
             "foreign_project" => fixture.mutate(|row| row["Config"]["Labels"]["com.docker.compose.project"] = json!("foreign-project")),
             "foreign_service" => fixture.mutate(|row| row["Config"]["Labels"]["com.docker.compose.service"] = json!("app")),
+            "foreign_working_dir" => fixture.mutate(|row| row["Config"]["Labels"]["com.docker.compose.project.working_dir"] = json!(fixture.root.join("state"))),
+            "oneoff" => fixture.mutate(|row| row["Config"]["Labels"]["com.docker.compose.oneoff"] = json!("True")),
             "unlabelled" => fixture.mutate(|row| { row["Config"]["Labels"].as_object_mut().unwrap().remove("com.effigy.checkout"); }),
             "missing_scope" => fixture.mutate(|row| { row["Config"]["Labels"].as_object_mut().unwrap().remove("com.effigy.scope"); }),
             "stopped" => fixture.mutate(|row| { row["State"]["Running"] = json!(false); row["State"]["Status"] = json!("exited"); }),
@@ -445,7 +580,7 @@ fn concurrent_caller_and_expired_binding_have_no_effect() {
     assert!(!fixture.root.join("state/build-effect").exists());
     drop(guard);
     let row = effigy_containers::exec::RunningComposeContainer {
-        container_name: "private-builder-1".to_owned(),
+        container_name: format!("{}-builder-1", fixture.policy.project_name),
         service: Some("builder".to_owned()),
         project_name: Some(fixture.policy.project_name.clone()),
         status: "Up".to_owned(),
@@ -543,7 +678,7 @@ fn extra_declared_service_and_malformed_retained_admission_refuse() {
     for mode in ["sibling", "malformed_marker", "foreign_marker"] {
         let mut fixture = Fixture::new(true, true, "docker");
         if mode == "sibling" {
-            let compose = fixture.root.join("compose.yml");
+            let compose = fixture.root.join("infra/release/linux/docker-compose.yml");
             let content = std::fs::read_to_string(&compose)
                 .unwrap()
                 .replace("services:\n", "services:\n  app:\n    image: private:app\n");
@@ -652,4 +787,180 @@ fn interrupted_successful_backend_cannot_publish_task_success() {
         Some(STALE_IDENTITY)
     );
     fixture.assert_preserved();
+}
+
+#[test]
+fn managed_namespace_builds_without_adopting_any_legacy_shape() {
+    let _lock = crate::contract_test_support::lock_test();
+    for scoped in [false, true] {
+        for legacy in ["native", "named_oneoff", "labelled", "absent"] {
+            let mut fixture = Fixture::with_declaration(false, false, "colima", scoped);
+            fixture.retain_legacy(legacy);
+            assert_eq!(
+                fixture.policy.project_name,
+                if scoped {
+                    "effigy-artifact-builder-v1-ec-7288dc2b3e84"
+                } else {
+                    "effigy-artifact-builder-v1"
+                }
+            );
+            fixture
+                .task()
+                .unwrap_or_else(|error| panic!("scoped={scoped}, legacy={legacy}: {error}"));
+            assert_eq!(fixture.activation_count(), 1);
+            let identity = fixture.root.join("state/identity.json");
+            let original = std::fs::read(&identity).unwrap();
+            let current: Value = serde_json::from_slice(&original).unwrap();
+            assert_eq!(
+                current[0]["Config"]["Labels"]["com.effigy.checkout"],
+                json!(fixture.root)
+            );
+            assert!(
+                current[0]["Config"]["Labels"]
+                    .get("com.docker.compose.oneoff")
+                    .is_none(),
+                "native nerdctl omits this label"
+            );
+            preserve_tree(
+                &fixture
+                    .root
+                    .join("host-home/.effigy/runtime/host-container-leases"),
+                &mut fixture.preserved,
+            );
+            let manifest = fixture.root.join("effigy.toml");
+            let source = std::fs::read_to_string(&manifest).unwrap();
+            std::fs::write(
+                &manifest,
+                format!("{source}\n# subsequent source upgrade\n"),
+            )
+            .unwrap();
+            fixture.mode("next-upgrade");
+            fixture
+                .task()
+                .expect("future upgrades reuse the SAME managed project and native ID");
+            assert_eq!(fixture.activation_count(), 1);
+            assert_eq!(std::fs::read(&identity).unwrap(), original);
+            let artifact = fixture
+                .root
+                .join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
+            assert_eq!(
+                std::fs::read_to_string(artifact.with_extension("active-version"))
+                    .unwrap()
+                    .trim(),
+                effigy_core::build_info::active_version()
+            );
+            assert!(std::fs::read_to_string(&artifact)
+                .unwrap()
+                .contains("next-upgrade"));
+            fixture.assert_preserved();
+        }
+    }
+}
+
+#[test]
+fn both_handoffs_migrate_the_authentic_legacy_namespace_without_manual_commands() {
+    let _lock = crate::contract_test_support::lock_test();
+    for backend in ["colima", "docker"] {
+        for bounded in [false, true] {
+            let mut fixture = Fixture::new(false, false, backend);
+            fixture.retain_legacy("native");
+            let host = fixture.host();
+            let artifact = fixture
+                .root
+                .join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
+            write_linux_artifact(&artifact, "stale 5d source bytes", Some(STALE_IDENTITY));
+            assert_eq!(fixture.handoff(&host, bounded).unwrap(), artifact);
+            let expected = workspace_effigy_local_install_identity(&host).unwrap();
+            assert!(linux_workspace_effigy_artifact_is_current(
+                &artifact,
+                LinuxWorkspaceTarget::X86_64Gnu,
+                &expected
+            ));
+            assert_eq!(fixture.activation_count(), 1);
+            fixture.assert_preserved();
+        }
+    }
+}
+
+#[test]
+fn migration_failures_never_accept_stale_output_and_reuse_the_new_builder_on_retry() {
+    let _lock = crate::contract_test_support::lock_test();
+    for bounded in [false, true] {
+        for mode in [
+            "up_fail",
+            "up_bad_labels",
+            "up_inspect_fail",
+            "build_fail",
+            "no_output",
+            "wrong_target",
+            "list_fail",
+        ] {
+            let mut fixture = Fixture::new(false, false, "colima");
+            fixture.retain_legacy("native");
+            fixture.mode(mode);
+            let host = fixture.host();
+            let artifact = fixture
+                .root
+                .join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
+            write_linux_artifact(&artifact, "stale 5d source bytes", Some(STALE_IDENTITY));
+            fixture.handoff(&host, bounded).expect_err(mode);
+            assert_eq!(
+                read_trimmed_identity_file(&workspace_effigy_install_identity_file(&artifact))
+                    .as_deref(),
+                Some(STALE_IDENTITY),
+                "bounded={bounded}, mode={mode}"
+            );
+            if matches!(mode, "up_bad_labels" | "up_inspect_fail") {
+                assert!(!fixture.root.join("state/build-effect").exists(), "{mode}");
+            }
+            fixture.assert_preserved();
+            // A real build failure retains a strictly owned new builder for retry.
+            if mode == "build_fail" {
+                let identity = std::fs::read(fixture.root.join("state/identity.json")).unwrap();
+                fixture.mode("retry");
+                fixture
+                    .handoff(&host, bounded)
+                    .expect("retry requires no reset or manual engine operation");
+                assert_eq!(fixture.activation_count(), 1);
+                assert_eq!(
+                    std::fs::read(fixture.root.join("state/identity.json")).unwrap(),
+                    identity
+                );
+                fixture.assert_preserved();
+            }
+        }
+    }
+}
+
+#[test]
+fn a_collision_in_the_managed_namespace_is_never_treated_as_empty() {
+    let _lock = crate::contract_test_support::lock_test();
+    for case in [
+        "legacy_shape",
+        "foreign_checkout",
+        "mixed_labels",
+        "stopped",
+        "oneoff",
+        "missing_scope",
+    ] {
+        let mut fixture = Fixture::new(true, true, "colima");
+        fixture.retain_legacy("native");
+        fixture.mutate(|row| match case {
+            "legacy_shape" => row["Config"]["Labels"] = json!({"com.docker.compose.project": fixture.policy.project_name, "com.docker.compose.service": "builder"}),
+            "foreign_checkout" => row["Config"]["Labels"]["com.effigy.checkout"] = json!(fixture.root.join("state")),
+            "mixed_labels" => row["Config"]["Labels"]["com.effigy.scope"] = json!("foreign"),
+            "stopped" => { row["State"]["Running"] = json!(false); row["State"]["Status"] = json!("exited"); },
+            "oneoff" => row["Config"]["Labels"]["com.docker.compose.oneoff"] = json!("True"),
+            "missing_scope" => { row["Config"]["Labels"].as_object_mut().unwrap().remove("com.effigy.scope"); },
+            _ => unreachable!(),
+        });
+        fixture.task().expect_err(case);
+        assert_eq!(fixture.activation_count(), 0, "{case}");
+        assert!(!fixture.root.join("state/build-effect").exists(), "{case}");
+        assert!(
+            !fixture.calls().iter().flatten().any(|arg| arg == "exec"),
+            "{case}"
+        );
+        fixture.assert_preserved();
+    }
 }

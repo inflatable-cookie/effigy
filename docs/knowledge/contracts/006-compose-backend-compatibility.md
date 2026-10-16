@@ -274,14 +274,31 @@ artifact identity. Both ordinary and bounded handoff continue through the same
 maintained task and retain their receipt, target, digest and freshness checks.
 There is no public-release fallback for an unpublished local identity.
 
-A preexisting unlabelled builder stays
-unavailable; a plain retry cannot adopt its running inputs. The operator must
-first verify the exact selected container's full ID, project/service, checkout
-bind and retained data, then explicitly stop that selected scope with
-`effigy container linux-release down` and recreate it with
-`effigy container linux-release up --detach` (or the artifact task). Neither
-operation is performed by a diagnostic or this source qualification. Do not
-apply these example names to another project or use broad cleanup.
+The maintained Linux builder uses the stable private Compose project base
+`effigy-artifact-builder-v1`, with the ordinary checkout/worktree scope suffix.
+This is a one-time namespace migration from `effigy-linux-release`, not a new
+namespace per source version, upgrade or retry. The first build activates a
+new labelled builder through the existing manager; subsequent builds reuse its
+strictly verified immutable ID, including after partial activation or changed
+source inputs. Artifact paths and the task interface are unchanged.
+
+Legacy `effigy-linux-release` containers and their admission records, cache
+volumes and other retained data are left untouched, whether absent, labelled,
+or ambiguous. A pre-label nerdctl container lacks the checkout/scope and oneoff
+labels; a named `compose run` can reproduce its native name and metadata, and
+the old admission does not record its native ID. That evidence cannot prove a
+non-oneoff association. Effigy therefore never adopts, executes in, relabels,
+stops or recreates that old builder during automatic artifact preparation.
+No user reset or cleanup is required. Later operator cleanup is separate and
+optional. The new project uses separate named caches, so the first build may
+need image/dependency downloads and additional disk space; old caches remain.
+
+A collision in the new project is not an empty project: missing, foreign,
+mixed or contradictory ownership evidence still refuses before activation or
+exec. No generic ownership check or ordinary application drift guard is
+relaxed. Private transport fixtures exercise the shipped declaration, the
+native legacy shape and named-oneoff counterexample, both automatic handoffs,
+repeat upgrades and failures; they do not attest live consumer recovery.
 
 ### Container-local TCP alias visibility
 
