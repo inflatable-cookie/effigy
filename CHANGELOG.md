@@ -239,6 +239,8 @@ During v0.x, MINOR bumps may include breaking changes.
   1.2.0.
 
 ### Fixed
+- Vault-generation regression coverage uses the production CLI boundary without
+  leaking its internal generation marker into parallel Rhai unit tests.
 - Container preflight and workspace catalog preparation use the existing
   transport/plan boundaries while preserving their bounds and ownership checks.
 - `[secrets.vault].generate` Rhai hooks can now create `required`

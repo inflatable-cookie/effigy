@@ -401,3 +401,30 @@ existing transport adapter and plan normalization described by
 [the architecture boundary](../architecture/022-runtime-architecture-sanity-audit.md#bounded-discovery-and-catalog-preparation).
 The real drift guard and allowlists are unchanged; passing source checks does
 not replace candidate CI or the actual seven prepared-version release gates.
+
+
+### Publication hold for local hybrid proof
+
+Tom's later publication ruling applies to decision `0116369e`:
+
+> "I'll bootstral:local first so we can use it locally - we don't need or really
+> want v0.15.0 actually released until we've proved this all to be fully working".
+
+CI and preparation may finish, but preserve a successful prepared state without
+running release execute, creating the tag, dispatching binary publication or
+publishing. Tom must explicitly release this hold after the existing owners'
+Reference, compli-me and songsprout `dev` / `dev:test` proofs and Acowtancy
+adoption proof on the locally bootstrapped build. Those proofs grant no runtime
+or cleanup authority to the release owner.
+
+### Shared-process Rhai generation coverage
+
+The generation marker is process-wide. Test environment restoration alone does
+not isolate parallel tests. The production CLI generation and outside-hook
+refusal controls run in separate child environments; they own this positive
+coverage instead of a redundant library unit test setting the marker globally.
+The ordinary missing-required library test remains unchanged, and the focused
+release selector runs the Rhai library together with eight test threads.
+This changes test placement only; production generation and secret refusal
+semantics remain unchanged. The exact interleaving in the earlier prepared-tree
+failure was not recorded.
