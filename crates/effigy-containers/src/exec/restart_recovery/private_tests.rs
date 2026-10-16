@@ -145,7 +145,7 @@ set -eu
 printf '%s\n' "$*" >> commands
 full=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 case "$*" in
-  'nerdctl --profile private-health -- ps --all --format '*)
+  'nerdctl --profile private-health -- ps --all --filter label=com.docker.compose.project=private-health-project --format '*)
     printf 'fixture-db\tExited (1)\t\tprivate-health-project\t\tdb\tfalse\n'
     ;;
   'nerdctl --profile private-health -- start fixture-db')

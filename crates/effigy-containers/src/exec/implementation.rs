@@ -192,11 +192,7 @@ pub fn list_running_compose_containers_for_policy(
     let output = run_runtime_command_capture_with_repair(
         repo_root,
         policy,
-        &[
-            OsString::from("ps"),
-            OsString::from("--format"),
-            OsString::from(DOCKER_PS_FORMAT),
-        ],
+        &project_ps_args(policy.project_name.as_str(), false),
         "runtime ps",
         None,
         None,
@@ -208,6 +204,23 @@ pub fn list_running_compose_containers_for_policy(
             .filter(|row| row.project_name.as_deref() == Some(policy.project_name.as_str()))
             .collect(),
     )
+}
+
+/// Runtime `ps` arguments listing one Compose project's containers. The label
+/// filter keeps the runtime from enumerating every container in a shared VM;
+/// callers still filter the parsed rows by project as the authority.
+fn project_ps_args(project_name: &str, include_stopped: bool) -> Vec<OsString> {
+    let mut args = vec![OsString::from("ps")];
+    if include_stopped {
+        args.push(OsString::from("--all"));
+    }
+    args.extend([
+        OsString::from("--filter"),
+        OsString::from(format!("label=com.docker.compose.project={project_name}")),
+        OsString::from("--format"),
+        OsString::from(DOCKER_PS_FORMAT),
+    ]);
+    args
 }
 
 /// Deadline-aware compose `ps` probe. One caller-visible monotonic deadline is
@@ -223,11 +236,7 @@ pub fn list_running_compose_containers_for_policy_with_deadline(
     let output = run_runtime_command_capture_with_repair(
         repo_root,
         policy,
-        &[
-            OsString::from("ps"),
-            OsString::from("--format"),
-            OsString::from(DOCKER_PS_FORMAT),
-        ],
+        &project_ps_args(policy.project_name.as_str(), false),
         "runtime ps",
         None,
         deadline,
@@ -249,11 +258,7 @@ pub fn list_running_compose_containers_for_policy_with_timeout(
     let output = run_runtime_command_capture_for_policy_with_timeout(
         repo_root,
         policy,
-        &[
-            OsString::from("ps"),
-            OsString::from("--format"),
-            OsString::from(DOCKER_PS_FORMAT),
-        ],
+        &project_ps_args(policy.project_name.as_str(), false),
         "runtime ps",
         timeout,
     )?;
@@ -529,12 +534,7 @@ pub fn list_compose_containers_for_project_including_stopped(
     let output = run_runtime_command_capture_with_repair(
         repo_root,
         policy,
-        &[
-            OsString::from("ps"),
-            OsString::from("--all"),
-            OsString::from("--format"),
-            OsString::from(DOCKER_PS_FORMAT),
-        ],
+        &project_ps_args(project_name, true),
         "runtime ps --all",
         Some(COMPOSE_PS_TIMEOUT),
         None,
@@ -566,12 +566,7 @@ pub fn list_compose_containers_for_policy_including_stopped_with_timeout(
     let output = run_runtime_command_capture_for_policy_with_timeout(
         repo_root,
         policy,
-        &[
-            OsString::from("ps"),
-            OsString::from("--all"),
-            OsString::from("--format"),
-            OsString::from(DOCKER_PS_FORMAT),
-        ],
+        &project_ps_args(policy.project_name.as_str(), true),
         "runtime ps --all",
         timeout,
     )?;

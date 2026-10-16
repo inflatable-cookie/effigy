@@ -467,13 +467,13 @@ mod tests {
     #[cfg(unix)]
     fn discovery_hang_script(pgfile: &Path) -> String {
         format!(
-            "#!/bin/sh\ncase \"$1\" in\n  nerdctl)\n    case \"$*\" in\n      *\"ps --format\"*)\n        printf '%s\\n' \"$$\" > '{pg}'\n        sleep 300 &\n        printf '%s\\n' \"$!\" >> '{pg}'\n        wait\n        ;;\n      *)\n        printf 'demo-stack-workspace-1\\n'\n        exit 0\n        ;;\n    esac\n    ;;\n  *)\n    exit 0\n    ;;\nesac\n",
+            "#!/bin/sh\ncase \"$1\" in\n  nerdctl)\n    case \"$*\" in\n      *\"ps --filter\"*\"--format\"*)\n        printf '%s\\n' \"$$\" > '{pg}'\n        sleep 300 &\n        printf '%s\\n' \"$!\" >> '{pg}'\n        wait\n        ;;\n      *)\n        printf 'demo-stack-workspace-1\\n'\n        exit 0\n        ;;\n    esac\n    ;;\n  *)\n    exit 0\n    ;;\nesac\n",
             pg = pgfile.display()
         )
     }
 
     /// Phased variant of the hang fixture for the caller-deadline proof. The
-    /// first `ps --format` invocation answers instantly through the same
+    /// first project-filtered `ps` invocation answers instantly through the same
     /// production capture path (readiness: PATH resolution, phase dispatch,
     /// output capture and row selection), while the second and later
     /// invocations hang with recorded PIDs. Every invocation logs its argv
@@ -488,7 +488,7 @@ mod tests {
         root: &Path,
     ) -> String {
         format!(
-            "#!/bin/sh\nprintf 'argv: %s\\n' \"$*\" >> '{trace}'\ncase \"$1\" in\n  nerdctl)\n    case \"$*\" in\n      *\"ps --format\"*)\n        printf 'spawned %s\\n' \"$$\" >> '{trace}'\n        n=$(cat '{counter}' 2>/dev/null || echo 0)\n        n=$((n + 1))\n        printf '%s\\n' \"$n\" > '{counter}'\n        if [ \"$n\" -ge 2 ]; then\n          printf 'hanging invocation %s\\n' \"$n\" >> '{trace}'\n          printf '%s\\n' \"$$\" > '{pg}'\n          sleep 300 &\n          printf '%s\\n' \"$!\" >> '{pg}'\n          wait\n        else\n          printf 'warming invocation %s\\n' \"$n\" >> '{trace}'\n          printf 'demo-stack-workspace-1\\tUp 2 minutes\\t\\tdemo-stack\\t{root}\\tworkspace\\t0\\n'\n          exit 0\n        fi\n        ;;\n      *)\n        printf 'demo-stack-workspace-1\\n'\n        exit 0\n        ;;\n    esac\n    ;;\n  *)\n    exit 0\n    ;;\nesac\n",
+            "#!/bin/sh\nprintf 'argv: %s\\n' \"$*\" >> '{trace}'\ncase \"$1\" in\n  nerdctl)\n    case \"$*\" in\n      *\"ps --filter\"*\"--format\"*)\n        printf 'spawned %s\\n' \"$$\" >> '{trace}'\n        n=$(cat '{counter}' 2>/dev/null || echo 0)\n        n=$((n + 1))\n        printf '%s\\n' \"$n\" > '{counter}'\n        if [ \"$n\" -ge 2 ]; then\n          printf 'hanging invocation %s\\n' \"$n\" >> '{trace}'\n          printf '%s\\n' \"$$\" > '{pg}'\n          sleep 300 &\n          printf '%s\\n' \"$!\" >> '{pg}'\n          wait\n        else\n          printf 'warming invocation %s\\n' \"$n\" >> '{trace}'\n          printf 'demo-stack-workspace-1\\tUp 2 minutes\\t\\tdemo-stack\\t{root}\\tworkspace\\t0\\n'\n          exit 0\n        fi\n        ;;\n      *)\n        printf 'demo-stack-workspace-1\\n'\n        exit 0\n        ;;\n    esac\n    ;;\n  *)\n    exit 0\n    ;;\nesac\n",
             pg = pgfile.display(),
             counter = counterfile.display(),
             trace = tracefile.display(),
@@ -953,7 +953,7 @@ mod tests {
         let counterfile = root.join("discovery-invocations");
         let tracefile = root.join("discovery-trace");
         let script = format!(
-            "#!/bin/sh\nprintf 'argv: %s\\n' \"$*\" >> '{trace}'\ncase \"$1\" in\n  nerdctl)\n    case \"$*\" in\n      *\"ps --format\"*)\n        printf 'spawned %s\\n' \"$$\" >> '{trace}'\n        n=$(cat '{counter}' 2>/dev/null || echo 0)\n        n=$((n + 1))\n        printf '%s\\n' \"$n\" > '{counter}'\n        printf 'demo-stack-workspace-1\\tUp 2 minutes\\t\\tdemo-stack\\t{root}\\tworkspace\\t0\\n'\n        exit 0\n        ;;\n      *)\n        exit 0\n        ;;\n    esac\n    ;;\n  *)\n    exit 0\n    ;;\nesac\n",
+            "#!/bin/sh\nprintf 'argv: %s\\n' \"$*\" >> '{trace}'\ncase \"$1\" in\n  nerdctl)\n    case \"$*\" in\n      *\"ps --filter\"*\"--format\"*)\n        printf 'spawned %s\\n' \"$$\" >> '{trace}'\n        n=$(cat '{counter}' 2>/dev/null || echo 0)\n        n=$((n + 1))\n        printf '%s\\n' \"$n\" > '{counter}'\n        printf 'demo-stack-workspace-1\\tUp 2 minutes\\t\\tdemo-stack\\t{root}\\tworkspace\\t0\\n'\n        exit 0\n        ;;\n      *)\n        exit 0\n        ;;\n    esac\n    ;;\n  *)\n    exit 0\n    ;;\nesac\n",
             root = root.display(),
             trace = tracefile.display(),
             counter = counterfile.display()
@@ -1040,6 +1040,8 @@ mod tests {
                 "effigy",
                 "--",
                 "ps",
+                "--filter",
+                "label=com.docker.compose.project=demo-stack",
                 "--format",
                 "{{.Names}}",
             ])

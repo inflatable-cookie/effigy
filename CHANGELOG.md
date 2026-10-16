@@ -244,6 +244,10 @@ During v0.x, MINOR bumps may include breaking changes.
   BuildKit stopped, `effigy container up` and container tasks now start those
   units inside the VM and continue, instead of waiting and then restarting the
   whole VM, which took down every stack on it and could itself time out.
+- Container readiness, tasks and `container up` list only the selected Compose
+  project's containers (runtime label filter) instead of every container in a
+  shared VM, so the preflight inventory no longer times out on busy machines
+  holding many stacks.
 - Task locks are published atomically and carry an owner token. A concurrent
   run can no longer see a half-written lock, delete it, and start alongside the
   owner, and a finishing run never removes or refreshes a successor's lock. An
