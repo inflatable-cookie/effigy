@@ -23,6 +23,10 @@ pub const SCOPE_LABEL: &str = "com.effigy.scope";
 pub const MANAGED_LABEL: &str = "com.effigy.managed";
 pub const PROJECT_LABEL: &str = "com.effigy.project";
 pub const PERSIST_LABEL: &str = "com.effigy.persist";
+pub const SERVICE_LABEL: &str = "com.effigy.service";
+pub const VOLUME_NAME_LABEL: &str = "com.effigy.volume-name";
+pub const MOUNT_TARGET_LABEL: &str = "com.effigy.mount-target";
+pub const REPO_ROOT_LABEL: &str = "com.effigy.repo-root";
 /// Canonical checkout path that rendered a generated Compose service. nerdctl
 /// compose omits Docker's `com.docker.compose.project.working_dir`, so owned
 /// binding checks fall back to this label.
@@ -93,12 +97,22 @@ impl ScopeRecord {
             .iter()
             .map(|volume| volume.name.clone())
             .collect::<Vec<_>>();
-        let retain_volumes = policy
+        // Volumes borrowed through `data_from` belong to the owner
+        // environment's project. This record retains them so no retirement
+        // path deletes or claims them; they are never owned from a
+        // borrowing environment.
+        let mut retain_volumes = policy
             .managed_volumes
             .iter()
             .filter(|volume| volume.persist)
             .map(|volume| volume.name.clone())
             .collect::<Vec<_>>();
+        retain_volumes.extend(
+            policy
+                .borrowed_volumes
+                .iter()
+                .map(|volume| volume.name.clone()),
+        );
         let host_routes = host_map
             .routes
             .iter()
@@ -375,57 +389,12 @@ fn unix_now() -> u64 {
 mod tests {
     use super::*;
     use crate::policy::hosts::build_host_map;
+    use crate::policy::model::test_policy;
     use crate::policy_support::with_test_effigy_home;
-    use crate::{EffectiveComposeSource, EffectiveContainerPolicy, EffectiveDnsRoute};
-    use effigy_manifest::{
-        ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerSecretDelivery,
-        ManifestContainerShutdownMode, ManifestContainerStartup,
-    };
+    use crate::EffectiveContainerPolicy;
 
     fn policy(root: &Path) -> EffectiveContainerPolicy {
-        EffectiveContainerPolicy {
-            repo_root: root.to_path_buf(),
-            name: "web".to_owned(),
-            driver: ManifestContainerDriver::Colima,
-            startup: ManifestContainerStartup::Detached,
-            profile: "effigy".to_owned(),
-            compose_source: EffectiveComposeSource::Generated,
-            compose_files: vec![],
-            compose_file_display: "generated".to_owned(),
-            managed_volumes: vec![],
-            shared_services: vec![],
-            project_name: "app-dev-wt-abcdef012345".to_owned(),
-            primary_service: "app".to_owned(),
-            dns_domain: Some("app-wabcdef01.test".to_owned()),
-            dns_base_domain: None,
-            dns_tls: true,
-            dns_port: Some(80),
-            dns_routes: vec![EffectiveDnsRoute {
-                domain: "app-wabcdef01.test".to_owned(),
-                declared_domain: "app.test".to_owned(),
-                tls: true,
-                port: Some(80),
-                service: Some("web".to_owned()),
-                target_host: None,
-            }],
-            service_aliases: vec![],
-            declared_ports: vec![],
-            ports_declared_explicitly: false,
-            declared_mounts: vec![],
-            declared_media_mounts: vec![],
-            pull_production_hook: None,
-            health_check: None,
-            health_timeout_secs: 60,
-            secret_delivery: ManifestContainerSecretDelivery::ComposeEnv,
-            secret_runtime_dir: None,
-            source_secret_runtime_for_deferrals: false,
-            workspace_user: None,
-            workspace_home: None,
-            on_task_exit: ManifestContainerOnTaskExit::Stop,
-            shutdown: ManifestContainerShutdownMode::Graceful,
-            detach_timeout_secs: 10,
-            host_processes: Vec::new(),
-        }
+        test_policy(root)
     }
 
     #[test]

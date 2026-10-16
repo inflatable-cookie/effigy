@@ -7,6 +7,20 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- `data_from` on `[containers.<env>]` lets a container environment borrow
+  another environment's service data volumes. Services present in both
+  environments with the same catalog entry mount the owner environment's
+  named volumes for the same checkout and worktree scope — bundle hybrid
+  (`dev`) and the container profile (`dev:container`) see one database and
+  one bucket per checkout, and switching between them is seamless. `up` of
+  either environment first stops the other's shared data services and prints
+  one line naming the handover; a failed stop refuses instead of racing for
+  the volumes. Borrowed volumes are declared `external` in the generated
+  Compose, so `reset`, `reset --wipe-data`, `retire`, `retire --dead` and
+  `ports reclaim` never delete or claim the owner's data — retirement records
+  list them as retained, never owned. Environments without `data_from` keep
+  their own fresh volumes, and existing manifests generate byte-identical
+  Compose.
 - Added a [v0.15.0 consumer migration guide](docs/guides/085-v0.15.0-consumer-migration.md)
   covering the catalog-pack compatibility step, container lifecycle and
   doctor behavior changes, opt-in features, and a DecodeLabs checklist.

@@ -251,6 +251,33 @@ pub fn list_running_compose_containers_for_policy_with_deadline(
     )
 }
 
+/// Deadline-aware compose `ps` probe for an arbitrary Compose project in
+/// this checkout — used by the `data_from` handover to discover a peer
+/// environment's running services. The policy only selects the runtime
+/// profile and backend; container selection is by the given project name.
+pub fn list_running_compose_containers_for_project_with_deadline(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    project_name: &str,
+    deadline: Option<Instant>,
+) -> Result<Vec<RunningComposeContainer>, ContainerExecError> {
+    let output = run_runtime_command_capture_with_repair(
+        repo_root,
+        policy,
+        &project_ps_args(project_name, false),
+        "runtime ps",
+        None,
+        deadline,
+    )?;
+
+    Ok(
+        parse_running_compose_containers(&String::from_utf8_lossy(&output.stdout))?
+            .into_iter()
+            .filter(|row| row.project_name.as_deref() == Some(project_name))
+            .collect(),
+    )
+}
+
 /// Deadline-aware compose `ps --all` probe that keeps stopped rows. A
 /// project-wide `compose up` can start or recreate a stopped declared sibling,
 /// so ownership must be proven for those rows before it is authorized, not
@@ -385,6 +412,9 @@ mod legacy_admission_tests {
             compose_files: vec![],
             compose_file_display: "direct".to_owned(),
             managed_volumes: vec![],
+            borrowed_volumes: vec![],
+            data_peers: Vec::new(),
+            data_from: None,
             shared_services: vec![],
             project_name: project.to_owned(),
             primary_service: "app".to_owned(),

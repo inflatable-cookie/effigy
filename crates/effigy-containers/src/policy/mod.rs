@@ -1,4 +1,5 @@
 pub mod admission;
+pub mod data_from;
 pub mod hosts;
 pub mod inline_workspace;
 pub mod load;

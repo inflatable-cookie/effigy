@@ -24,6 +24,9 @@ pub use ops::{
     ContainerStatsOperation, ContainerStatusOperation, ContainerUpOperation,
     ContainerVolumeListOperation, ContainerVolumeOperation, ContainerVolumePruneOperation,
 };
+pub use policy::data_from::{
+    borrowed_volume_ensure_commands, plan_volume_data_handover, VolumeDataHandover,
+};
 pub use policy::hosts::{
     add_managed_listener_routes, build_host_map, uses_shared_runtime_identity, EffectiveHostMap,
     EffectiveHostRoute, HostRouteKind, HostScopeKind,
@@ -38,7 +41,7 @@ pub use policy::load::{
 };
 pub use policy::model::{
     ContainerEjectResult, ContainerPolicyError, EffectiveAttachMode, EffectiveComposeSource,
-    EffectiveContainerPolicy, EffectiveDnsRoute, EffectiveHostProcess,
+    EffectiveContainerPolicy, EffectiveDataPeer, EffectiveDnsRoute, EffectiveHostProcess,
     EffectiveManagedHostListener, EffectiveServiceAlias, HostProcessRestart, HostProcessSignal,
     SharedServiceBinding,
 };
@@ -77,7 +80,8 @@ pub use runtime::scope::{
     load as load_scope_record, load_all as load_all_scope_records, load_for_checkout,
     remove as remove_scope_record, upsert as upsert_scope_record, volume_has_ownership_proof,
     ScopeComposeKind, ScopeRecord, CHECKOUT_LABEL, COMPOSE_PROJECT_LABEL, MANAGED_LABEL,
-    PERSIST_LABEL, PROJECT_LABEL, SCOPE_LABEL,
+    MOUNT_TARGET_LABEL, PERSIST_LABEL, PROJECT_LABEL, REPO_ROOT_LABEL, SCOPE_LABEL, SERVICE_LABEL,
+    VOLUME_NAME_LABEL,
 };
 pub use workspace::{
     load_workspace_ownership_plan, load_workspace_ownership_targets, rust_cache_kind,

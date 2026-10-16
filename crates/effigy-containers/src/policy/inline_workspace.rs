@@ -80,6 +80,9 @@ pub fn load_inline_workspace_container_policy(
             .display()
             .to_string(),
         managed_volumes: Vec::new(),
+        borrowed_volumes: Vec::new(),
+        data_peers: Vec::new(),
+        data_from: None,
         shared_services: Vec::new(),
         project_name: super::project::scope_project_name(
             repo_root,

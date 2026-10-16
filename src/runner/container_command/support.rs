@@ -419,6 +419,24 @@ pub(super) fn annotate_shared_service_notes(
     }
 }
 
+/// Surface `data_from` handover lines in the detached up report: one text
+/// line per handover plus a machine-readable `data_handover` list.
+pub(super) fn annotate_data_handover_notes(
+    report: &mut effigy_containers::ContainerCommandReport,
+    notes: &[String],
+) {
+    if notes.is_empty() {
+        return;
+    }
+    if let Some(json_object) = report.json.as_object_mut() {
+        json_object.insert("data_handover".to_owned(), json!(notes));
+    }
+    for note in notes {
+        report.success_text.push('\n');
+        report.success_text.push_str(note);
+    }
+}
+
 pub(super) fn annotate_tcp_alias_host_notes(
     report: &mut effigy_containers::ContainerCommandReport,
     notes: &[String],
@@ -874,6 +892,9 @@ mod tests {
             compose_files: vec![PathBuf::from("docker-compose.yml")],
             compose_file_display: "docker-compose.yml".to_owned(),
             managed_volumes: vec![],
+            borrowed_volumes: Vec::new(),
+            data_peers: Vec::new(),
+            data_from: None,
             shared_services: vec![],
             project_name: "demo-web-renamed".to_owned(),
             primary_service: "app".to_owned(),

@@ -29,9 +29,9 @@ use crate::{
 };
 
 use super::model::{
-    ContainerPolicyError, EffectiveAttachMode, EffectiveComposeSource, EffectiveContainerPolicy,
-    EffectiveDnsRoute, EffectiveHostProcess, EffectiveManagedHostListener, EffectiveServiceAlias,
-    HostProcessRestart, HostProcessSignal,
+    ComposeVolumeBorrow, ContainerPolicyError, EffectiveAttachMode, EffectiveComposeSource,
+    EffectiveContainerPolicy, EffectiveDataPeer, EffectiveDnsRoute, EffectiveHostProcess,
+    EffectiveManagedHostListener, EffectiveServiceAlias, HostProcessRestart, HostProcessSignal,
 };
 
 pub fn load_container_policy(
@@ -482,10 +482,19 @@ fn build_effective_policy(
         containers.environments.len(),
         repo_root,
     )?;
+    let data_links = resolve_volume_data_links(
+        repo_root,
+        containers,
+        default_project_name_base,
+        name,
+        config,
+    )?;
+    let volume_borrow = data_links.borrow.clone();
     let (
         mut compose_files,
         compose_file_display,
         managed_volumes,
+        borrowed_volumes,
         effective_ports,
         shared_services,
     ) = resolve_compose_source(
@@ -495,6 +504,7 @@ fn build_effective_policy(
         config,
         &project_name,
         effective_manifest,
+        volume_borrow.as_ref(),
         admission.as_deref_mut(),
     )?;
     let primary_service = config.primary_service.clone().ok_or_else(|| {
@@ -593,6 +603,9 @@ fn build_effective_policy(
         compose_files,
         compose_file_display,
         managed_volumes,
+        borrowed_volumes,
+        data_peers: data_links.peers,
+        data_from: data_links.data_from,
         shared_services,
         project_name,
         primary_service,
@@ -648,6 +661,114 @@ fn build_effective_policy(
         guard.context_for_policy(&policy)?;
     }
     Ok((policy, workspace_mount_decisions))
+}
+
+/// Every `data_from` link touching this environment, in both directions,
+/// plus the generated-compose borrow input when this environment borrows.
+/// The manifest validates every reference at load; this resolution stays
+/// defensive so a future caller cannot skip that validation silently.
+struct VolumeDataLinks {
+    data_from: Option<String>,
+    peers: Vec<EffectiveDataPeer>,
+    borrow: Option<ComposeVolumeBorrow>,
+}
+
+fn resolve_volume_data_links(
+    repo_root: &Path,
+    containers: &ManifestContainersConfig,
+    default_project_name_base: &str,
+    name: &str,
+    config: &ManifestContainerConfig,
+) -> Result<VolumeDataLinks, ContainerPolicyError> {
+    let container_count = containers.environments.len();
+    let project_for = |peer_name: &str, peer_config: &ManifestContainerConfig| {
+        resolve_project_name(
+            peer_config,
+            default_project_name_base,
+            peer_name,
+            container_count,
+            repo_root,
+        )
+    };
+    let mut peers = Vec::new();
+    let mut data_from = None;
+    let mut borrow = None;
+    if let Some(owner_name) = config
+        .data_from
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        let Some(owner) = containers.environments.get(owner_name) else {
+            return Err(ContainerPolicyError::TaskInvocation(format!(
+                "container `{name}` declares `data_from = \"{owner_name}\"` but that environment is not defined"
+            )));
+        };
+        let services = shared_data_service_names(config, owner);
+        let owner_project = project_for(owner_name, owner)?;
+        peers.push(EffectiveDataPeer {
+            environment: owner_name.to_owned(),
+            project_name: owner_project.clone(),
+            services: services.clone(),
+        });
+        borrow = Some(ComposeVolumeBorrow {
+            owner_project_name: owner_project,
+            services: services.into_iter().collect(),
+        });
+        data_from = Some(owner_name.to_owned());
+    }
+    for (peer_name, peer_config) in &containers.environments {
+        let borrows_this = peer_config
+            .data_from
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .is_some_and(|owner| owner == name);
+        if !borrows_this {
+            continue;
+        }
+        let services = shared_data_service_names(peer_config, config);
+        peers.push(EffectiveDataPeer {
+            environment: peer_name.clone(),
+            project_name: project_for(peer_name, peer_config)?,
+            services,
+        });
+    }
+    peers.sort_by(|left, right| left.environment.cmp(&right.environment));
+    Ok(VolumeDataLinks {
+        data_from,
+        peers,
+        borrow,
+    })
+}
+
+/// Service names declared with the same catalog entry in both environments,
+/// excluding host-global `shared = true` services, which live in their own
+/// project and are never borrowed. Sorted and deduplicated.
+fn shared_data_service_names(
+    borrower: &ManifestContainerConfig,
+    owner: &ManifestContainerConfig,
+) -> Vec<String> {
+    let mut names = borrower
+        .services
+        .iter()
+        .filter(|(service_name, service)| {
+            if service.shared.unwrap_or(false) {
+                return false;
+            }
+            owner
+                .services
+                .get(service_name.as_str())
+                .is_some_and(|owner_service| {
+                    !owner_service.shared.unwrap_or(false)
+                        && owner_service.catalog == service.catalog
+                })
+        })
+        .map(|(service_name, _)| service_name.clone())
+        .collect::<Vec<_>>();
+    names.sort();
+    names.dedup();
+    names
 }
 
 fn resolve_host_process(

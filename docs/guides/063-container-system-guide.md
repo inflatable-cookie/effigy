@@ -522,6 +522,63 @@ downloads its own browser revision. Changing the value requires an image
 rebuild. See [`067`](067-catalog-services-reference.md) for the full
 parameter surface.
 
+### Sharing service data with another environment (`data_from`)
+
+A container environment can borrow another environment's service data volumes
+with `data_from`. Services that both environments declare with the same name
+and the same catalog entry mount the named environment's volumes — one
+Postgres, one MinIO bucket per checkout. Switching between the two
+environments hands the data over automatically: `container up` stops the
+other environment's shared data services first and prints one line naming
+the handover, with no refusal.
+
+The hybrid shape from a bundle `dev` profile plus its container twin is the
+canonical example:
+
+```toml
+[containers.dev]
+primary_service = "app"
+
+[containers.dev.services.app]
+catalog = "workspace-rust-bun"
+
+[containers.dev.services.db]
+catalog = "postgres"
+
+[containers.dev.services.s3]
+catalog = "minio"
+
+[containers.dev-hybrid]
+primary_service = "app"
+data_from = "dev"
+
+[containers.dev-hybrid.services.app]
+catalog = "workspace-rust-bun"
+
+[containers.dev-hybrid.services.db]
+catalog = "postgres"
+
+[containers.dev-hybrid.services.s3]
+catalog = "minio"
+```
+
+`dev-hybrid` mounts `dev`'s `db` and `s3` volumes for the same checkout and
+worktree scope; a linked worktree borrows that worktree's volumes, never the
+primary checkout's. `app` and everything else about the environment —
+project name, published ports, routes — stays separate. Services that only
+one side declares keep their own volumes.
+
+Validation refuses, at manifest load, an unknown or self target, chains or
+cycles, driver mismatches, direct `compose_file` ownership on either side,
+`share_runtime_identity` on the borrower, and the same service name bound to
+different catalogs.
+
+The owner's data is protected: borrowed volumes are declared `external` in
+the generated Compose, so `reset`, `reset --wipe-data`, `retire`,
+`retire --dead` and `ports reclaim` on the borrowing environment never delete
+or claim them. `reset --wipe-data` on the owner still removes them. An
+environment without `data_from` keeps its own fresh volumes.
+
 ### Optional extra workspace mounts
 
 Use `systems.<name>.workspaces.<workspace>.mounts` for optional sibling or

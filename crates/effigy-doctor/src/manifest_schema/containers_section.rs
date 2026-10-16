@@ -41,6 +41,7 @@ pub(super) fn validate_containers_section(context: &mut SchemaContext<'_, '_>, c
                 "dns",
                 "project_name",
                 "primary_service",
+                "data_from",
                 "lifecycle",
                 "health",
                 "host",
@@ -59,6 +60,7 @@ pub(super) fn validate_containers_section(context: &mut SchemaContext<'_, '_>, c
             table.get("primary_service"),
             "primary_service",
         );
+        validate_string_field(context, &path, table.get("data_from"), "data_from");
 
         if let Some(lifecycle) = table.get("lifecycle") {
             validate_container_lifecycle(context, &path, lifecycle);
