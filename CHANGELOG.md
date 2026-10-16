@@ -241,6 +241,13 @@ During v0.x, MINOR bumps may include breaking changes.
 ### Fixed
 - Container preflight and workspace catalog preparation use the existing
   transport/plan boundaries while preserving their bounds and ownership checks.
+- `[secrets.vault].generate` Rhai hooks can now create `required`
+  rhai-targeted secrets that are not in the vault yet. Previously the Rhai
+  secret store refused the hook with `required Rhai secret(s) missing from
+  the vault`, so fresh clones could not bootstrap. The skip applies only
+  while the runner's generate hook runs; every other Rhai secret read still
+  refuses missing required keys, and vault, passphrase, declaration and
+  target checks are unchanged.
 - Listener-handoff fixture closure checks retain socket identity across numeric
   descriptor reuse in parallel release tests.
 - Supervision-initialization fixtures exclude parallel shared-scope installation

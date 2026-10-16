@@ -87,6 +87,12 @@ and from `secrets = "required"` task startup when a required local vault is
 missing or incomplete. It is not a generic deploy/state/artifact generation
 hook.
 
+While the hook runs, a Rhai step may read and write declared rhai-targeted
+secrets even when `required` keys are still absent: creating them is the
+hook's purpose. Vault existence, unlock, declaration and target checks still
+apply. Outside the hook, Rhai secret access refuses before side effects when
+a `required` rhai-targeted key is missing.
+
 ## Config Versus Secrets
 
 Effigy must help repos move these values out of secret storage:

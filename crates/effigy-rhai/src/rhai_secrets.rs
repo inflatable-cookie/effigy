@@ -199,7 +199,9 @@ pub(crate) fn resolve_rhai_secret_store(
             .into_iter()
             .filter(|name| !store.values.contains_key(name))
             .collect::<Vec<_>>();
-        if !missing_required.is_empty() {
+        // The `[secrets.vault].generate` hook exists to create missing
+        // secrets, so it must not demand them before it runs.
+        if !missing_required.is_empty() && !vault_generation_active() {
             return Err(RhaiHostError::new(format!(
                 "required Rhai secret(s) missing from the vault: {}",
                 missing_required.join(", ")
@@ -208,6 +210,13 @@ pub(crate) fn resolve_rhai_secret_store(
     }
 
     Ok(store)
+}
+
+/// Set by the runner while `[secrets.vault].generate` runs.
+const TASK_SECRET_GENERATION_ACTIVE_ENV: &str = "EFFIGY_INTERNAL_TASK_SECRET_GENERATION_ACTIVE";
+
+fn vault_generation_active() -> bool {
+    std::env::var_os(TASK_SECRET_GENERATION_ACTIVE_ENV).is_some()
 }
 
 /// An empty store that refuses every consumer secret operation.
