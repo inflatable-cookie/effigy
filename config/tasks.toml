@@ -745,6 +745,7 @@
 ]
 "test:workspace:artifact-builder-recovery" = [
   { task = "test:workspace:catalog-handoff:build" },
+  { id = "builder-recovery-parent-membership", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test host_scheduler_integration --filterset 'test(workspace_parent_membership_covers_the_maintained_family)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
   { id = "builder-recovery", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-rhai --lib --filterset 'test(builder_recovery::) | test(workspace_artifact_build_helper)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
 ]
 "check:workspace:artifact-builder-recovery" = [
