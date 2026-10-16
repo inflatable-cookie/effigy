@@ -208,8 +208,11 @@ pub fn run_cli(raw_args: Vec<String>) {
 
 pub fn run_and_render_command(context: &CliExecutionContext<'_>, command: Command) {
     let task_stdout_owned = command_owns_task_stdout(&command);
+    let stdout_is_terminal = std::io::stdout().is_terminal();
+    let clean_machine_output = !stdout_is_terminal && command_emits_release_notes(&command);
+    let suppress_header = context.suppress_header || clean_machine_output;
     let mut renderer = PlainRenderer::stdout(context.output_mode);
-    if !context.suppress_header {
+    if !suppress_header {
         if task_stdout_owned {
             let mut header_renderer = PlainRenderer::stderr(context.output_mode);
             let _ = render_cli_header(&mut header_renderer, context.command_root);
@@ -234,7 +237,8 @@ pub fn run_and_render_command(context: &CliExecutionContext<'_>, command: Comman
             if !output.trim().is_empty() {
                 let _ = renderer.text(&output);
             }
-            if !task_stdout_owned || !output.trim().is_empty() {
+            let output_is_empty = output.trim().is_empty();
+            if (!task_stdout_owned || !output_is_empty) && !clean_machine_output {
                 let _ = renderer.text("");
             }
         }
@@ -261,7 +265,7 @@ pub fn run_and_render_command(context: &CliExecutionContext<'_>, command: Comman
             }
             if let Some(rendered) = err.rendered_output() {
                 let _ = renderer.text(rendered);
-                if context.suppress_header {
+                if suppress_header {
                     std::process::exit(1);
                 }
             }
@@ -274,6 +278,17 @@ pub fn run_and_render_command(context: &CliExecutionContext<'_>, command: Comman
 
 fn command_owns_task_stdout(command: &Command) -> bool {
     matches!(command, Command::Task(_) | Command::Draft(_))
+}
+
+fn command_emits_release_notes(command: &Command) -> bool {
+    matches!(
+        command,
+        Command::Changelog(args)
+            if matches!(
+                &args.subcommand,
+                effigy_cli::ChangelogSubcommand::Extract { .. }
+            )
+    )
 }
 
 fn command_requests_local_qa_json(command: &Command) -> bool {

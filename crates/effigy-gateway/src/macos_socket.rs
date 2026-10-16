@@ -3,6 +3,9 @@
 //! Layout constants match `sys/proc_info.h` on the MacOSX SDK used to verify
 //! this tree (`PROC_PIDFDSOCKETINFO_SIZE` = 792). A size or flavor mismatch
 //! is Unknown; nothing is guessed from `ps`, `lsof`, or SPI sysctl.
+//! Return-value contracts: Apple XNU f6217f891ac0bb64f3d375211650a4c1ff8ca1ea,
+//! bsd/kern/proc_info.c::proc_pidfdlist and
+//! libsyscall/wrappers/libproc/libproc.c::{proc_pidinfo, proc_pidfdinfo}.
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
@@ -86,8 +89,12 @@ fn list_socket_fds(pid: i32) -> Result<Vec<i32>, std::io::Error> {
         count
     ];
     let want = (count * std::mem::size_of::<libc::proc_fdinfo>()) as i32;
+    // libproc maps errors to zero, but a successful live zero-FD list also
+    // returns zero. Clear this thread's errno before the ambiguous data query.
+    nix::errno::Errno::clear();
     // SAFETY: `info` is aligned writable storage for `count` proc_fdinfo
-    // records, matching the size query above.
+    // records in one initialized allocation, matching the positive size query
+    // above. The byte extent fits i32; the synchronous call retains no pointer.
     let read = unsafe {
         libc::proc_pidinfo(
             pid,
@@ -97,16 +104,40 @@ fn list_socket_fds(pid: i32) -> Result<Vec<i32>, std::io::Error> {
             want,
         )
     };
-    if read <= 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-    let got = usize::try_from(read).unwrap_or(0) / std::mem::size_of::<libc::proc_fdinfo>();
+    let errno = nix::errno::Errno::last_raw();
+    let got = fd_list_record_count(read, errno, want as usize)?;
     Ok(info
         .into_iter()
         .take(got)
         .filter(|entry| entry.proc_fdtype == libc::PROX_FDTYPE_SOCKET as u32)
         .map(|entry| entry.proc_fd)
         .collect())
+}
+
+fn fd_list_record_count(read: i32, errno: i32, capacity: usize) -> std::io::Result<usize> {
+    if read < 0 || (read == 0 && errno != 0) {
+        return Err(libproc_error(errno));
+    }
+    let bytes = read as usize;
+    let record_size = std::mem::size_of::<libc::proc_fdinfo>();
+    if bytes > capacity || !bytes.is_multiple_of(record_size) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "macOS descriptor list has an invalid record extent",
+        ));
+    }
+    Ok(bytes / record_size)
+}
+
+fn libproc_error(errno: i32) -> std::io::Error {
+    if errno == 0 {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "macOS process inspection returned no record without an error code",
+        )
+    } else {
+        std::io::Error::from_raw_os_error(errno)
+    }
 }
 
 /// Kernel socket handle for one process-owned descriptor.
@@ -116,8 +147,10 @@ fn list_socket_fds(pid: i32) -> Result<Vec<i32>, std::io::Error> {
 /// reports `dev=0, ino=0` for every socket and cannot distinguish them.
 pub(super) fn fd_socket_handle(pid: i32, fd: i32) -> Result<u64, std::io::Error> {
     let mut buf = [0u8; SOCKET_FDINFO_SIZE];
-    // SAFETY: `buf` is aligned writable storage of PROC_PIDFDSOCKETINFO_SIZE
-    // bytes; pid/fd are the process-owned descriptors from PROC_PIDLISTFDS.
+    nix::errno::Errno::clear();
+    // SAFETY: `buf` is one initialized writable allocation of exactly the
+    // public PROC_PIDFDSOCKETINFO_SIZE. The synchronous copy retains no pointer;
+    // invalid or vanished pid/fd values are native errors, never dereferenced.
     let read = unsafe {
         libc::proc_pidfdinfo(
             pid,
@@ -127,8 +160,9 @@ pub(super) fn fd_socket_handle(pid: i32, fd: i32) -> Result<u64, std::io::Error>
             SOCKET_FDINFO_SIZE as i32,
         )
     };
-    if read < 0 {
-        return Err(std::io::Error::last_os_error());
+    let errno = nix::errno::Errno::last_raw();
+    if read <= 0 {
+        return Err(libproc_error(errno));
     }
     if read as usize != SOCKET_FDINFO_SIZE {
         return Err(std::io::Error::new(
@@ -149,8 +183,10 @@ pub(super) fn socket_endpoint(
     fd: i32,
 ) -> Result<Option<GatewayEndpoint>, std::io::Error> {
     let mut buf = [0u8; SOCKET_FDINFO_SIZE];
-    // SAFETY: `buf` is aligned writable storage of PROC_PIDFDSOCKETINFO_SIZE
-    // bytes; pid/fd are the process-owned descriptors from PROC_PIDLISTFDS.
+    nix::errno::Errno::clear();
+    // SAFETY: `buf` is one initialized writable allocation of exactly the
+    // public PROC_PIDFDSOCKETINFO_SIZE. The synchronous copy retains no pointer;
+    // invalid or vanished pid/fd values are native errors, never dereferenced.
     let read = unsafe {
         libc::proc_pidfdinfo(
             pid,
@@ -160,13 +196,12 @@ pub(super) fn socket_endpoint(
             SOCKET_FDINFO_SIZE as i32,
         )
     };
-    if read < 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-    // The descriptor list is a kernel snapshot. libproc returns zero bytes
-    // when a listed socket descriptor has disappeared before its detail query.
-    if read == 0 {
-        return Ok(None);
+    let errno = nix::errno::Errno::last_raw();
+    // Unlike a variable-length FD list, a successful socket query supplies
+    // one complete record. libproc maps native errors (including permissions)
+    // to zero; only the caller's exact EBADF/ESRCH policy may skip a race.
+    if read <= 0 {
+        return Err(libproc_error(errno));
     }
     if read != SOCKET_FDINFO_SIZE as i32 {
         return Err(std::io::Error::new(
@@ -267,6 +302,114 @@ fn read_u64_slice(buf: &[u8], offset: usize) -> Result<u64, std::io::Error> {
 
 #[cfg(test)]
 mod macos_socket_layout_tests {
+    use std::process::{Child, Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    struct OwnedChild(Child);
+
+    impl Drop for OwnedChild {
+        fn drop(&mut self) {
+            // Keep this exact child unreaped until its fixture is finished.
+            // Never signal a PID discovered by an observation or name lookup.
+            let _ = self.0.kill();
+            self.0.wait().expect("reap owned descriptorless fixture");
+        }
+    }
+
+    #[test]
+    fn legacy_recovery_macos_live_descriptorless_child_has_no_listeners() {
+        let child = OwnedChild(
+            Command::new("/bin/sh")
+                .args(["-c", "exec 0<&- 1>&- 2>&-; exec /bin/sleep 30"])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .expect("spawn owned descriptorless fixture"),
+        );
+        let pid = i32::try_from(child.0.id()).expect("fixture PID");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let mut info = [libc::proc_fdinfo {
+                proc_fd: 0,
+                proc_fdtype: 0,
+            }; 64];
+            nix::errno::Errno::clear();
+            // SAFETY: pid belongs to our retained, unreaped Child. The aligned
+            // initialized array remains writable for exactly the byte size
+            // passed to the documented PROC_PIDLISTFDS data query. No borrowed
+            // pointer escapes the synchronous call. The native zero/errno=0
+            // observation proves this fixture reached its descriptorless state.
+            let read = unsafe {
+                libc::proc_pidinfo(
+                    pid,
+                    libc::PROC_PIDLISTFDS,
+                    0,
+                    info.as_mut_ptr().cast(),
+                    std::mem::size_of_val(&info) as i32,
+                )
+            };
+            let errno = std::io::Error::last_os_error().raw_os_error();
+            if read == 0 && errno == Some(0) {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "fixture never became descriptorless"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        // Deliberately dirty errno: successful empty lists must not inherit it.
+        nix::errno::Errno::EACCES.set();
+        let result = super::process_listening_endpoints(child.0.id());
+        let listener = std::net::TcpListener::bind("127.0.0.1:0")
+            .expect("private listener for production exclusivity scan");
+        let endpoint = super::GatewayEndpoint {
+            transport: super::GatewayTransport::Tcp,
+            addr: listener.local_addr().expect("private listener address"),
+        };
+        let exclusive =
+            crate::legacy::verify_process_listener_exclusive(std::process::id(), &endpoint);
+        drop(child);
+        assert!(result
+            .expect("live zero-FD process is inspectable")
+            .is_empty());
+        exclusive.expect("descriptorless sibling must not poison the exclusive listener proof");
+    }
+
+    #[test]
+    fn legacy_recovery_macos_invalid_own_socket_descriptor_preserves_native_error() {
+        let pid = i32::try_from(std::process::id()).expect("current PID");
+        let error = super::socket_endpoint(pid, i32::MAX)
+            .expect_err("libproc errors are not evidence of an absent listener");
+        assert_eq!(error.raw_os_error(), Some(libc::EBADF));
+        let error = super::fd_socket_handle(pid, i32::MAX)
+            .expect_err("socket-handle query preserves native refusal");
+        assert_eq!(error.raw_os_error(), Some(libc::EBADF));
+    }
+
+    #[test]
+    fn legacy_recovery_macos_fd_list_distinguishes_empty_errors_and_invalid_extents() {
+        let record = std::mem::size_of::<libc::proc_fdinfo>();
+        assert_eq!(super::fd_list_record_count(0, 0, record).unwrap(), 0);
+        assert_eq!(
+            super::fd_list_record_count(record as i32, libc::EACCES, record).unwrap(),
+            1
+        );
+        for errno in [libc::EPERM, libc::EACCES, libc::ESRCH, libc::EBADF] {
+            let error = super::fd_list_record_count(0, errno, record).unwrap_err();
+            assert_eq!(error.raw_os_error(), Some(errno));
+        }
+        for (read, capacity) in [(-1, record), (1, record), ((record * 2) as i32, record)] {
+            assert_eq!(
+                super::fd_list_record_count(read, 0, capacity)
+                    .unwrap_err()
+                    .kind(),
+                std::io::ErrorKind::InvalidData,
+            );
+        }
+    }
+
     #[test]
     fn legacy_recovery_macos_socket_fdinfo_matches_sdk_size() {
         assert_eq!(super::SOCKET_FDINFO_SIZE, 792);

@@ -5,10 +5,10 @@ use effigy_catalog::volumes::{
     parse_listed_resource_names, remove_volume_command, DockerCommand,
 };
 use effigy_containers::{
-    load_for_checkout, load_scope_record, plan_retirement, remaining_after, remove_scope_record,
-    retire_report, retire_report_unverified, upsert_scope_record, volume_has_ownership_proof,
-    ObservedKind, ObservedResource, ScopeComposeKind, ScopeRecord, COMPOSE_PROJECT_LABEL,
-    PROJECT_LABEL, SCOPE_LABEL,
+    load_all_scope_records, load_for_checkout, load_scope_record, plan_retirement, remaining_after,
+    remove_scope_record, retire_report, retire_report_unverified, upsert_scope_record,
+    volume_has_ownership_proof, ObservedKind, ObservedResource, ScopeComposeKind, ScopeRecord,
+    COMPOSE_PROJECT_LABEL, PROJECT_LABEL, SCOPE_LABEL,
 };
 use effigy_gateway::loopback::LoopbackRegistry;
 use effigy_gateway::ports::PortRegistry;
@@ -59,6 +59,114 @@ pub(super) fn run_container_retire(
         last_report = Some(retire_one_record(&record, output_json)?);
     }
     last_report.ok_or_else(|| RunnerError::task_invocation("no runtime scope to retire"))
+}
+
+/// Retire every recorded runtime scope whose checkout is definitely gone, for
+/// example worktrees removed without running their teardown. Each scope uses
+/// the ordinary retirement path; one failure does not stop the others.
+pub(super) fn run_container_retire_dead(
+    yes: bool,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    let records = dead_scope_records()?;
+    if records.is_empty() {
+        return Ok(if output_json {
+            serde_json::json!({"schema": DEAD_RETIRE_SCHEMA, "scopes": []}).to_string()
+        } else {
+            "[ok] no recorded runtime scope has a missing checkout".to_owned()
+        });
+    }
+    let listing = records
+        .iter()
+        .map(|record| format!("  {} {}", record.token, record.checkout))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let plan = format!(
+        "Retire {} runtime scope(s) whose checkout no longer exists, removing their owned containers, networks, mutable volumes, routes and ports:\n{listing}",
+        records.len()
+    );
+    // A refused confirmation still names exactly what `--yes` would retire.
+    maybe_confirm_destructive_container_action(
+        "effigy container retire --dead",
+        &plan,
+        output_json,
+        yes,
+    )
+    .map_err(|error| RunnerError::task_invocation(format!("{plan}\n{error}")))?;
+    let mut outcomes = Vec::new();
+    let mut failures = 0;
+    for record in &records {
+        let result = retire_one_record(record, output_json);
+        if result.is_err() {
+            failures += 1;
+        }
+        outcomes.push((record, result));
+    }
+    let rendered = if output_json {
+        let scopes = outcomes
+            .iter()
+            .map(|(record, result)| {
+                let (ok, report) = match result {
+                    Ok(text) => (true, text.clone()),
+                    Err(RunnerError::CommandJsonFailure { rendered }) => (false, rendered.clone()),
+                    Err(error) => (false, error.to_string()),
+                };
+                serde_json::json!({
+                    "token": record.token,
+                    "checkout": record.checkout,
+                    "ok": ok,
+                    "report": serde_json::from_str::<serde_json::Value>(&report)
+                        .unwrap_or(serde_json::Value::String(report)),
+                })
+            })
+            .collect::<Vec<_>>();
+        serde_json::json!({"schema": DEAD_RETIRE_SCHEMA, "scopes": scopes}).to_string()
+    } else {
+        outcomes
+            .iter()
+            .map(|(record, result)| match result {
+                Ok(text) => format!(
+                    "[ok] retired {} ({})\n{text}",
+                    record.token, record.checkout
+                ),
+                Err(error) => format!(
+                    "[warn] {} ({}) not fully retired\n{error}",
+                    record.token, record.checkout
+                ),
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    if failures == 0 {
+        Ok(rendered)
+    } else if output_json {
+        Err(RunnerError::CommandJsonFailure { rendered })
+    } else {
+        Err(RunnerError::task_invocation(format!(
+            "{rendered}\n{failures} of {} dead scope(s) were not fully retired; their records are kept for a retry",
+            records.len()
+        )))
+    }
+}
+
+const DEAD_RETIRE_SCHEMA: &str = "effigy.container.retire-dead.v1";
+
+fn dead_scope_records() -> Result<Vec<ScopeRecord>, RunnerError> {
+    Ok(load_all_scope_records()
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?
+        .into_iter()
+        .filter(|record| checkout_definitely_missing(std::path::Path::new(&record.checkout)))
+        .collect())
+}
+
+/// Only a path that is positively absent counts as gone; an unreadable or
+/// otherwise uncertain path keeps its scope.
+fn checkout_definitely_missing(path: &std::path::Path) -> bool {
+    path.is_absolute()
+        && matches!(
+            std::fs::symlink_metadata(path),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound
+        )
 }
 
 fn resolve_retire_records(
@@ -1030,5 +1138,32 @@ mod stopped_profile_tests {
         assert_eq!(details["schema"], "effigy.container.retire.v1");
         assert_eq!(details["idempotent"], false);
         assert_eq!(details["unverified_profiles"][0], "stopped-profile");
+    }
+}
+
+#[cfg(test)]
+mod dead_selection_tests {
+    use super::checkout_definitely_missing;
+
+    #[test]
+    fn only_a_positively_absent_absolute_checkout_counts_as_dead() {
+        let root = tempfile::tempdir().expect("tempdir");
+        assert!(!checkout_definitely_missing(root.path()), "live checkout");
+        assert!(checkout_definitely_missing(
+            &root.path().join("removed-worktree")
+        ));
+        assert!(
+            !checkout_definitely_missing(std::path::Path::new("relative/worktree")),
+            "a relative record path is not trusted as gone"
+        );
+        #[cfg(unix)]
+        {
+            let link = root.path().join("dangling");
+            std::os::unix::fs::symlink(root.path().join("missing-target"), &link).expect("symlink");
+            assert!(
+                !checkout_definitely_missing(&link),
+                "an existing (dangling) entry is not positively absent"
+            );
+        }
     }
 }

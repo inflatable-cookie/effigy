@@ -303,6 +303,7 @@ effigy container hosts [--repo <PATH>] [--json]
 effigy container <NAME> hosts [--repo <PATH>] [--json]
 effigy container scope [--repo <PATH>] [--json]
 effigy container retire [--repo <PATH>] [--scope <TOKEN>] [--yes] [--json]
+effigy container retire --dead [--yes] [--json]
 effigy system <up|down|status|logs|repair|reset-runtime> [--system <NAME>] [--repo <PATH>] [--follow] [--json]
 effigy workspace [<NAME>] [--system <NAME>] [--repo <PATH>]
 ```
@@ -316,7 +317,8 @@ runtime metadata allows it. Text and JSON include reclaimable and in-use size
 totals; unknown sizes are counted instead of guessed.
 `effigy container retire` removes one scoped worker stack, including Created
 and stopped containers and disposable caches. Call it from worktree teardown,
-or retry with `--scope` after the checkout is gone. It rejects
+or retry with `--scope` after the checkout is gone. `--dead` retires every
+recorded scope whose checkout path no longer exists. It rejects
 `effigy container <NAME> retire` before record lookup or runtime inventory,
 including when `--scope` or `--yes` is also supplied. Omit the name to select
 the checkout's recorded generation, or pass `--scope <TOKEN>` to select one

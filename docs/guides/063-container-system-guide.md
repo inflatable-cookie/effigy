@@ -609,6 +609,24 @@ use `bootstrap teardown` for worker scopes; that command is only for
 `--fresh` bootstrap sessions. A failed retire must stay non-zero so the
 durable record remains and archive does not swallow residue.
 
+Worktrees removed without running their teardown (for example Queue task
+checkouts) leave their stacks behind. `effigy container retire --dead` retires
+every recorded scope whose checkout path is positively absent, through the same
+retirement path; an unreadable or uncertain path keeps its scope. Without a
+terminal or `--yes` it refuses and prints the scopes it would retire. Each scope
+is retired independently: a scope that cannot be fully retired keeps its record
+for a retry and makes the command exit non-zero. `--json` reports every scope in
+one `effigy.container.retire-dead.v1` document. To prune on a host schedule, run
+it periodically, for example from cron:
+
+```text
+0 4 * * * /usr/local/bin/effigy container retire --dead --yes
+```
+
+Stacks created before runtime-scope records existed have no record and are not
+selected; remove them through `container volume prune --global --orphans` and
+the runtime's own tooling.
+
 Generated compose binds every published port to loopback by default —
 the port policy rewrites fragment entries like `"3000:3000"` into
 `"127.0.0.1:<allocated-host-port>:3000"`, so dev services (dbgate,

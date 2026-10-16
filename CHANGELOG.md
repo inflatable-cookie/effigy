@@ -7,6 +7,10 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- `effigy container retire --dead` retires every recorded runtime scope whose
+  checkout no longer exists, such as worktrees removed without running their
+  teardown, through the ordinary retirement path. It previews the scopes when
+  run without a terminal or `--yes`, and is safe to schedule with `--yes`.
 - Ordinary `effigy container status` output prints a one-line text note
   pointing to `effigy container ports status` when the machine-wide
   generated-container port registry is at or near exhaustion (zero or one
@@ -244,6 +248,11 @@ During v0.x, MINOR bumps may include breaking changes.
   bounded 15-second window separate from the initial workload probe. Valid
   Colima stacks no longer exhaust a shared two-second window before exec;
   explicit caller deadlines and strict immutable-ID ownership checks remain.
+- macOS managed-listener inspection accepts a successful empty descriptor list
+  from a live same-user process, instead of failing with stale errno. Socket
+  detail queries preserve native failures rather than treating every zero return
+  as an absent socket. Permission/unknown observations still refuse, with the
+  same ownership checks and readiness deadlines.
 - A container task no longer attaches a 5-minute idle-shutdown lease to a stack
   you brought up explicitly with `effigy container up`, and a pending lease is
   dropped when you do. `effigy container down` - including `--global` and the
@@ -253,6 +262,8 @@ During v0.x, MINOR bumps may include breaking changes.
   minutes later, and a `down` outside the checkout left a stale owner marker that
   blocked later leases. The lease notice now names
   `effigy container up --detach` and `EFFIGY_DISABLE_HOST_CONTAINER_LEASE=1`.
+- Redirected `effigy changelog extract` output omits the presentation banner, so
+  extracted release notes contain only the selected changelog content.
 - `effigy doctor` no longer reports `{ task = "defer …" }` and other builtin
   command references as unresolved tasks, and accepts every top-level manifest
   table (`isolation`, `state`, `deploy`, `data`, `env_schema`, `qa`). A manifest

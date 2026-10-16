@@ -50,7 +50,12 @@ primary_service = "app"
     assert_eq!(policy.dns_port, None);
     assert_eq!(
         policy.compose_files,
-        vec![root.join("infra/dev/docker-compose.yml")]
+        vec![
+            root.join("infra/dev/docker-compose.yml"),
+            root.canonicalize()
+                .expect("canonical fixture checkout")
+                .join(".effigy/runtime/compose/web.ownership.compose.yml"),
+        ]
     );
 }
 
