@@ -77,13 +77,35 @@ pub fn compose_invocation_plan_from_tail_args(
     action: ContainerAction,
     label: &str,
 ) -> Result<ContainerComposeInvocationPlan, EffigyRuntimeError> {
+    compose_invocation_plan_for_project(
+        repo_root,
+        policy,
+        &policy.project_name,
+        tail,
+        action,
+        label,
+    )
+}
+
+/// Compose invocation plan against another Compose project in the same
+/// checkout — used by the `data_from` handover to stop a peer environment's
+/// services with this environment's compose files and the peer's project
+/// name, so container selection stays by project and service label.
+pub fn compose_invocation_plan_for_project(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    project_name: &str,
+    tail: Vec<std::ffi::OsString>,
+    action: ContainerAction,
+    label: &str,
+) -> Result<ContainerComposeInvocationPlan, EffigyRuntimeError> {
     let mut args = vec![std::ffi::OsString::from("compose")];
     for compose_file in &policy.compose_files {
         args.push(std::ffi::OsString::from("-f"));
         args.push(compose_file.as_os_str().to_os_string());
     }
     args.push(std::ffi::OsString::from("-p"));
-    args.push(std::ffi::OsString::from(policy.project_name.as_str()));
+    args.push(std::ffi::OsString::from(project_name));
     args.extend(tail);
     compose_invocation_plan_from_args(repo_root, policy, args, action, label)
 }
@@ -176,6 +198,9 @@ mod tests {
             compose_files: vec![PathBuf::from("docker-compose.yml")],
             compose_file_display: "docker-compose.yml".to_owned(),
             managed_volumes: vec![],
+            borrowed_volumes: vec![],
+            data_peers: Vec::new(),
+            data_from: None,
             shared_services: vec![],
             project_name: "demo".to_owned(),
             primary_service: "app".to_owned(),

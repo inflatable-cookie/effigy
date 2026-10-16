@@ -292,6 +292,7 @@ mod host_git_mount_tests {
             profile: None,
             compose_file: None,
             project_name: None,
+            data_from: None,
             primary_service: Some("workspace".to_owned()),
             services,
             working_dir: None,

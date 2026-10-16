@@ -1,7 +1,7 @@
 # 005 - Container Runtime Contract
 
 Owner: Platform
-Last Updated: 2026-10-12
+Last Updated: 2026-10-16
 
 This contract defines the required runtime guarantees for container-backed
 task execution in Effigy.
@@ -717,6 +717,49 @@ the running managed process and `effigy container down`. Another checkout,
 another scope or a live worktree generation still refuses. Container teardown
 removes only `source = container` routes owned by the caller, so stopping the
 old container environment cannot remove a handed-over listener route.
+
+## Shared service data volumes (`data_from`)
+
+A container environment may declare `data_from = "<other-env>"`. Every service
+the two environments declare with the same name and the same catalog entry —
+excluding host-global `shared = true` services — mounts the owner environment's
+named volumes instead of its own. Volume names resolve from the owner's
+resolved Compose project identity in the same checkout and worktree scope, so a
+linked worktree borrows the owner's worktree-scoped volumes and never the
+primary checkout's. Services without a match keep their own volumes. Ports,
+published addresses, gateway routes and the Compose project name stay per
+environment; a borrowing environment's containers carry their own environment
+identity labels.
+
+The manifest layer validates every reference at load: the target must exist and
+not be the environment itself, chains and cycles are refused, both environments
+must use the same driver, and neither side may use direct `compose_file`
+ownership or `share_runtime_identity`. A service name declared in both
+environments with different catalogs is refused rather than silently split.
+
+Borrowed volumes are declared `external: true` in the borrowing environment's
+generated Compose under the owner's volume names. Compose therefore never
+creates, removes or re-labels them, and `compose down -v` cannot delete them.
+Before Compose up, the borrowing environment ensures each borrowed volume
+exists — creation is idempotent and never touches an existing volume's data —
+so a fresh checkout can bring up the borrowing environment first.
+
+The two linked environments must never run their shared data services against
+the same volumes at once. `container up` of either environment first stops the
+other environment's shared data services that are still running (a `compose
+stop` against the other environment's project, same checkout and scope), then
+prints one line naming what it handed over. There is no refusal for a running
+sibling — switching is seamless; only a failed stop refuses the activation, and
+it names the environment, project and failure.
+
+Data safety is absolute in the borrowing direction. `container reset` and
+`reset --wipe-data` classify only owned volumes, so borrowed volumes are never
+removed; `retire`, `retire --dead` and `ports reclaim` never delete or claim
+the owner's volumes, and the borrowing environment's runtime-scope record lists
+borrowed volumes as retained, never owned. Retiring the owner's checkout still
+removes its own resources as today. Environments without `data_from` keep
+their own fresh volumes, and manifests without `data_from` generate
+byte-identical Compose.
 
 A linked worktree that does not share runtime identity gets one effective host
 map for its declared HTTP routes and TCP aliases. The apex becomes

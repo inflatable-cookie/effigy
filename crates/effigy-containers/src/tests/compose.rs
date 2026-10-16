@@ -17,7 +17,7 @@ fn run_git(repo: &Path, args: &[&str]) {
     );
 }
 
-fn create_linked_worktree_fixture(
+pub(super) fn create_linked_worktree_fixture(
     root: &Path,
     manifest: &str,
     names: &[&str],

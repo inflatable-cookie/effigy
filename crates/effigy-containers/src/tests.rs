@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 
 mod catalog_pack_fallback;
 mod compose;
+mod data_from;
 mod policies;
 mod volumes_reports;
 

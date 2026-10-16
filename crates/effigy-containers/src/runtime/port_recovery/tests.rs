@@ -102,6 +102,38 @@ fn scope_record(token: &str, checkout: &str, projects: &[&str]) -> ScopeRecord {
 }
 
 #[test]
+fn borrowing_environment_record_holds_the_owner_port_allocation() {
+    // A `data_from` borrower shares its checkout (and therefore its scope
+    // record and project path) with the owner. While that record exists the
+    // owner's port allocation is held, so a borrower-side reclaim can never
+    // release the owner's project while its volumes are still borrowed.
+    let record = scope_record(
+        "abcdef0123456789abcdef0123456789",
+        MISSING,
+        &["acowtancy-dev-hybrid"],
+    );
+    let mut facts = clean_facts();
+    facts.scopes = Ok(vec![record]);
+    let registry = registry_with(&[
+        ("acowtancy-dev", 8100, MISSING),
+        ("acowtancy-dev-hybrid", 8300, MISSING),
+    ]);
+    let plan = plan_recovery(&registry, &facts, missing_everywhere, no_bound_ports);
+
+    assert_eq!(plan.global_hold, None);
+    let (owner, owner_reason) = decision_for(&plan, "acowtancy-dev");
+    assert_eq!(owner, Decision::Hold);
+    assert!(
+        owner_reason.contains("runtime-scope record")
+            || owner_reason.contains("allocations record"),
+        "the shared checkout record holds the owner allocation: {owner_reason}"
+    );
+    let (borrower, _) = decision_for(&plan, "acowtancy-dev-hybrid");
+    assert_eq!(borrower, Decision::Hold);
+    assert_eq!(plan.reclaim_names(), Vec::<String>::new());
+}
+
+#[test]
 fn definitely_missing_unowned_allocation_is_reclaimed() {
     let registry = registry_with(&[("gone", 8100, MISSING)]);
     let plan = plan_recovery(

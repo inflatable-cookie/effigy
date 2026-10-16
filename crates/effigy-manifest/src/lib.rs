@@ -384,9 +384,101 @@ impl TaskManifest {
                     container.dns.as_ref(),
                 )?;
             }
+            validate_container_data_from(manifest_path, containers)?;
         }
         Ok(())
     }
+}
+
+/// Validate every `[containers.<env>].data_from` reference at manifest load.
+///
+/// A borrowing environment mounts another environment's service data volumes,
+/// so a broken reference would silently split or merge the wrong data. Every
+/// failure mode therefore refuses here with a message naming both
+/// environments.
+fn validate_container_data_from(
+    manifest_path: &Path,
+    containers: &ManifestContainersConfig,
+) -> Result<(), ManifestError> {
+    let compose_error = |detail: String| ManifestError::Compose {
+        path: manifest_path.to_path_buf(),
+        detail,
+    };
+    for (name, config) in &containers.environments {
+        let Some(target) = config.data_from.as_deref().map(str::trim) else {
+            continue;
+        };
+        if target.is_empty() {
+            return Err(compose_error(format!(
+                "[containers.{name}].data_from must name another container environment; found an empty value"
+            )));
+        }
+        if config.compose_file.is_some() {
+            return Err(compose_error(format!(
+                "[containers.{name}].data_from = \"{target}\" requires catalog-driven `[containers.{name}.services]`; direct `compose_file` ownership declares volumes Effigy cannot resolve"
+            )));
+        }
+        if config.share_runtime_identity {
+            return Err(compose_error(format!(
+                "[containers.{name}].data_from = \"{target}\" cannot combine with `share_runtime_identity = true`; a borrowing environment keeps its own Compose project identity"
+            )));
+        }
+        if target == name.as_str() {
+            return Err(compose_error(format!(
+                "[containers.{name}].data_from cannot name the environment itself"
+            )));
+        }
+        let Some(owner) = containers.environments.get(target) else {
+            let available = containers
+                .environments
+                .keys()
+                .map(|entry| format!("`{entry}`"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(compose_error(format!(
+                "[containers.{name}].data_from = \"{target}\" names an unknown container environment (available: {available})"
+            )));
+        };
+        if owner.compose_file.is_some() {
+            return Err(compose_error(format!(
+                "[containers.{name}].data_from = \"{target}\" cannot borrow from a direct `compose_file` environment; the owner must declare `[containers.{target}.services]`"
+            )));
+        }
+        if let Some(next) = owner
+            .data_from
+            .as_deref()
+            .map(str::trim)
+            .filter(|next| !next.is_empty())
+        {
+            return Err(compose_error(format!(
+                "[containers.{name}].data_from = \"{target}\" would chain through \"{next}\"; data_from must name an environment that owns its volumes directly"
+            )));
+        }
+        let effective_driver = |config: &ManifestContainerConfig| {
+            config.driver.unwrap_or(ManifestContainerDriver::Colima)
+        };
+        if effective_driver(config) != effective_driver(owner) {
+            return Err(compose_error(format!(
+                "[containers.{name}].data_from = \"{target}\" requires both environments to use the same driver"
+            )));
+        }
+        for (service_name, service) in &config.services {
+            let Some(owner_service) = owner.services.get(service_name) else {
+                continue;
+            };
+            if service.catalog == owner_service.catalog {
+                continue;
+            }
+            if service.shared.unwrap_or(false) || owner_service.shared.unwrap_or(false) {
+                continue;
+            }
+            return Err(compose_error(format!(
+                "[containers.{name}].data_from = \"{target}\" cannot reconcile service `{service_name}`: it is `{}` in `{name}` but `{}` in `{target}`; give the service distinct names or match the catalog",
+                service.catalog, owner_service.catalog
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn validate_dns_routes(
@@ -1240,6 +1332,143 @@ route = { domain = "two.example.test" }
 "#,
         );
         assert!(err(&manifest).contains("dependency cycle"));
+    }
+}
+
+#[cfg(test)]
+mod container_data_from_validation_tests {
+    use super::*;
+
+    fn parse(text: &str) -> TaskManifest {
+        toml::from_str(text).expect("parse manifest")
+    }
+
+    fn err(manifest: &TaskManifest) -> String {
+        match manifest.validate(Path::new("/tmp/effigy.toml")) {
+            Ok(_) => panic!("expected validation error"),
+            Err(error) => error.to_string(),
+        }
+    }
+
+    fn valid_pair() -> String {
+        r#"
+[containers]
+default = "dev"
+
+[containers.dev]
+primary_service = "app"
+
+[containers.dev.services.db]
+catalog = "postgres"
+
+[containers.hybrid]
+primary_service = "app"
+data_from = "dev"
+
+[containers.hybrid.services.db]
+catalog = "postgres"
+"#
+        .to_owned()
+    }
+
+    #[test]
+    fn valid_data_from_pair_is_accepted() {
+        parse(&valid_pair())
+            .validate(Path::new("/tmp/effigy.toml"))
+            .expect("valid data_from pair");
+    }
+
+    #[test]
+    fn unknown_data_from_target_is_rejected_with_available_names() {
+        let mut manifest = valid_pair();
+        manifest = manifest.replace("data_from = \"dev\"", "data_from = \"missing\"");
+        let error = err(&parse(&manifest));
+        assert!(error.contains("unknown container environment"), "{error}");
+        assert!(error.contains("`dev`"), "{error}");
+    }
+
+    #[test]
+    fn self_referencing_data_from_is_rejected() {
+        let manifest = valid_pair().replace("data_from = \"dev\"", "data_from = \"hybrid\"");
+        let error = err(&parse(&manifest));
+        assert!(
+            error.contains("cannot name the environment itself"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn chained_data_from_is_rejected() {
+        let manifest = format!(
+            "{}\n[containers.chain]\nprimary_service = \"app\"\ndata_from = \"hybrid\"\n\n[containers.chain.services.db]\ncatalog = \"postgres\"\n",
+            valid_pair()
+        );
+        let error = err(&parse(&manifest));
+        assert!(error.contains("would chain through"), "{error}");
+    }
+
+    #[test]
+    fn explicit_matching_driver_is_accepted() {
+        let manifest = valid_pair().replace(
+            "[containers.hybrid]\nprimary_service",
+            "[containers.hybrid]\ndriver = \"colima\"\nprimary_service",
+        );
+        // Both environments resolve to the same effective driver, so the
+        // explicit declaration stays valid. Only `ManifestContainerDriver`
+        // variants that can diverge can produce a mismatch refusal.
+        parse(&manifest)
+            .validate(Path::new("/tmp/effigy.toml"))
+            .expect("matching explicit driver");
+    }
+
+    #[test]
+    fn empty_data_from_value_is_rejected() {
+        let manifest = valid_pair().replace("data_from = \"dev\"", "data_from = \" \"");
+        let error = err(&parse(&manifest));
+        assert!(
+            error.contains("must name another container environment"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn data_from_with_direct_compose_file_is_rejected() {
+        let manifest = valid_pair().replace(
+            "[containers.hybrid]\nprimary_service = \"app\"",
+            "[containers.hybrid]\nprimary_service = \"app\"\ncompose_file = \"docker-compose.yml\"",
+        );
+        let error = err(&parse(&manifest));
+        assert!(error.contains("requires catalog-driven"), "{error}");
+    }
+
+    #[test]
+    fn data_from_owner_with_direct_compose_file_is_rejected() {
+        let manifest = valid_pair().replace(
+            "[containers.dev]\nprimary_service = \"app\"",
+            "[containers.dev]\nprimary_service = \"app\"\ncompose_file = \"docker-compose.yml\"",
+        );
+        let error = err(&parse(&manifest));
+        assert!(error.contains("cannot borrow from a direct"), "{error}");
+    }
+
+    #[test]
+    fn data_from_with_share_runtime_identity_is_rejected() {
+        let manifest = valid_pair().replace(
+            "[containers.hybrid]\nprimary_service = \"app\"",
+            "[containers.hybrid]\nprimary_service = \"app\"\nshare_runtime_identity = true",
+        );
+        let error = err(&parse(&manifest));
+        assert!(error.contains("share_runtime_identity"), "{error}");
+    }
+
+    #[test]
+    fn conflicting_same_name_service_catalogs_are_rejected() {
+        let manifest = valid_pair().replace(
+            "[containers.hybrid.services.db]\ncatalog = \"postgres\"",
+            "[containers.hybrid.services.db]\ncatalog = \"mariadb\"",
+        );
+        let error = err(&parse(&manifest));
+        assert!(error.contains("cannot reconcile service `db`"), "{error}");
     }
 }
 

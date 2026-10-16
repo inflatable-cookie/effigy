@@ -29,6 +29,18 @@ pub struct EffectiveContainerPolicy {
     pub compose_files: Vec<PathBuf>,
     pub compose_file_display: String,
     pub managed_volumes: Vec<ManagedVolume>,
+    /// Named volumes this environment mounts from a `data_from` owner's
+    /// Compose project. They are declared `external` in the generated
+    /// Compose so no Effigy or Compose path ever creates, deletes or claims
+    /// them; retirement records list them as retained, never owned.
+    pub borrowed_volumes: Vec<ManagedVolume>,
+    /// Container environments sharing this environment's service data
+    /// volumes through `data_from`, in whichever direction, with the
+    /// services whose volumes are shared.
+    pub data_peers: Vec<EffectiveDataPeer>,
+    /// The environment this one borrows service data volumes from, as
+    /// declared by `data_from`.
+    pub data_from: Option<String>,
     pub shared_services: Vec<SharedServiceBinding>,
     pub project_name: String,
     pub primary_service: String,
@@ -153,6 +165,32 @@ pub struct EffectiveServiceAlias {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EffectiveDataPeer {
+    /// The peer environment's manifest name.
+    pub environment: String,
+    /// The peer environment's resolved Compose project name in this
+    /// checkout and worktree scope.
+    pub project_name: String,
+    /// Service names declared with the same catalog entry in both
+    /// environments; their named volumes are shared, sorted.
+    pub services: Vec<String>,
+}
+
+/// Generated-compose rewrite input when this environment borrows another
+/// environment's service data volumes through `data_from`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ComposeVolumeBorrow {
+    /// The owner environment's resolved Compose project name in this
+    /// checkout and worktree scope. Borrowed volume names are resolved
+    /// against it, so a linked worktree borrows the owner's
+    /// worktree-scoped volumes, never the primary checkout's.
+    pub owner_project_name: String,
+    /// Borrowing services with the same name and catalog entry in the
+    /// owner environment, sorted.
+    pub services: std::collections::BTreeSet<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SharedServiceBinding {
     pub service_name: String,
     pub catalog: String,
@@ -218,6 +256,61 @@ impl std::fmt::Display for ContainerPolicyError {
 }
 
 impl std::error::Error for ContainerPolicyError {}
+
+#[cfg(test)]
+pub(crate) fn test_policy(repo_root: &std::path::Path) -> EffectiveContainerPolicy {
+    use effigy_manifest::{
+        ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerSecretDelivery,
+        ManifestContainerShutdownMode, ManifestContainerStartup,
+    };
+
+    EffectiveContainerPolicy {
+        repo_root: repo_root.to_path_buf(),
+        name: "hybrid".to_owned(),
+        driver: ManifestContainerDriver::Colima,
+        startup: ManifestContainerStartup::Detached,
+        profile: "effigy".to_owned(),
+        compose_source: EffectiveComposeSource::Generated,
+        compose_files: vec![],
+        compose_file_display: "generated".to_owned(),
+        managed_volumes: vec![],
+        borrowed_volumes: vec![],
+        data_peers: vec![],
+        data_from: None,
+        shared_services: vec![],
+        project_name: "app-dev-wt-abcdef012345".to_owned(),
+        primary_service: "app".to_owned(),
+        dns_domain: Some("app-wabcdef01.test".to_owned()),
+        dns_base_domain: None,
+        dns_tls: true,
+        dns_port: Some(80),
+        dns_routes: vec![EffectiveDnsRoute {
+            domain: "app-wabcdef01.test".to_owned(),
+            declared_domain: "app.test".to_owned(),
+            tls: true,
+            port: Some(80),
+            service: Some("web".to_owned()),
+            target_host: None,
+        }],
+        service_aliases: vec![],
+        declared_ports: vec![],
+        ports_declared_explicitly: false,
+        declared_mounts: vec![],
+        declared_media_mounts: vec![],
+        pull_production_hook: None,
+        health_check: None,
+        health_timeout_secs: 60,
+        secret_delivery: ManifestContainerSecretDelivery::ComposeEnv,
+        secret_runtime_dir: None,
+        source_secret_runtime_for_deferrals: false,
+        workspace_user: None,
+        workspace_home: None,
+        on_task_exit: ManifestContainerOnTaskExit::Stop,
+        shutdown: ManifestContainerShutdownMode::Graceful,
+        detach_timeout_secs: 10,
+        host_processes: Vec::new(),
+    }
+}
 
 impl From<ManifestError> for ContainerPolicyError {
     fn from(value: ManifestError) -> Self {

@@ -310,6 +310,13 @@ pub struct ManifestContainerConfig {
     /// Deliberately reuse one Compose identity across linked worktrees.
     #[serde(default)]
     pub share_runtime_identity: bool,
+    /// Borrow this environment's service data volumes from another
+    /// environment: services present in both environments with the same
+    /// catalog entry mount the target environment's named volumes, so the
+    /// two environments see one database per checkout. Validated at manifest
+    /// load; see `TaskManifest::validate`.
+    #[serde(default)]
+    pub data_from: Option<String>,
     #[serde(default)]
     pub primary_service: Option<String>,
     #[serde(default)]

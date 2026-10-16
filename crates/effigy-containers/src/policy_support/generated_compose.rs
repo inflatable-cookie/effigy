@@ -75,6 +75,100 @@ fn apply_runtime_scope_labels(
     }
 }
 
+/// Rewrite a borrowing environment's generated Compose so every named
+/// volume of a shared service resolves to the `data_from` owner's volume.
+/// Service references and the top-level volume keys move from this
+/// environment's project prefix to the owner's; the moved top-level entries
+/// become `external: true` so Compose never creates, removes or re-labels
+/// them, and `compose down -v` cannot delete the owner's data. Returns the
+/// borrowed (owner-named) volume names.
+fn apply_compose_volume_borrow(
+    project_name: &str,
+    borrow: &crate::policy::model::ComposeVolumeBorrow,
+    document: &mut GeneratedComposeDocument,
+    assembly: &mut effigy_catalog::assembly::AssemblyResult,
+) -> Result<Vec<String>, ContainerPolicyError> {
+    let borrowed = volume_borrow_renames(project_name, borrow, assembly);
+    if borrowed.is_empty() {
+        return Ok(Vec::new());
+    }
+    for service in document.services.values_mut() {
+        let Some(volumes) = service.volumes.as_mut() else {
+            continue;
+        };
+        for entry in volumes.iter_mut() {
+            let GeneratedComposeVolume::String(raw) = entry else {
+                continue;
+            };
+            let Some((source, rest)) = raw.split_once(':') else {
+                continue;
+            };
+            let Some(renamed) = borrowed
+                .iter()
+                .find(|(original, _)| original == source)
+                .map(|(_, renamed)| renamed)
+            else {
+                continue;
+            };
+            *raw = format!("{renamed}:{rest}");
+        }
+    }
+    if let Some(YamlValue::Mapping(volumes)) = document.extra.get_mut("volumes") {
+        let mut rewritten = serde_yaml::Mapping::new();
+        for (key, entry) in volumes.iter() {
+            let key_text = key.as_str().unwrap_or_default().to_owned();
+            match borrowed.iter().find(|(original, _)| *original == key_text) {
+                Some((_, owner_name)) => {
+                    let mut external = serde_yaml::Mapping::new();
+                    external.insert(
+                        YamlValue::String("external".to_owned()),
+                        YamlValue::Bool(true),
+                    );
+                    rewritten.insert(
+                        YamlValue::String(owner_name.clone()),
+                        YamlValue::Mapping(external),
+                    );
+                }
+                None => {
+                    rewritten.insert(key.clone(), entry.clone());
+                }
+            }
+        }
+        *volumes = rewritten;
+    }
+    Ok(borrowed.into_iter().map(|(_, renamed)| renamed).collect())
+}
+
+/// Compute the volume renames for one `data_from` borrow: every named
+/// volume this project declares for a borrowing service maps from
+/// `{project}-{service}-{key}` to `{owner_project}-{service}-{key}`.
+/// The assembly is the volume inventory, so its entries rename with the
+/// document.
+fn volume_borrow_renames(
+    project_name: &str,
+    borrow: &crate::policy::model::ComposeVolumeBorrow,
+    assembly: &mut effigy_catalog::assembly::AssemblyResult,
+) -> Vec<(String, String)> {
+    let mut renames = Vec::new();
+    for volume in assembly.volumes.iter_mut() {
+        if !borrow.services.contains(volume.service.as_str()) {
+            continue;
+        }
+        let prefix = format!("{project_name}-{}-", volume.service);
+        let Some(key) = volume.name.strip_prefix(&prefix) else {
+            continue;
+        };
+        if key.is_empty() {
+            continue;
+        }
+        let owner_name = format!("{}-{}-{key}", borrow.owner_project_name, volume.service);
+        renames.push((volume.name.clone(), owner_name.clone()));
+        volume.name = owner_name;
+        volume.project_name = borrow.owner_project_name.clone();
+    }
+    renames
+}
+
 fn upsert_mapping_label(map: &mut serde_yaml::Mapping, key: &str, value: &str) {
     let labels = match map.get_mut("labels") {
         Some(YamlValue::Mapping(existing)) => existing,
@@ -292,10 +386,12 @@ type ResolvedComposeSource = (
     Vec<PathBuf>,
     String,
     Vec<ManagedVolume>,
+    Vec<ManagedVolume>,
     Vec<String>,
     Vec<SharedServiceBinding>,
 );
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn resolve_compose_source(
     repo_root: &Path,
     bundle_root: Option<&Path>,
@@ -303,6 +399,7 @@ pub(crate) fn resolve_compose_source(
     config: &ManifestContainerConfig,
     project_name: &str,
     effective_manifest: &str,
+    volume_borrow: Option<&crate::policy::model::ComposeVolumeBorrow>,
     admission: Option<&mut crate::policy::admission::PolicyAdmission>,
 ) -> Result<ResolvedComposeSource, ContainerPolicyError> {
     if config.compose_file.is_some() && !config.services.is_empty() {
@@ -353,6 +450,7 @@ pub(crate) fn resolve_compose_source(
         return Ok((
             vec![compose_file, ownership_override],
             display,
+            Vec::new(),
             Vec::new(),
             effective_ports,
             Vec::new(),
@@ -435,6 +533,11 @@ pub(crate) fn resolve_compose_source(
             &checkout.display().to_string(),
         );
     }
+    let borrowed_volume_names = if let Some(borrow) = volume_borrow {
+        apply_compose_volume_borrow(project_name, borrow, &mut compose_document, &mut assembly)?
+    } else {
+        Vec::new()
+    };
     let configured_bindings = configured_host_ports(config)
         .iter()
         .map(|raw| parse_port_binding(raw))
@@ -516,6 +619,13 @@ pub(crate) fn resolve_compose_source(
             .volumes
             .iter()
             .map(ManagedVolume::from_volume_info)
+            .filter(|volume| !borrowed_volume_names.contains(&volume.name))
+            .collect(),
+        assembly
+            .volumes
+            .iter()
+            .map(ManagedVolume::from_volume_info)
+            .filter(|volume| borrowed_volume_names.contains(&volume.name))
             .collect(),
         effective_ports,
         shared_services,
