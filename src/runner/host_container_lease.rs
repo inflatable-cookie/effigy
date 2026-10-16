@@ -177,7 +177,6 @@ pub(in crate::runner) struct DetachedActivationContext {
     pub(in crate::runner) marker_required: bool,
 }
 
-#[cfg(test)]
 pub(in crate::runner) fn capture_detached_activation_context(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
@@ -289,6 +288,44 @@ pub(in crate::runner) fn record_partial_activation(
     let marker_path = partial_activation_path(repo_root, policy);
     fs::write(&marker_path, encoded)
         .map_err(|error| RunnerError::task_invocation_failed_write(&marker_path, error))
+}
+
+/// A retained artifact builder may execute against its verified source bind
+/// without claiming that its old Compose inputs have been activated. Keep the
+/// admission untouched, and require every immutable context field to match.
+pub(in crate::runner) fn workspace_builder_admission_retained(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<Option<serde_json::Value>, RunnerError> {
+    let path = partial_activation_path(repo_root, policy);
+    let raw = match fs::read_to_string(&path) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(RunnerError::task_invocation_failed_read(&path, error)),
+    };
+    let mut recorded: serde_json::Value = serde_json::from_str(&raw)
+        .map_err(|error| RunnerError::task_invocation_failed_parse(&path, error))?;
+    let original = recorded.clone();
+    if !recorded
+        .get("inputs")
+        .and_then(|inputs| inputs.as_array())
+        .is_some_and(|inputs| !inputs.is_empty())
+    {
+        return Err(RunnerError::task_invocation("workspace artifact builder retained admission inputs are malformed; no build attempted"));
+    }
+    let mut current = partial_activation_context(repo_root, policy)?;
+    if let (Some(recorded), Some(current)) = (recorded.as_object_mut(), current.as_object_mut()) {
+        // Only input digests may differ. This is execution authority, never a
+        // replacement admission or evidence that current Compose was applied.
+        recorded.remove("inputs");
+        current.remove("inputs");
+    }
+    if recorded != current {
+        return Err(RunnerError::task_invocation(
+            "workspace artifact builder retained admission identity is unverified; no activation or build attempted",
+        ));
+    }
+    Ok(Some(original))
 }
 
 /// Drop a recorded detached admission whose inputs have since changed, once

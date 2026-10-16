@@ -49,7 +49,7 @@ Policy:
 | Execution request | `exec::run` backed by Effigy's routed execution helpers | Exposed |
 | Config | `config::raw`, `config::effective`, `config::get`, `config::get_or`, `config::user_path`, `config::user_get`, `config::user_set`, `config::user_unset` | Exposed |
 | Tasks | `task::run`, `task::run_json`, `task::list`, `task::resolve`, `task::info`, `catalog::tasks` | Exposed |
-| Container lifecycle | `container::up`, `container::down`, `container::down_all`, `container::shell`, `container::shell` (with service), `container::exec` | Exposed |
+| Container lifecycle | `container::workspace_artifact_build` (maintained artifact task only), `container::up`, `container::down`, `container::down_all`, `container::shell`, `container::shell` (with service), `container::exec` | Exposed |
 | Container inspection | `container::status`, `container::logs`, `container::stats` | Exposed |
 | Container cleanup | `container::cache_list`, `container::cache_prune`, `container::volume_list`, `container::volume_prune` | Exposed |
 | Container data | `container::data`, `container::data_dump`, `container::data_seed`, `container::data_pull_production` | Exposed |

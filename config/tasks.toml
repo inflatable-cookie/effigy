@@ -692,13 +692,15 @@
 "test:workspace:artifact-freshness" = [
   { task = "test:workspace:catalog-handoff:build" },
   { task = "test:workspace:artifact-provisioning" },
+  { task = "test:workspace:artifact-builder-recovery" },
   { task = "test:workspace:artifact-admission" },
   { task = "test:workspace:artifact-activation" },
 ]
+# Builder recovery controls run separately under artifact-builder-recovery.
 # Existing pinned private Queue route: authenticated fixture execution plus
 # forged, expired and outside-root refusal controls. No live scheduler state.
 "test:workspace:artifact-provisioning" = [
-  { id = "workspace-artifact-provisioning", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(runner::system_command::workspace::tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
+  { id = "workspace-artifact-provisioning", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(runner::system_command::workspace::tests::) - test(builder_recovery::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
 ]
 "test:workspace:artifact-parent" = [
   { task = "test:workspace:catalog-handoff:build" },
@@ -740,6 +742,13 @@
 ]
 "test:workspace:artifact-full-id" = [
   { id = "full-id-replacement", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(direct_builder_full_id_replacement_refuses_before_probe_or_restart)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
+]
+"test:workspace:artifact-builder-recovery" = [
+  { task = "test:workspace:catalog-handoff:build" },
+  { id = "builder-recovery", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-rhai --lib --filterset 'test(builder_recovery::) | test(workspace_artifact_build_helper)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
+]
+"check:workspace:artifact-builder-recovery" = [
+  "cargo clippy -p effigy-rhai --all-targets -- -D warnings",
 ]
 "test:workspace:artifact-builder" = [
   { id = "builder-activation", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(direct_builder_activation_tests::) | test(run_manifest_task_run_array_rhai_steps_support_container_helpers)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
