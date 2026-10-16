@@ -2,7 +2,7 @@
 
 Owner: Platform
 Created: 2026-05-05
-Last Updated: 2026-10-06
+Last Updated: 2026-10-16
 
 ## Purpose
 
@@ -162,3 +162,11 @@ cleanup from an unavailable probe. Fresh full-ID/project/service/oneoff/scope/
 checkout and published-port inspection gates exposure. Source changes and a
 missing primary refuse until explicit scope stop. See contract 005 and guide 063
 for command/result ownership and native limits.
+
+### Linux workspace artifact builder execution
+
+The maintained artifact task has a narrow execution-only recovery operation for
+an owned running source-bound builder. It does not readmit changed Compose
+inputs or grant general application recovery authority. The
+[backend compatibility contract](006-compose-backend-compatibility.md) owns its
+identity, bind, locking, deadline and refusal rules.

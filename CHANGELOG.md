@@ -198,6 +198,10 @@ During v0.x, MINOR bumps may include breaking changes.
   endpoints, or trust behavior change.
 
 ### Changed
+- Local workspace handoff automatically reuses a verified owned Linux artifact
+  builder after an upgrade leaves a changed-input partial activation. Builds
+  preserve the original admission and cache volumes; foreign or uncertain
+  builders still refuse, and stale artifacts remain rejected.
 - `[defer]` templates receive `{args}` and `{request}` shell-quoted, the same
   way task `{args}` are: an argument containing spaces stays one word and shell
   syntax in an argument is not interpreted. A template that relied on an

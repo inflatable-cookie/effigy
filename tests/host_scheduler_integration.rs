@@ -1856,6 +1856,7 @@ workspace_parent_cases! {
     workspace_fixture_family_admission => "test:workspace:artifact-admission",
     workspace_fixture_family_readiness => "test:workspace:artifact-readiness",
     workspace_fixture_family_builder => "test:workspace:artifact-builder",
+    workspace_fixture_family_builder_recovery => "test:workspace:artifact-builder-recovery",
     workspace_fixture_family_owners => "test:workspace:artifact-owner-integrations",
     workspace_fixture_family_diagnostics => "test:workspace:artifact-diagnostics",
     workspace_fixture_family_managed => "test:workspace:artifact-managed-callers",

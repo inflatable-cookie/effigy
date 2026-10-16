@@ -247,7 +247,34 @@ Target compatibility case:
   native exec, including replacement and sibling-state preservation.
 
 Direct Compose labels come from the supported ownership override, never from a
-hardcoded checkout in the builder YAML. A preexisting unlabelled builder stays
+hardcoded checkout in the builder YAML. The maintained
+`workspace:linux:artifact` task uses the builder-only
+`container::workspace_artifact_build(args)` operation. An already running owned
+builder can build current bound source even if its detached admission is partial
+and its input digests changed after an upgrade. This is execution-only recovery:
+the original admission and completion state stay untouched, and no current
+Compose activation is claimed. Ordinary application drift refusal is unchanged.
+
+The operation serializes callers with the existing lock machinery, lists the
+selected project including stopped containers, requires exactly one builder,
+and inspects its full ID, project/service, explicit checkout and exact scope.
+It requires one writable bind of this canonical checkout at `/workspace`, no
+shadowing mounts below it, and no published ports. It reverifies that identity
+and bind at the native ID-targeted exec boundary under the original observation
+deadline. Unknown, foreign, missing, stopped, malformed or changing identities
+refuse without adoption, restart, teardown, marker removal or publication. A
+retained admission with no container refuses; a first activation with neither
+container nor admission uses the ordinary container manager. Existing runtime
+drift checks remain in force. No VM recovery or broad cleanup is added.
+
+The builder remains detached after success or failure, preserving its cache
+volumes and completed artifacts for retry. Its original image may be unable to
+compile newer source; a failed build then remains a failure and grants no
+artifact identity. Both ordinary and bounded handoff continue through the same
+maintained task and retain their receipt, target, digest and freshness checks.
+There is no public-release fallback for an unpublished local identity.
+
+A preexisting unlabelled builder stays
 unavailable; a plain retry cannot adopt its running inputs. The operator must
 first verify the exact selected container's full ID, project/service, checkout
 bind and retained data, then explicitly stop that selected scope with

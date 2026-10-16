@@ -23,6 +23,22 @@ pub(super) fn register_container_module(
 
 fn build_container_module(context: Arc<ScriptContext>, callbacks: HostCallbacks) -> rhai::Module {
     let mut module = rhai::Module::new();
+    let builder_context = context.clone();
+    let builder_callbacks = callbacks.clone();
+    module.set_native_fn(
+        "workspace_artifact_build",
+        move |command: Array| -> Result<Dynamic, Box<EvalAltResult>> {
+            if builder_context.task_name != "workspace:linux:artifact" {
+                return Err(rhai_runtime_error("workspace artifact builder requires the maintained workspace:linux:artifact task"));
+            }
+            run_feature_dynamic(
+                &builder_context,
+                &builder_callbacks,
+                FEATURE_CONTAINER_WORKSPACE_ARTIFACT_BUILD,
+                json!({"command": dynamic_array_to_strings(&command)?}),
+            )
+        },
+    );
     let container_context = context.clone();
     let container_callbacks = callbacks.clone();
     module.set_native_fn(

@@ -604,6 +604,7 @@ pub struct VerifiedComposeContainer {
     scope: Option<String>,
     profile: String,
     backend: crate::compose::ComposeBackend,
+    workspace_builder_deadline: Option<Instant>,
 }
 
 impl VerifiedComposeContainer {
@@ -621,12 +622,21 @@ impl VerifiedComposeContainer {
         policy: &EffectiveContainerPolicy,
         deadline: Instant,
     ) -> Result<(), ContainerExecError> {
-        let current = verify_owned_running_compose_identities(
-            repo_root,
-            policy,
-            std::slice::from_ref(&self.row),
-            deadline,
-        )?;
+        let current = if let Some(original_deadline) = self.workspace_builder_deadline {
+            vec![verify_workspace_artifact_builder(
+                repo_root,
+                policy,
+                &self.row,
+                deadline.min(original_deadline),
+            )?]
+        } else {
+            verify_owned_running_compose_identities(
+                repo_root,
+                policy,
+                std::slice::from_ref(&self.row),
+                deadline,
+            )?
+        };
         if current.len() == 1
             && current[0].id == self.id
             && current[0].checkout == self.checkout
@@ -643,6 +653,124 @@ impl VerifiedComposeContainer {
             stderr: "binding unavailable: container full ID or checkout/scope/backend binding changed before effect".to_owned(),
         })
     }
+}
+
+/// Refuse a builder declaration that could activate any additional service.
+pub fn verify_workspace_artifact_builder_declaration(
+    policy: &EffectiveContainerPolicy,
+) -> Result<(), ContainerExecError> {
+    for file in &policy.compose_files {
+        let bytes = std::fs::read(file).map_err(|error| ContainerExecError::Launch {
+            command: "read workspace builder declaration".to_owned(),
+            error,
+        })?;
+        let compose: serde_yaml::Value =
+            serde_yaml::from_slice(&bytes).map_err(|error| ContainerExecError::Failure {
+                command: "parse workspace builder declaration".to_owned(),
+                code: None,
+                stdout: String::new(),
+                stderr: error.to_string(),
+            })?;
+        let builder = compose
+            .get("services")
+            .and_then(|services| services.get("builder"));
+        if compose.get("include").is_some()
+            || builder.is_some_and(|builder| {
+                builder.get("extends").is_some()
+                    || builder.get("depends_on").is_some()
+                    || builder.get("ports").is_some()
+            })
+        {
+            return Err(ContainerExecError::Failure {
+                command: "verify workspace builder declaration".to_owned(), code: None, stdout: String::new(),
+                stderr: "workspace artifact builder cannot include, extend, depend on or publish other workloads".to_owned(),
+            });
+        }
+    }
+    let services = super::restart_recovery::declared_service_names(&policy.compose_files)?;
+    if services.len() != 1 || !services.contains("builder") {
+        return Err(ContainerExecError::Failure {
+            command: "verify workspace builder declaration".to_owned(),
+            code: None,
+            stdout: String::new(),
+            stderr: "workspace artifact builder must declare only the builder service".to_owned(),
+        });
+    }
+    Ok(())
+}
+
+/// Strict builder execution authority: explicit checkout/scope labels, a full
+/// immutable identity and a writable source bind at /workspace. Unlike stack
+/// reactivation this never adopts legacy unlabelled containers.
+pub fn verify_workspace_artifact_builder(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    row: &RunningComposeContainer,
+    deadline: Instant,
+) -> Result<VerifiedComposeContainer, ContainerExecError> {
+    let ownership = OwnershipContext::resolve(repo_root, policy)?;
+    let remaining =
+        super::process::remaining_until_deadline(deadline, "inspect workspace builder")?;
+    let output = run_runtime_command_capture_for_policy_with_absolute_deadline(
+        repo_root,
+        policy,
+        &inspect_owned_binding_args(row),
+        "inspect workspace builder",
+        deadline,
+        remaining,
+    )?;
+    let mut binding = ownership.verify_inspected(repo_root, policy, row, &output.stdout)?;
+    let raw: serde_json::Value =
+        serde_json::from_slice(&output.stdout).map_err(|error| ContainerExecError::Launch {
+            command: "inspect workspace builder".to_owned(),
+            error: std::io::Error::other(error),
+        })?;
+    let record = raw.as_array().and_then(|records| records.first());
+    let checkout = record
+        .and_then(|record| record.pointer("/Config/Labels/com.effigy.checkout"))
+        .and_then(|value| value.as_str());
+    let mounts = record
+        .and_then(|record| record.get("Mounts"))
+        .and_then(|value| value.as_array());
+    let workspace_mounts = mounts
+        .into_iter()
+        .flatten()
+        .filter(|mount| {
+            mount.get("Destination").and_then(|value| value.as_str()) == Some("/workspace")
+        })
+        .collect::<Vec<_>>();
+    let shadowed = mounts.into_iter().flatten().any(|mount| {
+        mount
+            .get("Destination")
+            .and_then(|value| value.as_str())
+            .is_some_and(|destination| destination.starts_with("/workspace/"))
+    });
+    let bind_matches = !shadowed
+        && match workspace_mounts.as_slice() {
+            [mount] => {
+                mount.get("Type").and_then(|value| value.as_str()) == Some("bind")
+                    && mount.get("RW").and_then(|value| value.as_bool()) == Some(true)
+                    && mount
+                        .get("Source")
+                        .and_then(|value| value.as_str())
+                        .and_then(|value| Path::new(value).canonicalize().ok())
+                        .as_ref()
+                        == Some(&ownership.canonical)
+            }
+            _ => false,
+        };
+    let no_ports = record
+        .and_then(|record| record.pointer("/NetworkSettings/Ports"))
+        .and_then(|value| value.as_object())
+        .is_some_and(|ports| ports.is_empty());
+    if !ownership.owns(checkout, binding.scope.as_deref()) || !bind_matches || !no_ports {
+        return Err(ContainerExecError::Failure {
+            command: "inspect workspace builder".to_owned(), code: None, stdout: String::new(),
+            stderr: "workspace builder explicit checkout/scope labels or writable /workspace source bind are unverified".to_owned(),
+        });
+    }
+    binding.workspace_builder_deadline = Some(deadline);
+    Ok(binding)
 }
 
 pub fn verify_owned_running_compose_rows(
@@ -1062,6 +1190,7 @@ impl OwnershipContext {
             }
         }
         Ok(VerifiedComposeContainer {
+            workspace_builder_deadline: None,
             row: current,
             id: identity.id,
             checkout: self.canonical.clone(),

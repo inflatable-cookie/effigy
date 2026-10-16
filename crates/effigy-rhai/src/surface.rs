@@ -102,6 +102,7 @@ pub const FEATURE_STATE_APPLY: &str = "state.apply";
 pub const FEATURE_STATE_CAPTURE: &str = "state.capture";
 pub const FEATURE_STATE_CAPTURE_SET: &str = "state.capture_set";
 pub const FEATURE_STATE_HISTORY: &str = "state.history";
+pub const FEATURE_CONTAINER_WORKSPACE_ARTIFACT_BUILD: &str = "container.workspace_artifact_build";
 pub const FEATURE_CONTAINER_STATUS: &str = "container.status";
 pub const FEATURE_CONTAINER_LOGS: &str = "container.logs";
 pub const FEATURE_CONTAINER_RESET: &str = "container.reset";
@@ -188,6 +189,7 @@ pub const FEATURE_NAMES: &[&str] = &[
     FEATURE_STATE_CAPTURE,
     FEATURE_STATE_CAPTURE_SET,
     FEATURE_STATE_HISTORY,
+    FEATURE_CONTAINER_WORKSPACE_ARTIFACT_BUILD,
     FEATURE_CONTAINER_STATUS,
     FEATURE_CONTAINER_LOGS,
     FEATURE_CONTAINER_RESET,
@@ -1053,6 +1055,13 @@ const EXTRA_SURFACE_FUNCTIONS: &[RhaiSurfaceFunction] = &[
         signature: "task::run_json(task, args)",
         description: "Run a manifest task and parse JSON output.",
         safety: "depends-on-task",
+    },
+    RhaiSurfaceFunction {
+        module: MODULE_CONTAINER,
+        name: "workspace_artifact_build",
+        signature: "container::workspace_artifact_build(args)",
+        description: "Build through the owned Linux workspace artifact builder without readmitting retained inputs.",
+        safety: "runtime-mutation",
     },
     RhaiSurfaceFunction {
         module: MODULE_CONTAINER,

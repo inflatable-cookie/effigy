@@ -28,6 +28,7 @@ pub use implementation::{
     owned_service_listing_args, run_compose_capture, run_compose_invocation_capture,
     run_compose_invocation_capture_with_env, run_docker_capture, running_stack_admits_reactivation,
     shutdown_container, verify_owned_running_compose_identities, verify_owned_running_compose_rows,
+    verify_workspace_artifact_builder, verify_workspace_artifact_builder_declaration,
     ContainerExecError, OwnershipContext, RunningComposeContainerInventory,
     RuntimeInventoryFailure, VerifiedComposeContainer,
 };

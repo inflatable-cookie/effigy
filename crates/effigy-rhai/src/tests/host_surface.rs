@@ -189,3 +189,22 @@ fn execute_rhai_script_exposes_extended_rhai_feature_surface() {
 
     execute_rhai_script(&context, script, &[], &callbacks()).expect("execute");
 }
+
+#[test]
+fn workspace_artifact_build_helper_preserves_argv_and_requires_maintained_task() {
+    let root = temp_root("workspace-builder-helper");
+    let mut context = ScriptContext {
+        cwd: root.clone(),
+        repo_root: root,
+        task_name: "demo".to_owned(),
+        stop_requested: install_stop_requested_flag().unwrap(),
+    };
+    let script = r#"let result = container::workspace_artifact_build(["sh", "-lc", "space $literal; bytes"]);
+if result["feature"] != "container.workspace_artifact_build" || result["options"]["command"][2] != "space $literal; bytes" { throw("argv changed"); }"#;
+    let error = execute_rhai_script(&context, script, &[], &callbacks()).unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("maintained workspace:linux:artifact task"));
+    context.task_name = "workspace:linux:artifact".to_owned();
+    execute_rhai_script(&context, script, &[], &callbacks()).unwrap();
+}

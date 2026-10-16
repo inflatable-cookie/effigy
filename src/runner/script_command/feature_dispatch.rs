@@ -149,6 +149,13 @@ pub(super) fn run_rhai_feature(
                 output_json: true,
             }),
         ),
+        FEATURE_CONTAINER_WORKSPACE_ARTIFACT_BUILD => {
+            crate::runner::container_command::workspace_artifact_builder::build(
+                repo_root,
+                &string_array(&options, "command")?,
+            )?;
+            Ok(serde_json::json!({"success": true}).to_string())
+        }
         FEATURE_CONTAINER_STATUS => {
             if let Some(name) = string_option(&options, "name")? {
                 run_container_json(

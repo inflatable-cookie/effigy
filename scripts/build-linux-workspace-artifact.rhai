@@ -1,4 +1,3 @@
-let container_name = "linux-release";
 let host_artifacts_dir = path::join(repo_root, ".effigy/linux-release/artifacts");
 let release_triple = if env("EFFIGY_LINUX_RELEASE_TRIPLE") == "" {
     "x86_64-unknown-linux-gnu"
@@ -9,18 +8,7 @@ let active_version = str::trim(effigy::active_version());
 let copied_binary = path::join(host_artifacts_dir, "effigy-" + release_triple);
 let receipt_path = path::join(host_artifacts_dir, "rehearsal.txt");
 
-fn down_container(name) {
-    let output = container::down(name);
-    if output.trim() != "" {
-        log(output);
-    }
-}
-
 fs::create_dir(host_artifacts_dir);
-let up = container::up(container_name, true);
-if up.trim() != "" {
-    log(up);
-}
 
 let build_script = "set -eu\n";
 build_script += "mkdir -p /workspace/.effigy/linux-release/artifacts\n";
@@ -40,25 +28,20 @@ build_script += "  echo \"build_kind=workspace-artifact\"\n";
 build_script += "  echo \"completed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)\"\n";
 build_script += "} > /workspace/.effigy/linux-release/artifacts/rehearsal.txt\n";
 
-let shell_error = "";
-try {
-    let output = container::exec_stream(container_name, ["sh", "-lc", build_script]);
-    if !output["success"] {
-        throw "container build command exited with status " + output["status"].to_string();
-    }
-} catch (error) {
-    shell_error = error.to_string();
-}
-if shell_error != "" {
-    down_container(container_name);
-    throw "[error] linux workspace artifact build failed\n" + shell_error;
-}
+container::workspace_artifact_build(["sh", "-lc", build_script]);
 
-down_container(container_name);
 if !fs::exists(copied_binary) || !fs::is_file(copied_binary) {
     throw "[error] expected copied Linux workspace artifact at " + copied_binary;
 }
 if !fs::exists(receipt_path) || !fs::is_file(receipt_path) {
     throw "[error] expected Linux workspace artifact receipt at " + receipt_path;
+}
+let version_path = copied_binary + ".active-version";
+if !fs::is_file(version_path) || str::trim(fs::read_file(version_path)) != active_version {
+    throw "[error] Linux workspace artifact active version does not match the host";
+}
+let receipt = fs::env_file_map(receipt_path);
+if receipt["release_triple"] != release_triple || fs::file_size(copied_binary) == 0 {
+    throw "[error] Linux workspace artifact build did not produce valid output for " + release_triple;
 }
 log("[ok] linux workspace artifact built");

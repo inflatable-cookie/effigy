@@ -244,6 +244,10 @@ Current v1 helpers:
   - `task::list()` / `task::list(options_map)`
   - `task::resolve(selector)`
   - `task::info(selector)`
+  - `container::workspace_artifact_build(args_array)` — restricted to the
+    maintained `workspace:linux:artifact` task; streams a build through the
+    strictly owned Linux builder, throws on failure, and returns `{ success: true }`
+    on process success (artifact receipt and freshness checks still follow).
   - `container::up(name, detach_bool)`
   - `container::down(name)`
   - `container::shell(name, command_string)`

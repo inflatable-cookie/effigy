@@ -353,6 +353,16 @@ Behavior:
 - open workspace shell
 - do package or maintenance work inside Linux
 - on shell exit, prompt to bring the system down and default the answer to yes
+- a local upgrade automatically rebuilds a stale Linux artifact through
+  `workspace:linux:artifact`. A running, strictly owned Linux builder can be
+  reused even when an older detached activation remained partial. Effigy checks
+  the immutable container identity and writable checkout bind before building;
+  it keeps the original activation record and cache volumes, and leaves the
+  builder detached for reuse. No manual down/up or marker deletion is needed
+  for this supported case. Foreign, missing, stopped, unlabelled or changing
+  builders still refuse. If the retained image cannot compile current source,
+  the build fails without accepting the old artifact. See the
+  [builder ownership contract](../knowledge/contracts/006-compose-backend-compatibility.md).
 - if the handoff refuses a stale Linux workspace artifact, the refusal names the
   host and artifact versions, the target, and the rebuild command, for example
   `EFFIGY_LINUX_RELEASE_TRIPLE=aarch64-unknown-linux-gnu effigy workspace:linux:artifact`.

@@ -1,3 +1,5 @@
+mod builder_recovery;
+
 use super::*;
 use crate::contract_test_support::EnvGuard;
 use crate::runner::exec_command::{BoundedCommandBudget, BoundedCommandPhase};
