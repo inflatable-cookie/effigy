@@ -1528,3 +1528,36 @@ fn secret_target_label(target: ManifestSecretTarget) -> &'static str {
         ManifestSecretTarget::Artifacts => "artifacts",
     }
 }
+
+#[cfg(test)]
+mod vault_generate_hook_tests {
+    use super::*;
+
+    fn secrets_with_generate(step: &str) -> ManifestSecretsConfig {
+        toml::from_str(&format!(
+            "backend = \"effigy-vault\"\n[vault]\ngenerate = {step}\n"
+        ))
+        .expect("secrets config")
+    }
+
+    #[test]
+    fn generation_flag_is_cleared_after_the_hook_succeeds_or_fails() {
+        let root = tempfile::tempdir().expect("repo root");
+        fs::write(root.path().join("effigy.toml"), "[tasks]\n").expect("project manifest");
+        std::env::remove_var(TASK_SECRET_GENERATION_ACTIVE_ENV);
+
+        let ok = secrets_with_generate(r#"{ run = "true" }"#);
+        assert!(run_configured_vault_generate_task(root.path(), Some(&ok)).expect("hook runs"));
+        assert!(
+            std::env::var_os(TASK_SECRET_GENERATION_ACTIVE_ENV).is_none(),
+            "flag must be cleared after a successful hook"
+        );
+
+        let failing = secrets_with_generate(r#"{ run = "false" }"#);
+        assert!(run_configured_vault_generate_task(root.path(), Some(&failing)).is_err());
+        assert!(
+            std::env::var_os(TASK_SECRET_GENERATION_ACTIVE_ENV).is_none(),
+            "flag must be cleared after a failing hook"
+        );
+    }
+}
