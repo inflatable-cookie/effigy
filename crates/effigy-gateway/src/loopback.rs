@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::atomic_write;
 use crate::error::GatewayError;
+use crate::routes::{RouteSource, RouteTable};
 
 /// Build the stable registry identity for one isolated project checkout.
 pub fn project_loopback_identity(project_name: &str, checkout: &Path) -> String {
@@ -169,6 +170,26 @@ impl LoopbackRegistry {
         self.assignments.is_empty()
     }
 
+    /// Reallocate an identity whose stored IP is now reserved by another
+    /// project's container route.
+    ///
+    /// Pruning drops registry assignments for stacks that are not running,
+    /// but their container routes stay registered and a stale route's
+    /// gateway TCP listener can still bind the tuple. When that happens the
+    /// stored IP no longer names this identity's listener, so keeping it
+    /// would republish Compose ports on an address a stale listener holds.
+    /// Returns true when the identity was deallocated and needs a fresh
+    /// allocation.
+    pub fn deallocate_if_reserved(&mut self, identity: &str, reserved: &HashSet<Ipv4Addr>) -> bool {
+        let collides = self
+            .get(identity)
+            .is_some_and(|assignment| reserved.contains(&assignment.ip));
+        if collides {
+            self.deallocate(identity);
+        }
+        collides
+    }
+
     fn next_available_ip_avoiding(&self, reserved: &HashSet<Ipv4Addr>) -> Option<Ipv4Addr> {
         let assigned: std::collections::HashSet<Ipv4Addr> =
             self.assignments.values().map(|entry| entry.ip).collect();
@@ -190,6 +211,42 @@ fn set_owner_only_permissions(path: &Path) -> Result<(), GatewayError> {
             reason: format!("failed to set owner-only permissions: {error}"),
         }
     })
+}
+
+/// Loopback IPs held by other projects' container routes that a new
+/// allocation for `project_path` must avoid.
+///
+/// This is the one shared reservation both allocation paths call. Compose
+/// generation (`effigy-containers`) and gateway registration previously
+/// disagreed here: generation only avoided IPs already present in
+/// `loopback-ips.json` while
+/// registration also reserved every other project's container-route `dns_ip`.
+/// Pruning drops assignments for stacks that are not running, but their
+/// routes stay in `routes.json`, so generation could publish Compose ports on
+/// an IP a stale route's gateway TCP listener still binds. Registration then
+/// reallocated, and DNS, the runtime binding and the gateway listener ended
+/// up on different IPs while the mapped localhost ports stayed ready — the
+/// host alias hung against a dead or wrong upstream. Reserving in both paths
+/// keeps the compose-published IP and the registered route IP identical for
+/// one identity.
+///
+/// Only `RouteSource::Container` routes participate: DNS-only or externally
+/// owned routes never back a gateway TCP alias listener.
+///
+/// Stale-route cleanup for missing checkouts (`effigy container retire
+/// --dead`) owns deleting the routes themselves; this reservation only stops
+/// new allocations from colliding with them.
+pub fn reserved_loopback_ips_for_other_projects(
+    route_table: &RouteTable,
+    project_path: &str,
+) -> HashSet<Ipv4Addr> {
+    route_table
+        .all_routes()
+        .into_iter()
+        .filter(|route| route.source == RouteSource::Container)
+        .filter(|route| route.project != project_path)
+        .filter_map(|route| route.dns_ip)
+        .collect()
 }
 
 #[cfg(not(unix))]

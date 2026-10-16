@@ -855,6 +855,7 @@ fn run_gateway_status_with_config(
     }
     let routes = gateway_route_dashboard(config, &route_table, &tls);
     let repair = gateway_repair_plan(&route_table, detect_active_gateway_projects());
+    let unbound_aliases = gateway_tcp_alias_unbound_routes(&route_table);
     let (trust_state, trust_reason) = route_table_trust_fields(
         &effigy_gateway::trust::inspect_route_table_trust(&config.route_table_path),
     );
@@ -888,6 +889,8 @@ fn run_gateway_status_with_config(
             "route_count": routes.len(),
             "tcp_bind_conflict_count": repair.conflicts.len(),
             "tcp_bind_conflicts": render_gateway_tcp_conflicts_json(&repair.conflicts),
+            "tcp_alias_unbound_count": unbound_aliases.len(),
+            "tcp_alias_unbound": render_gateway_tcp_alias_unbound_json(&unbound_aliases),
             "routes": render_routes_json(&routes),
         })
         .to_string());
@@ -953,6 +956,13 @@ fn run_gateway_status_with_config(
                 .iter()
                 .flat_map(render_gateway_tcp_conflict_lines),
         );
+    }
+    if !unbound_aliases.is_empty() {
+        lines.push(format!(
+            "[warn] found {} TCP alias route(s) with no working mapped-port fallback",
+            unbound_aliases.len()
+        ));
+        lines.extend(render_gateway_tcp_alias_unbound_lines(&unbound_aliases));
     }
     lines.extend(routes.iter().map(render_route_line));
 
@@ -1066,28 +1076,119 @@ fn run_gateway_repair_with_config(
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct GatewayTcpBindConflict {
-    bind_ip: std::net::Ipv4Addr,
-    bind_port: u16,
-    routes: Vec<GatewayTcpConflictRoute>,
+pub(in crate::runner) struct GatewayTcpBindConflict {
+    pub bind_ip: std::net::Ipv4Addr,
+    pub bind_port: u16,
+    pub routes: Vec<GatewayTcpConflictRoute>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct GatewayTcpConflictRoute {
-    domain: String,
-    project: String,
-    target: Option<String>,
-    repairable: bool,
-    reason: Option<String>,
+pub(in crate::runner) struct GatewayTcpConflictRoute {
+    pub domain: String,
+    pub project: String,
+    pub target: Option<String>,
+    pub repairable: bool,
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct GatewayRepairPlan {
-    conflicts: Vec<GatewayTcpBindConflict>,
-    repairable_domains: Vec<String>,
+pub(in crate::runner) struct GatewayRepairPlan {
+    pub conflicts: Vec<GatewayTcpBindConflict>,
+    pub repairable_domains: Vec<String>,
 }
 
-fn gateway_repair_plan(
+/// A TCP alias route the gateway manager can never serve.
+///
+/// A missing or unparsable `tcp_target` means no listener ever starts for
+/// the bind tuple: the manager skips such routes while it only logs
+/// `TCP alias listener failed` / `ignoring conflicting TCP alias route`.
+/// The alias then cannot reach its mapped localhost port even though that
+/// port is ready — the hang signature from the loopback-divergence incident.
+/// `gateway status` and `doctor` surface these because daemon logs are where
+/// an operator never looks during a hang.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::runner) struct GatewayTcpAliasUnbound {
+    pub domain: String,
+    pub project: String,
+    pub bind_ip: std::net::Ipv4Addr,
+    pub bind_port: u16,
+    pub tcp_target: Option<String>,
+    pub reason: String,
+}
+
+/// Collect every TCP alias route with no working mapped-port fallback.
+///
+/// Pure route-table analysis: routes without `dns_ip` + `tcp_port` are not
+/// TCP aliases, and aliases whose `tcp_target` parses as a socket address
+/// get a listener from the manager. Everything else is reported with the
+/// alias domain and its (missing or broken) fallback.
+pub(in crate::runner) fn gateway_tcp_alias_unbound_routes(
+    route_table: &RouteTable,
+) -> Vec<GatewayTcpAliasUnbound> {
+    let mut unbound = Vec::new();
+    for route in route_table.all_routes() {
+        let (Some(bind_ip), Some(bind_port)) = (route.dns_ip, route.tcp_port) else {
+            continue;
+        };
+        let reason = match route.tcp_target.as_deref().map(str::trim) {
+            None | Some("") => Some("missing mapped-port fallback".to_owned()),
+            Some(raw) if raw.parse::<SocketAddr>().is_err() => Some(format!(
+                "invalid mapped-port fallback `{raw}`; expected `<127.0.0.1>:<port>`"
+            )),
+            Some(_) => None,
+        };
+        if let Some(reason) = reason {
+            unbound.push(GatewayTcpAliasUnbound {
+                domain: route.domain.clone(),
+                project: route.project.clone(),
+                bind_ip,
+                bind_port,
+                tcp_target: route.tcp_target.clone(),
+                reason,
+            });
+        }
+    }
+    unbound.sort_by(|left, right| left.domain.cmp(&right.domain));
+    unbound
+}
+
+pub(in crate::runner) fn render_gateway_tcp_alias_unbound_lines(
+    unbound: &[GatewayTcpAliasUnbound],
+) -> Vec<String> {
+    unbound
+        .iter()
+        .map(|route| {
+            format!(
+                "[warn] TCP alias `{}` ({}:{}) has no working listener ({}); mapped-port fallback is {}; the alias cannot reach healthy mapped ports",
+                route.domain,
+                route.bind_ip,
+                route.bind_port,
+                route.reason,
+                route.tcp_target.as_deref().unwrap_or("<missing>"),
+            )
+        })
+        .collect()
+}
+
+pub(in crate::runner) fn render_gateway_tcp_alias_unbound_json(
+    unbound: &[GatewayTcpAliasUnbound],
+) -> Vec<serde_json::Value> {
+    unbound
+        .iter()
+        .map(|route| {
+            json!({
+                "domain": route.domain,
+                "project": route.project,
+                "bind_ip": route.bind_ip.to_string(),
+                "bind_port": route.bind_port,
+                "tcp_target": route.tcp_target,
+                "reason": route.reason,
+            })
+        })
+        .collect()
+}
+
+pub(in crate::runner) fn gateway_repair_plan(
     route_table: &RouteTable,
     active_projects: Option<std::collections::BTreeSet<String>>,
 ) -> GatewayRepairPlan {
@@ -1192,7 +1293,7 @@ fn detect_active_gateway_projects() -> Option<std::collections::BTreeSet<String>
     )
 }
 
-fn render_gateway_tcp_conflicts_json(
+pub(in crate::runner) fn render_gateway_tcp_conflicts_json(
     conflicts: &[GatewayTcpBindConflict],
 ) -> Vec<serde_json::Value> {
     conflicts
@@ -1213,7 +1314,9 @@ fn render_gateway_tcp_conflicts_json(
         .collect()
 }
 
-fn render_gateway_tcp_conflict_lines(conflict: &GatewayTcpBindConflict) -> Vec<String> {
+pub(in crate::runner) fn render_gateway_tcp_conflict_lines(
+    conflict: &GatewayTcpBindConflict,
+) -> Vec<String> {
     let mut lines = vec![format!(
         "[warn] duplicate TCP bind {}:{}",
         conflict.bind_ip, conflict.bind_port

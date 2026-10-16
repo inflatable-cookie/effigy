@@ -178,6 +178,11 @@ fn collect_runtime_diagnostics(
     // policies, so surface it before any container-policy early return.
     append_route_table_trust_diagnostics(&mut diagnostics);
 
+    // TCP alias listener health is machine-global too: a duplicate bind
+    // tuple or a missing mapped-port fallback hangs the alias on any repo,
+    // so it also precedes the container-policy early returns.
+    append_gateway_tcp_alias_diagnostics(&mut diagnostics);
+
     // Catalog-pack health is machine-global too, and matters on repos with no
     // container policy at all, so it also precedes the early returns below.
     append_catalog_pack_diagnostics(&mut diagnostics);
@@ -414,6 +419,50 @@ fn append_route_table_trust_diagnostics(diagnostics: &mut DoctorRuntimeDiagnosti
             "gateway route table is untrusted ({reason}); the gateway keeps its last-known-good routes. Restore owner-only permissions (no group/other write) or re-register routes with `effigy container up` to re-stamp it."
         )),
     }
+}
+
+/// Surface gateway TCP alias listeners that can never serve traffic as
+/// doctor runtime warnings: duplicate bind tuples with divergent mapped-port
+/// fallbacks (only one alias wins the listener) and alias routes with a
+/// missing or invalid fallback (the manager starts no listener at all). Both
+/// name the alias and the fallback so an operator sees the hang cause
+/// without reading daemon logs. Route-table trust reporting stays separate;
+/// a missing or unreadable table simply yields no alias findings here.
+fn append_gateway_tcp_alias_diagnostics(diagnostics: &mut DoctorRuntimeDiagnostics) {
+    use effigy_gateway::routes::RouteTable;
+    use effigy_gateway::server::GatewayConfig;
+
+    let Ok(gateway_dir) = crate::runner::gateway_command::gateway_dir() else {
+        return;
+    };
+    let route_table_path = GatewayConfig::standard(gateway_dir).route_table_path;
+    let Ok(route_table) = RouteTable::load(&route_table_path) else {
+        return;
+    };
+    let plan = crate::runner::gateway_command::gateway_repair_plan(&route_table, None);
+    for conflict in &plan.conflicts {
+        let routes = conflict
+            .routes
+            .iter()
+            .map(|route| {
+                format!(
+                    "`{}` -> {}",
+                    route.domain,
+                    route.target.as_deref().unwrap_or("<missing>")
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        diagnostics.warnings.push(format!(
+            "gateway TCP bind {}:{} is claimed by aliases with different mapped-port fallbacks ({}); only one listener wins and the other alias hangs while its mapped port stays ready. Run `effigy gateway repair` to inspect.",
+            conflict.bind_ip, conflict.bind_port, routes,
+        ));
+    }
+    diagnostics.warnings.extend(
+        crate::runner::gateway_command::render_gateway_tcp_alias_unbound_lines(
+            &crate::runner::gateway_command::gateway_tcp_alias_unbound_routes(&route_table),
+        ),
+    );
 }
 
 /// Flag a stale colima SSH-agent forwarding socket for a running profile. A
