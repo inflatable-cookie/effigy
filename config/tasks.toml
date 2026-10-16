@@ -582,6 +582,11 @@
 # and terminate/reap exactly the already-owned child tree. Private tempfile
 # fixtures with recorded pids/groups and a private test-only injection at the
 # real initialization boundary; no OS exhaustion or live-process sabotage.
+"test:release:supervision-coordination-control" = { run = "cargo test -p effigy --lib release_preparation_fixture_supervision_init_excludes_parallel_normal_scope_at_wait_boundary -- --nocapture", timeout_ms = 120000 }
+"test:release:supervision-fixture-exclusion" = [
+  { task = "test:runner:supervision-init" },
+  { task = "test:release:prepared-tree-fixture-coordination" },
+]
 "test:runner:supervision-init" = [
   { id = "supervision-init", run = "cargo test -p effigy --lib supervision_init -- --nocapture", timeout_ms = 240000 },
 ]
