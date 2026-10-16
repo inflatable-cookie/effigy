@@ -302,6 +302,12 @@
 "test:host-process:exit-observation" = [
   { id = "owned-exit-observation", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(host_process_exit_observation_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
 ]
+# Controlled transaction exclusion for the live managed-listener fixture.
+"test:gateway:route-fixture-transaction" = { run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_host_dependent_replacement_route_edits_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 }
+"check:gateway:route-fixture-transaction" = [
+  { task = "check:host-process:owned-stop:compile" },
+  { task = "check:host-process:owned-stop:lint" },
+]
 "test:host-process:dependent-replacement" = [
   { id = "published-dependent-replacement", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_host_dependent_replacement_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
 ]

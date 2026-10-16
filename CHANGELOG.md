@@ -239,6 +239,8 @@ During v0.x, MINOR bumps may include breaking changes.
   1.2.0.
 
 ### Fixed
+- Managed-listener integration fixtures coordinate deliberate route edits with
+  lifecycle writers and retain private gateway refusals on HTTPS failure.
 - Release checks isolate baseline doctor fixtures from the developer's catalog
   store, and private catalog-pinning fixtures admit the compiled release version.
 - Effigy-managed service host aliases no longer hang while their mapped
