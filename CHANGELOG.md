@@ -239,6 +239,8 @@ During v0.x, MINOR bumps may include breaking changes.
   1.2.0.
 
 ### Fixed
+- Listener-handoff fixture closure checks retain socket identity across numeric
+  descriptor reuse in parallel release tests.
 - Supervision-initialization fixtures exclude parallel shared-scope installation
   through the existing signal-proof and environment lock pair.
 - Managed-listener integration fixtures coordinate deliberate route edits with
