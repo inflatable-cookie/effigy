@@ -243,6 +243,10 @@ During v0.x, MINOR bumps may include breaking changes.
   1.2.0.
 
 ### Fixed
+- Shared-service project names (`effigy-shared-<catalog>-<8 hex>`, which also
+  name their data volumes) now pin SipHash-1-3 with zero keys, the algorithm
+  `DefaultHasher` uses today. Existing names stay byte-identical, and a later
+  Rust upgrade cannot silently rename a shared service and orphan its data.
 - Workspace dependency volumes (Composer `vendor`, JS `node_modules`) with one
   writable service and read-only consumers (for example an app service writing
   the volume while an Nginx service mounts it `:ro`) are classified by their
