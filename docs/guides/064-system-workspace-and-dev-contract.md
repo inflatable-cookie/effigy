@@ -359,8 +359,13 @@ Behavior:
   the immutable container identity and writable checkout bind before building;
   it keeps the original activation record and cache volumes, and leaves the
   builder detached for reuse. No manual down/up or marker deletion is needed
-  for this supported case. Foreign, missing, stopped, unlabelled or changing
-  builders still refuse. If the retained image cannot compile current source,
+  for this supported case. The one-time move from `effigy-linux-release` to
+  `effigy-artifact-builder-v1` creates a separate labelled builder with the usual
+  checkout/worktree isolation. It leaves old containers, admissions and caches
+  untouched, including ambiguous pre-label builders. Future upgrades reuse the
+  same new project; separate caches can require downloads and extra disk space.
+  Foreign, missing, stopped, unlabelled or changing builders in the selected
+  new project still refuse. If the retained image cannot compile current source,
   the build fails without accepting the old artifact. See the
   [builder ownership contract](../knowledge/contracts/006-compose-backend-compatibility.md).
 - if the handoff refuses a stale Linux workspace artifact, the refusal names the
@@ -375,9 +380,11 @@ Behavior:
   preparation, whose recovery command names the actual target and retains its
   original deadline and cumulative output limits. An in-progress build is
   checked again after its lock releases.
-- an existing unlabelled direct-Compose builder cannot be adopted by retrying
-  `up`. See [the scoped recovery boundary](../knowledge/contracts/006-compose-backend-compatibility.md#primary-service-exec-readiness)
-  before explicitly stopping and recreating a verified selected builder.
+- legacy builder cleanup is optional and separate from automatic rebuilds.
+  No manual reset, relabel or retirement is needed for the namespace migration.
+  Missing legacy ownership labels cannot safely establish its association, so
+  Effigy applies no lifecycle or exec effects to those old objects. See
+  [the scoped recovery boundary](../knowledge/contracts/006-compose-backend-compatibility.md#primary-service-exec-readiness).
 
 ### Manual substrate control
 
