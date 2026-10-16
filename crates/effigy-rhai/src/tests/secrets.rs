@@ -330,50 +330,6 @@ fn execute_rhai_script_blocks_missing_required_rhai_secret_before_side_effects()
 }
 
 #[test]
-fn vault_generate_hook_creates_missing_required_rhai_secrets() {
-    let root = temp_root("rhai-secret-generate-missing-required");
-    write_rhai_secret_manifest(&root, r#"targets = ["rhai"]"#);
-    write_test_vault(&root, "vault-passphrase", &[]);
-    let _env = ScopedTestEnv::set_many(&[
-        (
-            "EFFIGY_TEST_SECRETS_PASSPHRASE",
-            "vault-passphrase".to_owned(),
-        ),
-        (
-            "EFFIGY_INTERNAL_TASK_SECRET_GENERATION_ACTIVE",
-            "1".to_owned(),
-        ),
-    ]);
-
-    execute_rhai_script(
-        &script_context(&root),
-        r#"
-            if !secrets::has("api_token") {
-                secrets::set_many(#{ api_token: "generated_secret" });
-            }
-        "#,
-        &[],
-        &callbacks(),
-    )
-    .expect("the generate hook may run before required secrets exist");
-
-    let raw = fs::read_to_string(root.join(".effigy/secrets/local.vault")).expect("read vault");
-    let payload = VaultEnvelope::from_json(&raw)
-        .expect("parse vault")
-        .decrypt_with_passphrase("vault-passphrase")
-        .expect("decrypt vault");
-    assert_eq!(
-        payload
-            .records
-            .get("api_token")
-            .expect("generated")
-            .value
-            .expose(),
-        "generated_secret"
-    );
-}
-
-#[test]
 fn execute_rhai_script_rejects_undeclared_and_wrong_target_secret_reads() {
     let root = temp_root("rhai-secret-wrong-target");
     write_rhai_secret_manifest(&root, r#"targets = ["tasks"]"#);

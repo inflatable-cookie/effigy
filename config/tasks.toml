@@ -1121,6 +1121,17 @@
   "cargo test --test cli_output_tests cli_contracts_validate_selection_rejects_invalid_artifacts -- --nocapture",
 ]
 
+# Run the Rhai library together so process-wide fixture leaks are observable.
+"test:release:rhai-generation-isolation" = [
+  { id = "shared-rhai-library", run = "cargo test -p effigy-rhai --lib -- --test-threads=8", timeout_ms = 600000 },
+  { id = "production-hook-cli", run = "cargo nextest run -p effigy --test secrets_vault_generate_cli_tests --no-capture --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { id = "hook-cleanup", run = "cargo nextest run -p effigy --lib --filterset 'test(vault_generate_hook_tests)' --no-capture --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
+]
+"check:release:rhai-generation-isolation" = [
+  "cargo check -p effigy-rhai -p effigy --all-targets --profile test",
+  "cargo clippy -p effigy-rhai -p effigy --all-targets -- -D warnings",
+]
+
 # Architecture drift guards
 "test:release:runtime-drift-routing" = [
   { task = "qa:architecture:runtime-container-drift" },
