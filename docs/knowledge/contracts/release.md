@@ -473,15 +473,40 @@ Existing `effigy-shared-*` names and their volume identities must remain
 byte-identical. Task `636fc8a2-ced4-4fc1-8e29-e444750940b5` owns that approved
 implementation.
 
-The current publication hold requires the route handover, shared-data and
-stable shared-service identity fixes to merge through independent review and
-all seven exact-head CI checks. The Underlay hybrid and Acowtancy adoption
-proofs must then pass on admitted local builds containing all three fixes.
+The publication hold requires the route handover, shared-data and stable
+shared-service identity fixes, plus the complete environment-handover correction
+below, to merge through independent review and all seven exact-head CI checks.
+The Underlay hybrid and Acowtancy adoption proofs must then pass on admitted
+local builds containing all four fixes.
 Earlier proofs remain historical evidence; they do not qualify the expanded
 candidate. Existing consumer owners admit and run these proofs. No prepare,
 execute, tag, publication workflow or publishing starts before those passing
 results. The release owner may lift the hold when these conditions pass without
 another approval request, preserving decision `0116369e` and every release gate.
+
+#### Complete environment handover required before the fresh proofs
+
+The reported Underlay proof on source `e0c6ade77` passed shared-data and
+borrower-protection cases but failed the live hybrid-to-container switch:
+data services were stopped before a later route claim refused the switch,
+leaving hybrid listeners without their data services and the target partial.
+This partial proof does not qualify the candidate for publication.
+
+Under Tom's seamless-switching ruling, task
+`ba4268a3-a647-4797-9b62-a53d01bb2f38` owns the complete environment-handover
+correction. Refusal checks must precede handover effects. For paired
+`data_from` environments or same-checkout environments with colliding routes,
+the approved handover stops the other complete environment cleanly while
+keeping its volumes, then starts the target. An environment stopped by handover
+must restart through ordinary `up`, rather than being stranded as an
+unreconcilable partial activation. Existing ownership and effect-boundary
+checks remain required; this ruling waives none of them.
+
+The fresh consumer proofs must use a build containing this correction as well
+as the preceding route, shared-data and stable-name fixes. They must exercise
+the demonstrated live reverse transition, without a manual prior `down` hiding
+the failing path. Publication and new preparation stay held until the existing
+proof owners report passing results.
 
 Lifting the hold resumes decision `0116369e` version 2 with no gate waiver:
 fresh hosted CI on current clean, pushed main, a fresh prepare with all seven
