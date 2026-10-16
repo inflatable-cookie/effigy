@@ -331,3 +331,21 @@ no findings use the existing scoped catalog-home test override, so operator
 pack selection cannot silently become fixture input. This does not change
 production compatibility validation or suppress unhealthy-pack findings. Host
 pack migration is a separate operator action, not a way to make tests pass.
+
+### Managed-listener fixture transactions
+
+Private tests that deliberately forge and restore routes while managed
+supervisors run must hold the existing route-table transaction lock across
+load/edit/save, just as lifecycle registration does. Atomic rename protects
+readers from partial JSON; it does not serialize read/modify/write transactions.
+The dependent-replacement fixture exercises the native exclusion and preserves
+a concurrent lifecycle registration. Network and lifecycle readiness waits stay
+outside those mutation transactions.
+
+Candidate CI `38858608096` at `8729ab01` failed one Linux sibling HTTPS assertion
+with a managed-listener ownership refusal. Its log did not preserve the inner
+predicate; one unchanged private macOS reproduction passed. The unlocked fixture
+edits are a demonstrated race repaired separately, not a proven historical cause
+for that CI refusal. Private HTTPS failure diagnostics now include the fixture's
+gateway stderr. Production ownership checks, deadlines and release gates remain
+unchanged; future candidate evidence must pass in its own right.

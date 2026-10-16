@@ -10,7 +10,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
-use effigy_gateway::routes::{Route, RouteSource, RouteTable};
+use effigy_gateway::routes::{Route, RouteSource, RouteTable, RouteTableLock};
 use serde_json::Value;
 
 const EFFIGY: &str = env!("CARGO_BIN_EXE_effigy");
@@ -1133,7 +1133,7 @@ fn managed_host_dependent_replacement_preserves_routes_and_scope_teardown() {
     let sibling_state = &app_states[2];
     let forged_listener = ForeignListener::bind("127.0.0.1:0".parse().unwrap());
     let route_path = private_gateway.join("routes.json");
-    let mut routes = effigy_gateway::routes::RouteTable::load(&route_path).unwrap();
+    let routes = effigy_gateway::routes::RouteTable::load(&route_path).unwrap();
     let sibling_route = routes.lookup(sibling_domain).unwrap().clone();
     let mut forged_route = sibling_route.clone();
     forged_route.target = Some(forged_listener.address.to_string());
@@ -1142,8 +1142,7 @@ fn managed_host_dependent_replacement_preserves_routes_and_scope_teardown() {
         .as_mut()
         .expect("managed listener owner")
         .address = forged_listener.address.to_string();
-    routes.upsert(forged_route);
-    routes.save(&route_path).unwrap();
+    edit_live_fixture_routes(&route_path, |routes| routes.upsert(forged_route));
     let forged_response = wait_for_https_response_containing(
         https_address,
         &ca_path,
@@ -1157,9 +1156,9 @@ fn managed_host_dependent_replacement_preserves_routes_and_scope_teardown() {
     );
     assert!(!forged_listener.received_request());
 
-    let mut routes = effigy_gateway::routes::RouteTable::load(&route_path).unwrap();
-    routes.upsert(sibling_route.clone());
-    routes.save(&route_path).unwrap();
+    edit_live_fixture_routes(&route_path, |routes| {
+        routes.upsert(sibling_route.clone());
+    });
     assert_eq!(
         curl_https(https_address, &ca_path, sibling_domain, "/"),
         format!(
@@ -1169,15 +1168,13 @@ fn managed_host_dependent_replacement_preserves_routes_and_scope_teardown() {
         )
     );
 
-    let mut routes = effigy_gateway::routes::RouteTable::load(&route_path).unwrap();
     let mut reused_identity_route = sibling_route.clone();
     reused_identity_route
         .managed_listener
         .as_mut()
         .expect("managed listener owner")
         .listener_boot_identity = "a different boot/process generation".to_owned();
-    routes.upsert(reused_identity_route);
-    routes.save(&route_path).unwrap();
+    edit_live_fixture_routes(&route_path, |routes| routes.upsert(reused_identity_route));
     let reused_identity_response = wait_for_https_response_containing(
         https_address,
         &ca_path,
@@ -1189,9 +1186,7 @@ fn managed_host_dependent_replacement_preserves_routes_and_scope_teardown() {
         reused_identity_response.contains("503 Service Unavailable"),
         "a stale or reused process identity must fail closed: {reused_identity_response}"
     );
-    let mut routes = effigy_gateway::routes::RouteTable::load(&route_path).unwrap();
-    routes.upsert(sibling_route);
-    routes.save(&route_path).unwrap();
+    edit_live_fixture_routes(&route_path, |routes| routes.upsert(sibling_route));
     drop(forged_listener);
     drop(foreign);
 
@@ -1346,7 +1341,6 @@ fn managed_host_dependent_replacement_preserves_routes_and_scope_teardown() {
     );
     assert!(delayed_state["child_pid"].is_null());
 
-    let mut routes = effigy_gateway::routes::RouteTable::load(&route_path).unwrap();
     let foreign_claim = effigy_gateway::routes::Route {
         domain: "claimed.host.test".to_owned(),
         target: Some("127.0.0.1:48081".to_owned()),
@@ -1364,8 +1358,7 @@ fn managed_host_dependent_replacement_preserves_routes_and_scope_teardown() {
         tls: true,
         registered: Utc::now(),
     };
-    routes.upsert(foreign_claim.clone());
-    routes.save(&route_path).unwrap();
+    edit_live_fixture_routes(&route_path, |routes| routes.upsert(foreign_claim.clone()));
     write_listener_fixture_manifest(ListenerFixtureManifest {
         checkout: primary_checkout,
         profile: primary_profile,
@@ -1389,9 +1382,9 @@ fn managed_host_dependent_replacement_preserves_routes_and_scope_teardown() {
     );
     let routes = effigy_gateway::routes::RouteTable::load(&route_path).unwrap();
     assert_eq!(routes.lookup("claimed.host.test"), Some(&foreign_claim));
-    let mut routes = effigy_gateway::routes::RouteTable::load(&route_path).unwrap();
-    routes.deregister("claimed.host.test").unwrap();
-    routes.save(&route_path).unwrap();
+    edit_live_fixture_routes(&route_path, |routes| {
+        routes.deregister("claimed.host.test").unwrap();
+    });
 
     write_listener_fixture_manifest(ListenerFixtureManifest {
         checkout: primary_checkout,
@@ -1496,6 +1489,79 @@ fn managed_host_dependent_replacement_preserves_routes_and_scope_teardown() {
     println!(
         "managed listener identity and cleanup receipts: identities={}, primary_route_removed=true, worktree_routes_removed=true, foreign_port_received_no_request=true, private_host_effects=none",
         serde_json::Value::Array(identity_receipts)
+    );
+}
+
+// A forged route can trigger dependent lifecycle writes. Participate in the
+// same transaction lock so a stale lifecycle snapshot cannot undo restoration,
+// and a fixture edit cannot discard an unrelated lifecycle update.
+fn edit_live_fixture_routes(path: &Path, edit: impl FnOnce(&mut RouteTable)) {
+    let _lock = RouteTableLock::acquire(path).expect("lock private fixture routes");
+    let mut routes = RouteTable::load(path).expect("load private fixture routes");
+    edit(&mut routes);
+    routes
+        .save(path)
+        .expect("save private fixture route transaction");
+}
+
+#[test]
+fn managed_host_dependent_replacement_route_edits_exclude_lifecycle_writers() {
+    use effigy_gateway::registration::{register_route, RouteRegistration};
+    use std::sync::mpsc;
+
+    let fixture = tempfile::tempdir().expect("private route transaction fixture");
+    let route_path = fixture.path().join("routes.json");
+    let registration = |domain: &str| RouteRegistration {
+        domain: domain.to_owned(),
+        target: Some("127.0.0.1:48081".to_owned()),
+        dns_ip: None,
+        tcp_port: None,
+        tcp_target: None,
+        tls: false,
+        project_path: fixture.path().display().to_string(),
+        source: RouteSource::Manual,
+    };
+    register_route(&route_path, &registration("original.test")).unwrap();
+    let sibling = registration("sibling.test");
+    let (attempt_tx, attempt_rx) = mpsc::channel();
+    thread::scope(|scope| {
+        let mut writer = None;
+        let mut excluded = false;
+        edit_live_fixture_routes(&route_path, |routes| {
+            // A second native open must not acquire the transaction lock.
+            // This fails deterministically if the fixture helper is unlocked.
+            let probe = fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(route_path.with_extension("lock"))
+                .expect("open independent lock handle");
+            excluded = matches!(probe.try_lock(), Err(fs::TryLockError::WouldBlock));
+            drop(probe);
+            writer = Some(scope.spawn(|| {
+                attempt_tx.send(()).unwrap();
+                register_route(&route_path, &sibling).expect("concurrent lifecycle registration");
+            }));
+            attempt_rx
+                .recv_timeout(Duration::from_secs(5))
+                .expect("lifecycle writer reached registration");
+            let mut original = routes.lookup("original.test").unwrap().clone();
+            original.target = Some("127.0.0.1:48082".to_owned());
+            routes.upsert(original);
+        });
+        writer.unwrap().join().expect("settle lifecycle writer");
+        assert!(
+            excluded,
+            "fixture mutation bypassed the lifecycle transaction lock"
+        );
+    });
+    let routes = RouteTable::load(&route_path).unwrap();
+    assert_eq!(
+        routes.lookup("original.test").unwrap().target.as_deref(),
+        Some("127.0.0.1:48082")
+    );
+    assert!(
+        routes.lookup("sibling.test").is_some(),
+        "fixture restoration lost the concurrent lifecycle registration"
     );
 }
 
@@ -2908,8 +2974,12 @@ fn curl_https(address: SocketAddr, ca: &Path, hostname: &str, path: &str) -> Str
         thread::sleep(Duration::from_millis(25));
     };
     panic!(
-        "verified HTTPS request failed for {hostname}: {last_error}; response={}",
-        curl_https_response(address, ca, hostname, path)
+        "verified HTTPS request failed for {hostname}: {last_error}; response={}; private_gateway_stderr={}",
+        curl_https_response(address, ca, hostname, path),
+        ca.parent()
+            .and_then(Path::parent)
+            .and_then(|root| fs::read_to_string(root.join("gateway.stderr.log")).ok())
+            .unwrap_or_else(|| "private gateway diagnostics unavailable".to_owned())
     );
 }
 
