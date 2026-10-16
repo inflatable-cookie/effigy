@@ -705,6 +705,19 @@ generation is stale and may be claimed by another worktree. A fixed domain
 therefore refuses a second live worktree until the consumer supplies distinct
 domains. The route table never silently moves a live sibling's domain.
 
+A checkout may switch between its container environment and hybrid managed
+listener mode in either direction. A managed listener claiming a domain held by
+a `source = container` route from the same checkout and scope replaces it with
+the listener route in the same locked transaction, and the container
+environment may keep running. Container registration takes the domain back once
+the recorded managed listener generation is no longer live, decided by the
+existing managed-listener availability and ownership checks. A managed listener
+generation that is still live is a real conflict: the claim refuses and names
+the running managed process and `effigy container down`. Another checkout,
+another scope or a live worktree generation still refuses. Container teardown
+removes only `source = container` routes owned by the caller, so stopping the
+old container environment cannot remove a handed-over listener route.
+
 A linked worktree that does not share runtime identity gets one effective host
 map for its declared HTTP routes and TCP aliases. The apex becomes
 `<apex>-w<host-key>.<tld>` (for `app.test`, `app-w<host-key>.test`); helper

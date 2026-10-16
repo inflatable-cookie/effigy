@@ -36,7 +36,7 @@ use effigy_gateway::identity::{read_live_process_identity, GatewayStartIdentity}
 use effigy_gateway::legacy::{process_listening_endpoints, GatewayEndpoint, GatewayTransport};
 use effigy_gateway::registration::{
     check_managed_listener_route_claim, deregister_managed_listener_route, project_scope,
-    register_managed_listener_route,
+    register_managed_listener_route, ManagedListenerRoutePublication,
 };
 use effigy_gateway::routes::{ManagedListenerRouteOwner, RouteTable};
 use nix::sys::signal::{kill, Signal};
@@ -2160,59 +2160,71 @@ fn supervise_managed_host_listener(
             )?;
             return Ok(());
         }
-        if let Err(error) = publish_managed_listener_route(spec, listener, &owner) {
-            write_listener_state(
-                &spec.listener_state_file,
-                listener_state(
-                    spec,
-                    supervisor,
-                    "unavailable",
-                    Some(&generation),
-                    None,
-                    None,
-                    None,
-                    Some(&root_identity),
-                    Some(&owned),
-                    Some(&owner),
-                ),
-            )?;
-            deregister_managed_listener_route(
-                &listener_route_table_path(spec)?,
-                &spec.project_path,
-                &listener.route_domain,
-                &spec.owner,
-                &generation,
-            )
-            .map_err(|cleanup_error| RunnerError::task_invocation(cleanup_error.to_string()))?;
-            terminate_owned_child_group(&mut child, &root_identity, Duration::from_secs(2))?;
-            child_pid.store(0, Ordering::SeqCst);
-            *child_identity
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
-            append_log_line(
-                &log_path,
-                &format!("[effigy host-process] route publication failed: {error}"),
-            );
-            diagnostic.route = RouteObservation::PublicationFailed;
-            write_listener_state(
-                &spec.listener_state_file,
-                with_diagnostic(
+        match publish_managed_listener_route(spec, listener, &owner) {
+            Ok(ManagedListenerRoutePublication::HandedOverFromContainer) => {
+                append_log_line(
+                    &log_path,
+                    &format!(
+                        "[effigy host-process] gateway route for `{}` handed over from this checkout's container environment; the container environment is still running",
+                        listener.route_domain
+                    ),
+                );
+            }
+            Ok(_) => {}
+            Err(error) => {
+                write_listener_state(
+                    &spec.listener_state_file,
                     listener_state(
                         spec,
                         supervisor,
-                        "failed",
+                        "unavailable",
                         Some(&generation),
                         None,
                         None,
                         None,
-                        None,
-                        None,
-                        None,
+                        Some(&root_identity),
+                        Some(&owned),
+                        Some(&owner),
                     ),
-                    &diagnostic,
-                ),
-            )?;
-            return Ok(());
+                )?;
+                deregister_managed_listener_route(
+                    &listener_route_table_path(spec)?,
+                    &spec.project_path,
+                    &listener.route_domain,
+                    &spec.owner,
+                    &generation,
+                )
+                .map_err(|cleanup_error| RunnerError::task_invocation(cleanup_error.to_string()))?;
+                terminate_owned_child_group(&mut child, &root_identity, Duration::from_secs(2))?;
+                child_pid.store(0, Ordering::SeqCst);
+                *child_identity
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+                append_log_line(
+                    &log_path,
+                    &format!("[effigy host-process] route publication failed: {error}"),
+                );
+                diagnostic.route = RouteObservation::PublicationFailed;
+                write_listener_state(
+                    &spec.listener_state_file,
+                    with_diagnostic(
+                        listener_state(
+                            spec,
+                            supervisor,
+                            "failed",
+                            Some(&generation),
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                        ),
+                        &diagnostic,
+                    ),
+                )?;
+                return Ok(());
+            }
         }
 
         let child_wait =
@@ -2999,7 +3011,7 @@ fn publish_managed_listener_route(
     spec: &HostProcessRuntimeSpec,
     listener: &EffectiveManagedHostListener,
     owner: &ManagedListenerRouteOwner,
-) -> Result<(), RunnerError> {
+) -> Result<ManagedListenerRoutePublication, RunnerError> {
     let root = spec.gateway_root.as_deref().ok_or_else(|| {
         RunnerError::task_invocation("managed listener route has no gateway state root")
     })?;

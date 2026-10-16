@@ -376,6 +376,17 @@ Listener routes go to the shared gateway, so browsers reach them like any
 other container route. Set `EFFIGY_GATEWAY_PRIVATE_STATE_ROOT` to publish them
 to a private gateway instead (see below).
 
+Switching between the container environment and managed host listeners needs no
+manual route cleanup. When a listener claims a gateway domain that the same
+checkout and scope already published as a container route, Effigy hands the
+route over in one locked transaction, and the container environment may keep
+running. Starting the container environment again takes the domain back once
+the recorded listener generation is no longer live. A listener that is still
+live is a real conflict: the run refuses and names the running managed process,
+and `effigy container down` stops it. Another checkout or worktree generation
+still refuses, and stopping the old container environment never removes the
+handed-over listener route.
+
 `container up --detach --json` returns each ready listener's actual address,
 internal URL, public URL, generation and state-file path. A linked worktree
 or marked ephemeral clone publishes its checkout-scoped name, so the same

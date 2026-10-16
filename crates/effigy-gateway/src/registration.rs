@@ -60,6 +60,56 @@ pub fn check_claim(
     Ok(())
 }
 
+/// Whether container teardown still covers a route for this checkout
+/// generation. Teardown removes only routes this checkout published as
+/// container routes; a managed listener route, including one handed over from
+/// this checkout's own container environment, stays.
+pub fn container_teardown_covers(route: &Route, project_path: &str, scope: Option<&str>) -> bool {
+    owned_by(route, project_path, scope)
+        && route.managed_listener.is_none()
+        && route.source == RouteSource::Container
+}
+
+/// Refuse a container registration that would displace a live managed listener
+/// from this same checkout and scope. A managed listener generation that is no
+/// longer live is a handover, not a conflict.
+pub fn check_container_claim(
+    route: &Route,
+    project_path: &str,
+    scope: Option<&str>,
+) -> Result<(), GatewayError> {
+    check_container_claim_with(route, project_path, scope, |owner| {
+        crate::managed_listener::verify_managed_listener_owner(owner).is_ok()
+    })
+}
+
+/// [`check_container_claim`] with an injected liveness observation, so tests
+/// can exercise both outcomes without a real listener process.
+pub fn check_container_claim_with<F>(
+    route: &Route,
+    project_path: &str,
+    scope: Option<&str>,
+    listener_is_live: F,
+) -> Result<(), GatewayError>
+where
+    F: FnOnce(&ManagedListenerRouteOwner) -> bool,
+{
+    check_claim(route, project_path, scope)?;
+    if !owned_by(route, project_path, scope) {
+        return Ok(());
+    }
+    if let Some(owner) = route.managed_listener.as_ref() {
+        if listener_is_live(owner) {
+            return Err(GatewayError::ManagedListenerRouteConflict {
+                domain: route.domain.clone(),
+                owner: owner.owner.clone(),
+                pid: owner.supervisor_pid,
+            });
+        }
+    }
+    Ok(())
+}
+
 /// Configuration for registering a container route.
 #[derive(Debug, Clone)]
 pub struct RouteRegistration {
@@ -88,10 +138,22 @@ pub struct RouteRegistration {
     pub source: RouteSource,
 }
 
+/// How a managed listener route was published.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ManagedListenerRoutePublication {
+    /// No route previously held the domain.
+    Registered,
+    /// Replaced the same managed owner's previous child generation.
+    ReplacedGeneration,
+    /// Took over a route published by this checkout's container environment.
+    HandedOverFromContainer,
+}
+
 /// Register a route in the route table file.
 ///
 /// Loads the route table, adds the route, and saves atomically.
-/// If a route for the domain already exists, it's replaced (upsert).
+/// If a route for the domain already exists, it's replaced (upsert), except a
+/// live managed listener from this same checkout and scope, which stays.
 pub fn register_route(
     route_table_path: &Path,
     registration: &RouteRegistration,
@@ -100,13 +162,7 @@ pub fn register_route(
     let mut table = RouteTable::load(route_table_path)?;
     let scope = project_scope(&registration.project_path)?;
     if let Some(existing) = table.lookup(&registration.domain) {
-        if existing.managed_listener.is_some() {
-            return Err(GatewayError::ForeignRoute {
-                domain: registration.domain.clone(),
-                project: existing.project.clone(),
-            });
-        }
-        check_claim(existing, &registration.project_path, scope.as_deref())?;
+        check_container_claim(existing, &registration.project_path, scope.as_deref())?;
     }
 
     table.upsert(Route {
@@ -129,8 +185,9 @@ pub fn register_route(
 
 /// Atomically publish a host-listener route for one managed process
 /// generation. A same-project route is not sufficient authority: replacement
-/// requires the exact stable listener owner and expected predecessor
-/// generation.
+/// of another managed generation requires the exact stable listener owner and
+/// expected predecessor generation. A route from this same checkout's container
+/// environment is handed over in the same locked transaction.
 pub fn register_managed_listener_route(
     route_table_path: &Path,
     project_path: &str,
@@ -139,7 +196,7 @@ pub fn register_managed_listener_route(
     tls: bool,
     owner: ManagedListenerRouteOwner,
     expected_generation: Option<&str>,
-) -> Result<(), GatewayError> {
+) -> Result<ManagedListenerRoutePublication, GatewayError> {
     let parsed_target = target.parse::<std::net::SocketAddr>().map_err(|error| {
         GatewayError::RouteTableReadError {
             path: route_table_path.to_path_buf(),
@@ -163,13 +220,28 @@ pub fn register_managed_listener_route(
     let _lock = RouteTableLock::acquire(route_table_path)?;
     let mut table = RouteTable::load(route_table_path)?;
     let scope = project_scope(project_path)?;
-    if let Some(existing) = table.lookup(domain) {
-        let replaceable = owned_by(existing, project_path, scope.as_deref())
-            && existing.managed_listener.as_ref().is_some_and(|current| {
-                current.owner == owner.owner
+    let publication = if let Some(existing) = table.lookup(domain) {
+        if owned_by(existing, project_path, scope.as_deref()) {
+            if let Some(current) = existing.managed_listener.as_ref() {
+                if current.owner == owner.owner
                     && expected_generation == Some(current.generation.as_str())
-            });
-        if !replaceable {
+                {
+                    ManagedListenerRoutePublication::ReplacedGeneration
+                } else {
+                    return Err(GatewayError::ForeignRoute {
+                        domain: domain.to_owned(),
+                        project: existing.project.clone(),
+                    });
+                }
+            } else if existing.source == RouteSource::Container && expected_generation.is_none() {
+                ManagedListenerRoutePublication::HandedOverFromContainer
+            } else {
+                return Err(GatewayError::ForeignRoute {
+                    domain: domain.to_owned(),
+                    project: existing.project.clone(),
+                });
+            }
+        } else {
             return Err(GatewayError::ForeignRoute {
                 domain: domain.to_owned(),
                 project: existing.project.clone(),
@@ -182,7 +254,9 @@ pub fn register_managed_listener_route(
                 "managed listener route `{domain}` disappeared before generation replacement"
             ),
         });
-    }
+    } else {
+        ManagedListenerRoutePublication::Registered
+    };
 
     table.upsert(Route {
         domain: domain.to_owned(),
@@ -197,12 +271,14 @@ pub fn register_managed_listener_route(
         managed_listener: Some(owner),
         registered: Utc::now(),
     });
-    table.save(route_table_path)
+    table.save(route_table_path)?;
+    Ok(publication)
 }
 
 /// Check a requested listener domain before child startup. Existing claims are
-/// accepted only when they already belong to the exact stable managed owner;
-/// publication still requires a generation-guarded transaction later.
+/// accepted when they already belong to the exact stable managed owner, or when
+/// they are container routes from this same checkout generation that the
+/// publication transaction will hand over.
 pub fn check_managed_listener_route_claim(
     route_table_path: &Path,
     project_path: &str,
@@ -213,12 +289,15 @@ pub fn check_managed_listener_route_claim(
     let table = RouteTable::load(route_table_path)?;
     let scope = project_scope(project_path)?;
     if let Some(existing) = table.lookup(domain) {
-        let same_owner = owned_by(existing, project_path, scope.as_deref())
-            && existing
-                .managed_listener
-                .as_ref()
-                .is_some_and(|current| current.owner == owner);
-        if !same_owner {
+        let same_owner = existing
+            .managed_listener
+            .as_ref()
+            .is_some_and(|current| current.owner == owner);
+        let container_handover =
+            existing.managed_listener.is_none() && existing.source == RouteSource::Container;
+        if !owned_by(existing, project_path, scope.as_deref())
+            || !(same_owner || container_handover)
+        {
             return Err(GatewayError::ForeignRoute {
                 domain: domain.to_owned(),
                 project: existing.project.clone(),
@@ -272,7 +351,7 @@ pub fn deregister_route(
     };
     let owned = table
         .lookup(domain)
-        .is_some_and(|route| owned_by(route, project_path, scope.as_deref()));
+        .is_some_and(|route| container_teardown_covers(route, project_path, scope.as_deref()));
     if !owned {
         return Ok(false);
     }

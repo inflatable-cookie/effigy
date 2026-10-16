@@ -1071,6 +1071,93 @@ fn foreign_teardown_preserves_tls_material_and_tcp_alias() {
 }
 
 #[test]
+fn container_down_after_listener_handover_preserves_the_successor_route() {
+    with_test_home("container-down-after-handover", || {
+        use effigy_gateway::identity::GatewayStartIdentity;
+        use effigy_gateway::registration::{
+            deregister_managed_listener_route, register_managed_listener_route,
+        };
+        use effigy_gateway::routes::ManagedListenerRouteOwner;
+
+        let root = tempfile::tempdir().unwrap();
+        let checkout = root.path().join("primary");
+        std::fs::create_dir_all(&checkout).unwrap();
+        let project = checkout.display().to_string();
+        let table_path = gateway_route_table_path().unwrap();
+        let route = |domain: &str| RegisteredGatewayRoute {
+            domain: domain.to_owned(),
+            target: Some("127.0.0.1:8100".to_owned()),
+            dns_ip: None,
+            tcp_port: None,
+            tcp_target: None,
+            tls: false,
+            service: Some("web".to_owned()),
+            external_target: false,
+        };
+        let mut policy = test_policy();
+        policy.repo_root = checkout.clone();
+
+        // The container publishes `clientname.test`, then hybrid mode hands the
+        // route to a managed listener while the container keeps running.
+        reconcile_gateway_routes(&table_path, &checkout, &[route("clientname.test")]).unwrap();
+        let start = GatewayStartIdentity::Linux { start_ticks: 1 };
+        let owner = ManagedListenerRouteOwner {
+            owner: "main|web|test|app".to_owned(),
+            runtime_generation: "runtime-1".to_owned(),
+            generation: "child-1".to_owned(),
+            supervisor_pid: 10,
+            supervisor_boot_identity: "boot".to_owned(),
+            supervisor_start_identity: start.clone(),
+            root_pid: 11,
+            root_boot_identity: "boot".to_owned(),
+            root_start_identity: start.clone(),
+            listener_pid: 11,
+            listener_boot_identity: "boot".to_owned(),
+            listener_start_identity: start,
+            address: "127.0.0.1:43123".to_owned(),
+            route_tls: false,
+            availability_file: root.path().join("app.listener.json").display().to_string(),
+        };
+        register_managed_listener_route(
+            &table_path,
+            &project,
+            "clientname.test",
+            "127.0.0.1:43123",
+            false,
+            owner,
+            None,
+        )
+        .expect("handover route publication");
+
+        // `container down` must not remove the live successor route.
+        assert!(deregister_gateway_routes_for_container(&policy)
+            .unwrap()
+            .is_empty());
+        let survivors = RouteTable::load(&table_path).unwrap();
+        assert!(survivors
+            .lookup("clientname.test")
+            .unwrap()
+            .managed_listener
+            .is_some());
+
+        // Stopping the hybrid generation, then starting the container again.
+        assert!(deregister_managed_listener_route(
+            &table_path,
+            &project,
+            "clientname.test",
+            "main|web|test|app",
+            "child-1",
+        )
+        .unwrap());
+        reconcile_gateway_routes(&table_path, &checkout, &[route("clientname.test")]).unwrap();
+        let back = RouteTable::load(&table_path).unwrap();
+        let restored = back.lookup("clientname.test").unwrap();
+        assert_eq!(restored.source, RouteSource::Container);
+        assert!(restored.managed_listener.is_none());
+    });
+}
+
+#[test]
 fn two_live_worktrees_cannot_register_one_fixed_domain() {
     with_test_home("live-sibling-fixed-domain", || {
         let root = tempfile::tempdir().unwrap();

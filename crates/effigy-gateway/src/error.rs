@@ -38,6 +38,14 @@ pub enum GatewayError {
     #[error("gateway domain `{domain}` is owned by live checkout `{project}`; configure a distinct domain for this worktree or stop the owning checkout")]
     ForeignRoute { domain: String, project: String },
 
+    /// A live managed listener from this same checkout still owns the domain.
+    #[error("gateway domain `{domain}` is held by the live managed listener `{owner}` (supervisor PID {pid}); stop that environment with `effigy container down` before starting the container environment")]
+    ManagedListenerRouteConflict {
+        domain: String,
+        owner: String,
+        pid: u32,
+    },
+
     /// No route found for the given domain.
     #[error("no route registered for domain '{domain}'")]
     RouteNotFound { domain: String },
