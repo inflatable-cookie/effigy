@@ -1269,7 +1269,7 @@ fn load_or_allocate_loopback_ip_with_inventory(
         let inventory = discover_inventory();
         match route_table.as_ref() {
             Some(route_table) => {
-                prune_loopback_assignments(&mut registry, &route_table, &inventory)
+                prune_loopback_assignments(&mut registry, route_table, &inventory)
             }
             None => LoopbackPruneOutcome {
                 changed: false,

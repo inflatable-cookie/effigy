@@ -769,6 +769,9 @@ an IP a stale route's gateway TCP listener still binds while registration
 reallocated elsewhere, hanging the host alias against a dead or wrong
 upstream while mapped localhost ports stayed ready. Stale-route deletion for
 missing checkouts stays with `effigy container retire --dead` (#305).
+Status/doctor alias reporting is static route-table analysis (conflicting
+bind tuples, missing/invalid fallbacks); live OS-level listener bind failures
+remain daemon-log-only.
 
 Participation is decided before any `ps` discovery, without launching Docker,
 Colima, or a container. A proven-inactive optional runtime is skipped rather
