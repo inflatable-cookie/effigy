@@ -7,6 +7,10 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- Added a [v0.15.0 consumer migration guide](docs/guides/085-v0.15.0-consumer-migration.md)
+  covering the catalog-pack compatibility step, container lifecycle and
+  doctor behavior changes, opt-in features, and a DecodeLabs checklist.
+  Container, gateway and docs help notices now lead with the user action.
 - `effigy container retire --dead` retires every recorded runtime scope whose
   checkout no longer exists, such as worktrees removed without running their
   teardown, through the ordinary retirement path. It previews the scopes when
@@ -595,10 +599,6 @@ During v0.x, MINOR bumps may include breaking changes.
 - Added a [v0.14.0 consumer migration checklist](docs/guides/083-v0.14.0-consumer-migration.md)
   covering breaking changes and compatibility from v0.13.1, with an
   incremental first-parent supplement for the later reviewed repair wave.
-- Added a [v0.15.0 consumer migration guide](docs/guides/085-v0.15.0-consumer-migration.md)
-  covering the catalog-pack compatibility step, container lifecycle and
-  doctor behavior changes, opt-in features, and a DecodeLabs checklist.
-  Container, gateway and docs help notices now lead with the user action.
 - Unset or `EFFIGY_HOST_SCHEDULER=1` routes heavy tasks (`qa`, `ci`, `ci:fresh`,
   `admission = "heavy"`) and heavy QA groups through the host-run scheduler
   (Queue/Nucleus owns capacity and scheduling). `EFFIGY_HOST_SCHEDULER=0` is
