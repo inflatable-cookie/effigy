@@ -1353,10 +1353,29 @@ source, not from the host login name:
   private fixture, not installed-consumer acceptance
 - bind-mounted rust `target` or cargo paths: verify only; never chown host
   source, siblings, or shared caches
-- named volumes used by two or more compose or managed services: rust
-  caches verify only; other shared named volumes are forbidden
+- named volumes written by two or more compose or managed services: rust
+  caches verify only; other shared named volumes are forbidden. Sharing is
+  decided by the actual writer set, not by every reference: a service whose
+  compose entry mounts the volume read-only (effective Compose short `:ro`
+  or long `read_only: true` semantics, resolved across every declared
+  overlay and managed volume) is a consumer, not a writer. An Effigy-owned
+  primary volume with exactly one writable service therefore stays
+  repairable even when Nginx-style services mount it read-only. A service
+  whose access mode is ambiguous or malformed conservatively counts as a
+  writer, and the primary's own read-only mount keeps non-mutating
+  authority: a writer elsewhere never grants the primary mutation power
 - read-only, external, or foreign mounts: refuse mutation; fail closed when
   they are declared rust caches
+
+Dependency volumes (Composer `vendor`, JS `node_modules`) that remain
+nonrepairable under the rules above - two writers, external or foreign
+sources, or a read-only primary mount - are still probed and verified, never
+silently omitted. Preparation checks numeric-user read/write access on them
+and refuses readiness when it fails, without mutating them; doctor reports an
+actionable `container.workspace-ownership` finding for an unusable dependency
+volume instead of a clean bill. Doctor stays read-only: no write probes,
+chown, or restarts, and an expired or unavailable observation stays
+incomplete rather than clean or a permission fault.
 
 A matching owner at the mount root is not enough. Nested unwritable
 `target/debug/.cargo-build-lock` and Cargo `registry/src` / `git/checkouts`

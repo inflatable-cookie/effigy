@@ -1434,3 +1434,68 @@ fn task_activation_surfaces_workspace_permission_failure_before_lease_refresh() 
         vec!["prepare", "permissions"]
     );
 }
+
+#[test]
+fn task_activation_surfaces_dependency_volume_failure_before_lease_refresh() {
+    // A nonrepairable dependency volume (Composer vendor / JS node_modules)
+    // that the resolved workspace user cannot write must block task readiness
+    // at the permission stage; lease refresh and the task child never run.
+    let repo_root = Path::new("/tmp/demo-repo");
+    let policy = test_policy(PathBuf::from("docker-compose.yml"));
+    let events = Arc::new(Mutex::new(Vec::<&'static str>::new()));
+
+    let plan = runtime_activation_plan_from_request(
+        repo_root,
+        &policy,
+        ActivationRequest {
+            container_name: Some("web"),
+            repo_override: Some(repo_root.to_path_buf()),
+            route: RuntimeActivationRoute::Task,
+            session_context: RuntimeSessionContext::default(),
+        },
+    );
+    let error = activate_container_runtime_plan_for_task_using(
+        &plan,
+        &policy,
+        {
+            let events = Arc::clone(&events);
+            move |_, _, _, _, _| {
+                events.lock().expect("events lock").push("prepare");
+                Ok(false)
+            }
+        },
+        {
+            let events = Arc::clone(&events);
+            move |_, _, _, _| {
+                events.lock().expect("events lock").push("permissions");
+                Err(RunnerError::task_invocation(
+                    "resolved user `dev` (uid=501 gid=20) cannot read/write `/var/www/cbs/vendor`",
+                ))
+            }
+        },
+        {
+            let events = Arc::clone(&events);
+            move |_, _| {
+                events.lock().expect("events lock").push("gateway");
+                Ok(())
+            }
+        },
+        {
+            let events = Arc::clone(&events);
+            move |_, _, _| {
+                events.lock().expect("events lock").push("lease");
+                Ok(true)
+            }
+        },
+    )
+    .expect_err("dependency volume failure should surface");
+
+    assert!(error
+        .to_string()
+        .contains("cannot read/write `/var/www/cbs/vendor`"));
+    assert_eq!(
+        *events.lock().expect("events lock"),
+        vec!["prepare", "permissions"],
+        "lease refresh must not run after a dependency volume permission failure"
+    );
+}

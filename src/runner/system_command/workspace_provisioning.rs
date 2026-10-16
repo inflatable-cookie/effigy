@@ -203,7 +203,7 @@ fn render_workspace_permission_progress_label(plan: &WorkspacePermissionPlan) ->
     )
 }
 
-fn is_dependency_tree_path(path: &str) -> bool {
+pub(super) fn is_dependency_tree_path(path: &str) -> bool {
     let trimmed = path.trim_end_matches('/');
     matches!(
         Path::new(trimmed)
@@ -220,7 +220,12 @@ fn dependency_tree_is_under_authoritative_root(candidate: &str, authoritative: &
     let Some(candidate_parent) = parent_unix_path(candidate) else {
         return false;
     };
-    candidate_parent == root_parent || path_is_under(candidate_parent, root_parent)
+    // Only a strictly nested tree (candidate parent inside the authoritative
+    // tree's parent scope) may rely on the authoritative recursive scan.
+    // Same-parent siblings (Composer `vendor` next to JS `node_modules` as
+    // separate volumes) are distinct mount scopes: neither scan descends into
+    // the other, so each sibling keeps its own recursive repair.
+    path_is_under(candidate_parent, root_parent)
 }
 
 fn parent_unix_path(path: &str) -> Option<&str> {

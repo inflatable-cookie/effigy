@@ -371,7 +371,7 @@ fn workspace_ownership_finding(
         check_id: check_id::CONTAINER_WORKSPACE_OWNERSHIP.to_owned(),
         severity: DoctorSeverity::Warning,
         evidence: format!(
-            "container `{container_name}` has rust build/cache or managed workspace paths that the declared workspace user {identity} cannot use: {}",
+            "container `{container_name}` has rust build/cache, managed workspace, or dependency volume (vendor/node_modules) paths that the declared workspace user {identity} cannot use: {}",
             samples.join(", ")
         ),
         remediation: "Headless workspace, primary-service exec, and routed tasks repair owned disposable rust/cargo/target named volumes before children launch. If doctor still reports this, rerun `effigy doctor --verbose`. Do not recursively chown host source, sibling, or shared binds; isolate `target` with catalog `isolated_dirs` when the path is a host bind.".to_owned(),
@@ -723,6 +723,36 @@ volumes:
         )
         .expect("write bind and shared volume fixture");
         let mut policy = policy_for(root);
+        policy.compose_files = vec![compose];
+        policy
+    }
+
+    /// Generated PHP app + Nginx shape: `app` is the primary workspace writer
+    /// of Composer vendor and JS node_modules; `web` mounts them read-only.
+    fn dependency_volume_policy(root: &Path, web_mode: &str) -> EffectiveContainerPolicy {
+        let compose = root.join("docker-compose.yml");
+        fs::write(
+            &compose,
+            format!(
+                r#"
+services:
+  app:
+    volumes:
+      - cbs-vendor:/var/www/cbs/vendor
+      - cbs-node-modules:/var/www/cbs/node_modules
+  web:
+    volumes:
+      - cbs-vendor:/var/www/cbs/vendor:{web_mode}
+      - cbs-node-modules:/var/www/cbs/node_modules:{web_mode}
+volumes:
+  cbs-vendor:
+  cbs-node-modules:
+"#
+            ),
+        )
+        .expect("write dependency volume fixture");
+        let mut policy = policy_for(root);
+        policy.primary_service = "app".to_owned();
         policy.compose_files = vec![compose];
         policy
     }
@@ -1648,6 +1678,139 @@ esac
             diagnostics.findings.iter().all(|finding| !finding.fixable),
             "verify-only findings are not fixable"
         );
+    }
+
+    #[test]
+    fn dependency_volume_wrong_permissions_stay_a_path_specific_finding() {
+        // root0700 app-writer/web-reader fixture: the unwritable dependency
+        // volume is probed and reported as an actionable finding, never
+        // omitted into a clean bill, and the diagnosis stays read-only.
+        let _lock = lock_test();
+        let (_temp, root) = fresh_root("ownership-dependency-volume");
+        let bad_path = "/var/www/cbs/vendor";
+        let policy = dependency_volume_policy(&root, /* web_mode */ "ro");
+        let plan = load_workspace_ownership_plan(&policy).expect("ownership plan");
+        let vendor = plan
+            .targets
+            .iter()
+            .find(|target| target.path == bad_path)
+            .expect("vendor target");
+        assert_eq!(
+            vendor.repair_authority,
+            WorkspaceRepairAuthority::OwnedDisposable,
+            "a sole-writer volume with read-only consumers stays repairable"
+        );
+        let budget = Duration::from_secs(8);
+        let _env = with_scripted_backend_env();
+        let guard = scripted_doctor::install(scripted_ownership_handler(
+            &policy,
+            OwnershipFixture {
+                path_records: [(bad_path.to_owned(), "0 0 700".to_owned())].into(),
+                access_records: [(bad_path.to_owned(), "unwritable".to_owned())].into(),
+                ..OwnershipFixture::default()
+            },
+        ));
+        let mut diagnostics = DoctorRuntimeDiagnostics::default();
+        append_workspace_ownership_diagnostics(
+            &root,
+            std::slice::from_ref(&policy),
+            Some(guard.deadline(budget)),
+            &mut diagnostics,
+        );
+
+        let runtime = guard.runtime();
+        let executed = runtime.applicable_operations();
+        assert_eq!(
+            diagnostics.findings.len(),
+            1,
+            "unwritable dependency volume remains a finding: {:?}",
+            diagnostics.findings
+        );
+        assert!(
+            diagnostics.findings[0]
+                .evidence
+                .contains(&format!("{bad_path}\tunwritable-by-uid-501")),
+            "numeric-user failure must identify the exact dependency path: {:?}",
+            diagnostics.findings[0]
+        );
+        assert!(
+            runtime
+                .requested_metadata_paths()
+                .iter()
+                .any(|path| path == bad_path),
+            "the dependency volume must be sampled, not dropped: {:?}",
+            runtime.requested_metadata_paths()
+        );
+        assert!(
+            runtime
+                .requested_access_paths()
+                .iter()
+                .any(|path| path == bad_path),
+            "the dependency volume must receive a numeric-user access check"
+        );
+        assert_numeric_access_user(&executed, "501:20")
+            .expect("access checks must use the resolved uid and gid");
+        assert_no_mutating_operations(&executed).expect("read-only diagnosis");
+        assert_no_unexpected_operations(&executed).expect("no unexpected launch");
+    }
+
+    #[test]
+    fn shared_dependency_volume_wrong_permissions_stay_reported() {
+        // Two writable services: the vendor volume stays forbidden, but an
+        // unwritable root must still be probed and reported, not silently
+        // omitted into a clean result.
+        let _lock = lock_test();
+        let (_temp, root) = fresh_root("ownership-shared-dependency-volume");
+        let bad_path = "/var/www/cbs/vendor";
+        let policy = dependency_volume_policy(&root, /* web_mode */ "rw");
+        let plan = load_workspace_ownership_plan(&policy).expect("ownership plan");
+        let vendor = plan
+            .targets
+            .iter()
+            .find(|target| target.path == bad_path)
+            .expect("vendor target");
+        assert_eq!(
+            vendor.repair_authority,
+            WorkspaceRepairAuthority::Forbidden,
+            "two writable services keep the volume forbidden"
+        );
+        let budget = Duration::from_secs(8);
+        let _env = with_scripted_backend_env();
+        let guard = scripted_doctor::install(scripted_ownership_handler(
+            &policy,
+            OwnershipFixture {
+                path_records: [(bad_path.to_owned(), "0 0 700".to_owned())].into(),
+                access_records: [(bad_path.to_owned(), "unwritable".to_owned())].into(),
+                ..OwnershipFixture::default()
+            },
+        ));
+        let mut diagnostics = DoctorRuntimeDiagnostics::default();
+        append_workspace_ownership_diagnostics(
+            &root,
+            std::slice::from_ref(&policy),
+            Some(guard.deadline(budget)),
+            &mut diagnostics,
+        );
+
+        let runtime = guard.runtime();
+        let executed = runtime.applicable_operations();
+        assert_eq!(
+            diagnostics.findings.len(),
+            1,
+            "unwritable shared dependency volume is reported: {:?}",
+            diagnostics.findings
+        );
+        assert!(diagnostics.findings[0].evidence.contains(bad_path));
+        assert!(
+            runtime
+                .requested_metadata_paths()
+                .iter()
+                .any(|path| path == bad_path),
+            "the forbidden dependency volume must still be probed: {:?}",
+            runtime.requested_metadata_paths()
+        );
+        assert_no_mutating_operations(&executed).expect("read-only diagnosis");
+        assert_no_unexpected_operations(&executed).expect("no unexpected launch");
     }
     // ------------------------------------------------------------------
     // Fixture contract (papercut 4ee28d2c): the deterministic capture seams,
