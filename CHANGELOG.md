@@ -243,6 +243,20 @@ During v0.x, MINOR bumps may include breaking changes.
   1.2.0.
 
 ### Fixed
+- Workspace dependency volumes (Composer `vendor`, JS `node_modules`) with one
+  writable service and read-only consumers (for example an app service writing
+  the volume while an Nginx service mounts it `:ro`) are classified by their
+  actual writer set: the read-only consumers no longer make the volume
+  "shared", so owned-volume permission preparation repairs it for the resolved
+  workspace user instead of refusing. Volumes written by two or more services,
+  external volumes, and ambiguous or malformed access modes keep the previous
+  non-mutating behavior, and a read-only primary mount never gains mutation
+  authority from a writer elsewhere. Nonrepairable dependency volumes are no
+  longer silently omitted: preparation checks numeric-user access on them and
+  blocks readiness on failure, and `effigy doctor` reports an actionable
+  `container.workspace-ownership` finding for an unusable dependency volume
+  instead of a clean bill. Same-parent dependency trees (`vendor` beside
+  `node_modules` as separate volumes) each get their own recursive repair.
 - Automatic local Linux artifact rebuilds now use the stable managed builder
   project `effigy-artifact-builder-v1`, preserving checkout/worktree isolation.
   Ambiguous legacy builders and their admissions/caches remain untouched; no

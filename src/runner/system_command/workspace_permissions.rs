@@ -8,7 +8,9 @@ use effigy_containers::{
 };
 use effigy_core::shell::shell_quote;
 
-use super::workspace_provisioning::{plan_workspace_permission_prep, WorkspacePermissionMode};
+use super::workspace_provisioning::{
+    is_dependency_tree_path, plan_workspace_permission_prep, WorkspacePermissionMode,
+};
 use super::RunnerError;
 use crate::runner::exec_command::run_compose_exec_plan_with_deadline;
 
@@ -500,9 +502,17 @@ pub(super) fn prepare_workspace_permissions(
         .filter_map(|path| {
             let target = target_for_probe_path(&targets, path);
             let inspection = inspection_for(&probe_paths, &inspections, path)?;
-            if inspection.presence == PathPresence::Missing
-                || (target.authority == WorkspaceRepairAuthority::Forbidden
-                    && target.rust_cache.is_none())
+            if inspection.presence == PathPresence::Missing {
+                return None;
+            }
+            // A forbidden dependency volume is still access-checked as the
+            // numeric user: installs fail without it, so an unwritable one
+            // must block readiness instead of being skipped.
+            let dependency_volume = target.mount_kind == WorkspaceMountKind::NamedVolume
+                && is_dependency_tree_path(&target.path);
+            if target.authority == WorkspaceRepairAuthority::Forbidden
+                && target.rust_cache.is_none()
+                && !dependency_volume
             {
                 return None;
             }
@@ -699,6 +709,12 @@ fn prepared_targets(
         .collect::<Vec<_>>();
     for target in verification_targets.into_iter().filter(|target| {
         target.rust_cache.is_some()
+            // Dependency volumes (Composer vendor, JS node_modules) stay
+            // probed even when nonrepairable, so an unwritable forbidden or
+            // shared dependency volume is reported instead of silently
+            // omitted.
+            || (target.mount_kind == WorkspaceMountKind::NamedVolume
+                && is_dependency_tree_path(&target.path))
             || (target.mount_kind != WorkspaceMountKind::Image
                 && recursive_owned_paths
                     .iter()
@@ -996,6 +1012,12 @@ pub(in crate::runner) fn diagnose_workspace_ownership(
         .filter(|target| {
             target.rust_cache.is_some()
                 || target.repair_authority == WorkspaceRepairAuthority::OwnedDisposable
+                // Dependency volumes stay in the probe set even when
+                // nonrepairable: an unwritable forbidden or shared vendor /
+                // node_modules volume must produce a finding, never a silent
+                // clean.
+                || (target.mount_kind == WorkspaceMountKind::NamedVolume
+                    && is_dependency_tree_path(&target.path))
         })
         .collect::<Vec<_>>();
     let mut target_samples = vec![Vec::new(); targets.len()];
@@ -3369,6 +3391,197 @@ services:
         prepare_workspace_permissions("dev", &plan, None, &context(), &mut backend).expect("prep");
         assert!(backend.chown_log.is_empty());
         assert!(backend.chmod_log.is_empty());
+    }
+
+    // ---- dependency volumes with one writer and read-only consumers ----
+
+    /// Generated PHP app + Nginx shape: `app` (primary) writes the Composer
+    /// vendor volume; `web` only mounts it read-only. Realistic root-owned
+    /// 0700 volume roots; the numeric identity (501:20) is recorded by the
+    /// memory backend, not hardcoded into the plan.
+    fn dependency_volume_policy(root: &Path, web_mode: &str) -> EffectiveContainerPolicy {
+        let compose_path = root.join("docker-compose.yml");
+        std::fs::write(
+            &compose_path,
+            format!(
+                r#"
+services:
+  app:
+    volumes:
+      - cbs-vendor:/var/www/cbs/vendor
+      - cbs-node-modules:/var/www/cbs/node_modules
+  web:
+    volumes:
+      - cbs-vendor:/var/www/cbs/vendor:{web_mode}
+      - cbs-node-modules:/var/www/cbs/node_modules:{web_mode}
+"#
+            ),
+        )
+        .expect("private compose fixture");
+        let mut policy = effective_container_policy("web", "cbs-dev", "app", compose_path);
+        policy.repo_root = root.to_path_buf();
+        policy.workspace_user = Some("dev".to_owned());
+        policy.workspace_home = Some("/home/dev".to_owned());
+        policy
+    }
+
+    fn root0700_dependency_fixture() -> MemoryAccessBackend {
+        let mut backend = MemoryAccessBackend::new(vec![identity("dev", 501, 20)]);
+        backend.add_dir("/home/dev", 501, 20, 0o755);
+        backend.add_dir("/home/dev/.cache", 501, 20, 0o755);
+        backend.add_dir("/home/dev/.config", 501, 20, 0o755);
+        backend.add_dir("/home/dev/.local", 501, 20, 0o755);
+        // Volume roots exactly as observed in the live incident: 0:0 mode 0700.
+        backend.add_dir("/var/www/cbs/vendor", 0, 0, 0o700);
+        backend.add_dir("/var/www/cbs/vendor/symfony", 0, 0, 0o755);
+        backend.add_dir("/var/www/cbs/node_modules", 0, 0, 0o700);
+        backend
+    }
+
+    #[test]
+    fn sole_writer_dependency_volumes_are_prepared_for_resolved_numeric_identity() {
+        let root = tempfile::tempdir().expect("fresh private fixture root");
+        let policy = dependency_volume_policy(root.path(), "ro");
+        // Production plan path: classification comes from the compose source,
+        // with the read-only web consumer as real input.
+        let mut backend = root0700_dependency_fixture();
+        ensure_workspace_permissions_ready_with(&policy, None, &mut backend)
+            .expect("app-writer/web-reader dependency volumes must be prepared");
+
+        assert_eq!(backend.owner_of("/var/www/cbs/vendor"), Some((501, 20)));
+        assert_eq!(
+            backend.owner_of("/var/www/cbs/vendor/symfony"),
+            Some((501, 20))
+        );
+        assert_eq!(
+            backend.owner_of("/var/www/cbs/node_modules"),
+            Some((501, 20))
+        );
+        // Mode semantics are preserved: no world/group write is added.
+        assert_eq!(backend.mode_of("/var/www/cbs/vendor"), Some(0o700));
+        assert!(backend
+            .created_locks
+            .iter()
+            .any(|path| path == "/var/www/cbs/vendor/.effigy-write-probe"));
+        assert!(backend
+            .created_locks
+            .iter()
+            .any(|path| path == "/var/www/cbs/node_modules/.effigy-write-probe"));
+    }
+
+    #[test]
+    fn dependency_volume_prep_is_idempotent_without_repair() {
+        let root = tempfile::tempdir().expect("fresh private fixture root");
+        let policy = dependency_volume_policy(root.path(), "ro");
+        let mut backend = root0700_dependency_fixture();
+        ensure_workspace_permissions_ready_with(&policy, None, &mut backend).expect("first prep");
+        let chowns_after_first = backend.chown_log.len();
+        let bulk_after_first = backend.bulk_calls;
+        assert!(chowns_after_first > 0);
+
+        ensure_workspace_permissions_ready_with(&policy, None, &mut backend)
+            .expect("clean repeat prep must stay ready");
+        assert_eq!(
+            backend.chown_log.len(),
+            chowns_after_first,
+            "idempotent clean prep performs no repair"
+        );
+        assert_eq!(backend.bulk_calls, bulk_after_first);
+    }
+
+    #[test]
+    fn two_writer_dependency_volume_prep_still_refuses_without_mutation() {
+        let root = tempfile::tempdir().expect("fresh private fixture root");
+        let policy = dependency_volume_policy(root.path(), "rw");
+        let mut backend = root0700_dependency_fixture();
+        let error = ensure_workspace_permissions_ready_with(&policy, None, &mut backend)
+            .expect_err("a two-writer dependency volume must not be repaired");
+        let error = error.to_string();
+        assert!(error.contains("cannot read/write `/var/www/cbs/"));
+        assert!(error.contains("uid=501"));
+        assert!(error.contains("gid=20"));
+        assert!(backend.chown_log.is_empty());
+        assert_eq!(backend.owner_of("/var/www/cbs/vendor"), Some((0, 0)));
+        assert_eq!(backend.mode_of("/var/www/cbs/vendor"), Some(0o700));
+    }
+
+    #[test]
+    fn read_only_primary_dependency_volume_fails_prep_without_mutation() {
+        // The other service is the writer; the primary only reads. No primary
+        // mutation authority, but the unwritable dependency target must still
+        // be probed and reported instead of silently omitted.
+        let root = tempfile::tempdir().expect("fresh private fixture root");
+        let compose_path = root.path().join("docker-compose.yml");
+        std::fs::write(
+            &compose_path,
+            r#"
+services:
+  app:
+    volumes:
+      - cbs-vendor:/var/www/cbs/vendor:ro
+  web:
+    volumes:
+      - cbs-vendor:/var/www/cbs/vendor
+"#,
+        )
+        .expect("private compose fixture");
+        let mut policy = effective_container_policy("web", "cbs-dev", "app", compose_path);
+        policy.repo_root = root.path().to_path_buf();
+        policy.workspace_user = Some("dev".to_owned());
+        policy.workspace_home = Some("/home/dev".to_owned());
+        let mut backend = root0700_dependency_fixture();
+        let error = ensure_workspace_permissions_ready_with(&policy, None, &mut backend)
+            .expect_err("read-only primary vendor must fail closed");
+        let error = error.to_string();
+        assert!(error.contains("cannot read/write `/var/www/cbs/vendor`"));
+        assert!(backend.chown_log.is_empty());
+        assert_eq!(backend.owner_of("/var/www/cbs/vendor"), Some((0, 0)));
+    }
+
+    #[test]
+    fn doctor_reports_unwritable_dependency_volume_before_repair_and_clean_after() {
+        let root = tempfile::tempdir().expect("fresh private fixture root");
+        let policy = dependency_volume_policy(root.path(), "ro");
+
+        // Before repair: root0700 volume roots are a finding, not clean.
+        let mut backend = root0700_dependency_fixture();
+        let finding = diagnose_workspace_ownership(&policy, Ok(true), &[], &mut backend);
+        assert_eq!(finding.status, WorkspaceOwnershipProbeStatus::Finding);
+        assert!(finding
+            .samples
+            .iter()
+            .any(|sample| sample.contains("/var/www/cbs/vendor")));
+        assert!(finding
+            .samples
+            .iter()
+            .any(|sample| sample.contains("unwritable-by-uid-501")));
+        assert_eq!(backend.list_unowned_calls.get(), 0);
+        assert!(backend.chown_log.is_empty());
+
+        // After the actual numeric-user repair the same fixture reads clean.
+        let mut repaired = root0700_dependency_fixture();
+        ensure_workspace_permissions_ready_with(&policy, None, &mut repaired)
+            .expect("prep repairs the sole-writer volumes");
+        let clean = diagnose_workspace_ownership(&policy, Ok(true), &[], &mut repaired);
+        assert_eq!(clean.status, WorkspaceOwnershipProbeStatus::Clean);
+        assert!(clean.evidence.unwrap_or_default().contains("uid=501"));
+    }
+
+    #[test]
+    fn doctor_reports_unwritable_shared_and_nonrepairable_dependency_volumes() {
+        // Two writers: the volume is forbidden, but an unwritable root must
+        // still be probed and reported rather than omitted into a clean bill.
+        let root = tempfile::tempdir().expect("fresh private fixture root");
+        let policy = dependency_volume_policy(root.path(), "rw");
+        let mut backend = root0700_dependency_fixture();
+        let diagnosis = diagnose_workspace_ownership(&policy, Ok(true), &[], &mut backend);
+        assert_eq!(diagnosis.status, WorkspaceOwnershipProbeStatus::Finding);
+        assert!(diagnosis
+            .samples
+            .iter()
+            .any(|sample| sample.contains("/var/www/cbs/vendor")));
+        assert_eq!(backend.list_unowned_calls.get(), 0);
+        assert!(backend.chown_log.is_empty());
     }
 
     #[test]

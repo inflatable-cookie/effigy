@@ -957,14 +957,20 @@ Headless workspace, primary-service exec, and routed tasks prepare declared
 disposable Rust build/cache paths for that resolved numeric user before
 children launch. Named cargo/target volumes exclusive to the primary
 service are repaired and then verified with an actual read/write/create-lock
-probe. Named volumes also mounted by another compose or managed service are
-not mutated: rust caches are probed only, and other shared named volumes
-are refused. Bind-mounted rust paths are probed only; Effigy never
-recursively chowns host source, siblings, or shared caches. Isolate
-`target` with catalog `isolated_dirs` when the host bind is unwritable
+probe. Named volumes written by another compose or managed service are not
+mutated: rust caches are probed only, and other shared named volumes are
+refused. Sharing follows the writer set, not every reference: a service that
+mounts the volume read-only is a consumer, so a primary-owned Composer
+`vendor` or JS `node_modules` volume with one writable service (the app) and
+read-only Nginx-style consumers stays repairable, while a volume written by
+two or more services still is not. Bind-mounted rust paths are probed only;
+Effigy never recursively chowns host source, siblings, or shared caches.
+Isolate `target` with catalog `isolated_dirs` when the host bind is unwritable
 inside the container. A matching owner at the mount root is not enough:
 nested `target/debug/.cargo-build-lock` and Cargo `registry/src` /
-`git/checkouts` must be usable by the resolved user. Anonymous colon-less
+`git/checkouts` must be usable by the resolved user, and owned dependency
+volumes get the same root-and-contents repair with mount modes preserved (no
+group/world write is added for read-only consumers). Anonymous colon-less
 compose mounts such as `/workspace-root/api/target` stay classified as
 named-volume owned-disposable rust targets.
 
@@ -975,7 +981,9 @@ numeric workspace user. Effigy does not compare its root-observed owner to the
 workspace uid or write a probe file in the bind; a root-owned cache passes when
 the numeric user's access works. An unwritable bind fails with its mount
 source and guidance to grant that uid access, while its root and contents stay
-untouched. The host-mount ruling is recorded in
+untouched. Same-parent dependency trees (`vendor` beside `node_modules` as
+separate volumes) are distinct mount scopes and each gets its own recursive
+repair. The host-mount ruling is recorded in
 [`005-container-runtime-contract.md`](../knowledge/contracts/005-container-runtime-contract.md).
 
 Exec preparation batches metadata and numeric-user access probes for the
@@ -986,8 +994,13 @@ there is no exact invalidation proof for a cached result.
 
 For a running workspace, `effigy doctor` remains read-only and reports
 `container.workspace-ownership` when declared cargo/target mounts, their
-nested rust lock/cache paths, managed disposable volumes, or
-`$BUN_INSTALL/install` are unusable by the resolved workspace uid/gid. The
+nested rust lock/cache paths, managed disposable volumes, Composer `vendor`
+or JS `node_modules` volumes that are nonrepairable (shared between writers,
+external, or mounted read-only in the primary), or
+`$BUN_INSTALL/install` are unusable by the resolved workspace uid/gid.
+Dependency volumes are never silently omitted: an unwritable forbidden or
+shared dependency volume is a finding before any repair, and the same
+fixture reads clean after the numeric user's access actually passes. The
 check batches metadata reads for the known mount roots and each required
 nested path depth, then checks read/write access as the resolved numeric
 uid/gid for present non-symlink paths. Overlapping declared targets reuse a
