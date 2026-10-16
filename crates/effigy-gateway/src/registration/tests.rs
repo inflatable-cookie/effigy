@@ -73,13 +73,12 @@ fn register_upserts_existing() {
     assert!(table.lookup("myapp.test").unwrap().tls);
 }
 
-#[test]
-fn managed_listener_routes_require_exact_generation_and_block_static_replacement() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("routes.json");
-    let project = dir.path().display().to_string();
+/// A managed listener route owner that is structurally valid but not backed by
+/// a live process. The production liveness probe refuses it, which is exactly
+/// the "previous generation is gone" handover case.
+fn synthetic_owner(generation: &str, address: &str) -> ManagedListenerRouteOwner {
     let start = crate::identity::GatewayStartIdentity::Linux { start_ticks: 1 };
-    let make_owner = |generation: &str, address: &str| ManagedListenerRouteOwner {
+    ManagedListenerRouteOwner {
         owner: "main|web|test|app".to_owned(),
         runtime_generation: "runtime-1".to_owned(),
         generation: generation.to_owned(),
@@ -93,38 +92,43 @@ fn managed_listener_routes_require_exact_generation_and_block_static_replacement
         listener_boot_identity: "boot".to_owned(),
         listener_start_identity: start.clone(),
         address: address.to_owned(),
-        route_tls: true,
+        route_tls: false,
         availability_file: "/fixture/state.json".to_owned(),
-    };
+    }
+}
 
-    register_managed_listener_route(
-        &path,
-        &project,
-        "app.example.test",
-        "127.0.0.1:43123",
-        true,
-        make_owner("child-1", "127.0.0.1:43123"),
-        None,
-    )
-    .unwrap();
+fn container_registration(project: &str, target: &str) -> RouteRegistration {
+    RouteRegistration {
+        domain: "app.example.test".to_owned(),
+        target: Some(target.to_owned()),
+        dns_ip: None,
+        tcp_port: None,
+        tcp_target: None,
+        tls: false,
+        project_path: project.to_owned(),
+        source: RouteSource::Container,
+    }
+}
 
-    let static_replacement = register_route(
-        &path,
-        &RouteRegistration {
-            domain: "app.example.test".to_owned(),
-            target: Some("127.0.0.1:8080".to_owned()),
-            dns_ip: None,
-            tcp_port: None,
-            tcp_target: None,
-            tls: false,
-            project_path: project.clone(),
-            source: RouteSource::Container,
-        },
+#[test]
+fn managed_listener_routes_require_exact_generation_and_hand_over_container_routes() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("routes.json");
+    let project = dir.path().display().to_string();
+
+    assert_eq!(
+        register_managed_listener_route(
+            &path,
+            &project,
+            "app.example.test",
+            "127.0.0.1:43123",
+            false,
+            synthetic_owner("child-1", "127.0.0.1:43123"),
+            None,
+        )
+        .unwrap(),
+        ManagedListenerRoutePublication::Registered
     );
-    assert!(matches!(
-        static_replacement,
-        Err(GatewayError::ForeignRoute { .. })
-    ));
     assert!(!deregister_managed_listener_route(
         &path,
         &project,
@@ -134,16 +138,44 @@ fn managed_listener_routes_require_exact_generation_and_block_static_replacement
     )
     .unwrap());
 
-    register_managed_listener_route(
-        &path,
-        &project,
-        "app.example.test",
-        "127.0.0.1:43124",
-        true,
-        make_owner("child-2", "127.0.0.1:43124"),
-        Some("child-1"),
-    )
-    .unwrap();
+    // A live listener from this same checkout is a real conflict. The refusal
+    // names the running managed process and never the claimant's own path.
+    let live = RouteTable::load(&path)
+        .unwrap()
+        .lookup("app.example.test")
+        .cloned()
+        .unwrap();
+    let conflict = check_container_claim_with(&live, &project, None, |_| true).unwrap_err();
+    assert!(matches!(
+        &conflict,
+        GatewayError::ManagedListenerRouteConflict { pid: 10, .. }
+    ));
+    let rendered = conflict.to_string();
+    assert!(rendered.contains("main|web|test|app"), "{rendered}");
+    assert!(rendered.contains("effigy container down"), "{rendered}");
+    assert!(
+        !rendered.contains(&project),
+        "conflict must not name the claimant's own path: {rendered}"
+    );
+
+    // A generation that is no longer live is a handover, not a conflict.
+    assert!(check_container_claim_with(&live, &project, None, |_| false).is_ok());
+
+    // Replacement of the same managed owner still requires the exact expected
+    // predecessor generation, and a stale stop callback cannot remove it.
+    assert_eq!(
+        register_managed_listener_route(
+            &path,
+            &project,
+            "app.example.test",
+            "127.0.0.1:43124",
+            false,
+            synthetic_owner("child-2", "127.0.0.1:43124"),
+            Some("child-1"),
+        )
+        .unwrap(),
+        ManagedListenerRoutePublication::ReplacedGeneration
+    );
     assert!(!deregister_managed_listener_route(
         &path,
         &project,
@@ -161,6 +193,155 @@ fn managed_listener_routes_require_exact_generation_and_block_static_replacement
             .as_deref(),
         Some("127.0.0.1:43124")
     );
+}
+
+#[test]
+fn container_handover_round_trip_keeps_teardown_ownership_correct() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("routes.json");
+    let project = dir.path().display().to_string();
+
+    register_route(&path, &container_registration(&project, "127.0.0.1:8080")).unwrap();
+    assert_eq!(
+        register_managed_listener_route(
+            &path,
+            &project,
+            "app.example.test",
+            "127.0.0.1:43123",
+            false,
+            synthetic_owner("child-1", "127.0.0.1:43123"),
+            None,
+        )
+        .unwrap(),
+        ManagedListenerRoutePublication::HandedOverFromContainer
+    );
+    let handed_over = RouteTable::load(&path)
+        .unwrap()
+        .lookup("app.example.test")
+        .cloned()
+        .unwrap();
+    assert_eq!(handed_over.source, RouteSource::Task);
+    assert!(handed_over.managed_listener.is_some());
+    assert!(!container_teardown_covers(&handed_over, &project, None));
+
+    // Stopping the old container environment must not remove the successor.
+    assert!(!deregister_route(&path, "app.example.test", &project).unwrap());
+    assert!(RouteTable::load(&path)
+        .unwrap()
+        .lookup("app.example.test")
+        .is_some());
+
+    // Stopping the hybrid generation, then starting the container again.
+    assert!(deregister_managed_listener_route(
+        &path,
+        &project,
+        "app.example.test",
+        "main|web|test|app",
+        "child-1",
+    )
+    .unwrap());
+    register_route(&path, &container_registration(&project, "127.0.0.1:8080")).unwrap();
+    let back = RouteTable::load(&path)
+        .unwrap()
+        .lookup("app.example.test")
+        .cloned()
+        .unwrap();
+    assert_eq!(back.source, RouteSource::Container);
+    assert!(back.managed_listener.is_none());
+    assert!(container_teardown_covers(&back, &project, None));
+}
+
+#[test]
+fn foreign_managed_listener_route_refuses_container_claim_without_naming_the_claimant() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("routes.json");
+    let (one, _) = linked_checkout(root.path(), "one");
+    let (two, _) = linked_checkout(root.path(), "two");
+    let one_path = one.display().to_string();
+    let two_path = two.display().to_string();
+
+    register_managed_listener_route(
+        &path,
+        &two_path,
+        "app.test",
+        "127.0.0.1:43123",
+        false,
+        synthetic_owner("child-1", "127.0.0.1:43123"),
+        None,
+    )
+    .unwrap();
+
+    let existing = RouteTable::load(&path)
+        .unwrap()
+        .lookup("app.test")
+        .cloned()
+        .unwrap();
+    let conflict = check_container_claim(&existing, &one_path, None).unwrap_err();
+    assert!(matches!(&conflict, GatewayError::ForeignRoute { .. }));
+    let rendered = conflict.to_string();
+    assert!(rendered.contains(&two_path), "{rendered}");
+    assert!(!rendered.contains(&one_path), "{rendered}");
+}
+
+#[test]
+fn live_managed_listener_route_blocks_container_registration() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("routes.json");
+    let project = dir.path().display().to_string();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let identity = crate::identity::read_live_process_identity(std::process::id())
+        .expect("test process identity");
+    let availability = dir.path().join("app.listener.json");
+    std::fs::write(
+        &availability,
+        serde_json::to_vec(&serde_json::json!({
+            "schema": "effigy.managed.host-listener-state.v1",
+            "owner": "main|web|test|app",
+            "runtime_generation": "runtime-1",
+            "generation": "child-1",
+            "status": "ready",
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let owner = ManagedListenerRouteOwner {
+        owner: "main|web|test|app".to_owned(),
+        runtime_generation: "runtime-1".to_owned(),
+        generation: "child-1".to_owned(),
+        supervisor_pid: std::process::id(),
+        supervisor_boot_identity: identity.boot_identity.clone(),
+        supervisor_start_identity: identity.start_identity.clone(),
+        root_pid: std::process::id(),
+        root_boot_identity: identity.boot_identity.clone(),
+        root_start_identity: identity.start_identity.clone(),
+        listener_pid: std::process::id(),
+        listener_boot_identity: identity.boot_identity.clone(),
+        listener_start_identity: identity.start_identity.clone(),
+        address: address.to_string(),
+        route_tls: false,
+        availability_file: availability.display().to_string(),
+    };
+    register_managed_listener_route(
+        &path,
+        &project,
+        "app.example.test",
+        &address.to_string(),
+        false,
+        owner,
+        None,
+    )
+    .unwrap();
+
+    let error = register_route(&path, &container_registration(&project, "127.0.0.1:8080"))
+        .expect_err("a live managed listener must refuse a container registration");
+    assert!(matches!(
+        error,
+        GatewayError::ManagedListenerRouteConflict { .. }
+    ));
+    let rendered = error.to_string();
+    assert!(rendered.contains("effigy container down"), "{rendered}");
+    drop(listener);
 }
 
 #[test]

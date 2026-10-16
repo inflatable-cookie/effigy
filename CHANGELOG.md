@@ -257,6 +257,14 @@ During v0.x, MINOR bumps may include breaking changes.
   `container.workspace-ownership` finding for an unusable dependency volume
   instead of a clean bill. Same-parent dependency trees (`vendor` beside
   `node_modules` as separate volumes) each get their own recursive repair.
+- A checkout can switch between its container environment and hybrid managed
+  host-listener mode in either direction without errors or manual cleanup. A
+  managed listener hands over a gateway route published by the same checkout
+  and scope in one locked transaction, and container registration takes the
+  domain back once that listener generation is no longer live. A still-live
+  managed listener is a real conflict and refuses with the running managed
+  process and `effigy container down` as the remedy; another checkout or scope
+  still refuses, and container teardown no longer removes a handed-over route.
 - Automatic local Linux artifact rebuilds now use the stable managed builder
   project `effigy-artifact-builder-v1`, preserving checkout/worktree isolation.
   Ambiguous legacy builders and their admissions/caches remain untouched; no

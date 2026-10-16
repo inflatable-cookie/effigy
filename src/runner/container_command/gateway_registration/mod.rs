@@ -20,7 +20,9 @@ use effigy_gateway::loopback::{
     project_loopback_identity, reserved_loopback_ips_for_other_projects, shared_loopback_identity,
     LoopbackRegistry,
 };
-use effigy_gateway::registration::{check_claim, owned_by, project_scope};
+use effigy_gateway::registration::{
+    check_claim, check_container_claim, container_teardown_covers, owned_by, project_scope,
+};
 #[cfg(test)]
 use effigy_gateway::registration::{deregister_route, register_route, RouteRegistration};
 use effigy_gateway::routes::{Route, RouteSource, RouteTable, RouteTableLock};
@@ -372,7 +374,7 @@ pub(in crate::runner) fn deregister_gateway_routes_for_container(
         .filter_map(|domain| {
             table
                 .lookup(&domain)
-                .filter(|route| owned_by(route, &project_path, scope.as_deref()))
+                .filter(|route| container_teardown_covers(route, &project_path, scope.as_deref()))
                 .cloned()
         })
         .collect::<Vec<_>>();
@@ -426,7 +428,7 @@ fn reconcile_gateway_routes_guarded(
     let scope = gateway_project_scope(&project_path)?;
     for route in desired {
         if let Some(existing) = table.lookup(&route.domain) {
-            check_claim(existing, &project_path, scope.as_deref()).map_err(|error| {
+            check_container_claim(existing, &project_path, scope.as_deref()).map_err(|error| {
                 RunnerError::gateway_route_registration(
                     "register",
                     &route.domain,

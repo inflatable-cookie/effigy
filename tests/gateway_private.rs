@@ -1565,6 +1565,157 @@ fn managed_host_dependent_replacement_route_edits_exclude_lifecycle_writers() {
     );
 }
 
+/// A checkout can switch container -> hybrid -> container in either direction
+/// without refusal while a route is handed over, and a still-live managed
+/// listener is refused as a real conflict. Every mutation goes through the
+/// production route-table transaction, which takes the route-table lock.
+#[test]
+fn container_hybrid_container_switch_hands_over_routes_and_refuses_a_live_listener() {
+    use effigy_gateway::identity::{read_live_process_identity, GatewayStartIdentity};
+    use effigy_gateway::registration::{
+        check_managed_listener_route_claim, deregister_managed_listener_route, deregister_route,
+        register_managed_listener_route, register_route, ManagedListenerRoutePublication,
+        RouteRegistration,
+    };
+    use effigy_gateway::routes::ManagedListenerRouteOwner;
+
+    let fixture = tempfile::tempdir().expect("private route switch fixture");
+    let route_path = fixture.path().join("routes.json");
+    let project = fixture.path().display().to_string();
+    let dead_start = GatewayStartIdentity::Linux { start_ticks: 1 };
+    let dead_owner = |generation: &str, address: &str| ManagedListenerRouteOwner {
+        owner: "main|web|test|app".to_owned(),
+        runtime_generation: "runtime-1".to_owned(),
+        generation: generation.to_owned(),
+        supervisor_pid: 10,
+        supervisor_boot_identity: "boot".to_owned(),
+        supervisor_start_identity: dead_start.clone(),
+        root_pid: 11,
+        root_boot_identity: "boot".to_owned(),
+        root_start_identity: dead_start.clone(),
+        listener_pid: 11,
+        listener_boot_identity: "boot".to_owned(),
+        listener_start_identity: dead_start.clone(),
+        address: address.to_owned(),
+        route_tls: false,
+        availability_file: fixture
+            .path()
+            .join("dead.listener.json")
+            .display()
+            .to_string(),
+    };
+    let container_registration = |target: &str| RouteRegistration {
+        domain: "switch.example.test".to_owned(),
+        target: Some(target.to_owned()),
+        dns_ip: None,
+        tcp_port: None,
+        tcp_target: None,
+        tls: false,
+        project_path: project.clone(),
+        source: RouteSource::Container,
+    };
+
+    // Container -> hybrid: a same-checkout container route neither refuses the
+    // preflight claim nor the publication transaction.
+    register_route(&route_path, &container_registration("127.0.0.1:48081")).unwrap();
+    check_managed_listener_route_claim(
+        &route_path,
+        &project,
+        "switch.example.test",
+        "main|web|test|app",
+    )
+    .expect("a same-checkout container route must not refuse the hybrid claim");
+    assert_eq!(
+        register_managed_listener_route(
+            &route_path,
+            &project,
+            "switch.example.test",
+            "127.0.0.1:48082",
+            false,
+            dead_owner("child-1", "127.0.0.1:48082"),
+            None,
+        )
+        .unwrap(),
+        ManagedListenerRoutePublication::HandedOverFromContainer
+    );
+    assert!(
+        !deregister_route(&route_path, "switch.example.test", &project).unwrap(),
+        "container teardown must not remove the successor route"
+    );
+
+    // Hybrid -> container once the listener generation is gone.
+    assert!(deregister_managed_listener_route(
+        &route_path,
+        &project,
+        "switch.example.test",
+        "main|web|test|app",
+        "child-1",
+    )
+    .unwrap());
+    register_route(&route_path, &container_registration("127.0.0.1:48083"))
+        .expect("the container may reclaim the domain once the listener is gone");
+    let reclaimed = RouteTable::load(&route_path)
+        .unwrap()
+        .lookup("switch.example.test")
+        .cloned()
+        .expect("reclaimed container route");
+    assert_eq!(reclaimed.source, RouteSource::Container);
+    assert!(reclaimed.managed_listener.is_none());
+
+    // A live managed listener is a real conflict. The refusal names the running
+    // managed process and how to stop it, never the claimant's own path.
+    let listener = TcpListener::bind("127.0.0.1:0").expect("live listener fixture");
+    let live_address = listener.local_addr().expect("live listener address");
+    let identity = read_live_process_identity(std::process::id()).expect("test process identity");
+    let availability = fixture.path().join("live.listener.json");
+    fs::write(
+        &availability,
+        serde_json::to_vec(&serde_json::json!({
+            "schema": "effigy.managed.host-listener-state.v1",
+            "owner": "main|web|test|app",
+            "runtime_generation": "runtime-1",
+            "generation": "child-live",
+            "status": "ready",
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let live_owner = ManagedListenerRouteOwner {
+        owner: "main|web|test|app".to_owned(),
+        runtime_generation: "runtime-1".to_owned(),
+        generation: "child-live".to_owned(),
+        supervisor_pid: std::process::id(),
+        supervisor_boot_identity: identity.boot_identity.clone(),
+        supervisor_start_identity: identity.start_identity.clone(),
+        root_pid: std::process::id(),
+        root_boot_identity: identity.boot_identity.clone(),
+        root_start_identity: identity.start_identity.clone(),
+        listener_pid: std::process::id(),
+        listener_boot_identity: identity.boot_identity.clone(),
+        listener_start_identity: identity.start_identity.clone(),
+        address: live_address.to_string(),
+        route_tls: false,
+        availability_file: availability.display().to_string(),
+    };
+    register_managed_listener_route(
+        &route_path,
+        &project,
+        "switch.example.test",
+        &live_address.to_string(),
+        false,
+        live_owner,
+        None,
+    )
+    .unwrap();
+    let conflict = register_route(&route_path, &container_registration("127.0.0.1:48084"))
+        .expect_err("a live managed listener must refuse the container environment");
+    let rendered = conflict.to_string();
+    assert!(rendered.contains("main|web|test|app"), "{rendered}");
+    assert!(rendered.contains("effigy container down"), "{rendered}");
+    assert!(!rendered.contains(&project), "{rendered}");
+    drop(listener);
+}
+
 /// One primary checkout and linked worktrees, all committed from one base.
 /// Each caller writes its own uncommitted listener manifest.
 fn create_listener_worktree_fixture(
