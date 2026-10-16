@@ -67,8 +67,8 @@ pub fn effigy_home() -> Option<std::path::PathBuf> {
 }
 
 pub use runtime::port_recovery::{
-    port_reclaim_apply, port_reclaim_dry_run, port_report_json, port_status, Decision,
-    PortRecoveryReport, PortRecoveryRow, PORTS_SCHEMA,
+    port_capacity_note, port_reclaim_apply, port_reclaim_dry_run, port_report_json, port_status,
+    Decision, PortRecoveryReport, PortRecoveryRow, PORTS_SCHEMA,
 };
 pub use runtime::retire::{
     plan_retirement, remaining_after, ObservedKind, ObservedResource, RetirementPlan,

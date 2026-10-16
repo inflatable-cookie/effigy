@@ -580,3 +580,89 @@ fn absent_registry_reports_empty_capacity_without_creating_files() {
         "status must not take the lock"
     );
 }
+
+/// Fill the default base upward so exactly `free_ranges` default-size ranges
+/// remain allocatable, matching how repeated allocation packs the registry.
+fn registry_filled_to(free_ranges: usize) -> PortRegistry {
+    let mut registry = PortRegistry::new();
+    let fills = registry.capacity().allocatable_ranges - free_ranges;
+    for index in 0..fills {
+        registry
+            .allocate(
+                &format!("p{index}"),
+                &format!("/effigy-test/ports-note/p{index}"),
+            )
+            .expect("allocation fits while free ranges remain");
+    }
+    assert_eq!(registry.capacity().allocatable_ranges, free_ranges);
+    registry
+}
+
+#[test]
+fn capacity_note_points_to_ports_status_at_one_free_range() {
+    let _lock = crate::test_env_lock();
+    let home = tempfile::tempdir().expect("fixture home");
+    registry_filled_to(1)
+        .save(&home.path().join("ports.json"))
+        .expect("save fixture registry");
+
+    let note = crate::with_test_effigy_home(home.path(), super::port_capacity_note)
+        .expect("one free range is near exhaustion");
+    assert_eq!(note.lines().count(), 1);
+    assert!(note.starts_with("[note] generated-container port registry"));
+    assert!(note.contains("capacity is low (1 free 100-port range remains)"));
+    assert!(note.contains("`effigy container ports status`"));
+}
+
+#[test]
+fn capacity_note_points_to_ports_status_at_zero_free_ranges() {
+    let _lock = crate::test_env_lock();
+    let home = tempfile::tempdir().expect("fixture home");
+    registry_filled_to(0)
+        .save(&home.path().join("ports.json"))
+        .expect("save fixture registry");
+
+    let note = crate::with_test_effigy_home(home.path(), super::port_capacity_note)
+        .expect("zero free ranges is exhaustion");
+    assert_eq!(note.lines().count(), 1);
+    assert!(note.contains("capacity is exhausted (no free 100-port ranges remain)"));
+    assert!(note.contains("`effigy container ports status`"));
+}
+
+#[test]
+fn capacity_note_absent_with_comfortable_capacity() {
+    let _lock = crate::test_env_lock();
+    let home = tempfile::tempdir().expect("fixture home");
+    registry_filled_to(2)
+        .save(&home.path().join("ports.json"))
+        .expect("save fixture registry");
+
+    let note = crate::with_test_effigy_home(home.path(), super::port_capacity_note);
+    assert!(note.is_none(), "two free ranges stay quiet");
+}
+
+#[test]
+fn capacity_note_absent_without_a_registry_file() {
+    let _lock = crate::test_env_lock();
+    let home = tempfile::tempdir().expect("fixture home");
+
+    let note = crate::with_test_effigy_home(home.path(), super::port_capacity_note);
+    assert!(note.is_none(), "an absent registry has full capacity");
+    assert!(
+        !home.path().join("ports.json").exists(),
+        "the note must not create the registry"
+    );
+}
+
+#[test]
+fn capacity_note_absent_when_registry_is_unreadable() {
+    let _lock = crate::test_env_lock();
+    let home = tempfile::tempdir().expect("fixture home");
+    std::fs::write(home.path().join("ports.json"), "not json").expect("write fixture");
+
+    let note = crate::with_test_effigy_home(home.path(), super::port_capacity_note);
+    assert!(
+        note.is_none(),
+        "an unreadable registry gets no capacity claim"
+    );
+}
