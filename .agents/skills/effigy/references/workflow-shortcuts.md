@@ -156,10 +156,21 @@ effigy doctor --json                # machine-readable envelope
 
 This is the right surface for ambiguity and repo health, not a default greeting.
 
-## JSON for everything
+## JSON output
 
-Append `--json` (or prefix with `effigy --json <command>`) to get an
-`effigy.command.v1` envelope from any command. See `json-envelope.md`.
+For command modes that support JSON, append `--json` (or prefix with
+`effigy --json <command>`) to get an `effigy.command.v1` envelope.
+`effigy graph watch --json` instead emits newline-delimited
+`effigy.graph.watch.event.v1` events. Finite `system logs --json` and
+`container <NAME> logs --json` snapshots support JSON; their `--follow`
+modes reject it. `workspace` and interactive `container shell` have no JSON
+form. For a finite shell command, supply all required bounds:
+
+```bash
+effigy container <NAME> shell --command 'printf hello' --bounded --deadline-ms 30000 --stdout-limit-bytes 1048576 --stderr-limit-bytes 262144 --json
+```
+
+See `json-envelope.md`.
 
 ## Bootstrap from outside the repo
 

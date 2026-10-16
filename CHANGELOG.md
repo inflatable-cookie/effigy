@@ -7,6 +7,10 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- Added a [v0.15.0 consumer migration guide](docs/guides/085-v0.15.0-consumer-migration.md)
+  covering the catalog-pack compatibility step, container lifecycle and
+  doctor behavior changes, opt-in features, and a DecodeLabs checklist.
+  Container, gateway and docs help notices now lead with the user action.
 - `effigy container retire --dead` retires every recorded runtime scope whose
   checkout no longer exists, such as worktrees removed without running their
   teardown, through the ordinary retirement path. It previews the scopes when
