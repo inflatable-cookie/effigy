@@ -412,10 +412,38 @@ Tom's later publication ruling applies to decision `0116369e`:
 
 CI and preparation may finish, but preserve a successful prepared state without
 running release execute, creating the tag, dispatching binary publication or
-publishing. Tom must explicitly release this hold after the existing owners'
-Reference, compli-me and songsprout `dev` / `dev:test` proofs and Acowtancy
-adoption proof on the locally bootstrapped build. Those proofs grant no runtime
-or cleanup authority to the release owner.
+publishing. The existing owners supply the Reference, compli-me and songsprout
+`dev` / `dev:test` proofs and Acowtancy adoption proof on locally bootstrapped
+builds. Those proofs grant no runtime or cleanup authority to the release owner.
+
+#### Conditional lifting authority — 2026-10-16
+
+Tom subsequently ruled in the effigy-a6 thread, relayed to the release owner:
+
+> "Accept as is. Lift when ready".
+
+This accepts the reported Underlay results and their disclosed limits:
+Reference `dev:test` 161/161 on `v0.15.0+local.7420729.dirty`
+(`sha256:9c3ab11b…`), compli-me 185/185 and songsprout 74/74 on
+`v0.14.1+local.344f5c6` (`sha256:9498298f…`). These are owner-reported
+proofs across two builds, not exact-current-main qualification. The dirty
+Reference source was not pinned; a temporary prepare mutation was suggested
+but not established as its cause. Root gateway identity for PID 75179 remained
+unverified. Tom accepted these caveats; no replacement Underlay proof is a
+publication prerequisite.
+
+The remaining hold condition is a passing Acowtancy adoption proof reported by
+its existing owner, `2f6b92d1`. Once that authentic result passes, the release
+owner may lift the publication hold without another approval request to Tom.
+A failed or unclear result keeps the hold in place and is reported to effigy-a6.
+Until the condition passes, do not execute, tag, dispatch publication workflows
+or publish.
+
+Lifting the hold resumes decision `0116369e` version 2 with no gate waiver:
+fresh hosted CI on current clean, pushed main, a fresh prepare with all seven
+configured gates, then the supported tag, binary publication and isolated
+install verification. Accepted consumer proofs do not substitute for any of
+those checks or qualify later source changes.
 
 ### Shared-process Rhai generation coverage
 
