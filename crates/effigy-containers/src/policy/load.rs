@@ -218,7 +218,9 @@ pub fn load_admitted_container_policy(
         })?);
     }
     let mut artifacts = vec![
-        root.join(".effigy/runtime/compose/.effigy-compose.generated.yml"),
+        root.join(format!(
+            ".effigy/runtime/compose/{name}.generated.compose.yml"
+        )),
         root.join(".effigy/runtime/compose/.effigy-compose.override.yml"),
         root.join(format!(
             ".effigy/runtime/compose/{name}.workspace.compose.yml"

@@ -571,7 +571,10 @@ pub(crate) fn resolve_compose_source(
         "typed assembly policy application",
         &mut assembly,
     )?;
-    let output = ComposeOutput::new(repo_root.join(GENERATED_RUNTIME_COMPOSE_DIR));
+    let output = ComposeOutput::new(
+        repo_root.join(GENERATED_RUNTIME_COMPOSE_DIR),
+        container_name,
+    );
     ensure_effigy_ignored_in_git_root(repo_root).map_err(|error| ContainerPolicyError::Read {
         path: git_local_exclude_path(repo_root),
         error,
@@ -592,9 +595,7 @@ pub(crate) fn resolve_compose_source(
                 .join(",")
         )
     };
-    let output_path = repo_root
-        .join(GENERATED_RUNTIME_COMPOSE_DIR)
-        .join(".effigy-compose.generated.yml");
+    let output_path = output.generated_compose_path();
     if let Some(guard) = &admission {
         guard.before_render_write(&output_path, assembly.compose_yaml.as_bytes())?;
     }
@@ -974,7 +975,10 @@ fn resolve_shared_service_bindings(
             .copied()
             .find(|binding| binding.host != binding.container)
             .unwrap_or(parsed_bindings[0]);
-        let output = ComposeOutput::new(output_dir);
+        // Shared services live outside any one environment's generated
+        // payload; key their output by the shared project so every renderer
+        // of the same shared project converges on one file.
+        let output = ComposeOutput::new(output_dir, &shared_project_name);
         let write = output.write(
             &assembly,
             &format!("{shared_project_name}\n# publish_address={publish_address}"),

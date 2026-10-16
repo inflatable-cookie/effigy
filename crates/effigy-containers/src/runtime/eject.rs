@@ -20,7 +20,7 @@ pub fn eject_generated_compose(
         )));
     }
 
-    let output = ComposeOutput::new(repo_root.join(GENERATED_RUNTIME_COMPOSE_DIR));
+    let output = ComposeOutput::new(repo_root.join(GENERATED_RUNTIME_COMPOSE_DIR), &policy.name);
     let eject = output.eject_to(&repo_root.join(EJECTED_COMPOSE_DIR))?;
     Ok(ContainerEjectResult {
         compose_path: eject.compose_path,

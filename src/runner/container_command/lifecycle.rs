@@ -1609,7 +1609,7 @@ variant = "default"
         assert!(rendered.contains("ejected catalog-backed compose ownership"));
         assert!(root.join("infra/dev/docker-compose.yml").exists());
         assert!(!root
-            .join(".effigy/runtime/compose/.effigy-compose.generated.yml")
+            .join(".effigy/runtime/compose/web.generated.compose.yml")
             .exists());
         let manifest = fs::read_to_string(root.join("effigy.toml")).expect("read manifest");
         assert!(manifest.contains("compose_file = \"infra/dev/docker-compose.yml\""));

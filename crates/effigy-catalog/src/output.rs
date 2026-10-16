@@ -10,10 +10,12 @@ use std::path::{Path, PathBuf};
 use crate::assembly::AssemblyResult;
 use crate::error::CatalogError;
 
-/// Manages compose file output and lifecycle.
+/// Manages compose file output and lifecycle for one container environment.
 pub struct ComposeOutput {
     /// Directory where generated runtime files are written.
     output_dir: PathBuf,
+    /// The owning container environment's name; keys the generated files.
+    container_name: String,
 }
 
 /// Result of writing compose output to disk.
@@ -46,9 +48,30 @@ pub struct EjectResult {
 }
 
 impl ComposeOutput {
-    /// Create a new output manager for the given directory.
-    pub fn new(output_dir: PathBuf) -> Self {
-        Self { output_dir }
+    /// Create a new output manager for one container environment.
+    ///
+    /// The generated compose file and its checksum are keyed by the
+    /// environment name. Every environment of a checkout renders its own
+    /// generated Compose payload, so resolving or stopping one environment's
+    /// policy never rewrites another environment's admitted Compose inputs
+    /// between admission and publication.
+    pub fn new(output_dir: PathBuf, container_name: impl Into<String>) -> Self {
+        Self {
+            output_dir,
+            container_name: container_name.into(),
+        }
+    }
+
+    /// Path to this environment's generated compose file.
+    fn generated_compose_file(&self) -> PathBuf {
+        self.output_dir
+            .join(format!("{}.generated.compose.yml", self.container_name))
+    }
+
+    /// Path to this environment's regeneration checksum.
+    fn checksum_file(&self) -> PathBuf {
+        self.output_dir
+            .join(format!("{}.generated.checksum", self.container_name))
     }
 
     /// Write the assembly result to disk.
@@ -62,8 +85,8 @@ impl ComposeOutput {
     ) -> Result<WriteResult, CatalogError> {
         std::fs::create_dir_all(&self.output_dir)?;
 
-        let compose_path = self.output_dir.join(".effigy-compose.generated.yml");
-        let checksum_path = self.output_dir.join(".effigy-compose.checksum");
+        let compose_path = self.generated_compose_file();
+        let checksum_path = self.checksum_file();
 
         // Check if regeneration is needed.
         let current_checksum = simple_checksum(manifest_content);
@@ -131,7 +154,7 @@ impl ComposeOutput {
 
     /// Eject generated compose output into a user-owned directory.
     pub fn eject_to(&self, target_dir: &Path) -> Result<EjectResult, CatalogError> {
-        let generated_path = self.output_dir.join(".effigy-compose.generated.yml");
+        let generated_path = self.generated_compose_file();
         let permanent_path = target_dir.join("docker-compose.yml");
 
         if !generated_path.exists() {
@@ -197,7 +220,7 @@ impl ComposeOutput {
 
         // Clean up generated files.
         let _ = std::fs::remove_file(&generated_path);
-        let _ = std::fs::remove_file(self.output_dir.join(".effigy-compose.checksum"));
+        let _ = std::fs::remove_file(self.checksum_file());
         let _ = std::fs::remove_dir_all(&catalog_dir);
 
         Ok(EjectResult {
@@ -209,7 +232,7 @@ impl ComposeOutput {
 
     /// Path to the generated compose file.
     pub fn generated_compose_path(&self) -> PathBuf {
-        self.output_dir.join(".effigy-compose.generated.yml")
+        self.generated_compose_file()
     }
 
     /// Path to the override compose file (user-provided).

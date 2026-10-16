@@ -29,6 +29,19 @@ fn managed_host_fixture() -> tempfile::TempDir {
         .expect("owned contained managed host fixture")
 }
 
+fn copy_dir_all(src: &Path, dst: &Path) {
+    fs::create_dir_all(dst).expect("create fixture directory");
+    for entry in fs::read_dir(src).expect("read fixture source") {
+        let entry = entry.expect("fixture entry");
+        let dest = dst.join(entry.file_name());
+        if entry.path().is_dir() {
+            copy_dir_all(&entry.path(), &dest);
+        } else {
+            fs::copy(entry.path(), &dest).expect("copy fixture file");
+        }
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn private_gateway_shutdown_handles_owned_term_int_and_inherited_ignore() {
@@ -4196,6 +4209,355 @@ fn container_hybrid_environment_switch_hands_the_whole_environment_over() {
     assert!(
         !active(&hybrid_project),
         "the refused handover starts nothing"
+    );
+
+    // Leave the checkout stopped: idempotent downs stop any live environment.
+    for env in ["stack", "hybrid"] {
+        let _ = container(env)
+            .args(["down", "--json"])
+            .output()
+            .expect("run switch container down");
+    }
+}
+
+/// One fake Docker project's live service rows: (service, full id, published
+/// container ports).
+type ServiceRows<'a> = (&'a String, Vec<(&'static str, &'static str, Vec<u16>)>);
+
+/// A scoped (ephemeral) clone must admit and publish its first detached `up`
+/// of an environment with a managed host listener without refusal: the #196
+/// regression refused every such environment there. The stack ↔ hybrid
+/// handover round trip also runs in the scoped checkout, including the live
+/// reverse transition (hybrid running → stack up, no manual down). Both
+/// environments use the bundle-driven generated compose shape a published
+/// consumer reference repo uses.
+#[test]
+fn container_scoped_clone_first_listener_up_and_switch_round_trip_hands_over() {
+    let fixture = managed_host_fixture();
+    let effects = HostEffectSentinels::new(fixture.path());
+    let docker_dir = std::env::split_paths(&effects.env_path)
+        .next()
+        .expect("sentinel PATH directory");
+    let docker_log = fixture.path().join("docker-fixture.log");
+    write_switch_fake_docker(&docker_dir.join("docker"));
+
+    let home = fixture.path().join("home");
+    fs::create_dir(&home).expect("fixture home");
+    let foreign_ca = fixture.path().join("foreign-ca");
+    fs::create_dir(&foreign_ca).expect("foreign CA sentinel");
+    let mut gateway_cleanup = GatewayCleanup::new(&effects, &foreign_ca);
+    let (private_gateway, _https_address) =
+        start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut gateway_cleanup);
+    let routes_path = private_gateway.join("routes.json");
+
+    let bundle_src = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("crates/effigy-manifest/tests/fixtures/workspace-app-bundle");
+    copy_dir_all(&bundle_src, &fixture.path().join("bundles/workspace-app"));
+
+    let checkout = fixture.path().join("checkout");
+    fs::create_dir(&checkout).expect("switch checkout");
+    fs::write(
+        checkout.join("effigy.toml"),
+        "[containers]\ndefault = \"stack\"\n",
+    )
+    .expect("seed manifest before git commit");
+    git(&checkout, &["init", "--initial-branch=main"]);
+    git(&checkout, &["config", "user.name", "Switch Fixture"]);
+    git(
+        &checkout,
+        &["config", "user.email", "switch-fixture@example.invalid"],
+    );
+    git(&checkout, &["add", "effigy.toml"]);
+    git(&checkout, &["commit", "-m", "fixture base"]);
+    // The checkout is an ephemeral-scoped clone: like Nucleus task workspaces.
+    git(&checkout, &["config", "effigy.runtimeScope", "ephemeral"]);
+    let checkout = checkout.canonicalize().expect("canonical switch checkout");
+
+    let control = fixture.path().join("switch-control");
+    fs::create_dir(&control).expect("listener control directory");
+    let child_binary = std::env::current_exe().expect("integration test binary");
+    let listener_env = format!(
+        "FIXTURE_BINARY = {}\nFIXTURE_BODY = \"hybrid-body\"\nFIXTURE_PREVIOUS_PORT_FILE = {}\nFIXTURE_RESTART_FILE = {}\nFIXTURE_PAUSED_FILE = {}\nFIXTURE_CONTINUE_FILE = {}\nFIXTURE_READINESS_REFUSED_FILE = {}\n",
+        toml_quote(&child_binary.display().to_string()),
+        toml_quote(&control.join("previous-port").display().to_string()),
+        toml_quote(&control.join("restart").display().to_string()),
+        toml_quote(&control.join("listener-paused").display().to_string()),
+        toml_quote(&control.join("continue-exit").display().to_string()),
+        toml_quote(&control.join("readiness-refused").display().to_string()),
+    );
+    let manifest = format!(
+        "[bundle]\nbase = {{ type = \"path\", dir = \"../bundles/workspace-app\" }}\nhost = \"switch.test\"\nproject_name = \"scoped-reference-dev\"\nworkspace_subdir = \"scoped-reference\"\ndatabases = [\"acme\"]\n\n\
+[containers.stack.dns]\nroutes = [{{ domain = \"switch.test\", tls = true, port = 41003, service = \"workspace\" }}]\n\n\
+[containers.hybrid]\nprimary_service = \"workspace\"\nstartup = \"detached\"\nworking_dir = \"/workspace-root/scoped-reference\"\n\n\
+[containers.hybrid.services.workspace]\ncatalog = \"workspace-rust-bun\"\nworking_subdir = \"scoped-reference\"\nhost_ports = [\"41003:41003\"]\n\n\
+[[containers.hybrid.host_processes]]\nname = \"app\"\nrun = \"exec \\\"$FIXTURE_BINARY\\\" --ignored --exact managed_listener_fixture_child --nocapture\"\nrestart = \"never\"\n\n\
+[containers.hybrid.host_processes.env]\n{listener_env}\
+[containers.hybrid.host_processes.listener]\nbind = \"127.0.0.1:0\"\n\n\
+[containers.hybrid.host_processes.listener.readiness]\npath = \"/health\"\nstatus = 200\ntimeout_secs = 20\n\n\
+[containers.hybrid.host_processes.listener.route]\ndomain = \"switch.test\"\n"
+    );
+    fs::write(checkout.join("effigy.toml"), manifest).expect("write switch manifest");
+
+    let stack_policy =
+        effigy_containers::load_container_policy(&checkout, Some("stack")).expect("stack policy");
+    let hybrid_policy =
+        effigy_containers::load_container_policy(&checkout, Some("hybrid")).expect("hybrid policy");
+    let stack_project = stack_policy.project_name.clone();
+    let hybrid_project = hybrid_policy.project_name.clone();
+    let stack_domain = stack_policy.dns_routes[0].domain.clone();
+    let hybrid_listener_domain = hybrid_policy
+        .host_processes
+        .iter()
+        .find_map(|process| process.listener.as_ref())
+        .expect("hybrid listener")
+        .route_domain
+        .clone();
+    assert_eq!(
+        stack_domain, hybrid_listener_domain,
+        "both environments claim the same (scoped) domain"
+    );
+    // The scope token must exist before the proofs are written, so the
+    // ownership labels match what the activation flow resolves later.
+    let scope_token = effigy_core::worktree_scope::load_or_create(&checkout)
+        .expect("checkout scope")
+        .expect("an ephemeral clone is runtime-scoped");
+    let scope_token = scope_token.trim().to_owned();
+    let state = fixture.path().join("switch-docker-state");
+    fs::create_dir(&state).expect("switch docker state directory");
+    // One published loopback binding per declared container port, so every
+    // route the bundle declares can resolve its runtime target. The stack
+    // environment declares the full bundle service set; the hybrid twin only
+    // declares the workspace service, and its rows stay within that.
+    let workspace = (
+        "workspace",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        vec![41001, 41002, 41003],
+    );
+    let postgres = (
+        "postgres",
+        "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        vec![5432],
+    );
+    let minio = (
+        "minio",
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        vec![9000, 9001],
+    );
+    let dbgate = (
+        "dbgate",
+        "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        vec![3000],
+    );
+    let mailpit = (
+        "mailpit",
+        "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        vec![1025, 8025],
+    );
+    let project_services: [ServiceRows; 2] = [
+        (
+            &stack_project,
+            vec![
+                workspace.clone(),
+                postgres.clone(),
+                minio.clone(),
+                dbgate.clone(),
+                mailpit.clone(),
+            ],
+        ),
+        (&hybrid_project, vec![workspace.clone()]),
+    ];
+    for (project, services) in project_services {
+        let mut ps_rows = String::new();
+        for (service, id, ports) in services {
+            let container = format!("{project}-{service}-1");
+            let bindings = ports
+                .iter()
+                .map(|port| format!("127.0.0.1:{port}->{port}/tcp"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            ps_rows.push_str(&format!(
+                "{container}\tUp 1 minute\t{bindings}\t{project}\t{}\t{service}\tFalse\n",
+                checkout.display()
+            ));
+            let inspect_ports = ports
+                .iter()
+                .map(|port| {
+                    (
+                        format!("{port}/tcp"),
+                        serde_json::json!([{"HostIp": "127.0.0.1", "HostPort": port.to_string()}]),
+                    )
+                })
+                .collect::<serde_json::Map<String, Value>>();
+            let labels = serde_json::json!({
+                "com.docker.compose.project": project,
+                "com.docker.compose.service": service,
+                "com.docker.compose.oneoff": "False",
+                "com.effigy.checkout": checkout,
+                "com.effigy.scope": scope_token,
+            });
+            let proof = serde_json::json!([{
+                "Id": id,
+                "Name": format!("/{container}"),
+                "State": {"Status": "running", "Running": true},
+                "Config": {"Labels": labels},
+                "NetworkSettings": {"Ports": inspect_ports},
+            }]);
+            fs::write(
+                state.join(format!("inspect-{container}.json")),
+                serde_json::to_vec(&proof).expect("proof json"),
+            )
+            .expect("write owned proof");
+        }
+        fs::write(state.join(format!("ps-{project}.txt")), ps_rows).expect("write ps rows");
+    }
+
+    let cleanup = ManagedContainerCleanup {
+        checkouts: vec![checkout.clone()],
+        home: home.clone(),
+        private_gateway: private_gateway.clone(),
+        foreign_ca: foreign_ca.clone(),
+        effects_path: effects.env_path.clone(),
+        mkcert: effects.private_mkcert.clone(),
+        effect_log: effects.log.clone(),
+        mkcert_calls: effects.mkcert_calls.clone(),
+        docker_log: docker_log.clone(),
+    };
+
+    let container = |env: &str| {
+        let mut command = Command::new(EFFIGY);
+        command
+            .env("FAKE_OWNED_STATE", &state)
+            .args(["container", env])
+            .current_dir(&checkout)
+            .env("HOME", &cleanup.home)
+            .env("EFFIGY_TEST_CONTAINERS_HOME", cleanup.home.join(".effigy"))
+            .env("PATH", &cleanup.effects_path)
+            .env("EFFIGY_COMPOSE_BACKEND", "docker")
+            .env(
+                effigy_gateway::private_state::PRIVATE_STATE_ROOT_ENV,
+                &cleanup.private_gateway,
+            )
+            .env("EFFIGY_GATEWAY_MKCERT_BIN", &cleanup.mkcert)
+            .env("EFFECT_LOG", &cleanup.effect_log)
+            .env("MKCERT_CALLS", &cleanup.mkcert_calls)
+            .env("CAROOT", &cleanup.foreign_ca)
+            .env("FOREIGN_CAROOT", &cleanup.foreign_ca)
+            .env("FAKE_DOCKER_LOG", &cleanup.docker_log)
+            .env("EFFIGY_DEBUG_DETACHED_VERIFY", "1");
+        command
+    };
+    let switch_up = |env: &str| {
+        let output = container(env)
+            .args(["up", "--detach"])
+            .output()
+            .expect("run switch container up");
+        if !output.status.success() {
+            let table = RouteTable::load(&routes_path)
+                .map(|table| format!("{table:?}"))
+                .unwrap_or_else(|error| error.to_string());
+            let markers: Vec<String> = fs::read_dir(&state)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .collect();
+            panic!(
+                "`container {env} up --detach` refused: stdout={} stderr={}\\nroutes={table}\\nstate markers={markers:?}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr),
+            );
+        }
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    };
+    let active = |project: &str| state.join(format!("active-{project}")).exists();
+    let route_source = |domain: &str| {
+        RouteTable::load(&routes_path)
+            .expect("route table")
+            .lookup(domain)
+            .map(|route| route.source)
+    };
+    let route_owner_environment = |domain: &str| -> Option<String> {
+        RouteTable::load(&routes_path)
+            .expect("route table")
+            .lookup(domain)
+            .and_then(|route| route.managed_listener.clone())
+            .map(|owner| owner.owner)
+    };
+
+    // The very first bring-up in this scoped clone is the listener
+    // environment: nothing is live, so nothing is handed over, and the
+    // detached activation must admit and publish without refusal.
+    let hybrid_up = switch_up("hybrid");
+    assert!(
+        !hybrid_up.contains("[handover]"),
+        "the first bring-up has nothing to hand over: {hybrid_up}"
+    );
+    assert!(active(&hybrid_project), "hybrid's containers are live");
+    assert_eq!(
+        route_source(&hybrid_listener_domain),
+        Some(RouteSource::Task),
+        "the live hybrid listener holds the domain"
+    );
+    assert_eq!(
+        route_owner_environment(&hybrid_listener_domain)
+            .as_deref()
+            .and_then(|owner| owner.split('|').nth(1))
+            .map(str::to_owned),
+        Some("hybrid".to_owned()),
+        "the listener owner names the hybrid environment"
+    );
+
+    // The live reverse transition: hybrid is running and stack comes up with
+    // no manual down. The whole hybrid environment is handed over first.
+    let stack_up = switch_up("stack");
+    assert_eq!(
+        stack_up.matches("[handover]").count(),
+        1,
+        "one handover line: {stack_up}"
+    );
+    assert!(
+        stack_up.contains("stopping environment `hybrid`"),
+        "{stack_up}"
+    );
+    assert!(
+        !active(&hybrid_project),
+        "the handed-over hybrid containers are stopped"
+    );
+    assert!(active(&stack_project), "stack's containers are live");
+    assert_eq!(
+        route_source(&stack_domain),
+        Some(RouteSource::Container),
+        "stack holds the domain again, with no orphan listener route"
+    );
+
+    // And back: stack live -> hybrid up hands the whole stack environment
+    // over, so the scoped round trip works in both directions.
+    let back = switch_up("hybrid");
+    assert_eq!(
+        back.matches("[handover]").count(),
+        1,
+        "one handover line: {back}"
+    );
+    assert!(back.contains("stopping environment `stack`"), "{back}");
+    assert!(
+        !active(&stack_project),
+        "the handed-over stack containers are stopped"
+    );
+    assert!(
+        active(&hybrid_project),
+        "hybrid's containers are live again"
+    );
+    assert_eq!(
+        route_source(&hybrid_listener_domain),
+        Some(RouteSource::Task),
+        "the live hybrid listener holds the domain again"
+    );
+
+    // The handover keeps every volume: no `-v` teardown ever ran.
+    let log = fs::read_to_string(&docker_log).expect("docker fixture log");
+    assert!(
+        !log.contains(" down -v") && !log.contains("down --volumes"),
+        "the handover never removes volumes: {log}"
     );
 
     // Leave the checkout stopped: idempotent downs stop any live environment.

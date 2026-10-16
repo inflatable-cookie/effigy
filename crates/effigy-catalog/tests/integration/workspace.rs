@@ -567,7 +567,7 @@ fn end_to_end_php_stack_written_to_disk() {
 
     let resolver = bundled_resolver();
     let assembler = ComposeAssembler::new(resolver);
-    let output = ComposeOutput::new(output_dir.clone());
+    let output = ComposeOutput::new(output_dir.clone(), "web");
 
     // Simulate a real PHP client project with the full service stack.
     let services = vec![
@@ -911,7 +911,7 @@ fn end_to_end_eject_produces_standalone_compose() {
 
     let resolver = bundled_resolver();
     let assembler = ComposeAssembler::new(resolver);
-    let output = ComposeOutput::new(output_dir.clone());
+    let output = ComposeOutput::new(output_dir.clone(), "web");
 
     let services = vec![
         ServiceDeclaration {
