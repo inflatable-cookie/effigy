@@ -144,6 +144,12 @@
   "cargo test -p effigy-containers --lib linked_worktrees_get_distinct_effective_hosts_and_primary_keeps_declared -- --nocapture",
   "cargo test -p effigy-containers --lib invalid_linked_worktree_admin_directory_is_refused -- --nocapture",
 ]
+"test:containers:data-from" = [
+  "cargo test -p effigy-manifest --lib container_data_from -- --nocapture",
+  "cargo test -p effigy-doctor --lib validate_manifest_schema_accepts_container_data_from -- --nocapture",
+  "cargo test -p effigy-containers --lib tests::data_from -- --nocapture",
+  "cargo test -p effigy-containers --lib policy::data_from -- --nocapture",
+]
 "test:containers:loopback" = "cargo test -p effigy-containers runtime::loopback::tests:: -- --nocapture"
 # Machine-wide generated-container port registry recovery: exhaustion and
 # reclaim in a private registry, status/dry-run non-mutation, digest-confirmed
