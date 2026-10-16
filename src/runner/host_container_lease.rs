@@ -426,10 +426,7 @@ fn partial_activation_context(
         "profile": policy.profile,
         "project_name": policy.project_name,
         "primary_service": policy.primary_service,
-        "backend": match effigy_containers::compose::resolve_compose_backend_for_repo(repo_root, policy) {
-            effigy_containers::compose::ComposeBackend::Docker => "docker",
-            effigy_containers::compose::ComposeBackend::ColimaNerdctl => "colima-nerdctl",
-        },
+        "backend": super::exec_command::runtime_backend_identity_for_policy(repo_root, policy),
         "compose_source": match policy.compose_source {
             effigy_containers::EffectiveComposeSource::Direct => "direct",
             effigy_containers::EffectiveComposeSource::Generated => "generated",

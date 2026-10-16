@@ -965,3 +965,18 @@ fn activate_exec_surface_preserves_skip_lease_policy_for_handoff_sessions() {
         ))
     );
 }
+
+#[test]
+fn runtime_backend_identity_preserves_partial_activation_keys() {
+    let fixture = tempfile::tempdir().expect("private backend identity fixture");
+    for (backend, expected) in [("docker", "docker"), ("colima-nerdctl", "colima-nerdctl")] {
+        let _env = crate::contract_test_support::EnvGuard::set_many(&[(
+            "EFFIGY_COMPOSE_BACKEND",
+            Some(backend.to_owned()),
+        )]);
+        assert_eq!(
+            super::runtime_backend_identity_for_policy(fixture.path(), &test_policy()),
+            expected,
+        );
+    }
+}

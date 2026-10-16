@@ -389,3 +389,15 @@ handoff validation and descriptor cleanup remain unchanged. Preparation
 `61f662d8` at `6bd9af00` failed the numeric-only closure assertion and rolled back;
 its exact historical successor is unknown. New source checks do not qualify the
 prepared 0.15.0 tree or waive any candidate CI or release gate.
+
+
+### Runtime adapter drift in prepared-version QA
+
+Preparation `8c40d8c6` at `21b297d7` passed the full prepared-0.15 workspace test
+gate, then QA refused backend branching in shell preflight/lease bookkeeping
+and Compose assembly in workspace catalog preparation. The operation rolled
+back and settled failed with no escaped descendants. These calls now use the
+existing transport adapter and plan normalization described by
+[the architecture boundary](../architecture/022-runtime-architecture-sanity-audit.md#bounded-discovery-and-catalog-preparation).
+The real drift guard and allowlists are unchanged; passing source checks does
+not replace candidate CI or the actual seven prepared-version release gates.

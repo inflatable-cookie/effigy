@@ -370,7 +370,7 @@ impl CatalogTransport<'_> {
     }
 
     fn run(&mut self, command: &str) -> Result<Vec<u8>, &'static str> {
-        let mut args = effigy_containers::compose::compose_args(self.policy, ["exec", "-T"]);
+        let mut args = vec![OsString::from("exec"), OsString::from("-T")];
         args.extend([
             "-u".into(),
             self.policy
@@ -400,16 +400,15 @@ impl CatalogTransport<'_> {
 
     /// Run one fixed argv as root in the selected workspace, without a shell.
     fn run_as_root(&mut self, argv: &[&str]) -> Result<Vec<u8>, &'static str> {
-        let mut args = effigy_containers::compose::compose_args(
-            self.policy,
-            [
-                "exec",
-                "-T",
-                "-u",
-                "0",
-                self.policy.primary_service.as_str(),
-            ],
-        );
+        let mut args = [
+            "exec",
+            "-T",
+            "-u",
+            "0",
+            self.policy.primary_service.as_str(),
+        ]
+        .map(OsString::from)
+        .to_vec();
         args.extend(argv.iter().map(OsString::from));
         self.check_target()?;
         let output = self.capture_exec(args)?;
@@ -417,8 +416,9 @@ impl CatalogTransport<'_> {
         Ok(output)
     }
 
-    /// Run one Compose exec, inside the bounded budget when one governs this
-    /// preparation.
+    /// Pass the exec tail through the existing manager/transport normalizer;
+    /// it alone supplies the Compose file/project prefix in either mode.
+    /// Keep the bounded budget when one governs this preparation.
     fn capture_exec(&mut self, args: Vec<OsString>) -> Result<Vec<u8>, &'static str> {
         if let Some(budget) = self.budget.as_deref_mut() {
             let target = self
