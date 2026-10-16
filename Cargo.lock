@@ -930,6 +930,7 @@ dependencies = [
  "nix 0.31.3",
  "serde",
  "serde_json",
+ "siphasher",
  "tempfile",
  "toml",
  "yaml_serde",

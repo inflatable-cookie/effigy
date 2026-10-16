@@ -911,15 +911,44 @@ fn validate_supported_shared_service(
     Ok(contract)
 }
 
-fn shared_service_project_name(service: &ManifestContainerServiceConfig) -> String {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    service.catalog.hash(&mut hasher);
-    service.variant.hash(&mut hasher);
-    service.config.hash(&mut hasher);
-    for (key, value) in &service.params {
-        key.hash(&mut hasher);
-        value.to_string().hash(&mut hasher);
+/// SipHash-1-3 with zero keys, matching `std::collections::hash_map::DefaultHasher`
+/// on current Rust. `DefaultHasher` does not guarantee that algorithm across
+/// releases; shared-service project names also name their data volumes, so a
+/// silent rename would orphan existing data.
+struct PinnedSipHasher13(siphasher::sip::SipHasher13);
+
+impl PinnedSipHasher13 {
+    fn new() -> Self {
+        Self(siphasher::sip::SipHasher13::new_with_keys(0, 0))
     }
+}
+
+impl Hasher for PinnedSipHasher13 {
+    fn write(&mut self, msg: &[u8]) {
+        self.0.write(msg);
+    }
+
+    fn finish(&self) -> u64 {
+        self.0.finish()
+    }
+}
+
+fn hash_shared_service_identity(
+    service: &ManifestContainerServiceConfig,
+    hasher: &mut impl Hasher,
+) {
+    service.catalog.hash(hasher);
+    service.variant.hash(hasher);
+    service.config.hash(hasher);
+    for (key, value) in &service.params {
+        key.hash(hasher);
+        value.to_string().hash(hasher);
+    }
+}
+
+fn shared_service_project_name(service: &ManifestContainerServiceConfig) -> String {
+    let mut hasher = PinnedSipHasher13::new();
+    hash_shared_service_identity(service, &mut hasher);
     format!(
         "effigy-shared-{}-{:08x}",
         service.catalog,
@@ -1723,6 +1752,28 @@ mod tests {
             .map(|path| path.join(".effigy"));
 
         assert_ne!(Some(actual), real_home);
+    }
+
+    #[test]
+    fn shared_service_project_name_is_pinned_to_current_default_hasher() {
+        let service: ManifestContainerServiceConfig = serde_json::from_value(serde_json::json!({
+            "catalog": "mariadb",
+            "database": "acowtancy",
+            "shared": true
+        }))
+        .expect("real catalog-shaped shared MariaDB service");
+
+        let name = shared_service_project_name(&service);
+        assert_eq!(name, "effigy-shared-mariadb-0721de3e");
+
+        let mut std_hasher = std::collections::hash_map::DefaultHasher::new();
+        hash_shared_service_identity(&service, &mut std_hasher);
+        let std_name = format!(
+            "effigy-shared-{}-{:08x}",
+            service.catalog,
+            (std_hasher.finish() & 0xffff_ffff) as u32
+        );
+        assert_eq!(name, std_name);
     }
 
     fn full_project_registry() -> LoopbackRegistry {
