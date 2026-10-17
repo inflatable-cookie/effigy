@@ -999,6 +999,19 @@ mod tests {
         }
     }
 
+    /// Spawn a shell for the script-behavior tests with a fixed shell and PATH.
+    ///
+    /// The plain parallel cargo harness shares process env, and an unguarded
+    /// concurrent PATH write in another test would otherwise make a PATH `sh`
+    /// lookup fail with ENOENT. The stub effigy is invoked by absolute path
+    /// and the harness dir is unique per test, so nothing else in the
+    /// environment matters.
+    fn script_shell() -> std::process::Command {
+        let mut command = std::process::Command::new("/bin/sh");
+        command.env("PATH", "/usr/bin:/bin");
+        command
+    }
+
     fn wait_for_state(path: &std::path::Path, expected: &str, timeout_secs: u64) {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
         loop {
@@ -1031,7 +1044,7 @@ mod tests {
             executable: &harness.stub_arg(),
             secrets_required: false,
         });
-        let mut child = std::process::Command::new("sh")
+        let mut child = script_shell()
             .arg("-c")
             .arg(&rendered)
             .spawn()
@@ -1066,7 +1079,7 @@ mod tests {
             command: "printf child-ok",
             exec_readiness_timeout_secs: 30,
         });
-        let mut child = std::process::Command::new("sh")
+        let mut child = script_shell()
             .arg("-c")
             .arg(&rendered)
             .stdout(std::process::Stdio::null())
@@ -1110,7 +1123,7 @@ mod tests {
             command: "printf child-ok",
             exec_readiness_timeout_secs: 30,
         });
-        let output = std::process::Command::new("sh")
+        let output = script_shell()
             .arg("-c")
             .arg(&rendered)
             // Probes fail against the failed lifecycle's stopped stack, so
@@ -1141,7 +1154,7 @@ mod tests {
             command: "printf child-ok",
             exec_readiness_timeout_secs: 2,
         });
-        let output = std::process::Command::new("sh")
+        let output = script_shell()
             .arg("-c")
             .arg(&rendered)
             .env("STUB_MODE", "probe-fail")
@@ -1170,7 +1183,7 @@ mod tests {
             &harness.stub_arg(),
             30,
         );
-        let mut child = std::process::Command::new("sh")
+        let mut child = script_shell()
             .arg("-c")
             .arg(&rendered)
             .stdout(std::process::Stdio::null())
