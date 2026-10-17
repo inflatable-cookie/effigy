@@ -511,7 +511,7 @@ fn run_settle_releases_only_locks_attributed_to_its_run_token() {
     );
 
     let released =
-        crate::runner::locking::io::release_locks_attributed_to_run(&root, "managedrun-A");
+        crate::runner::locking::io::release_locks_attributed_to_run(&root, "managedrun-A", None);
 
     assert_eq!(released, vec!["task:api".to_owned()]);
     assert!(

@@ -768,15 +768,40 @@ routes withdrawn, Compose containers stopped, all volumes kept, scope
 records cleared. Before the live environment comes down, the handover
 ends every live headless managed owner of the same checkout whose plan
 is bound to that environment, through the same path as
-`effigy <task> stop`: the owned processes settle, the run's status is
-recorded, and the owner's own exit releases its task lock through the
-lock owner-token rules. One line names each managed task ended. An owner
-bound to any other environment is never touched. If ending an owner
-fails, the handover refuses before stopping the environment, names the
-failure, and says to run `effigy <task> stop`. A stale lock from a dead
-holder is still reclaimed only by the existing lock rules; lock ownership
-is never weakened. One line names the handed-over environment and what
+`effigy <task> stop`, and waits for the owner's real settle: the stop
+cascade finishes whole - the owned host processes are gone, the
+process groups the owner exec'd into the environment are ended through
+the exec adapter (or by the environment's own `container down`, which
+the cascade runs), and every task lock the run took is released
+through the lock owner-token rules. The wait uses the derived managed
+settle budget - the child shutdown grace, the managed lifecycle
+cleanup's own `container down` budget, and environment inspection
+slack - never a fixed guess. Because the owner's cascade already
+brought its environment down, the handover withdraws any routes an
+inline cascade could not, verifies the environment is down, and runs
+the ordinary down only as a backstop if a live remainder somehow
+survived; it never races a second conflicting down. One line names
+each managed task ended. An owner bound to any other environment is
+never touched. If ending an owner fails, the handover refuses before
+stopping the environment and names what is still running; it never
+advises the stop that is already in progress. A stale lock from a dead
+holder is still reclaimed only by the existing lock rules; lock
+ownership is never weakened. One line names the handed-over environment and what
 moved.
+
+A managed run's stop - `effigy <task> stop`, a SIGINT/SIGTERM settle,
+or a handover-driven stop - reports settled only after that same whole
+cascade finished and nothing the run owns is left. Lock records
+carrying the run's settle token name their run: the processes a run
+starts on the host and through the exec surface write the token into
+their lock records, the run's settle releases records still attributed
+to it through the owner-token rules, and a genuinely live foreign
+holder still refuses. A lock holder in another PID namespace - a
+container-side Effigy process, or a host holder seen from inside a
+container - is judged by its heartbeat lease alone, never by a foreign
+process table, so an in-container PID is never mistaken for a live
+host process or the reverse. Records without the run token keep
+today's behavior.
 The handover refuses only when ending a bound managed owner or
 stopping that environment itself fails; it
 then names the failure and leaves the environment recoverable by its own

@@ -388,12 +388,19 @@ refuse (foreign route claims, loopback allocation, manifest, policy and
 ownership validation), ends every live headless managed owner bound to
 the losing environment through the same path as `effigy <task> stop`
 (one line names each managed task ended; any other environment's owner is
-never touched), then brings the live environment down whole — host
-processes and listeners stopped, routes withdrawn, containers stopped, data
-kept — and starts the requested one, printing one line naming the handover.
-The handover refuses only when ending a bound managed owner or stopping
-the live environment itself fails,
-and the stopped environment restarts with a plain `up`. Another checkout or
+never touched) and waits for the owner's real settle: its whole stop
+cascade finishes - owned processes gone, exec'd container-side groups
+ended through the exec adapter, every task lock released through the
+lock owner-token rules - on a derived settle budget, never a fixed
+guess. The owner's cascade already brought its environment down, so
+the handover verifies that and races no second conflicting down, then
+brings the live environment down whole if anything is somehow still
+live - host processes and listeners stopped, routes withdrawn,
+containers stopped, data kept - and starts the requested one, printing
+one line naming the handover. The handover refuses only when ending a
+bound managed owner or stopping the live environment itself fails, and
+names what is still running without advising the stop that is already
+in progress; the stopped environment restarts with a plain `up`. Another checkout or
 worktree generation still refuses, and stopping the old container
 environment never removes the handed-over listener route.
 

@@ -130,7 +130,10 @@
   "cargo check -p effigy-catalog --all-targets",
   "cargo clippy -p effigy-catalog --all-targets -- -D warnings",
 ]
-"check:containers:scope-compile" = "cargo check -p effigy-containers -p effigy-runtime -p effigy --all-targets"
+"check:containers:scope-compile" = [
+  "cargo check -p effigy-containers -p effigy-runtime -p effigy-managed -p effigy --all-targets",
+  "cargo clippy -p effigy-containers -p effigy-runtime -p effigy-managed -p effigy --all-targets -- -D warnings",
+]
 "check:containers:retire-selection" = [
   "cargo check -p effigy-cli -p effigy --all-targets",
   "cargo clippy -p effigy-cli -p effigy --all-targets -- -D warnings",
@@ -308,6 +311,9 @@
 # re-entry that never probes the host runtime. Unit renders plus scripted
 # shell behavior and the fake-runtime healthy-stack E2E (first start and
 # reuse after a handover). Private fixtures only; no live VM or container.
+# The settle controls (#200) live beside them: the whole-environment
+# handover's owner-settle unit proofs and the task-lock attribution rules
+# the settle depends on.
 "test:managed:headless-lifecycle" = [
   { id = "managed-exec-readiness-render", run = "cargo test -p effigy-containers --lib session::tests:: -- --nocapture", timeout_ms = 300000 },
   { id = "managed-up-workspace-prep", run = "cargo test -p effigy --lib container_command::lifecycle::tests::up_workspace_permission -- --nocapture", timeout_ms = 300000 },
@@ -315,6 +321,10 @@
   { id = "managed-inline-exec-render", run = "cargo test -p effigy --lib execute::pipeline::managed::tests::inline_managed -- --nocapture", timeout_ms = 300000 },
   { id = "managed-headless-controls", run = "cargo test -p effigy --lib managed_and_locking_tests::managed_headless_tests -- --nocapture", timeout_ms = 600000 },
   { id = "managed-headless-healthy-stack", run = "cargo test --test cli_output_tests cli_managed_headless_lifecycle_reaches_running_on_healthy_stack -- --nocapture", timeout_ms = 600000 },
+  { id = "managed-headless-settle-e2e", run = "cargo test --test cli_output_tests cli_managed_headless_stop_settles_remote_exec_children_and_locks -- --nocapture", timeout_ms = 600000 },
+  { id = "managed-handover-slow-down-e2e", run = "cargo test --test cli_output_tests cli_forward_handover_waits_for_owner_whose_stop_cascade_is_slow -- --nocapture", timeout_ms = 600000 },
+  { id = "managed-handover-owner-settle", run = "cargo test -p effigy --lib container_command::handover::tests:: -- --nocapture", timeout_ms = 600000 },
+  { id = "managed-lock-attribution", run = "cargo test -p effigy --lib managed_and_locking_tests::locking_tests:: -- --nocapture", timeout_ms = 600000 },
 ]
 "proof:managed:host-readiness" = [
   { id = "managed-host-readiness-probe", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(managed_host_readiness_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },

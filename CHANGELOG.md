@@ -244,6 +244,29 @@ During v0.x, MINOR bumps may include breaking changes.
   endpoints, or trust behavior change.
 
 ### Changed
+- A managed run's stop, a SIGINT/SIGTERM settle, and a handover-driven stop
+  now report settled only after the whole stop cascade finished. `effigy
+  <task> stop` and a handover wait for the supervisor's real cascade -
+  including its lifecycle cleanup's `container down` - on a settle budget
+  derived from the existing shutdown grace and cleanup budgets, so a real
+  down is never mistaken for a hang. Every process group the run exec'd
+  into its container environment is ended through the same exec surface it
+  attached through (an in-container `cargo run` can no longer outlive the
+  stop), a run that owns its environment brings it down as before, and the
+  stop output says what settled. When a handover ends a bound managed
+  owner, the owner's cascade has already brought the environment down: the
+  handover verifies that instead of racing a second conflicting `down`, and
+  a refusal names what is still running without ever advising the stop that
+  is already in progress.
+- Lock records written by the processes a managed run starts - on the host
+  and inside the container - carry the run's settle token, and the run's
+  settle releases records still attributed to it through the lock
+  owner-token rules, so an immediate restart after a stop has no lock
+  conflict. A lock holder in another PID namespace (a container-side
+  Effigy process, or a host holder seen from inside a container) is judged
+  by its heartbeat lease alone instead of a foreign process table; a
+  genuinely live foreign holder still refuses, and lock records without
+  the token keep today's behavior.
 - Local workspace handoff automatically reuses a verified owned Linux artifact
   builder after an upgrade leaves a changed-input partial activation. Builds
   preserve the original admission and cache volumes; foreign or uncertain

@@ -289,8 +289,19 @@ no readiness, so the headless supervisor skips them and prints one note per
 skipped process instead of spawning a child that would block on a TTY it
 can never receive. Startup prints the stop command for the task
 (`effigy dev stop`). SIGINT/SIGTERM to the headless owner settles the run
-through the same path as `effigy dev stop` — owned processes settle, the
-status is recorded — then the owner exits.
+through the same path as `effigy dev stop`, then the owner exits.
+
+A stop reports settled only after the run's whole cascade finished:
+- every owned host process has ended, including the process groups the
+  run exec'd into its container environment, which are ended through
+  the same exec surface they attached through (an in-container
+  `cargo run` cannot outlive the stop); a run that owns its
+  environment also brings it down, which ends what attaches to it;
+- every task lock the run and its children took has been released,
+  through the lock owner-token rules. Processes the run started - on
+  the host and inside the container - write the run's settle token
+  into their lock records, so the settle releases what a killed holder
+  could not drop, and an immediate restart has no lock conflict.
 
 Use another shell or automation process to inspect or stop it:
 
