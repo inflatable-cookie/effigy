@@ -36,6 +36,7 @@ mod host_transition_evidence;
 mod interactive_session;
 mod locking;
 mod managed_listener_readiness;
+mod managed_settle;
 mod managed_shell;
 mod manifest;
 mod owned_children;

@@ -73,6 +73,47 @@ pub struct ManagedProcessSpec {
     /// raw `run` command on the host. Sourced from
     /// `[[tasks.<name>.concurrent]].run_in = "host"`.
     pub run_on_host: bool,
+    /// Container-side path of the exec-group marker this process writes
+    /// when it attaches through the environment's exec surface. The run's
+    /// stop reads the recorded process group from the shared checkout and
+    /// ends the group through the exec adapter, because killing only the
+    /// host exec clients never reaches the remote side. `None` for host
+    /// and handoff-local processes, whose whole trees the supervisor
+    /// already owns.
+    pub exec_group_file: Option<PathBuf>,
+}
+
+/// Environment variable that carries the owning managed run's token into
+/// every process the run starts, on the host and through the exec surface.
+/// Lock records written by those processes name the token, so the run's
+/// settle can release them through the lock owner-token rules.
+pub const RUN_TOKEN_ENV: &str = "EFFIGY_MANAGED_RUN_TOKEN";
+
+/// Settle hooks the host runner lends one headless run for its stop. The
+/// runtime calls them inside the stop cascade: container-side groups are
+/// ended while the environment is still up, and lock records outliving a
+/// SIGKILLed holder are released after the host children are gone.
+#[derive(Clone, Copy)]
+pub struct ManagedRunSettle<'a> {
+    /// Ends one recorded exec'd process group through the exec adapter,
+    /// given the group id the marker file recorded.
+    pub end_container_process: Option<&'a dyn Fn(u32) -> Result<(), String>>,
+    /// Releases task locks still attributed to this run's token, returning
+    /// the released lock scopes.
+    pub release_run_locks: Option<&'a dyn Fn() -> Vec<String>>,
+}
+
+impl std::fmt::Debug for ManagedRunSettle<'_> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ManagedRunSettle")
+            .field(
+                "end_container_process",
+                &self.end_container_process.is_some(),
+            )
+            .field("release_run_locks", &self.release_run_locks.is_some())
+            .finish()
+    }
 }
 
 #[derive(Debug)]

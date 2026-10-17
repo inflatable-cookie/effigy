@@ -18,11 +18,29 @@ use signal_hook::iterator::Signals;
 use super::policy;
 use super::redaction::SecretStreamRedactor;
 use crate::render_support::managed_process_specs;
-use crate::{ManagedError, ManagedProcessRole, ManagedProcessSpec, ManagedTaskPlan};
+use crate::{
+    ManagedError, ManagedProcessRole, ManagedProcessSpec, ManagedRunSettle, ManagedTaskPlan,
+};
 
 const HEADLESS_STATE_SCHEMA: &str = "effigy.managed.headless.v1";
 const EVENT_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(3);
+
+/// Budget of one managed lifecycle cleanup's own `container down`. The
+/// cleanup inside a stop cascade waits at most this long for the
+/// environment to go down.
+pub const LIFECYCLE_CLEANUP_TIMEOUT_SECS: u64 = 90;
+
+/// Budget for one managed stop settle. It covers the supervisor's whole
+/// real stop cascade instead of a fixed guess: the host child shutdown
+/// grace, the lifecycle cleanup's `container down` budget, and the
+/// environment inspection slack a verifying handover needs.
+pub const MANAGED_SETTLE_BUDGET: Duration =
+    Duration::from_secs(SHUTDOWN_GRACE.as_secs() + LIFECYCLE_CLEANUP_TIMEOUT_SECS + 15);
+
+/// Directory below one session's runtime dir holding the exec-group
+/// markers of the processes the run exec'd into its environment.
+const EXEC_GROUP_DIR: &str = "exec";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct HeadlessSessionState {
@@ -37,6 +55,11 @@ struct HeadlessSessionState {
     /// to the environment coming down. Older sessions lack the field.
     #[serde(default)]
     container_environment: Option<String>,
+    /// Token of the managed run that owns this session, shared with every
+    /// process the run started so their lock records are attributable to
+    /// the run. Older sessions lack the field.
+    #[serde(default)]
+    run_token: Option<String>,
     processes: Vec<HeadlessProcessState>,
 }
 
@@ -46,12 +69,18 @@ struct HeadlessProcessState {
     pid: u32,
     status: String,
     log: PathBuf,
+    /// Whether the process attached through the environment's exec surface
+    /// and so records an exec group the stop must end remotely. Older
+    /// sessions lack the field.
+    #[serde(default)]
+    container_exec: bool,
 }
 
 pub fn run_managed_task_headless(
     task_name: &str,
     repo_root: &Path,
     plan: ManagedTaskPlan,
+    settle: Option<&ManagedRunSettle<'_>>,
 ) -> Result<String, ManagedError> {
     let runtime_dir = managed_runtime_dir(repo_root, task_name, &plan.profile);
     fs::create_dir_all(&runtime_dir)
@@ -102,14 +131,18 @@ pub fn run_managed_task_headless(
         status: "running".to_owned(),
         started_at_unix_ms: unix_time_ms(),
         container_environment: plan.container_environment.clone(),
-        processes: process_names
+        run_token: std::env::var(crate::RUN_TOKEN_ENV)
+            .ok()
+            .filter(|token| !token.is_empty()),
+        processes: supervised
             .iter()
             .enumerate()
-            .map(|(index, name)| HeadlessProcessState {
-                name: name.clone(),
-                pid: pid_by_name.get(name).copied().unwrap_or_default(),
+            .map(|(index, process)| HeadlessProcessState {
+                name: process.name.clone(),
+                pid: pid_by_name.get(&process.name).copied().unwrap_or_default(),
                 status: "running".to_owned(),
-                log: process_log_path(&runtime_dir, index, name),
+                log: process_log_path(&runtime_dir, index, &process.name),
+                container_exec: process.exec_group_file.is_some(),
             })
             .collect(),
     };
@@ -141,8 +174,20 @@ pub fn run_managed_task_headless(
     });
     signal_handle.close();
     let _ = signal_thread.join();
+    // End the process groups this run exec'd into its environment through
+    // the exec adapter while the environment is still up: their remote
+    // effigy processes then release their locks through the ordinary guard
+    // rules. Killing only the host exec clients never reaches the remote
+    // side, and a surviving in-container `cargo run` would keep its task
+    // locks alive past this stop.
+    end_container_exec_groups(&runtime_dir, &state, settle);
     supervisor.terminate_all_graceful(SHUTDOWN_GRACE);
     reconcile_final_diagnostics(&supervisor, &mut state);
+    // Release lock records the run's processes still hold: a SIGKILLed
+    // holder never drops its guard, and the env's teardown is not always
+    // part of this run's own cascade (a hybrid run attaches to an
+    // environment it does not own).
+    release_run_locks(settle);
 
     let observed_non_zero = match loop_result {
         Ok(observed) => observed,
@@ -280,11 +325,29 @@ pub fn managed_headless_logs(
     Ok(String::new())
 }
 
+/// What one stop request observed about the managed run it asked to stop.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ManagedHeadlessStopOutcome {
+    /// The request summary, as before: what was asked to stop.
+    pub summary: String,
+    /// Whether the supervisor itself was gone after the request, meaning
+    /// its whole stop cascade (including a lifecycle `container down`)
+    /// has finished. An exited-but-unreaped supervisor still counts as not
+    /// settled here; callers refine with the lock records, which a zombie
+    /// has already dropped.
+    pub settled: bool,
+    pub supervisor_pid: u32,
+    pub run_token: Option<String>,
+    pub container_environment: Option<String>,
+    /// Recorded child processes still alive after the cascade budget.
+    pub surviving_processes: Vec<(String, u32)>,
+}
+
 pub fn managed_headless_stop(
     repo_root: &Path,
     task_name: &str,
     profile: &str,
-) -> Result<String, ManagedError> {
+) -> Result<ManagedHeadlessStopOutcome, ManagedError> {
     let runtime_dir = managed_runtime_dir(repo_root, task_name, profile);
     let state_path = runtime_dir.join("session.json");
     let state = read_state(&state_path)?;
@@ -298,9 +361,22 @@ pub fn managed_headless_stop(
                 && process_is_descendant_of(process.pid, state.supervisor_pid)
         })
         .collect::<Vec<_>>();
+    let outcome = |summary: String, settled: bool| ManagedHeadlessStopOutcome {
+        summary,
+        settled,
+        supervisor_pid: state.supervisor_pid,
+        run_token: state.run_token.clone(),
+        container_environment: state.container_environment.clone(),
+        surviving_processes: running
+            .iter()
+            .filter(|process| process_is_running(process.pid))
+            .map(|process| (process.name.clone(), process.pid))
+            .collect(),
+    };
     if running.is_empty() {
-        return Ok(format!(
-            "managed headless task `{task_name}` profile `{profile}` is not running"
+        return Ok(outcome(
+            format!("managed headless task `{task_name}` profile `{profile}` is not running"),
+            !supervisor_running,
         ));
     }
     let stop_path = runtime_dir.join("stop.requested");
@@ -325,10 +401,85 @@ pub fn managed_headless_stop(
             terminate_process_tree(process.pid, true);
         }
     }
-    Ok(format!(
-        "stopping managed headless task `{task_name}` profile `{profile}` ({} process(es))",
-        running.len()
+    // The cascade completion is judged by the caller, which can also see
+    // the lock records: a supervisor that exited but is not reaped yet (a
+    // zombie its parent has not collected) has already dropped its locks
+    // and must not stall the settle budget here.
+    Ok(outcome(
+        format!("{} process(es) ended", running.len()),
+        !process_is_running(state.supervisor_pid),
     ))
+}
+
+/// End every process group this run exec'd into its environment: read each
+/// recorded group marker from the shared checkout and ask the exec adapter
+/// to terminate that group. Best effort per process; the environment's own
+/// teardown is the backstop for a run whose lifecycle owns it.
+fn end_container_exec_groups(
+    runtime_dir: &Path,
+    state: &HeadlessSessionState,
+    settle: Option<&ManagedRunSettle<'_>>,
+) {
+    let Some(settle) = settle else {
+        return;
+    };
+    let Some(end) = settle.end_container_process else {
+        return;
+    };
+    for process in &state.processes {
+        if !process.container_exec {
+            continue;
+        }
+        let marker = exec_group_file_path(runtime_dir, &process.name);
+        let Some(pgid) = read_exec_group_pgid(&marker) else {
+            continue;
+        };
+        if let Err(error) = end(pgid) {
+            println!(
+                "[headless] could not end exec'd process group for `{}` (pgid {pgid}): {error}",
+                process.name
+            );
+        }
+        let _ = fs::remove_file(&marker);
+    }
+}
+
+/// Release lock records attributed to this run's token through the lock
+/// owner-token rules.
+fn release_run_locks(settle: Option<&ManagedRunSettle<'_>>) {
+    let Some(settle) = settle else {
+        return;
+    };
+    let Some(release) = settle.release_run_locks else {
+        return;
+    };
+    let released = release();
+    if !released.is_empty() {
+        println!(
+            "[headless] released {} task lock(s) still attributed to this run: {}",
+            released.len(),
+            released.join(", ")
+        );
+    }
+}
+
+/// Container-side path of one process's exec-group marker. The rendering
+/// hands this path to the attach command, which writes the session leader
+/// it creates; the stop reads the same file through the shared checkout.
+pub fn exec_group_file_path(session_dir: &Path, process_name: &str) -> PathBuf {
+    session_dir
+        .join(EXEC_GROUP_DIR)
+        .join(format!("{}.pgid", safe_component(process_name)))
+}
+
+fn read_exec_group_pgid(marker: &Path) -> Option<u32> {
+    let raw = fs::read_to_string(marker).ok()?;
+    raw.trim().parse::<u32>().ok().filter(|pid| *pid > 0)
+}
+
+/// One session's runtime directory below `<repo>/.effigy/runtime/managed`.
+pub fn session_runtime_dir(repo_root: &Path, task_name: &str, profile: &str) -> PathBuf {
+    managed_runtime_dir(repo_root, task_name, profile)
 }
 
 struct HeadlessSupervisionContext<'a> {
@@ -724,7 +875,7 @@ mod tests {
         headless_stop_command, live_headless_sessions, safe_component, split_headless_processes,
     };
     use crate::{ManagedProcessRole, ManagedProcessSpec};
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn safe_component_keeps_runtime_paths_flat() {
@@ -748,7 +899,46 @@ mod tests {
             start_after_ms: 0,
             shutdown_on_exit: false,
             run_on_host: false,
+            exec_group_file: None,
         }
+    }
+
+    #[test]
+    fn exec_group_files_live_in_a_flat_session_subdirectory() {
+        let session_dir = super::session_runtime_dir(Path::new("/tmp/repo"), "dev:hybrid", "web");
+        assert_eq!(
+            session_dir,
+            PathBuf::from("/tmp/repo/.effigy/runtime/managed/dev_hybrid-web")
+        );
+        let marker = super::exec_group_file_path(&session_dir, "catalog/api");
+        assert_eq!(
+            marker,
+            PathBuf::from("/tmp/repo/.effigy/runtime/managed/dev_hybrid-web/exec/catalog_api.pgid")
+        );
+    }
+
+    #[test]
+    fn exec_group_pgid_reader_accepts_only_positive_leaders() {
+        let temp = tempfile::tempdir().expect("pgid fixture");
+        let marker = temp.path().join("api.pgid");
+        assert_eq!(super::read_exec_group_pgid(&marker), None);
+        std::fs::write(&marker, b"4242\n").expect("write pgid");
+        assert_eq!(super::read_exec_group_pgid(&marker), Some(4242));
+        std::fs::write(&marker, b"0\n").expect("write zero pgid");
+        assert_eq!(super::read_exec_group_pgid(&marker), None);
+        std::fs::write(&marker, b"not-a-pid\n").expect("write junk pgid");
+        assert_eq!(super::read_exec_group_pgid(&marker), None);
+    }
+
+    #[test]
+    fn settle_budget_covers_the_whole_stop_cascade() {
+        // Child shutdown grace + the lifecycle cleanup's own `container
+        // down` budget + environment inspection slack: a real down is
+        // never mistaken for a hang.
+        assert_eq!(
+            super::MANAGED_SETTLE_BUDGET,
+            std::time::Duration::from_secs(3 + 90 + 15)
+        );
     }
 
     #[test]
@@ -784,7 +974,8 @@ mod tests {
             readiness: crate::ManagedTaskReadiness::default(),
             container_environment: Some("stack".to_owned()),
         };
-        super::run_managed_task_headless("dev", temp.path(), plan).expect("quick headless run");
+        super::run_managed_task_headless("dev", temp.path(), plan, None)
+            .expect("quick headless run");
         let raw = std::fs::read_to_string(
             temp.path()
                 .join(".effigy/runtime/managed/dev-default/session.json"),

@@ -203,6 +203,10 @@ pub(crate) struct InlineManagedStandardExecRequest<'a> {
     /// managed plan's readiness timeout so concurrent children share the
     /// lifecycle's own startup budget instead of a fixed guess.
     pub exec_readiness_timeout_secs: u64,
+    /// Container-side path of the exec-group marker the attach writes, so
+    /// the managed run's stop can end the remote process group through the
+    /// exec adapter. `None` keeps the plain attach shape.
+    pub exec_group_file: Option<&'a Path>,
 }
 
 pub(crate) fn render_inline_managed_standard_exec_command(
@@ -217,6 +221,7 @@ pub(crate) fn render_inline_managed_standard_exec_command(
         setup_command,
         command,
         exec_readiness_timeout_secs,
+        exec_group_file,
     } = request;
     let cwd = shell_quote(&process_cwd.display().to_string());
     let lifecycle_state = managed_lifecycle_state_path(repo_root, &policy.name, owner_task);
@@ -237,6 +242,7 @@ pub(crate) fn render_inline_managed_standard_exec_command(
         ),
     );
     let rewritten = container_exec_command(command, repo_root, process_cwd, container_repo_root);
+    let tracked = render_tracked_inline_exec_command(&rewritten, exec_group_file);
     let attach = render_inline_compose_command(
         repo_root,
         policy,
@@ -248,7 +254,7 @@ pub(crate) fn render_inline_managed_standard_exec_command(
                 policy.primary_service.as_str(),
                 "sh",
                 "-lc",
-                rewritten.as_str(),
+                tracked.as_str(),
             ],
         ),
     );
@@ -289,4 +295,30 @@ fn format_os_args(args: &[std::ffi::OsString]) -> String {
         .map(|arg| shell_quote(&arg.to_string_lossy()))
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// Wrap a routed inline exec command so the remote side records the session
+/// leader it creates under `exec_group_file`, and so the leader owns its
+/// own process group when `setsid` exists. The managed run's stop reads
+/// the marker through the shared checkout and ends that group through the
+/// exec adapter. Every step is best effort: an unwritable marker still
+/// attaches and runs the command.
+fn render_tracked_inline_exec_command(
+    routed_command: &str,
+    exec_group_file: Option<&Path>,
+) -> String {
+    let Some(group_file) = exec_group_file else {
+        return routed_command.to_owned();
+    };
+    let group_dir = group_file
+        .parent()
+        .map(|parent| shell_quote(&parent.display().to_string()))
+        .unwrap_or_else(|| ".".to_owned());
+    let quoted_group_file = shell_quote(&group_file.display().to_string());
+    let payload = shell_quote(&format!(
+        "printf '%s\\n' \"$$\" > {quoted_group_file} 2>/dev/null; {routed_command}"
+    ));
+    format!(
+        "mkdir -p {group_dir} 2>/dev/null; if command -v setsid >/dev/null 2>&1; then setsid sh -c {payload}; else printf '%s\\n' \"$$\" > {quoted_group_file} 2>/dev/null; {routed_command}; fi"
+    )
 }

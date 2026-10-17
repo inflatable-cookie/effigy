@@ -75,7 +75,14 @@ pub(super) fn lock_conflict(
     existing: Option<super::LockRecord>,
     wait: Option<LockWaitEvidence>,
 ) -> RunnerError {
-    let (holder_pid, started_at, heartbeat_at, holder_hostname, holder_workspace_root) = existing
+    let (
+        holder_pid,
+        started_at,
+        heartbeat_at,
+        holder_hostname,
+        holder_workspace_root,
+        managed_run_token,
+    ) = existing
         .map(|record| {
             (
                 Some(record.pid),
@@ -83,9 +90,10 @@ pub(super) fn lock_conflict(
                 Some(lock_heartbeat_epoch_ms(&record)),
                 record.hostname,
                 record.workspace_root,
+                record.managed_run_token,
             )
         })
-        .unwrap_or((None, None, None, None, None));
+        .unwrap_or((None, None, None, None, None, None));
 
     let status_command = scope_label
         .strip_prefix("task:")
@@ -120,6 +128,7 @@ pub(super) fn lock_conflict(
             "holder_heartbeat_at_epoch_ms": heartbeat_at,
             "holder_hostname": holder_hostname,
             "holder_workspace_root": holder_workspace_root,
+            "holder_managed_run_token": managed_run_token,
             "wait_timeout_ms": wait.timeout_ms,
             "waited_ms": wait.waited_ms,
             "status_command": status_command,
@@ -162,17 +171,39 @@ pub(super) fn lock_heartbeat_epoch_ms(record: &super::LockRecord) -> u128 {
 }
 
 pub(super) fn lock_is_stale(record: &super::LockRecord) -> bool {
-    if !pid_is_alive(record.pid) {
-        return true;
-    }
-    if !pid_looks_like_effigy(record.pid) {
-        return true;
+    if pid_liveness_is_comparable(record) {
+        if !pid_is_alive(record.pid) {
+            return true;
+        }
+        if !pid_looks_like_effigy(record.pid) {
+            return true;
+        }
     }
     let heartbeat_at = lock_heartbeat_epoch_ms(record);
     now_epoch_ms().saturating_sub(heartbeat_at) > LOCK_STALE_LEASE_MS
 }
 
-pub(super) fn lock_hostname() -> Option<String> {
+/// Whether this host's process table can judge the record's holder.
+/// PIDs are only comparable inside the PID namespace that wrote the
+/// record: a container-side holder's PID means nothing on the host (it may
+/// be dead, or worse, name an unrelated live host process), and a host
+/// holder's PID means nothing inside a container. A record annotated with
+/// a different hostname - or one whose own namespace cannot be named - is
+/// therefore judged by its heartbeat lease alone, which the shared
+/// checkout keeps current for a live holder.
+fn pid_liveness_is_comparable(record: &super::LockRecord) -> bool {
+    let Some(written) = record.hostname.as_deref() else {
+        // Unannotated records keep today's behavior.
+        return true;
+    };
+    let local = lock_hostname();
+    let Some(local) = local.as_deref() else {
+        return false;
+    };
+    written == local
+}
+
+pub(in crate::runner) fn lock_hostname() -> Option<String> {
     std::env::var("HOSTNAME")
         .ok()
         .filter(|value| !value.trim().is_empty())
@@ -181,4 +212,33 @@ pub(super) fn lock_hostname() -> Option<String> {
                 .ok()
                 .filter(|value| !value.trim().is_empty())
         })
+        // The kernel hostname is authoritative when no environment variable
+        // carries it, so host and container holders are always annotated
+        // with comparable names.
+        .or_else(kernel_hostname)
+}
+
+#[cfg(unix)]
+fn kernel_hostname() -> Option<String> {
+    let mut buffer = [0u8; 256];
+    // SAFETY: the buffer is a valid 256-byte region and libc::gethostname
+    // writes at most that many bytes plus a NUL terminator.
+    let written = unsafe { libc::gethostname(buffer.as_mut_ptr().cast(), buffer.len()) };
+    if written != 0 {
+        return None;
+    }
+    let end = buffer
+        .iter()
+        .position(|byte| *byte == 0)
+        .unwrap_or(buffer.len());
+    std::str::from_utf8(&buffer[..end])
+        .ok()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+}
+
+#[cfg(not(unix))]
+fn kernel_hostname() -> Option<String> {
+    None
 }

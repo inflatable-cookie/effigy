@@ -250,6 +250,7 @@ fn materialize_demo_special_managed_processes(
                             setup_command: process.setup.as_deref(),
                             command: &process.run,
                             exec_readiness_timeout_secs,
+                            exec_group_file: None,
                         },
                     );
                 } else if matches!(
@@ -266,6 +267,7 @@ fn materialize_demo_special_managed_processes(
                         executable: &executable,
                         command: &process.run,
                         exec_readiness_timeout_secs,
+                        exec_group_file: None,
                     });
                 }
             }

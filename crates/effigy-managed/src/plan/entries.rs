@@ -67,6 +67,7 @@ pub fn resolve_concurrent_process_entries<'a>(
                 start_after_ms: normalized.start_after_ms,
                 shutdown_on_exit: normalized.shutdown_on_exit,
                 run_on_host: normalized.run_on_host,
+                exec_group_file: None,
             },
             start_rank: normalized.start_rank,
             tab_rank: normalized.tab_rank,

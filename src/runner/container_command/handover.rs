@@ -37,7 +37,6 @@ use crate::runner::error::RunnerError;
 use crate::runner::host_container_lease::{
     clear_partial_activation, clear_persistent_container_owner, record_environment_handover,
 };
-use crate::runner::locking::io::task_lock_holder_pids;
 
 const ENVIRONMENT_INSPECTION_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -416,19 +415,17 @@ pub(super) fn stop_peer_data_services(
     Ok(notes)
 }
 
-/// How long the handover waits for one ended owner to release its
-/// task lock before refusing with the stop command to run.
-const HANDOVER_OWNER_SETTLE_TIMEOUT: Duration = Duration::from_secs(20);
-
 /// End every live headless managed owner of this checkout whose plan is
 /// bound to `environment`, through the same path as `effigy <task> stop`.
 /// Runs after the #195 handover record lands and before the environment
 /// stops: the record already leaves the environment recoverable by its
 /// own `up` or `down`, so a failure refuses with the environment still
-/// stoppable and says what to run. The owner's own exit releases its task
-/// lock through the lock owner-token rules; a stale lock from a dead
-/// holder is still reclaimed only by the existing lock rules, never
-/// weakened here.
+/// stoppable and says what to run. The owner's whole stop cascade -
+/// including its own `container <env> down` - finishes before the
+/// handover continues, so the wait uses the derived managed settle
+/// budget. The owner's exit releases its own task lock through the lock
+/// owner-token rules; a stale lock from a dead holder is still reclaimed
+/// only by the existing lock rules, never weakened here.
 fn end_headless_managed_owners(
     repo_root: &Path,
     target: &PendingHandover,
@@ -440,8 +437,8 @@ fn end_headless_managed_owners(
         }
         settle_headless_owner(repo_root, &session).map_err(|error| {
             RunnerError::task_invocation(format!(
-                "cannot hand over environment `{}`: failed to end managed task `{}` (profile `{}`) bound to it: {error}. Run `effigy {} stop` and retry; environment `{}` stays in a state its own `effigy container up` or `effigy container down` recovers",
-                target.environment, session.task, session.profile, session.task, target.environment,
+                "cannot hand over environment `{}`: failed to end managed task `{}` (profile `{}`) bound to it: {error}. The stop the handover requested is already in progress and settles or fails on its own; environment `{}` stays in a state its own `effigy container up` or `effigy container down` recovers",
+                target.environment, session.task, session.profile, target.environment,
             ))
         })?;
         notes.push(format!(
@@ -453,36 +450,20 @@ fn end_headless_managed_owners(
 }
 
 /// End one live headless owner through the same path as
-/// `effigy <task> stop` and wait until its task lock is released.
-/// Settles once the supervisor process itself is gone, or once no lock
-/// record names it as holder: an exited-but-unreaped supervisor (a
-/// zombie its parent has not collected yet) already dropped its lock
-/// guard, so its records are gone and the reverse handover can proceed.
-/// A supervisor that is still alive and still holds its lock past the
-/// deadline refuses with the stop command to run; a stale lock from a
-/// dead holder is left for the existing lock rules.
+/// `effigy <task> stop` and wait for its real settle: every owned child
+/// process has ended - including the groups the owner exec'd into the
+/// environment - and every task lock the run took is released, through
+/// the derived settle budget. Refuses naming what is still running; it
+/// never advises the stop that is already in progress.
 fn settle_headless_owner(
     repo_root: &Path,
     session: &effigy_managed::runtime::LiveHeadlessSession,
 ) -> Result<String, RunnerError> {
-    let summary =
-        effigy_managed::runtime::managed_headless_stop(repo_root, &session.task, &session.profile)
-            .map_err(RunnerError::from)?;
-    let deadline = Instant::now() + HANDOVER_OWNER_SETTLE_TIMEOUT;
-    loop {
-        let supervisor_gone = !effigy_process::process_is_running(session.supervisor_pid);
-        let lock_released = !task_lock_holder_pids(repo_root).contains(&session.supervisor_pid);
-        if supervisor_gone || lock_released {
-            return Ok(summary);
-        }
-        if Instant::now() >= deadline {
-            return Err(RunnerError::task_invocation(format!(
-                "managed task `{}` (profile `{}`) did not settle after its stop was requested; run `effigy {} stop` and retry",
-                session.task, session.profile, session.task,
-            )));
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    }
+    crate::runner::managed_settle::stop_and_settle_headless_run(
+        repo_root,
+        &session.task,
+        &session.profile,
+    )
 }
 
 /// Bring one environment down with the ordinary `container down` semantics:
@@ -524,18 +505,40 @@ fn execute_handover(
         },
     )?;
     // Every live headless managed owner bound to the losing environment
-    // ends before the environment stops: a failure refuses here and the
-    // owner's own exit releases its task lock through the lock
-    // owner-token rules.
+    // ends before the environment stops: a failure refuses here, and the
+    // owner's whole stop cascade - including its own `container <env>
+    // down` - finishes before the handover continues.
     let owner_notes = end_headless_managed_owners(repo_root, target)?;
     stop_host_processes_best_effort(repo_root, Some(&target.environment));
-    effigy_runtime::write::run_container_down(
-        repo_root,
-        Some(&target.environment),
-        false,
-        deregister_gateway_routes,
-    )
-    .map_err(|error| {
+    let ordinary_down = |deregister_gateway_routes: &dyn Fn(
+        &EffectiveContainerPolicy,
+    ) -> Result<
+        Vec<String>,
+        effigy_runtime::EffigyRuntimeError,
+    >| {
+        effigy_runtime::write::run_container_down(
+            repo_root,
+            Some(&target.environment),
+            false,
+            deregister_gateway_routes,
+        )
+        .map(|_| ())
+    };
+    // The owners' cascades already brought the environment down. Withdraw
+    // any routes an inline cascade could not (it stops Compose only), then
+    // verify instead of racing a second down; a live remainder still takes
+    // the ordinary down as the backstop.
+    let down_result = if owner_notes.is_empty() {
+        ordinary_down(deregister_gateway_routes)
+    } else {
+        let _ = deregister_gateway_routes(&target.policy)?;
+        let routes = SameCheckoutRoutes::load(repo_root)?;
+        match environment_is_live(repo_root, &target.policy, routes.as_ref()) {
+            Ok(false) => Ok(()),
+            _ => ordinary_down(deregister_gateway_routes),
+        }
+    };
+    down_result.map_err(|error| {
         RunnerError::task_invocation(format!(
             "{note} failed: {error}. Environment `{}` stays in a state its own `effigy container up` or `effigy container down` recovers from",
             target.environment

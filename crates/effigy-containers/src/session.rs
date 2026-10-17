@@ -338,6 +338,10 @@ pub struct ManagedStandardExecRequest<'a> {
     /// managed plan's readiness timeout so concurrent children share the
     /// lifecycle's own startup budget instead of a fixed guess.
     pub exec_readiness_timeout_secs: u64,
+    /// Container-side path of the exec-group marker the attach writes, so
+    /// the managed run's stop can end the remote process group through the
+    /// exec adapter. `None` keeps the plain attach shape.
+    pub exec_group_file: Option<&'a Path>,
 }
 
 pub fn managed_standard_exec_command(request: ManagedStandardExecRequest<'_>) -> String {
@@ -351,12 +355,16 @@ pub fn managed_standard_exec_command(request: ManagedStandardExecRequest<'_>) ->
         executable,
         command,
         exec_readiness_timeout_secs,
+        ..
     } = request;
     let repo = shell_quote(&repo_root.display().to_string());
     let cwd = shell_quote(&process_cwd.display().to_string());
     let routed_command =
         container_exec_command(command, repo_root, process_cwd, container_repo_root);
-    let command = shell_quote(&routed_command);
+    let command = shell_quote(&render_tracked_exec_command(
+        &routed_command,
+        request.exec_group_file,
+    ));
     let selector = container_name
         .map(str::trim)
         .filter(|value| !value.is_empty() && *value != "default");
@@ -412,6 +420,48 @@ pub fn managed_lifecycle_state_path(
     repo_root
         .join(".effigy/runtime/managed-lifecycle")
         .join(format!("{sanitized_task}-{sanitized_container}.state"))
+}
+
+/// Wrap a routed exec command so the remote side records the session leader
+/// it creates under `exec_group_file`, and so the leader owns its own
+/// process group when `setsid` exists. The managed run's stop reads the
+/// marker through the shared checkout and ends that group through the exec
+/// adapter, because killing only the host exec clients never reaches the
+/// remote side. Every step is best effort: an unwritable marker still
+/// attaches and runs the command.
+fn render_tracked_exec_command(routed_command: &str, exec_group_file: Option<&Path>) -> String {
+    let Some(group_file) = exec_group_file else {
+        return routed_command.to_owned();
+    };
+    let group_dir = group_file
+        .parent()
+        .map(|parent| shell_quote(&parent.display().to_string()))
+        .unwrap_or_else(|| ".".to_owned());
+    let quoted_group_file = shell_quote(&group_file.display().to_string());
+    let payload = shell_quote(&format!(
+        "printf '%s\\n' \"$$\" > {quoted_group_file} 2>/dev/null; {routed_command}"
+    ));
+    format!(
+        "mkdir -p {group_dir} 2>/dev/null; if command -v setsid >/dev/null 2>&1; then setsid sh -c {payload}; else printf '%s\\n' \"$$\" > {quoted_group_file} 2>/dev/null; {routed_command}; fi"
+    )
+}
+
+/// One `container <name> shell --command` invocation against the same exec
+/// surface managed standard processes attach through. The managed run's
+/// stop uses it to end recorded exec'd process groups in place.
+pub fn managed_container_shell_command(
+    executable: &str,
+    container_name: Option<&str>,
+    inner_command: &str,
+    repo_root: &Path,
+) -> String {
+    let repo = shell_quote(&repo_root.display().to_string());
+    effigy_container_command_with_extra(
+        executable,
+        container_name,
+        &format!("shell --command {}", shell_quote(inner_command)),
+        &repo,
+    )
 }
 
 fn sanitize_state_key(value: &str) -> String {
@@ -599,8 +649,9 @@ fn yes_no(value: bool) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{
-        managed_lifecycle_command, managed_shell_command, managed_standard_exec_command,
-        resolve_effigy_invocation_prefix, ManagedLifecycleRequest, ManagedStandardExecRequest,
+        managed_container_shell_command, managed_lifecycle_command, managed_shell_command,
+        managed_standard_exec_command, resolve_effigy_invocation_prefix, ManagedLifecycleRequest,
+        ManagedStandardExecRequest,
     };
     use std::path::Path;
 
@@ -748,6 +799,7 @@ mod tests {
             executable: "effigy",
             command: "printf api-ok",
             exec_readiness_timeout_secs: 45,
+            exec_group_file: None,
         });
 
         assert!(
@@ -768,6 +820,56 @@ mod tests {
     }
 
     #[test]
+    fn managed_standard_exec_command_records_the_remote_session_leader() {
+        let rendered = managed_standard_exec_command(ManagedStandardExecRequest {
+            repo_root: Path::new("/tmp/repo"),
+            container_name: Some("web"),
+            owner_task: "dev",
+            process_cwd: Path::new("/tmp/repo/acme-api"),
+            container_repo_root: Some(Path::new("/workspace-root/repo")),
+            setup_command: None,
+            executable: "effigy",
+            command: "printf api-ok",
+            exec_readiness_timeout_secs: 45,
+            exec_group_file: Some(Path::new(
+                "/workspace-root/repo/.effigy/runtime/managed/dev-default/exec/api.pgid",
+            )),
+        });
+
+        let attach = rendered
+            .find("shell --command")
+            .map(|index| &rendered[index..])
+            .expect("attach command");
+        assert!(
+            attach.contains("mkdir -p /workspace-root/repo/.effigy/runtime/managed/dev-default/exec 2>/dev/null; if command -v setsid >/dev/null 2>&1; then setsid sh -c"),
+            "attach must run under its own recorded session: {attach}"
+        );
+        assert!(
+            attach.contains("\"$$\" > /workspace-root/repo/.effigy/runtime/managed/dev-default/exec/api.pgid 2>/dev/null; "),
+            "attach must record the session leader: {attach}"
+        );
+        assert!(
+            attach.contains("cd /workspace-root/repo/acme-api && export PATH=/workspace-root/repo/acme-api/node_modules/.bin:$PATH; printf api-ok"),
+            "the routed command still runs inside the recorded leader: {attach}"
+        );
+    }
+
+    #[test]
+    fn managed_container_shell_command_targets_the_same_exec_surface() {
+        let rendered = managed_container_shell_command(
+            "effigy",
+            Some("web"),
+            "kill -TERM -- -4242",
+            Path::new("/tmp/repo"),
+        );
+
+        assert_eq!(
+            rendered,
+            "env EFFIGY_INTERNAL_SUPPRESS_HEADER=1 effigy container web shell --command 'kill -TERM -- -4242' --repo /tmp/repo"
+        );
+    }
+
+    #[test]
     fn managed_standard_exec_command_rewrites_host_repo_paths_for_container_commands() {
         let rendered = managed_standard_exec_command(ManagedStandardExecRequest {
             repo_root: Path::new("/Users/tom/repo"),
@@ -779,6 +881,7 @@ mod tests {
             executable: "effigy",
             command: "(cd '/Users/tom/repo/acme-admin' && svelte-kit sync)",
             exec_readiness_timeout_secs: 45,
+            exec_group_file: None,
         });
 
         assert!(
@@ -811,6 +914,7 @@ mod tests {
             executable: "effigy",
             command: "bun run dev",
             exec_readiness_timeout_secs: 45,
+            exec_group_file: None,
         });
 
         assert!(
@@ -834,6 +938,7 @@ mod tests {
             executable: "effigy",
             command: "bun run dev",
             exec_readiness_timeout_secs: 45,
+            exec_group_file: None,
         });
 
         let setup_index = rendered.find("printf setup-ok").expect("setup command");
@@ -881,6 +986,7 @@ mod tests {
             executable: "effigy",
             command: "printf api-ok",
             exec_readiness_timeout_secs: 60,
+            exec_group_file: None,
         });
 
         assert!(
@@ -1078,6 +1184,7 @@ mod tests {
             executable: &harness.stub_arg(),
             command: "printf child-ok",
             exec_readiness_timeout_secs: 30,
+            exec_group_file: None,
         });
         let mut child = script_shell()
             .arg("-c")
@@ -1122,6 +1229,7 @@ mod tests {
             executable: &harness.stub_arg(),
             command: "printf child-ok",
             exec_readiness_timeout_secs: 30,
+            exec_group_file: None,
         });
         let output = script_shell()
             .arg("-c")
@@ -1153,6 +1261,7 @@ mod tests {
             executable: &harness.stub_arg(),
             command: "printf child-ok",
             exec_readiness_timeout_secs: 2,
+            exec_group_file: None,
         });
         let output = script_shell()
             .arg("-c")
