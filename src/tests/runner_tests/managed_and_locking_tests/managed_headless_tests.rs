@@ -30,6 +30,48 @@ concurrent = [
     );
 }
 
+fn write_shell_and_standard_headless_manifest(root: &std::path::Path) {
+    // The shell entry needs a container-backed binding to validate, but
+    // headless never spawns it; the standard entry runs on the host so
+    // no nested container invocation ever executes.
+    write_root_manifest(
+        root,
+        r#"[tasks.dev]
+mode = "tui"
+workspace = "app"
+concurrent = [
+  { name = "api", run = "printf 'api ready\\n'; while true; do sleep 1; done", run_in = "host", start = 2 },
+  { role = "shell", service = "workspace", start = 1 }
+]
+
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
+
+[containers]
+default = "web"
+
+[containers.web]
+driver = "colima"
+startup = "detached"
+compose_file = "docker-compose.yml"
+project_name = "demo-web-dev"
+primary_service = "app"
+working_dir = "/workspace"
+"#,
+    );
+    std::fs::write(
+        root.join("docker-compose.yml"),
+        "services:\n  app:\n    image: alpine:latest\n",
+    )
+    .expect("write docker compose");
+}
+
 #[test]
 fn managed_headless_failure_names_process_log_and_tail() {
     let _guard = lock_test();
@@ -108,4 +150,110 @@ fn managed_headless_status_logs_and_stop_control_live_session() {
         .expect("headless thread join")
         .expect("headless stop should be clean");
     assert!(completed.contains("session: stopped"), "got: {completed}");
+}
+
+#[test]
+fn managed_headless_run_skips_interactive_shell_without_tty_argv() {
+    let _guard = lock_test();
+    let root = temp_workspace("managed-headless-shell-skip");
+    write_shell_and_standard_headless_manifest(&root);
+    let state_path = root.join(".effigy/runtime/managed/dev-default/session.json");
+    let root_for_thread = root.clone();
+    let run = std::thread::spawn(move || run_dev(&root_for_thread, &["--headless"]));
+
+    wait_for_path_exists(
+        &state_path,
+        Duration::from_secs(5),
+        "managed headless state",
+    );
+    // Let the supervisor settle, then read the recorded session: the
+    // shell role must never have been spawned, so no `-it`/TTY argv or
+    // shell log exists for the headless run.
+    std::thread::sleep(Duration::from_secs(1));
+    let raw = fs::read_to_string(&state_path).expect("read headless session");
+    assert!(
+        !raw.contains("\"shell\""),
+        "shell process was skipped: {raw}"
+    );
+    assert!(
+        !root
+            .join(".effigy/runtime/managed/dev-default/02-shell.log")
+            .exists(),
+        "no shell log is written for a skipped headless shell"
+    );
+    assert!(
+        root.join(".effigy/runtime/managed/dev-default/01-api.log")
+            .is_file(),
+        "the standard process still runs"
+    );
+
+    let stop = run_dev(&root, &["stop"]).expect("stop");
+    assert!(stop.contains("stopping managed headless task `dev`"));
+    let completed = run
+        .join()
+        .expect("headless thread join")
+        .expect("headless stop should be clean");
+    assert!(completed.contains("session: stopped"), "got: {completed}");
+}
+
+/// SIGINT to the headless owner settles the run through the stop path
+/// and exits within a bounded time, with no surviving owned process.
+/// Unix-only: Windows has no SIGINT delivery to emulate here.
+#[cfg(unix)]
+#[test]
+fn managed_headless_run_exits_on_sigint_with_no_surviving_processes() {
+    let _guard = lock_test();
+    let root = temp_workspace("managed-headless-sigint");
+    write_long_running_headless_manifest(&root);
+    let state_path = root.join(".effigy/runtime/managed/dev-default/session.json");
+    let root_for_thread = root.clone();
+    let run = std::thread::spawn(move || run_dev(&root_for_thread, &["--headless"]));
+
+    wait_for_path_exists(
+        &state_path,
+        Duration::from_secs(5),
+        "managed headless state",
+    );
+    std::thread::sleep(Duration::from_secs(1));
+    let me = std::process::id().to_string();
+    let delivered = std::process::Command::new("kill")
+        .arg("-INT")
+        .arg(&me)
+        .status()
+        .expect("send SIGINT to the test process");
+    assert!(delivered.success(), "SIGINT delivery must succeed");
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while !run.is_finished() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "headless run did not exit within 30s of SIGINT"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let completed = run
+        .join()
+        .expect("headless thread join")
+        .expect("headless run settles after SIGINT");
+    assert!(completed.contains("session: stopped"), "got: {completed}");
+    let raw = fs::read_to_string(&state_path).expect("read headless session");
+    let state: serde_json::Value = serde_json::from_str(&raw).expect("headless session parses");
+    for process in state
+        .get("processes")
+        .and_then(|processes| processes.as_array())
+        .cloned()
+        .unwrap_or_default()
+    {
+        let pid = process
+            .get("pid")
+            .and_then(|pid| pid.as_u64())
+            .unwrap_or_default() as u32;
+        let name = process
+            .get("name")
+            .and_then(|name| name.as_str())
+            .unwrap_or("?");
+        assert!(
+            !effigy_process::process_is_running(pid),
+            "owned process `{name}` (pid {pid}) did not survive SIGINT"
+        );
+    }
 }

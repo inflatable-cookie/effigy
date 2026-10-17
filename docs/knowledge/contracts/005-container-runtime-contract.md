@@ -729,7 +729,18 @@ incoming environment's route claims collide with the live environment's
 declared claims — the live environment comes down whole with the ordinary
 `container down` semantics: managed host processes and listeners stopped,
 routes withdrawn, Compose containers stopped, all volumes kept, scope
-records cleared. One line names the handed-over environment and what moved.
+records cleared. Before the live environment comes down, the handover
+ends every live headless managed owner of the same checkout whose plan
+is bound to that environment, through the same path as
+`effigy <task> stop`: the owned processes settle, the run's status is
+recorded, and the owner's own exit releases its task lock through the
+lock owner-token rules. One line names each managed task ended. An owner
+bound to any other environment is never touched. If ending an owner
+fails, the handover refuses before stopping the environment, names the
+failure, and says to run `effigy <task> stop`. A stale lock from a dead
+holder is still reclaimed only by the existing lock rules; lock ownership
+is never weakened. One line names the handed-over environment and what
+moved.
 The handover refuses only when stopping that environment itself fails; it
 then names the failure and leaves the environment recoverable by its own
 `up` or `down`. The stop is recorded beside the environment's lease before

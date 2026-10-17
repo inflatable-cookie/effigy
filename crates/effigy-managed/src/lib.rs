@@ -85,6 +85,11 @@ pub struct ManagedTaskPlan {
     pub passthrough: Vec<String>,
     pub gateway_auto_start: bool,
     pub readiness: ManagedTaskReadiness,
+    /// Container environment this plan starts and owns through its
+    /// lifecycle process, if any. The headless runtime records it in
+    /// session state so a whole-environment handover can find and end
+    /// the live owner bound to the environment coming down.
+    pub container_environment: Option<String>,
 }
 
 #[derive(Debug, Clone)]

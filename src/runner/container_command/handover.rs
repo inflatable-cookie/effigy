@@ -190,7 +190,7 @@ pub(super) fn hand_over_conflicting_environments(
 
     let mut notes = Vec::new();
     for target in targets.values() {
-        notes.push(execute_handover(
+        notes.extend(execute_handover(
             repo_root,
             target,
             &policy.name,
@@ -415,6 +415,41 @@ pub(super) fn stop_peer_data_services(
     Ok(notes)
 }
 
+/// End every live headless managed owner of this checkout whose plan is
+/// bound to `environment`, through the same path as `effigy <task> stop`.
+/// Runs before the handover records or stops anything, so a failure
+/// refuses the handover while the environment is still untouched. The
+/// owner's own exit releases its task lock through the lock owner-token
+/// rules; a stale lock from a dead holder is still reclaimed only by the
+/// existing lock rules, never weakened here.
+fn end_headless_managed_owners(
+    repo_root: &Path,
+    target: &PendingHandover,
+) -> Result<Vec<String>, RunnerError> {
+    let mut notes = Vec::new();
+    for session in effigy_managed::runtime::live_headless_sessions(repo_root) {
+        if session.container_environment.as_deref() != Some(target.environment.as_str()) {
+            continue;
+        }
+        effigy_managed::runtime::stop_headless_session_and_wait(
+            repo_root,
+            &session.task,
+            &session.profile,
+        )
+        .map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "cannot hand over environment `{}`: failed to end managed task `{}` (profile `{}`) bound to it: {error}. Run `effigy {} stop` and retry",
+                target.environment, session.task, session.profile, session.task,
+            ))
+        })?;
+        notes.push(format!(
+            "[handover] ended managed task `{}` (profile `{}`) bound to environment `{}`",
+            session.task, session.profile, target.environment,
+        ));
+    }
+    Ok(notes)
+}
+
 /// Bring one environment down with the ordinary `container down` semantics:
 /// host processes and managed listeners stopped, gateway routes withdrawn,
 /// Compose containers stopped, all volumes kept, scope records cleared. The
@@ -427,7 +462,7 @@ fn execute_handover(
     deregister_gateway_routes: &impl Fn(
         &EffectiveContainerPolicy,
     ) -> Result<Vec<String>, effigy_runtime::EffigyRuntimeError>,
-) -> Result<String, RunnerError> {
+) -> Result<Vec<String>, RunnerError> {
     // A stale scope record from an earlier state must not survive the
     // handover; the fresh record below is the only evidence that counts.
     clear_partial_activation(repo_root, &target.policy)?;
@@ -441,6 +476,12 @@ fn execute_handover(
             format!(" for {detail}")
         },
     );
+    // Every live headless managed owner bound to the losing environment
+    // ends before the handover records or stops anything: a failure
+    // refuses here while the environment is still untouched, and the
+    // owner's own exit releases its task lock through the lock
+    // owner-token rules.
+    let owner_notes = end_headless_managed_owners(repo_root, target)?;
     record_environment_handover(repo_root, &target.policy, stopped_by, &detail).map_err(
         |error| {
             RunnerError::task_invocation(format!(
@@ -463,7 +504,9 @@ fn execute_handover(
         ))
     })?;
     clear_persistent_container_owner(repo_root, &target.policy)?;
-    Ok(note)
+    let mut notes = vec![note];
+    notes.extend(owner_notes);
+    Ok(notes)
 }
 
 #[cfg(test)]
@@ -746,6 +789,183 @@ domain = "switch.test"
             Some("web")
         );
         assert_eq!(managed_listener_owner_environment("web"), None);
+    }
+
+    /// A fabricated live headless session: a session-leader `sh`
+    /// supervisor that spawns one owned `sleep` child, reaps it, and
+    /// exits when it dies — the same shape `managed_headless_stop`
+    /// settles. The supervisor's own session keeps the stop path's
+    /// process-tree signals inside the fixture.
+    #[cfg(unix)]
+    struct FixtureOwner {
+        supervisor: std::process::Child,
+        owned_pid: u32,
+    }
+
+    #[cfg(unix)]
+    fn spawn_session_owner() -> FixtureOwner {
+        use std::io::BufRead;
+        use std::os::unix::process::CommandExt;
+
+        let mut supervisor = std::process::Command::new("sh");
+        supervisor
+            .args(["-c", "sleep 60 & echo $!; wait"])
+            .stdout(std::process::Stdio::piped());
+        // SAFETY: `pre_exec` runs in the forked child before `exec`;
+        // `setsid` moves the supervisor into its own session so the
+        // stop path's process-tree signals stay inside the fixture.
+        unsafe {
+            supervisor.pre_exec(|| {
+                nix::unistd::setsid()
+                    .map(|_| ())
+                    .map_err(std::io::Error::from)
+            });
+        }
+        let mut supervisor = supervisor.spawn().expect("fixture supervisor");
+        let stdout = supervisor.stdout.take().expect("supervisor stdout");
+        let mut lines = std::io::BufReader::new(stdout).lines();
+        let owned_pid: u32 = lines
+            .next()
+            .expect("sleep pid line")
+            .expect("read sleep pid")
+            .trim()
+            .parse()
+            .expect("parse sleep pid");
+        FixtureOwner {
+            supervisor,
+            owned_pid,
+        }
+    }
+
+    #[cfg(unix)]
+    fn write_live_headless_session(
+        repo_root: &Path,
+        task: &str,
+        profile: &str,
+        supervisor_pid: u32,
+        environment: Option<&str>,
+        owned_pid: u32,
+    ) {
+        let dir = repo_root
+            .join(".effigy/runtime/managed")
+            .join(format!("{task}-{profile}"));
+        fs::create_dir_all(&dir).expect("session dir");
+        let mut state = serde_json::json!({
+            "schema": "effigy.managed.headless.v1",
+            "task": task,
+            "profile": profile,
+            "supervisor_pid": supervisor_pid,
+            "status": "running",
+            "started_at_unix_ms": 1,
+            "processes": [{
+                "name": "worker",
+                "pid": owned_pid,
+                "status": "running",
+                "log": dir.join("01-worker.log").display().to_string(),
+            }],
+        });
+        if let Some(environment) = environment {
+            state["container_environment"] = serde_json::Value::String(environment.to_owned());
+        }
+        fs::write(
+            dir.join("session.json"),
+            serde_json::to_vec_pretty(&state).expect("session json"),
+        )
+        .expect("write session");
+    }
+
+    #[cfg(unix)]
+    fn handover_target_for(repo_root: &Path, environment: &str) -> PendingHandover {
+        let mut policy = claim_policy(repo_root, None);
+        policy.name = environment.to_owned();
+        PendingHandover {
+            environment: environment.to_owned(),
+            policy,
+            domains: Vec::new(),
+            data_from: false,
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn handover_ends_only_the_headless_owner_bound_to_the_losing_environment() {
+        let temp = tempfile::tempdir().expect("handover owner fixture");
+        let repo_root = temp.path().join("repo");
+        fs::create_dir_all(&repo_root).expect("mkdir repo");
+        let mut losing = spawn_session_owner();
+        let mut other = spawn_session_owner();
+        let losing_pid = losing.owned_pid;
+        let other_pid = other.owned_pid;
+        write_live_headless_session(
+            &repo_root,
+            "site",
+            "default",
+            losing.supervisor.id(),
+            Some("web"),
+            losing_pid,
+        );
+        write_live_headless_session(
+            &repo_root,
+            "other",
+            "default",
+            other.supervisor.id(),
+            Some("stack"),
+            other_pid,
+        );
+        // A legacy session without the environment binding is never
+        // touched, even though its supervisor is alive.
+        write_live_headless_session(
+            &repo_root,
+            "legacy",
+            "default",
+            other.supervisor.id(),
+            None,
+            other_pid,
+        );
+
+        let target = handover_target_for(&repo_root, "web");
+        let notes = end_headless_managed_owners(&repo_root, &target).expect("end losing owner");
+
+        assert_eq!(notes.len(), 1, "one line for one ended owner: {notes:?}");
+        assert!(
+            notes[0].contains("`site`")
+                && notes[0].contains("`default`")
+                && notes[0].contains("`web`"),
+            "{}",
+            notes[0]
+        );
+        assert!(
+            !effigy_process::process_is_running(losing_pid),
+            "the losing environment's owner is settled"
+        );
+        assert!(
+            effigy_process::process_is_running(other_pid),
+            "an owner bound to another environment is never touched"
+        );
+        effigy_process::terminate_process_tree(other_pid, true);
+        let _ = losing.supervisor.wait();
+        let _ = other.supervisor.wait();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn handover_ignores_dead_supervisors_and_missing_sessions() {
+        let temp = tempfile::tempdir().expect("handover owner fixture");
+        let repo_root = temp.path().join("repo");
+        fs::create_dir_all(&repo_root).expect("mkdir repo");
+        // A supervisor PID that has already exited: spawn and reap so
+        // the pid is real but dead (and cannot be confused with -1).
+        let mut exited = std::process::Command::new("true")
+            .spawn()
+            .expect("exited supervisor");
+        let dead = exited.id();
+        let _ = exited.wait();
+        write_live_headless_session(&repo_root, "gone", "default", dead, Some("web"), dead);
+
+        let target = handover_target_for(&repo_root, "web");
+        let notes =
+            end_headless_managed_owners(&repo_root, &target).expect("dead owners are ignored");
+        assert!(notes.is_empty(), "{notes:?}");
     }
 
     fn claim_policy(repo_root: &Path, shared: Option<(&str, &str)>) -> EffectiveContainerPolicy {

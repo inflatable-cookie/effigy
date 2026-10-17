@@ -20,8 +20,8 @@ mod redaction;
 mod stream;
 
 pub use headless::{
-    managed_headless_logs, managed_headless_status, managed_headless_stop,
-    run_managed_task_headless,
+    live_headless_sessions, managed_headless_logs, managed_headless_status, managed_headless_stop,
+    run_managed_task_headless, stop_headless_session_and_wait, LiveHeadlessSession,
 };
 
 pub fn run_managed_task_tui(

@@ -7,6 +7,21 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- A whole-environment handover ends the losing environment's headless
+  managed owners before stopping anything. When `container up` hands over
+  a live conflicting environment, it first ends every live headless
+  managed owner (`effigy <task> --headless`) whose plan is bound to the
+  losing environment, through the same path as `effigy <task> stop` —
+  owned processes settle, status is recorded, and the owner's own exit
+  releases its task lock through the lock owner-token rules — printing one
+  line naming each managed task ended. Owners bound to any other
+  environment are never touched. Ending an owner that fails refuses the
+  handover before the environment is stopped and says to run
+  `effigy <task> stop`. Headless runs also never allocate an interactive
+  TTY: shell-role processes are skipped with a note instead of spawning a
+  child that would block on a TTY, and SIGINT/SIGTERM to the headless owner
+  settles the run through the stop path before exiting. A stale lock from
+  a dead holder is still reclaimed only by the existing lock rules.
 - Switching between a checkout's container and hybrid environments is one
   preflighted handover. `container up` of one environment while another
   environment of the same checkout and scope is live first evaluates

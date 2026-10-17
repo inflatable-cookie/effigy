@@ -18,7 +18,7 @@ use signal_hook::iterator::Signals;
 use super::policy;
 use super::redaction::SecretStreamRedactor;
 use crate::render_support::managed_process_specs;
-use crate::{ManagedError, ManagedTaskPlan};
+use crate::{ManagedError, ManagedProcessRole, ManagedProcessSpec, ManagedTaskPlan};
 
 const HEADLESS_STATE_SCHEMA: &str = "effigy.managed.headless.v1";
 const EVENT_POLL_INTERVAL: Duration = Duration::from_millis(100);
@@ -32,6 +32,11 @@ struct HeadlessSessionState {
     supervisor_pid: u32,
     status: String,
     started_at_unix_ms: u128,
+    /// Container environment the plan's lifecycle process owns, if any.
+    /// A whole-environment handover uses it to find the live owner bound
+    /// to the environment coming down. Older sessions lack the field.
+    #[serde(default)]
+    container_environment: Option<String>,
     processes: Vec<HeadlessProcessState>,
 }
 
@@ -52,20 +57,37 @@ pub fn run_managed_task_headless(
     fs::create_dir_all(&runtime_dir)
         .map_err(|error| ManagedError::task_invocation_failed_write(&runtime_dir, error))?;
 
-    let process_names = plan
-        .processes
+    // Headless runs never allocate an interactive TTY. Shell-role
+    // processes only attach an interactive container shell once the
+    // lifecycle is ready; they contribute nothing to readiness, so the
+    // headless supervisor skips them with a note instead of spawning a
+    // child that would block on a TTY it can never receive.
+    let (supervised, skipped_shells) = split_headless_processes(plan.processes);
+    for skipped in &skipped_shells {
+        println!(
+            "[headless] skipping interactive shell process `{skipped}`: headless runs never allocate a TTY"
+        );
+    }
+    println!(
+        "[headless] managed task `{task_name}` (profile `{}`) running under supervisor PID {}; stop with `{}`",
+        plan.profile,
+        std::process::id(),
+        headless_stop_command(task_name, &plan.profile),
+    );
+    let _ = std::io::Write::flush(&mut std::io::stdout());
+
+    let process_names = supervised
         .iter()
         .map(|process| process.name.clone())
         .collect::<Vec<_>>();
-    let secret_values = plan
-        .processes
+    let secret_values = supervised
         .iter()
         .flat_map(|process| process.secret_env.values())
         .filter(|value| !value.is_empty())
         .cloned()
         .collect::<Vec<_>>();
     let mut log_files = open_process_logs(&runtime_dir, &process_names)?;
-    let specs = managed_process_specs(plan.processes.iter().cloned());
+    let specs = managed_process_specs(supervised.iter().cloned());
     let supervisor = ProcessSupervisor::spawn(repo_root.to_path_buf(), specs)?;
     let _cleanup = SupervisorCleanup(&supervisor);
     let pid_by_name = supervisor
@@ -79,6 +101,7 @@ pub fn run_managed_task_headless(
         supervisor_pid: std::process::id(),
         status: "running".to_owned(),
         started_at_unix_ms: unix_time_ms(),
+        container_environment: plan.container_environment.clone(),
         processes: process_names
             .iter()
             .enumerate()
@@ -100,8 +123,7 @@ pub fn run_managed_task_headless(
 
     let shutdown_requested = Arc::new(AtomicBool::new(false));
     let (signal_handle, signal_thread) = install_signal_handler(shutdown_requested.clone())?;
-    let shutdown_on_exit = plan
-        .processes
+    let shutdown_on_exit = supervised
         .iter()
         .filter(|process| process.shutdown_on_exit)
         .map(|process| process.name.clone())
@@ -150,6 +172,122 @@ pub fn run_managed_task_headless(
 }
 
 struct SupervisorCleanup<'a>(&'a ProcessSupervisor);
+
+/// Split a headless plan into the processes the supervisor starts and
+/// the interactive shell processes it skips. Shell-role processes only
+/// attach an interactive (`-it`/TTY) container shell once the lifecycle
+/// is ready; they gate no readiness, so skipping them keeps the
+/// profile's readiness semantics while guaranteeing headless runs never
+/// allocate an interactive TTY child.
+fn split_headless_processes(
+    processes: Vec<ManagedProcessSpec>,
+) -> (Vec<ManagedProcessSpec>, Vec<String>) {
+    let mut supervised = Vec::with_capacity(processes.len());
+    let mut skipped = Vec::new();
+    for process in processes {
+        if process.role == ManagedProcessRole::Shell {
+            skipped.push(process.name.clone());
+            continue;
+        }
+        supervised.push(process);
+    }
+    (supervised, skipped)
+}
+
+fn headless_stop_command(task_name: &str, profile: &str) -> String {
+    if profile == crate::DEFAULT_MANAGED_PROFILE {
+        format!("effigy {task_name} stop")
+    } else {
+        format!("effigy {task_name} stop {profile}")
+    }
+}
+
+/// A live headless managed owner of this checkout, as recorded in its
+/// session state. A whole-environment handover uses the bound container
+/// environment to find the owners it must end.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LiveHeadlessSession {
+    pub task: String,
+    pub profile: String,
+    pub supervisor_pid: u32,
+    pub container_environment: Option<String>,
+}
+
+/// Every headless session of this checkout whose supervisor is still
+/// alive. Unreadable, foreign-schema or orphaned sessions are ignored;
+/// only a live owner can hold a task lock.
+pub fn live_headless_sessions(repo_root: &Path) -> Vec<LiveHeadlessSession> {
+    let sessions_dir = repo_root.join(".effigy/runtime/managed");
+    let Ok(entries) = fs::read_dir(&sessions_dir) else {
+        return Vec::new();
+    };
+    let mut live = Vec::new();
+    for entry in entries.flatten() {
+        let state = read_state(&entry.path().join("session.json"));
+        let Ok(mut state) = state else {
+            continue;
+        };
+        refresh_running_state(&mut state);
+        if state.status != "running" {
+            continue;
+        }
+        if !process_is_running(state.supervisor_pid) {
+            continue;
+        }
+        live.push(LiveHeadlessSession {
+            task: state.task,
+            profile: state.profile,
+            supervisor_pid: state.supervisor_pid,
+            container_environment: state.container_environment,
+        });
+    }
+    live
+}
+
+/// How long a handover waits for one ended owner to settle.
+const HANDOVER_OWNER_SETTLE_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// End one live headless owner through the same path as
+/// `effigy <task> stop` and wait for it to settle. Succeeds once the
+/// supervisor is gone, or once it is still alive but owns no live
+/// process (a finishing owner whose lock release is imminent). A
+/// supervisor that still owns a live process past the deadline refuses
+/// with the stop command to run.
+pub fn stop_headless_session_and_wait(
+    repo_root: &Path,
+    task: &str,
+    profile: &str,
+) -> Result<String, ManagedError> {
+    let summary = managed_headless_stop(repo_root, task, profile)?;
+    let state_path = managed_runtime_dir(repo_root, task, profile).join("session.json");
+    let deadline = std::time::Instant::now() + HANDOVER_OWNER_SETTLE_TIMEOUT;
+    loop {
+        let settled = match read_state(&state_path) {
+            Ok(mut state) => {
+                refresh_running_state(&mut state);
+                let supervisor_gone = !process_is_running(state.supervisor_pid);
+                let no_live_processes = state.processes.iter().all(|process| {
+                    !(process.status == "running"
+                        && process_is_running(process.pid)
+                        && process_is_descendant_of(process.pid, state.supervisor_pid))
+                });
+                supervisor_gone || no_live_processes
+            }
+            // An owner that already removed its state is settled.
+            Err(_) => true,
+        };
+        if settled {
+            return Ok(summary);
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(ManagedError::task_invocation(format!(
+                "managed task `{task}` (profile `{profile}`) did not settle after its stop was requested; run `{}` and retry",
+                headless_stop_command(task, profile),
+            )));
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+}
 
 impl Drop for SupervisorCleanup<'_> {
     fn drop(&mut self) {
@@ -627,10 +765,66 @@ fn unix_time_ms() -> u128 {
 
 #[cfg(test)]
 mod tests {
-    use super::safe_component;
+    use super::{
+        headless_stop_command, live_headless_sessions, safe_component, split_headless_processes,
+    };
+    use crate::{ManagedProcessRole, ManagedProcessSpec};
+    use std::path::PathBuf;
 
     #[test]
     fn safe_component_keeps_runtime_paths_flat() {
         assert_eq!(safe_component("catalog/api"), "catalog_api");
+    }
+
+    fn headless_spec(name: &str, role: ManagedProcessRole) -> ManagedProcessSpec {
+        ManagedProcessSpec {
+            name: name.to_owned(),
+            role,
+            run: format!("printf {name}"),
+            secret_env: Default::default(),
+            setup: None,
+            setup_steps: Vec::new(),
+            cwd: PathBuf::from("/tmp/repo"),
+            service: None,
+            start_after_ms: 0,
+            shutdown_on_exit: false,
+            run_on_host: false,
+        }
+    }
+
+    #[test]
+    fn headless_supervision_skips_only_shell_roles() {
+        let (supervised, skipped) = split_headless_processes(vec![
+            headless_spec("lifecycle", ManagedProcessRole::Lifecycle),
+            headless_spec("shell", ManagedProcessRole::Shell),
+            headless_spec("api", ManagedProcessRole::Standard),
+        ]);
+        let names = supervised
+            .iter()
+            .map(|process| process.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(names, vec!["lifecycle", "api"]);
+        assert_eq!(skipped, vec!["shell".to_owned()]);
+    }
+
+    #[test]
+    fn headless_stop_command_names_profile_only_when_not_default() {
+        assert_eq!(headless_stop_command("dev", "default"), "effigy dev stop");
+        assert_eq!(
+            headless_stop_command("dev", "admin"),
+            "effigy dev stop admin"
+        );
+    }
+
+    #[test]
+    fn live_headless_sessions_ignores_missing_and_foreign_state() {
+        let temp = tempfile::tempdir().expect("headless scan fixture");
+        // No sessions directory at all: no owners.
+        assert!(live_headless_sessions(temp.path()).is_empty());
+        // Unparsable and foreign-schema sessions are ignored.
+        let dir = temp.path().join(".effigy/runtime/managed/broken-default");
+        std::fs::create_dir_all(&dir).expect("session dir");
+        std::fs::write(dir.join("session.json"), b"not json").expect("write");
+        assert!(live_headless_sessions(temp.path()).is_empty());
     }
 }
