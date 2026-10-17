@@ -283,6 +283,15 @@ setup, lifecycle, shutdown, schema-env, and local-dev secret paths. It writes:
 - `.effigy/runtime/managed/<task>-<profile>/session.json`
 - one numbered log file per process in that directory
 
+Headless runs never allocate an interactive TTY. Shell-role processes only
+attach an interactive container shell once the lifecycle is ready and gate
+no readiness, so the headless supervisor skips them and prints one note per
+skipped process instead of spawning a child that would block on a TTY it
+can never receive. Startup prints the stop command for the task
+(`effigy dev stop`). SIGINT/SIGTERM to the headless owner settles the run
+through the same path as `effigy dev stop` — owned processes settle, the
+status is recorded — then the owner exits.
+
 Use another shell or automation process to inspect or stop it:
 
 ```sh

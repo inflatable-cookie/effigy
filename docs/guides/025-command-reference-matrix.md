@@ -537,7 +537,11 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
   entry, and `health_wait_timeout_secs` controls the deadline
 - managed headless runs keep task-local state and logs under
   `.effigy/runtime/managed/`; `EFFIGY_MANAGED_HEADLESS=1` is equivalent to
-  `--headless`
+  `--headless`. Headless runs skip shell-role processes (no interactive
+  TTY is ever allocated), stop on SIGINT/SIGTERM through the same path
+  as `effigy <task> stop`, and record the lifecycle-bound container
+environment in `session.json` so a whole-environment handover can end
+  the live owner bound to the losing environment
 - `--verbose-root`, `--env-schema`, and `--lock-wait-ms` apply to manifest task
   invocations; `EFFIGY_LOCK_WAIT_MS` is the env fallback when the flag is
   omitted. The passthrough-style built-ins `doctor`, `watch`, and `scan` reject
