@@ -1719,3 +1719,196 @@ fn refusal_accounting_boundary_observations_describe_no_attempt() {
         assert_eq!(read_total, BoundedObservedBytes::Unknown);
     }
 }
+
+/// In-container re-entry for the bounded surface: under the handoff marker
+/// the command runs locally through the caller's bounded budget instead of
+/// probing a host runtime. Refusal shims for every host runtime binary fail
+/// the test if any probe escapes the container.
+#[cfg(unix)]
+mod handoff_local_tests {
+    use super::super::run_container_shell_bounded;
+    use super::limits;
+    use crate::contract_test_support::{lock_test, EnvGuard};
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn handoff_repo(name: &str) -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
+        let shared_parent =
+            cfg!(target_os = "macos").then_some(std::path::Path::new("/Users/Shared"));
+        let (dir, bin_dir, repo_root) = super::fixture_in(name, shared_parent);
+        let workspace = repo_root.join("workspace");
+        fs::create_dir_all(&workspace).expect("mkdir handoff workspace");
+        fs::write(
+            repo_root.join("docker-compose.yml"),
+            "services:\n  app:\n    image: busybox\n",
+        )
+        .expect("write compose file");
+        fs::write(
+            repo_root.join("effigy.toml"),
+            format!(
+                "[containers]\ndefault = \"web\"\n\n[containers.web]\ncompose_file = \"docker-compose.yml\"\nproject_name = \"demo-web\"\nprimary_service = \"app\"\nworking_dir = '{}'\n",
+                workspace.display(),
+            ),
+        )
+        .expect("write manifest");
+        for program in ["colima", "docker", "nerdctl", "compose"] {
+            let path = bin_dir.join(program);
+            fs::write(
+                &path,
+                format!(
+                    "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 42\n",
+                    repo_root
+                        .join(format!("host-runtime-{program}.log"))
+                        .display()
+                ),
+            )
+            .expect("write refusal shim");
+            let mut permissions = fs::metadata(&path).expect("stat shim").permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&path, permissions).expect("chmod shim");
+        }
+        (dir, bin_dir, repo_root)
+    }
+
+    fn handoff_env(
+        bin_dir: &std::path::Path,
+        home: &std::path::Path,
+    ) -> crate::contract_test_support::EnvGuard {
+        let current = std::env::var("PATH").unwrap_or_default();
+        EnvGuard::set_many(&[
+            (
+                crate::runner::container_runtime::CONTAINER_HANDOFF_ENV_NAME,
+                Some("1".to_owned()),
+            ),
+            ("PATH", Some(format!("{}:{current}", bin_dir.display()))),
+            ("HOME", Some(home.display().to_string())),
+            ("EFFIGY_COMPOSE_BACKEND", Some("docker".to_owned())),
+        ])
+    }
+
+    fn assert_no_host_runtime_probes(repo_root: &std::path::Path) {
+        for program in ["colima", "docker", "nerdctl", "compose"] {
+            assert!(
+                !repo_root
+                    .join(format!("host-runtime-{program}.log"))
+                    .exists(),
+                "host runtime `{program}` was probed from inside the handoff"
+            );
+        }
+    }
+
+    #[test]
+    fn bounded_shell_command_runs_handoff_local_without_host_probes() {
+        let (dir, bin_dir, repo_root) = handoff_repo("bounded-shell-local");
+        let home = dir.path().join("home");
+        fs::create_dir_all(&home).expect("mkdir isolated home");
+        let _lock = lock_test();
+        let _env = handoff_env(&bin_dir, &home);
+        let marker = repo_root.join("handoff-bounded-marker.txt");
+
+        let output = run_container_shell_bounded(
+            &repo_root,
+            Some("web"),
+            Some("app"),
+            &format!("printf handoff-bounded-ok > '{}'", marker.display()),
+            limits(30_000, 65536, 65536),
+            false,
+        )
+        .expect("handoff bounded shell should run locally");
+        assert!(
+            output.contains("bounded container command finished for container `web` service `app`"),
+            "got: {output}"
+        );
+        assert_eq!(
+            fs::read_to_string(&marker).expect("read marker"),
+            "handoff-bounded-ok"
+        );
+        assert_no_host_runtime_probes(&repo_root);
+    }
+
+    #[test]
+    fn bounded_shell_command_handoff_local_keeps_json_schema() {
+        let (dir, bin_dir, repo_root) = handoff_repo("bounded-shell-local-json");
+        let home = dir.path().join("home");
+        fs::create_dir_all(&home).expect("mkdir isolated home");
+        let _lock = lock_test();
+        let _env = handoff_env(&bin_dir, &home);
+
+        let output = run_container_shell_bounded(
+            &repo_root,
+            Some("web"),
+            Some("app"),
+            "printf handoff-json-ok",
+            limits(30_000, 65536, 65536),
+            true,
+        )
+        .expect("handoff bounded shell should run locally");
+        let payload: serde_json::Value =
+            serde_json::from_str(&output).expect("bounded output must stay JSON");
+        assert_eq!(
+            payload["schema"], "effigy.container.bounded-exec.v1",
+            "got: {output}"
+        );
+        assert_eq!(payload["ok"], true, "got: {output}");
+        assert_eq!(payload["container"], "web", "got: {output}");
+        assert_eq!(payload["service"], "app", "got: {output}");
+        assert_eq!(payload["failure"], "complete", "got: {output}");
+        assert_eq!(payload["stdout"], "handoff-json-ok", "got: {output}");
+        assert_no_host_runtime_probes(&repo_root);
+    }
+
+    #[test]
+    fn bounded_shell_command_handoff_stdout_cap_still_applies() {
+        let (dir, bin_dir, repo_root) = handoff_repo("bounded-shell-local-overflow");
+        let home = dir.path().join("home");
+        fs::create_dir_all(&home).expect("mkdir isolated home");
+        let _lock = lock_test();
+        let _env = handoff_env(&bin_dir, &home);
+
+        let error = run_container_shell_bounded(
+            &repo_root,
+            Some("web"),
+            Some("app"),
+            "i=0; while [ \"$i\" -lt 100 ]; do printf 'x'; i=$((i+1)); done",
+            limits(30_000, 64, 65536),
+            true,
+        )
+        .expect_err("overflowing stdout must refuse even handoff-local");
+        let details = super::failure_details(&error);
+        assert_eq!(details["failure"], "stdout_overflow", "got: {details}");
+        assert_no_host_runtime_probes(&repo_root);
+    }
+
+    #[test]
+    fn bounded_shell_command_handoff_expired_deadline_refuses_before_spawn() {
+        let (dir, bin_dir, repo_root) = handoff_repo("bounded-shell-local-deadline");
+        let home = dir.path().join("home");
+        fs::create_dir_all(&home).expect("mkdir isolated home");
+        let _lock = lock_test();
+        let _env = handoff_env(&bin_dir, &home);
+        let marker = repo_root.join("handoff-bounded-deadline-marker.txt");
+
+        let past = std::time::Instant::now()
+            .checked_sub(std::time::Duration::from_secs(1))
+            .expect("past deadline");
+        let error = super::super::run_container_shell_bounded_with_deadline(
+            &repo_root,
+            Some("web"),
+            Some("app"),
+            &format!("printf late > '{}'", marker.display()),
+            limits(30_000, 65536, 65536),
+            true,
+            past,
+            past,
+        )
+        .expect_err("expired deadline must refuse before any spawn");
+        let details = super::failure_details(&error);
+        assert_eq!(details["failure"], "deadline", "got: {details}");
+        assert_eq!(details["phase"], "runtime_discovery", "got: {details}");
+        assert!(
+            !marker.exists(),
+            "expired handoff operation must not run the command"
+        );
+        assert_no_host_runtime_probes(&repo_root);
+    }
+}

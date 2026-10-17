@@ -24,7 +24,7 @@
 //! Remote cancellation stays unverified: terminating the owned host client
 //! group proves nothing about a remote container process.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::io::Write;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -40,6 +40,7 @@ use super::shell_prep::{
     maybe_refresh_workspace_effigy_for_shell_bounded, resolve_container_shell_session_bounded,
 };
 use super::RunnerError;
+use crate::runner::container_runtime::{resolve_handoff_local_execution, HandoffLocalExecution};
 use crate::runner::exec_command::{
     BoundedCapture, BoundedCaptureFailure, BoundedCommandBudget, BoundedCommandPhase,
     BoundedObservedBytes, BoundedRefusalObservations, BoundedScopedCaptureFailure, BoundedStream,
@@ -103,6 +104,30 @@ fn run_container_shell_bounded_with_deadline(
             &budget,
             BoundedCommandPhase::RuntimeDiscovery,
         ));
+    }
+    // Inside the workspace container the requested command is already
+    // local: run it directly through the same bounded budget (deadline and
+    // stream caps) instead of probing a host runtime (colima/nerdctl/docker)
+    // that is unreachable from inside. No owned-binding discovery, lease,
+    // or workspace effigy refresh runs; the binary's presence proves the
+    // install, and the local process already runs as the exec user.
+    if let Some(resolved) = resolve_handoff_local_execution(repo_root, name, service) {
+        let execution = resolved?;
+        if Instant::now() >= deadline {
+            return Err(deadline_refusal(
+                Some((&execution.policy, execution.service.as_str())),
+                &limits,
+                &budget,
+                BoundedCommandPhase::RuntimeDiscovery,
+            ));
+        }
+        return run_handoff_local_bounded_command(
+            &execution,
+            command,
+            &limits,
+            output_json,
+            budget,
+        );
     }
 
     let session = resolve_container_shell_session_bounded(repo_root, name, service, &mut budget)?;
@@ -239,6 +264,50 @@ fn run_bounded_command_with_budget(
         limits,
         budget: &budget,
         workspace_user_fallback,
+        output_json,
+    };
+    render.into_result(capture)
+}
+
+/// Handoff-local bounded command: the caller already runs inside its own
+/// workspace container, so the command executes as a local process through
+/// the caller's bounded budget instead of a compose exec hop.
+///
+/// The same absolute deadline and cumulative stdout/stderr caps apply, the
+/// same `effigy.container.bounded-exec.v1` payload renders, and refusal
+/// accounting keeps its closed vocabulary. There is deliberately no
+/// owned-binding discovery, host lease, workspace effigy refresh, or
+/// workspace-user fallback: the handoff marker is only set by Effigy's own
+/// compose exec into the target service, and the local process already runs
+/// as the exec user.
+fn run_handoff_local_bounded_command(
+    execution: &HandoffLocalExecution,
+    command: &str,
+    limits: &BoundedExecLimits,
+    output_json: bool,
+    mut budget: BoundedCommandBudget,
+) -> Result<String, RunnerError> {
+    let policy = &execution.policy;
+    let service = execution.service.as_str();
+    let capture = budget
+        .run_command(
+            &execution.working_dir,
+            OsStr::new("sh"),
+            &[OsString::from("-lc"), OsString::from(command)],
+            None,
+            &[],
+            BoundedCommandPhase::CommandExecution,
+        )
+        .map_err(|failure| bounded_failure_error(policy, service, &budget, failure))?;
+    if !output_json && capture.status.success() {
+        emit_captured_output(&capture)?;
+    }
+    let render = BoundedRenderContext {
+        policy,
+        service,
+        limits,
+        budget: &budget,
+        workspace_user_fallback: false,
         output_json,
     };
     render.into_result(capture)

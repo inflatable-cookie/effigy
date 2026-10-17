@@ -958,6 +958,10 @@ environment — instead of spawning `colima`, `nerdctl`, `docker`, or
 routing already stays local under handoff; this closes the remaining
 exec surfaces so a task invoked inside its own container runs as the
 in-container execution instead of failing on host-only runtime probes.
+The opt-in bounded shell (`--bounded`) takes the same local path: the
+absolute deadline and stdout/stderr caps still apply to the local
+execution and the same bounded-exec schema renders, with no discovery,
+lease, or workspace-user fallback phases.
 
 ### Public Shell Sessions
 

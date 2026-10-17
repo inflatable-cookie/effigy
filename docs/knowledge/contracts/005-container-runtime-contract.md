@@ -107,6 +107,9 @@ the marker is only ever set by Effigy's own compose exec into the target
 service, so the local container is the requested one by construction.
 Task routing, suite targeting, and workspace-shell handoff already stay
 local under the same marker; this closes the remaining exec surfaces.
+The opt-in bounded shell takes the same local path with its absolute
+deadline and stream caps intact, rendering the same bounded-exec schema
+without discovery, lease, or workspace-user fallback phases.
 
 Ordinary workload entry gives the selected service's owned-binding observation
 (runtime inventory followed by strict inspect) a bounded 15-second window.

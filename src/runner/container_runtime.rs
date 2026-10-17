@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
 use super::error::RunnerError;
+use effigy_containers::EffectiveContainerPolicy;
 
 pub(in crate::runner) const CONTAINER_HANDOFF_ENV_NAME: &str = "EFFIGY_INTERNAL_CONTAINER_HANDOFF";
 pub(in crate::runner) const CONTAINER_HANDOFF_ENV_ASSIGNMENT: &str =
@@ -15,6 +16,7 @@ pub(in crate::runner) fn inside_container_handoff() -> bool {
 /// workspace container. Carries only filesystem-resolved state so resolving
 /// it never spawns a host runtime probe.
 pub(in crate::runner) struct HandoffLocalExecution {
+    pub policy: EffectiveContainerPolicy,
     pub container: String,
     pub service: String,
     pub working_dir: PathBuf,
@@ -67,12 +69,14 @@ fn resolve_handoff_local_execution_inner(
     } else {
         repo_root.to_path_buf()
     };
+    let container = container_name
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(policy.name.as_str())
+        .to_owned();
     Ok(HandoffLocalExecution {
-        container: container_name
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .unwrap_or(policy.name.as_str())
-            .to_owned(),
+        policy,
+        container,
         service,
         working_dir,
     })
