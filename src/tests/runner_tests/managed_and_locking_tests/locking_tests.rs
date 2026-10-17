@@ -161,7 +161,7 @@ run = "printf ok"
         &[(
             "task-dev.lock",
             &format!(
-                r#"{{"scope":"task:dev","pid":{},"started_at_epoch_ms":{},"heartbeat_at_epoch_ms":{},"hostname":"test-host","workspace_root":"{}"}}"#,
+                r#"{{"scope":"task:dev","pid":{},"started_at_epoch_ms":{},"heartbeat_at_epoch_ms":{},"workspace_root":"{}"}}"#,
                 child.id(),
                 now,
                 now,
@@ -476,6 +476,112 @@ run = "printf ok"
     let out = run_dev(&root, &["--lock-wait-ms", "250"])
         .expect("stopped owner should be reclaimed during wait");
     assert_output_equals(&out, "");
+}
+
+/// A lock written by an in-container Effigy process carries its managed
+/// run's token, so the run's settle can release it through the lock
+/// owner-token rules. Only the run's own records move; a foreign token or
+/// an unattributed record is never touched.
+#[test]
+fn run_settle_releases_only_locks_attributed_to_its_run_token() {
+    let _guard = lock_test();
+    let root = temp_workspace("lock-run-attribution");
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time")
+        .as_millis();
+    let record = |scope: &str, token: Option<&str>| {
+        format!(
+            r#"{{"scope":"{scope}","pid":999999,"started_at_epoch_ms":{now},"heartbeat_at_epoch_ms":{now},"managed_run_token":{}}}"#,
+            token
+                .map(|token| format!("\"{token}\""))
+                .unwrap_or_else(|| "null".to_owned())
+        )
+    };
+    let api_record = record("task:api", Some("managedrun-A"));
+    let jobs_record = record("task:jobs", Some("managedrun-B"));
+    let dev_record = record("task:dev", None);
+    write_lock_files(
+        &root,
+        &[
+            ("task-api.lock", api_record.as_str()),
+            ("task-jobs.lock", jobs_record.as_str()),
+            ("task-dev.lock", dev_record.as_str()),
+        ],
+    );
+
+    let released =
+        crate::runner::locking::io::release_locks_attributed_to_run(&root, "managedrun-A");
+
+    assert_eq!(released, vec!["task:api".to_owned()]);
+    assert!(
+        !root.join(".effigy/locks/task-api.lock").exists(),
+        "the run's own record is released"
+    );
+    assert!(
+        root.join(".effigy/locks/task-jobs.lock").exists(),
+        "another run's attributed record survives"
+    );
+    assert!(
+        root.join(".effigy/locks/task-dev.lock").exists(),
+        "an unattributed record survives"
+    );
+}
+
+/// A holder in another PID namespace - a container-side Effigy process -
+/// is judged by its heartbeat lease, never by the host process table: a
+/// fresh heartbeat means a genuinely live holder and still refuses, even
+/// when the recorded PID is dead on the host or names an unrelated live
+/// host process. An aged heartbeat is reclaimed.
+#[cfg(unix)]
+#[test]
+fn container_holder_pid_is_judged_by_its_heartbeat_not_the_host_table() {
+    let _guard = lock_test();
+    let root = temp_workspace("lock-container-holder");
+    write_root_manifest(
+        &root,
+        r#"[tasks.dev]
+run = "printf ok"
+"#,
+    );
+
+    let mut unrelated = Command::new("sleep")
+        .arg("9")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn unrelated host process");
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time")
+        .as_millis();
+    let container_record = |heartbeat_at_epoch_ms: u128| -> String {
+        format!(
+            r#"{{"scope":"task:dev","pid":{},"started_at_epoch_ms":{now},"heartbeat_at_epoch_ms":{heartbeat_at_epoch_ms},"hostname":"fixture-container-xyz","workspace_root":"{}"}}"#,
+            unrelated.id(),
+            root.display()
+        )
+    };
+    let fresh = container_record(now);
+    write_lock_files(&root, &[("task-dev.lock", fresh.as_str())]);
+
+    let error = run_dev(&root, &[]).expect_err("a live container holder still refuses");
+    crate::runner::tests::prelude::assert_lock_conflict(
+        error,
+        "task:dev",
+        "effigy tasks unlock task:dev",
+    );
+
+    // The heartbeat ages out: the holder is gone, the record is stale,
+    // and the reclaim must not be blocked by the unrelated live host PID.
+    let aged = container_record(now.saturating_sub(60_000));
+    write_lock_files(&root, &[("task-dev.lock", aged.as_str())]);
+    let out = run_dev(&root, &[]).expect("aged container lease should be reclaimed");
+    assert_output_equals(&out, "");
+
+    let _ = unrelated.kill();
+    let _ = unrelated.wait();
 }
 
 fn single_json_path(dir: &Path) -> std::path::PathBuf {
