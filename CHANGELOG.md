@@ -274,6 +274,24 @@ During v0.x, MINOR bumps may include breaking changes.
   1.2.0.
 
 ### Fixed
+- Headless `dev:container` app children now start and stay running on a
+  healthy stack, on first start and after a handover. Three causes, found
+  in the Acowtancy v0.15.0 adoption proof (#625): `container up` never ran
+  workspace permission preparation, so Effigy-managed cache volumes (Cargo
+  registry/git, target dirs) kept root-owned permissions from first
+  creation or a reused/handed-over stack and the workspace user could not
+  write — preparation now runs as an `up` integration stage after exec
+  readiness is verified, before secrets, gateway exposure and readiness
+  reporting. An Effigy invocation inside its own workspace container no
+  longer probes host runtime commands: `container shell`/`container exec`
+  and `exec` with `EFFIGY_INTERNAL_CONTAINER_HANDOFF=1` execute the
+  requested command directly where the caller already is instead of
+  spawning `colima`/`nerdctl`/`docker` (unreachable from inside). And
+  managed children share the lifecycle's readiness budget instead of a
+  fixed 30s exec-readiness timeout, wait while the lifecycle reports
+  `starting`, and only then poll exec readiness with the same per-probe
+  windows as `container up` — so a slow-but-healthy first start no longer
+  times children out while the stack is still coming up.
 - The headless managed `dev:container` lifecycle no longer refuses with
   "detached activation publication refused" while it starts an environment in
   a scoped `data_from` clone (Acowtancy adoption proof #625). The managed

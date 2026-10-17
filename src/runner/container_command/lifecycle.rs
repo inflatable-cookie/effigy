@@ -78,6 +78,7 @@ const SECRETS_REQUIRED_ENV: &str = "EFFIGY_SECRETS_REQUIRED";
 struct ContainerUpPlan {
     stop_flag: Arc<AtomicBool>,
     policy: EffectiveContainerPolicy,
+    requested_container: Option<String>,
     secret_runtime: ResolvedContainerSecretRuntime,
     compose_secret_env: Vec<(String, OsString)>,
     warnings: Vec<String>,
@@ -425,6 +426,7 @@ fn prepare_container_up(
     Ok(ContainerUpPlan {
         stop_flag,
         policy,
+        requested_container: name.map(str::to_owned),
         secret_runtime,
         compose_secret_env,
         warnings,
@@ -570,6 +572,26 @@ fn complete_container_up_runtime_integrations(
             return Err(finish_container_up_failure(error, cleanup_result));
         }
     };
+    // Managed cache and build volumes (Cargo registry/git, target dirs) are
+    // owned-disposable mounts: repair their workspace-user ownership now
+    // that exec is verified, before secrets, gateway exposure or readiness
+    // reporting. `container up` is the one stage every first creation,
+    // reuse and handover passes through; managed children and `container
+    // shell` enter through exec without their own preparation.
+    if let Err(error) = ensure_up_workspace_permissions(policy, || {
+        crate::runner::system_command::ensure_workspace_permissions_ready(
+            repo_root,
+            policy,
+            plan.requested_container.as_deref(),
+            None,
+        )
+    }) {
+        if plan.attach_mode == EffectiveAttachMode::Detached {
+            return Err(detached_partial_activation_error(policy, error, None));
+        }
+        let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, policy);
+        return Err(finish_container_up_failure(error, cleanup_result));
+    }
     if let Err(error) =
         materialize_container_secret_runtime(repo_root, policy, &plan.secret_runtime, &binding)
     {
@@ -636,6 +658,26 @@ fn complete_container_up_runtime_integrations(
         managed_host_listeners,
         tcp_alias_host_notes,
         warnings,
+    })
+}
+
+/// Run workspace permission preparation as a `container up` integration
+/// stage, after exec readiness is verified and before secrets, gateway
+/// exposure or readiness reporting.
+///
+/// The injectable `prepare` keeps the failure mapping unit-testable without
+/// a runtime; production passes the same workspace permission backend task
+/// activation uses, so owned-disposable cache volumes are writable by the
+/// workspace user on first creation, reuse and handover alike.
+fn ensure_up_workspace_permissions(
+    policy: &EffectiveContainerPolicy,
+    prepare: impl FnOnce() -> Result<(), RunnerError>,
+) -> Result<(), RunnerError> {
+    prepare().map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "container `{}` workspace permission preparation failed: {error}",
+            policy.name
+        ))
     })
 }
 
@@ -1127,6 +1169,37 @@ pub(super) fn run_container_shell(
             "`effigy container shell` does not support `--json` because it is interactive",
         ));
     }
+    // Inside the workspace container the requested shell is the caller's
+    // own environment: run it directly instead of probing a host runtime
+    // (colima/nerdctl/docker) that is unreachable from inside.
+    if let Some(resolved) =
+        crate::runner::container_runtime::resolve_handoff_local_execution(repo_root, name, service)
+    {
+        let execution = resolved?;
+        let output = match command {
+            Some(shell_command) => {
+                crate::runner::container_runtime::run_handoff_local_shell_command(
+                    &execution,
+                    shell_command,
+                    &[],
+                    false,
+                )?
+            }
+            None => {
+                crate::runner::container_runtime::run_handoff_local_interactive_shell(&execution)?
+            }
+        };
+        if command.is_some() && !output.status.success() {
+            return Err(RunnerError::task_invocation(format!(
+                "container handoff shell command exited with status {}",
+                output.status
+            )));
+        }
+        return Ok(format!(
+            "{} finished container shell for `{}` service `{}`",
+            "[ok]", execution.container, execution.service,
+        ));
+    }
     let (policy, service, working_dir) = resolve_container_shell_session(repo_root, name, service)?;
     let _operation_plan = exec_operation_plan(
         repo_root,
@@ -1220,6 +1293,32 @@ fn run_container_exec_operation(
         return Err(RunnerError::task_invocation(
             "container_exec requires at least one command argument",
         ));
+    }
+    // Inside the workspace container the requested command is already
+    // local: run it directly instead of probing a host runtime
+    // (colima/nerdctl/docker) that is unreachable from inside.
+    if let Some(resolved) = crate::runner::container_runtime::resolve_handoff_local_execution(
+        repo_root,
+        name,
+        operation.service.as_deref(),
+    ) {
+        let execution = resolved?;
+        let env = operation
+            .env
+            .iter()
+            .filter(|(key, _)| !crate::runner::host_scheduler::is_scheduler_owned_env(key))
+            .map(|(key, value)| (key.clone(), value.to_string_lossy().into_owned()))
+            .collect::<Vec<_>>();
+        let mut argv = Vec::with_capacity(operation.command.len());
+        argv.extend(operation.command.iter().cloned());
+        return crate::runner::container_runtime::run_handoff_local_direct_command_with_options(
+            &execution,
+            &argv,
+            operation.cwd.as_deref(),
+            operation.stdin_file.as_deref(),
+            &env,
+            capture,
+        );
     }
 
     let (policy, service, _) =
@@ -1319,12 +1418,12 @@ fn emit_ssh_agent_socket_warning(policy: &EffectiveContainerPolicy, repo_root: &
 mod tests {
     use super::{
         annotate_workspace_extra_mount_decisions, clear_partial_activation,
-        detached_partial_activation_error, exec_operation_plan, gateway_registration_failure,
-        lifecycle_operation_plan, partial_activation_recorded, partial_reconcile_skips_compose_up,
-        primary_service_is_running, reconcile_partial_activation,
-        refresh_workspace_mounts_for_creation, resolve_workspace_mounts_for_creation,
-        run_container_down_command, run_container_eject, start_runtime_after_scope_registration,
-        RunnerError,
+        detached_partial_activation_error, ensure_up_workspace_permissions, exec_operation_plan,
+        gateway_registration_failure, lifecycle_operation_plan, partial_activation_recorded,
+        partial_reconcile_skips_compose_up, primary_service_is_running,
+        reconcile_partial_activation, refresh_workspace_mounts_for_creation,
+        resolve_workspace_mounts_for_creation, run_container_down_command, run_container_eject,
+        start_runtime_after_scope_registration, RunnerError,
     };
     use crate::runner::container_command::handover::hand_over_conflicting_environments;
     use crate::runner::container_command::support::{
@@ -1390,6 +1489,34 @@ mod tests {
             detach_timeout_secs: 10,
             host_processes: Vec::new(),
         }
+    }
+
+    #[test]
+    fn up_workspace_permission_preparation_names_container_on_failure() {
+        let policy = test_policy(Vec::new());
+
+        let error = ensure_up_workspace_permissions(&policy, || {
+            Err(RunnerError::task_invocation(
+                "resolved user `dev` (uid=501 gid=20) cannot read/write `/usr/local/cargo/git/db`",
+            ))
+        })
+        .expect_err("preparation failure should surface");
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains("container `web` workspace permission preparation failed"),
+            "got: {rendered}"
+        );
+        assert!(
+            rendered.contains("/usr/local/cargo/git/db"),
+            "got: {rendered}"
+        );
+    }
+
+    #[test]
+    fn up_workspace_permission_preparation_passes_success_through() {
+        let policy = test_policy(Vec::new());
+
+        ensure_up_workspace_permissions(&policy, || Ok(())).expect("clean preparation should pass");
     }
 
     #[test]
@@ -1549,6 +1676,132 @@ mod tests {
                 assert!(operation.interactive);
             }
             other => panic!("unexpected operation kind: {other:?}"),
+        }
+    }
+
+    fn write_handoff_repo(name: &str) -> PathBuf {
+        let root = temp_repo("container-handoff", name);
+        let workspace = root.join("workspace");
+        fs::create_dir_all(&workspace).expect("mkdir handoff workspace");
+        // The container working directory is absolute; point it at a fresh
+        // fixture directory so the test proves local execution without
+        // touching anything outside the fixture.
+        let working_dir = workspace.display().to_string().replace('\'', "'\\''");
+        fs::write(
+            root.join("effigy.toml"),
+            format!(
+                r#"
+[containers.web]
+primary_service = "app"
+working_dir = '{working_dir}'
+
+[containers.web.services.app]
+catalog = "node"
+"#,
+            ),
+        )
+        .expect("write manifest");
+        fs::create_dir_all(root.join("bin")).expect("mkdir fake runtime bin");
+        for binary in ["docker", "colima", "nerdctl", "compose"] {
+            // Loud refusal shims: any host runtime probe from inside the
+            // handoff fails the test by recording the invocation.
+            let path = root.join("bin").join(binary);
+            fs::write(
+                &path,
+                format!(
+                    "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\n exit 42\n",
+                    root.join(format!("host-runtime-{binary}.log")).display()
+                ),
+            )
+            .expect("write refusal shim");
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mut perms = fs::metadata(&path).expect("stat shim").permissions();
+                perms.set_mode(0o755);
+                fs::set_permissions(&path, perms).expect("chmod shim");
+            }
+        }
+        root
+    }
+
+    fn handoff_env(root: &std::path::Path) -> crate::contract_test_support::EnvGuard {
+        let path = format!(
+            "{}:{}",
+            root.join("bin").display(),
+            std::env::var("PATH").unwrap_or_default()
+        );
+        crate::contract_test_support::EnvGuard::set_many(&[
+            (
+                crate::runner::container_runtime::CONTAINER_HANDOFF_ENV_NAME,
+                Some("1".to_owned()),
+            ),
+            ("PATH", Some(path)),
+        ])
+    }
+
+    #[test]
+    fn handoff_container_shell_command_runs_locally_without_host_runtime() {
+        let root = write_handoff_repo("shell-command-local");
+        let _env = handoff_env(&root);
+        let marker = root.join("shell-marker.txt");
+
+        let output = super::run_container_shell(
+            &root,
+            Some("web"),
+            Some("app"),
+            Some(&format!("printf handoff-shell-ok > '{}'", marker.display())),
+            false,
+        )
+        .expect("handoff shell command should run locally");
+        assert!(
+            output.contains("finished container shell for `web` service `app`"),
+            "got: {output}"
+        );
+        assert_eq!(
+            fs::read_to_string(&marker).expect("read marker"),
+            "handoff-shell-ok"
+        );
+        for binary in ["docker", "colima", "nerdctl", "compose"] {
+            assert!(
+                !root.join(format!("host-runtime-{binary}.log")).exists(),
+                "host runtime `{binary}` was probed from inside the handoff"
+            );
+        }
+    }
+
+    #[test]
+    fn handoff_container_exec_operation_runs_locally_without_host_runtime() {
+        let root = write_handoff_repo("exec-operation-local");
+        let _env = handoff_env(&root);
+        let marker = root.join("exec-marker.txt");
+
+        let output = super::run_container_exec_operation_capture(
+            &root,
+            Some("web"),
+            effigy_containers::ContainerCapturedExecOperation {
+                service: Some("app".to_owned()),
+                command: vec![
+                    "sh".to_owned(),
+                    "-lc".to_owned(),
+                    format!("printf handoff-exec-ok > '{}'", marker.display()),
+                ],
+                stdin_file: None,
+                cwd: None,
+                env: std::collections::BTreeMap::new(),
+            },
+        )
+        .expect("handoff exec operation should run locally");
+        assert!(output.status.success(), "exec failed: {output:?}");
+        assert_eq!(
+            fs::read_to_string(&marker).expect("read marker"),
+            "handoff-exec-ok"
+        );
+        for binary in ["docker", "colima", "nerdctl", "compose"] {
+            assert!(
+                !root.join(format!("host-runtime-{binary}.log")).exists(),
+                "host runtime `{binary}` was probed from inside the handoff"
+            );
         }
     }
 

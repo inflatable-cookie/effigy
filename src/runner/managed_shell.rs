@@ -7,7 +7,6 @@ use effigy_containers::session::{
     container_exec_command, managed_lifecycle_dns_routes_section,
     managed_lifecycle_idle_wait_command, managed_lifecycle_readiness_wait,
     managed_lifecycle_setup_sequence, managed_lifecycle_state_path,
-    MANAGED_EXEC_READINESS_TIMEOUT_SECS,
 };
 use effigy_containers::EffectiveContainerPolicy;
 use effigy_core::shell::shell_quote;
@@ -110,7 +109,7 @@ pub(crate) fn render_inline_managed_lifecycle_command(
     format!(
         "sh -lc {}",
         shell_quote(&format!(
-            "state_path={lifecycle_state}; parent_pid=$PPID; mkdir -p \"$(dirname \"$state_path\")\"; printf '%s\\n' starting > \"$state_path\"; started=0; cleanup() {{ if [ \"$started\" = 1 ]; then printf '%s\\n' stopped > \"$state_path\"; {down} >/dev/null 2>&1 || true; else printf '%s\\n' failed > \"$state_path\"; fi; }}; trap 'cleanup' EXIT INT TERM; printf 'managed lifecycle: %s\\n' {readiness_status}; if ! {up}; then printf '%s\\n' 'managed lifecycle failed during container startup' 1>&2; exit 1; fi; started=1; {setup_sequence}{readiness_wait}printf '%s\\n' ready > \"$state_path\"; printf 'managed ready: %s\\n' {ready_banner}; printf 'Managed Container Lifecycle\\n\\n'; printf 'container: %s\\n' {label}; printf 'owner_task: %s\\n' {owner_task}; printf 'readiness: %s\\n' {readiness_status}; {dns_routes_section}printf 'ready_message: %s\\n\\n' {ready_banner}; {ps} || true; printf '\\n[info] lifecycle owner is idle; use compose status to refresh.\\n'; {idle_wait}",
+            "state_path={lifecycle_state}; parent_pid=$PPID; mkdir -p \"$(dirname \"$state_path\")\"; printf '%s\\n' starting > \"$state_path\"; started=0; cleanup() {{ if [ \"$started\" = 1 ]; then printf '%s\\n' stopped > \"$state_path\"; {down} >/dev/null 2>&1 || true; else printf '%s\\n' failed > \"$state_path\"; fi; }}; trap 'cleanup' EXIT INT TERM; printf 'managed lifecycle: %s\\n' {readiness_status}; if ! {up}; then printf '%s\\n' 'managed lifecycle failed during container startup' 1>&2; exit 1; fi; started=1; printf '%s\\n' started > \"$state_path\"; {setup_sequence}{readiness_wait}printf '%s\\n' ready > \"$state_path\"; printf 'managed ready: %s\\n' {ready_banner}; printf 'Managed Container Lifecycle\\n\\n'; printf 'container: %s\\n' {label}; printf 'owner_task: %s\\n' {owner_task}; printf 'readiness: %s\\n' {readiness_status}; {dns_routes_section}printf 'ready_message: %s\\n\\n' {ready_banner}; {ps} || true; printf '\\n[info] lifecycle owner is idle; use compose status to refresh.\\n'; {idle_wait}",
             label = shell_quote(&policy.name),
             owner_task = shell_quote(owner_task),
             readiness_status = shell_quote(readiness_status),
@@ -187,20 +186,38 @@ pub(crate) fn render_inline_managed_shell_command(
     format!(
         "sh -lc {}",
         shell_quote(&format!(
-            "state_path={lifecycle_state}; while true; do if {readiness_probe} >/dev/null 2>&1; then {attach}; exit $?; fi; if [ -f \"$state_path\" ] && [ \"$(cat \"$state_path\")\" = failed ]; then printf '%s\\n' 'managed lifecycle failed before shell became available' 1>&2; exit 1; fi; sleep 1; done"
+            "state_path={lifecycle_state}; while true; do if [ -f \"$state_path\" ] && [ \"$(cat \"$state_path\")\" = starting ]; then sleep 1; continue; fi; if {readiness_probe} >/dev/null 2>&1; then {attach}; exit $?; fi; if [ -f \"$state_path\" ] && [ \"$(cat \"$state_path\")\" = failed ]; then printf '%s\\n' 'managed lifecycle failed before shell became available' 1>&2; exit 1; fi; sleep 1; done"
         ))
     )
 }
 
+pub(crate) struct InlineManagedStandardExecRequest<'a> {
+    pub repo_root: &'a Path,
+    pub policy: &'a EffectiveContainerPolicy,
+    pub owner_task: &'a str,
+    pub process_cwd: &'a Path,
+    pub container_repo_root: Option<&'a Path>,
+    pub setup_command: Option<&'a str>,
+    pub command: &'a str,
+    /// Outer budget for the exec-readiness wait. The caller passes the
+    /// managed plan's readiness timeout so concurrent children share the
+    /// lifecycle's own startup budget instead of a fixed guess.
+    pub exec_readiness_timeout_secs: u64,
+}
+
 pub(crate) fn render_inline_managed_standard_exec_command(
-    repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
-    owner_task: &str,
-    process_cwd: &Path,
-    container_repo_root: Option<&Path>,
-    setup_command: Option<&str>,
-    command: &str,
+    request: InlineManagedStandardExecRequest<'_>,
 ) -> String {
+    let InlineManagedStandardExecRequest {
+        repo_root,
+        policy,
+        owner_task,
+        process_cwd,
+        container_repo_root,
+        setup_command,
+        command,
+        exec_readiness_timeout_secs,
+    } = request;
     let cwd = shell_quote(&process_cwd.display().to_string());
     let lifecycle_state = managed_lifecycle_state_path(repo_root, &policy.name, owner_task);
     let lifecycle_state = shell_quote(&lifecycle_state.display().to_string());
@@ -260,8 +277,8 @@ pub(crate) fn render_inline_managed_standard_exec_command(
     format!(
         "sh -lc {}",
         shell_quote(&format!(
-            "cd {cwd} && state_path={lifecycle_state}; deadline=$(( $(date +%s) + {timeout_secs} )); while true; do if {probe} >/dev/null 2>&1; then {setup_sequence}{attach}; exit $?; fi; if [ -f \"$state_path\" ] && [ \"$(cat \"$state_path\")\" = failed ]; then printf '%s\\n' 'managed lifecycle failed before exec surface became available' 1>&2; exit 1; fi; if [ \"$(date +%s)\" -ge \"$deadline\" ]; then printf '%s\\n' 'managed exec timed out waiting for container exec readiness' 1>&2; exit 1; fi; sleep 1; done",
-            timeout_secs = MANAGED_EXEC_READINESS_TIMEOUT_SECS,
+            "cd {cwd} && state_path={lifecycle_state}; deadline=$(( $(date +%s) + {timeout_secs} )); while true; do if [ -f \"$state_path\" ] && [ \"$(cat \"$state_path\")\" = starting ]; then sleep 1; continue; fi; if {probe} >/dev/null 2>&1; then {setup_sequence}{attach}; exit $?; fi; if [ -f \"$state_path\" ] && [ \"$(cat \"$state_path\")\" = failed ]; then printf '%s\\n' 'managed lifecycle failed before exec surface became available' 1>&2; exit 1; fi; if [ \"$(date +%s)\" -ge \"$deadline\" ]; then printf '%s\\n' 'managed exec timed out waiting for container exec readiness' 1>&2; exit 1; fi; sleep 1; done",
+            timeout_secs = exec_readiness_timeout_secs,
             setup_sequence = setup_sequence,
         ))
     )

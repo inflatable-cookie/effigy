@@ -96,6 +96,18 @@ service passes it. An unlabelled, foreign or wrong-checkout primary is neither
 exec'd nor restarted; the up reports not exec-ready. The shell and task exec
 that follow are gated by that readiness boundary.
 
+An Effigy invocation that already runs inside its own workspace container
+(`EFFIGY_INTERNAL_CONTAINER_HANDOFF=1`) never calls host runtime commands.
+`container shell --command`, `container exec`, and `exec` resolve the policy
+and working directory from the filesystem only and execute the requested
+command directly where the caller already is; a bare `container shell`
+opens the login shell locally. No `colima`/`nerdctl`/`docker` probe, no
+workspace effigy refresh, and no owned-binding recheck runs from inside —
+the marker is only ever set by Effigy's own compose exec into the target
+service, so the local container is the requested one by construction.
+Task routing, suite targeting, and workspace-shell handoff already stay
+local under the same marker; this closes the remaining exec surfaces.
+
 Ordinary workload entry gives the selected service's owned-binding observation
 (runtime inventory followed by strict inspect) a bounded 15-second window.
 The initial workload exec probe then has its separate two-second window; the
@@ -243,6 +255,27 @@ changed/legacy markers and unavailable observations refuse without Compose up.
 The context persists as the detached owner after success, marked complete; only
 the selected temporary task lease is cleared. Explicit `container down` clears that context
 and keeps volumes. Attached bring-up keeps its existing cleanup policy.
+
+`container up` runs workspace permission preparation as an integration stage
+once exec readiness is verified, before secrets, gateway exposure, and
+readiness reporting. `up` is the one stage every first creation, reuse, and
+handover passes through; managed children and `container shell` enter through
+exec without their own preparation. Owned-disposable cache and build volumes
+(Cargo registry/git, target dirs) are therefore writable by the workspace
+user however the stack was created. A preparation failure refuses closed
+with the container named: detached `up` records a partial activation
+without tearing the started scope down, attached `up` runs the ordinary
+failed bring-up cleanup, and neither retries, recreates, or adopts anything.
+
+Managed concurrent children share the task's readiness budget
+(`health_wait_timeout_secs`, default 60 seconds) for container exec
+readiness instead of a fixed guess, with the same per-probe windows as
+`container up`. Children wait while the lifecycle state reports `starting`
+(the lifecycle writes `started` once `up` — including preparation —
+succeeds, and `ready` after readiness waiting) and only then poll the
+readiness probe. A slow-but-healthy first start therefore no longer times
+children out while the stack is still coming up, and reuse or handover
+starts from prepared volumes.
 
 Detached JSON failures contain bounded structural details: state, phase,
 unverified readiness/exposure, and supported recovery/stop commands. No raw

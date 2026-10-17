@@ -302,6 +302,19 @@
 "test:managed:process-inventory" = [
   { id = "managed-process-inventory-rows", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy-gateway --lib --filterset 'test(process_inventory_row_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
 ]
+# Managed headless container lifecycle (headless dev:container children):
+# exec-readiness render contract (plan-timeout budget plus wait-while-starting
+# gate), up-stage workspace permission preparation, and in-container
+# re-entry that never probes the host runtime. Unit renders plus scripted
+# shell behavior and the fake-runtime healthy-stack E2E (first start and
+# reuse after a handover). Private fixtures only; no live VM or container.
+"test:managed:headless-lifecycle" = [
+  { id = "managed-exec-readiness-render", run = "cargo test -p effigy-containers --lib session::tests:: -- --nocapture", timeout_ms = 300000 },
+  { id = "managed-up-workspace-prep", run = "cargo test -p effigy --lib container_command::lifecycle::tests::up_workspace_permission -- --nocapture", timeout_ms = 300000 },
+  { id = "managed-handoff-local-exec", run = "cargo test -p effigy --lib container_command::lifecycle::tests::handoff_container -- --nocapture", timeout_ms = 300000 },
+  { id = "managed-inline-exec-render", run = "cargo test -p effigy --lib execute::pipeline::managed::tests::inline_managed -- --nocapture", timeout_ms = 300000 },
+  { id = "managed-headless-healthy-stack", run = "cargo test --test cli_output_tests cli_managed_headless_lifecycle_reaches_running_on_healthy_stack -- --nocapture", timeout_ms = 600000 },
+]
 "proof:managed:host-readiness" = [
   { id = "managed-host-readiness-probe", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(managed_host_readiness_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
   { id = "managed-host-readiness-terminal", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_host_readiness_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },

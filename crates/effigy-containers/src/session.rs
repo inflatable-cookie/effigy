@@ -4,7 +4,6 @@
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
-pub const MANAGED_EXEC_READINESS_TIMEOUT_SECS: u64 = 30;
 const CONTAINER_WORKSPACE_EFFIGY_INSTALL_PATH: &str = "/usr/local/bin/effigy";
 
 use crate::{
@@ -220,7 +219,7 @@ pub fn managed_lifecycle_command(request: ManagedLifecycleRequest<'_>) -> String
     format!(
         "sh -lc {script}",
         script = shell_quote(&format!(
-            "state_path={lifecycle_state}; parent_pid=$PPID; mkdir -p \"$(dirname \"$state_path\")\"; printf '%s\\n' starting > \"$state_path\"; started=0; cleanup() {{ if [ \"$started\" = 1 ]; then printf '%s\\n' stopped > \"$state_path\"; {down} >/dev/null 2>&1 || true; else printf '%s\\n' failed > \"$state_path\"; fi; }}; trap 'cleanup' EXIT INT TERM; printf 'managed lifecycle: %s\\n' {readiness_status}; if ! {up}; then printf '%s\\n' 'managed lifecycle failed during container startup' 1>&2; exit 1; fi; started=1; {setup_sequence}{readiness_wait}printf '%s\\n' ready > \"$state_path\"; printf 'managed ready: %s\\n' {ready_banner}; printf 'Managed Container Lifecycle\\n\\n'; printf 'container: %s\\n' {label}; printf 'owner_task: %s\\n' {owner_task}; printf 'readiness: %s\\n' {readiness_status}; {dns_routes_section}printf 'ready_message: %s\\n\\n' {ready_banner}; {status} || true; printf '\\n[info] lifecycle owner is idle; use `effigy container {label} status` to refresh.\\n'; {idle_wait}",
+            "state_path={lifecycle_state}; parent_pid=$PPID; mkdir -p \"$(dirname \"$state_path\")\"; printf '%s\\n' starting > \"$state_path\"; started=0; cleanup() {{ if [ \"$started\" = 1 ]; then printf '%s\\n' stopped > \"$state_path\"; {down} >/dev/null 2>&1 || true; else printf '%s\\n' failed > \"$state_path\"; fi; }}; trap 'cleanup' EXIT INT TERM; printf 'managed lifecycle: %s\\n' {readiness_status}; if ! {up}; then printf '%s\\n' 'managed lifecycle failed during container startup' 1>&2; exit 1; fi; started=1; printf '%s\\n' started > \"$state_path\"; {setup_sequence}{readiness_wait}printf '%s\\n' ready > \"$state_path\"; printf 'managed ready: %s\\n' {ready_banner}; printf 'Managed Container Lifecycle\\n\\n'; printf 'container: %s\\n' {label}; printf 'owner_task: %s\\n' {owner_task}; printf 'readiness: %s\\n' {readiness_status}; {dns_routes_section}printf 'ready_message: %s\\n\\n' {ready_banner}; {status} || true; printf '\\n[info] lifecycle owner is idle; use `effigy container {label} status` to refresh.\\n'; {idle_wait}",
             label = shell_quote(label),
             readiness_status = shell_quote(readiness_status),
             ready_banner = shell_quote(&ready_banner),
@@ -284,6 +283,7 @@ pub fn managed_shell_command(
     owner_task: &str,
     service: Option<&str>,
     executable: &str,
+    exec_readiness_timeout_secs: u64,
 ) -> String {
     let repo = shell_quote(&repo_root.display().to_string());
     let selector = container_name
@@ -315,8 +315,8 @@ pub fn managed_shell_command(
     format!(
         "sh -lc {script}",
         script = shell_quote(&format!(
-            "state_path={lifecycle_state}; deadline=$(( $(date +%s) + {timeout_secs} )); while true; do if {readiness_probe}; then exec {attach}; fi; if [ -f \"$state_path\" ] && [ \"$(cat \"$state_path\")\" = failed ]; then printf '%s\\n' 'managed lifecycle failed before shell became available' 1>&2; exit 1; fi; if [ \"$(date +%s)\" -ge \"$deadline\" ]; then printf '%s\\n' 'managed shell timed out waiting for container exec readiness' 1>&2; exit 1; fi; sleep 1; done",
-            timeout_secs = MANAGED_EXEC_READINESS_TIMEOUT_SECS,
+            "state_path={lifecycle_state}; deadline=$(( $(date +%s) + {timeout_secs} )); while true; do if [ -f \"$state_path\" ] && [ \"$(cat \"$state_path\")\" = starting ]; then sleep 1; continue; fi; if {readiness_probe}; then exec {attach}; fi; if [ -f \"$state_path\" ] && [ \"$(cat \"$state_path\")\" = failed ]; then printf '%s\\n' 'managed lifecycle failed before shell became available' 1>&2; exit 1; fi; if [ \"$(date +%s)\" -ge \"$deadline\" ]; then printf '%s\\n' 'managed shell timed out waiting for container exec readiness' 1>&2; exit 1; fi; sleep 1; done",
+            timeout_secs = exec_readiness_timeout_secs,
         )),
     )
 }
@@ -334,6 +334,10 @@ pub struct ManagedStandardExecRequest<'a> {
     pub setup_command: Option<&'a str>,
     pub executable: &'a str,
     pub command: &'a str,
+    /// Outer budget for the exec-readiness wait. The caller passes the
+    /// managed plan's readiness timeout so concurrent children share the
+    /// lifecycle's own startup budget instead of a fixed guess.
+    pub exec_readiness_timeout_secs: u64,
 }
 
 pub fn managed_standard_exec_command(request: ManagedStandardExecRequest<'_>) -> String {
@@ -346,6 +350,7 @@ pub fn managed_standard_exec_command(request: ManagedStandardExecRequest<'_>) ->
         setup_command,
         executable,
         command,
+        exec_readiness_timeout_secs,
     } = request;
     let repo = shell_quote(&repo_root.display().to_string());
     let cwd = shell_quote(&process_cwd.display().to_string());
@@ -390,8 +395,8 @@ pub fn managed_standard_exec_command(request: ManagedStandardExecRequest<'_>) ->
     format!(
         "sh -lc {script}",
         script = shell_quote(&format!(
-            "cd {cwd} && state_path={lifecycle_state}; deadline=$(( $(date +%s) + {timeout_secs} )); while true; do if {readiness_probe}; then {setup_sequence}exec {attach}; fi; if [ -f \"$state_path\" ] && [ \"$(cat \"$state_path\")\" = failed ]; then printf '%s\\n' 'managed lifecycle failed before exec surface became available' 1>&2; exit 1; fi; if [ \"$(date +%s)\" -ge \"$deadline\" ]; then printf '%s\\n' 'managed exec timed out waiting for container exec readiness' 1>&2; exit 1; fi; sleep 1; done",
-            timeout_secs = MANAGED_EXEC_READINESS_TIMEOUT_SECS,
+            "cd {cwd} && state_path={lifecycle_state}; deadline=$(( $(date +%s) + {timeout_secs} )); while true; do if [ -f \"$state_path\" ] && [ \"$(cat \"$state_path\")\" = starting ]; then sleep 1; continue; fi; if {readiness_probe}; then {setup_sequence}exec {attach}; fi; if [ -f \"$state_path\" ] && [ \"$(cat \"$state_path\")\" = failed ]; then printf '%s\\n' 'managed lifecycle failed before exec surface became available' 1>&2; exit 1; fi; if [ \"$(date +%s)\" -ge \"$deadline\" ]; then printf '%s\\n' 'managed exec timed out waiting for container exec readiness' 1>&2; exit 1; fi; sleep 1; done",
+            timeout_secs = exec_readiness_timeout_secs,
             setup_sequence = setup_sequence,
         )),
     )
@@ -636,6 +641,15 @@ mod tests {
             "got: {rendered}"
         );
         assert!(rendered.contains("parent_pid=$PPID"), "got: {rendered}");
+        let up_index = rendered.find("up --detach").expect("lifecycle up");
+        // Single quotes are re-quoted by shell quoting, so match the
+        // quote-free state-write markers.
+        let started_index = rendered
+            .find("started > ")
+            .expect("started marker after up");
+        let ready_index = rendered.find("ready > ").expect("ready marker");
+        assert!(up_index < started_index, "got: {rendered}");
+        assert!(started_index < ready_index, "got: {rendered}");
         assert!(
             rendered.contains("while kill -0 \"$parent_pid\" >/dev/null 2>&1; do sleep 1; done"),
             "got: {rendered}"
@@ -733,10 +747,11 @@ mod tests {
             setup_command: None,
             executable: "effigy",
             command: "printf api-ok",
+            exec_readiness_timeout_secs: 45,
         });
 
         assert!(
-            rendered.contains("cd /tmp/repo/acme-api && state_path=/tmp/repo/.effigy/runtime/managed-lifecycle/dev-web.state; deadline=$(( $(date +%s) + 30 )); while true; do if env EFFIGY_INTERNAL_SUPPRESS_HEADER=1 effigy container web shell --command true --repo /tmp/repo >/dev/null 2>&1; then exec env EFFIGY_INTERNAL_SUPPRESS_HEADER=1 effigy container web shell --command"),
+            rendered.contains("cd /tmp/repo/acme-api && state_path=/tmp/repo/.effigy/runtime/managed-lifecycle/dev-web.state; deadline=$(( $(date +%s) + 45 )); while true; do if [ -f \"$state_path\" ] && [ \"$(cat \"$state_path\")\" = starting ]; then sleep 1; continue; fi; if env EFFIGY_INTERNAL_SUPPRESS_HEADER=1 effigy container web shell --command true --repo /tmp/repo >/dev/null 2>&1; then exec env EFFIGY_INTERNAL_SUPPRESS_HEADER=1 effigy container web shell --command"),
             "got: {rendered}"
         );
         assert!(
@@ -763,6 +778,7 @@ mod tests {
             setup_command: None,
             executable: "effigy",
             command: "(cd '/Users/tom/repo/acme-admin' && svelte-kit sync)",
+            exec_readiness_timeout_secs: 45,
         });
 
         assert!(
@@ -794,6 +810,7 @@ mod tests {
             ),
             executable: "effigy",
             command: "bun run dev",
+            exec_readiness_timeout_secs: 45,
         });
 
         assert!(
@@ -816,6 +833,7 @@ mod tests {
             setup_command: Some("printf setup-ok; "),
             executable: "effigy",
             command: "bun run dev",
+            exec_readiness_timeout_secs: 45,
         });
 
         let setup_index = rendered.find("printf setup-ok").expect("setup command");
@@ -833,6 +851,7 @@ mod tests {
             "dev",
             Some("workspace"),
             "effigy",
+            45,
         );
 
         assert!(
@@ -851,6 +870,49 @@ mod tests {
     }
 
     #[test]
+    fn managed_standard_exec_command_waits_while_lifecycle_starts() {
+        let rendered = managed_standard_exec_command(ManagedStandardExecRequest {
+            repo_root: Path::new("/tmp/repo"),
+            container_name: Some("web"),
+            owner_task: "dev",
+            process_cwd: Path::new("/tmp/repo/acme-api"),
+            container_repo_root: Some(Path::new("/workspace-root/repo")),
+            setup_command: None,
+            executable: "effigy",
+            command: "printf api-ok",
+            exec_readiness_timeout_secs: 60,
+        });
+
+        assert!(
+            rendered.contains(
+                "while true; do if [ -f \"$state_path\" ] && [ \"$(cat \"$state_path\")\" = starting ]; then sleep 1; continue; fi; if env"
+            ),
+            "got: {rendered}"
+        );
+        assert!(rendered.contains("+ 60 )); while true;"), "got: {rendered}");
+    }
+
+    #[test]
+    fn managed_shell_command_waits_while_lifecycle_starts() {
+        let rendered = managed_shell_command(
+            Path::new("/tmp/repo"),
+            Some("web"),
+            "dev",
+            Some("workspace"),
+            "effigy",
+            60,
+        );
+
+        assert!(
+            rendered.contains(
+                "while true; do if [ -f \"$state_path\" ] && [ \"$(cat \"$state_path\")\" = starting ]; then sleep 1; continue; fi; if env"
+            ),
+            "got: {rendered}"
+        );
+        assert!(rendered.contains("+ 60 )); while true;"), "got: {rendered}");
+    }
+
+    #[test]
     fn managed_gateway_command_suppresses_header_output() {
         let rendered = super::managed_gateway_command("effigy");
 
@@ -858,5 +920,272 @@ mod tests {
             rendered,
             "env EFFIGY_INTERNAL_SUPPRESS_HEADER=1 effigy gateway up"
         );
+    }
+
+    fn wait_for_child(
+        child: &mut std::process::Child,
+        timeout_secs: u64,
+        what: &str,
+    ) -> std::process::ExitStatus {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
+        loop {
+            if let Some(status) = child.try_wait().expect("poll child") {
+                return status;
+            }
+            assert!(std::time::Instant::now() < deadline, "timed out: {what}");
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    }
+
+    /// Stub-`effigy` harness for executing the rendered managed scripts.
+    ///
+    /// The stub emulates `effigy container <name> <subcommand>`: `up` takes
+    /// a beat (container startup), `shell --command true` probes readiness,
+    /// any other `shell --command` attaches the workload. Probe/attach
+    /// markers prove what the script attempted and when. `STUB_MODE` tunes
+    /// behavior: `probe-fail` makes every probe fail so the readiness
+    /// timeout is observable.
+    struct ScriptHarness {
+        dir: std::path::PathBuf,
+        stub: std::path::PathBuf,
+        log: std::path::PathBuf,
+    }
+
+    impl ScriptHarness {
+        fn setup(name: &str) -> Self {
+            let dir = std::env::temp_dir().join(format!(
+                "effigy-managed-script-{name}-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .expect("time")
+                    .as_nanos()
+            ));
+            std::fs::create_dir_all(&dir).expect("mkdir harness");
+            let log = dir.join("stub.log");
+            let stub = dir.join("effigy-stub.sh");
+            std::fs::write(
+                &stub,
+                format!(
+                    "#!/bin/sh\nlog='{log}'\nmode=\"${{STUB_MODE:-ok}}\"\nprintf '%s\\n' \"$*\" >> \"$log\"\ncase \"$*\" in\n  *up*) sleep 1; exit 0 ;;\n  *shell*)\n    if [ \"$mode\" = probe-fail ]; then exit 1; fi\n    case \"$*\" in\n      *'--command true'*) printf probe >> \"$log\" ;;\n      *) printf attach >> \"$log\" ;;\n    esac\n    exit 0 ;;\n  *) exit 0 ;;\nesac\n",
+                    log = log.display()
+                ),
+            )
+            .expect("write stub");
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mut perms = std::fs::metadata(&stub).expect("stat stub").permissions();
+                perms.set_mode(0o755);
+                std::fs::set_permissions(&stub, perms).expect("chmod stub");
+            }
+            Self { dir, stub, log }
+        }
+
+        fn stub_arg(&self) -> String {
+            self.stub.display().to_string()
+        }
+
+        fn state_path(&self) -> std::path::PathBuf {
+            super::managed_lifecycle_state_path(&self.dir, "web", "dev")
+        }
+
+        fn invocations(&self) -> String {
+            std::fs::read_to_string(&self.log).unwrap_or_default()
+        }
+
+        fn cleanup(&self) {
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    fn wait_for_state(path: &std::path::Path, expected: &str, timeout_secs: u64) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
+        loop {
+            let current = std::fs::read_to_string(path).unwrap_or_default();
+            if current.trim() == expected {
+                return;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "timed out waiting for lifecycle state `{expected}` (got `{}`)",
+                current.trim()
+            );
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    }
+
+    #[test]
+    fn managed_lifecycle_script_marks_started_after_up_before_ready() {
+        let harness = ScriptHarness::setup("lifecycle-started");
+        let rendered = managed_lifecycle_command(ManagedLifecycleRequest {
+            repo_root: &harness.dir,
+            container_name: Some("web"),
+            owner_task: "dev",
+            health_wait: false,
+            health_wait_timeout_secs: 60,
+            ready_message: None,
+            dns_route_lines: &[],
+            readiness_probe_urls: &[],
+            setup_commands: &[String::from("sleep 2")],
+            executable: &harness.stub_arg(),
+            secrets_required: false,
+        });
+        let mut child = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(&rendered)
+            .spawn()
+            .expect("spawn lifecycle script");
+        wait_for_state(&harness.state_path(), "starting", 10);
+        // `up` takes a beat in the stub: `started` must land after the
+        // startup completes and before the ready banner.
+        wait_for_state(&harness.state_path(), "started", 10);
+        wait_for_state(&harness.state_path(), "ready", 10);
+        let up_at = harness.invocations().find("up --detach").expect("up ran");
+        let status_at = harness.invocations().find("status").expect("status ran");
+        assert!(up_at < status_at);
+        child.kill().expect("stop lifecycle script");
+        let _ = child.wait();
+        harness.cleanup();
+    }
+
+    #[test]
+    fn managed_standard_exec_script_waits_while_lifecycle_starts() {
+        let harness = ScriptHarness::setup("exec-waits-starting");
+        std::fs::create_dir_all(harness.state_path().parent().expect("state parent"))
+            .expect("mkdir state parent");
+        std::fs::write(harness.state_path(), "starting\n").expect("seed starting");
+        let rendered = managed_standard_exec_command(ManagedStandardExecRequest {
+            repo_root: &harness.dir,
+            container_name: Some("web"),
+            owner_task: "dev",
+            process_cwd: &harness.dir,
+            container_repo_root: None,
+            setup_command: None,
+            executable: &harness.stub_arg(),
+            command: "printf child-ok",
+            exec_readiness_timeout_secs: 30,
+        });
+        let mut child = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(&rendered)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn child script");
+        // While the lifecycle reports `starting` the child must not probe
+        // or attach: no stub invocation may happen.
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        assert!(
+            !harness.log.exists(),
+            "child probed during startup: {}",
+            harness.invocations()
+        );
+        std::fs::write(harness.state_path(), "started\n").expect("seed started");
+        let status = wait_for_child(&mut child, 10, "child should attach");
+        assert!(status.success(), "child failed after startup");
+        let log = harness.invocations();
+        assert!(
+            log.contains("probe"),
+            "expected readiness probe, got: {log}"
+        );
+        assert!(log.contains("attach"), "expected attach, got: {log}");
+        harness.cleanup();
+    }
+
+    #[test]
+    fn managed_standard_exec_script_exits_when_lifecycle_fails() {
+        let harness = ScriptHarness::setup("exec-lifecycle-failed");
+        std::fs::create_dir_all(harness.state_path().parent().expect("state parent"))
+            .expect("mkdir state parent");
+        std::fs::write(harness.state_path(), "failed\n").expect("seed failed");
+        let rendered = managed_standard_exec_command(ManagedStandardExecRequest {
+            repo_root: &harness.dir,
+            container_name: Some("web"),
+            owner_task: "dev",
+            process_cwd: &harness.dir,
+            container_repo_root: None,
+            setup_command: None,
+            executable: &harness.stub_arg(),
+            command: "printf child-ok",
+            exec_readiness_timeout_secs: 30,
+        });
+        let output = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(&rendered)
+            // Probes fail against the failed lifecycle's stopped stack, so
+            // the loop reaches the lifecycle-failure backstop.
+            .env("STUB_MODE", "probe-fail")
+            .output()
+            .expect("run child script");
+        assert!(!output.status.success());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("managed lifecycle failed before exec surface became available"),
+            "got: {stderr}"
+        );
+        harness.cleanup();
+    }
+
+    #[test]
+    fn managed_standard_exec_script_times_out_with_configured_budget() {
+        let harness = ScriptHarness::setup("exec-timeout");
+        let rendered = managed_standard_exec_command(ManagedStandardExecRequest {
+            repo_root: &harness.dir,
+            container_name: Some("web"),
+            owner_task: "dev",
+            process_cwd: &harness.dir,
+            container_repo_root: None,
+            setup_command: None,
+            executable: &harness.stub_arg(),
+            command: "printf child-ok",
+            exec_readiness_timeout_secs: 2,
+        });
+        let output = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(&rendered)
+            .env("STUB_MODE", "probe-fail")
+            .output()
+            .expect("run child script");
+        assert!(!output.status.success());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("managed exec timed out waiting for container exec readiness"),
+            "got: {stderr}"
+        );
+        harness.cleanup();
+    }
+
+    #[test]
+    fn managed_shell_script_waits_while_lifecycle_starts() {
+        let harness = ScriptHarness::setup("shell-waits-starting");
+        std::fs::create_dir_all(harness.state_path().parent().expect("state parent"))
+            .expect("mkdir state parent");
+        std::fs::write(harness.state_path(), "starting\n").expect("seed starting");
+        let rendered = managed_shell_command(
+            &harness.dir,
+            Some("web"),
+            "dev",
+            None,
+            &harness.stub_arg(),
+            30,
+        );
+        let mut child = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(&rendered)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn shell script");
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        assert!(
+            !harness.log.exists(),
+            "shell probed during startup: {}",
+            harness.invocations()
+        );
+        std::fs::write(harness.state_path(), "started\n").expect("seed started");
+        let status = wait_for_child(&mut child, 10, "shell should attach");
+        assert!(status.success(), "shell failed after startup");
+        harness.cleanup();
     }
 }
