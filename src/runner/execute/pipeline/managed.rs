@@ -904,6 +904,15 @@ fn materialize_special_managed_processes(
             }
         }
     }
+    // Record the environment this plan's lifecycle owns so the headless
+    // runtime can persist it in session state; a whole-environment
+    // handover uses it to find the live owner bound to the environment
+    // coming down. Handoff sessions render no policy, so they bind to
+    // no environment here.
+    plan.container_environment = inline_policy
+        .as_ref()
+        .or(named_policy.as_ref())
+        .map(|policy| policy.name.clone());
     Ok(())
 }
 
@@ -1514,6 +1523,7 @@ mod tests {
             passthrough: Vec::new(),
             gateway_auto_start: false,
             readiness: effigy_managed::ManagedTaskReadiness::default(),
+            container_environment: None,
         }
     }
 

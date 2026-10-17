@@ -103,6 +103,9 @@ fn build_managed_task_plan(
                 .unwrap_or(DEFAULT_MANAGED_HEALTH_WAIT_TIMEOUT_SECS),
             ready_message: task.ready_message.clone(),
         },
+        // The runner fills this in once it resolves the container
+        // policy for lifecycle-backed plans.
+        container_environment: None,
     })
 }
 
