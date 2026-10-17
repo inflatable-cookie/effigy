@@ -113,10 +113,14 @@ pub(super) fn rewrite_workspace_mounts_for_direct_compose(
     if let Some(guard) = &admission {
         guard.before_render_write(&rewrite_path, rendered.as_bytes())?;
     }
-    std::fs::write(&rewrite_path, &rendered).map_err(|error| ContainerPolicyError::Read {
-        path: rewrite_path.clone(),
-        error,
-    })?;
+    // Atomic replacement: every policy resolution rewrites this admitted
+    // Compose input while strict publication verifies read it concurrently.
+    effigy_catalog::atomic_write::write_atomic(&rewrite_path, rendered.as_bytes()).map_err(
+        |error| ContainerPolicyError::Read {
+            path: rewrite_path.clone(),
+            error,
+        },
+    )?;
     if let Some(guard) = admission {
         guard.record_rendered(&rewrite_path, rendered.as_bytes())?;
     }

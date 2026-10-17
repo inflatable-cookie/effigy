@@ -1184,4 +1184,104 @@ mod tests {
             "a task-started stack is probed before teardown"
         );
     }
+
+    fn generated_workspace_checkout(label: &str) -> std::path::PathBuf {
+        let repo_root = std::env::temp_dir().join(format!(
+            "effigy-host-lease-{label}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&repo_root).expect("mkdir repo");
+        std::fs::write(
+            repo_root.join("effigy.toml"),
+            r#"
+[systems]
+default = "dev"
+
+[systems.dev]
+container = "web"
+default_workspace = "app"
+working_dir = "/workspace-root/app"
+user = "dev"
+home = "/home/dev"
+mounts = []
+
+[systems.dev.workspaces.app]
+
+[containers]
+default = "web"
+
+[containers.web]
+primary_service = "app"
+
+[containers.web.services.app]
+catalog = "php-fpm"
+version = "8.3"
+
+[containers.web.services.web]
+catalog = "nginx"
+variant = "default"
+"#,
+        )
+        .expect("write manifest");
+        repo_root
+    }
+
+    /// The exact publication seam of a managed detached activation: a strict
+    /// admission verify against runtime Compose inputs while another process
+    /// resolves the same policy and rewrites those inputs. The managed shell
+    /// and exec readiness probes do exactly this once per second during a
+    /// headless `dev:container` startup, and a truncating rewrite let the
+    /// verify observe a torn input and refuse publication (#197). Atomic
+    /// replacement keeps every read on one complete generation.
+    #[test]
+    fn concurrent_policy_resolutions_never_tear_admitted_compose_inputs() {
+        let repo_root = generated_workspace_checkout("verify-tear");
+        let home = tempfile::tempdir().expect("temporary fixture home");
+        let containers_home = home.path().join(".effigy");
+        // The writer thread resolves the policy through the same private home;
+        // env (unlike a thread-local) reaches the spawned writer.
+        let _env = crate::contract_test_support::EnvGuard::set_many(&[(
+            "EFFIGY_TEST_CONTAINERS_HOME",
+            Some(containers_home.display().to_string()),
+        )]);
+        effigy_containers::with_test_effigy_home(&containers_home, || {
+            let policy = effigy_containers::load_container_policy(&repo_root, None)
+                .expect("admission policy resolution");
+            let context = super::capture_detached_activation_context(&repo_root, &policy)
+                .expect("capture admitted activation context");
+            context
+                .verify(&repo_root, &policy, false)
+                .expect("fresh context verifies before the race");
+
+            let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let writer_stop = stop.clone();
+            let writer_root = repo_root.clone();
+            let writer = std::thread::spawn(move || {
+                while !writer_stop.load(std::sync::atomic::Ordering::Relaxed) {
+                    effigy_containers::load_container_policy(&writer_root, None)
+                        .expect("writer policy resolution");
+                }
+            });
+            let mut clean_reads = 0usize;
+            let failure = loop {
+                match context.verify(&repo_root, &policy, false) {
+                    Ok(()) => clean_reads += 1,
+                    Err(error) => break Some(error),
+                }
+                if clean_reads >= 2000 {
+                    break None;
+                }
+            };
+            stop.store(true, std::sync::atomic::Ordering::Relaxed);
+            writer.join().expect("writer joins");
+            assert!(
+                failure.is_none(),
+                "publication verify raced a concurrent policy rewrite after {clean_reads} clean reads: {}",
+                failure.expect("failure is set").to_string().replace('\n', " ")
+            );
+        });
+    }
 }

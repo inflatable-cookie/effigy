@@ -156,6 +156,31 @@ pub(in crate::runner) fn gateway_up_for_managed_task(command: &str) -> Result<()
     gateway_up_for_managed_task_with(command, verified_gateway_status_for_up)
 }
 
+/// Whether an authenticated, running gateway with an unreadable identity is
+/// safe to keep using. Managed task start only reuses an already-running
+/// gateway or starts one; it never signals, stops, replaces or recovers one.
+/// The hybrid handoff path reuses a running gateway without consulting its
+/// identity at all, so a headless managed start treats the same state —
+/// `record=authenticated`, `process=running`, identity unreadable to this
+/// user (permission-denied) — as reusable too, with one printed note. Any
+/// operation that signals, stops, replaces, recovers or starts a second
+/// gateway still requires a verified identity and keeps its refusal.
+fn reusable_unverified_gateway(diagnosis: &effigy_gateway::server::GatewayStatusDiagnosis) -> bool {
+    use effigy_gateway::server::{GatewayIdentityOutcome, GatewayProcessProbe, GatewayRecordKind};
+    diagnosis.record == GatewayRecordKind::Authenticated
+        && diagnosis.process_probe == Some(GatewayProcessProbe::Running)
+        && matches!(
+            diagnosis.identity,
+            GatewayIdentityOutcome::PermissionDenied | GatewayIdentityOutcome::Unknown
+        )
+}
+
+/// The single note printed when a managed start reuses an authenticated,
+/// running gateway whose identity this user cannot read. Labels only.
+fn unverified_gateway_reuse_note() -> &'static str {
+    "[gateway] gateway identity could not be verified (permission-denied); reusing the authenticated, running gateway without replacement"
+}
+
 /// Managed-start preflight with an injectable status probe. Production passes
 /// the local read-only preflight; tests inject a typed denial to prove the
 /// caller-level refusal carries the bounded diagnosis and launches nothing.
@@ -163,16 +188,29 @@ fn gateway_up_for_managed_task_with(
     command: &str,
     preflight: impl FnOnce(&GatewayConfig) -> GatewayUpStatusProbe,
 ) -> Result<(), RunnerError> {
+    gateway_up_for_managed_task_with_diagnosis(command, preflight, server::diagnose_gateway_status)
+}
+
+fn gateway_up_for_managed_task_with_diagnosis(
+    command: &str,
+    preflight: impl FnOnce(&GatewayConfig) -> GatewayUpStatusProbe,
+    diagnose: impl FnOnce(&GatewayConfig) -> effigy_gateway::server::GatewayStatusDiagnosis,
+) -> Result<(), RunnerError> {
     let mut state = ManagedStartState::Unverified;
     if effigy_core::executable_override::current().is_none() {
         let config = gateway_config()?;
         let probe = preflight(&config);
         if probe.identity_permission_denied {
             // Mirror `up`: one elevated lifecycle through the command when an
-            // interactive terminal can approve it; otherwise refuse with the
-            // same bounded diagnosis and launch no replacement.
+            // interactive terminal can approve it; otherwise reuse the
+            // authenticated, running gateway without replacement, or refuse
+            // with the same bounded diagnosis and launch nothing.
             if !(std::io::stdin().is_terminal() && elevation::gateway_identity_elevation_allowed())
             {
+                if reusable_unverified_gateway(&diagnose(&config)) {
+                    eprintln!("{}", unverified_gateway_reuse_note());
+                    return Ok(());
+                }
                 match resolve_gateway_status_for_config(&config, probe.status) {
                     Err(error) => return Err(error),
                     Ok(_) => {

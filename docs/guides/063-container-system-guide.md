@@ -1516,7 +1516,15 @@ that predates this and see an "untrusted" warning, re-run `effigy container up`
 If gateway identity is unreadable to the current user, `effigy gateway status`
 may request the existing bounded, read-only administrator verification; a
 lifecycle command may request the existing bounded administrator operation.
-Approve that visible request in an interactive terminal. If the identity or
+Approve that visible request in an interactive terminal. Reuse is different
+from authority: publishing or withdrawing routes writes the owner-checked
+route table directly, and a managed task start (`effigy dev:container` in a
+headless session, for example) only reuses an already-running daemon. So an
+authenticated, running gateway whose identity is unreadable is reused without
+replacement on those paths — headless included — with one printed note that
+the identity could not be verified. Only operations that signal, stop,
+replace, recover, or start a second gateway still require a verified identity
+and refuse with the bounded diagnosis. If the identity or
 lifecycle wait times out, run `effigy gateway status` before
 retrying; Effigy keeps records when the process generation is unknown and does
 not infer a match from a responding HTTP endpoint or PID file. To restart only

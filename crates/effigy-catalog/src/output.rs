@@ -105,16 +105,22 @@ impl ComposeOutput {
             }
         }
 
-        // Write compose file.
-        std::fs::write(&compose_path, &result.compose_yaml).map_err(|e| {
-            CatalogError::WriteError {
+        // Write compose file and its regeneration checksum atomically: these
+        // are admitted Compose inputs that concurrent policy resolutions and
+        // strict publication verifies read while this write is in flight.
+        crate::atomic_write::write_atomic(&compose_path, result.compose_yaml.as_bytes()).map_err(
+            |e| CatalogError::WriteError {
                 path: compose_path.clone(),
                 reason: e.to_string(),
-            }
-        })?;
+            },
+        )?;
 
-        // Write checksum.
-        let _ = std::fs::write(&checksum_path, &current_checksum);
+        crate::atomic_write::write_atomic(&checksum_path, current_checksum.as_bytes()).map_err(
+            |e| CatalogError::WriteError {
+                path: checksum_path.clone(),
+                reason: e.to_string(),
+            },
+        )?;
 
         // Write Dockerfiles to a catalog build context directory.
         let catalog_dir = self.output_dir.join(".effigy-catalog");

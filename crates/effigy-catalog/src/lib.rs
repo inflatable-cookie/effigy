@@ -15,6 +15,7 @@
 //! crates. Integration into the main runner happens separately.
 
 pub mod assembly;
+pub mod atomic_write;
 pub mod error;
 pub mod fragment;
 pub mod output;
