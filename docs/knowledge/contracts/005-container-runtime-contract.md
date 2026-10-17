@@ -741,7 +741,8 @@ failure, and says to run `effigy <task> stop`. A stale lock from a dead
 holder is still reclaimed only by the existing lock rules; lock ownership
 is never weakened. One line names the handed-over environment and what
 moved.
-The handover refuses only when stopping that environment itself fails; it
+The handover refuses only when ending a bound managed owner or
+stopping that environment itself fails; it
 then names the failure and leaves the environment recoverable by its own
 `up` or `down`. The stop is recorded beside the environment's lease before
 the first effect, so its next `up` restarts it instead of refusing an

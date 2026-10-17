@@ -244,51 +244,6 @@ pub fn live_headless_sessions(repo_root: &Path) -> Vec<LiveHeadlessSession> {
     live
 }
 
-/// How long a handover waits for one ended owner to settle.
-const HANDOVER_OWNER_SETTLE_TIMEOUT: Duration = Duration::from_secs(20);
-
-/// End one live headless owner through the same path as
-/// `effigy <task> stop` and wait for it to settle. Succeeds once the
-/// supervisor is gone, or once it is still alive but owns no live
-/// process (a finishing owner whose lock release is imminent). A
-/// supervisor that still owns a live process past the deadline refuses
-/// with the stop command to run.
-pub fn stop_headless_session_and_wait(
-    repo_root: &Path,
-    task: &str,
-    profile: &str,
-) -> Result<String, ManagedError> {
-    let summary = managed_headless_stop(repo_root, task, profile)?;
-    let state_path = managed_runtime_dir(repo_root, task, profile).join("session.json");
-    let deadline = std::time::Instant::now() + HANDOVER_OWNER_SETTLE_TIMEOUT;
-    loop {
-        let settled = match read_state(&state_path) {
-            Ok(mut state) => {
-                refresh_running_state(&mut state);
-                let supervisor_gone = !process_is_running(state.supervisor_pid);
-                let no_live_processes = state.processes.iter().all(|process| {
-                    !(process.status == "running"
-                        && process_is_running(process.pid)
-                        && process_is_descendant_of(process.pid, state.supervisor_pid))
-                });
-                supervisor_gone || no_live_processes
-            }
-            // An owner that already removed its state is settled.
-            Err(_) => true,
-        };
-        if settled {
-            return Ok(summary);
-        }
-        if std::time::Instant::now() >= deadline {
-            return Err(ManagedError::task_invocation(format!(
-                "managed task `{task}` (profile `{profile}`) did not settle after its stop was requested; run `{}` and retry",
-                headless_stop_command(task, profile),
-            )));
-        }
-        thread::sleep(Duration::from_millis(100));
-    }
-}
-
 impl Drop for SupervisorCleanup<'_> {
     fn drop(&mut self) {
         self.0.terminate_all();
@@ -777,6 +732,10 @@ mod tests {
     }
 
     fn headless_spec(name: &str, role: ManagedProcessRole) -> ManagedProcessSpec {
+        headless_spec_in(name, role, PathBuf::from("/tmp/repo"))
+    }
+
+    fn headless_spec_in(name: &str, role: ManagedProcessRole, cwd: PathBuf) -> ManagedProcessSpec {
         ManagedProcessSpec {
             name: name.to_owned(),
             role,
@@ -784,7 +743,7 @@ mod tests {
             secret_env: Default::default(),
             setup: None,
             setup_steps: Vec::new(),
-            cwd: PathBuf::from("/tmp/repo"),
+            cwd,
             service: None,
             start_after_ms: 0,
             shutdown_on_exit: false,
@@ -805,6 +764,40 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(names, vec!["lifecycle", "api"]);
         assert_eq!(skipped, vec!["shell".to_owned()]);
+    }
+
+    #[test]
+    fn headless_run_records_container_environment_in_session() {
+        let temp = tempfile::tempdir().expect("headless env fixture");
+        let plan = crate::ManagedTaskPlan {
+            mode: "tui".to_owned(),
+            profile: "default".to_owned(),
+            processes: vec![headless_spec_in(
+                "api",
+                ManagedProcessRole::Standard,
+                temp.path().to_path_buf(),
+            )],
+            tab_order: vec!["api".to_owned()],
+            fail_on_non_zero: true,
+            passthrough: Vec::new(),
+            gateway_auto_start: false,
+            readiness: crate::ManagedTaskReadiness::default(),
+            container_environment: Some("stack".to_owned()),
+        };
+        super::run_managed_task_headless("dev", temp.path(), plan).expect("quick headless run");
+        let raw = std::fs::read_to_string(
+            temp.path()
+                .join(".effigy/runtime/managed/dev-default/session.json"),
+        )
+        .expect("read headless session");
+        let state: serde_json::Value = serde_json::from_str(&raw).expect("headless session parses");
+        assert_eq!(
+            state
+                .get("container_environment")
+                .and_then(|value| value.as_str()),
+            Some("stack"),
+            "{raw}"
+        );
     }
 
     #[test]

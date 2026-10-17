@@ -237,6 +237,27 @@ pub(in crate::runner) fn unlock_all(workspace_root: &Path) -> Result<UnlockResul
     })
 }
 
+/// PIDs named as holders by the checkout's current task-lock records.
+/// Unreadable records are skipped: a lock a reader cannot parse is
+/// another path's problem, never evidence of ownership.
+///
+/// The container handover uses this to tell an exited-but-unreaped
+/// owner (whose lock guard already dropped and whose records are gone)
+/// from one that still holds its task lock.
+pub(in crate::runner) fn task_lock_holder_pids(workspace_root: &Path) -> Vec<u32> {
+    let locks_dir = workspace_root.join(LOCKS_DIR);
+    let Ok(entries) = fs::read_dir(&locks_dir) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("lock"))
+        .filter_map(|path| files::read_lock_record(&path).ok())
+        .map(|record| record.pid)
+        .collect()
+}
+
 fn acquire_scope_lock(
     locks_root: &Path,
     scope: LockScope,

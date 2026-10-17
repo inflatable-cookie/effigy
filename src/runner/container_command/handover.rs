@@ -37,6 +37,7 @@ use crate::runner::error::RunnerError;
 use crate::runner::host_container_lease::{
     clear_partial_activation, clear_persistent_container_owner, record_environment_handover,
 };
+use crate::runner::locking::io::task_lock_holder_pids;
 
 const ENVIRONMENT_INSPECTION_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -415,13 +416,19 @@ pub(super) fn stop_peer_data_services(
     Ok(notes)
 }
 
+/// How long the handover waits for one ended owner to release its
+/// task lock before refusing with the stop command to run.
+const HANDOVER_OWNER_SETTLE_TIMEOUT: Duration = Duration::from_secs(20);
+
 /// End every live headless managed owner of this checkout whose plan is
 /// bound to `environment`, through the same path as `effigy <task> stop`.
-/// Runs before the handover records or stops anything, so a failure
-/// refuses the handover while the environment is still untouched. The
-/// owner's own exit releases its task lock through the lock owner-token
-/// rules; a stale lock from a dead holder is still reclaimed only by the
-/// existing lock rules, never weakened here.
+/// Runs after the #195 handover record lands and before the environment
+/// stops: the record already leaves the environment recoverable by its
+/// own `up` or `down`, so a failure refuses with the environment still
+/// stoppable and says what to run. The owner's own exit releases its task
+/// lock through the lock owner-token rules; a stale lock from a dead
+/// holder is still reclaimed only by the existing lock rules, never
+/// weakened here.
 fn end_headless_managed_owners(
     repo_root: &Path,
     target: &PendingHandover,
@@ -431,15 +438,10 @@ fn end_headless_managed_owners(
         if session.container_environment.as_deref() != Some(target.environment.as_str()) {
             continue;
         }
-        effigy_managed::runtime::stop_headless_session_and_wait(
-            repo_root,
-            &session.task,
-            &session.profile,
-        )
-        .map_err(|error| {
+        settle_headless_owner(repo_root, &session).map_err(|error| {
             RunnerError::task_invocation(format!(
-                "cannot hand over environment `{}`: failed to end managed task `{}` (profile `{}`) bound to it: {error}. Run `effigy {} stop` and retry",
-                target.environment, session.task, session.profile, session.task,
+                "cannot hand over environment `{}`: failed to end managed task `{}` (profile `{}`) bound to it: {error}. Run `effigy {} stop` and retry; environment `{}` stays in a state its own `effigy container up` or `effigy container down` recovers",
+                target.environment, session.task, session.profile, session.task, target.environment,
             ))
         })?;
         notes.push(format!(
@@ -448,6 +450,39 @@ fn end_headless_managed_owners(
         ));
     }
     Ok(notes)
+}
+
+/// End one live headless owner through the same path as
+/// `effigy <task> stop` and wait until its task lock is released.
+/// Settles once the supervisor process itself is gone, or once no lock
+/// record names it as holder: an exited-but-unreaped supervisor (a
+/// zombie its parent has not collected yet) already dropped its lock
+/// guard, so its records are gone and the reverse handover can proceed.
+/// A supervisor that is still alive and still holds its lock past the
+/// deadline refuses with the stop command to run; a stale lock from a
+/// dead holder is left for the existing lock rules.
+fn settle_headless_owner(
+    repo_root: &Path,
+    session: &effigy_managed::runtime::LiveHeadlessSession,
+) -> Result<String, RunnerError> {
+    let summary =
+        effigy_managed::runtime::managed_headless_stop(repo_root, &session.task, &session.profile)
+            .map_err(RunnerError::from)?;
+    let deadline = Instant::now() + HANDOVER_OWNER_SETTLE_TIMEOUT;
+    loop {
+        let supervisor_gone = !effigy_process::process_is_running(session.supervisor_pid);
+        let lock_released = !task_lock_holder_pids(repo_root).contains(&session.supervisor_pid);
+        if supervisor_gone || lock_released {
+            return Ok(summary);
+        }
+        if Instant::now() >= deadline {
+            return Err(RunnerError::task_invocation(format!(
+                "managed task `{}` (profile `{}`) did not settle after its stop was requested; run `effigy {} stop` and retry",
+                session.task, session.profile, session.task,
+            )));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
 }
 
 /// Bring one environment down with the ordinary `container down` semantics:
@@ -476,12 +511,10 @@ fn execute_handover(
             format!(" for {detail}")
         },
     );
-    // Every live headless managed owner bound to the losing environment
-    // ends before the handover records or stops anything: a failure
-    // refuses here while the environment is still untouched, and the
-    // owner's own exit releases its task lock through the lock
-    // owner-token rules.
-    let owner_notes = end_headless_managed_owners(repo_root, target)?;
+    // The handover record lands before the first effect, so even ending
+    // a bound managed owner — whose lifecycle shutdown runs that
+    // environment's `container down` — leaves the environment recoverable
+    // by its own `up` or `down` if the handover refuses afterwards.
     record_environment_handover(repo_root, &target.policy, stopped_by, &detail).map_err(
         |error| {
             RunnerError::task_invocation(format!(
@@ -490,6 +523,11 @@ fn execute_handover(
             ))
         },
     )?;
+    // Every live headless managed owner bound to the losing environment
+    // ends before the environment stops: a failure refuses here and the
+    // owner's own exit releases its task lock through the lock
+    // owner-token rules.
+    let owner_notes = end_headless_managed_owners(repo_root, target)?;
     stop_host_processes_best_effort(repo_root, Some(&target.environment));
     effigy_runtime::write::run_container_down(
         repo_root,
@@ -791,6 +829,52 @@ domain = "switch.test"
         assert_eq!(managed_listener_owner_environment("web"), None);
     }
 
+    /// A child process reaped by a background thread. The handover's
+    /// settle wait treats a zombie as alive (it answers signals), and in
+    /// these tests the owner is our own child, so without prompt reaping
+    /// the wait would time out on a reaped-but-uncollected exit. In
+    /// production the handover runs in a different process from the owner
+    /// and never sees this.
+    #[cfg(unix)]
+    type ReapedStatus = std::sync::Arc<std::sync::Mutex<Option<(bool, Option<i32>)>>>;
+
+    #[cfg(unix)]
+    struct ReapedChild {
+        status: ReapedStatus,
+        handle: Option<std::thread::JoinHandle<()>>,
+    }
+
+    #[cfg(unix)]
+    impl ReapedChild {
+        fn spawn(mut child: std::process::Child) -> Self {
+            let status: ReapedStatus = std::sync::Arc::new(std::sync::Mutex::new(None));
+            let sink = status.clone();
+            let handle = std::thread::spawn(move || {
+                let exited = child
+                    .wait()
+                    .ok()
+                    .map(|status| (status.success(), status.code()));
+                *sink.lock().expect("reaper lock") = exited;
+            });
+            ReapedChild {
+                status,
+                handle: Some(handle),
+            }
+        }
+
+        /// `(success, code)` once the child has been reaped, `None` while
+        /// it still lives.
+        fn exited(&self) -> Option<(bool, Option<i32>)> {
+            *self.status.lock().expect("reaper lock")
+        }
+
+        fn join(&mut self) {
+            if let Some(handle) = self.handle.take() {
+                let _ = handle.join();
+            }
+        }
+    }
+
     /// A fabricated live headless session: a session-leader `sh`
     /// supervisor that spawns one owned `sleep` child, reaps it, and
     /// exits when it dies — the same shape `managed_headless_stop`
@@ -798,7 +882,8 @@ domain = "switch.test"
     /// process-tree signals inside the fixture.
     #[cfg(unix)]
     struct FixtureOwner {
-        supervisor: std::process::Child,
+        supervisor: ReapedChild,
+        supervisor_pid: u32,
         owned_pid: u32,
     }
 
@@ -822,6 +907,7 @@ domain = "switch.test"
             });
         }
         let mut supervisor = supervisor.spawn().expect("fixture supervisor");
+        let supervisor_pid = supervisor.id();
         let stdout = supervisor.stdout.take().expect("supervisor stdout");
         let mut lines = std::io::BufReader::new(stdout).lines();
         let owned_pid: u32 = lines
@@ -832,7 +918,8 @@ domain = "switch.test"
             .parse()
             .expect("parse sleep pid");
         FixtureOwner {
-            supervisor,
+            supervisor: ReapedChild::spawn(supervisor),
+            supervisor_pid,
             owned_pid,
         }
     }
@@ -874,6 +961,165 @@ domain = "switch.test"
         .expect("write session");
     }
 
+    /// The `effigy` binary under test, resolved the same way the managed
+    /// stream tests resolve it: the `effigy` binary beside the test
+    /// harness's parent directory.
+    #[cfg(unix)]
+    fn compiled_effigy_binary() -> PathBuf {
+        std::env::current_exe()
+            .expect("current exe")
+            .parent()
+            .and_then(|dir| dir.parent())
+            .map(|dir| dir.join("effigy"))
+            .filter(|path| path.is_file())
+            .expect("compiled effigy binary")
+    }
+
+    #[cfg(unix)]
+    fn repo_lock_files(repo_root: &Path) -> Vec<PathBuf> {
+        let locks_dir = repo_root.join(".effigy/locks");
+        std::fs::read_dir(&locks_dir)
+            .map(|entries| {
+                entries
+                    .flatten()
+                    .map(|entry| entry.path())
+                    .filter(|path| path.extension().is_some_and(|ext| ext == "lock"))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    #[cfg(unix)]
+    fn patch_headless_session_environment(state_path: &Path, environment: &str) {
+        let raw = fs::read_to_string(state_path).expect("read headless session");
+        let mut state: serde_json::Value =
+            serde_json::from_str(&raw).expect("headless session parses");
+        state["container_environment"] = serde_json::Value::String(environment.to_owned());
+        fs::write(
+            state_path,
+            serde_json::to_vec_pretty(&state).expect("session json"),
+        )
+        .expect("write headless session");
+    }
+
+    /// Reverse-handover proof: a real headless owner process holds the
+    /// shared task lock, the reverse invocation on the same scope
+    /// refuses while it lives, the handover ends it, its lock file is
+    /// gone, and the following invocation on the same scope succeeds.
+    #[cfg(unix)]
+    #[test]
+    fn handover_end_owner_releases_lock_for_reverse_handover() {
+        use std::time::{Duration, Instant};
+
+        let temp = tempfile::tempdir().expect("reverse handover fixture");
+        let repo_root = temp.path().join("repo");
+        fs::create_dir_all(&repo_root).expect("mkdir repo");
+        fs::write(
+            repo_root.join("effigy.toml"),
+            r#"[tasks.dev]
+mode = "tui"
+lock = "handover-proof"
+concurrent = [
+  { name = "api", run = "while true; do sleep 1; done", start = 1 }
+]
+
+[tasks.rev]
+lock = "handover-proof"
+run = "printf reverse-ok"
+"#,
+        )
+        .expect("write manifest");
+        let binary = compiled_effigy_binary();
+        let repo_arg = repo_root.display().to_string();
+        // The owner is a separate process, so its lock guard drops only
+        // when the handover actually ends it.
+        let mut owner = ReapedChild::spawn(
+            std::process::Command::new(&binary)
+                .args(["--repo", &repo_arg, "dev", "--headless"])
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .expect("spawn headless owner"),
+        );
+        let state_path = repo_root.join(".effigy/runtime/managed/dev-default/session.json");
+        let start_deadline = Instant::now() + Duration::from_secs(60);
+        while !state_path.exists() {
+            assert!(
+                Instant::now() < start_deadline,
+                "headless owner did not start"
+            );
+            assert!(
+                owner.exited().is_none(),
+                "headless owner exited before the handover"
+            );
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        // Bind the live owner to env `stack` the way a lifecycle-backed
+        // plan records it.
+        patch_headless_session_environment(&state_path, "stack");
+        assert!(
+            !repo_lock_files(&repo_root).is_empty(),
+            "the live owner holds its task lock"
+        );
+        // While the owner lives, the reverse invocation on the same lock
+        // scope refuses.
+        let refused = std::process::Command::new(&binary)
+            .args(["--repo", &repo_arg, "rev"])
+            .output()
+            .expect("reverse attempt");
+        assert!(
+            !refused.status.success(),
+            "reverse handover must refuse while the owner lives"
+        );
+        assert!(
+            String::from_utf8_lossy(&refused.stderr).contains("lock conflict"),
+            "{}",
+            String::from_utf8_lossy(&refused.stderr)
+        );
+
+        let target = handover_target_for(&repo_root, "stack");
+        let notes = end_headless_managed_owners(&repo_root, &target).expect("end losing owner");
+        assert_eq!(notes.len(), 1, "one line for one ended owner: {notes:?}");
+        assert!(notes[0].contains("`dev`"), "{}", notes[0]);
+        let exit_deadline = Instant::now() + Duration::from_secs(60);
+        let exit_status = loop {
+            if let Some((success, code)) = owner.exited() {
+                break (success, code);
+            }
+            assert!(
+                Instant::now() < exit_deadline,
+                "headless owner did not exit after the handover ended it"
+            );
+            std::thread::sleep(Duration::from_millis(100));
+        };
+        assert!(
+            exit_status.0,
+            "ended owner exits cleanly after settling: {exit_status:?}"
+        );
+        owner.join();
+        assert!(
+            repo_lock_files(&repo_root).is_empty(),
+            "ending the owner released its task lock"
+        );
+        // The following invocation on the same scope succeeds: the
+        // reverse handover.
+        let reverse = std::process::Command::new(&binary)
+            .args(["--repo", &repo_arg, "rev"])
+            .output()
+            .expect("reverse run");
+        assert!(
+            reverse.status.success(),
+            "reverse handover succeeds after the owner is ended: {}",
+            String::from_utf8_lossy(&reverse.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&reverse.stdout).contains("reverse-ok"),
+            "{}",
+            String::from_utf8_lossy(&reverse.stdout)
+        );
+    }
+
     #[cfg(unix)]
     fn handover_target_for(repo_root: &Path, environment: &str) -> PendingHandover {
         let mut policy = claim_policy(repo_root, None);
@@ -900,7 +1146,7 @@ domain = "switch.test"
             &repo_root,
             "site",
             "default",
-            losing.supervisor.id(),
+            losing.supervisor_pid,
             Some("web"),
             losing_pid,
         );
@@ -908,7 +1154,7 @@ domain = "switch.test"
             &repo_root,
             "other",
             "default",
-            other.supervisor.id(),
+            other.supervisor_pid,
             Some("stack"),
             other_pid,
         );
@@ -918,7 +1164,7 @@ domain = "switch.test"
             &repo_root,
             "legacy",
             "default",
-            other.supervisor.id(),
+            other.supervisor_pid,
             None,
             other_pid,
         );
@@ -943,8 +1189,8 @@ domain = "switch.test"
             "an owner bound to another environment is never touched"
         );
         effigy_process::terminate_process_tree(other_pid, true);
-        let _ = losing.supervisor.wait();
-        let _ = other.supervisor.wait();
+        losing.supervisor.join();
+        other.supervisor.join();
     }
 
     #[cfg(unix)]
