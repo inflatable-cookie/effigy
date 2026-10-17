@@ -311,7 +311,7 @@
 "test:managed:headless-lifecycle" = [
   { id = "managed-exec-readiness-render", run = "cargo test -p effigy-containers --lib session::tests:: -- --nocapture", timeout_ms = 300000 },
   { id = "managed-up-workspace-prep", run = "cargo test -p effigy --lib container_command::lifecycle::tests::up_workspace_permission -- --nocapture", timeout_ms = 300000 },
-  { id = "managed-handoff-local-exec", run = "cargo test -p effigy --lib container_command::lifecycle::tests::handoff_container -- --nocapture", timeout_ms = 300000 },
+  { id = "managed-handoff-local-exec", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(bounded_exec::tests::handoff_local_tests::handoff_container_)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
   { id = "managed-inline-exec-render", run = "cargo test -p effigy --lib execute::pipeline::managed::tests::inline_managed -- --nocapture", timeout_ms = 300000 },
   { id = "managed-headless-controls", run = "cargo test -p effigy --lib managed_and_locking_tests::managed_headless_tests -- --nocapture", timeout_ms = 600000 },
   { id = "managed-headless-healthy-stack", run = "cargo test --test cli_output_tests cli_managed_headless_lifecycle_reaches_running_on_healthy_stack -- --nocapture", timeout_ms = 600000 },
