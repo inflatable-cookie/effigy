@@ -274,6 +274,32 @@ During v0.x, MINOR bumps may include breaking changes.
   1.2.0.
 
 ### Fixed
+- The headless managed `dev:container` lifecycle no longer refuses with
+  "detached activation publication refused" while it starts an environment in
+  a scoped `data_from` clone (Acowtancy adoption proof #625). The managed
+  shell/exec readiness probes resolve the same container policy once per
+  second while the lifecycle runs, and each resolution rewrote the admitted
+  runtime Compose inputs (workspace mount rewrite and DNS override) with a
+  truncating `fs::write`; a strict publication verify that read an input
+  inside a rewrite window saw a torn or empty file and refused, leaving the
+  stack partially activated with no routes published. Those runtime
+  generated files — the per-environment generated Compose payload and
+  regeneration checksum, workspace, ownership and DNS overrides — are now
+  replaced atomically (temporary file plus same-directory rename), so every
+  reader observes one complete generation and a killed writer leaves the
+  previous complete file. Admission verification stays strict: real drift or
+  a missing marker for a genuinely recorded partial activation still refuses,
+  and a legacy `.effigy-compose.generated.yml` left behind by an older build
+  never participates in the admitted inputs.
+- Headless managed task start reuses an authenticated, running shared gateway
+  whose identity the current user cannot read (permission-denied), printing
+  one note that the identity could not be verified — the same way the hybrid
+  workspace handoff path already reuses it — instead of refusing with
+  "cannot determine gateway state". Route publication and withdrawal never
+  gated on the daemon identity (they write the owner-checked route table
+  directly); operations that signal, stop, replace, recover or start a second
+  gateway still require a verified identity and keep their refusals. No new
+  privilege, helper, or root-process read is added.
 - A detached `container up` of an environment whose generated Compose input
   is shared per checkout no longer refuses with "detached activation
   publication refused" when another environment of the same checkout is

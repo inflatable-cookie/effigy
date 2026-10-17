@@ -4569,6 +4569,414 @@ fn container_scoped_clone_first_listener_up_and_switch_round_trip_hands_over() {
     }
 }
 
+/// The headless managed `dev:container` lifecycle — the path Acowtancy's
+/// adoption proof (#625) drove — must publish its environment's routes in a
+/// scoped `data_from` clone and hand the environment over to a following
+/// hybrid `up` (#195). While the lifecycle runs, the managed shell and exec
+/// readiness probes resolve the same container policy once per second, so the
+/// test also hammers policy resolution concurrently: a truncating rewrite of
+/// the admitted runtime Compose inputs tore them under that race and the
+/// strict publication verify refused (#197). Deterministic bounded policy
+/// loads stand in for the probes; the teardown keeps volumes.
+#[test]
+fn container_headless_managed_lifecycle_publishes_routes_in_scoped_data_from_clone() {
+    let fixture = managed_host_fixture();
+    let effects = HostEffectSentinels::new(fixture.path());
+    let docker_dir = std::env::split_paths(&effects.env_path)
+        .next()
+        .expect("sentinel PATH directory");
+    let docker_log = fixture.path().join("docker-fixture.log");
+    write_switch_fake_docker(&docker_dir.join("docker"));
+
+    let home = fixture.path().join("home");
+    fs::create_dir(&home).expect("fixture home");
+    // Managed process commands run through `sh -lc`, whose login profile
+    // reorders PATH behind the developer's real docker; the fixture home's
+    // profile pins the sentinel docker first for every spawned shell.
+    fs::write(
+        home.join(".profile"),
+        format!("PATH='{}':$PATH\nexport PATH\n", docker_dir.display()),
+    )
+    .expect("write fixture login profile");
+    let foreign_ca = fixture.path().join("foreign-ca");
+    fs::create_dir(&foreign_ca).expect("foreign CA sentinel");
+    let mut gateway_cleanup = GatewayCleanup::new(&effects, &foreign_ca);
+    let (private_gateway, _https_address) =
+        start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut gateway_cleanup);
+    let routes_path = private_gateway.join("routes.json");
+
+    let bundle_src = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("crates/effigy-manifest/tests/fixtures/workspace-app-bundle");
+    copy_dir_all(&bundle_src, &fixture.path().join("bundles/workspace-app"));
+
+    let checkout = fixture.path().join("checkout");
+    fs::create_dir(&checkout).expect("managed clone checkout");
+    fs::write(
+        checkout.join("effigy.toml"),
+        "[containers]\ndefault = \"stack\"\n",
+    )
+    .expect("seed manifest before git commit");
+    git(&checkout, &["init", "--initial-branch=main"]);
+    git(&checkout, &["config", "user.name", "Managed Clone Fixture"]);
+    git(
+        &checkout,
+        &[
+            "config",
+            "user.email",
+            "managed-clone-fixture@example.invalid",
+        ],
+    );
+    git(&checkout, &["add", "effigy.toml"]);
+    git(&checkout, &["commit", "-m", "fixture base"]);
+    git(&checkout, &["config", "effigy.runtimeScope", "ephemeral"]);
+    let checkout = checkout.canonicalize().expect("canonical managed clone");
+
+    let manifest = "\
+[bundle]\nbase = { type = \"path\", dir = \"../bundles/workspace-app\" }\nhost = \"managed.test\"\nproject_name = \"managed-clone-dev\"\nworkspace_subdir = \"managed-reference\"\ndatabases = [\"acme\"]\n\n\
+[containers.hybrid]\ndata_from = \"stack\"\nprimary_service = \"workspace\"\nstartup = \"detached\"\nworking_dir = \"/workspace-root/managed-reference\"\n\n\
+[containers.hybrid.services.workspace]\ncatalog = \"workspace-rust-bun\"\nworking_subdir = \"managed-reference\"\nhost_ports = [\"41003:41003\"]\n\n\
+[containers.hybrid.dns]\nroutes = [{ domain = \"managed.test\", tls = true, port = 41003, service = \"workspace\" }]\n\n\
+[tasks.\"dev:container\"]\nmode = \"tui\"\ncontainer_lifecycle = true\ngateway = true\nhealth_wait = false\nconcurrent = [\n  { role = \"shell\", service = \"workspace\", start = 2 },\n  { role = \"lifecycle\", start = 1 },\n]\n";
+    fs::write(checkout.join("effigy.toml"), manifest).expect("write managed clone manifest");
+
+    let stack_policy =
+        effigy_containers::load_container_policy(&checkout, Some("stack")).expect("stack policy");
+    let hybrid_policy = effigy_containers::load_container_policy(&checkout, Some("hybrid"))
+        .expect("hybrid policy with data_from");
+    assert_eq!(
+        hybrid_policy.data_from.as_deref(),
+        Some("stack"),
+        "the fixture is a data_from pair"
+    );
+    let stack_project = stack_policy.project_name.clone();
+    let hybrid_project = hybrid_policy.project_name.clone();
+    let managed_domain = stack_policy.dns_routes[0].domain.clone();
+    let scope_token = effigy_core::worktree_scope::load_or_create(&checkout)
+        .expect("checkout scope")
+        .expect("an ephemeral clone is runtime-scoped");
+    let scope_token = scope_token.trim().to_owned();
+    let state = fixture.path().join("managed-docker-state");
+    fs::create_dir(&state).expect("managed docker state directory");
+
+    let workspace = (
+        "workspace",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        vec![41001, 41002, 41003],
+    );
+    let postgres = (
+        "postgres",
+        "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        vec![5432],
+    );
+    let minio = (
+        "minio",
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        vec![9000, 9001],
+    );
+    let dbgate = (
+        "dbgate",
+        "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        vec![3000],
+    );
+    let mailpit = (
+        "mailpit",
+        "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        vec![1025, 8025],
+    );
+    let project_services: [ServiceRows; 2] = [
+        (
+            &stack_project,
+            vec![
+                workspace.clone(),
+                postgres.clone(),
+                minio.clone(),
+                dbgate.clone(),
+                mailpit.clone(),
+            ],
+        ),
+        (&hybrid_project, vec![workspace.clone()]),
+    ];
+    for (project, services) in project_services {
+        let mut ps_rows = String::new();
+        for (service, id, ports) in services {
+            let container = format!("{project}-{service}-1");
+            let bindings = ports
+                .iter()
+                .map(|port| format!("127.0.0.1:{port}->{port}/tcp"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            ps_rows.push_str(&format!(
+                "{container}\tUp 1 minute\t{bindings}\t{project}\t{}\t{service}\tFalse\n",
+                checkout.display()
+            ));
+            let inspect_ports = ports
+                .iter()
+                .map(|port| {
+                    (
+                        format!("{port}/tcp"),
+                        serde_json::json!([{"HostIp": "127.0.0.1", "HostPort": port.to_string()}]),
+                    )
+                })
+                .collect::<serde_json::Map<String, Value>>();
+            let labels = serde_json::json!({
+                "com.docker.compose.project": project,
+                "com.docker.compose.service": service,
+                "com.docker.compose.oneoff": "False",
+                "com.effigy.checkout": checkout,
+                "com.effigy.scope": scope_token,
+            });
+            let proof = serde_json::json!([{
+                "Id": id,
+                "Name": format!("/{container}"),
+                "State": {"Status": "running", "Running": true},
+                "Config": {"Labels": labels},
+                "NetworkSettings": {"Ports": inspect_ports},
+            }]);
+            fs::write(
+                state.join(format!("inspect-{container}.json")),
+                serde_json::to_vec(&proof).expect("proof json"),
+            )
+            .expect("write owned proof");
+        }
+        fs::write(state.join(format!("ps-{project}.txt")), ps_rows).expect("write ps rows");
+    }
+
+    let cleanup = ManagedContainerCleanup {
+        checkouts: vec![checkout.clone()],
+        home: home.clone(),
+        private_gateway: private_gateway.clone(),
+        foreign_ca: foreign_ca.clone(),
+        effects_path: effects.env_path.clone(),
+        mkcert: effects.private_mkcert.clone(),
+        effect_log: effects.log.clone(),
+        mkcert_calls: effects.mkcert_calls.clone(),
+        docker_log: docker_log.clone(),
+    };
+
+    // Deterministic DNS rendering across the test process and the CLI
+    // children: an empty COLIMA_HOME makes every policy resolution use the
+    // fallback resolver list, so the admitted DNS override never depends on
+    // the developer's Colima configuration.
+    let colima_home = fixture.path().join("empty-colima-home");
+    fs::create_dir(&colima_home).expect("empty colima home");
+    struct EnvRestore(&'static str, Option<std::ffi::OsString>);
+    impl Drop for EnvRestore {
+        fn drop(&mut self) {
+            match self.1.take() {
+                Some(value) => std::env::set_var(self.0, value),
+                None => std::env::remove_var(self.0),
+            }
+        }
+    }
+    let previous_colima_home = std::env::var_os("COLIMA_HOME");
+    std::env::set_var("COLIMA_HOME", &colima_home);
+    let _colima_env = EnvRestore("COLIMA_HOME", previous_colima_home);
+    // The in-process hammer resolves the same policy as the CLI children, so
+    // every home-derived render input (private home, host git/ssh mounts,
+    // Colima DNS config) must match on both sides.
+    let previous_containers_home = std::env::var_os("EFFIGY_TEST_CONTAINERS_HOME");
+    std::env::set_var("EFFIGY_TEST_CONTAINERS_HOME", cleanup.home.join(".effigy"));
+    let _containers_env = EnvRestore("EFFIGY_TEST_CONTAINERS_HOME", previous_containers_home);
+    let previous_home = std::env::var_os("HOME");
+    std::env::set_var("HOME", &cleanup.home);
+    let _home_env = EnvRestore("HOME", previous_home);
+
+    let managed_env = |command: &mut Command| {
+        command
+            .env("FAKE_OWNED_STATE", &state)
+            .current_dir(&checkout)
+            .env("HOME", &cleanup.home)
+            .env("EFFIGY_TEST_CONTAINERS_HOME", cleanup.home.join(".effigy"))
+            .env("PATH", &cleanup.effects_path)
+            .env("COLIMA_HOME", &colima_home)
+            .env("EFFIGY_COMPOSE_BACKEND", "docker")
+            .env(
+                effigy_gateway::private_state::PRIVATE_STATE_ROOT_ENV,
+                &cleanup.private_gateway,
+            )
+            .env("EFFIGY_GATEWAY_MKCERT_BIN", &cleanup.mkcert)
+            .env("EFFECT_LOG", &cleanup.effect_log)
+            .env("MKCERT_CALLS", &cleanup.mkcert_calls)
+            .env("CAROOT", &cleanup.foreign_ca)
+            .env("FOREIGN_CAROOT", &cleanup.foreign_ca)
+            .env("FAKE_DOCKER_LOG", &cleanup.docker_log);
+    };
+
+    // The managed shell/exec readiness probes resolve the container policy
+    // once per second while the lifecycle admits and publishes; this loop
+    // exercises the same rewrite path at a much higher rate.
+    let hammer_stop = Arc::new(AtomicBool::new(false));
+    let hammer_handle = {
+        let stop = hammer_stop.clone();
+        let hammer_checkout = checkout.clone();
+        thread::spawn(move || {
+            while !stop.load(Ordering::Relaxed) {
+                if effigy_containers::load_container_policy(&hammer_checkout, Some("stack"))
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        })
+    };
+
+    let managed_out = fs::File::create(fixture.path().join("managed-supervisor.out"))
+        .expect("managed supervisor output file");
+    let managed_err = managed_out
+        .try_clone()
+        .expect("clone managed supervisor output file");
+    let mut managed = Command::new(EFFIGY);
+    managed.args(["dev:container", "--headless"]);
+    managed_env(&mut managed);
+    managed.env("EFFIGY_DEBUG_ADMISSION_REFUSAL", "1");
+    managed
+        .stdin(Stdio::null())
+        .stdout(managed_out)
+        .stderr(managed_err);
+    let mut managed_guard = ManagedSupervisor(
+        managed
+            .spawn()
+            .expect("spawn headless managed dev:container supervisor"),
+    );
+    let managed = &mut managed_guard.0;
+
+    let lifecycle_state = || {
+        fs::read_to_string(
+            checkout.join(".effigy/runtime/managed-lifecycle/dev-container-stack.state"),
+        )
+        .unwrap_or_default()
+        .trim()
+        .to_owned()
+    };
+    let route_count = || {
+        RouteTable::load(&routes_path)
+            .map(|table| table.all_routes().len())
+            .unwrap_or(0)
+    };
+    let deadline = Instant::now() + Duration::from_secs(120);
+    let published = loop {
+        if managed
+            .try_wait()
+            .expect("poll managed supervisor")
+            .is_some()
+            && route_count() == 0
+        {
+            let _ = managed.wait();
+            panic!(
+                "the managed supervisor exited before publishing routes: lifecycle_log={} supervisor_stderr={}",
+                fs::read_to_string(
+                    checkout.join(".effigy/runtime/managed/dev_container-default/01-lifecycle.log")
+                )
+                .unwrap_or_default(),
+                fs::read_to_string(fixture.path().join("managed-supervisor.out"))
+                    .unwrap_or_default()
+            );
+        }
+        if lifecycle_state() == "ready" && route_count() > 0 {
+            break route_count();
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the managed lifecycle did not publish routes in time: state={} routes={} lifecycle_log={}",
+            lifecycle_state(),
+            route_count(),
+            fs::read_to_string(
+                checkout.join(".effigy/runtime/managed/dev_container-default/01-lifecycle.log")
+            )
+            .unwrap_or_default()
+        );
+        thread::sleep(Duration::from_millis(50));
+    };
+    assert!(
+        published >= 6,
+        "the stack's declared routes are published: {published}"
+    );
+    assert!(
+        state.join(format!("active-{stack_project}")).exists(),
+        "the managed lifecycle's stack containers are live"
+    );
+    let stack_route = RouteTable::load(&routes_path)
+        .expect("route table")
+        .lookup(&managed_domain)
+        .cloned()
+        .expect("the managed domain is published");
+    assert_eq!(
+        stack_route.source,
+        RouteSource::Container,
+        "the container environment itself holds the domain"
+    );
+
+    // A following hybrid `up` takes over per #195 while the supervisor is
+    // still running, under the same concurrent policy-resolution load.
+    let mut takeover = Command::new(EFFIGY);
+    takeover.args(["container", "hybrid", "up", "--detach"]);
+    managed_env(&mut takeover);
+    let takeover = takeover.output().expect("run hybrid takeover");
+    let takeover_text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&takeover.stdout),
+        String::from_utf8_lossy(&takeover.stderr)
+    );
+    assert!(
+        takeover.status.success(),
+        "the hybrid takeover refused under concurrent policy load: {takeover_text}"
+    );
+    assert!(
+        takeover_text.contains("stopping environment `stack`"),
+        "the takeover hands the whole stack environment over: {takeover_text}"
+    );
+    assert!(
+        !state.join(format!("active-{stack_project}")).exists(),
+        "the handed-over stack containers are stopped"
+    );
+    assert!(
+        state.join(format!("active-{hybrid_project}")).exists(),
+        "the hybrid environment is live"
+    );
+    let hybrid_route = RouteTable::load(&routes_path)
+        .expect("route table")
+        .lookup(&managed_domain)
+        .cloned()
+        .expect("the domain stays published under hybrid");
+    assert_eq!(hybrid_route.source, RouteSource::Container);
+
+    hammer_stop.store(true, Ordering::Relaxed);
+    hammer_handle.join().expect("hammer joins");
+
+    let mut stop = Command::new(EFFIGY);
+    stop.args(["dev:container", "stop"]);
+    managed_env(&mut stop);
+    let _ = stop.output();
+
+    let log = fs::read_to_string(&docker_log).expect("docker fixture log");
+    assert!(
+        !log.contains(" down -v") && !log.contains("down --volumes"),
+        "the handover never removes volumes: {log}"
+    );
+
+    // Leave the checkout stopped: idempotent downs stop any live environment.
+    for env in ["stack", "hybrid"] {
+        let mut down = Command::new(EFFIGY);
+        down.args(["container", env, "down", "--json"]);
+        managed_env(&mut down);
+        let _ = down.output();
+    }
+}
+
+/// The headless managed supervisor stays alive while its session runs and its
+/// lifecycle child outlives the test on panic, so the guard stops the whole
+/// owned process tree on drop.
+struct ManagedSupervisor(std::process::Child);
+
+impl Drop for ManagedSupervisor {
+    fn drop(&mut self) {
+        if self.0.try_wait().ok().flatten().is_none() {
+            let _ = self.0.kill();
+        }
+        let _ = self.0.wait();
+    }
+}
+
 /// A per-project fake Docker adapter: each environment's containers are live
 /// only while its `active-<project>` marker exists, `compose up`/`down`
 /// maintain the markers, and `ps` reports the project's owned container with a

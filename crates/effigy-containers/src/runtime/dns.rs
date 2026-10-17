@@ -39,10 +39,15 @@ pub(crate) fn materialize_runtime_dns_override(
     if let Some(guard) = &admission {
         guard.before_render_write(&override_path, override_yaml.as_bytes())?;
     }
-    std::fs::write(&override_path, &override_yaml).map_err(|error| ContainerPolicyError::Read {
-        path: override_path.clone(),
-        error,
-    })?;
+    // Atomic replacement: the managed shell/exec readiness probes resolve the
+    // policy once per second and strict publication verifies read this file
+    // concurrently, so a truncating rewrite would tear an admitted input.
+    effigy_catalog::atomic_write::write_atomic(&override_path, override_yaml.as_bytes()).map_err(
+        |error| ContainerPolicyError::Read {
+            path: override_path.clone(),
+            error,
+        },
+    )?;
     if let Some(guard) = admission {
         guard.record_rendered(&override_path, override_yaml.as_bytes())?;
     }
@@ -304,6 +309,87 @@ mod tests {
         assert_eq!(
             runtime_routes.service_alias_domains.get("postgres"),
             Some(&vec!["postgres.s3.acme.test".to_owned()])
+        );
+    }
+
+    /// The override is an admitted Compose input that every policy resolution
+    /// rewrites while strict detached-activation publication verifies read it
+    /// concurrently (the managed shell/exec readiness probes resolve the
+    /// policy once per second during a headless `dev:container` startup). A
+    /// truncating rewrite let such a verify observe a torn or empty file and
+    /// refuse publication (#197), so replacement must be atomic: a concurrent
+    /// reader always sees one complete generation.
+    #[test]
+    fn runtime_dns_override_replacement_never_tears_concurrent_readers() {
+        let root = tempfile::tempdir().expect("temporary fixture");
+        let compose_dir = root.path().join(".effigy").join("runtime").join("compose");
+        std::fs::create_dir_all(&compose_dir).expect("compose dir");
+        let compose = compose_dir.join("web.generated.compose.yml");
+        std::fs::write(
+            &compose,
+            "services:\n  workspace:\n    image: example\n  postgres:\n    image: example\n  dbgate:\n    image: example\n  mailpit:\n    image: example\n  minio:\n    image: example\n",
+        )
+        .expect("write compose");
+        let compose_files = vec![compose];
+
+        let dns_routes: Vec<EffectiveDnsRoute> = (0..300)
+            .map(|index| route(&format!("r{index}.teardown.test")))
+            .collect();
+        let runtime_routes = runtime_route_domains(&dns_routes, &[alias()], Some("teardown.test"));
+        let override_dir = root.path().join(".effigy").join("runtime").join("dns");
+        let override_path = override_dir.join("web.compose.override.yml");
+
+        materialize_runtime_dns_override(
+            root.path(),
+            "web",
+            "effigy",
+            &runtime_routes,
+            &mut compose_files.clone(),
+            None,
+        )
+        .expect("initial override render");
+        let expected = std::fs::read_to_string(&override_path).expect("rendered override");
+        assert!(
+            expected.len() > 32_000,
+            "the fixture override stays large enough to expose a truncating rewrite: {}",
+            expected.len()
+        );
+
+        const WRITER_ITERATIONS: usize = 120;
+        let done = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let writer_done = done.clone();
+        let writer_root = root.path().to_path_buf();
+        let writer_routes = runtime_routes;
+        let writer_compose = compose_files.clone();
+        let writer = std::thread::spawn(move || {
+            for iteration in 0..WRITER_ITERATIONS {
+                materialize_runtime_dns_override(
+                    &writer_root,
+                    "web",
+                    "effigy",
+                    &writer_routes,
+                    &mut writer_compose.clone(),
+                    None,
+                )
+                .expect("concurrent override render");
+                writer_done.store(iteration + 1, std::sync::atomic::Ordering::Relaxed);
+            }
+        });
+        let mut reads = 0usize;
+        while done.load(std::sync::atomic::Ordering::Relaxed) < WRITER_ITERATIONS {
+            let observed = std::fs::read_to_string(&override_path).unwrap_or_else(|error| {
+                panic!("override unreadable after {reads} clean reads: {error}")
+            });
+            assert_eq!(
+                observed, expected,
+                "a reader observed a torn override after {reads} clean reads"
+            );
+            reads += 1;
+        }
+        writer.join().expect("writer joins");
+        assert!(
+            reads >= WRITER_ITERATIONS,
+            "the reader must share the writer's window: {reads} reads for {WRITER_ITERATIONS} rewrites"
         );
     }
 }

@@ -702,9 +702,14 @@ fn render_direct_compose_ownership_override(
     if let Some(guard) = admission.as_deref() {
         guard.before_render_write(&path, rendered.as_bytes())?;
     }
-    std::fs::write(&path, rendered.as_bytes()).map_err(|error| ContainerPolicyError::Read {
-        path: path.clone(),
-        error,
+    // Atomic replacement: this override is an admitted Compose input that
+    // concurrent policy resolutions rewrite and strict publication verifies
+    // read.
+    effigy_catalog::atomic_write::write_atomic(&path, rendered.as_bytes()).map_err(|error| {
+        ContainerPolicyError::Read {
+            path: path.clone(),
+            error,
+        }
     })?;
     if let Some(guard) = admission {
         guard.record_rendered(&path, rendered.as_bytes())?;

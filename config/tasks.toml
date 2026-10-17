@@ -150,6 +150,15 @@
   "cargo test -p effigy-containers --lib tests::data_from -- --nocapture",
   "cargo test -p effigy-containers --lib policy::data_from -- --nocapture",
 ]
+# Detached-activation admission over the runtime Compose inputs: the strict
+# publication verify reads the per-environment generated payload, workspace,
+# ownership and DNS overrides while concurrent policy resolutions rewrite
+# them, so replacement stays atomic and every read sees one complete
+# generation. Covers the #197 publication-refusal regression seam.
+"test:containers:detached-admission" = [
+  "cargo test -p effigy --lib host_container_lease::tests:: -- --nocapture",
+  "cargo test -p effigy-containers --lib runtime::dns::tests:: -- --nocapture",
+]
 "test:containers:loopback" = "cargo test -p effigy-containers runtime::loopback::tests:: -- --nocapture"
 # Machine-wide generated-container port registry recovery: exhaustion and
 # reclaim in a private registry, status/dry-run non-mutation, digest-confirmed
@@ -313,7 +322,7 @@
 "test:gateway:route-fixture-transaction" = { run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_host_dependent_replacement_route_edits_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 }
 # Same-checkout container <-> hybrid managed-listener route handover through the
 # production locked transactions, plus one live-listener conflict refusal.
-"test:gateway:route-handover" = { run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(container_hybrid_container_switch_) | test(container_hybrid_environment_switch_) | test(container_scoped_clone_first_listener_up_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 }
+"test:gateway:route-handover" = { run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(container_hybrid_container_switch_) | test(container_hybrid_environment_switch_) | test(container_scoped_clone_first_listener_up_) | test(container_headless_managed_lifecycle_publishes_routes_in_scoped_data_from_clone)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 }
 "check:gateway:route-fixture-transaction" = [
   { task = "check:host-process:owned-stop:compile" },
   { task = "check:host-process:owned-stop:lint" },

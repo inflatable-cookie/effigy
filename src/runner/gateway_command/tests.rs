@@ -1921,6 +1921,213 @@ fn permission_reuse_managed_denied_preflight_refuses_with_diagnosis_without_laun
     );
 }
 
+/// Defect B (#197): an authenticated, running gateway whose identity this
+/// user cannot read (permission-denied) is reusable for a headless managed
+/// start — the same way the hybrid handoff path already reuses it — with one
+/// printed note, no second daemon and no signal. The record stays in place.
+#[cfg(unix)]
+#[test]
+fn permission_reuse_managed_reuses_authenticated_running_gateway_with_denied_identity() {
+    use effigy_gateway::server::{
+        GatewayIdentityOutcome, GatewayProcessProbe, GatewayRecordKind, GatewayStatusDiagnosis,
+    };
+
+    let root = tempfile::tempdir().expect("private fixture directory");
+    let home = root.path().join("home");
+    let gateway_home = home.join(GATEWAY_DIR_NAME);
+    std::fs::create_dir_all(&gateway_home).expect("create private gateway directory");
+    let _home_guard = set_test_gateway_home(&home);
+
+    let pid_path = gateway_home.join("gateway.pid");
+    let identity_path = gateway_home.join("gateway.identity");
+    std::fs::write(&pid_path, b"4196\n").expect("write fixture PID");
+    std::fs::write(&identity_path, b"{}").expect("write fixture identity");
+    let before_pid = std::fs::read(&pid_path).expect("read PID fixture");
+    let before_identity = std::fs::read(&identity_path).expect("read identity fixture");
+
+    let marker = root.path().join("managed-start-ran");
+    let command = format!("touch '{}'", marker.display());
+    let denial = |status| GatewayUpStatusProbe {
+        status: Err(status),
+        identity_permission_denied: true,
+    };
+    let running_denied = || GatewayStatusDiagnosis {
+        pid: Some(4196),
+        record: GatewayRecordKind::Authenticated,
+        process_probe: Some(GatewayProcessProbe::Running),
+        identity: GatewayIdentityOutcome::PermissionDenied,
+    };
+
+    gateway_up_for_managed_task_with_diagnosis(
+        &command,
+        |_| denial(effigy_gateway::GatewayError::ProcessStateUnknown { pid: 4196 }),
+        |_| running_denied(),
+    )
+    .expect("an authenticated, running gateway is reusable with unreadable identity");
+
+    assert!(
+        !marker.exists(),
+        "reuse must not run the startup command a second time"
+    );
+    assert_eq!(std::fs::read(&pid_path).expect("PID preserved"), before_pid);
+    assert_eq!(
+        std::fs::read(&identity_path).expect("identity preserved"),
+        before_identity
+    );
+}
+
+/// The same unreadable identity is only reusable while the gateway is proven
+/// authenticated and running. A missing or dead generation still refuses the
+/// headless managed start (it would start a replacement or a second daemon)
+/// with the bounded diagnosis, no launch and no signal.
+#[cfg(unix)]
+#[test]
+fn permission_reuse_managed_still_refuses_replacement_when_gateway_is_not_running() {
+    use effigy_gateway::server::{
+        GatewayIdentityOutcome, GatewayProcessProbe, GatewayRecordKind, GatewayStatusDiagnosis,
+    };
+
+    for (label, diagnosis) in [
+        (
+            "absent record",
+            GatewayStatusDiagnosis {
+                pid: None,
+                record: GatewayRecordKind::Absent,
+                process_probe: None,
+                identity: GatewayIdentityOutcome::NotChecked,
+            },
+        ),
+        (
+            "dead generation",
+            GatewayStatusDiagnosis {
+                pid: Some(4196),
+                record: GatewayRecordKind::Authenticated,
+                process_probe: Some(GatewayProcessProbe::ConfirmedAbsent),
+                identity: GatewayIdentityOutcome::PermissionDenied,
+            },
+        ),
+    ] {
+        let root = tempfile::tempdir().expect("private fixture directory");
+        let home = root.path().join("home");
+        let gateway_home = home.join(GATEWAY_DIR_NAME);
+        std::fs::create_dir_all(&gateway_home).expect("create private gateway directory");
+        let _home_guard = set_test_gateway_home(&home);
+        let pid_path = gateway_home.join("gateway.pid");
+        std::fs::write(&pid_path, b"4196\n").expect("write fixture PID");
+        let before_pid = std::fs::read(&pid_path).expect("read PID fixture");
+
+        let marker = root.path().join("managed-start-ran");
+        let command = format!("touch '{}'", marker.display());
+        let error = gateway_up_for_managed_task_with_diagnosis(
+            &command,
+            |_| GatewayUpStatusProbe {
+                status: Err(effigy_gateway::GatewayError::ProcessStateUnknown { pid: 4196 }),
+                identity_permission_denied: true,
+            },
+            |_| diagnosis,
+        )
+        .expect_err("a non-running generation must still refuse the managed start");
+        let message = error.to_string();
+        assert!(
+            message.contains("cannot determine gateway state")
+                || message.contains("gateway identity is unknown"),
+            "{label} denial must carry the bounded refusal: {message}"
+        );
+        assert!(!marker.exists(), "{label}: nothing was launched");
+        assert_eq!(
+            std::fs::read(&pid_path).expect("PID preserved"),
+            before_pid,
+            "{label}: the PID record stays in place for reconciliation"
+        );
+    }
+}
+
+/// The reuse predicate is exact: only an authenticated record, a confirmed
+/// running process and an unreadable (permission-denied or unknown) identity
+/// qualify. Verified identities and other record shapes keep their existing
+/// behavior, and read-only reuse never authorizes stop or replacement.
+#[test]
+fn reusable_unverified_gateway_predicate_is_exact() {
+    use effigy_gateway::server::{
+        GatewayIdentityOutcome, GatewayProcessProbe, GatewayRecordKind, GatewayStatusDiagnosis,
+    };
+    let diagnosis = |record: GatewayRecordKind,
+                     process: Option<GatewayProcessProbe>,
+                     identity: GatewayIdentityOutcome| GatewayStatusDiagnosis {
+        pid: Some(4196),
+        record,
+        process_probe: process,
+        identity,
+    };
+
+    assert!(super::reusable_unverified_gateway(&diagnosis(
+        GatewayRecordKind::Authenticated,
+        Some(GatewayProcessProbe::Running),
+        GatewayIdentityOutcome::PermissionDenied,
+    )));
+    assert!(super::reusable_unverified_gateway(&diagnosis(
+        GatewayRecordKind::Authenticated,
+        Some(GatewayProcessProbe::Running),
+        GatewayIdentityOutcome::Unknown,
+    )));
+    for (label, candidate) in [
+        (
+            "verified matching identity",
+            diagnosis(
+                GatewayRecordKind::Authenticated,
+                Some(GatewayProcessProbe::Running),
+                GatewayIdentityOutcome::Matched,
+            ),
+        ),
+        (
+            "confirmed-absent process",
+            diagnosis(
+                GatewayRecordKind::Authenticated,
+                Some(GatewayProcessProbe::ConfirmedAbsent),
+                GatewayIdentityOutcome::PermissionDenied,
+            ),
+        ),
+        (
+            "unprobed process",
+            diagnosis(
+                GatewayRecordKind::Authenticated,
+                None,
+                GatewayIdentityOutcome::PermissionDenied,
+            ),
+        ),
+        (
+            "legacy pid-only record",
+            diagnosis(
+                GatewayRecordKind::LegacyPidOnly,
+                Some(GatewayProcessProbe::Running),
+                GatewayIdentityOutcome::PermissionDenied,
+            ),
+        ),
+        (
+            "untrusted record",
+            diagnosis(
+                GatewayRecordKind::UntrustedOrMalformed,
+                Some(GatewayProcessProbe::Running),
+                GatewayIdentityOutcome::PermissionDenied,
+            ),
+        ),
+        (
+            "identity mismatch",
+            diagnosis(
+                GatewayRecordKind::Authenticated,
+                Some(GatewayProcessProbe::Running),
+                GatewayIdentityOutcome::Mismatch,
+            ),
+        ),
+    ] {
+        assert!(
+            !super::reusable_unverified_gateway(&candidate),
+            "{label} must not authorize reuse"
+        );
+    }
+    assert!(super::unverified_gateway_reuse_note().contains("permission-denied"));
+}
+
 /// Bounded fixture proof for the listener-handoff command-envelope JSON.
 ///
 /// The production `gateway_handoff_report_json` envelope is exercised with
