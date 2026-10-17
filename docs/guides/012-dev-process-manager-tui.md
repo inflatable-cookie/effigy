@@ -309,6 +309,14 @@ effigy dev stop admin
 includes the failing process's log path and tail in the task error, so lifecycle
 startup failures do not collapse to an unexplained exit code.
 
+Concurrent children wait while the lifecycle reports `starting` and only
+then poll container exec readiness. The wait shares the task's readiness
+budget (`health_wait_timeout_secs`, default 60 seconds) with the same
+per-probe windows as `container up`, instead of a fixed 30 seconds — so a
+slow-but-healthy first start no longer times children out while the stack
+is still coming up. Raise the timeout when the stack legitimately needs
+longer than the default.
+
 - `EFFIGY_MANAGED_STREAM=1`
   - bypasses TUI and runs the selected profile in stream mode
 - `EFFIGY_MANAGED_HEADLESS=1`

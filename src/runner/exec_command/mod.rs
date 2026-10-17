@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::io::IsTerminal;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Output;
 
 use effigy_builtin::BuiltinContainerSuiteTarget;
@@ -91,6 +91,20 @@ pub(in crate::runner) fn try_run_exec_alias(
         Err(effigy_exec::ExecError::AliasNotFound { .. }) => return Ok(None),
         Err(error) => return Err(RunnerError::task_invocation(error.to_string())),
     };
+    // Inside the workspace container the alias command is already local:
+    // run it directly without activating (and probing) the host runtime.
+    if let Some(local) = run_handoff_local_raw_exec(HandoffLocalRawExec {
+        repo_root,
+        invocation_cwd,
+        container_name: &surface.container_name,
+        config: &surface.config,
+        service: &alias.service,
+        command: &alias.command,
+        output_json,
+        alias_name: Some(alias_name),
+    }) {
+        return local.map(Some);
+    }
     let activation = activate_exec_surface(repo_root, &surface)?;
 
     let output = run_raw_exec(RawExecRequest {
@@ -179,6 +193,70 @@ pub(in crate::runner) fn capture_routed_task_container_exec_with_policy(
     )
 }
 
+/// Run an `effigy exec` command where the caller already is when inside
+/// the workspace container. Returns `None` on the host so host flows keep
+/// their activation and runtime checks.
+///
+/// The container working directory resolves exactly as the compose path
+/// would map it, but the command executes as a local process: no
+/// `colima`/`nerdctl`/`docker` probe ever runs inside the container.
+struct HandoffLocalRawExec<'a> {
+    repo_root: &'a Path,
+    invocation_cwd: &'a Path,
+    container_name: &'a str,
+    config: &'a ManifestContainerConfig,
+    service: &'a str,
+    command: &'a [String],
+    output_json: bool,
+    alias_name: Option<&'a str>,
+}
+
+fn run_handoff_local_raw_exec(
+    request: HandoffLocalRawExec<'_>,
+) -> Option<Result<String, RunnerError>> {
+    let HandoffLocalRawExec {
+        repo_root,
+        invocation_cwd,
+        container_name,
+        config,
+        service,
+        command,
+        output_json,
+        alias_name,
+    } = request;
+    let resolved = super::container_runtime::resolve_handoff_local_execution(
+        repo_root,
+        Some(container_name),
+        Some(service),
+    )?;
+    let mut execution = match resolved {
+        Ok(execution) => execution,
+        Err(error) => return Some(Err(error)),
+    };
+    let mapped_cwd = match surface::map_host_cwd(repo_root, invocation_cwd, container_name, config)
+    {
+        Ok(mapped) => mapped,
+        Err(error) => return Some(Err(error)),
+    };
+    execution.working_dir = PathBuf::from(mapped_cwd);
+    let output = match super::container_runtime::run_handoff_local_direct_command(
+        &execution,
+        command,
+        output_json,
+    ) {
+        Ok(output) => output,
+        Err(error) => return Some(Err(error)),
+    };
+    Some(render_exec_result(
+        container_name,
+        service,
+        command,
+        output,
+        output_json,
+        alias_name,
+    ))
+}
+
 fn run_explicit_exec(
     repo_root: &Path,
     invocation_cwd: &Path,
@@ -187,8 +265,22 @@ fn run_explicit_exec(
     output_json: bool,
 ) -> Result<String, RunnerError> {
     let surface = resolve_default_exec_surface(repo_root)?;
-    let activation = activate_exec_surface(repo_root, &surface)?;
     let service = service_override.unwrap_or(surface.policy.primary_service.as_str());
+    // Inside the workspace container the command is already local: run it
+    // directly without activating (and probing) the host runtime.
+    if let Some(local) = run_handoff_local_raw_exec(HandoffLocalRawExec {
+        repo_root,
+        invocation_cwd,
+        container_name: &surface.container_name,
+        config: &surface.config,
+        service,
+        command,
+        output_json,
+        alias_name: None,
+    }) {
+        return local;
+    }
+    let activation = activate_exec_surface(repo_root, &surface)?;
     let output = run_raw_exec(RawExecRequest {
         repo_root,
         invocation_cwd,

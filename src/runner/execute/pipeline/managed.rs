@@ -747,6 +747,7 @@ fn materialize_special_managed_processes(
     let readiness_probe_urls =
         managed_readiness_probe_urls(inline_policy.as_ref().or(named_policy.as_ref()));
     let health_wait_timeout_secs = plan.readiness.timeout_secs;
+    let exec_readiness_timeout_secs = plan.readiness.timeout_secs;
     let container_repo_root = binding_resolution.exec_working_dir(repo_root)?;
     for process in &mut plan.processes {
         match process.role {
@@ -817,6 +818,7 @@ fn materialize_special_managed_processes(
                         &preflight.selector.task_name,
                         process.service.as_deref(),
                         &executable,
+                        exec_readiness_timeout_secs,
                     )
                 };
             }
@@ -875,13 +877,16 @@ fn materialize_special_managed_processes(
                 }
                 if let Some(policy) = inline_policy.as_ref() {
                     process.run = render_inline_managed_standard_exec_command(
-                        repo_root,
-                        policy,
-                        &preflight.selector.task_name,
-                        &process.cwd,
-                        container_repo_root.as_deref(),
-                        wrapped_setup.as_deref(),
-                        &wrapped_run,
+                        crate::runner::managed_shell::InlineManagedStandardExecRequest {
+                            repo_root,
+                            policy,
+                            owner_task: &preflight.selector.task_name,
+                            process_cwd: &process.cwd,
+                            container_repo_root: container_repo_root.as_deref(),
+                            setup_command: wrapped_setup.as_deref(),
+                            command: &wrapped_run,
+                            exec_readiness_timeout_secs,
+                        },
                     );
                 } else if container_binding.container_name().is_some() {
                     process.run = managed_standard_exec_command(ManagedStandardExecRequest {
@@ -893,6 +898,7 @@ fn materialize_special_managed_processes(
                         setup_command: wrapped_setup.as_deref(),
                         executable: &executable,
                         command: &wrapped_run,
+                        exec_readiness_timeout_secs,
                     });
                 }
             }
@@ -1097,7 +1103,8 @@ mod tests {
     use crate::runner::error::RunnerError;
     use crate::runner::execute::workspace_seeded::render_workspace_seeded_task_command;
     use crate::runner::managed_shell::{
-        managed_readiness_probe_urls, render_inline_managed_standard_exec_command,
+        managed_readiness_probe_urls, render_inline_managed_lifecycle_command,
+        render_inline_managed_standard_exec_command, InlineManagedStandardExecRequest,
     };
     use crate::runner::runtime_session_context::LeaseRefreshPolicy;
     use effigy_containers::{
@@ -1208,16 +1215,68 @@ mod tests {
     }
 
     #[test]
-    fn inline_managed_standard_exec_runs_setup_before_attach() {
-        let rendered = render_inline_managed_standard_exec_command(
+    fn inline_managed_standard_exec_waits_while_lifecycle_starts() {
+        let rendered =
+            render_inline_managed_standard_exec_command(InlineManagedStandardExecRequest {
+                repo_root: Path::new("/tmp/repo"),
+                policy: &test_policy(),
+                owner_task: "dev",
+                process_cwd: Path::new("/tmp/repo/acme-front"),
+                container_repo_root: Some(Path::new("/workspace-root/repo")),
+                setup_command: None,
+                command: "bun run dev",
+                exec_readiness_timeout_secs: 45,
+            });
+
+        assert!(
+            rendered.contains(
+                "while true; do if [ -f \"$state_path\" ] && [ \"$(cat \"$state_path\")\" = starting ]; then sleep 1; continue; fi; if"
+            ),
+            "got: {rendered}"
+        );
+        assert!(rendered.contains("+ 45 )); while true;"), "got: {rendered}");
+    }
+
+    #[test]
+    fn inline_managed_lifecycle_marks_started_after_up_before_ready() {
+        let rendered = render_inline_managed_lifecycle_command(
             Path::new("/tmp/repo"),
             &test_policy(),
-            "dev",
-            Path::new("/tmp/repo/acme-front"),
-            Some(Path::new("/workspace-root/repo")),
-            Some("printf setup-ok; "),
-            "bun run dev",
+            crate::runner::managed_shell::InlineManagedLifecycle {
+                owner_task: "dev",
+                health_wait: false,
+                health_wait_timeout_secs: 60,
+                ready_message: None,
+                dns_route_lines: &[],
+                readiness_probe_urls: &[],
+                setup_commands: &[],
+            },
         );
+
+        let up_index = rendered.find("up").expect("lifecycle up");
+        // Single quotes are re-quoted by shell quoting, so match the
+        // quote-free state-write markers.
+        let started_index = rendered
+            .find("started > ")
+            .expect("started marker after up");
+        let ready_index = rendered.find("ready > ").expect("ready marker");
+        assert!(up_index < started_index, "got: {rendered}");
+        assert!(started_index < ready_index, "got: {rendered}");
+    }
+
+    #[test]
+    fn inline_managed_standard_exec_runs_setup_before_attach() {
+        let rendered =
+            render_inline_managed_standard_exec_command(InlineManagedStandardExecRequest {
+                repo_root: Path::new("/tmp/repo"),
+                policy: &test_policy(),
+                owner_task: "dev",
+                process_cwd: Path::new("/tmp/repo/acme-front"),
+                container_repo_root: Some(Path::new("/workspace-root/repo")),
+                setup_command: Some("printf setup-ok; "),
+                command: "bun run dev",
+                exec_readiness_timeout_secs: 45,
+            });
 
         let setup_index = rendered.find("printf setup-ok").expect("setup command");
         let attach_index = rendered

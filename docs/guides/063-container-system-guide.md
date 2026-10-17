@@ -949,6 +949,24 @@ per launch.
 
 Container-backed tasks now use two distinct lifecycle models.
 
+### Commands inside the workspace container
+
+An Effigy invocation that already runs inside its own workspace container
+(`EFFIGY_INTERNAL_CONTAINER_HANDOFF=1`, set by every compose exec into the
+target service) never probes a host runtime. `container shell --command`,
+`container exec`, and `exec` execute the requested command directly where
+the caller already is — same working directory, inherited handoff
+environment — instead of spawning `colima`, `nerdctl`, `docker`, or
+`compose`, which are unreachable from inside. A bare interactive
+`container shell` opens the login shell locally for the same reason. Task
+routing already stays local under handoff; this closes the remaining
+exec surfaces so a task invoked inside its own container runs as the
+in-container execution instead of failing on host-only runtime probes.
+The opt-in bounded shell (`--bounded`) takes the same local path: the
+absolute deadline and stdout/stderr caps still apply to the local
+execution and the same bounded-exec schema renders, with no discovery,
+lease, or workspace-user fallback phases.
+
 ### Public Shell Sessions
 
 Interactive public shell/session surfaces include:
@@ -1070,6 +1088,17 @@ whole ownership plan, and scans owned paths together before repairing only
 dirty volumes. Clean paths launch no repair. Each invocation still checks
 current ownership and access because nested paths can change externally and
 there is no exact invalidation proof for a cached result.
+
+`container up` runs the same workspace permission preparation as an
+integration stage once exec readiness is verified, before secrets,
+gateway exposure, and readiness reporting. `up` is the one stage every
+first creation, reuse, and handover passes through, while managed children
+and `container shell` enter through exec without their own preparation —
+so owned-disposable cache volumes (Cargo registry/git, target dirs) are
+writable by the workspace user however the stack was created. A
+preparation failure refuses closed: detached `up` records a partial
+activation without tearing the started scope down, attached `up` cleans
+up, and neither retries, recreates, or adopts anything.
 
 For a running workspace, `effigy doctor` remains read-only and reports
 `container.workspace-ownership` when declared cargo/target mounts, their

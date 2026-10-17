@@ -9922,6 +9922,272 @@ fn cli_container_up_detached_starts_colima_and_reports_ready() {
     assert!(colima_invocations.contains(" up -d"));
 }
 
+fn assert_headless_lifecycle_children_running(root: &std::path::Path, children: &[&str]) {
+    let session_path = root.join(".effigy/runtime/managed/dev-default/session.json");
+    let raw = fs::read_to_string(&session_path).expect("read headless session");
+    let session: Value = serde_json::from_str(&raw).expect("parse headless session");
+    assert_eq!(session["task"], "dev");
+    assert_eq!(session["status"], "stopped");
+    for name in children {
+        let process = session["processes"]
+            .as_array()
+            .expect("session processes")
+            .iter()
+            .find(|entry| entry["name"] == *name)
+            .unwrap_or_else(|| panic!("session is missing child `{name}`: {raw}"));
+        assert_eq!(
+            process["status"], "exit=0",
+            "child `{name}` did not reach running-then-clean-exit: {raw}"
+        );
+        let log = process["log"].as_str().expect("child log path");
+        assert!(
+            std::path::Path::new(log).is_file(),
+            "child `{name}` log is missing at {log}"
+        );
+    }
+}
+
+/// Headless `dev` with a container lifecycle on a healthy stack: concurrent
+/// children wait out a slow first start (colima start delay), reach running
+/// once the lifecycle's startup completes, and a second run after the
+/// environment is stopped and reconciled (handover reuse) succeeds again.
+///
+/// Regression proof for the managed headless child failures: the old fixed
+/// 30s exec-readiness budget timed children out while the stack was still
+/// coming up, and `container up` never prepared workspace permission
+/// ownership for managed cache volumes. All resources are private; the
+/// runtime is the fake colima/docker pair, so no live VM or container
+/// starts and nothing outside the fixture is touched.
+#[test]
+fn cli_managed_headless_lifecycle_reaches_running_on_healthy_stack() {
+    let _guard = CLI_PROCESS_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    let private = tempfile::Builder::new()
+        .prefix("effigy-headless-lifecycle-")
+        .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
+        .expect("exclusive fake runtime fixture");
+    let root = fs::canonicalize(private.path()).expect("canonical fixture root");
+    // Keep the fixture for post-mortem when the operator asks for it.
+    if std::env::var_os("EFFIGY_TEST_KEEP_FIXTURE").is_some() {
+        eprintln!("kept headless fixture at {}", private.keep().display());
+    }
+    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
+    fs::create_dir_all(root.join("app")).expect("mkdir app dir");
+    fs::write(
+        root.join("infra/dev/docker-compose.yml"),
+        "services:\n  app:\n    image: alpine:3.20\n    command: [\"sh\", \"-lc\", \"sleep 3600\"]\n",
+    )
+    .expect("write compose file");
+    // The window child runs on the host so the run stays alive past the
+    // slow first start; api/front attach through the fake runtime the
+    // moment exec readiness succeeds after `up` completes.
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[tasks.dev]
+mode = "tui"
+workspace = "app"
+container_lifecycle = true
+concurrent = [
+  { role = "lifecycle", start = 1, tab = 1 },
+  { name = "api", run = "printf api-running", start = 2, tab = 2 },
+  { name = "front", run = "printf front-running", start = 3, tab = 3 },
+  { name = "window", run = "sleep 60", run_in = "host", start = 4, tab = 4, shutdown_on_exit = true },
+]
+
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
+working_dir = "/workspace"
+user = "dev"
+home = "/home/dev"
+
+[containers]
+default = "web"
+
+[containers.web]
+driver = "colima"
+startup = "detached"
+profile = "dev"
+compose_file = "infra/dev/docker-compose.yml"
+project_name = "fixture-web-dev"
+primary_service = "app"
+working_dir = "/workspace"
+
+[containers.web.lifecycle]
+on_task_exit = "stop"
+shutdown = "graceful"
+detach_timeout_secs = 1
+
+[containers.web.host]
+ports = ["8080:80"]
+mounts = ["./app:/workspace"]
+"#,
+    )
+    .expect("write managed headless manifest");
+    let (bin_dir, colima_state) = install_fake_container_runtime(&root);
+    // Managed children run through `sh -lc` login shells, and macOS login
+    // shells rebuild PATH via path_helper, demoting the test's fake-first
+    // PATH behind system directories. The wrapper restores the fake runtime
+    // on PATH before re-executing the real binary, so every nested effigy
+    // invocation (lifecycle `up`, readiness probes, attaches) resolves the
+    // fake `colima`/`docker` pair. It is referenced by absolute path, so the
+    // login-shell reordering cannot shadow it.
+    let wrapper = root.join("effigy-path-wrapper.sh");
+    fs::write(
+        &wrapper,
+        format!(
+            "#!/bin/sh\nFAKEBIN='{}'\nREAL='{}'\nPATH=\"$FAKEBIN:$PATH\"\nexport PATH\nexec \"$REAL\" \"$@\"\n",
+            bin_dir.display(),
+            env!("CARGO_BIN_EXE_effigy")
+        ),
+    )
+    .expect("write path wrapper");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(&wrapper).expect("stat wrapper").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&wrapper, perms).expect("chmod wrapper");
+    }
+    let docker_args = root.join("docker-args.log");
+    let colima_args = root.join("colima-args.log");
+    let log_follow = root.join("log-follow.marker");
+    let service_state = root.join("service-running");
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").expect("PATH")
+    );
+    let base_env: Vec<(String, String)> = vec![
+        ("NO_COLOR".to_owned(), "1".to_owned()),
+        // Route every nested effigy invocation (which the login-shell
+        // children would otherwise resolve through a reordered PATH)
+        // through the PATH-restoring wrapper.
+        (
+            "EFFIGY_EXECUTABLE".to_owned(),
+            wrapper.display().to_string(),
+        ),
+        // The workspace effigy install (Linux artifact build) is covered
+        // by dedicated tests; skip it here so readiness probes exercise the
+        // exec path instead of artifact provisioning.
+        (
+            "EFFIGY_TEST_SKIP_WORKSPACE_EFFIGY_HANDOFF".to_owned(),
+            "1".to_owned(),
+        ),
+        ("HOME".to_owned(), root.display().to_string()),
+        (
+            "EFFIGY_HOST_RUN_ROOT".to_owned(),
+            scheduler_state_root().display().to_string(),
+        ),
+        (
+            "EFFIGY_TEST_CONTAINERS_HOME".to_owned(),
+            root.join(".effigy").display().to_string(),
+        ),
+        ("PATH".to_owned(), path.clone()),
+        (
+            "EFFIGY_TEST_DOCKER_ARGS_FILE".to_owned(),
+            docker_args.display().to_string(),
+        ),
+        (
+            "EFFIGY_TEST_COLIMA_ARGS_FILE".to_owned(),
+            colima_args.display().to_string(),
+        ),
+        (
+            "EFFIGY_TEST_COLIMA_STATE_FILE".to_owned(),
+            colima_state.display().to_string(),
+        ),
+        (
+            "EFFIGY_TEST_SERVICE_STATE_FILE".to_owned(),
+            service_state.display().to_string(),
+        ),
+        (
+            "EFFIGY_TEST_LOG_FOLLOW_FILE".to_owned(),
+            log_follow.display().to_string(),
+        ),
+        // Slow first start: the fixed 30s child budget timed out while a
+        // healthy multi-service stack was still coming up.
+        (
+            "EFFIGY_TEST_COLIMA_START_DELAY_SECS".to_owned(),
+            "35".to_owned(),
+        ),
+    ];
+    let run_headless = |extra_env: &[(&str, &str)]| -> std::process::Output {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_effigy"))
+            .arg("dev")
+            .arg("--headless")
+            .arg("--repo")
+            .arg(&root)
+            .envs(
+                base_env
+                    .iter()
+                    .map(|(key, value)| (key.as_str(), value.as_str())),
+            )
+            .envs(extra_env.iter().copied())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn headless run");
+        let deadline = Instant::now() + Duration::from_secs(240);
+        loop {
+            if child.try_wait().expect("poll headless run").is_some() {
+                return child.wait_with_output().expect("wait headless run");
+            }
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("headless run did not finish within 240s");
+            }
+            std::thread::sleep(Duration::from_millis(200));
+        }
+    };
+
+    // First start against the slow stack.
+    let first = run_headless(&[]);
+    let lifecycle_log = || {
+        fs::read_to_string(root.join(".effigy/runtime/managed/dev-default/01-lifecycle.log"))
+            .unwrap_or_else(|_| "<no lifecycle log>".to_owned())
+    };
+    assert!(
+        first.status.success(),
+        "first headless run failed: stdout={} stderr={} lifecycle={}",
+        String::from_utf8_lossy(&first.stdout),
+        String::from_utf8_lossy(&first.stderr),
+        lifecycle_log()
+    );
+    assert_headless_lifecycle_children_running(&root, &["api", "front", "window"]);
+    // `container up` prepares workspace permission ownership as an
+    // integration stage even though managed children enter via exec.
+    let runtime_calls = fs::read_to_string(&colima_args).expect("read colima args")
+        + &fs::read_to_string(&docker_args).unwrap_or_default();
+    assert!(
+        runtime_calls.contains("effigy-perm-find-batch")
+            || runtime_calls.contains("effigy-perm-inspect-batch")
+            || runtime_calls.contains("effigy-perm-access-batch")
+            || runtime_calls.contains("effigy-perm-mkdir-batch"),
+        "expected workspace permission preparation during up, got: {runtime_calls}"
+    );
+
+    // Reuse after the environment is stopped and reconciled (handover).
+    // Force the reconcile path: without service rows `up` runs compose
+    // again instead of short-circuiting on the running stack.
+    let _ = fs::remove_file(&service_state);
+    let second = run_headless(&[("EFFIGY_TEST_COLIMA_START_DELAY_SECS", "")]);
+    assert!(
+        second.status.success(),
+        "reuse headless run failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&second.stdout),
+        String::from_utf8_lossy(&second.stderr)
+    );
+    assert_headless_lifecycle_children_running(&root, &["api", "front", "window"]);
+}
+
 #[test]
 fn cli_container_attached_session_stops_environment_on_sigint() {
     // All resources and HOME are private; no shared lock file is touched.

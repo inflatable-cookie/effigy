@@ -208,7 +208,7 @@ fn resolve_default_exec_container_name(
     }
 }
 
-fn map_host_cwd(
+pub(super) fn map_host_cwd(
     repo_root: &Path,
     invocation_cwd: &Path,
     container_name: &str,

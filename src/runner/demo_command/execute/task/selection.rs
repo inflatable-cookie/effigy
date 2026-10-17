@@ -174,6 +174,7 @@ fn materialize_demo_special_managed_processes(
         inline_policy.as_ref(),
         &executable,
     )?;
+    let exec_readiness_timeout_secs = plan.readiness.timeout_secs;
     for process in &mut plan.processes {
         match process.role {
             ManagedProcessRole::Lifecycle => {
@@ -227,6 +228,7 @@ fn materialize_demo_special_managed_processes(
                         task_name,
                         process.service.as_deref(),
                         &executable,
+                        exec_readiness_timeout_secs,
                     )
                 };
             }
@@ -239,13 +241,16 @@ fn materialize_demo_special_managed_processes(
                 }
                 if let Some(policy) = inline_policy.as_ref() {
                     process.run = render_inline_managed_standard_exec_command(
-                        repo_root,
-                        policy,
-                        task_name,
-                        &process.cwd,
-                        container_repo_root.as_deref(),
-                        process.setup.as_deref(),
-                        &process.run,
+                        crate::runner::managed_shell::InlineManagedStandardExecRequest {
+                            repo_root,
+                            policy,
+                            owner_task: task_name,
+                            process_cwd: &process.cwd,
+                            container_repo_root: container_repo_root.as_deref(),
+                            setup_command: process.setup.as_deref(),
+                            command: &process.run,
+                            exec_readiness_timeout_secs,
+                        },
                     );
                 } else if matches!(
                     container_binding,
@@ -260,6 +265,7 @@ fn materialize_demo_special_managed_processes(
                         setup_command: process.setup.as_deref(),
                         executable: &executable,
                         command: &process.run,
+                        exec_readiness_timeout_secs,
                     });
                 }
             }
