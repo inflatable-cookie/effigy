@@ -27,6 +27,11 @@ const FORWARDED_RUNTIME_ENV: &[&str] = &[
     super::SCHEDULER_ENV,
     super::ROOT_ENV,
     "CI",
+    // The managed run's settle identity: the worker that executes a task
+    // inside a managed run's tree writes lock records attributed to the
+    // run, so the run's settle can release them through the lock
+    // owner-token rules. It authorizes nothing beyond that checkout.
+    effigy_managed::RUN_TOKEN_ENV,
     "CARGO_HOME",
     "CARGO_TARGET_DIR",
     "CARGO_BUILD_JOBS",

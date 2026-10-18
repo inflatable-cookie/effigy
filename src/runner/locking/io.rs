@@ -23,6 +23,8 @@ const LOCKS_DIR: &str = ".effigy/locks";
 pub(in crate::runner) const LOCK_WAIT_ENV: &str = "EFFIGY_LOCK_WAIT_MS";
 const LOCK_WAIT_POLL_MS: u64 = 50;
 
+pub(in crate::runner) use stale::lock_hostname;
+
 pub(in crate::runner) fn resolve_lock_wait_ms(explicit: Option<u64>) -> Result<u64, RunnerError> {
     if let Some(value) = explicit {
         return Ok(value);
@@ -85,6 +87,15 @@ struct LockRecord {
     /// and stale cleanup only touch the record they mean to.
     #[serde(default)]
     owner_token: Option<String>,
+    /// Token of the managed run whose process tree wrote this record, when
+    /// the holder is part of a managed run (host children and the exec'd
+    /// in-container processes alike). The run's settle releases these
+    /// records through the owner-token rules, and holders across a PID
+    /// namespace boundary are judged by their heartbeat lease instead of a
+    /// foreign process table. Records without the field behave exactly as
+    /// before.
+    #[serde(default)]
+    managed_run_token: Option<String>,
 }
 
 fn new_owner_token() -> String {
@@ -237,27 +248,6 @@ pub(in crate::runner) fn unlock_all(workspace_root: &Path) -> Result<UnlockResul
     })
 }
 
-/// PIDs named as holders by the checkout's current task-lock records.
-/// Unreadable records are skipped: a lock a reader cannot parse is
-/// another path's problem, never evidence of ownership.
-///
-/// The container handover uses this to tell an exited-but-unreaped
-/// owner (whose lock guard already dropped and whose records are gone)
-/// from one that still holds its task lock.
-pub(in crate::runner) fn task_lock_holder_pids(workspace_root: &Path) -> Vec<u32> {
-    let locks_dir = workspace_root.join(LOCKS_DIR);
-    let Ok(entries) = fs::read_dir(&locks_dir) else {
-        return Vec::new();
-    };
-    entries
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("lock"))
-        .filter_map(|path| files::read_lock_record(&path).ok())
-        .map(|record| record.pid)
-        .collect()
-}
-
 fn acquire_scope_lock(
     locks_root: &Path,
     scope: LockScope,
@@ -276,6 +266,7 @@ fn acquire_scope_lock(
         hostname: stale::lock_hostname(),
         workspace_root: Some(workspace_root.display().to_string()),
         owner_token: Some(token.clone()),
+        managed_run_token: managed_run_token_from_env(),
     };
     let body = serde_json::to_vec(&record)
         .map_err(|error| RunnerError::Ui(format!("failed to encode lock record: {error}")))?;
@@ -349,6 +340,88 @@ fn acquire_scope_lock(
 
 fn elapsed_wait_ms(started_at: Instant) -> u64 {
     started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64
+}
+
+/// The managed run token this process carries, when it belongs to a
+/// managed run's process tree. In-container exec'd processes inherit the
+/// token through their rendered command; the run's settle uses it to
+/// release records their holders could not drop.
+fn managed_run_token_from_env() -> Option<String> {
+    std::env::var(effigy_managed::RUN_TOKEN_ENV)
+        .ok()
+        .filter(|token| !token.is_empty())
+}
+
+/// One live-or-stale holder named by the checkout's current task-lock
+/// records. `managed_run_token` attributes the record to a managed run.
+#[derive(Debug, Clone)]
+pub(in crate::runner) struct TaskLockHolder {
+    pub scope: String,
+    pub pid: u32,
+    pub hostname: Option<String>,
+    pub managed_run_token: Option<String>,
+}
+
+/// Every holder named by the checkout's current task-lock records.
+/// Unreadable records are skipped: a lock a reader cannot parse is
+/// another path's problem, never evidence of ownership.
+pub(in crate::runner) fn task_lock_holders(workspace_root: &Path) -> Vec<TaskLockHolder> {
+    let locks_dir = workspace_root.join(LOCKS_DIR);
+    let Ok(entries) = fs::read_dir(&locks_dir) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("lock"))
+        .filter_map(|path| {
+            let record = files::read_lock_record(&path).ok()?;
+            Some(TaskLockHolder {
+                scope: record.scope,
+                pid: record.pid,
+                hostname: record.hostname,
+                managed_run_token: record.managed_run_token,
+            })
+        })
+        .collect()
+}
+
+/// Remove every lock record attributed to `run_token`, through the lock
+/// owner-token rules: each file is unlinked only if it still holds exactly
+/// the record that named the run, so a successor's lock is never touched.
+/// Records held by `skip_pid` (the live run's own guards, which drop at
+/// return) are left for that guard or for the post-cascade sweep. Returns
+/// the released lock scopes.
+pub(in crate::runner) fn release_locks_attributed_to_run(
+    workspace_root: &Path,
+    run_token: &str,
+    skip_pid: Option<u32>,
+) -> Vec<String> {
+    let locks_dir = workspace_root.join(LOCKS_DIR);
+    let Ok(entries) = fs::read_dir(&locks_dir) else {
+        return Vec::new();
+    };
+    let mut released = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("lock") {
+            continue;
+        }
+        let Ok(record) = files::read_lock_record(&path) else {
+            continue;
+        };
+        if record.managed_run_token.as_deref() != Some(run_token) {
+            continue;
+        }
+        if skip_pid.is_some_and(|pid| record.pid == pid) {
+            continue;
+        }
+        if files::read_lock_record(&path).is_ok_and(|current| current == record) {
+            let _ = fs::remove_file(&path);
+            released.push(record.scope);
+        }
+    }
+    released
 }
 
 impl LockGuard {

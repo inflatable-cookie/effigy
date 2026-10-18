@@ -8579,7 +8579,7 @@ fn install_fake_container_runtime(
         &colima,
         &r#"#!/bin/sh
 set -eu
-printf "%s\n" "$*" >> "$EFFIGY_TEST_COLIMA_ARGS_FILE"
+printf "%s %s\n" "$(date +%s)" "$*" >> "$EFFIGY_TEST_COLIMA_ARGS_FILE"
 if [ "${1:-}" = "status" ]; then
   if [ -f "$EFFIGY_TEST_COLIMA_STATE_FILE" ]; then
     printf "Running\n"
@@ -8635,7 +8635,24 @@ case "$*" in
         fi
         case "$*" in
           *"--format"*)
-            printf "fixture-web-dev-app-1\tUp 10 seconds\t0.0.0.0:8080->80/tcp\tfixture-web-dev\t%s\tapp\tFalse\n" "${EFFIGY_TEST_OWNED_CHECKOUT:-$fixture_checkout}"
+            row_project="fixture-web-dev"
+            for arg in "$@"; do
+              case "$arg" in
+                label=com.docker.compose.project=*)
+                  row_project="${arg#label=com.docker.compose.project=}"
+                  ;;
+                -p)
+                  row_project_pending=1
+                  ;;
+                *)
+                  if [ "${row_project_pending:-0}" = 1 ]; then
+                    row_project="$arg"
+                    row_project_pending=0
+                  fi
+                  ;;
+              esac
+            done
+            printf "%s-app-1\tUp 10 seconds\t0.0.0.0:8080->80/tcp\t%s\t%s\tapp\tFalse\n" "$row_project" "$row_project" "${EFFIGY_TEST_OWNED_CHECKOUT:-$fixture_checkout}"
             ;;
           *)
             printf "NAME                STATUS\napp                 running\n"
@@ -8643,7 +8660,17 @@ case "$*" in
         esac
         ;;
       inspect)
-        /bin/cat "${EFFIGY_TEST_OWNED_INSPECT_FILE:-$fixture_inspect}"
+        queried=""
+        for arg in "$@"; do
+          queried="$arg"
+        done
+        inspected="${queried#/}"
+        if [ "$inspected" = "fixture-web-dev-app-1" ]; then
+          /bin/cat "${EFFIGY_TEST_OWNED_INSPECT_FILE:-$fixture_inspect}"
+        else
+          row_project="${inspected%-app-1}"
+          /usr/bin/sed "s/fixture-web-dev-app-1/${queried}/g; s/fixture-web-dev/${row_project}/g" "${EFFIGY_TEST_OWNED_INSPECT_FILE:-$fixture_inspect}"
+        fi
         ;;
       start)
         printf "started\n"
@@ -8720,11 +8747,39 @@ case "$*" in
           *"find -P"*)
             ;;
           *)
+            if [ -n "${EFFIGY_TEST_EXEC_REMOTE_MODE:-}" ]; then
+              last_arg=""
+              for arg in "$@"; do
+                last_arg="$arg"
+              done
+              case "$last_arg" in
+                kill\ -TERM*)
+                  sh -c "$last_arg"
+                  ;;
+                  *)
+                  done_marker="$EFFIGY_TEST_REMOTE_DONE_DIR/exec-$$.done"
+                  sh -c '( sh -c "$1" >/dev/null 2>&1; : > "$2" ) &' sh "$last_arg" "$done_marker"
+                  i=0
+                  while [ ! -f "$done_marker" ] && [ "$i" -lt 1500 ]; do
+                    sleep 0.2
+                    i=$((i + 1))
+                  done
+                  exit 0
+                  ;;
+              esac
+              exit 0
+            fi
             printf "exec-ok\n"
             ;;
         esac
         ;;
       down)
+        if [ -n "${EFFIGY_TEST_DOWN_REMOVES_SERVICE:-}" ]; then
+          rm -f "${EFFIGY_TEST_SERVICE_STATE_FILE:-/nonexistent}"
+        fi
+        if [ -n "${EFFIGY_TEST_DOWN_DELAY_SECS:-}" ]; then
+          sleep "$EFFIGY_TEST_DOWN_DELAY_SECS"
+        fi
         printf "compose-down\n"
         ;;
       kill)
@@ -10185,7 +10240,695 @@ mounts = ["./app:/workspace"]
         String::from_utf8_lossy(&second.stdout),
         String::from_utf8_lossy(&second.stderr)
     );
-    assert_headless_lifecycle_children_running(&root, &["api", "front", "window"]);
+    assert_headless_lifecycle_children_running(&root, api_front_window());
+}
+
+fn api_front_window() -> &'static [&'static str] {
+    &["api", "front", "window"]
+}
+
+/// A stop of a managed run whose children attach through the exec surface
+/// settles the whole run: the recorded remote process group is ended
+/// through the exec adapter (killing only the host exec clients never
+/// reaches it), every task lock the remote Effigy process took is released
+/// through the run-token rules, and an immediate restart has no lock
+/// conflict. The fake runtime runs exec'd payloads outside the CLI's
+/// process tree, exactly like a real container exec, so a surviving
+/// in-container child is real and its death is really proven.
+#[test]
+fn cli_managed_headless_stop_settles_remote_exec_children_and_locks() {
+    let _guard = CLI_PROCESS_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    let private = tempfile::Builder::new()
+        .prefix("effigy-headless-settle-")
+        .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
+        .expect("exclusive fake runtime fixture");
+    let root = fs::canonicalize(private.path()).expect("canonical fixture root");
+    if std::env::var_os("EFFIGY_TEST_KEEP_FIXTURE").is_some() {
+        eprintln!(
+            "kept headless settle fixture at {}",
+            private.keep().display()
+        );
+    }
+    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
+    fs::write(
+        root.join("infra/dev/docker-compose.yml"),
+        "services:\n  app:\n    image: alpine:3.20\n    command: [\"sh\", \"-lc\", \"sleep 3600\"]\n",
+    )
+    .expect("write compose file");
+    // The concurrent child execs into the environment and runs a nested
+    // Effigy task that takes its own task lock, like an in-container
+    // `cargo run` behind a task reference.
+    let binary = env!("CARGO_BIN_EXE_effigy");
+    let root_display = root.display();
+    fs::write(
+        root.join("effigy.toml"),
+        format!(
+            r#"[tasks.dev]
+mode = "tui"
+workspace = "app"
+container_lifecycle = true
+concurrent = [
+  {{ role = "lifecycle", start = 1 }},
+  {{ name = "api", run = "env EFFIGY_INTERNAL_CONTAINER_HANDOFF=1 HOME='{root_display}' '{binary}' --repo '{root_display}' hold", start = 2 }}
+]
+
+[tasks.hold]
+run = "i=0; while [ \"$i\" -lt 300 ]; do sleep 1; i=$((i+1)); done"
+
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
+
+[containers]
+default = "web"
+
+[containers.web]
+driver = "colima"
+startup = "detached"
+profile = "dev"
+compose_file = "infra/dev/docker-compose.yml"
+project_name = "fixture-web-dev"
+primary_service = "app"
+working_dir = "{root_display}"
+
+[containers.web.lifecycle]
+on_task_exit = "stop"
+detach_timeout_secs = 1
+"#
+        ),
+    )
+    .expect("write managed headless manifest");
+    let (bin_dir, colima_state) = install_fake_container_runtime(&root);
+    let wrapper = root.join("effigy-path-wrapper.sh");
+    fs::write(
+        &wrapper,
+        format!(
+            "#!/bin/sh\nFAKEBIN='{}'\nREAL='{}'\nPATH=\"$FAKEBIN:$PATH\"\nexport PATH\nexec \"$REAL\" \"$@\"\n",
+            bin_dir.display(),
+            binary
+        ),
+    )
+    .expect("write path wrapper");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(&wrapper).expect("stat wrapper").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&wrapper, perms).expect("chmod wrapper");
+    }
+    let docker_args = root.join("docker-args.log");
+    let colima_args = root.join("colima-args.log");
+    let log_follow = root.join("log-follow.marker");
+    let service_state = root.join("service-running");
+    let remote_done_dir = root.join("remote-done");
+    fs::create_dir_all(&remote_done_dir).expect("mkdir remote done dir");
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").expect("PATH")
+    );
+    let base_env: Vec<(String, String)> = vec![
+        ("NO_COLOR".to_owned(), "1".to_owned()),
+        (
+            "EFFIGY_EXECUTABLE".to_owned(),
+            wrapper.display().to_string(),
+        ),
+        (
+            "EFFIGY_TEST_SKIP_WORKSPACE_EFFIGY_HANDOFF".to_owned(),
+            "1".to_owned(),
+        ),
+        ("HOME".to_owned(), root.display().to_string()),
+        (
+            "EFFIGY_HOST_RUN_ROOT".to_owned(),
+            scheduler_state_root().display().to_string(),
+        ),
+        (
+            "EFFIGY_TEST_CONTAINERS_HOME".to_owned(),
+            root.join(".effigy").display().to_string(),
+        ),
+        ("PATH".to_owned(), path.clone()),
+        (
+            "EFFIGY_TEST_DOCKER_ARGS_FILE".to_owned(),
+            docker_args.display().to_string(),
+        ),
+        (
+            "EFFIGY_TEST_COLIMA_ARGS_FILE".to_owned(),
+            colima_args.display().to_string(),
+        ),
+        (
+            "EFFIGY_TEST_COLIMA_STATE_FILE".to_owned(),
+            colima_state.display().to_string(),
+        ),
+        (
+            "EFFIGY_TEST_SERVICE_STATE_FILE".to_owned(),
+            service_state.display().to_string(),
+        ),
+        (
+            "EFFIGY_TEST_LOG_FOLLOW_FILE".to_owned(),
+            log_follow.display().to_string(),
+        ),
+        // The fake exec runs each payload in its own detached session,
+        // outside the exec CLI's process tree, like a real container exec.
+        ("EFFIGY_TEST_EXEC_REMOTE_MODE".to_owned(), "1".to_owned()),
+        (
+            "EFFIGY_TEST_REMOTE_DONE_DIR".to_owned(),
+            remote_done_dir.display().to_string(),
+        ),
+    ];
+    let wait_for = |condition: &dyn Fn() -> bool, what: &str| {
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while !condition() {
+            assert!(Instant::now() < deadline, "timed out waiting for {what}");
+            std::thread::sleep(Duration::from_millis(200));
+        }
+    };
+
+    let mut first = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("dev")
+        .arg("--headless")
+        .arg("--repo")
+        .arg(&root)
+        .envs(
+            base_env
+                .iter()
+                .map(|(key, value)| (key.as_str(), value.as_str())),
+        )
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn first headless run");
+    let session_dir = root.join(".effigy/runtime/managed/dev-default");
+    let marker = session_dir.join("exec/api.pgid");
+    let lock_file = root.join(".effigy/locks/task-hold.lock");
+    let marker_deadline = Instant::now() + Duration::from_secs(60);
+    while !marker.is_file() {
+        assert!(
+            Instant::now() < marker_deadline,
+            "timed out waiting for the remote session leader marker to be recorded; colima tail={} remote-done={:?}",
+            fs::read_to_string(&colima_args)
+                .unwrap_or_default()
+                .lines()
+                .last()
+                .unwrap_or_default(),
+            fs::read_dir(&remote_done_dir)
+                .map(|entries| {
+                    entries
+                        .flatten()
+                        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default(),
+        );
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    let pgid: u32 = fs::read_to_string(&marker)
+        .expect("read session leader marker")
+        .trim()
+        .parse()
+        .expect("session leader pgid");
+    wait_for(
+        &|| lock_file.is_file(),
+        "the remote holder's task lock to appear",
+    );
+    // The in-container Effigy process wrote its lock with the managed
+    // run's token: the run's settle can release it.
+    let lock_record = fs::read_to_string(&lock_file).expect("read remote holder lock");
+    assert!(
+        lock_record.contains("\"managed_run_token\":\"managedrun-"),
+        "the remote lock must carry the run token: {lock_record}"
+    );
+    assert!(
+        effigy_process::process_is_running(pgid),
+        "the remote holder process (pgid {pgid}) is live before the stop"
+    );
+
+    let stop = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("dev")
+        .arg("stop")
+        .arg("--repo")
+        .arg(&root)
+        .envs(
+            base_env
+                .iter()
+                .map(|(key, value)| (key.as_str(), value.as_str())),
+        )
+        .output()
+        .expect("run dev stop");
+    let stop_deadline = Instant::now() + Duration::from_secs(120);
+    assert!(
+        stop.status.success(),
+        "stop failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&stop.stdout),
+        String::from_utf8_lossy(&stop.stderr)
+    );
+    let stop_output = String::from_utf8_lossy(&stop.stdout);
+    assert!(
+        stop_output.contains("settled managed headless task `dev`"),
+        "stop must report settled: {stop_output}"
+    );
+    let first_exit = loop {
+        if first.try_wait().expect("poll first run").is_some() {
+            break first.wait_with_output().expect("wait first run");
+        }
+        assert!(
+            Instant::now() < stop_deadline,
+            "the first headless run did not exit after its stop settled"
+        );
+        std::thread::sleep(Duration::from_millis(200));
+    };
+    assert!(
+        first_exit.status.success(),
+        "the stopped run exits cleanly: stdout={} stderr={} colima={}",
+        String::from_utf8_lossy(&first_exit.stdout),
+        String::from_utf8_lossy(&first_exit.stderr),
+        fs::read_to_string(&colima_args).unwrap_or_default()
+    );
+    assert!(
+        !effigy_process::process_is_running(pgid),
+        "the remote holder process (pgid {pgid}) was ended through the exec adapter"
+    );
+    assert!(
+        !lock_file.exists(),
+        "the run's settle released the remote holder's lock"
+    );
+    assert!(
+        !marker.exists(),
+        "the consumed session leader marker is cleaned up"
+    );
+    let runtime_calls = fs::read_to_string(&colima_args).expect("read colima args")
+        + &fs::read_to_string(&docker_args).unwrap_or_default();
+    assert!(
+        runtime_calls.contains(&format!("kill -TERM -- -{pgid}")),
+        "the exec adapter was asked to end the recorded group: {runtime_calls}"
+    );
+
+    // An immediate restart has no lock conflict: it reaches running and
+    // keeps a live remote holder, then settles cleanly through the same
+    // stop path.
+    let mut second = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("dev")
+        .arg("--headless")
+        .arg("--repo")
+        .arg(&root)
+        .envs(
+            base_env
+                .iter()
+                .map(|(key, value)| (key.as_str(), value.as_str())),
+        )
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn restart headless run");
+    let restart_deadline = Instant::now() + Duration::from_secs(60);
+    while !lock_file.exists() {
+        assert!(
+            Instant::now() < restart_deadline,
+            "the restart did not reach a live remote holder"
+        );
+        if second.try_wait().expect("poll restart run").is_some() {
+            let output = second.wait_with_output().expect("restart output");
+            panic!(
+                "the restart exited before reaching running (lock conflict?): stdout={} stderr={}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    let restart_stop = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("dev")
+        .arg("stop")
+        .arg("--repo")
+        .arg(&root)
+        .envs(
+            base_env
+                .iter()
+                .map(|(key, value)| (key.as_str(), value.as_str())),
+        )
+        .output()
+        .expect("run restart dev stop");
+    assert!(
+        restart_stop.status.success()
+            && String::from_utf8_lossy(&restart_stop.stdout)
+                .contains("settled managed headless task `dev`"),
+        "restart stop failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&restart_stop.stdout),
+        String::from_utf8_lossy(&restart_stop.stderr)
+    );
+    let second_exit = loop {
+        if second.try_wait().expect("poll restart run").is_some() {
+            break second.wait_with_output().expect("wait restart run");
+        }
+        assert!(
+            Instant::now() < restart_deadline + Duration::from_secs(60),
+            "the restart run did not exit after its stop settled"
+        );
+        std::thread::sleep(Duration::from_millis(200));
+    };
+    assert!(
+        second_exit.status.success(),
+        "the restart run exits cleanly after its stop: stdout={} stderr={}",
+        String::from_utf8_lossy(&second_exit.stdout),
+        String::from_utf8_lossy(&second_exit.stderr)
+    );
+}
+
+/// A forward handover with a live headless owner whose stop cascade takes
+/// longer than the old fixed 20s guess: the owned environment's fake
+/// `down` sleeps 25s. The handover waits for the owner's real settle, ends
+/// the owner once, verifies the environment is down instead of racing a
+/// second `down`, and the requested environment starts. No refusal.
+#[test]
+fn cli_forward_handover_waits_for_owner_whose_stop_cascade_is_slow() {
+    let _guard = CLI_PROCESS_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    let private = tempfile::Builder::new()
+        .prefix("effigy-handover-slow-down-")
+        .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
+        .expect("exclusive fake runtime fixture");
+    let root = fs::canonicalize(private.path()).expect("canonical fixture root");
+    if std::env::var_os("EFFIGY_TEST_KEEP_FIXTURE").is_some() {
+        eprintln!(
+            "kept slow-down handover fixture at {}",
+            private.keep().display()
+        );
+    }
+    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
+    fs::write(
+        root.join("infra/dev/docker-compose.yml"),
+        "services:\n  app:\n    image: alpine:3.20\n    command: [\"sh\", \"-lc\", \"sleep 3600\"]\n",
+    )
+    .expect("write compose file");
+    let root_display = root.display();
+    fs::write(
+        root.join("effigy.toml"),
+        format!(
+            r#"[tasks.devc]
+mode = "tui"
+workspace = "stack"
+container_lifecycle = true
+concurrent = [
+  {{ role = "lifecycle", start = 1 }},
+  {{ name = "watch", run = "i=0; while [ \"$i\" -lt 600 ]; do sleep 1; i=$((i+1)); done", run_in = "host", start = 2 }},
+]
+
+[tasks.devh]
+mode = "tui"
+workspace = "web"
+container_lifecycle = true
+concurrent = [
+  {{ role = "lifecycle", start = 1 }},
+  {{ name = "api", run = "printf hybrid-running", start = 2, shutdown_on_exit = true }},
+]
+
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "stack"
+
+[systems.dev.workspaces.stack]
+container = "stack"
+
+[systems.dev.workspaces.web]
+container = "web"
+
+[containers]
+default = "stack"
+
+[containers.stack]
+driver = "colima"
+startup = "detached"
+profile = "dev"
+compose_file = "infra/dev/docker-compose.yml"
+project_name = "fixture-stack-dev"
+primary_service = "app"
+working_dir = "{root_display}"
+
+[containers.stack.dns]
+routes = [{{ domain = "switch.test", tls = false, port = 8080, service = "app" }}]
+
+[containers.stack.host]
+ports = ["8080:80"]
+
+[containers.stack.lifecycle]
+on_task_exit = "stop"
+detach_timeout_secs = 1
+
+[containers.web]
+driver = "colima"
+startup = "detached"
+profile = "dev"
+compose_file = "infra/dev/docker-compose.yml"
+project_name = "fixture-web-dev"
+primary_service = "app"
+working_dir = "{root_display}"
+
+[containers.web.dns]
+routes = [{{ domain = "switch.test", tls = false, port = 8081, service = "app" }}]
+
+[containers.web.host]
+ports = ["8081:80"]
+
+[containers.web.lifecycle]
+on_task_exit = "stop"
+detach_timeout_secs = 1
+"#
+        ),
+    )
+    .expect("write handover manifest");
+    let (bin_dir, colima_state) = install_fake_container_runtime(&root);
+    let binary = env!("CARGO_BIN_EXE_effigy");
+    let wrapper = root.join("effigy-path-wrapper.sh");
+    fs::write(
+        &wrapper,
+        format!(
+            "#!/bin/sh\nFAKEBIN='{}'\nREAL='{}'\nPATH=\"$FAKEBIN:$PATH\"\nexport PATH\nexec \"$REAL\" \"$@\"\n",
+            bin_dir.display(),
+            binary
+        ),
+    )
+    .expect("write path wrapper");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(&wrapper).expect("stat wrapper").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&wrapper, perms).expect("chmod wrapper");
+    }
+    let docker_args = root.join("docker-args.log");
+    let colima_args = root.join("colima-args.log");
+    let log_follow = root.join("log-follow.marker");
+    let service_state = root.join("service-running");
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").expect("PATH")
+    );
+    let base_env: Vec<(String, String)> = vec![
+        ("NO_COLOR".to_owned(), "1".to_owned()),
+        (
+            "EFFIGY_EXECUTABLE".to_owned(),
+            wrapper.display().to_string(),
+        ),
+        (
+            "EFFIGY_TEST_SKIP_WORKSPACE_EFFIGY_HANDOFF".to_owned(),
+            "1".to_owned(),
+        ),
+        ("HOME".to_owned(), root.display().to_string()),
+        (
+            "EFFIGY_HOST_RUN_ROOT".to_owned(),
+            scheduler_state_root().display().to_string(),
+        ),
+        (
+            "EFFIGY_TEST_CONTAINERS_HOME".to_owned(),
+            root.join(".effigy").display().to_string(),
+        ),
+        ("PATH".to_owned(), path.clone()),
+        (
+            "EFFIGY_TEST_DOCKER_ARGS_FILE".to_owned(),
+            docker_args.display().to_string(),
+        ),
+        (
+            "EFFIGY_TEST_COLIMA_ARGS_FILE".to_owned(),
+            colima_args.display().to_string(),
+        ),
+        (
+            "EFFIGY_TEST_COLIMA_STATE_FILE".to_owned(),
+            colima_state.display().to_string(),
+        ),
+        (
+            "EFFIGY_TEST_SERVICE_STATE_FILE".to_owned(),
+            service_state.display().to_string(),
+        ),
+        (
+            "EFFIGY_TEST_LOG_FOLLOW_FILE".to_owned(),
+            log_follow.display().to_string(),
+        ),
+    ];
+    let spawn_headless = |task: &str, extra_env: &[(&str, &str)]| {
+        Command::new(binary)
+            .arg(task)
+            .arg("--headless")
+            .arg("--repo")
+            .arg(&root)
+            .envs(
+                base_env
+                    .iter()
+                    .map(|(key, value)| (key.as_str(), value.as_str())),
+            )
+            .envs(extra_env.iter().copied())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn headless run")
+    };
+
+    // The owner: headless devc bound to `stack`, alive on a looping host
+    // child until the handover ends it. Its own stop cascade's downs are
+    // equally slow, so the settle wait covers a real `container down`.
+    let mut owner = spawn_headless(
+        "devc",
+        &[
+            ("EFFIGY_TEST_DOWN_DELAY_SECS", "25"),
+            ("EFFIGY_TEST_DOWN_REMOVES_SERVICE", "1"),
+        ],
+    );
+    let owner_session = root.join(".effigy/runtime/managed/devc-default/session.json");
+    let owner_state_path = root.join(".effigy/runtime/managed-lifecycle/devc-stack.state");
+    let start_deadline = Instant::now() + Duration::from_secs(120);
+    while !owner_state_path.is_file()
+        || fs::read_to_string(&owner_state_path)
+            .unwrap_or_default()
+            .trim()
+            != "ready"
+    {
+        assert!(
+            Instant::now() < start_deadline,
+            "the stack owner did not reach ready"
+        );
+        assert!(
+            owner.try_wait().expect("poll owner").is_none(),
+            "the stack owner exited before the handover"
+        );
+        std::thread::sleep(Duration::from_millis(200));
+    }
+
+    // The incoming environment: its `up` hands `stack` over. The fake
+    // `down` sleeps 25s, longer than the retired fixed 20s settle guess.
+    let mut incoming = spawn_headless(
+        "devh",
+        &[
+            ("EFFIGY_TEST_DOWN_DELAY_SECS", "25"),
+            ("EFFIGY_TEST_DOWN_REMOVES_SERVICE", "1"),
+        ],
+    );
+    let incoming_deadline = Instant::now() + Duration::from_secs(240);
+    let incoming_exit = loop {
+        if incoming.try_wait().expect("poll incoming run").is_some() {
+            break incoming.wait_with_output().expect("wait incoming run");
+        }
+        assert!(
+            Instant::now() < incoming_deadline,
+            "the incoming handover run did not finish within 240s"
+        );
+        std::thread::sleep(Duration::from_millis(200));
+    };
+    assert!(
+        incoming_exit.status.success(),
+        "the forward handover refused: stdout={} stderr={} colima={}",
+        String::from_utf8_lossy(&incoming_exit.stdout),
+        String::from_utf8_lossy(&incoming_exit.stderr),
+        fs::read_to_string(&colima_args).unwrap_or_default()
+    );
+    assert!(
+        !String::from_utf8_lossy(&incoming_exit.stderr).contains("did not settle"),
+        "no settle refusal is expected: {}",
+        String::from_utf8_lossy(&incoming_exit.stderr)
+    );
+
+    let owner_raw = fs::read_to_string(&owner_session).expect("read owner session");
+    let owner_state: Value = serde_json::from_str(&owner_raw).expect("parse owner session");
+    let owner_pid = owner_state["supervisor_pid"].as_u64().expect("owner pid") as u32;
+    assert_eq!(
+        owner_state["status"], "stopped",
+        "owner session: {owner_raw}"
+    );
+    // The owner is this test's own child: wait(2) is the exact exit
+    // observation, and an unreaped zombie must not read as running.
+    let exit_deadline = Instant::now() + Duration::from_secs(60);
+    let owner_exit_epoch = loop {
+        if owner.try_wait().expect("poll ended owner").is_some() {
+            break std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_secs();
+        }
+        assert!(
+            Instant::now() < exit_deadline,
+            "the ended owner's supervisor ({owner_pid}) is still running"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    let _ = owner_pid;
+
+    // Behaviour proof: the losing environment is downed by the owner's own
+    // cascade and the handover races no second conflicting down. Every
+    // stack `down` the fake observed must start before the owner process
+    // exits (its whole cascade, cleanup down included); a handover-time
+    // down would start after. The cascade issues one down from the
+    // lifecycle's exit trap and one from the managed cleanup; a loaded
+    // runner may force-kill the trap down before it reaches compose, so
+    // the cascade count is one or two, never more.
+    let runtime_calls = fs::read_to_string(&colima_args).expect("read colima args")
+        + &fs::read_to_string(&docker_args).unwrap_or_default();
+    let mut stack_downs = 0;
+    for line in runtime_calls.lines() {
+        if !(line.contains(" down") && line.contains("fixture-stack-dev")) {
+            continue;
+        }
+        stack_downs += 1;
+        let started_epoch: u64 = line
+            .split(' ')
+            .next()
+            .and_then(|ts| ts.parse().ok())
+            .unwrap_or(0);
+        assert!(
+            started_epoch <= owner_exit_epoch + 2,
+            "a stack down started after the owner's cascade finished; the handover raced a second conflicting down: {line}"
+        );
+    }
+    assert!(
+        (1..=2).contains(&stack_downs),
+        "only the owner's own cascade downs `stack` (its lifecycle exit-trap down and the managed cleanup down, one or two); got {stack_downs}: {runtime_calls}"
+    );
+
+    // The requested environment started: the incoming run's children
+    // reached running and exited cleanly.
+    let incoming_session =
+        fs::read_to_string(root.join(".effigy/runtime/managed/devh-default/session.json"))
+            .expect("read incoming session");
+    let incoming_state: Value =
+        serde_json::from_str(&incoming_session).expect("parse incoming session");
+    assert_eq!(incoming_state["status"], "stopped", "{incoming_session}");
+    let process = incoming_state["processes"]
+        .as_array()
+        .expect("session processes")
+        .iter()
+        .find(|entry| entry["name"] == "api")
+        .unwrap_or_else(|| panic!("session is missing child `api`: {incoming_session}"));
+    assert_eq!(
+        process["status"], "exit=0",
+        "child `api` did not run on the handed-over environment: {incoming_session}"
+    );
 }
 
 #[test]
@@ -10572,7 +11315,7 @@ fn cli_container_falls_back_to_colima_nerdctl_when_docker_is_missing() {
         .output()
         .expect("run effigy");
 
-    assert!(output.status.success(), "fallback up failed: {output:?}");
+    assert!(output.status.success(), "fallback up failed: {output:?}",);
     let parsed = parse_stdout_json(&output);
     assert_eq!(parsed["result"]["schema"], "effigy.container.up.v1");
     let invocations = fs::read_to_string(&colima_args).expect("read colima args");

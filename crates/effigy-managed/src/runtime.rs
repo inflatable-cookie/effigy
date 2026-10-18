@@ -20,8 +20,9 @@ mod redaction;
 mod stream;
 
 pub use headless::{
-    live_headless_sessions, managed_headless_logs, managed_headless_status, managed_headless_stop,
-    run_managed_task_headless, LiveHeadlessSession,
+    exec_group_file_path, live_headless_sessions, managed_headless_logs, managed_headless_status,
+    managed_headless_stop, run_managed_task_headless, session_runtime_dir, LiveHeadlessSession,
+    ManagedHeadlessStopOutcome, LIFECYCLE_CLEANUP_TIMEOUT_SECS, MANAGED_SETTLE_BUDGET,
 };
 
 pub fn run_managed_task_tui(

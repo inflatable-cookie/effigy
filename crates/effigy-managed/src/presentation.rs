@@ -52,13 +52,14 @@ pub fn run_or_render_managed_task(
     manifest_path: &Path,
     plan: ManagedTaskPlan,
     execution_mode: ManagedExecutionMode,
+    settle: Option<&crate::ManagedRunSettle<'_>>,
 ) -> Result<String, ManagedError> {
     match execution_mode {
         ManagedExecutionMode::Stream => {
             runtime::run_managed_task_runtime(task_name, repo_root, plan)
         }
         ManagedExecutionMode::Headless => {
-            runtime::run_managed_task_headless(task_name, repo_root, plan)
+            runtime::run_managed_task_headless(task_name, repo_root, plan, settle)
         }
         ManagedExecutionMode::Tui => runtime::run_managed_task_tui(task_name, repo_root, plan),
         ManagedExecutionMode::RenderPlan => {

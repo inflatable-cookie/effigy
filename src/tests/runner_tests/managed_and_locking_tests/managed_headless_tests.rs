@@ -144,7 +144,7 @@ fn managed_headless_status_logs_and_stop_control_live_session() {
     assert!(!logs.contains("front ready"), "got: {logs}");
 
     let stop = run_dev(&root, &["stop"]).expect("stop");
-    assert!(stop.contains("stopping managed headless task `dev`"));
+    assert!(stop.contains("settled managed headless task `dev`"));
     let completed = run
         .join()
         .expect("headless thread join")
@@ -188,7 +188,7 @@ fn managed_headless_run_skips_interactive_shell_without_tty_argv() {
     );
 
     let stop = run_dev(&root, &["stop"]).expect("stop");
-    assert!(stop.contains("stopping managed headless task `dev`"));
+    assert!(stop.contains("settled managed headless task `dev`"));
     let completed = run
         .join()
         .expect("headless thread join")

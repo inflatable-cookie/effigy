@@ -203,6 +203,10 @@ pub(crate) struct InlineManagedStandardExecRequest<'a> {
     /// managed plan's readiness timeout so concurrent children share the
     /// lifecycle's own startup budget instead of a fixed guess.
     pub exec_readiness_timeout_secs: u64,
+    /// Container-side path of the exec-group marker the attach writes, so
+    /// the managed run's stop can end the remote process group through the
+    /// exec adapter. `None` keeps the plain attach shape.
+    pub exec_group_file: Option<&'a Path>,
 }
 
 pub(crate) fn render_inline_managed_standard_exec_command(
@@ -217,6 +221,7 @@ pub(crate) fn render_inline_managed_standard_exec_command(
         setup_command,
         command,
         exec_readiness_timeout_secs,
+        exec_group_file,
     } = request;
     let cwd = shell_quote(&process_cwd.display().to_string());
     let lifecycle_state = managed_lifecycle_state_path(repo_root, &policy.name, owner_task);
@@ -237,6 +242,8 @@ pub(crate) fn render_inline_managed_standard_exec_command(
         ),
     );
     let rewritten = container_exec_command(command, repo_root, process_cwd, container_repo_root);
+    let tracked =
+        effigy_containers::session::render_tracked_exec_command(&rewritten, exec_group_file);
     let attach = render_inline_compose_command(
         repo_root,
         policy,
@@ -248,7 +255,7 @@ pub(crate) fn render_inline_managed_standard_exec_command(
                 policy.primary_service.as_str(),
                 "sh",
                 "-lc",
-                rewritten.as_str(),
+                tracked.as_str(),
             ],
         ),
     );
