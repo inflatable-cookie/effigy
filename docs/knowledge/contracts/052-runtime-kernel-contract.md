@@ -57,8 +57,9 @@ Engines on the kernel, each the single authority for its resources:
 
 The kernel contains no command grammar, Compose, Docker, Colima, launchd,
 mkcert, scheduler or deployment code. Those sit behind adapters that call
-kernel primitives (§8.4). The kernel adds no public command; it adds two
-hidden internal entry points, `__kernel-supervise` and `__kernel-sentinel`.
+kernel primitives (§8.4). The kernel adds no public command; it adds three
+hidden internal entry points: `__kernel-supervise`, `__kernel-sentinel` and
+`__kernel-probe-guard`.
 
 ## 2. Vocabulary
 
@@ -77,6 +78,9 @@ hidden internal entry points, `__kernel-supervise` and `__kernel-sentinel`.
 | Claim | An exclusive hold on a data, endpoint or address resource. |
 | Generation | A per-resource counter. Every effect, request and callback carries it. |
 | Residue | An effect settle could not prove released. |
+| Settled | `Closed` with `Complete` cleanup. |
+| Resolved | Settled, or `Closed` with residue an operator explicitly acknowledged. Anything else is unresolved. |
+| Probe guard | A per-probe helper that owns an observation subprocess, bounded by its deadline, and writes nothing. |
 | Observed | `Verified`, `Absent` (with proof) or `Unknown` (with reason). |
 
 ## 3. Decisions where the audit designs differ
@@ -112,7 +116,7 @@ names the rule or invariant it relies on.
 | # | Rule | Forbidden states |
 | --- | --- | --- |
 | R1 | **Host authority.** Every mutable resource has exactly one authority and one gate. Gates and the store live on the host. Guests never lock host gates or write host records. Effigy in a guest keeps working (§8). | A guest holding or opening a host gate; a guest writing the host store; authority inferred from a hostname, heartbeat age or a file in a bind mount. |
-| R2 | **Pure reads.** Static and Observe commands write nothing anywhere. | `help`, `status`, `tasks`, `--plan`, `graph status` or `doctor` creating, renaming or truncating a file, appending a Git exclude, allocating a port or address, rendering Compose, minting a scope token, fetching a bundle, or acquiring a gate exclusively. |
+| R2 | **Pure reads.** Static and Observe commands write nothing anywhere. Observe may run guarded, non-mutating probes (§5.11). | `help`, `status`, `tasks`, `--plan`, `graph status` or `doctor` creating, renaming or truncating a file, appending a Git exclude, allocating a port or address, rendering Compose, minting a scope token, fetching a bundle, writing the store or a journal, or acquiring a gate exclusively. |
 | R3 | **Unknown grants nothing.** An `Unknown` observation never authorises a kill, teardown, reclaim, reuse, displacement, restart or deletion. Destructive action needs the resource's own gate plus `Verified` ownership and identity, or `Absent` with proof. | A restart because an exec probe failed; reuse of a gateway whose identity could not be read; a route displaced because owner evidence was unreadable; git failure read as clean; a lock reclaimed because a heartbeat aged. |
 | R4 | **Holder protection.** Nothing stops, restarts, recreates, resets or hands over an environment while a live or unknown holder of a bound run exists, except that run's own settle releasing its own attachment. | Any `down`, restart, recreate, reset, handover or reap of an environment with a holder whose liveness is `Verified` or `Unknown`. |
 | R5 | **Positive settlement.** Settled requires a closed run, complete cleanup, and every effect `Released`, `Retained`, `Irreversible` or `Failed`. Succeeded requires natural completion of every required obligation. | A missing record, dead owner, free gate, elapsed time, empty inventory or killed client manufacturing `Settled`, `Succeeded` or `stopped`. |
@@ -121,10 +125,10 @@ names the rule or invariant it relies on.
 | --- | --- | --- |
 | K1 | **One identity.** Equivalent spellings resolve to one canonical `ResourceId`. Distinct resources never collide. The encoding is versioned (§5.1). | Three gates for `build`, `api/build`, `./apps/api/build`; `a:b` sharing a gate with `a-b`; any identity derived from `std::hash` or a lossy slug. |
 | K2 | **Gate is liveness.** A gate is held exactly while a live process on this host holds it. | Heartbeats, staleness, unlink-reclaim or an unlock command; two processes believing they hold one gate. |
-| K3 | **Intent first.** No external effect without a committed intent. `Admitted` commits before the first effect of a run, including setup steps, env-schema commands, gateway ensure and spawn. | A child, container, route or file effect with no prior journal entry; publication before bind. |
+| K3 | **Intent first.** No external effect without a committed intent. `Admitted` commits before the first effect of a run, including setup steps, env-schema commands, gateway ensure and spawn. Observation probes are not effects: they change nothing Effigy owns and run under a probe guard, never a journal (§5.11). | A child, container, route or file effect with no prior journal entry; publication before bind. |
 | K4 | **One settle.** One settle implementation, run only by the owner gate's holder, in reverse effect order. It is idempotent and resumable. | Two teardown authorities for one effect; cleanup only on the success path; settle reconstructed from directory scans. |
-| K5 | **One open run per owner.** At most one non-closed run per owner resource. `Run::begin` settles or refuses an interrupted predecessor before admitting. | A successor running beside its predecessor's unsettled record. |
-| K6 | **Custody closure.** No Effigy-spawned process outlives its run's settle. The owner exists before the first spawn. A spawn barrier prevents an unrecorded workload. Partial spawns roll back. Process groups are retained through stream close. | Orphans after SIGTERM, SIGHUP or owner SIGKILL; leader exit read as group closure; client exit read as remote closure. |
+| K5 | **One unresolved run per owner.** `Run::begin` admits a run only when every earlier run of its owner is settled, or that run's remaining residue was explicitly acknowledged. A non-closed predecessor is settled first; a `Closed` predecessor with `Incomplete` cleanup gets a settle retry first. | A successor running beside a predecessor's unsettled record or unacknowledged residue. |
+| K6 | **Custody closure.** No Effigy-spawned process outlives its run's settle, and no probe outlives its deadline plus grace. The owner exists before the first spawn. A spawn barrier prevents an unrecorded workload. Partial spawns roll back. Process groups are retained through stream close. Signals need positive generation evidence (I-P4). | Orphans after SIGTERM, SIGHUP or owner SIGKILL; leader exit read as group closure; client exit read as remote closure; a group or session signalled because its number is in use. |
 | K7 | **Fencing.** Every effect, request and callback carries `(ResourceId, Generation)`. A stale generation is refused. | A stale stop stopping a successor; a late callback deleting a successor's route. |
 | K8 | **Bounded.** Every kernel wait takes a deadline. Expiry cancels at a safe boundary and never detaches a writer. Only declared workload lifetimes are open-ended. | A `starting` loop that skips its deadline; curl without a time limit; a detached writer killed mid-transaction. |
 | K9 | **One signal router.** One router per process, installed in `main` before any spawn. Libraries take a cancel token and never install handlers. HUP, INT and TERM are handled. | A library swallowing INT or TERM; HUP killing an owner with no cascade. |
@@ -330,12 +334,15 @@ impl Kernel {
 | Read store, probe gates | no | yes | yes | yes | yes |
 | Acquire gates | no | no | derived stores | source stores | all |
 | Write store or files | no | no | derived caches | sources, user files | all |
-| Network | no | no | no | source acquisition | declared adapter effects |
-| Spawn processes | no | read-only probes | indexers | fetch, clone, install | all |
+| Observation I/O: local TCP connect, HTTP `GET` or `HEAD`, Unix control sockets, DNS to the gateway | no | yes, guarded (§5.11) | yes | yes | yes |
+| Network for source acquisition | no | no | no | yes | no |
+| Network for declared adapter effects | no | no | no | no | yes |
+| Spawn processes | no | guarded probes only (§5.11) | indexers, under a run | fetch, clone, install, under a run | all, under a run |
 | Git exclude, token minting | no | no | no | yes | yes |
 
-Read-only probes run non-mutating forms, for example
-`git --no-optional-locks status`.
+Probes run non-mutating forms, for example `git --no-optional-locks status`,
+and only through `ObserveContext::probe_process` and `ObserveContext::connect`
+(§5.11). Observe obtains no `EffectContext`, no `Run` and no journal.
 
 #### Invariants
 
@@ -360,8 +367,10 @@ Read-only probes run non-mutating forms, for example
 
 - Every Static and Observe command runs against a permission-denied state
   root and checkout. It succeeds, and a filesystem snapshot diff is empty.
-- Compile-fail tests: an Observe context cannot reach `Store::txn` or
-  `Gate::acquire`.
+- Compile-fail tests: an Observe context cannot reach `Store::txn`,
+  `Gate::acquire` or `Custody::spawn`.
+- A guarded subprocess probe and an HTTP probe run against a
+  permission-denied state root and checkout with an empty diff (§5.11).
 
 ### 5.4 `Gate`
 
@@ -418,7 +427,10 @@ gates/<scope-name>/<rid-name>.gate LOCK_EX by the holder; never unlinked while t
   that scope exists.
 - I-G2: holding is liveness (K2). The diagnostic body is never authority.
 - I-G3: acquisition is canonical-order and all-or-nothing (K14). A gate
-  acquired out of canonical order while others are held uses `FailFast` only.
+  acquired later, while others are held, may wait under a deadline only when
+  no holder of that gate ever waits on the gates already held; otherwise it
+  uses `FailFast`. `Gate(Env)` is the defined case: attaching runs wait for
+  it, and environment runs never wait on a holder's owner gate (I-A2).
 - I-G4: a gate held across a subprocess, prompt or network call is a run's
   owner gate, held by a journalled run under a deadline. Work that needs
   exclusion across such calls, such as bundle sync or graph refresh, runs as a
@@ -572,7 +584,7 @@ pub enum BeginError {
 | --- | --- | --- |
 | 1 | Check class and placement. | none |
 | 2 | `Gate::acquire(owner + inv.gates)`. | gates held |
-| 3 | If the owner has a non-closed run, it is interrupted (the gate was free): settle it now under a cleanup budget. Residue: refuse with `PredecessorUnsettled`, unless the caller passed an explicit residue acknowledgement, which is recorded and touches nothing. | predecessor `Closed` |
+| 3 | For every unresolved predecessor of the owner: a non-closed one is interrupted (the gate was free) and is settled now; a `Closed` one with unacknowledged residue gets a settle retry now. Both run under a cleanup budget. Residue left: refuse with `PredecessorUnsettled`, unless the caller passed an explicit residue acknowledgement. The acknowledgement is recorded on the predecessor and touches nothing; its residue stays listed and later settles keep retrying it. | every predecessor resolved |
 | 4 | One transaction: `generation += 1`; insert the run, phase `Admitted`, owner identity, invocation. | `Admitted` |
 | 5 | If custody is planned: spawn the sentinel (§5.8) and record its identity. | sentinel recorded |
 
@@ -585,7 +597,7 @@ Run phases:
 | `Starting` | all startup obligations satisfied | phase | `Active` | `Active` with an unresolved required probe |
 | `Admitted`, `Starting`, `Active` | stop request, signal, failure, natural end, deadline | cause | `Stopping` | new effects after `Stopping`, except settle's own |
 | `Stopping` | settle resolves every effect | `Closed { workload, cleanup }` in one transaction | `Closed` | `Closed` with an effect still `Intended` or `Applied` |
-| `Closed` with `Incomplete` | settle retry | updated cleanup | `Closed` with `Complete` or `Incomplete` | changing the workload outcome |
+| `Closed` with `Incomplete` | settle retry: the next `begin` on the owner, an explicit stop, or maintenance | updated cleanup | `Closed` with `Complete` or `Incomplete` | changing the workload outcome; admitting a successor while residue is unacknowledged |
 | any non-closed, gate free | reader observation | none | `Interrupted` (derived, never stored) | a reader repairing it |
 
 Effect states:
@@ -623,7 +635,9 @@ bounded observations. History never stands in for current state.
 
 - I-R1: intent before effect (K3), including setup steps, env-schema
   commands and gateway ensure, which today run before the lock.
-- I-R2: one open run per owner (K5).
+- I-R2: one unresolved run per owner (K5). A `Closed` run with
+  unacknowledged residue blocks the next `begin` exactly as a non-closed run
+  does.
 - I-R3: only the owner gate's holder writes a run's events, phase or outcome.
   Other processes only insert requests.
 - I-R4: requests carry the expected generation. A stale one is refused
@@ -658,8 +672,10 @@ bounded observations. History never stands in for current state.
 - `settle` twice, concurrently, and after a crash mid-settle: same outcome,
   no double undo in strict-fake call logs.
 - A stale stop request against a successor generation is refused.
-- A predecessor with residue blocks `begin` unless acknowledged, and the
-  acknowledgement touches nothing.
+- A non-closed predecessor and a `Closed` predecessor with `Incomplete`
+  cleanup both get a settle attempt from the next `begin`. With residue left,
+  `begin` refuses `PredecessorUnsettled`; with an acknowledgement it admits,
+  touches nothing, and the residue stays listed and retried.
 
 ### 5.7 `OwnedProcess` and `SignalRouter`
 
@@ -713,15 +729,37 @@ Spawn protocol:
 | 3 | parent records `{pid, pgid, start identity, boot identity}` as `Applied` | child reads EOF and exits; settle observes the group `Absent` |
 | 4 | parent writes the go byte; the child execs the workload | settle stops the recorded group |
 
+Every custody spawn sets `EFFIGY_CUSTODY_NONCE=<run>:<effect>` in the child's
+environment; descendants inherit it. It is evidence, not a credential.
+
 If step 3 fails (ENOSPC), the parent kills the blocked child and returns
 `SpawnError::Unrecorded`. A later spawn failure in `spawn_all` stops every
 earlier child and returns both the primary and the cleanup errors.
 
-Stop: TERM plus CONT to the group, wait the grace, KILL the group, reap the
-leader, then verify closure. `kill(-pgid, 0)` returning `ESRCH`, or only
-zombie members, is `Verified` closure. `EPERM` is `Unknown`. Leader exit
-alone is never closure. Output EOF and exit are separate events; capture
-drains under its own deadline after closure.
+Owner stop. The owner holds the leader's `Child` and does not reap it until
+group closure is verified. The leader's pid is the group id, so neither can
+be reused while the owner signals. TERM plus CONT to the group, wait the
+grace, KILL the group, verify that no member other than the unreaped leader
+remains, then reap. `kill(-pgid, 0)` returning `ESRCH` proves the group
+`Absent`. `EPERM` is `Unknown`. Leader exit alone is never closure. Output
+EOF and exit are separate events; capture drains under its own deadline
+after closure. `src/runner/host_process.rs:3114-3149` and `:3217` already
+hold the unreaped root and refuse an unverified group; the regression at
+`:4297` is the model.
+
+Recovery stop. A sentinel or successor settles after the owner died; the
+leader was reparented and its number is no longer pinned.
+
+| Observation | Signal authority |
+| --- | --- |
+| Leader alive with the recorded start and boot identity | signal the group. On Linux, through a pidfd opened before the identity check, which pins the number. |
+| Leader gone or identity differs, and `kill(-pgid, 0)` returns `ESRCH` | none needed: `Absent` |
+| Leader gone or identity differs, and the group has members | signal each member individually, only if its environment carries the run's custody nonce and it started no earlier than the recorded spawn. On Linux, through a pidfd. Other members: `Unknown`, residue, never signalled. |
+| Process table or member environment unreadable | `Unknown`, residue |
+
+On macOS there is no pidfd, so a window between the per-member check and the
+signal remains. It is documented, as contract 049 documents macOS identity
+limits, and closed nowhere by guessing.
 
 Signal handling by placement:
 
@@ -742,18 +780,21 @@ kernel restores it on exit.
   which exists only after `Admitted` (K6).
 - I-P2: no workload executes without a durable custody record. The barrier
   enforces this.
-- I-P3: the group is retained until closure is verified, not until the
-  leader exits.
-- I-P4: signals go only to a verified identity: the leader's start and boot
-  identity, or a group verified non-empty. No pattern kills (`pkill -f`).
+- I-P3: the owner keeps the leader unreaped, and the group retained, until
+  closure is verified, not until the leader exits.
+- I-P4: signals need positive generation evidence: the owner's unreaped
+  leader; in recovery, the leader's verified start and boot identity, or a
+  member's custody nonce plus start time. A non-empty group or session is
+  never ownership evidence. No pattern kills (`pkill -f`).
 - I-P5: capture is bounded (tail ring plus rotating log) and redacted at the
   source, before any sink (K12).
 - I-P6: secrets never appear in argv; no `set_var`.
 - I-P7: one router per process (K9). Libraries take `CancelToken`. Rhai polls
   the token and never installs a handler.
-- I-P8: a process that creates a new session escapes the group. It is outside
-  custody, and the report says so when a descendant scan detects it.
-  Guest-placement Effigy never creates sessions.
+- I-P8: a process that creates a new session escapes the group, and one that
+  clears its environment loses the nonce. Either is outside custody in
+  recovery and is reported, never signalled by number. Guest-placement
+  Effigy never creates sessions or clears the nonce.
 
 #### Failure model
 
@@ -775,6 +816,15 @@ kernel restores it on exit.
 - A failure spawning child 2 of 3 leaves no survivor and reports both errors.
 - A descendant that ignores TERM and keeps the stdout pipe open is killed,
   and capture ends at its drain deadline.
+- Reused group: the process-table observer is a kernel trait, so the
+  harness can show the recorded pgid occupied by a foreign group without the
+  nonce after the leader is gone. Recovery signals nothing and reports
+  residue. The same holds for a foreign process sharing a pgid with a
+  surviving nonce-carrying member.
+- Leader exits while a nonce-carrying descendant survives: owner stop kills
+  it through the pinned group; sentinel recovery kills it through the nonce.
+- A descendant that clears its environment survives recovery as `Unknown`
+  residue and is never signalled by group number.
 - No secret bytes appear in `ps -o args` during any run.
 - A Rhai script cannot swallow a stop.
 
@@ -834,8 +884,9 @@ after `Admitted` whenever a run's custody is non-empty, in either placement.
 #### Invariants
 
 - I-SV1: one supervisor per detached run. It is the run's only writer.
-- I-SV2: per-run processes live exactly as long as their run plus its settle.
-  There is no resident daemon other than the user gateway.
+- I-SV2: per-run processes live exactly as long as their run plus its settle;
+  probe guards live as long as one probe. There is no resident daemon other
+  than the user gateway.
 - I-SV3: front ends (TUI, attached text, detached) read the same events and
   logs. A front end never changes topology or semantics (K11).
 - I-SV4: the supervisor and sentinel re-exec the binary identified at
@@ -867,12 +918,23 @@ pub enum AttachMode { Borrow, Exclusive { stop_on_release: bool } }
 
 impl Attachments {
     pub fn attach(run: &mut Run, env: &ResourceId, mode: AttachMode, cx: &EffectContext)
-        -> Result<AttachmentTicket, AttachError>;          // an effect with Reconcile settlement
+        -> Result<AttachmentTicket, AttachError>;  // takes Gate(Env) for one transaction;
+                                                   // an effect with Reconcile settlement
+    pub fn release(run: &mut Run, ticket: AttachmentTicket)
+        -> Result<(), StoreError>;                 // no Gate(Env); only removes protection
     pub fn holders(cx: &ObserveContext, env: &ResourceId)
         -> Vec<(RunId, Observed<Liveness>)>;
-    pub fn permit<'g>(guard: &'g GateGuard /* Gate(Env) */, env: &ResourceId,
+    pub fn permit<'g>(env_run: &'g Run /* owner: Env, holds Gate(Env) */,
                       exempt: Option<RunId>, cx: &EffectContext)
-        -> Result<TransitionPermit<'g>, HeldBy>;           // R4
+        -> Result<TransitionPermit<'g>, HeldBy>;   // R4; cannot outlive env_run's gate
+}
+
+pub enum AttachError {
+    EnvBusy { transition: Observed<RunId> },       // Gate(Env) not acquired by the deadline
+    EnvNotActive { state: EnvState },              // ask the environment engine to ensure
+    StaleGeneration { expected: Generation, current: Generation },
+    HostAuthorityRequired,
+    Store(StoreError),
 }
 
 pub enum ClaimState { Pending, Committed, Releasing, Quarantined { reusable_at: BootInstant } }
@@ -886,26 +948,47 @@ impl Claims {
 }
 ```
 
+Attach and transition serialize on `Gate(Env)`:
+
+| Step | Attaching run | Environment run (down, restart, recreate, reset, handover) |
+| --- | --- | --- |
+| 1 | Acquire `Gate(Env)` under its deadline, while holding its own owner gate. | Holds `Gate(Env)` as its owner gate for the whole run. |
+| 2 | One transaction: the environment is `Active` at generation g; insert the attachment `{run, g}` as an `Applied` effect. | Request every losing holder to settle; wait for each to resolve, still holding `Gate(Env)`. |
+| 3 | Release `Gate(Env)`. | `permit`: issued only when every holder is `Absent`, or the only holder is the exempt run settling itself. |
+| 4 | — | Each destructive effect's intent transaction re-checks holders and the generation, then the adapter runs. |
+| Refusal | `EnvBusy` at the deadline. `EnvNotActive`: request an ensure; the environment's apply run inserts the attachment in its final transaction. `StaleGeneration`: retry from step 1. | `HeldBy` lists live and unknown holders. |
+
+No attachment can appear between permit and mutation, because inserting one
+needs the gate the environment run holds. Releasing an attachment needs no
+gate: it only removes protection. Any policy a release triggers, such as
+stop on release, is a request to the environment engine, processed by an
+environment run. A holder therefore settles while a transition holds
+`Gate(Env)`, and the two never wait on each other.
+
 Holder liveness:
 
 | Holder run | Owner gate | Liveness | R4 |
 | --- | --- | --- | --- |
 | non-closed | held | `Verified(live)` | protects |
 | non-closed | free | `Interrupted` | protects until settled; the transition settles it first, as gate holder |
-| `Closed`, attachment released | any | `Absent` | permits |
+| `Closed`, residue unacknowledged | any | `Unknown` | protects |
+| resolved, attachment released | any | `Absent` | permits |
 | row or gate unreadable | any | `Unknown` | protects |
 
 #### Invariants
 
 - I-A1: `TransitionPermit` is the only key to an environment-mutating
   adapter call. It exists only when every holder is `Absent`, or the only
-  holder is the exempt run settling itself (R4).
-- I-A2: a handover asks each losing holder to settle through a request,
-  waits for `Closed` without holding a gate that holder needs, then takes
-  the permit. An interrupted holder is settled by taking its owner gate with
-  `FailFast` while `Gate(Env)` is held. On `Busy`, or to wait for a live
-  holder, the transition releases `Gate(Env)` first and re-validates from
-  the start.
+  holder is the exempt run settling itself (R4). Attach and permit serialize
+  on `Gate(Env)`: an attachment is inserted only under that gate, a permit
+  borrows the environment run that holds it, and each destructive effect's
+  intent transaction re-checks holders and generation.
+- I-A2: a down or handover keeps `Gate(Env)` while it asks each losing
+  holder to settle and waits for it to resolve. Holders settle without
+  `Gate(Env)`. An interrupted holder is settled by taking its owner gate with
+  `FailFast`. `Busy` means a successor holds that gate and settles the holder
+  first (K5), so the transition keeps waiting within its deadline. An
+  environment run never waits on a holder's owner gate.
 - I-A3: claims reserve the complete conflict set (data, domains, addresses,
   ports) in one transaction before any effect. A pending claim is protected
   while its holder's gate is held; reclaim needs that holder `Absent`.
@@ -932,6 +1015,11 @@ Holder liveness:
 - A holder whose liveness is injected `Unknown` blocks every transition.
 - Two concurrent stack and hybrid starts sharing data: exactly one commits
   the data claim.
+- The strict fake stalls an environment run between permit and adapter
+  apply. A concurrent attach waits, then returns `EnvBusy` or attaches after
+  the transition. No destructive call ever runs with an attachment present.
+- A holder settles and releases its attachment while a transition holds
+  `Gate(Env)`; neither waits on the other.
 - An address released and immediately requested is refused until
   quarantine ends.
 
@@ -978,6 +1066,10 @@ registration line on stderr, then execs the workload:
 | 5 | the workload counts as running only now | — | — |
 
 Stop: `signal_session(TERM)`, CONT, grace, `KILL`, then `observe_session`.
+`signal_session` signals the whole session only while the leader is alive
+with the registered start ticks. Otherwise it signals only session members
+whose environment carries the nonce and whose start ticks are not earlier
+than the leader's (I-P4). Other members are `Unknown`.
 `Absent` proofs: the container id is missing from a `Verified` inventory; the
 VM boot id changed; or no process in the session remains and the leader pid
 is gone or shows different start ticks. Exec failure is `Unknown`, never
@@ -988,7 +1080,8 @@ is gone or shows different start ticks. Exec failure is `Unknown`, never
 - I-RC1: no bind-mount marker files. Registration travels in band, and the
   nonce makes an unacknowledged launch findable (R1, D9).
 - I-RC2: a registration binds one container id and one VM boot. Cleanup never
-  transplants a pid or session number into a replacement container.
+  transplants a pid or session number into a replacement container, and a
+  session number in use is never ownership evidence.
 - I-RC3: local exec-client exit is never remote closure. The session is
   observed separately (K6).
 - I-RC4: without `setsid` in the image, `session_isolated = false` and closure
@@ -1014,7 +1107,8 @@ is gone or shows different start ticks. Exec failure is `Unknown`, never
 
 - A conformance suite every backend adapter must pass: kill at each step,
   container replaced, VM restarted, image without `setsid`, exec client
-  killed with the remote still running.
+  killed with the remote still running, and a recorded session number reused
+  by a foreign session without the nonce, which is never signalled.
 - Real-engine qualification on Colima (docker and containerd), Docker Desktop
   and Linux Docker. Apple Containers must pass before it is supported.
 
@@ -1050,14 +1144,59 @@ pub enum Readiness {
 }
 
 pub fn wait_all(probes: &[&dyn Probe], cx: &ObserveContext) -> Vec<Observed<Readiness>>;
+
+impl ObserveContext {
+    pub fn probe_process(&self, cmd: ProbeCommand) -> Observed<ProbeOutput>;  // guarded
+    pub fn connect(&self, target: ObservationTarget) -> Observed<ProbeIo>;    // non-mutating
+}
+
+pub struct ProbeCommand {
+    argv: Vec<OsString>, cwd: PathBuf, env: EnvSpec,
+    deadline: Duration, max_output: usize,    // stdin is null; no terminal
+}
+
+pub enum ObservationTarget {
+    Tcp(SocketAddr),
+    Http { url: Url, method: HttpReadMethod, expect: StatusSet },   // GET or HEAD, no body
+    UnixSocket(PathBuf),                                            // e.g. a control socket
+    Dns { name: String, server: SocketAddr },
+}
 ```
+
+Observation capability. Observe, RefreshDerived, Prepare and Mutate contexts
+all produce an `ObserveContext`; Observe commands get nothing else.
+
+| Capability | Allowed | Not allowed |
+| --- | --- | --- |
+| Processes | `probe_process`: an adapter-declared, non-mutating command, under a probe guard | `Custody::spawn`, a `Run`, a journal entry, a terminal |
+| Network | `connect`: local TCP connect, HTTP `GET` or `HEAD` without a body, Unix control sockets, DNS to the gateway; targets come from the resolved invocation, the store or endpoint claims; bounded response and per-attempt deadline | source acquisition (fetch, clone, pull), any other method, any target not derived from Effigy state |
+| Files and state | read-only opens; gate probes | any write, gate acquisition, store transaction |
+
+Probe guard protocol:
+
+| Step | Action | If the observer dies |
+| --- | --- | --- |
+| 1 | The observer spawns `__kernel-probe-guard` (the same binary) in a new process group, holding a pipe to it. | The guard reads EOF and exits. |
+| 2 | The guard spawns the probe in its own process group and keeps it unreaped. On Linux the probe also gets `PR_SET_PDEATHSIG` with the single-threaded guard as parent. | The guard kills the probe group, reaps, exits. |
+| 3 | The guard relays bounded output and kills the probe group at the deadline. | as step 2 |
+| 4 | The guard reports exit and closure, then exits. | — |
+
+Reconciliation with K3 and R2. A probe is not an effect: it changes nothing
+Effigy owns and uses only non-mutating commands and requests, so it needs no
+intent (K3) and leaves Observe pure (R2), with no file, store, gate or
+journal write. Its custody is the guard's and ends at the probe deadline plus
+a fixed grace, even if the observer is SIGKILLed (K6). Contexts of every
+other class use the same two calls for their probes.
 
 #### Invariants
 
 - I-O1: destructive APIs take `Absent` or `Verified<Owned<_>>` witnesses.
   There is no constructor from `Unknown` (R3).
 - I-O2: a probe observes only. It has no write capability and never repairs,
-  restarts or allocates.
+  restarts or allocates. Its processes and I/O go only through
+  `probe_process` and `connect`.
+- I-O6: no probe process outlives its deadline plus grace. Probe commands are
+  declared by adapters as non-mutating and verified by the read-only fixture.
 - I-O3: `wait_all` is one waiter with one deadline over an ordered list.
   Dependencies are typed facts, never sleeps.
 - I-O4: HTTP probes declare expected statuses (default 200–299), with a
@@ -1069,7 +1208,8 @@ pub fn wait_all(probes: &[&dyn Probe], cx: &ObserveContext) -> Vec<Observed<Read
 
 | Fault | Behavior |
 | --- | --- |
-| Crash, Kill | Probes hold no state; a bounded probe child is in the caller's custody. |
+| Crash, Kill of the observer | The probe guard reads EOF and kills the probe group. Nothing was written, so nothing needs recovery. |
+| Crash, Kill of the guard | On Linux the probe dies with it. On macOS the probe runs to its own bounded completion; status reports the guard loss. |
 | ENOSPC | Probes write nothing. |
 | Probe timeout | `Unknown(TimedOut)`; other findings are still reported. |
 | Tool missing | `Unknown(ToolUnavailable)`. |
@@ -1081,7 +1221,11 @@ pub fn wait_all(probes: &[&dyn Probe], cx: &ObserveContext) -> Vec<Observed<Read
 - `Unknown` injected into every observation (§12.1): nothing is killed,
   downed, reclaimed, displaced, reused or restarted.
 - An HTTP 401, 404 or 500 is not ready by default.
-- Probes run under the read-only fixture with an empty diff.
+- On a permission-denied state root and checkout, a
+  `git --no-optional-locks status` probe and an HTTP `GET` probe both
+  complete with an empty filesystem diff.
+- SIGKILL of the observer mid-probe leaves no probe process after the
+  deadline plus grace.
 
 ### 5.12 `Outcome`
 
@@ -1459,8 +1603,10 @@ A v0.14.1 user updates and everything keeps working with no manual steps
   oracles.
 - Scenarios: plain task; sequence; multi-child test; detached managed run
   with an environment attachment; environment up, down and handover on the
-  strict fake backend; endpoint reserve and commit; vault write; legacy
-  import.
+  strict fake backend, with a concurrent attach; a `Closed` predecessor
+  with residue followed by `begin`; owner loss followed by recovery stop over
+  a reused or foreign process group; Observe with guarded subprocess and HTTP
+  probes; endpoint reserve and commit; vault write; legacy import.
 
 | Oracle | Must hold after recovery |
 | --- | --- |
@@ -1474,6 +1620,9 @@ A v0.14.1 user updates and everything keeps working with no manual steps
 | O8 | No destructive call targeted anything whose observation was `Unknown`. |
 | O9 | Observability faults never changed a workload outcome or exit code. |
 | O10 | Static and Observe commands produced an empty filesystem diff. |
+| O11 | No destructive environment call ran while an attachment existed. |
+| O12 | No signal reached a process without generation evidence (I-P4); foreign fixture processes all survive. |
+| O13 | No run was admitted beside an unresolved predecessor (K5). |
 
 ### 12.2 Strict fakes
 
@@ -1488,7 +1637,7 @@ recorded contract change.
 
 - Supervisor matrix, full cross product as cheap model tests: front end
   (TUI, attached text, detached) × prior state (fresh, interrupted
-  predecessor, stopped) × stop (request, INT, TERM, HUP, owning-client
+  predecessor, closed predecessor with residue, stopped) × stop (request, INT, TERM, HUP, owning-client
   SIGKILL, owner SIGKILL, handover, explicit `down`) × attachment (none,
   borrowed, exclusive). Every cell asserts exactly one release per
   attachment. Named end-to-end representatives follow.
@@ -1527,11 +1676,11 @@ to the rule and primitive that makes it structurally impossible.
 | #195 (PR #321) | a partial peer stop left an incoherent environment | K3, K4, R4 | handover as a `Run`; permit | every step is journalled; a failure resumes through settle |
 | #196 (PR #322) | peer resolution rewrote the admitted payload | R2, K3 | `EffectClass`; immutable objects | resolution is Observe; published renders are never rewritten |
 | #197 (PR #323) | 1 Hz probes tore renders; reuse on unknown identity | R2, R3, I-O2 | `Probe`; `atomic_replace`; `Observed` | probes cannot write; `Unknown` cannot authorize reuse |
-| #198 (PR #324) | handover did not know a headless owner existed | K3, K5, I-A2 | `Run::begin`; attachments | the owner and attachment rows exist from `Admitted`; handover reads holders, not directories |
+| #198 (PR #324) | handover did not know a headless owner existed | K3, K5, I-A1, I-A2 | `Run::begin`; attachments serialized with permits on `Gate(Env)` | the owner and attachment rows exist from `Admitted`; handover reads holders, not directories; no attachment can appear between permit and mutation |
 | #199 (PR #325) | in-container readiness; `starting` bypassed its deadline | K8, I-O3 | `Probe`; `OperationContext` | every wait takes a deadline; readiness is a typed in-process predicate |
-| #200 (PR #326) | settle wait too short; remote groups survived | K6, R5, I-RC3 | remote custody; journal settle | remote closure is observed per session; settled is a journal fact, not a budget |
+| #200 (PR #326) | settle wait too short; remote groups survived | K6, R5, I-RC3, I-P4 | remote custody; journal settle | remote closure is observed per session, signalled only with registration or nonce evidence; settled is a journal fact, not a budget |
 | #201 (PR #327) | a failed child left a partial stack | K4, K3 | one settle on every exit path | startup failure enters `Stopping` and settles; no success-only cleanup |
-| #202 (PR #328) | session record absent; mass exit 137 from an explicit `container stack down` under a live run | K3, R4, R3, K5 | `Admitted` first; `TransitionPermit`; `Observed` | the record exists before any effect; no permit exists while a holder is live or unknown |
+| #202 (PR #328) | session record absent; mass exit 137 from an explicit `container stack down` under a live run | K3, R4, R3, K5, I-A1 | `Admitted` first; `TransitionPermit` serialized with attach on `Gate(Env)`; `Observed` | the record exists before any effect; no permit exists while a holder is live, unknown or still holding residue, and none can be outflanked by a late attach |
 
 | SYNTHESIS §6 # | Defect | Kernel-owned | Rule or invariant | Primitive |
 | --- | --- | --- | --- | --- |
@@ -1541,13 +1690,13 @@ to the rule and primitive that makes it structurally impossible.
 | 4 | Installed incompatible pack blocks workspace exec | no (Q-005, catalog lane) | — | — |
 | 5 | Stale-lock reclaim race | yes | K2 | `Gate` |
 | 6 | Reaper stops a stack mid-task | yes | R4 | attachments, `TransitionPermit` |
-| 7 | Four unserialised `down` authorities under a live run | yes | K4, R4 | one settle; `Gate(Env)`; permit |
+| 7 | Four unserialised `down` authorities under a live run | yes | K4, R4, I-A1 | one settle; `Gate(Env)` serializing attach and permit |
 | 8 | Deploy reports success for work it never ran | yes, the rule; deploy ownership is Q-003 | R5, I-OC1 | `Outcome` |
 | 9 | `qa`, `ci`, `ci:fresh` hard-wired to the scheduler | no (Q-006) | — | — |
 | 10 | Underlay bundle floor below the keys it emits | no (bundle and config lane) | — | — |
 | 11 | Wrong-backend volume actions; unserialised data writers; global reset | yes for identity and claims; reset scope is environment-lane | I-ID4, I-A3 | backend in `ResourceId`; `Data` claims; objects per generation |
 | 12 | Host stop drops failures | yes | R5, I-R8 | `StopReport`; `Outcome` residue |
-| 13 | Spawn before record and handler; SIGHUP unhandled; partial spawn leaks | yes | K3, K6, K9 | `Run::begin`; spawn barrier; `spawn_all`; `SignalRouter` |
+| 13 | Spawn before record and handler; SIGHUP unhandled; partial spawn leaks | yes | K3, K6, K9, I-P4 | `Run::begin`; spawn barrier; `spawn_all`; `SignalRouter`; generation-evidenced signals |
 | 14 | Unbounded waits | yes | K8 | `OperationContext` |
 | 15 | Gateway status prompts and lies; `up` reports before binding | yes for the rules; gateway shape is gateway-lane | R2, K3, I-O5 | Observe class; bind `Applied` before publish; `EndpointApplied` |
 | 16 | Reads mutate | yes | R2 | `EffectClass` |
@@ -1561,9 +1710,11 @@ to the rule and primitive that makes it structurally impossible.
 ## 14. Non-goals
 
 - No host-wide scheduler (vision). Heavy-task shape stays open under Q-006.
-- No separate binaries. Supervisor and sentinel re-exec the one `effigy`.
-- No daemon beyond the user gateway and per-run processes (supervisor,
-  sentinel) whose lifetime is one run and its settle.
+- No separate binaries. Supervisor, sentinel and probe guard re-exec the one
+  `effigy`.
+- No daemon beyond the user gateway, per-run processes (supervisor,
+  sentinel) whose lifetime is one run and its settle, and probe guards whose
+  lifetime is one probe.
 - No exactly-once claims across filesystem, engine or network boundaries.
 - No Compose replacement. The environment boundary stays open under Q-004.
 - No remote execution, plugins, marketplace or Windows support.

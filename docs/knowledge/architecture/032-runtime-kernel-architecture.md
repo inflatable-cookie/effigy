@@ -47,7 +47,7 @@ contexts.
 | `signal` | 5.7 | seven handler installations |
 | `supervise` | 5.8 | headless owner loop, setsid sidecar supervisors |
 | `remote` | 5.10 | exec group markers, `crates/effigy-containers/src/exec/managed_stop.rs` |
-| `observe`, `probe` | 5.11 | six readiness waiters, eleven liveness functions |
+| `observe`, `probe` | 5.11 | six readiness waiters, eleven liveness functions; read-side subprocesses such as `docker ps` and `git status`, now run under the probe guard |
 | `outcome` | 5.12 | string round-trips of reports (`src/runner/render.rs`) |
 | `ident` | 8.5 | `crates/effigy-process/src/identity.rs`, with macOS start identity moved to `proc_pidinfo` |
 | `fault` (test feature) | 12.1 | — |
@@ -63,13 +63,15 @@ contexts.
  │ effigy dev           owning client           │◀────────────│      state: guest $HOME  │
  │   └─ effigy __kernel-supervise  (per run)    │              └──────────────────────────┘
  │        └─ effigy __kernel-sentinel (per run) │
+ │ effigy status        observer                │
+ │   └─ effigy __kernel-probe-guard (per probe) │
  │ effigy gateway daemon  (user-owned, resident)│
  │ ~/.effigy/state/  kernel.db · gates · sock   │
  └──────────────────────────────────────────────┘
 ```
 
 - The only resident process is the user gateway. Supervisors and sentinels
-  live for one run and its settle.
+  live for one run and its settle; probe guards for one probe.
 - Every per-run process re-execs the binary identified at startup.
 - Guests never see `~/.effigy/state`. Only immutable object closures may be
   mounted, read-only, through a backend.
@@ -79,7 +81,8 @@ contexts.
 ### One-shot task
 
 ```text
-resolve (Observe) → Run::begin: gate, settle interrupted predecessor, Admitted
+resolve (Observe) → Run::begin: gate, settle or retry every unresolved predecessor
+(refuse on residue unless acknowledged), Admitted
 → sentinel → intend(process) → fork, barrier, record, go → wait, bounded capture
 → Stopping → settle (verify group closure) → Closed → release gate → Outcome
 ```
@@ -92,7 +95,8 @@ settles under a cleanup budget.
 ```text
 client: resolve → spawn supervisor (invocation on a pipe)
 supervisor: Run::begin → socket → "admitted" → setup steps (journalled)
-  → attach(env, Borrow or Exclusive) → environment reconciler applies if needed
+  → attach(env, Borrow or Exclusive): Gate(Env), one transaction, release gate
+    (EnvNotActive → ensure; the apply run inserts the attachment in its last commit)
   → wait_all(ExecReady, …) → workloads (local custody, remote custody) → Active
 client: render events and logs; EOF without detach → stop request
 supervisor: Stopping → settle: remote workloads, local workloads, attachment
@@ -102,17 +106,33 @@ supervisor: Stopping → settle: remote workloads, local workloads, attachment
 ### Environment transition
 
 ```text
-Gate(Env) → holders(env) → for each losing holder: request settle, wait for Closed
-(without holding a gate that holder needs) → permit → claims transaction
-→ adapter apply or down (journalled) → probes → commit applied generation
+Gate(Env), held for the whole run → holders(env) → for each losing holder:
+request settle, wait for it to resolve (holders release attachments without
+Gate(Env); new attaches wait on it) → permit → claims transaction
+→ per destructive effect: intent re-checks holders and generation → adapter
+apply or down → probes → commit applied generation
+```
+
+### Observation
+
+```text
+Observe command → ObserveContext only (no EffectContext, Run or journal)
+→ probe_process: __kernel-probe-guard owns the probe group, kills it at the
+  deadline or on observer EOF → bounded output
+→ connect: local TCP, HTTP GET or HEAD, control sockets, gateway DNS
+→ Outcome; filesystem unchanged
 ```
 
 ### Recovery
 
 ```text
-next Mutate on an owner: gate free + run non-closed = Interrupted
-→ settle under the new holder: observe each effect, undo verified ones,
-  record residue for Unknown → Closed → the new run is admitted or refused
+next Mutate on an owner: an unresolved predecessor is either non-closed with a
+free gate (Interrupted) or Closed with unacknowledged residue
+→ settle or retry under the new holder: observe each effect, undo verified
+  ones with generation evidence (unreaped leader, verified leader identity,
+  or custody nonce), record residue for Unknown
+→ the new run is admitted, or refused PredecessorUnsettled unless the
+  residue is explicitly acknowledged
 ```
 
 ## Implementation cuts
@@ -124,10 +144,10 @@ Engine migrations belong to the engine lanes and start only after cut 7.
 | --- | --- | --- |
 | 1 | `id`, `ctx`, `outcome`, `observe` types; encoding v1 golden table | identity proofs (§5.1); compile-fail class tests (§5.3) |
 | 2 | `gate`, `store`, `atomic_replace`, state-root trust and filesystem checks | gate and store proofs, including SIGSTOP and ENOSPC |
-| 3 | `run`: begin, journal, requests, settle; attachments and claims | journal-boundary kills; concurrent settle; permit refusals |
-| 4 | `custody` and `signal`: barrier spawn, `spawn_all`, stop, router, sentinel, detached supervisor | signal × run-kind kill matrix; partial spawn; secrets out of argv |
+| 3 | `run`: begin, journal, requests, settle; attachments and claims | journal-boundary kills; concurrent settle; closed-with-residue predecessor before `begin`; permit refusals; attach stalled between permit and apply |
+| 4 | `custody` and `signal`: barrier spawn, `spawn_all`, stop with the unreaped leader, nonce-evidenced recovery stop, router, sentinel, detached supervisor | signal × run-kind kill matrix; partial spawn; reused or foreign process group never signalled; secrets out of argv |
 | 5 | `remote`: adapter contract, wrapper, conformance suite; Docker and nerdctl adapters | conformance on the strict fake, then real-engine qualification |
-| 6 | `probe` | `Unknown` injection; HTTP status policy |
+| 6 | `probe`: `ObserveContext` capabilities and the probe guard | `Unknown` injection; HTTP status policy; guarded subprocess and HTTP probes on a permission-denied root with an empty diff; observer SIGKILL leaves no probe |
 | 7 | `fault` harness and the full oracle suite green | §12.1 oracles over every scenario |
 | 8 | `qa:kernel-ratchet` active with its baseline | the gate fails on a new raw primitive |
 
