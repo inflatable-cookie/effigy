@@ -747,6 +747,10 @@ mod host_git_mount_tests {
     }
 
     #[test]
+    #[cfg_attr(
+        all(target_os = "macos", effigy_shared_process),
+        ignore = "known v0.15 rebuild defect: papercut 12c025bf-8d0d-4fa0-9f65-6b2a4c473ecd; owner lane v015-environment"
+    )]
     fn mkcert_ca_mount_renders_read_only_when_root_ca_present() {
         let dir = temp_dir("mkcert-present");
         let pem = dir.join("rootCA.pem");
