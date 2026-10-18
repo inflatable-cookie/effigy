@@ -1047,7 +1047,25 @@ run = "printf reverse-ok"
         );
         let state_path = repo_root.join(".effigy/runtime/managed/dev-default/session.json");
         let start_deadline = Instant::now() + Duration::from_secs(60);
-        while !state_path.exists() {
+        loop {
+            // The record exists before the first child starts; wait until the
+            // owner's post-spawn write has recorded every child's PID. That is
+            // the owner's last write until a child exits, so the environment
+            // patch below survives until the handover reads it.
+            let recorded = fs::read_to_string(&state_path)
+                .ok()
+                .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+                .and_then(|state| {
+                    state["processes"].as_array().map(|rows| {
+                        !rows.is_empty()
+                            && rows.iter().all(|row| {
+                                row["pid"].as_u64().unwrap_or(0) != 0 && row["status"] == "running"
+                            })
+                    })
+                });
+            if recorded == Some(true) {
+                break;
+            }
             assert!(
                 Instant::now() < start_deadline,
                 "headless owner did not start"

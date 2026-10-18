@@ -30,6 +30,28 @@ concurrent = [
     );
 }
 
+/// Wait until the log file contains the expected output: the managed
+/// supervisor creates the per-process log files before it spawns children,
+/// so path existence alone proves nothing about child progress.
+fn wait_for_log_contains(path: &std::path::Path, needle: &str, timeout: Duration, label: &str) {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        if fs::read_to_string(path)
+            .unwrap_or_default()
+            .contains(needle)
+        {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "{label} did not appear in {}: {}",
+            path.display(),
+            fs::read_to_string(path).unwrap_or_default()
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
 fn write_shell_and_standard_headless_manifest(root: &std::path::Path) {
     // The shell entry needs a container-backed binding to validate, but
     // headless never spawns it; the standard entry runs on the host so
@@ -138,7 +160,12 @@ fn managed_headless_status_logs_and_stop_control_live_session() {
     assert!(front < api, "start ordering should be preserved: {status}");
 
     let log_path = root.join(".effigy/runtime/managed/dev-default/02-api.log");
-    wait_for_path_exists(&log_path, Duration::from_secs(5), "api log");
+    wait_for_log_contains(
+        &log_path,
+        "api ready",
+        Duration::from_secs(10),
+        "api output",
+    );
     let logs = run_dev(&root, &["logs", "api"]).expect("logs");
     assert!(logs.contains("api ready"), "got: {logs}");
     assert!(!logs.contains("front ready"), "got: {logs}");

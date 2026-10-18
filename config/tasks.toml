@@ -331,7 +331,7 @@
   { id = "managed-session-runtime", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-managed --lib --filterset 'test(runtime::headless::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
 ]
 "test:managed:recovery-controls" = [
-  { id = "managed-recovery-controls", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(managed_and_locking_tests::managed_headless_tests::) | test(finish_managed_task_) | test(reconcile_restarts_an_environment_a_handover_stopped) | test(partial_activation_running_primary_)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
+  { id = "managed-recovery-controls", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(managed_and_locking_tests::managed_headless_tests::) | test(managed_settle::tests::) | test(finish_managed_task_) | test(reconcile_restarts_an_environment_a_handover_stopped) | test(partial_activation_running_primary_)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
 ]
 "test:managed:headless-lifecycle" = [
   { id = "managed-exec-readiness-render", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib --filterset 'test(session::tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 300000 },
