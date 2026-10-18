@@ -508,6 +508,13 @@ the demonstrated live reverse transition, without a manual prior `down` hiding
 the failing path. Publication and new preparation stay held until the existing
 proof owners report passing results.
 
+As relayed on 2026-10-18, the Underlay proof requires Tom's direct go before
+launch. A peer-relayed go, including one from the release owner, does not
+satisfy that requirement. Source and binary handovers may continue, but they
+must not launch or reset that proof. The consumer owner retains its finite
+allowance and resource boundaries; the publication hold remains until both
+required consumer results pass.
+
 Lifting the hold resumes decision `0116369e` version 2 with no gate waiver:
 fresh hosted CI on current clean, pushed main, a fresh prepare with all seven
 configured gates, then the supported tag, binary publication and isolated
