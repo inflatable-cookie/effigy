@@ -20,9 +20,16 @@ evidence rather than authority to resume that flow.
 The agreed direction includes pinned bundles; heavy admission requiring both
 explicit `admission = "heavy"` and per-host opt-in; removal of root-bound
 gateway functionality; one detached managed supervisor per run; and a CI
-workflow correction. Lifecycle, kernel and security work uses Opus, Sol or
-Astra High. These are design constraints, not claims of implemented behavior
-or blanket permission to edit workflows. The cut list, service-catalog
+workflow correction. Implementation uses Sol High or Opus High, with Astra
+High for the hardest work. Approved briefs must explicitly require the
+selected author profile and its effective High setting. Independent review
+defaults to another capable model, such as Grok High or Deepseek High;
+frontier review requires an explicit exception. Healthy reviews already in
+progress keep their current reviewer. Low-cost implementation requires a
+later explicit exception from Tom.
+
+These are design constraints, not claims of implemented behavior or blanket
+permission to edit workflows. The cut list, service-catalog
 strategy and heavy-task model remain subject to the operator's Atlas
 discussion before rebuild briefs are admitted.
 
