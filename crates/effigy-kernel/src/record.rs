@@ -105,6 +105,9 @@ pub fn atomic_replace(
                 .with_suffix(".prev")?;
             dir.link(name, &staged)?;
             dir.rename(&staged, &name.with_suffix(".prev")?)?;
+            // rename(2) is a no-op when both names already link one inode
+            // (a retry after a failed replace), which would leave `staged`.
+            dir.remove(&staged, false)?;
             previous_kept = true;
         }
         crate::fault_point!(ReplaceRename).map_err(|e| io("rename", e))?;

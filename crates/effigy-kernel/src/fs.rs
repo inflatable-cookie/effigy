@@ -209,7 +209,14 @@ impl DirFd {
             libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW,
             0,
         )
-        .map_err(|e| FsError::io("open", &path, &e))?;
+        .map_err(|e| {
+            // O_DIRECTORY | O_NOFOLLOW meeting a symlink or file: ENOTDIR.
+            if e.raw_os_error() == Some(libc::ENOTDIR) {
+                FsError::untrusted(&path, "symlinked or non-directory component")
+            } else {
+                FsError::io("open", &path, &e)
+            }
+        })?;
         let dir = Self { fd, path };
         check(&dir.stat()?, trust, Kind::Dir, &dir.path)?;
         Ok(dir)
@@ -242,12 +249,22 @@ impl DirFd {
             | libc::O_CLOEXEC
             | libc::O_NONBLOCK
             | if create.is_some() { libc::O_CREAT } else { 0 };
-        let fd = match open_raw(self.raw(), &cname, flags, create.unwrap_or(0)) {
-            Ok(fd) => fd,
-            Err(error) if error.raw_os_error() == Some(libc::ENOENT) && create.is_none() => {
-                return Ok(None)
+        // macOS can fail one of two concurrent O_CREAT opens of the same new
+        // name with ENOENT although the directory exists; the name exists by
+        // the retry. A directory that really vanished still fails.
+        let mut attempts = if create.is_some() { 16 } else { 1 };
+        let fd = loop {
+            attempts -= 1;
+            match open_raw(self.raw(), &cname, flags, create.unwrap_or(0)) {
+                Ok(fd) => break fd,
+                Err(error) if error.raw_os_error() == Some(libc::ENOENT) && create.is_none() => {
+                    return Ok(None)
+                }
+                Err(error) if error.raw_os_error() == Some(libc::ENOENT) && attempts > 0 => {
+                    std::thread::yield_now();
+                }
+                Err(error) => return Err(FsError::io("open", &path, &error)),
             }
-            Err(error) => return Err(FsError::io("open", &path, &error)),
         };
         let stat = fstat(fd.as_raw_fd()).map_err(|e| FsError::io("stat", &path, &e))?;
         check(&stat, trust, Kind::File, &path)?;

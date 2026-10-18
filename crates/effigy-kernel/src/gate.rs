@@ -270,7 +270,7 @@ impl Gate {
             return Ok(ScopeRemoval::Busy);
         }
         let Some(dir) = gates.child(&name, Trust::Private, false)? else {
-            return Ok(ScopeRemoval::Removed);
+            return Ok(ScopeRemoval::Absent);
         };
         for entry in dir.list(1 << 16)? {
             let entry = entry

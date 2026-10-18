@@ -86,6 +86,15 @@ fn files(home: &Path) -> DirFd {
     std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
     DirFd::open(&dir).unwrap()
 }
+/// Creates `path` and every missing parent 0700, as kernel families are.
+fn private_dir(path: &Path) {
+    std::fs::create_dir_all(path).unwrap();
+    let mut current = path.to_path_buf();
+    while current.file_name().is_some_and(|name| name != ".effigy") {
+        std::fs::set_permissions(&current, std::fs::Permissions::from_mode(0o700)).unwrap();
+        current.pop();
+    }
+}
 fn name(text: &str) -> FileName {
     FileName::new(text).unwrap()
 }
@@ -459,13 +468,31 @@ fn race_acquire(home: &Path) {
         std::thread::sleep(Duration::from_micros(200));
         std::fs::remove_dir(home.join("holder")).unwrap();
         drop(guard);
+        // A window with no guard, so removals interleave with acquisitions.
+        std::thread::sleep(Duration::from_micros(300));
     }
+    std::fs::write(home.join(format!("done-{}", std::process::id())), b"").unwrap();
 }
 fn race_remove(home: &Path) {
     let cx = mutate();
     let root = root(home);
     let mut removed = 0;
-    for _ in 0..300 {
+    let acquirers_done = || {
+        std::fs::read_dir(home)
+            .unwrap()
+            .filter(|entry| {
+                entry
+                    .as_ref()
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("done-")
+            })
+            .count()
+            == 2
+    };
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while !acquirers_done() && Instant::now() < deadline {
         if Gate::remove_scope(&cx, &root, Scope::Checkout(checkout())).unwrap()
             == ScopeRemoval::Removed
         {
@@ -808,7 +835,7 @@ fn store_retention_keeps_unsettled_and_the_newest_twenty_settled_runs() {
     for index in 0..25 {
         let id = format!("settled-{index:02}");
         insert_run(&store, &id, &owner, "closed", Some("complete"), index);
-        std::fs::create_dir_all(runs.join(&id)).unwrap();
+        private_dir(&runs.join(&id));
         std::fs::write(runs.join(&id).join("stdout.log"), b"log").unwrap();
         store
             .conn()
@@ -888,7 +915,7 @@ fn store_retention_caps_logs_oldest_settled_first() {
     let runs = home.path().join(".effigy/state/runs");
     for (index, id) in ["a", "b", "c"].iter().enumerate() {
         insert_run(&store, id, &owner, "closed", Some("complete"), index as i64);
-        std::fs::create_dir_all(runs.join(id)).unwrap();
+        private_dir(&runs.join(id));
         store
             .conn()
             .execute(
@@ -944,7 +971,7 @@ fn store_retention_keeps_referenced_objects_and_three_superseded() {
                 .unwrap();
         }
         let dir = objects.join(digest);
-        std::fs::create_dir_all(&dir).unwrap();
+        private_dir(&dir);
         std::fs::write(dir.join("compose.yaml"), b"x").unwrap();
         std::fs::set_permissions(
             dir.join("compose.yaml"),

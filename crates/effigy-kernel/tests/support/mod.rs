@@ -133,15 +133,16 @@ impl Helper {
     pub fn pid(&self) -> u32 {
         self.child.id()
     }
-    /// The first line starting with `prefix`, without it.
+    /// The text after `prefix` on the first line containing it.
     pub fn expect(&self, prefix: &str, timeout: Duration) -> String {
         let deadline = Instant::now() + timeout;
         loop {
             let left = deadline.saturating_duration_since(Instant::now());
             match self.lines.recv_timeout(left) {
                 Ok(line) => {
-                    if let Some(rest) = line.strip_prefix(prefix) {
-                        return rest.trim().to_string();
+                    // libtest may print "test name ... " before the marker.
+                    if let Some(at) = line.find(prefix) {
+                        return line[at + prefix.len()..].trim().to_string();
                     }
                 }
                 Err(error) => panic!("helper never printed {prefix:?}: {error}"),

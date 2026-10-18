@@ -2,10 +2,12 @@
 
 Status: foundation types are implemented in `crates/effigy-kernel/`: identity
 encoding v1, operation contexts and class capabilities, observation and Probe
-API types, outcomes, and macOS/Linux platform facts. `qa:kernel-ratchet`
-enforces the committed production baseline in `config/kernel-ratchet.json`.
-Gates, store, runs, custody, signals, executable probes and the probe guard
-remain specified and unavailable. Engines have not adopted the kernel; the
+API types, outcomes, and macOS/Linux platform facts. Gates (§5.4), the store,
+records and `atomic_replace` (§5.5), the state root, its kernel-owned path
+families and retention (§7) are implemented with their proof lists and
+fault points. `qa:kernel-ratchet` enforces the committed production baseline
+in `config/kernel-ratchet.json`. Runs, custody, signals, executable probes and
+the probe guard remain specified and unavailable. Engines have not adopted the kernel; the
 mechanisms in the adoption map (§10) remain current behavior. QA-group `stop` and `hard_timeout_ms` stay unavailable: contract
 [051](051-bounded-qa-groups-contract.md) keeps refusing them until this
 kernel's run journal, custody and deadlines exist.
@@ -497,6 +499,11 @@ pub fn read_record<T: Record>(cx: &ObserveContext, dir: &DirFd, name: &FileName)
 SQLite settings: `journal_mode=DELETE`, `synchronous=FULL`,
 `foreign_keys=ON`, `busy_timeout` from the context. Write-ahead logging is
 not used: a read-only reader must work on a read-only filesystem (R2).
+SQLite opens files by path, so `kernel.db` is the one K13 exception to
+descriptor-relative opens: the kernel creates or verifies it
+descriptor-relative inside the verified 0700 root (regular, operator-owned,
+0600, one link, size-bounded) and SQLite then opens it with
+`SQLITE_OPEN_NOFOLLOW`.
 
 `atomic_replace` order: `openat` a temporary name with `O_CREAT or O_EXCL or
 O_NOFOLLOW or O_CLOEXEC` and the final mode, write, `fsync`, optionally link
