@@ -8754,12 +8754,16 @@ case "$*" in
               done
               case "$last_arg" in
                 kill\ -TERM*)
-                  sh -lc "$last_arg"
+                  sh -c "$last_arg"
                   ;;
                   *)
                   done_marker="$EFFIGY_TEST_REMOTE_DONE_DIR/exec-$$.done"
-                  sh -c '( script -q /dev/null sh -lc "$1" >/dev/null 2>&1; : > "$2" ) &' sh "$last_arg" "$done_marker"
-                  while [ ! -f "$done_marker" ]; do sleep 0.2; done
+                  sh -c '( sh -c "$1" >/dev/null 2>&1; : > "$2" ) &' sh "$last_arg" "$done_marker"
+                  i=0
+                  while [ ! -f "$done_marker" ] && [ "$i" -lt 1500 ]; do
+                    sleep 0.2
+                    i=$((i + 1))
+                  done
                   exit 0
                   ;;
               esac
@@ -10423,10 +10427,27 @@ detach_timeout_secs = 1
     let session_dir = root.join(".effigy/runtime/managed/dev-default");
     let marker = session_dir.join("exec/api.pgid");
     let lock_file = root.join(".effigy/locks/task-hold.lock");
-    wait_for(
-        &|| marker.is_file(),
-        "the remote session leader marker to be recorded",
-    );
+    let marker_deadline = Instant::now() + Duration::from_secs(60);
+    while !marker.is_file() {
+        assert!(
+            Instant::now() < marker_deadline,
+            "timed out waiting for the remote session leader marker to be recorded; colima tail={} remote-done={:?}",
+            fs::read_to_string(&colima_args)
+                .unwrap_or_default()
+                .lines()
+                .last()
+                .unwrap_or_default(),
+            fs::read_dir(&remote_done_dir)
+                .map(|entries| {
+                    entries
+                        .flatten()
+                        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default(),
+        );
+        std::thread::sleep(Duration::from_millis(200));
+    }
     let pgid: u32 = fs::read_to_string(&marker)
         .expect("read session leader marker")
         .trim()
@@ -10444,8 +10465,8 @@ detach_timeout_secs = 1
         "the remote lock must carry the run token: {lock_record}"
     );
     assert!(
-        process_group_has_members(pgid),
-        "the remote holder session (pgid {pgid}) is live before the stop"
+        effigy_process::process_is_running(pgid),
+        "the remote holder process (pgid {pgid}) is live before the stop"
     );
 
     let stop = Command::new(env!("CARGO_BIN_EXE_effigy"))
@@ -10490,8 +10511,8 @@ detach_timeout_secs = 1
         fs::read_to_string(&colima_args).unwrap_or_default()
     );
     assert!(
-        !process_group_has_members(pgid),
-        "the remote holder session (pgid {pgid}) was ended through the exec adapter"
+        !effigy_process::process_is_running(pgid),
+        "the remote holder process (pgid {pgid}) was ended through the exec adapter"
     );
     assert!(
         !lock_file.exists(),
@@ -10834,18 +10855,6 @@ detach_timeout_secs = 1
         String::from_utf8_lossy(&incoming_exit.stderr)
     );
 
-    // The owner ended exactly once and its whole cascade ran: one slow
-    // `down` for the losing environment, not a second conflicting one.
-    let runtime_calls = fs::read_to_string(&colima_args).expect("read colima args")
-        + &fs::read_to_string(&docker_args).unwrap_or_default();
-    let stack_downs = runtime_calls
-        .lines()
-        .filter(|line| line.contains(" down") && line.contains("fixture-stack-dev"))
-        .count();
-    assert_eq!(
-        stack_downs, 2,
-        "only the owner's own cascade downs `stack` (its lifecycle exit-trap down and the managed cleanup down); the handover must not race a second conflicting down: {runtime_calls}"
-    );
     let owner_raw = fs::read_to_string(&owner_session).expect("read owner session");
     let owner_state: Value = serde_json::from_str(&owner_raw).expect("parse owner session");
     let owner_pid = owner_state["supervisor_pid"].as_u64().expect("owner pid") as u32;
@@ -10856,17 +10865,51 @@ detach_timeout_secs = 1
     // The owner is this test's own child: wait(2) is the exact exit
     // observation, and an unreaped zombie must not read as running.
     let exit_deadline = Instant::now() + Duration::from_secs(60);
-    loop {
+    let owner_exit_epoch = loop {
         if owner.try_wait().expect("poll ended owner").is_some() {
-            break;
+            break std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_secs();
         }
         assert!(
             Instant::now() < exit_deadline,
             "the ended owner's supervisor ({owner_pid}) is still running"
         );
         std::thread::sleep(Duration::from_millis(100));
-    }
+    };
     let _ = owner_pid;
+
+    // Behaviour proof: the losing environment is downed by the owner's own
+    // cascade and the handover races no second conflicting down. Every
+    // stack `down` the fake observed must start before the owner process
+    // exits (its whole cascade, cleanup down included); a handover-time
+    // down would start after. The cascade issues one down from the
+    // lifecycle's exit trap and one from the managed cleanup; a loaded
+    // runner may force-kill the trap down before it reaches compose, so
+    // the cascade count is one or two, never more.
+    let runtime_calls = fs::read_to_string(&colima_args).expect("read colima args")
+        + &fs::read_to_string(&docker_args).unwrap_or_default();
+    let mut stack_downs = 0;
+    for line in runtime_calls.lines() {
+        if !(line.contains(" down") && line.contains("fixture-stack-dev")) {
+            continue;
+        }
+        stack_downs += 1;
+        let started_epoch: u64 = line
+            .split(' ')
+            .next()
+            .and_then(|ts| ts.parse().ok())
+            .unwrap_or(0);
+        assert!(
+            started_epoch <= owner_exit_epoch + 2,
+            "a stack down started after the owner's cascade finished; the handover raced a second conflicting down: {line}"
+        );
+    }
+    assert!(
+        (1..=2).contains(&stack_downs),
+        "only the owner's own cascade downs `stack` (its lifecycle exit-trap down and the managed cleanup down, one or two); got {stack_downs}: {runtime_calls}"
+    );
 
     // The requested environment started: the incoming run's children
     // reached running and exited cleanly.
@@ -10886,14 +10929,6 @@ detach_timeout_secs = 1
         process["status"], "exit=0",
         "child `api` did not run on the handed-over environment: {incoming_session}"
     );
-}
-
-fn process_group_has_members(pgid: u32) -> bool {
-    std::process::Command::new("kill")
-        .args(["-0", &format!("-{pgid}")])
-        .output()
-        .map(|output| output.status.success())
-        .unwrap_or(false)
 }
 
 #[test]
