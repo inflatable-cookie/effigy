@@ -38,14 +38,25 @@ documented TOCTOU and cross-UID proof limitation still visible. Decision:
 
 ## Q-003 — Production deployment ownership
 
-Status: open
+Status: open (partly settled)
 Asked: 2026-10-18
 
-Should production deployment be part of Effigy, or a separate tool? Tom would
-like Effigy to be a cohesive end-to-end development tool, but says this needs
-thinking through properly first. The current `deploy` surface reports success
-for obligations it never executes; see the October 2026 deep audit, analysis
-D8.
+Settled with Tom on 2026-10-18:
+
+- Effigy's deploy commands are untested in the wild, and no consumer deploys
+  through them yet. Acowtancy needs a Render deployment soon (Tom: "I need
+  that sorted soon").
+- v0.15 keeps `deploy model` and `deploy export`. `deploy apply` and
+  `deploy redeploy` refuse cleanly rather than report success for obligations
+  they don't execute.
+- The direction is an end-to-end `effigy deploy <env>` that runs the same way
+  from a developer machine, CI or an agent (Tom: "Probably all three?").
+
+Open: the full design. The starting shape is in Queue lane `deploy`: a kernel
+run with intent before each effect and explicit obligations (artifacts by
+digest, release gates, state and migrations, provider apply through an
+external adapter, health, history and rollback). Acowtancy on Render is the
+proving case.
 
 ## Q-004 — Relationship to Compose
 
