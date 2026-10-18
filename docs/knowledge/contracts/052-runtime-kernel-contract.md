@@ -128,7 +128,7 @@ names the rule or invariant it relies on.
 | K3 | **Intent first.** No external effect without a committed intent. `Admitted` commits before the first effect of a run, including setup steps, env-schema commands, gateway ensure and spawn. Observation probes are not effects: they change nothing Effigy owns and run under a probe guard, never a journal (§5.11). | A child, container, route or file effect with no prior journal entry; publication before bind. |
 | K4 | **One settle.** One settle implementation, run only by the owner gate's holder, in reverse effect order. It is idempotent and resumable. | Two teardown authorities for one effect; cleanup only on the success path; settle reconstructed from directory scans. |
 | K5 | **One unresolved run per owner.** `Run::begin` admits a run only when every earlier run of its owner is settled, or that run's remaining residue was explicitly acknowledged. A non-closed predecessor is settled first; a `Closed` predecessor with `Incomplete` cleanup gets a settle retry first. | A successor running beside a predecessor's unsettled record or unacknowledged residue. |
-| K6 | **Custody closure.** No Effigy-spawned process outlives its run's settle. No probe outlives its deadline plus grace while its observer or its guard lives (§5.11). The owner exists before the first spawn. A spawn barrier prevents an unrecorded workload. Partial spawns roll back. Process groups are retained through stream close. Signals need positive generation evidence (I-P4). | Orphans after SIGTERM, SIGHUP or owner SIGKILL; leader exit read as group closure; client exit read as remote closure; a group or session signalled because its number is in use. |
+| K6 | **Custody closure.** No Effigy-spawned process outlives its run's settle. No probe process with generation evidence outlives its deadline plus grace while its observer or its guard lives (§5.11). The owner exists before the first spawn. A spawn barrier prevents an unrecorded workload. Partial spawns roll back. Process groups are retained through stream close. Signals need positive generation evidence (I-P4). | Orphans after SIGTERM, SIGHUP or owner SIGKILL; leader exit read as group closure; client exit read as remote closure; a group or session signalled because its number is in use. |
 | K7 | **Fencing.** Every effect, request and callback carries `(ResourceId, Generation)`. A stale generation is refused. | A stale stop stopping a successor; a late callback deleting a successor's route. |
 | K8 | **Bounded.** Every kernel wait takes a deadline. Expiry cancels at a safe boundary and never detaches a writer. Only declared workload lifetimes are open-ended. | A `starting` loop that skips its deadline; curl without a time limit; a detached writer killed mid-transaction. |
 | K9 | **One signal router.** One router per process, installed in `main` before any spawn. Libraries take a cancel token and never install handlers. HUP, INT and TERM are handled. | A library swallowing INT or TERM; HUP killing an owner with no cascade. |
@@ -1182,26 +1182,37 @@ fork.
 | --- | --- | --- | --- |
 | 1 | On its first probe, spawn the guard. | Wait for registrations. | — |
 | 2 | Fork the probe into a new process group, blocked on a spawn barrier. Its environment carries `EFFIGY_PROBE_NONCE`, which names the observer's and the guard's pid and start identity, plus a sequence number. | — | Observer dies: the probe reads barrier EOF and exits without executing. |
-| 3 | Send the probe's pid, group, start identity, nonce and deadline to the guard. | Record them in memory; acknowledge. | No acknowledgement: the observer kills the unexecuted probe and returns `Unknown(GuardUnavailable)`. |
+| 3 | Send the probe's pid, group, start identity, nonce and deadline to the guard. | Record them in memory. On Linux, open a pidfd for the blocked leader, which pins the group number for the guard's lifetime. Acknowledge. | No acknowledgement: the observer kills the unexecuted probe and returns `Unknown(GuardUnavailable)`. |
 | 4 | On the acknowledgement, release the barrier. The probe executes. | — | — |
 | 5 | Keep the leader unreaped, which pins the group number. Relay bounded output, kill the group at the deadline, verify closure, reap, then tell the guard the probe closed. | At the deadline plus grace, stop any registered probe still open: the backup for a hung or stopped observer. | Guard dies: the observer still owns and stops the probe; the outcome carries a warning. Observer dies: the guard reads EOF and stops every registered open probe. |
 
 The guard is not the probe's parent, so it stops a probe by the recovery
-rule of I-P4. It signals the group only while the leader is alive with the
-registered start identity (on Linux, through a pidfd). Otherwise it signals
-members individually, only where the member carries the probe nonce and
-started no earlier than the registration. Anything else is left alone.
+rule of I-P4, limited to the generation evidence it holds:
+
+| Process | Guard's evidence | Guard may signal |
+| --- | --- | --- |
+| Group member, Linux | the pidfd opened at registration, which keeps the group number pinned after the leader exits | the whole group |
+| Group member, macOS, leader alive with the registered start identity | verified leader | the whole group |
+| Group member, macOS, leader gone | the probe nonce and a start no earlier than the registration | that member only |
+| Process that left the group (new session) | the probe nonce and start time | that process only |
+| Anything else | none | nothing |
 
 If the observer and the guard both die, the probe is outside custody. Its
 nonce names two owners whose absence the kernel can prove, so the kernel's
 maintenance step (Mutate class or the explicit maintenance command, never
-Observe) stops such processes by nonce and start time.
+Observe) stops nonce-carrying processes by nonce and start time.
 
-| Who lives | Bound on a probe and its descendants |
-| --- | --- |
-| Observer | the probe deadline: the observer kills the pinned group |
-| Guard only | the probe deadline plus grace: the guard stops it by leader identity or nonce |
-| Neither | the next maintenance step on this host |
+| Who lives | Stopped within the bound | Outside the bound |
+| --- | --- | --- |
+| Observer | every group member, at the deadline (pinned group); nonce-carrying processes that left the group | a process that left the group and cleared its environment |
+| Guard only | Linux: every group member, plus nonce-carrying processes outside it, at the deadline plus grace. macOS: the whole group while the leader lives; after that, nonce-carrying processes. | macOS: a group member without the nonce after the leader exits. Both: a process that left the group and cleared its environment. |
+| Neither | nonce-carrying processes, at the next maintenance step | any process without the nonce |
+
+Processes outside the bound are never signalled (I-P4, R3). Observe writes
+nothing, so it cannot record them as residue; the limit is stated here, not
+hidden. Probe commands are adapter-declared, non-mutating, short-lived tools,
+so a probe that escapes its group and clears its environment is a defect in
+that declaration.
 
 Reconciliation with K3 and R2. A probe is not an effect: it changes nothing
 Effigy owns and uses only non-mutating commands and requests, so it needs no
@@ -1217,9 +1228,11 @@ of every other class use the same two calls for their probes.
   restarts or allocates. Its processes and I/O go only through
   `probe_process` and `connect`.
 - I-O6: a probe executes only after the guard acknowledges its
-  registration. While its observer or its guard lives, no probe process or
-  descendant outlives the deadline plus grace. If both die, maintenance stops
-  it by nonce. Probe commands are declared by adapters as non-mutating and
+  registration. Every probe process inside the bound for whichever owner
+  lives (table above) is stopped within that bound. A process without
+  generation evidence is never signalled and is outside the bound; Observe
+  cannot record it. If both owners die, maintenance stops nonce-carrying
+  processes. Probe commands are declared by adapters as non-mutating and
   verified by the read-only fixture.
 - I-O3: `wait_all` is one waiter with one deadline over an ordered list.
   Dependencies are typed facts, never sleeps.
@@ -1232,9 +1245,9 @@ of every other class use the same two calls for their probes.
 
 | Fault | Behavior |
 | --- | --- |
-| Crash, Kill of the observer | The guard reads EOF and stops every registered open probe by leader identity or nonce. Nothing was written, so nothing needs recovery. |
+| Crash, Kill of the observer | The guard reads EOF and stops every registered open probe within its evidence (pidfd, verified leader or nonce). Processes without evidence are left alone. Nothing was written, so nothing needs recovery. |
 | Crash, Kill of the guard | The observer still owns each probe through its unreaped leader and kills the group at the deadline. New probes return `Unknown(GuardUnavailable)` until a new guard acknowledges. |
-| Crash, Kill of both | The probe is outside custody until maintenance stops it by nonce. |
+| Crash, Kill of both | The probe is outside custody. Maintenance stops nonce-carrying processes; any others stay untouched. |
 | SIGSTOP of the observer | The guard stops open probes at the deadline plus grace. |
 | ENOSPC | Probes write nothing. |
 | Probe timeout | `Unknown(TimedOut)`; other findings are still reported. |
@@ -1260,6 +1273,12 @@ of every other class use the same two calls for their probes.
     result is `Unknown`;
   - both SIGKILLed: the probe survives until maintenance, which stops it by
     nonce, while a foreign process with another or no nonce survives.
+- Observer SIGKILLed after the leader exits, leaving a descendant in the
+  group that cleared its environment: on Linux the guard stops it through
+  the pidfd-pinned group; on macOS it is left untouched and is outside
+  O14's bound.
+- A descendant that leaves the group and clears its environment is never
+  signalled, on either platform, by any owner.
 - Every probe case leaves an empty filesystem diff.
 
 ### 5.12 `Outcome`
@@ -1659,7 +1678,7 @@ A v0.14.1 user updates and everything keeps working with no manual steps
 | O11 | No destructive environment call ran while an attachment existed. |
 | O12 | No signal reached a process without generation evidence (I-P4); foreign fixture processes all survive. |
 | O13 | No run was admitted beside an unresolved predecessor (K5). |
-| O14 | While its observer or its guard lives, no probe process outlives its deadline plus grace (I-O6). |
+| O14 | While its observer or its guard lives, no probe process inside that owner's evidence bound (§5.11) outlives the deadline plus grace (I-O6). Processes without generation evidence are never signalled. |
 
 ### 12.2 Strict fakes
 

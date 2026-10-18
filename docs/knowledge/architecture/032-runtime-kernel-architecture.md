@@ -120,8 +120,10 @@ apply or down → probes → commit applied generation
 Observe command → ObserveContext only (no EffectContext, Run or journal)
 → probe_process: the observer forks the probe behind a barrier, registers it
   with __kernel-probe-guard, releases it on acknowledgement, keeps the leader
-  unreaped and kills the group at the deadline; the guard stops it on
-  observer death or at the deadline plus grace → bounded output
+  unreaped and kills the group at the deadline; the guard (pidfd-pinned group
+  on Linux, verified leader or nonce on macOS) stops it on observer death or
+  at the deadline plus grace; processes without evidence are left alone
+  → bounded output
 → connect: local TCP, HTTP GET or HEAD, control sockets, gateway DNS
 → Outcome; filesystem unchanged
 ```
