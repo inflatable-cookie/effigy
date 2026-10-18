@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use effigy_core::task_selection::{CatalogSelectionMode, TaskSelector};
 
 use crate::task_runtime::{ManifestTask, ManifestTaskRunIn};
-use crate::{CatalogGraphPosture, ManifestDraft, TaskManifest};
+use crate::{ManifestDraft, TaskManifest};
 
 /// Callback signature for resolving a `TaskSelector` against a slice
 /// of `LoadedCatalog`. The runner owns the routing implementation
@@ -70,21 +70,6 @@ impl LoadedCatalog {
             .get(name)
             .map(PathBuf::as_path)
             .unwrap_or(self.manifest_path.as_path())
-    }
-}
-
-impl LoadedCatalog {
-    /// Graph indexing posture this catalog declares in its own manifest.
-    ///
-    /// The posture is read from `[catalog.graph]` and never changes
-    /// membership, identity, or discovery. A catalog without the table is
-    /// folded into its parent graph corpus.
-    pub fn catalog_graph_posture(&self) -> CatalogGraphPosture {
-        self.manifest
-            .catalog
-            .as_ref()
-            .map(|catalog| catalog.graph_posture())
-            .unwrap_or_default()
     }
 }
 
@@ -145,56 +130,20 @@ mod tests {
     }
 
     #[test]
-    fn catalog_graph_posture_defaults_to_folded() {
-        let catalog = loaded_catalog(
-            "api",
-            "/tmp/dev/ws/apps/api",
-            "[catalog]\nalias = \"api\"\n",
-            1,
-        );
-        let posture = catalog.catalog_graph_posture();
-        assert!(!posture.segmented);
-        assert!(!posture.independent);
-        assert!(posture.is_folded());
+    fn retired_catalog_graph_names_the_replacement() {
+        for fields in [
+            "",
+            "segmented = true",
+            "segmented = true\nindependent = true",
+            "independent = true",
+            "store = 'custom.db'",
+        ] {
+            let body = format!("[catalog]\nalias = 'bovine'\n[catalog.graph]\n{fields}\n");
+            let error = toml::from_str::<TaskManifest>(&body).expect_err("retired table");
+            assert!(error.to_string().contains("[catalog.graph]"));
+            assert!(error.to_string().contains("graph explore --path"));
+        }
     }
-
-    #[test]
-    fn catalog_graph_posture_reads_segmented_and_independent() {
-        let catalog = loaded_catalog(
-            "bovine",
-            "/tmp/dev/ws/apps/bovine",
-            "[catalog]\nalias = \"bovine\"\n\n[catalog.graph]\nsegmented = true\nindependent = true\n",
-            1,
-        );
-        let posture = catalog.catalog_graph_posture();
-        assert!(posture.segmented);
-        assert!(posture.independent);
-    }
-
-    #[test]
-    fn independent_without_segmented_is_rejected_by_manifest_validation() {
-        let manifest: TaskManifest = toml::from_str(
-            "[catalog]\nalias = \"bovine\"\n\n[catalog.graph]\nindependent = true\n",
-        )
-        .expect("parse manifest");
-        let error = manifest
-            .validate(Path::new("/tmp/ws/apps/bovine/effigy.toml"))
-            .expect_err("independent without segmented must fail");
-        assert!(
-            error.to_string().contains("requires `segmented = true`"),
-            "{error}"
-        );
-    }
-
-    #[test]
-    fn catalog_graph_rejects_unknown_fields() {
-        let error = toml::from_str::<TaskManifest>(
-            "[catalog]\nalias = \"bovine\"\n\n[catalog.graph]\nsegmented = true\nstore = \"custom.db\"\n",
-        )
-        .expect_err("unknown graph field must fail");
-        assert!(error.to_string().contains("store"), "{error}");
-    }
-
     #[test]
     fn env_schema_declaring_catalog_falls_back_to_nearest_ancestor() {
         let catalogs = vec![

@@ -338,7 +338,7 @@ effigy graph index
 effigy graph status --json
 effigy graph explore "trace release orchestrator" --max-files 6 --max-bytes 12288 --json
 git diff --name-only | effigy graph affected --stdin --json
-effigy graph context "trace release orchestrator" --max-files 8 --max-bytes 4096 --json
+effigy graph explore --excerpts-only "trace release orchestrator" --max-files 8 --max-bytes 4096 --json
 ```
 
 Use this when an agent needs the first files to read without spraying `rg`
@@ -350,7 +350,7 @@ before trusting query results.
 If the repo is changing while you work:
 
 ```sh
-effigy graph watch --json
+effigy graph index --json
 ```
 
 ## 7) Manage Secrets

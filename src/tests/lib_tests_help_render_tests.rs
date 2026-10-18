@@ -271,33 +271,36 @@ fn render_deploy_help_shows_provider_package_export_surface() {
 }
 
 #[test]
-fn render_graph_help_shows_index_query_and_context_surface() {
+fn render_graph_help_shows_exactly_the_retained_surface() {
     let rendered = render_help_text(HelpTopic::Graph);
     assert!(rendered.contains("graph Help"));
-    assert!(rendered.contains("effigy graph index"));
-    assert!(rendered.contains("effigy graph status"));
-    assert!(rendered.contains("effigy graph watch"));
-    assert!(rendered.contains("effigy graph search"));
-    assert!(rendered.contains("effigy graph node"));
-    assert!(rendered.contains("effigy graph callers"));
-    assert!(rendered.contains("effigy graph callees"));
-    assert!(rendered.contains("effigy graph impact"));
-    assert!(rendered.contains("effigy graph context"));
-    assert!(rendered.contains("effigy graph explore"));
-    assert!(rendered.contains("--repo <PATH>"));
-    assert!(rendered.contains("--json"));
-    assert!(rendered.contains("--debounce-ms <MS>"));
-    assert!(rendered.contains("--refresh"));
-    assert!(rendered.contains("--stale-index"));
-    assert!(rendered.contains("EFFIGY_GRAPH_TIMEOUT_MS"));
-    assert!(rendered.contains("--language <ID>"));
-    assert!(rendered.contains("--path <PREFIX>"));
-    assert!(rendered.contains("--catalog <ALIAS>"));
-    assert!(rendered.contains("--all-catalogs"));
+    for command in ["index", "status", "search", "node", "affected", "explore"] {
+        assert!(rendered.contains(&format!("effigy graph {command}")));
+    }
+    for command in ["watch", "files", "callers", "callees", "impact", "context"] {
+        assert!(!rendered.contains(&format!("effigy graph {command}")));
+    }
+    for flag in [
+        "--repo <PATH>",
+        "--json",
+        "--refresh",
+        "--stale-index",
+        "EFFIGY_GRAPH_TIMEOUT_MS",
+        "--language <ID>",
+        "--path <PREFIX>",
+        "--in",
+        "--out",
+        "--excerpts-only",
+    ] {
+        assert!(rendered.contains(flag), "{flag}");
+    }
+    assert!(
+        !rendered.contains("--catalog")
+            && !rendered.contains("--all-catalogs")
+            && !rendered.contains("--debounce-ms")
+    );
     assert!(rendered.contains("Use `graph status` only for a report-only freshness check"));
-    assert!(rendered.contains("effigy.graph.watch.event.v1"));
-    assert!(rendered.contains("effigy graph context \"trace deploy provider export\""));
-    assert!(rendered.contains("effigy graph explore \"trace graph watch implementation\""));
+    assert!(rendered.contains("refreshing (n/N)"));
     assert!(rendered.contains("graph.backup-"));
     assert!(!rendered.contains("rm -rf .effigy/graph"));
 }

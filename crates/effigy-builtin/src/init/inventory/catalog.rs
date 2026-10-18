@@ -197,16 +197,16 @@ pub(super) fn graph_jobs(context: &RepoSetupContext) -> Vec<SetupJob> {
             true,
         ),
         contextual_job(
-            "graph_watch.guidance",
+            "graph_explore.guidance",
             JobClass::new(
                 SetupCategory::Graph,
                 SetupExecutionKind::Guidance,
                 SetupSafetyClass::SafeCheck,
             ),
             context.has_graph_index,
-            "Keep the graph warm during longer sessions.".to_owned(),
-            "graph watch is useful once the repo already has an index".to_owned(),
-            Some("effigy graph watch --json".to_owned()),
+            "Navigate code with automatic graph refresh.".to_owned(),
+            "graph queries refresh stale files automatically; no watcher is needed".to_owned(),
+            Some("effigy graph explore \"trace implementation ownership\" --json".to_owned()),
             false,
         ),
     ]

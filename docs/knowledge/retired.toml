@@ -1,4 +1,74 @@
 [[retired]]
+id = "effigy-graph-watch"
+retired = "2026-10-18"
+replacement = "Queries refresh automatically; use graph index to pre-warm. Removed spellings return replacement errors for one release."
+owner = "docs/knowledge/contracts/045-catalog-scoped-code-graph-contract.md"
+terms = ["effigy graph watch", "effigy.graph.watch.event.v1"]
+paths = ["crates/effigy-codegraph/src/watch.rs", "src/cli/graph_watch_dispatch.rs"]
+config_keys = []
+allow = ["CHANGELOG.md", "docs/guides/076-code-graph-and-agent-workflows.md", "docs/knowledge/contracts/json-schema-index.json"]
+
+[[retired]]
+id = "effigy-graph-files"
+retired = "2026-10-18"
+replacement = "Use graph search <QUERY> or graph node <PATH>. Removed spellings return replacement errors for one release."
+owner = "docs/knowledge/contracts/045-catalog-scoped-code-graph-contract.md"
+terms = ["effigy graph files", "effigy.graph.files.v1"]
+paths = []
+config_keys = []
+allow = ["CHANGELOG.md", "docs/guides/076-code-graph-and-agent-workflows.md", "docs/knowledge/contracts/json-schema-index.json"]
+
+[[retired]]
+id = "effigy-graph-callers"
+retired = "2026-10-18"
+replacement = "Use graph node <ID> --in. Removed spellings return replacement errors for one release."
+owner = "docs/knowledge/contracts/045-catalog-scoped-code-graph-contract.md"
+terms = ["effigy graph callers", "effigy.graph.callers.v1"]
+paths = []
+config_keys = []
+allow = ["CHANGELOG.md", "docs/guides/076-code-graph-and-agent-workflows.md", "docs/knowledge/contracts/json-schema-index.json"]
+
+[[retired]]
+id = "effigy-graph-callees"
+retired = "2026-10-18"
+replacement = "Use graph node <ID> --out. Removed spellings return replacement errors for one release."
+owner = "docs/knowledge/contracts/045-catalog-scoped-code-graph-contract.md"
+terms = ["effigy graph callees", "effigy.graph.callees.v1"]
+paths = []
+config_keys = []
+allow = ["CHANGELOG.md", "docs/guides/076-code-graph-and-agent-workflows.md", "docs/knowledge/contracts/json-schema-index.json"]
+
+[[retired]]
+id = "effigy-graph-impact"
+retired = "2026-10-18"
+replacement = "Use graph node <ID|PATH>. Removed spellings return replacement errors for one release."
+owner = "docs/knowledge/contracts/045-catalog-scoped-code-graph-contract.md"
+terms = ["effigy graph impact", "effigy.graph.impact.v1"]
+paths = []
+config_keys = []
+allow = ["CHANGELOG.md", "docs/guides/076-code-graph-and-agent-workflows.md", "docs/knowledge/contracts/json-schema-index.json"]
+
+[[retired]]
+id = "effigy-graph-context"
+retired = "2026-10-18"
+replacement = "Use graph explore <REQUEST> --excerpts-only; its payload schema is effigy.graph.explore.v1. Removed spellings return replacement errors for one release."
+owner = "docs/knowledge/contracts/045-catalog-scoped-code-graph-contract.md"
+terms = ["effigy graph context", "effigy.graph.context.v1"]
+paths = []
+config_keys = []
+allow = ["CHANGELOG.md", "docs/guides/076-code-graph-and-agent-workflows.md", "docs/knowledge/contracts/json-schema-index.json"]
+
+[[retired]]
+id = "effigy-catalog-scoped-graph"
+retired = "2026-10-18"
+replacement = "Remove the catalog graph table and graph catalog selectors. One graph indexes the whole checkout; narrow explore output with --path. Orphaned catalog stores are ignored with one warning per invocation and left untouched."
+owner = "docs/knowledge/contracts/045-catalog-scoped-code-graph-contract.md"
+terms = ["effigy.graph.fanout.v1", "graph index --all-catalogs", "graph status --all-catalogs", "graph index --catalog"]
+paths = []
+config_keys = ["catalog.graph"]
+allow = ["CHANGELOG.md", "docs/guides/076-code-graph-and-agent-workflows.md", "docs/knowledge/contracts/json-schema-index.json", "crates/effigy-manifest/src/lib.rs", "crates/effigy-manifest/src/loaded_catalog.rs"]
+
+[[retired]]
 id = "effigy-heavy-admission-store-and-cli"
 retired = "2026-10-02"
 replacement = "Queue and Nucleus own heavy scheduling. Effigy routes heavy invocations through the host-run client and exposes no local heavy-admission store or status/run/runs commands. Historical files under the former default or EFFIGY_ADMISSION_DIR root remain untouched and opaque; 48183cf is local rollout evidence, not a published consumer rollback target."

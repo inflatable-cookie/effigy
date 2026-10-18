@@ -8,9 +8,7 @@ use crate::extractor::{capability_set, extractor_id, GraphSink, LanguageIndexer,
 use crate::model::{ExtractorCapability, ExtractorRecord, FileRecord};
 use crate::ExtractorId;
 
-pub(crate) use resolve::{
-    demote_typed_relations, resolve_typed_relations, typed_edge_dest, typed_reference_dest,
-};
+pub(crate) use resolve::{resolve_typed_relations, typed_edge_dest, typed_reference_dest};
 
 pub struct MarkdownIndexer {
     extractor_id: ExtractorId,

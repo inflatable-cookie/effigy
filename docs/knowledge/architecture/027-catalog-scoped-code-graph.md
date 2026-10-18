@@ -1,141 +1,25 @@
-# Catalog-Scoped Code Graph Architecture
+# Checkout Code Graph Architecture
 
-Contract: [`045`](../contracts/045-catalog-scoped-code-graph-contract.md)
+Contract: [045](../contracts/045-catalog-scoped-code-graph-contract.md).
 
-## Purpose
+The graph has one checkout corpus, one SQLite database, one refresh lock and
+one cooperative deadline. Catalog topology does not create another ownership
+model. Both code navigation and documentation context use this same corpus.
 
-Large monorepos cannot treat every declared product as one mandatory code-graph
-corpus. Cold graph queries must reach the selected application without walking,
-fingerprinting, or indexing unrelated catalog trees.
+The unit of index consistency is a file. Parsing happens before mutation;
+graph rows, FTS rows and the per-file freshness key commit together. WAL lets
+concurrent readers keep a stable SQL view while the writer advances through
+files. Mixed committed file generations are reported as `refreshing (n/N)`.
+A killed writer cannot leave scan state certifying uncommitted rows.
 
-Effigy's existing catalog model already owns monorepo topology and stable local
-identity. Code-graph partitioning therefore attaches an indexing posture to a
-catalog instead of introducing a second segment registry.
+Cross-file records belong to their source. Replacing a target cannot delete an
+unchanged caller's edge or reference. Typed document links are derived from
+source declarations; interrupted resolution keeps document paths stale.
 
-## Authority Model
+Deadlines stop work at safe boundaries on the caller's thread. Committed work
+survives and retries resume it. Full database copies and detached timeout
+threads have no role in the consistency model.
 
-The composed root manifest remains the sole owner of effective catalog
-membership. A child manifest participates only when the root declares it under
-`[catalog.members]` or through the existing typed catalog-mount forms.
-
-Each member's own composed manifest may declare `[catalog.graph]`. That table
-answers how the parent workspace indexes this catalog; it does not add the
-catalog to membership, rename it, or grant recursive discovery.
-
-The catalog alias and canonical catalog root form the graph-scope identity.
-There are no graph-specific segment names or duplicate root lists. A nested
-manifest outside effective membership remains ordinary source.
-
-## Scope Postures
-
-Catalogs have three effective postures:
-
-| Posture | Manifest | Index behavior | Storage |
-| --- | --- | --- | --- |
-| folded | no graph block, or `segmented = false` | included in the parent corpus | parent store |
-| segmented/shared | `segmented = true` | independently lazy; pruned from parent scans | root shared database |
-| segmented/independent | `segmented = true`, `independent = true` | independently lazy; pruned from parent scans | catalog database and lock |
-
-`independent` means physical storage isolation. It does not control lazy refresh:
-all segmented catalogs refresh independently.
-
-The root manifest needs no graph topology. Its graph scope contains root-owned
-files plus folded member trees. Segmented member roots are pruned before descent,
-so a root query cannot accidentally pay their scan cost.
-
-## Selection
-
-Graph selection reuses catalog routing concepts:
-
-1. explicit `--catalog <alias>`;
-2. nearest in-scope segmented catalog for the invocation cwd;
-3. root graph scope.
-
-An explicit `--repo` selects the consumer workspace before catalog selection; it
-does not name a catalog. Existing query-local `--path` filters narrow the
-selected catalog and cannot widen it.
-
-`--all-catalogs` is the only fan-out. It visits the root scope and each segmented
-effective member separately, reports per-catalog progress/failure, and never
-turns ordinary queries into whole-workspace refreshes.
-
-## Index And Storage Ownership
-
-The code-graph crate owns a scope descriptor containing the workspace root,
-catalog alias, canonical catalog root, parent-prune set, and storage posture.
-Walkers start at the selected scope root and prune segmented descendants before
-descent. They never walk the workspace and filter afterward.
-
-The shared database stays at `.effigy/graph/graph.db`. Shared records,
-freshness state, and index runs carry catalog scope identity. Queries constrain
-FTS ranking, symbol selection, and traversal before result limiting.
-
-Independent databases use a deterministic root-owned location:
-
-```text
-.effigy/graph/catalogs/<encoded-alias>/graph.db
-```
-
-Each has its own refresh lock and last-complete snapshot. Manifests cannot
-supply database paths or named store pools. Alias encoding must be
-deterministic and traversal-safe.
-
-A finished index publishes `graph.complete.db` beside `graph.db` after all
-queryable state, including the search index, is updated. The new file is
-vacuumed into a sibling path and renamed over the previous snapshot only after
-success. Lookups that meet a live refresh lock, or that pass `--stale-index`,
-read that snapshot instead of a partial live rebuild. Without a snapshot they
-return `missing-index` and do not query the live database. The result is marked
-`stale-index` when a snapshot is served and is never presented as current. A lock wait records the holder pid and age when
-the lock file has them; a dead pid is a stale holder and does not consume the
-full in-flight wait. A cold checkout with no complete snapshot returns
-`missing-index` under `--stale-index` instead of spending the query budget on
-the first index.
-
-Changing catalog root, alias, segmentation, or independence invalidates the
-affected scope. It does not make sibling scopes stale. Removing a segmented
-catalog removes its active scope; stale records may be reclaimed without opening
-or refreshing another scope.
-
-## Relationships
-
-A shared store may resolve relationships to records from another catalog only
-when that catalog is already indexed and current. Relationship discovery never
-triggers sibling refresh. Query results remain scoped unless explicit fan-out is
-active.
-
-Independent stores retain local records and surface external references as
-unresolved boundary evidence. They do not open sibling databases implicitly.
-
-Repository-relative paths remain unchanged for the root and descendant members.
-V1 segmented graph scopes must resolve beneath the workspace root; an external
-or escaping catalog fails preflight with a useful diagnostic rather than storing
-ambiguous `..` provenance.
-
-## Documentation Boundary
-
-`[docs_policy.graph]` remains the sole authority for `effigy docs context`.
-Documentation context compiles and refreshes its repository-owned corpus without
-forcing code-graph catalog scopes to refresh. Catalog segmentation cannot remove
-an explicitly configured documentation root or reinterpret documentation
-authority.
-
-## Compatibility
-
-A repository with no segmented catalog retains the current single database,
-paths, query defaults, and JSON schemas. Catalog evidence is additive in graph
-payloads. Existing `--path`, bounded-query timeout, graph watch, and explicit
-index behavior remain intact inside the selected scope.
-
-## Failure Boundary
-
-Fail before scanning when:
-
-- `independent = true` appears without `segmented = true`;
-- an explicit catalog is unknown, duplicated, not an effective member, or
-  escapes the workspace root;
-- a catalog database identity/path cannot be derived safely;
-- `--all-catalogs` is combined with a single-catalog selector.
-
-One catalog's lock, corruption, extractor failure, or timeout must not require
-opening, repairing, or invalidating any sibling catalog.
+The six CLI commands project this model without separate watcher, catalog,
+file-list or relationship entry points. The guide owns their replacements:
+[Code graph workflows](../../guides/076-code-graph-and-agent-workflows.md).

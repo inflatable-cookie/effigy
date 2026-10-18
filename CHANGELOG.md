@@ -244,6 +244,16 @@ During v0.x, MINOR bumps may include breaking changes.
   endpoints, or trust behavior change.
 
 ### Changed
+- Graph now has six commands: `index`, `status`, `search`, `node`, `affected`
+  and `explore`. Node accepts file paths and incoming/outgoing relationships;
+  explore supports an excerpts-only mode. Removed command spellings and catalog
+  graph settings name their replacements for one release. Catalog partitioning
+  and the graph watcher are removed; all catalog members share the checkout index.
+- Graph refresh commits each file's graph, search data and freshness state
+  together, preserves incoming relationships, and resumes safely after a
+  timeout or interruption. Concurrent queries read committed files with
+  `refreshing` progress. Database snapshot copies and detached timeout workers
+  are removed; `graph status` is read-only.
 - A managed run's stop, a SIGINT/SIGTERM settle, and a handover-driven stop
   now report settled only after the whole stop cascade finished. `effigy
   <task> stop` and a handover wait for the supervisor's real cascade -

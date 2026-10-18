@@ -7,6 +7,7 @@ pub enum CodeGraphError {
     Sql(rusqlite::Error),
     Json(serde_json::Error),
     Validation(String),
+    DeadlineExceeded,
 }
 
 impl CodeGraphError {
@@ -22,6 +23,10 @@ impl Display for CodeGraphError {
             Self::Sql(error) => write!(f, "{error}"),
             Self::Json(error) => write!(f, "{error}"),
             Self::Validation(message) => write!(f, "{message}"),
+            Self::DeadlineExceeded => write!(
+                f,
+                "graph deadline expired at a safe boundary; committed file progress is preserved"
+            ),
         }
     }
 }

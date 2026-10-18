@@ -9,41 +9,17 @@ pub(super) fn parse_graph_command<I>(args: I) -> Result<Command, CliParseError>
 where
     I: IntoIterator<Item = String>,
 {
-    // Scope selectors are common to every `graph` subcommand, so they are
-    // pulled off the argument stream before the subcommand parser runs. That
-    // keeps one grammar instead of twelve slightly different ones.
     let mut positional = Vec::new();
-    let mut catalog = None;
-    let mut all_catalogs = false;
     let mut stale_index = false;
-    let mut args = args.into_iter();
-    while let Some(arg) = args.next() {
+    for arg in args {
         match arg.as_str() {
-            "--catalog" => {
-                if catalog.is_some() {
-                    return Err(CliParseError::InvalidArguments(
-                        "`--catalog` may only be given once".to_owned(),
-                    ));
-                }
-                catalog = Some(next_required_value(
-                    &mut args,
-                    CliParseError::MissingFlagValue {
-                        flag: "--catalog".to_owned(),
-                    },
-                )?);
-            }
-            "--all-catalogs" => all_catalogs = true,
+            "--catalog" | "--all-catalogs" => return Err(CliParseError::InvalidArguments(
+                format!("`{arg}` was removed in v0.15; use `effigy graph` on the whole checkout; use `--path` with `graph explore` to narrow results")
+            )),
             "--stale-index" => stale_index = true,
             _ => positional.push(arg),
         }
     }
-    if catalog.is_some() && all_catalogs {
-        return Err(CliParseError::InvalidArguments(
-            "`--catalog` and `--all-catalogs` cannot be combined; pick one scope or explicit fan-out"
-                .to_owned(),
-        ));
-    }
-
     let mut args = positional.into_iter();
     let Some(subcmd) = args.next() else {
         return Ok(Command::Help(HelpTopic::Graph));
@@ -53,43 +29,38 @@ where
         "--help" | "-h" => Ok(Command::Help(HelpTopic::Graph)),
         "index" => parse_graph_index(args),
         "status" => parse_graph_status(args),
-        "watch" => parse_graph_watch(args),
+        "watch" => Err(retired(
+            "watch",
+            "graph index (queries refresh automatically)",
+        )),
         "search" => parse_graph_search(args),
-        "files" => parse_graph_files(args),
+        "files" => Err(retired(
+            "files",
+            "graph search <QUERY> or graph node <PATH>",
+        )),
         "node" => parse_graph_node(args),
-        "callers" => parse_graph_relation(args, true),
-        "callees" => parse_graph_relation(args, false),
-        "impact" => parse_graph_impact(args),
+        "callers" => Err(retired("callers", "graph node <ID> --in")),
+        "callees" => Err(retired("callees", "graph node <ID> --out")),
+        "impact" => Err(retired("impact", "graph node <ID|PATH>")),
         "affected" => parse_graph_affected(args),
-        "context" => parse_graph_context(args),
+        "context" => Err(retired(
+            "context",
+            "graph explore <REQUEST> --excerpts-only",
+        )),
         "explore" => parse_graph_explore(args),
         other => Err(unknown_argument(other)),
     }?;
     if let Command::Graph(graph) = &mut command {
-        if all_catalogs && matches!(graph.subcommand, GraphSubcommand::Watch { .. }) {
-            return Err(CliParseError::InvalidArguments(
-                "`graph watch` supports `--catalog` but not `--all-catalogs`; run one watcher per catalog"
-                    .to_owned(),
-            ));
-        }
         if stale_index
             && matches!(
                 graph.subcommand,
-                GraphSubcommand::Index | GraphSubcommand::Watch { .. }
+                GraphSubcommand::Index | GraphSubcommand::Status { .. }
             )
         {
             return Err(CliParseError::InvalidArguments(
-                "`--stale-index` is a read-only lookup option and cannot be combined with `graph index` or `graph watch`"
-                    .to_owned(),
+                "`--stale-index` is a data-query option; use `graph status` for a report-only check".to_owned(),
             ));
         }
-        if stale_index && matches!(graph.subcommand, GraphSubcommand::Status { refresh: true }) {
-            return Err(CliParseError::InvalidArguments(
-                "`--stale-index` cannot be combined with `graph status --refresh`".to_owned(),
-            ));
-        }
-        graph.catalog = catalog;
-        graph.all_catalogs = all_catalogs;
         graph.stale_index = stale_index;
     }
     Ok(command)
@@ -104,8 +75,6 @@ where
         subcommand: GraphSubcommand::Index,
         repo_override,
         output_json,
-        catalog: None,
-        all_catalogs: false,
         stale_index: false,
     }))
 }
@@ -132,38 +101,6 @@ where
         subcommand: GraphSubcommand::Status { refresh },
         repo_override,
         output_json,
-        catalog: None,
-        all_catalogs: false,
-        stale_index: false,
-    }))
-}
-
-fn parse_graph_watch<I>(args: I) -> Result<Command, CliParseError>
-where
-    I: IntoIterator<Item = String>,
-{
-    let mut args = args.into_iter();
-    let mut repo_override = None;
-    let mut output_json = false;
-    let mut debounce_ms = 1_000u64;
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
-            "--debounce-ms" => {
-                debounce_ms = parse_positive_u64(&mut args, "--debounce-ms")?;
-            }
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Graph)),
-            other if other.starts_with('-') => return Err(unknown_argument(other)),
-            other => return Err(unknown_argument(other)),
-        }
-    }
-    Ok(Command::Graph(GraphArgs {
-        subcommand: GraphSubcommand::Watch { debounce_ms },
-        repo_override,
-        output_json,
-        catalog: None,
-        all_catalogs: false,
         stale_index: false,
     }))
 }
@@ -199,36 +136,6 @@ where
         subcommand: GraphSubcommand::Search { query, limit },
         repo_override,
         output_json,
-        catalog: None,
-        all_catalogs: false,
-        stale_index: false,
-    }))
-}
-
-fn parse_graph_files<I>(args: I) -> Result<Command, CliParseError>
-where
-    I: IntoIterator<Item = String>,
-{
-    let mut args = args.into_iter();
-    let mut repo_override = None;
-    let mut output_json = false;
-    let mut limit = None;
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
-            "--limit" => limit = Some(parse_limit(&mut args, "--limit")?),
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Graph)),
-            other if other.starts_with('-') => return Err(unknown_argument(other)),
-            other => return Err(unknown_argument(other)),
-        }
-    }
-    Ok(Command::Graph(GraphArgs {
-        subcommand: GraphSubcommand::Files { limit },
-        repo_override,
-        output_json,
-        catalog: None,
-        all_catalogs: false,
         stale_index: false,
     }))
 }
@@ -241,10 +148,16 @@ where
     let mut repo_override = None;
     let mut output_json = false;
     let mut id = None;
+    let mut incoming = false;
+    let mut outgoing = false;
+    let mut limit = None;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
             "--json" => output_json = true,
+            "--in" => incoming = true,
+            "--out" => outgoing = true,
+            "--limit" => limit = Some(parse_limit(&mut args, "--limit")?),
             "--help" | "-h" => return Ok(Command::Help(HelpTopic::Graph)),
             other if other.starts_with('-') => return Err(unknown_argument(other)),
             _ => {
@@ -254,97 +167,23 @@ where
                 id = Some(arg);
             }
         }
+    }
+    if incoming && outgoing {
+        return Err(CliParseError::InvalidArguments(
+            "`--in` and `--out` cannot be combined; omit both to show both directions".to_owned(),
+        ));
     }
     Ok(Command::Graph(GraphArgs {
         subcommand: GraphSubcommand::Node {
             id: id.ok_or(CliParseError::MissingFlagValue {
-                flag: "<ID>".to_owned(),
+                flag: "<ID|PATH>".to_owned(),
             })?,
-        },
-        repo_override,
-        output_json,
-        catalog: None,
-        all_catalogs: false,
-        stale_index: false,
-    }))
-}
-
-fn parse_graph_relation<I>(args: I, callers: bool) -> Result<Command, CliParseError>
-where
-    I: IntoIterator<Item = String>,
-{
-    let mut args = args.into_iter();
-    let mut repo_override = None;
-    let mut output_json = false;
-    let mut limit = None;
-    let mut id = None;
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
-            "--limit" => limit = Some(parse_limit(&mut args, "--limit")?),
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Graph)),
-            other if other.starts_with('-') => return Err(unknown_argument(other)),
-            _ => {
-                if id.is_some() {
-                    return Err(unknown_argument(&arg));
-                }
-                id = Some(arg);
-            }
-        }
-    }
-    let id = id.ok_or(CliParseError::MissingFlagValue {
-        flag: "<ID>".to_owned(),
-    })?;
-    Ok(Command::Graph(GraphArgs {
-        subcommand: if callers {
-            GraphSubcommand::Callers { id, limit }
-        } else {
-            GraphSubcommand::Callees { id, limit }
-        },
-        repo_override,
-        output_json,
-        catalog: None,
-        all_catalogs: false,
-        stale_index: false,
-    }))
-}
-
-fn parse_graph_impact<I>(args: I) -> Result<Command, CliParseError>
-where
-    I: IntoIterator<Item = String>,
-{
-    let mut args = args.into_iter();
-    let mut repo_override = None;
-    let mut output_json = false;
-    let mut limit = None;
-    let mut target = None;
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
-            "--limit" => limit = Some(parse_limit(&mut args, "--limit")?),
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Graph)),
-            other if other.starts_with('-') => return Err(unknown_argument(other)),
-            _ => {
-                if target.is_some() {
-                    return Err(unknown_argument(&arg));
-                }
-                target = Some(arg);
-            }
-        }
-    }
-    Ok(Command::Graph(GraphArgs {
-        subcommand: GraphSubcommand::Impact {
-            target: target.ok_or(CliParseError::MissingFlagValue {
-                flag: "<TARGET>".to_owned(),
-            })?,
+            incoming,
+            outgoing,
             limit,
         },
         repo_override,
         output_json,
-        catalog: None,
-        all_catalogs: false,
         stale_index: false,
     }))
 }
@@ -386,27 +225,11 @@ where
         },
         repo_override,
         output_json,
-        catalog: None,
-        all_catalogs: false,
         stale_index: false,
     }))
 }
 
-fn parse_graph_context<I>(args: I) -> Result<Command, CliParseError>
-where
-    I: IntoIterator<Item = String>,
-{
-    parse_graph_context_like(args, false)
-}
-
 fn parse_graph_explore<I>(args: I) -> Result<Command, CliParseError>
-where
-    I: IntoIterator<Item = String>,
-{
-    parse_graph_context_like(args, true)
-}
-
-fn parse_graph_context_like<I>(args: I, explore: bool) -> Result<Command, CliParseError>
 where
     I: IntoIterator<Item = String>,
 {
@@ -418,10 +241,12 @@ where
     let mut languages = Vec::new();
     let mut paths = Vec::new();
     let mut request = None;
+    let mut excerpts_only = false;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
             "--json" => output_json = true,
+            "--excerpts-only" => excerpts_only = true,
             "--max-files" => max_files = Some(parse_limit(&mut args, "--max-files")?),
             "--max-bytes" => max_bytes = Some(parse_limit(&mut args, "--max-bytes")?),
             "--language" => languages.push(next_required_value(
@@ -449,29 +274,18 @@ where
     let request = request.ok_or(CliParseError::MissingFlagValue {
         flag: "<REQUEST>".to_owned(),
     })?;
-    let subcommand = if explore {
-        GraphSubcommand::Explore {
-            request,
-            max_files,
-            max_bytes,
-            languages,
-            paths,
-        }
-    } else {
-        GraphSubcommand::Context {
-            request,
-            max_files,
-            max_bytes,
-            languages,
-            paths,
-        }
+    let subcommand = GraphSubcommand::Explore {
+        request,
+        max_files,
+        max_bytes,
+        languages,
+        paths,
+        excerpts_only,
     };
     Ok(Command::Graph(GraphArgs {
         subcommand,
         repo_override,
         output_json,
-        catalog: None,
-        all_catalogs: false,
         stale_index: false,
     }))
 }
@@ -514,23 +328,8 @@ where
         })
 }
 
-fn parse_positive_u64<I>(args: &mut I, flag: &str) -> Result<u64, CliParseError>
-where
-    I: Iterator<Item = String>,
-{
-    let value = next_required_value(
-        args,
-        CliParseError::MissingFlagValue {
-            flag: flag.to_owned(),
-        },
-    )?;
-    value
-        .parse::<u64>()
-        .ok()
-        .filter(|parsed| *parsed > 0)
-        .ok_or(CliParseError::InvalidFlagValue {
-            flag: flag.to_owned(),
-            value,
-            expected: "a positive integer".to_owned(),
-        })
+fn retired(command: &str, replacement: &str) -> CliParseError {
+    CliParseError::InvalidArguments(format!(
+        "`graph {command}` was removed in v0.15; use `effigy {replacement}`"
+    ))
 }

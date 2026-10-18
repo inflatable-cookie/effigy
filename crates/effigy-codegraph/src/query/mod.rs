@@ -32,7 +32,7 @@ pub fn files(repo_root: &Path, limit: Option<usize>) -> Result<GraphFilesPayload
     files_in_scope(&workspace_scope(repo_root)?, limit, RefreshPolicy::query())
 }
 
-/// `graph files` inside one selected scope.
+/// Native file inventory over the checkout graph.
 pub fn files_in_scope(
     scope: &GraphScope,
     limit: Option<usize>,
@@ -45,7 +45,7 @@ pub fn files_in_scope(
             files: Vec::new(),
         });
     };
-    let mut files = store.list_files_in_scope(scope)?;
+    let mut files = store.list_files()?;
     if let Some(limit) = limit {
         files.truncate(limit);
     }
@@ -65,10 +65,7 @@ pub fn search(
     )
 }
 
-/// `graph search` inside one selected scope.
-///
-/// The scope predicate is applied before ranking and before `LIMIT`, so a
-/// sibling catalog's records can never crowd out the selected scope's hits.
+/// Full-text search over the checkout graph, bounded by rank and limit.
 pub fn search_in_scope(
     scope: &GraphScope,
     query: &str,
@@ -85,7 +82,7 @@ pub fn search_in_scope(
     };
     let limit = limit.unwrap_or(20);
     let matches = store
-        .search_in_scope(query, limit, scope)?
+        .search(query, limit)?
         .into_iter()
         .map(|(record_type, record_id, rank)| {
             search_match_payload(scope.workspace_root(), &store, record_type, record_id, rank)
@@ -157,76 +154,173 @@ pub fn node(repo_root: &Path, id: &str) -> Result<GraphNodePayload, CodeGraphErr
     node_in_scope(&workspace_scope(repo_root)?, id, RefreshPolicy::query())
 }
 
-/// `graph node` inside one selected scope.
-///
-/// An id owned by a sibling catalog resolves to an empty node instead of
-/// opening or refreshing that sibling.
+/// Query a symbol or path, including relationships in either direction.
 pub fn node_in_scope(
     scope: &GraphScope,
     id: &str,
     policy: RefreshPolicy,
 ) -> Result<GraphNodePayload, CodeGraphError> {
+    node_with_options_in_scope(scope, id, false, false, None, policy)
+}
+
+pub fn node_with_options_in_scope(
+    scope: &GraphScope,
+    target: &str,
+    incoming: bool,
+    outgoing: bool,
+    limit: Option<usize>,
+    policy: RefreshPolicy,
+) -> Result<GraphNodePayload, CodeGraphError> {
+    if incoming && outgoing {
+        return Err(CodeGraphError::validation(
+            "choose one node direction or omit both",
+        ));
+    }
+    let limit = limit.unwrap_or(100);
+    if limit == 0 {
+        return Err(CodeGraphError::validation(
+            "node limit must be greater than 0",
+        ));
+    }
     let (store, freshness) = crate::refresh::open_query_store(scope, policy)?;
-    let Some(store) = store else {
-        return Ok(GraphNodePayload {
-            freshness,
-            file: None,
-            symbol: None,
-            edges: Vec::new(),
-            references: Vec::new(),
-            diagnostics: Vec::new(),
-        });
+    let mut payload = GraphNodePayload {
+        target: target.to_owned(),
+        direction: if incoming {
+            "in"
+        } else if outgoing {
+            "out"
+        } else {
+            "both"
+        }
+        .to_owned(),
+        freshness,
+        file: None,
+        symbol: None,
+        files: Vec::new(),
+        symbols: Vec::new(),
+        edges: Vec::new(),
+        references: Vec::new(),
+        diagnostics: Vec::new(),
     };
-    let file = store
-        .find_file_by_id(id)?
-        .filter(|record| scope.contains_relative(&record.path));
-    let symbol = store
-        .find_symbol_by_id(id)?
-        .filter(|record| scope.contains_relative(&record.provenance.source_path));
-    let edges = store
-        .list_edges_in_scope(scope)?
+    let Some(store) = store else {
+        return Ok(payload);
+    };
+    let files = store.list_files()?;
+    let symbols = store.list_symbols()?;
+    payload.file = files
+        .iter()
+        .find(|file| file.path == target || file.id.as_str() == target)
+        .cloned();
+    payload.symbol = symbols
+        .iter()
+        .find(|symbol| symbol.id.as_str() == target || symbol.canonical_name == target)
+        .cloned();
+    if payload.file.is_none() && payload.symbol.is_none() {
+        return Ok(payload);
+    }
+    let seeds: Vec<_> = symbols
+        .iter()
+        .filter(|symbol| {
+            payload
+                .file
+                .as_ref()
+                .is_some_and(|file| file.id == symbol.file_id)
+                || payload
+                    .symbol
+                    .as_ref()
+                    .is_some_and(|seed| seed.id == symbol.id)
+        })
+        .collect();
+    let mut seed_ids: BTreeSet<_> = seeds.iter().map(|symbol| symbol.id.clone()).collect();
+    if let Some(file) = &payload.file {
+        seed_ids.insert(file.id.clone());
+    }
+    let names: Vec<_> = seeds
+        .iter()
+        .map(|symbol| symbol.display_name.as_str())
+        .collect();
+    let matches_name = |target: &Option<String>| {
+        target
+            .as_ref()
+            .is_some_and(|target| names.iter().any(|name| target.contains(name)))
+    };
+    let include_in = !outgoing;
+    let include_out = !incoming;
+    payload.edges = store
+        .list_edges()?
         .into_iter()
         .filter(|edge| {
-            edge.from_id.as_str() == id || edge.to_id.as_ref().is_some_and(|to| to.as_str() == id)
+            (include_out && seed_ids.contains(&edge.from_id))
+                || (include_in
+                    && (edge.to_id.as_ref().is_some_and(|id| seed_ids.contains(id))
+                        || matches_name(&edge.unresolved_target)))
         })
+        .take(limit)
         .collect();
-    let file_id = file
-        .as_ref()
-        .map(|record| record.id.as_str().to_owned())
-        .or_else(|| {
-            symbol
-                .as_ref()
-                .map(|record| record.file_id.as_str().to_owned())
-        });
-    let references = store
-        .list_references_in_scope(scope)?
+    let mut related_ids = seed_ids.clone();
+    for edge in &payload.edges {
+        related_ids.insert(edge.from_id.clone());
+        if let Some(id) = &edge.to_id {
+            related_ids.insert(id.clone());
+        }
+    }
+    payload.symbols = symbols
+        .iter()
+        .filter(|symbol| {
+            related_ids.contains(&symbol.id)
+                || payload.edges.iter().any(|edge| {
+                    edge.unresolved_target
+                        .as_ref()
+                        .is_some_and(|target| target.contains(&symbol.display_name))
+                })
+        })
+        .take(limit)
+        .cloned()
+        .collect();
+    let mut file_ids: BTreeSet<_> = payload
+        .symbols
+        .iter()
+        .map(|symbol| symbol.file_id.clone())
+        .collect();
+    if let Some(file) = &payload.file {
+        file_ids.insert(file.id.clone());
+    }
+    payload.files = files
+        .into_iter()
+        .filter(|file| file_ids.contains(&file.id))
+        .take(limit)
+        .collect();
+    let seed_files: BTreeSet<_> = seeds
+        .iter()
+        .map(|symbol| symbol.file_id.clone())
+        .chain(payload.file.iter().map(|file| file.id.clone()))
+        .collect();
+    payload.references = store
+        .list_references()?
         .into_iter()
         .filter(|reference| {
-            reference.file_id.as_str() == file_id.as_deref().unwrap_or_default()
-                || reference
-                    .target_id
-                    .as_ref()
-                    .is_some_and(|target| target.as_str() == id)
+            (include_out && seed_files.contains(&reference.file_id))
+                || (include_in
+                    && (reference
+                        .target_id
+                        .as_ref()
+                        .is_some_and(|id| seed_ids.contains(id))
+                        || matches_name(&reference.unresolved_target)))
         })
+        .take(limit)
         .collect();
-    let diagnostics = store
-        .list_diagnostics_in_scope(scope)?
+    payload.diagnostics = store
+        .list_diagnostics()?
         .into_iter()
         .filter(|diagnostic| {
             diagnostic
                 .file_id
                 .as_ref()
-                .is_some_and(|file_id_value| Some(file_id_value.as_str()) == file_id.as_deref())
+                .is_some_and(|id| seed_files.contains(id))
         })
+        .take(limit)
         .collect();
-    Ok(GraphNodePayload {
-        freshness,
-        file,
-        symbol,
-        edges,
-        references,
-        diagnostics,
-    })
+    Ok(payload)
 }
 
 pub fn callers(
@@ -245,7 +339,7 @@ pub fn callees(
     related(repo_root, id, limit, false)
 }
 
-/// `graph callers` inside one selected scope.
+/// Native incoming symbol relationships.
 pub fn callers_in_scope(
     scope: &GraphScope,
     id: &str,
@@ -255,7 +349,7 @@ pub fn callers_in_scope(
     related_in_scope(scope, id, limit, true, policy)
 }
 
-/// `graph callees` inside one selected scope.
+/// Native outgoing symbol relationships.
 pub fn callees_in_scope(
     scope: &GraphScope,
     id: &str,
@@ -278,7 +372,7 @@ pub fn impact(
     )
 }
 
-/// `graph impact` inside one selected scope.
+/// Native impact selection over checkout records.
 pub fn impact_in_scope(
     scope: &GraphScope,
     target: &str,
@@ -295,9 +389,9 @@ pub fn impact_in_scope(
             edges: Vec::new(),
         });
     };
-    let files = store.list_files_in_scope(scope)?;
-    let symbols = store.list_symbols_in_scope(scope)?;
-    let edges = store.list_edges_in_scope(scope)?;
+    let files = store.list_files()?;
+    let symbols = store.list_symbols()?;
+    let edges = store.list_edges()?;
 
     if let Some(file) = files.iter().find(|file| file.path == target) {
         let file_symbols = symbols
@@ -405,9 +499,9 @@ pub fn affected_in_scope(
             notes: vec!["no complete graph index is available to query".to_owned()],
         });
     };
-    let files = store.list_files_in_scope(scope)?;
-    let symbols = store.list_symbols_in_scope(scope)?;
-    let edges = store.list_edges_in_scope(scope)?;
+    let files = store.list_files()?;
+    let symbols = store.list_symbols()?;
+    let edges = store.list_edges()?;
     let limit = limit.unwrap_or(100);
     let depth = depth.max(1);
     PreparedAffectedQuery::new(&files, &symbols, &edges, freshness).run(changed_paths, depth, limit)
@@ -807,7 +901,7 @@ pub fn context(
     )
 }
 
-/// `graph context` inside one selected scope.
+/// Ranked excerpts used by the explore excerpts-only mode.
 pub fn context_in_scope(
     scope: &GraphScope,
     request: &str,
@@ -834,9 +928,9 @@ pub fn context_in_scope(
             notes: vec!["no complete graph index is available to query".to_owned()],
         });
     };
-    let files = store.list_files_in_scope(scope)?;
-    let symbols = store.list_symbols_in_scope(scope)?;
-    let edges = store.list_edges_in_scope(scope)?;
+    let files = store.list_files()?;
+    let symbols = store.list_symbols()?;
+    let edges = store.list_edges()?;
     context_from_graph(
         scope,
         &store,
@@ -1345,9 +1439,9 @@ pub fn explore_in_scope(
             ],
         });
     };
-    let files = store.list_files_in_scope(scope)?;
-    let symbols = store.list_symbols_in_scope(scope)?;
-    let edges = store.list_edges_in_scope(scope)?;
+    let files = store.list_files()?;
+    let symbols = store.list_symbols()?;
+    let edges = store.list_edges()?;
     let context_payload = context_from_graph(
         scope,
         &store,
@@ -1365,7 +1459,7 @@ pub fn explore_in_scope(
         },
         freshness.clone(),
     )?;
-    let counts = store.counts_in_scope(scope)?;
+    let counts = store.counts()?;
     let primary = context_payload
         .items
         .iter()
@@ -1675,8 +1769,8 @@ fn related_in_scope(
             edges: Vec::new(),
         });
     };
-    let symbols = store.list_symbols_in_scope(scope)?;
-    let edges = store.list_edges_in_scope(scope)?;
+    let symbols = store.list_symbols()?;
+    let edges = store.list_edges()?;
     let target_symbol = symbols
         .iter()
         .find(|symbol| symbol.id.as_str() == id)

@@ -1,31 +1,6 @@
-//! Lazy on-query graph refresh with a cross-process refresh lock.
-//!
-//! Graph data queries detect staleness, then rebuild the index on the fly
-//! instead of returning stale results. On git repos whose index stamp matches
-//! the current HEAD and whose working tree is clean, freshness is verified
-//! without a full scan (a `git status` fast path); non-git repos and every git
-//! failure mode fall back to the per-file scan-state walk. A cross-process
-//! lock (`.effigy/graph/refresh.lock`, or the catalog's own lock when the
-//! scope is independent) guarantees only one process re-indexes a scope at a
-//! time.
-//!
-//! The lock file records the holder's pid and acquire time. A wait names that
-//! holder and its age when the metadata is readable. A dead pid is a stale
-//! holder: the waiter does not spend the full in-flight budget on it.
-//!
-//! Concurrent lookups never read a partial live rebuild. After a short wait
-//! they serve the last complete snapshot (marked `stale-index`) when one
-//! exists, or report `missing-index` with the lock identity and next action.
-//! `--stale-index` skips refresh entirely and reads that snapshot, or the
-//! live database when the lock is free and a finished index is present.
-//!
-//! `graph status` intentionally stays report-only: it is the diagnostic
-//! surface agents use to decide whether to index, so it must never mutate
-//! graph state behind the caller's back.
-//!
-//! Every entry point takes a [`GraphScope`]: the refresh walks, fingerprints,
-//! locks, and deletes only inside that scope, so selecting one catalog never
-//! touches a sibling.
+//! Cooperative lazy refresh over committed per-file transactions.
+//! A reader may see different file generations and reports `refreshing (n/N)`
+//! while another process holds the refresh lock. No database copy is made.
 
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -54,12 +29,8 @@ const LOCK_POLL_MS: u64 = 100;
 /// the lock as abandoned for lookup purposes.
 const STALE_HOLDER_WAIT_MS: u64 = 200;
 
-/// Cross-process exclusive lock guarding graph re-indexing of one scope.
-///
-/// Acquired by lazy refresh, `graph watch` batches, and explicit `graph index`
-/// runs, so parallel processes never race to rebuild the same scope. An
-/// independent catalog locks its own database directory; shared scopes lock
-/// the root graph directory.
+/// Cross-process exclusive lock guarding checkout refreshes.
+/// Lazy refresh and explicit indexing share the same lock.
 pub(crate) struct RefreshLock {
     file: File,
 }
@@ -129,6 +100,7 @@ impl RefreshLock {
             Instant::now() + Duration::from_millis(STALE_HOLDER_WAIT_MS.min(wait_ms));
         let mut waited = false;
         loop {
+            crate::deadline::check()?;
             if let Some(lock) = Self::try_acquire(scope)? {
                 return Ok(Some(lock));
             }
@@ -286,18 +258,16 @@ pub struct RefreshOutcome {
 pub enum RefreshSource {
     /// The live scope database, current or honestly marked stale.
     Live,
-    /// The last complete snapshot. Never a partial in-flight rebuild.
-    CompleteSnapshot,
-    /// No complete corpus is safe to query. Callers must return status only.
+    /// No committed files are available. Callers must return status only.
     Unavailable,
 }
 
-/// How a lookup should treat refresh, cold builds, and snapshots.
+/// How a lookup should treat refresh and cold builds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RefreshPolicy {
-    /// Skip refresh and lock wait; read the last complete corpus.
+    /// Skip refresh and lock wait; read the committed files.
     pub stale_index: bool,
-    /// When no complete index exists, build one under the refresh lock.
+    /// When no committed index exists, build one under the refresh lock.
     pub build_missing: bool,
 }
 
@@ -310,7 +280,7 @@ impl RefreshPolicy {
         }
     }
 
-    /// Bounded CLI lookup: `--stale-index` reads the last complete corpus.
+    /// Bounded CLI lookup: `--stale-index` reads the committed files.
     pub fn lookup(stale_index: bool) -> Self {
         Self {
             stale_index,
@@ -339,22 +309,21 @@ pub(crate) fn run_index_exclusive_with_wait(
 }
 
 fn lock_busy_message(
-    scope: &GraphScope,
+    _scope: &GraphScope,
     wait_ms: u64,
     inspection: &RefreshLockInspection,
 ) -> String {
-    let catalog = format!("catalog `{}`", scope.alias());
     match inspection.identity.as_ref() {
         Some(identity) if identity.stale_holder => format!(
-            "graph refresh lock remained busy for {wait_ms}ms ({catalog}; stale holder pid {} age {}ms); run `effigy graph index --json` once the abandoned lock clears",
+            "graph refresh lock remained busy for {wait_ms}ms (stale holder pid {} age {}ms); run `effigy graph index --json` once the abandoned lock clears",
             identity.pid, identity.age_ms
         ),
         Some(identity) => format!(
-            "graph refresh lock remained busy for {wait_ms}ms ({catalog}; holder pid {} age {}ms); wait for that process or pass `--stale-index` to read the last complete index",
+            "graph refresh lock remained busy for {wait_ms}ms (holder pid {} age {}ms); wait for that process or pass `--stale-index` to read the committed files",
             identity.pid, identity.age_ms
         ),
         None => format!(
-            "graph refresh lock remained busy for {wait_ms}ms ({catalog}); wait for the holder or pass `--stale-index` to read the last complete index"
+            "graph refresh lock remained busy for {wait_ms}ms; wait for the holder or pass `--stale-index` to read the committed files"
         ),
     }
 }
@@ -398,316 +367,156 @@ pub(crate) fn ensure_fresh_with_wait_and_progress(
     policy: RefreshPolicy,
     mut progress: impl FnMut(RefreshPending),
 ) -> Result<RefreshOutcome, CodeGraphError> {
-    if policy.stale_index {
-        return stale_index_outcome(scope, store);
-    }
-
-    phase::enter(GraphPhase::FreshnessScan);
-    let counts = store.counts_in_scope(scope)?;
-    if counts.files == 0 {
-        progress(RefreshPending::Cold);
-        if !policy.build_missing {
-            return Ok(missing_index_outcome(scope, "no usable local graph index"));
-        }
-        return build_missing_index(scope, store, in_flight_wait_ms);
-    }
-
-    // Git skip-gate: when this scope's index stamp matches the current HEAD
-    // and the working tree is clean, the indexed tree provably equals the
-    // current tree, so the freshness walk can be skipped. Non-git repos and
-    // any git failure fall through to the scan-state walk unchanged.
-    if crate::git::git_gate_says_fresh(scope, store)? {
-        return Ok(RefreshOutcome {
-            freshness: graph_freshness_payload(
-                true,
-                true,
-                &[],
-                store.failed_diagnostic_paths_in_scope(scope)?.len(),
-            ),
-            notes: Vec::new(),
-            source: RefreshSource::Live,
-        });
-    }
-
-    let stale_paths = stale_paths_in_scope(scope, store)?;
-    if stale_paths.is_empty() {
-        return Ok(RefreshOutcome {
-            freshness: graph_freshness_payload(
-                true,
-                true,
-                &[],
-                store.failed_diagnostic_paths_in_scope(scope)?.len(),
-            ),
-            notes: Vec::new(),
-            source: RefreshSource::Live,
-        });
-    }
-    // The scan above is the single freshness scan for this pass: its result
-    // feeds both the verdict and the rebuild below.
-    progress(RefreshPending::Stale);
-
+    crate::deadline::check()?;
     let inspection = inspect_refresh_lock(&scope.paths().refresh_lock_path);
     if inspection.held {
-        if let Some(outcome) = complete_snapshot_outcome(scope, store, &inspection)? {
-            return Ok(outcome);
-        }
+        return committed_outcome(scope, store, &inspection, &[]);
     }
-
-    let Some(lock) = RefreshLock::acquire_wait(scope, in_flight_wait_ms)? else {
-        let inspection = inspect_refresh_lock(&scope.paths().refresh_lock_path);
-        if let Some(outcome) = complete_snapshot_outcome(scope, store, &inspection)? {
-            return Ok(outcome);
-        }
-        let post_wait_stale = stale_paths_in_scope(scope, store)?;
-        if post_wait_stale.is_empty() {
-            return Ok(RefreshOutcome {
-                freshness: graph_freshness_payload(
-                    true,
-                    true,
-                    &[],
-                    store.failed_diagnostic_paths_in_scope(scope)?.len(),
-                ),
-                notes: vec!["graph index refreshed by a concurrent process".to_owned()],
-                source: RefreshSource::Live,
-            });
-        }
-        return Ok(locked_without_snapshot_outcome(scope, &inspection));
-    };
-
-    // A concurrent refresh may have finished while we waited for the lock.
-    let stale_after_wait = stale_paths_in_scope(scope, store)?;
-    if stale_after_wait.is_empty() {
-        drop(lock);
+    if policy.stale_index {
+        return committed_outcome(scope, store, &inspection, &[]);
+    }
+    let ready = store.counts()?.files > 0;
+    if ready && crate::git::git_gate_says_fresh(scope, store)? {
         return Ok(RefreshOutcome {
             freshness: graph_freshness_payload(
                 true,
                 true,
                 &[],
-                store.failed_diagnostic_paths_in_scope(scope)?.len(),
+                store.failed_diagnostic_paths()?.len(),
             ),
-            notes: vec!["graph index refreshed by a concurrent process".to_owned()],
+            notes: Vec::new(),
             source: RefreshSource::Live,
         });
     }
-
+    let stale = stale_paths_in_scope(scope, store)?;
+    if ready && stale.is_empty() {
+        return current_outcome(scope, store, Vec::new());
+    }
+    progress(if ready {
+        RefreshPending::Stale
+    } else {
+        RefreshPending::Cold
+    });
+    if !ready && !policy.build_missing {
+        return committed_outcome(scope, store, &inspection, &stale);
+    }
+    let Some(lock) = RefreshLock::acquire_wait(scope, in_flight_wait_ms)? else {
+        return committed_outcome(
+            scope,
+            store,
+            &inspect_refresh_lock(&scope.paths().refresh_lock_path),
+            &stale,
+        );
+    };
     let started = Instant::now();
     let report = run_index_unlocked_in_scope(scope)?;
-    let duration_ms = started.elapsed().as_millis();
-    let refreshed_files =
-        report.new_paths.len() + report.changed_paths.len() + report.deleted_paths.len();
-    let stale_after_refresh = stale_paths_in_scope(scope, store)?;
     drop(lock);
+    current_outcome(
+        scope,
+        store,
+        vec![format!(
+            "{} ({} files in {}ms)",
+            if ready {
+                "graph auto-refreshed"
+            } else {
+                "graph index built on demand"
+            },
+            report.indexed_files,
+            started.elapsed().as_millis()
+        )],
+    )
+}
 
+fn current_outcome(
+    scope: &GraphScope,
+    store: &GraphStore,
+    notes: Vec<String>,
+) -> Result<RefreshOutcome, CodeGraphError> {
+    let stale = stale_paths_in_scope(scope, store)?;
     Ok(RefreshOutcome {
         freshness: graph_freshness_payload(
+            store.counts()?.files > 0,
             true,
-            true,
-            &stale_after_refresh,
-            store.failed_diagnostic_paths_in_scope(scope)?.len(),
+            &stale,
+            store.failed_diagnostic_paths()?.len(),
         ),
-        notes: vec![format!(
-            "graph auto-refreshed ({refreshed_files} files in {duration_ms}ms)"
-        )],
+        notes,
         source: RefreshSource::Live,
     })
 }
 
-/// Open the store a lookup should read, applying [`RefreshPolicy`].
-///
-/// `None` means no complete corpus is available. Callers must return the
-/// freshness status without querying the live database.
+fn committed_outcome(
+    scope: &GraphScope,
+    store: &GraphStore,
+    inspection: &RefreshLockInspection,
+    stale: &[String],
+) -> Result<RefreshOutcome, CodeGraphError> {
+    let ready = store.counts()?.files > 0;
+    let failed = store.failed_diagnostic_paths()?.len();
+    let mut freshness = if ready {
+        stale_index_freshness_payload(stale, failed, inspection.held.then(|| inspection.payload()))
+    } else {
+        graph_freshness_payload(false, true, stale, failed)
+    };
+    if inspection.held {
+        freshness.state = "refreshing".to_owned();
+        freshness.stale = true;
+        freshness.lock = Some(inspection.payload());
+        let progress = store
+            .metadata_value("refresh_progress")?
+            .unwrap_or_else(|| "0/?".to_owned());
+        freshness.summary = format!(
+            "graph refreshing ({progress}); serving committed files; {}",
+            lock_busy_message(scope, 0, inspection)
+        );
+    }
+    Ok(RefreshOutcome {
+        freshness,
+        notes: Vec::new(),
+        source: if ready {
+            RefreshSource::Live
+        } else {
+            RefreshSource::Unavailable
+        },
+    })
+}
+
+/// Open one SQLite read transaction over committed data after the lazy refresh.
+/// The transaction fixes the view across a query's multiple SQL reads.
 pub fn open_query_store(
     scope: &GraphScope,
     policy: RefreshPolicy,
 ) -> Result<(Option<GraphStore>, GraphFreshnessPayload), CodeGraphError> {
-    if policy.stale_index {
-        return open_stale_index_store(scope);
+    let existing = GraphStore::open_read_only(scope)?;
+    if existing.is_none() && policy.stale_index {
+        let mut freshness = graph_freshness_payload(false, false, &[], 0);
+        let lock = inspect_refresh_lock(&scope.paths().refresh_lock_path);
+        if lock.held {
+            freshness.state = "refreshing".to_owned();
+            freshness.stale = true;
+            freshness.lock = Some(lock.payload());
+            freshness.summary =
+                "graph refreshing (0/?); no committed files yet; retry or run `effigy graph index`"
+                    .to_owned();
+        }
+        return Ok((None, freshness));
     }
-    let store = GraphStore::open_for_scope(scope)?;
+    let store = match existing {
+        Some(store) => store,
+        None => GraphStore::open_for_scope(scope)?,
+    };
     let outcome =
         ensure_fresh_with_wait_and_progress(scope, &store, IN_FLIGHT_WAIT_MS, policy, |_| {})?;
     let freshness = apply_notes(outcome.freshness, &outcome.notes);
-    match outcome.source {
-        RefreshSource::Live => Ok((Some(store), freshness)),
-        RefreshSource::CompleteSnapshot => {
-            let snapshot = GraphStore::open_complete_snapshot(scope)?.ok_or_else(|| {
-                CodeGraphError::validation(
-                    "last complete graph snapshot was reported but is missing; run `effigy graph index --json`",
-                )
-            })?;
-            Ok((Some(snapshot), freshness))
-        }
-        RefreshSource::Unavailable => Ok((None, freshness)),
+    drop(store);
+    if outcome.source == RefreshSource::Unavailable {
+        return Ok((None, freshness));
     }
-}
-
-fn open_stale_index_store(
-    scope: &GraphScope,
-) -> Result<(Option<GraphStore>, GraphFreshnessPayload), CodeGraphError> {
-    let inspection = inspect_refresh_lock(&scope.paths().refresh_lock_path);
-    if inspection.held {
-        if let Some(snapshot) = GraphStore::open_complete_snapshot(scope)? {
-            let failed = snapshot
-                .failed_diagnostic_paths_in_scope(scope)
-                .map(|paths| paths.len())
-                .unwrap_or(0);
-            let mut freshness =
-                stale_index_freshness_payload(&[], failed, Some(inspection.payload()));
-            freshness.summary = format!(
-                "{}; {}",
-                freshness.summary, "passed `--stale-index` while a refresh lock is held"
-            );
-            return Ok((Some(snapshot), freshness));
-        }
-        let outcome = locked_without_snapshot_outcome(scope, &inspection);
-        return Ok((None, apply_notes(outcome.freshness, &outcome.notes)));
+    let store = GraphStore::open_read_only(scope)?;
+    if let Some(store) = store.as_ref() {
+        store.begin_read()?;
     }
-
-    if let Some(snapshot) = GraphStore::open_complete_snapshot(scope)? {
-        let failed = snapshot
-            .failed_diagnostic_paths_in_scope(scope)
-            .map(|paths| paths.len())
-            .unwrap_or(0);
-        return Ok((
-            Some(snapshot),
-            stale_index_freshness_payload(&[], failed, None),
-        ));
-    }
-
-    let store = GraphStore::open_for_scope(scope)?;
-    let outcome = stale_index_outcome(scope, &store)?;
-    let freshness = apply_notes(outcome.freshness, &outcome.notes);
-    match outcome.source {
-        RefreshSource::Live => Ok((Some(store), freshness)),
-        RefreshSource::CompleteSnapshot => {
-            let snapshot = GraphStore::open_complete_snapshot(scope)?.ok_or_else(|| {
-                CodeGraphError::validation(
-                    "last complete graph snapshot was reported but is missing; run `effigy graph index --json`",
-                )
-            })?;
-            Ok((Some(snapshot), freshness))
-        }
-        RefreshSource::Unavailable => Ok((None, freshness)),
-    }
-}
-
-fn stale_index_outcome(
-    scope: &GraphScope,
-    store: &GraphStore,
-) -> Result<RefreshOutcome, CodeGraphError> {
-    let inspection = inspect_refresh_lock(&scope.paths().refresh_lock_path);
-    if inspection.held {
-        if complete_snapshot_exists(scope) {
-            return Ok(RefreshOutcome {
-                freshness: stale_index_freshness_payload(&[], 0, Some(inspection.payload())),
-                notes: vec!["graph --stale-index served last complete snapshot".to_owned()],
-                source: RefreshSource::CompleteSnapshot,
-            });
-        }
-        return Ok(locked_without_snapshot_outcome(scope, &inspection));
-    }
-    let counts = store.counts_in_scope(scope)?;
-    if counts.files > 0 && store.has_finished_index_run()? {
-        return Ok(RefreshOutcome {
-            freshness: stale_index_freshness_payload(
-                &[],
-                store.failed_diagnostic_paths_in_scope(scope)?.len(),
-                None,
-            ),
-            notes: vec!["graph --stale-index served last complete database".to_owned()],
-            source: RefreshSource::Live,
-        });
-    }
-    if complete_snapshot_exists(scope) {
-        return Ok(RefreshOutcome {
-            freshness: stale_index_freshness_payload(&[], 0, None),
-            notes: vec!["graph --stale-index served last complete snapshot".to_owned()],
-            source: RefreshSource::CompleteSnapshot,
-        });
-    }
-    Ok(missing_index_outcome(
-        scope,
-        "no complete graph index; run `effigy graph index --json`",
-    ))
-}
-
-fn complete_snapshot_exists(scope: &GraphScope) -> bool {
-    scope.paths().complete_db_path.is_file()
-}
-
-fn complete_snapshot_outcome(
-    scope: &GraphScope,
-    store: &GraphStore,
-    inspection: &RefreshLockInspection,
-) -> Result<Option<RefreshOutcome>, CodeGraphError> {
-    if !complete_snapshot_exists(scope) {
-        return Ok(None);
-    }
-    let stale_paths = stale_paths_in_scope(scope, store).unwrap_or_default();
-    let failed = store
-        .failed_diagnostic_paths_in_scope(scope)
-        .map(|paths| paths.len())
-        .unwrap_or(0);
-    Ok(Some(RefreshOutcome {
-        freshness: stale_index_freshness_payload(&stale_paths, failed, Some(inspection.payload())),
-        notes: vec![
-            "graph refresh in progress by another process; served last complete index".to_owned(),
-        ],
-        source: RefreshSource::CompleteSnapshot,
-    }))
-}
-
-fn missing_index_outcome(scope: &GraphScope, summary: &str) -> RefreshOutcome {
-    let inspection = inspect_refresh_lock(&scope.paths().refresh_lock_path);
-    let mut freshness = graph_freshness_payload(false, true, &[], 0);
-    freshness.summary = summary.to_owned();
-    if inspection.held || inspection.identity.is_some() {
-        freshness.lock = Some(inspection.payload());
-        freshness.summary = format!("{}; {}", freshness.summary, lock_next_action(&inspection));
-    } else {
-        freshness.summary =
-            format!("{summary}; run `effigy graph index --json` to pay the cold build separately");
-    }
-    RefreshOutcome {
-        freshness,
-        notes: Vec::new(),
-        source: RefreshSource::Unavailable,
-    }
-}
-
-fn locked_without_snapshot_outcome(
-    scope: &GraphScope,
-    inspection: &RefreshLockInspection,
-) -> RefreshOutcome {
-    let _ = scope;
-    let mut freshness = graph_freshness_payload(false, true, &[], 0);
-    freshness.usable = false;
-    freshness.lock = Some(inspection.payload());
-    freshness.summary = format!(
-        "no complete graph index while a refresh lock is held; {}",
-        lock_next_action(inspection)
-    );
-    RefreshOutcome {
-        freshness,
-        notes: vec!["graph refresh in progress by another process".to_owned()],
-        source: RefreshSource::Unavailable,
-    }
-}
-
-fn lock_next_action(inspection: &RefreshLockInspection) -> String {
-    match inspection.identity.as_ref() {
-        Some(identity) if identity.stale_holder => format!(
-            "stale holder pid {} (age {}ms); run `effigy graph index --json` once the lock is free",
-            identity.pid, identity.age_ms
-        ),
-        Some(identity) => format!(
-            "holder pid {} (age {}ms); wait for that process or pass `--stale-index` if a complete snapshot exists",
-            identity.pid, identity.age_ms
-        ),
-        None => {
-            "wait for the refresh lock holder or run `effigy graph index --json`".to_owned()
-        }
-    }
+    Ok((store, freshness))
 }
 
 fn apply_notes(mut freshness: GraphFreshnessPayload, notes: &[String]) -> GraphFreshnessPayload {
@@ -715,50 +524,6 @@ fn apply_notes(mut freshness: GraphFreshnessPayload, notes: &[String]) -> GraphF
         freshness.summary = format!("{} ({})", freshness.summary, notes.join("; "));
     }
     freshness
-}
-
-fn build_missing_index(
-    scope: &GraphScope,
-    store: &GraphStore,
-    in_flight_wait_ms: u64,
-) -> Result<RefreshOutcome, CodeGraphError> {
-    let inspection = inspect_refresh_lock(&scope.paths().refresh_lock_path);
-    if inspection.held {
-        if let Some(outcome) = complete_snapshot_outcome(scope, store, &inspection)? {
-            return Ok(outcome);
-        }
-    }
-    let Some(lock) = RefreshLock::acquire_wait(scope, in_flight_wait_ms)? else {
-        let inspection = inspect_refresh_lock(&scope.paths().refresh_lock_path);
-        if let Some(outcome) = complete_snapshot_outcome(scope, store, &inspection)? {
-            return Ok(outcome);
-        }
-        return Ok(locked_without_snapshot_outcome(scope, &inspection));
-    };
-    let started = Instant::now();
-    let report = run_index_unlocked_in_scope(scope)?;
-    let duration_ms = started.elapsed().as_millis();
-    drop(lock);
-
-    let counts = store.counts_in_scope(scope)?;
-    let ready = counts.files > 0;
-    Ok(RefreshOutcome {
-        freshness: graph_freshness_payload(
-            ready,
-            true,
-            &[],
-            store.failed_diagnostic_paths_in_scope(scope)?.len(),
-        ),
-        notes: vec![if ready {
-            format!(
-                "graph index built on demand ({} files in {duration_ms}ms)",
-                report.indexed_files
-            )
-        } else {
-            "graph index built on demand but found no indexable files".to_owned()
-        }],
-        source: RefreshSource::Live,
-    })
 }
 
 /// The refresh verdict reported by the lazy-refresh progress callback. The

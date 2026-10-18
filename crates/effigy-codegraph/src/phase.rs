@@ -1,11 +1,8 @@
 //! What the graph was doing when a wall-clock bound expired.
 //!
-//! A bounded graph command detaches its worker on timeout, so the reporting
-//! thread cannot ask the worker what it reached. Instead the worker records
-//! its current phase — and, where the phase is file-proportional, how far it
-//! got — into process-global atomics that any thread can read at any time.
-//! The record is advisory diagnostics only: nothing branches on it, and a
-//! torn read costs a slightly stale label, never correctness.
+//! Graph work records its current phase and completed-file count. A cooperative
+//! timeout reports the last safe boundary after work has stopped. These
+//! process-local counters are advisory; stored freshness owns graph trust.
 
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Instant;

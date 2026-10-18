@@ -151,7 +151,7 @@ through the help route.
 | `effigy workspace` | Ensure the selected system is up and then open the resolved workspace shell for the repo's declared developer surface | `<WORKSPACE>`, `--system`, `--repo` | (interactive; no JSON payload) | `064-system-workspace-and-dev-contract.md` |
 | `effigy bundle` | Inspect the active repo bundle source and refresh repo-local git/OCI bundle sources | `inspect`, `sync`, `--repo`, `--json` | `effigy.bundle.inspect.v1`, `effigy.bundle.sync.v1` | `065-external-bundle-adoption.md` |
 | `effigy deploy` | Derive a provider-neutral production deployment model, export bounded provider files through configured provider packages, and run provider-neutral deployment transactions with state, artifact, release, hook, health, and report evidence | `model`, `export <PROVIDER>`, `plan`, `apply`, `status`, `history`, `redeploy`, `--repo`, `--path`, `--write-report`, `--deployment`, `--yes`, `--json` | `deploy.model.v1`, `effigy.deploy.export.v1`, `effigy.deploy.plan.v1`, `effigy.deploy.apply.v1`, `effigy.deploy.status.v1`, `effigy.deploy.history.v1` | `074-deployment-guide.md`, [`../contracts/002-production-deployment-model.md`](../knowledge/contracts/002-production-deployment-model.md), [`../contracts/019-deployment-transaction-system-contract.md`](../knowledge/contracts/019-deployment-transaction-system-contract.md) |
-| `effigy graph` | Build, query, and keep the local code graph fresh for file, symbol, edge, impact, changed-file validation narrowing, bounded context packs, one-call exploration, catalog-scoped monorepo lookup, and watcher-driven agent lookup | `index`, `status`, `status --refresh`, `search`, `files`, `node`, `callers`, `callees`, `impact`, `affected`, `context`, `explore`, `watch`, `--catalog`, `--all-catalogs`, `--stale-index`, `--repo`, `--json`, `--limit`, `--depth`, `--stdin`, `--max-files`, `--max-bytes`, `--language`, `--path`, `--debounce-ms`, `EFFIGY_GRAPH_TIMEOUT_MS` | `effigy.graph.index.v1`, `effigy.graph.status.v1`, `effigy.graph.search.v1`, `effigy.graph.files.v1`, `effigy.graph.node.v1`, `effigy.graph.callers.v1`, `effigy.graph.callees.v1`, `effigy.graph.impact.v1`, `effigy.graph.affected.v1`, `effigy.graph.context.v1`, `effigy.graph.explore.v1`, `effigy.graph.fanout.v1`, `effigy.graph.watch.event.v1` | `076-code-graph-and-agent-workflows.md` |
+| `effigy graph` | Whole-checkout navigation with atomic per-file refresh | `index`, `status`, `search`, `node`, `affected`, `explore`, `--in`, `--out`, `--excerpts-only`, `--stale-index`, `--refresh`, `--repo`, `--json`, `--limit`, `--depth`, `--stdin`, `--max-files`, `--max-bytes`, `--language`, `--path`, `EFFIGY_GRAPH_TIMEOUT_MS` | `effigy.graph.index.v1`, `effigy.graph.status.v1`, `effigy.graph.search.v1`, `effigy.graph.node.v1`, `effigy.graph.affected.v1`, `effigy.graph.explore.v1` | `076-code-graph-and-agent-workflows.md` |
 | `effigy rhai` | Inspect the registered Rhai host API surface available to scripts, including module/function names and side-effect posture | `surface`, `--json` | `effigy.rhai.surface.v1` | `061-rhai-script-steps-guide.md`, `068-rhai-host-surface-audit.md` |
 | `effigy bootstrap` | Clone or update a repo from a git URL, apply its root bootstrap contract, sync optional submodules, bring along child repos, run setup, optionally stage DB seed dumps and run the standard `bootstrap:db-seed` task, optionally prompt for missing bundle DB dumps on a real TTY, optionally isolate generated-compose runtime state with `--fresh`, optionally pin this bootstrap session to `containerd` or `docker` with `--backend`, run `[bootstrap].start` after setup by default (`--no-start` to skip), and expose `bootstrap deps sync`, `bootstrap children status/sync`, and `bootstrap teardown` for typed dependency hydration, child checkout inspection/refresh, and fresh-session cleanup | `<git-url>`, `teardown`, `deps sync`, `children status`, `children sync`, `--path`, `--branch`, `--backend <containerd|docker>`, `--db-seed <FILE|OCI>|<TARGET>=<FILE|OCI>`, `--fresh`, `--no-prompt`, `--reuse-path`, `--no-start`, `--start`, `--plan`, `--yes`, `--js-only`, `--rust-only`, `--refresh-lock`, `--fetch-only`, `--checkout`, `--json` | `effigy.bootstrap.v1`, `effigy.bootstrap.deps.v1`, `effigy.bootstrap.children-status.v1`, `effigy.bootstrap.children-sync.v1`, `effigy.bootstrap-teardown.v1` | `057-bootstrap-repo-bringup.md` |
 | `effigy demo` | Discover repo-owned proof demos, browse them in the demo browser, inspect active/latest state, query retained attempt history, execute new attempts, and control runner-owned lifecycle for active demos | `list`, `browser`, `inspect`, `history`, `run`, `stop`, `input`, `resize`, `rerun`, `--repo`, `--json` | `effigy.demo.list.v1`, `effigy.demo.inspect.v1`, `effigy.demo.history.v1`, `effigy.demo.run.v1`, `effigy.demo.stop.v1`, `effigy.demo.input.v1`, `effigy.demo.resize.v1`, `effigy.demo.rerun.v1` | `058-demo-system-guide.md` |
@@ -352,18 +352,12 @@ effigy deploy apply <ENV> [--repo <PATH>] --yes [--json]
 effigy deploy status <ENV> [--repo <PATH>] [--json]
 effigy deploy history <ENV> [--repo <PATH>] [--limit <N>] [--json]
 effigy deploy redeploy <ENV> [--repo <PATH>] --deployment <ID> --yes [--json]
-effigy graph index [--repo <PATH>] [--catalog <ALIAS>] [--all-catalogs] [--json]
-effigy graph status [--repo <PATH>] [--refresh] [--catalog <ALIAS>] [--all-catalogs] [--json]
-effigy graph search <QUERY> [--repo <PATH>] [--limit <N>] [--catalog <ALIAS>] [--all-catalogs] [--stale-index] [--json]
-effigy graph files [--repo <PATH>] [--limit <N>] [--catalog <ALIAS>] [--all-catalogs] [--stale-index] [--json]
-effigy graph node <ID> [--repo <PATH>] [--catalog <ALIAS>] [--all-catalogs] [--stale-index] [--json]
-effigy graph callers <ID> [--repo <PATH>] [--limit <N>] [--catalog <ALIAS>] [--all-catalogs] [--stale-index] [--json]
-effigy graph callees <ID> [--repo <PATH>] [--limit <N>] [--catalog <ALIAS>] [--all-catalogs] [--stale-index] [--json]
-effigy graph impact <TARGET> [--repo <PATH>] [--limit <N>] [--catalog <ALIAS>] [--all-catalogs] [--stale-index] [--json]
-effigy graph affected [--repo <PATH>] [--depth <N>] [--limit <N>] [--catalog <ALIAS>] [--all-catalogs] [--stale-index] [--stdin] <PATH>... [--json]
-effigy graph context <REQUEST> [--repo <PATH>] [--max-files <N>] [--max-bytes <N>] [--catalog <ALIAS>] [--all-catalogs] [--stale-index] [--language <ID>]... [--path <PREFIX>]... [--json]
-effigy graph explore <REQUEST> [--repo <PATH>] [--max-files <N>] [--max-bytes <N>] [--catalog <ALIAS>] [--all-catalogs] [--stale-index] [--language <ID>]... [--path <PREFIX>]... [--json]
-effigy graph watch [--repo <PATH>] [--debounce-ms <MS>] [--catalog <ALIAS>] [--json]
+effigy graph index [--repo <PATH>] [--json]
+effigy graph status [--repo <PATH>] [--refresh] [--json]
+effigy graph search <QUERY> [--repo <PATH>] [--limit <N>] [--stale-index] [--json]
+effigy graph node <ID|PATH> [--repo <PATH>] [--in|--out] [--limit <N>] [--stale-index] [--json]
+effigy graph affected <PATH>... [--repo <PATH>] [--depth <N>] [--limit <N>] [--stale-index] [--stdin] [--json]
+effigy graph explore <REQUEST> [--repo <PATH>] [--excerpts-only] [--max-files <N>] [--max-bytes <N>] [--stale-index] [--language <ID>]... [--path <PREFIX>]... [--json]
 effigy bootstrap <GIT_URL> [--path <DIR>] [--branch <NAME>] [--backend <containerd|docker>] [--db-seed <FILE|OCI>|<TARGET>=<FILE|OCI>]... [--fresh] [--no-prompt] [--reuse-path] [--no-start] [--plan] [--json]
 effigy bootstrap teardown [--yes] [--json]
 effigy bootstrap deps sync [<path>...] [--js-only|--rust-only] [--refresh-lock] [--json]
@@ -371,10 +365,6 @@ effigy bootstrap children status [--json]
 effigy bootstrap children sync [--fetch-only] [--checkout] [--json]
 effigy demo <list|browser|inspect|history|run|stop|input|resize|rerun> [ARGS...] [--json]
 ```
-
-`effigy graph watch --json` is the graph JSON streaming exception: it emits
-newline-delimited `effigy.graph.watch.event.v1` payloads directly instead of a
-single `effigy.command.v1` envelope.
 
 ### Testing and Project Workflow
 
@@ -614,27 +604,14 @@ environment in `session.json` so a whole-environment handover can end
   the normal child capture reports
 - `state history` is read-only; it scans report JSON files and ignores malformed
   files with warnings instead of maintaining an index
-- graph data queries build or refresh the index on demand; use explicit
-  `graph index` to pre-warm a large repo or recover a broken cache. A held
-  refresh lock is named (pid and age) and lookups serve the last complete
-  snapshot as `stale-index`. Pass `--stale-index` to read that snapshot
-  without waiting or refreshing; a cold checkout then returns `missing-index`
-  instead of starting the first index inside the query budget
-- `[catalog.graph]` marks an existing catalog as a graph scope: `segmented`
-  prunes the catalog root from its parent's scan and `independent` gives it a
-  deterministic database under `.effigy/graph/catalogs/<encoded-alias>/`
-- graph commands accept `--catalog <ALIAS>` for one effective segmented catalog
-  and `--all-catalogs` for the only fan-out; plain commands use the invocation
-  cwd's deepest segmented catalog, or the root scope otherwise
-- graph JSON payloads carry additive `catalog.alias`, `catalog.root`,
-  `catalog.selection`, `catalog.segmented`, and `catalog.independent` evidence;
-  `--all-catalogs` renders `effigy.graph.fanout.v1` with one outcome per catalog
-- graph data queries have a 120000ms wall-clock budget by default; override it
-  with `EFFIGY_GRAPH_TIMEOUT_MS=<MS>` or use `0` to disable the bound; explicit
-  `graph index` and `graph watch` commands are unbounded
-- `graph status --json` exposes `freshness.state` (`ready`, `refresh-recommended`,
-  `degraded`, `missing-index`, `stale-index`) and `freshness.usable`; it is the
-  report-only pre-refresh view unless passed `--refresh`
+- graph queries lazily refresh one checkout corpus; each file commits graph rows,
+  search data and freshness together, and deadlines preserve committed progress
+- concurrent queries read committed files with `refreshing (n/N)`; `--stale-index`
+  skips refresh and returns `stale-index` or `refreshing`, never current
+- graph query budgets default to 120000ms; `EFFIGY_GRAPH_TIMEOUT_MS=<MS>`
+  overrides the cooperative deadline and `0` disables it; explicit index is unbounded
+- `graph status --json` is report-only; use `graph status --refresh` to update it; gate on
+  `freshness.state` and `freshness.usable`
 - the graph walk prunes `.git/`, `.effigy/`, `.venv/`, `__pycache__/`,
   `coverage/`, `dist/`, `node_modules/`, `target/`, `vendor/`, `.svelte-kit/`,
   `.next/`, `.nuxt/`, `.output/`, `.turbo/`, and `.parcel-cache/` at any depth
@@ -642,12 +619,10 @@ environment in `session.json` so a whole-environment handover can end
   Markdown kinds, fields, currentness, authority, and typed relations; the
   separate bounded docs-context query remains a planned surface
 - `graph explore` is the preferred one-call agent navigation packet for
-  code-understanding work; use `graph context` when you want the lower-level
+  code-understanding work; use `graph explore --excerpts-only` when you want the lower-level
   ranked item list instead
 - `graph affected` accepts changed paths as args or via `--stdin`; it narrows
   likely validation targets but does not prove exhaustive test reachability
-- `graph watch --json` streams newline-delimited `effigy.graph.watch.event.v1`
-  events and does not use the one-shot `effigy.command.v1` envelope
 
 ## Common Recipes
 

@@ -242,56 +242,15 @@ pub struct ManifestCatalog {
     pub alias: Option<String>,
     #[serde(default)]
     pub members: BTreeMap<String, String>,
-    #[serde(default)]
-    pub graph: Option<ManifestCatalogGraph>,
+    #[serde(default, rename = "graph", deserialize_with = "reject_catalog_graph")]
+    _retired_graph: Option<toml::Value>,
 }
 
-/// `[catalog.graph]` posture for one catalog.
-///
-/// The table answers how the parent workspace indexes this catalog. It never
-/// contributes membership, renames a catalog, or grants recursive discovery.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ManifestCatalogGraph {
-    #[serde(default)]
-    pub segmented: bool,
-    #[serde(default)]
-    pub independent: bool,
-}
-
-/// Normalized `[catalog.graph]` posture used by graph consumers.
-///
-/// Both fields default to `false`. `independent` only has meaning together
-/// with `segmented`; a composed manifest that sets `independent = true`
-/// without `segmented = true` is rejected during manifest validation.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct CatalogGraphPosture {
-    pub segmented: bool,
-    pub independent: bool,
-}
-
-impl CatalogGraphPosture {
-    /// The folded posture: indexed in the parent corpus, parent storage.
-    pub fn folded() -> Self {
-        Self::default()
-    }
-
-    pub fn is_folded(&self) -> bool {
-        !self.segmented
-    }
-}
-
-impl ManifestCatalog {
-    /// Normalized graph posture declared by this catalog manifest.
-    pub fn graph_posture(&self) -> CatalogGraphPosture {
-        match self.graph.as_ref() {
-            Some(graph) => CatalogGraphPosture {
-                segmented: graph.segmented,
-                independent: graph.independent,
-            },
-            None => CatalogGraphPosture::folded(),
-        }
-    }
+fn reject_catalog_graph<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<toml::Value>, D::Error> {
+    let _: serde::de::IgnoredAny = serde::Deserialize::deserialize(deserializer)?;
+    Err(serde::de::Error::custom("`[catalog.graph]` was removed in v0.15; remove the table; `effigy graph` indexes the whole checkout (use `graph explore --path <PREFIX>` to narrow results)"))
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -331,15 +290,6 @@ impl TaskManifest {
                     return Err(ManifestError::Compose {
                         path: manifest_path.to_path_buf(),
                         detail: "catalog member handles and directories must be non-empty strings"
-                            .to_owned(),
-                    });
-                }
-            }
-            if let Some(graph) = catalog.graph.as_ref() {
-                if graph.independent && !graph.segmented {
-                    return Err(ManifestError::Compose {
-                        path: manifest_path.to_path_buf(),
-                        detail: "[catalog.graph] `independent = true` requires `segmented = true`; a folded catalog is always indexed in its parent graph corpus"
                             .to_owned(),
                     });
                 }

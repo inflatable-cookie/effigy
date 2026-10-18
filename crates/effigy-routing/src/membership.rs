@@ -509,7 +509,7 @@ mod tests {
         .expect("root manifest");
         fs::write(
             member.join("effigy.toml"),
-            "[catalog]\nalias = \"bovine\"\n\n[catalog.graph]\nsegmented = true\n",
+            "[catalog]\nalias = \"bovine\"\n",
         )
         .expect("member manifest");
 

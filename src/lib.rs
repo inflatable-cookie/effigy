@@ -30,7 +30,6 @@ pub mod tui;
 pub use cli::entrypoint::run_and_render_command;
 pub use cli::entrypoint::run_cli;
 pub use cli::execution_context::CliExecutionContext;
-pub use cli::graph_watch_dispatch::run_graph_watch_command;
 pub use cli::help_dispatch::{
     build_help_group_payload_for_root, build_help_payload, run_help_command, run_help_group_command,
 };

@@ -1,8 +1,7 @@
 # JSON Envelope
 
 Every Effigy command run with `--json` returns one JSON document in the
-`effigy.command.v1` envelope shape. `graph watch --json` is the streaming
-exception described below.
+`effigy.command.v1` envelope shape.
 
 ## Envelope shape
 
@@ -71,10 +70,8 @@ These commands produce stable JSON payloads suitable for agents to consume:
 | `effigy --json graph status` | `result.payload.freshness`, stale paths, and counts |
 | `effigy --json graph explore "<q>"` | primary owners, excerpts, relations, guidance |
 | `effigy --json graph affected` | affected files, likely tests/tasks after edits |
-| `effigy --json graph context "<q>"` | ranked context items (lower-level than explore) |
+| `effigy --json graph explore --excerpts-only "<q>"` | ranked context items (lower-level than explore) |
 
-**Streaming exception:** `effigy graph watch --json` emits newline-delimited
-`effigy.graph.watch.event.v1` events — not wrapped in `effigy.command.v1`.
 
 ## Worked `jq` examples
 
@@ -119,15 +116,4 @@ fi
 
 ## Streaming vs single-shot
 
-Most commands emit one `effigy.command.v1` JSON document. The graph watcher
-only emits newline-delimited `effigy.graph.watch.event.v1` documents; it does
-not emit the one-shot envelope. Filter on `schema` when consuming that stream.
-
-## Full spec
-
-`docs/guides/017-json-output-contracts.md` in the Effigy repo defines:
-
-- complete envelope schema
-- per-command payload schemas with field-level docs
-- diagnostic levels and structured error codes
-- versioning policy for envelope and payload schemas
+Graph commands emit one JSON document; there is no graph event stream.
