@@ -193,9 +193,9 @@ conversion back into an effect context. Runtime Gate/Store/Custody compile-fail
 proofs follow their primitives; foundation compile-fail tests exercise their
 required effect-capability boundary now.
 
-The crate is a workspace member; the root manifest does not override Cargo's
-default member selection. Kernel proofs are selected explicitly by the narrow
-selectors below. No engine depends on the kernel yet.
+The root manifest selects the façade and kernel as Cargo default members, so
+existing macOS/Linux CI test, doc-test and lint commands include the kernel.
+No engine depends on the kernel yet.
 `test:kernel:<area>` selectors own the narrow proof families; `check:kernel`
 compiles all kernel targets and runs strict clippy. The `fault-injection`
 feature's observation hook exists only under `cfg(test)`.
