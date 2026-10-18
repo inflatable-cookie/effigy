@@ -10934,10 +10934,8 @@ detach_timeout_secs = 1
     // cascade and the handover races no second conflicting down. Every
     // stack `down` the fake observed must start before the owner process
     // exits (its whole cascade, cleanup down included); a handover-time
-    // down would start after. The cascade issues one down from the
-    // lifecycle's exit trap and one from the managed cleanup; a loaded
-    // runner may force-kill the trap down before it reaches compose, so
-    // the cascade count is one or two, never more.
+    // down would start after. Only runner finish owns the down; the
+    // lifecycle EXIT trap only records its state.
     let runtime_calls = fs::read_to_string(&colima_args).expect("read colima args")
         + &fs::read_to_string(&docker_args).unwrap_or_default();
     let mut stack_downs = 0;
@@ -10956,9 +10954,9 @@ detach_timeout_secs = 1
             "a stack down started after the owner's cascade finished; the handover raced a second conflicting down: {line}"
         );
     }
-    assert!(
-        (1..=2).contains(&stack_downs),
-        "only the owner's own cascade downs `stack` (its lifecycle exit-trap down and the managed cleanup down, one or two); got {stack_downs}: {runtime_calls}"
+    assert_eq!(
+        stack_downs, 1,
+        "only runner finish downs `stack`: {runtime_calls}"
     );
 
     // The requested environment started: the incoming run's children

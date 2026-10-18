@@ -488,9 +488,19 @@ fn run_container_up_compose(
     if let Some(context) = &plan.admitted_context {
         context.verify(repo_root, &plan.policy, context.marker_required)?;
     }
+    // Even an explicit/nested up cannot recreate an environment under live
+    // execs. Compose may start missing siblings, while preserving all existing
+    // containers, including when the headless record is not yet available.
+    let mut up_plan = plan.up_plan.clone();
+    if !crate::runner::managed_settle::environment_lock_holders(repo_root, &plan.policy.name)
+        .is_empty()
+    {
+        up_plan.args.retain(|arg| arg != "--force-recreate");
+        up_plan.args.push(OsString::from("--no-recreate"));
+    }
     if plan.attach_mode == EffectiveAttachMode::Attached {
         match run_compose_plan_inherit_with_stop_flag_and_env(
-            &plan.up_plan,
+            &up_plan,
             &plan.stop_flag,
             &plan.compose_secret_env,
         )? {
@@ -511,7 +521,7 @@ fn run_container_up_compose(
     } else {
         effigy_runtime::signals::run_compose_plan_capture_with_env(
             &plan.policy,
-            &plan.up_plan,
+            &up_plan,
             &plan.compose_secret_env,
         )?;
     }
@@ -755,6 +765,19 @@ fn partial_activation_reconcile_pending(
     let failed_runs =
         effigy_managed::runtime::failed_managed_run_tokens(repo_root, &plan.policy.name);
     if !failed_runs.is_empty() {
+        crate::runner::managed_settle::refuse_environment_mutation(
+            repo_root,
+            &plan.policy.name,
+            None,
+            None,
+        )?;
+        // Never tear the environment down while a process of a judged-failed
+        // generation still holds its run-token locks: the dead-owner judgment
+        // can be wrong through a stale or missing record, and the down would
+        // SIGKILL a live run's execs.
+        for token in &failed_runs {
+            crate::runner::managed_settle::refuse_recovery_while_token_live(repo_root, token)?;
+        }
         // Input admission above precedes teardown authority. Down ends any
         // exec groups the dead owner could not end; volumes are kept.
         effigy_containers::exec::verify_owned_stack_for_shutdown(repo_root, &plan.policy)?;
@@ -1059,6 +1082,13 @@ fn lifecycle_cleanup_failed_container_up(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> Result<(), RunnerError> {
+    crate::runner::managed_settle::refuse_environment_mutation(
+        repo_root,
+        &policy.name,
+        None,
+        None,
+    )?;
+
     super::closeout::cleanup_failed_container_up(
         repo_root,
         policy,
@@ -1074,8 +1104,20 @@ fn run_container_down_adapter(
     name: Option<&str>,
     output_json: bool,
 ) -> Result<String, RunnerError> {
-    stop_host_processes_best_effort(repo_root, name);
     let policy = load_container_policy(repo_root, name)?;
+    let stopping_token = std::env::var("EFFIGY_INTERNAL_MANAGED_STOP_TOKEN").ok();
+    // An explicit host task can finish under its own calling-task lock.
+    // A managed caller, even in this process, needs its runner's stop token.
+    let calling_task_pid = std::env::var_os(effigy_managed::RUN_TOKEN_ENV)
+        .is_none()
+        .then(std::process::id);
+    crate::runner::managed_settle::refuse_environment_mutation(
+        repo_root,
+        &policy.name,
+        calling_task_pid,
+        stopping_token.as_deref(),
+    )?;
+    stop_host_processes_best_effort(repo_root, name);
     let _operation_plan =
         lifecycle_operation_plan(repo_root, &policy, ContainerLifecycleOperation::down(false));
     let output = run_container_down(

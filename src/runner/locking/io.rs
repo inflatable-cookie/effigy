@@ -386,6 +386,40 @@ pub(in crate::runner) fn task_lock_holders(workspace_root: &Path) -> Vec<TaskLoc
         .collect()
 }
 
+/// Holders that still exclude another run. Local zombies have ended; foreign
+/// PID namespaces retain the existing heartbeat-lease liveness rule.
+pub(in crate::runner) fn live_task_lock_holders(workspace_root: &Path) -> Vec<TaskLockHolder> {
+    let Ok(entries) = fs::read_dir(workspace_root.join(LOCKS_DIR)) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter_map(|entry| {
+            if entry.path().extension().and_then(|ext| ext.to_str()) != Some("lock") {
+                return None;
+            }
+            let record = files::read_lock_record(&entry.path()).ok()?;
+            let comparable = record
+                .hostname
+                .as_deref()
+                .is_none_or(|host| lock_hostname().as_deref() == Some(host));
+            if comparable {
+                if !effigy_managed::runtime::managed_owner_is_running(record.pid) {
+                    return None;
+                }
+            } else if stale::lock_is_stale(&record) {
+                return None;
+            }
+            Some(TaskLockHolder {
+                scope: record.scope,
+                pid: record.pid,
+                hostname: record.hostname,
+                managed_run_token: record.managed_run_token,
+            })
+        })
+        .collect()
+}
+
 /// Remove every lock record attributed to `run_token`, through the lock
 /// owner-token rules: each file is unlinked only if it still holds exactly
 /// the record that named the run, so a successor's lock is never touched.

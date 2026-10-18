@@ -96,6 +96,41 @@ service passes it. An unlabelled, foreign or wrong-checkout primary is neither
 exec'd nor restarted; the up reports not exec-ready. The shell and task exec
 that follow are gated by that readiness boundary.
 
+No path may stop, restart or recreate an environment's containers while a
+live lock holder of a run bound to that environment exists, except that run's
+own stop.
+
+Task/profile locks establish liveness; a matching owner PID and run token in a
+session record only narrow the environment binding. A missing, unreadable or
+stale session record never grants mutation authority. A live holder whose
+binding cannot be established protects every environment in the checkout.
+Local live PIDs protect independently of heartbeat age; another PID namespace
+uses the existing heartbeat lease, never a coincidentally matching local PID.
+
+The exec-readiness recovery restart therefore keeps probing with its
+post-restart window when a live holder exists, then reports any remaining
+readiness failure without restarting. Compose up under a live holder uses
+`--no-recreate`, preserving existing containers while starting missing siblings.
+Lifecycle EXIT traps, including inline-workspace traps, only write lifecycle
+state. Runner finish owns exactly one down per managed stop; parent death gives
+an orphaned lifecycle shell no teardown authority over a successor.
+
+Failed-generation recovery requires the environment's task/profile locks to
+be free of live holders, including a successor with a different run token.
+Pre-spawn managed recovery holds its newly acquired task/profile locks and
+exempts only that local owner; it refuses any other live holder before down.
+A nested `container up` cannot make that exemption. An expired lease reaper
+also refuses before any shutdown effect while a task or managed holder remains
+live, retaining its lease on refusal. Handover first ends known bound owners
+through `effigy <task> stop` and waits for their complete settle, then checks
+locks again before touching the losing environment. An unbound live holder
+refuses handover; the incoming run's own locks are exempt from that check.
+The runner's finish marks its cleanup command with its run token so only its
+own stop can down the environment under that run's locks. An unrelated explicit
+`container down` must wait for the run's own stop too. An ordinary host task
+that explicitly calls down may close out under its own ancestor lock; this
+does not exempt a managed ancestor or grant authority to a reaper.
+
 An Effigy invocation that already runs inside its own workspace container
 (`EFFIGY_INTERNAL_CONTAINER_HANDOFF=1`) never calls host runtime commands.
 `container shell --command`, `container exec`, and `exec` resolve the policy

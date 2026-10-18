@@ -312,6 +312,31 @@ During v0.x, MINOR bumps may include breaking changes.
   1.2.0.
 
 ### Fixed
+- A live managed headless run keeps its session record for its whole life:
+  the record is written atomically before the first child starts and updated
+  on every recorded state change, and it is never deleted while the owner is
+  alive. When the record is missing or unreadable under a live run anyway,
+  `effigy <task> status`, `logs` and `stop` still work: they find the owner
+  through its task/profile locks and run token, report from the locks and log
+  files, and deliver the stop through the same request the owner watches, so
+  a `dev:container`-style warm-up can always be inspected and stopped. The
+  controls refuse only when no live run of that task and profile exists, and
+  every start hint names the actual task and profile instead of a hardcoded
+  `effigy dev --headless`.
+- Container lifecycle mutations respect live task/profile lock holders, even
+  when a session record is absent. Lifecycle EXIT traps only record state;
+  runner finish owns exactly one down per managed stop. Failed-generation
+  recovery and lease expiry cannot down a live successor's environment, and
+  handover must settle bound runs before stopping their environment. A live
+  holder with unknown binding blocks mutation. Compose up uses `--no-recreate`
+  under live holders, and exec-readiness recovery observes without restarting.
+  The #634 warm-up exit-137s were caused by the proof harness's explicit
+  `container stack down` cleanup after the missing-record stop failure, as
+  confirmed by its command journal and Lima's ordered shutdown; the restart
+  guard is separate hardening.
+- Headless startup delays no longer block control requests or signal handling.
+  The record is published before startup and updated as children start, and
+  stop cancels children still waiting for their start delay.
 - Managed headless and TUI stop lets the owner order remote and host child shutdown,
   exits successfully after earlier workload failures, and runs the bound
   environment cleanup even when the managed runtime failed. Stop checks the

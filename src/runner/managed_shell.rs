@@ -82,11 +82,6 @@ pub(crate) fn render_inline_managed_lifecycle_command(
     let lifecycle_state = shell_quote(&lifecycle_state.display().to_string());
     let up = render_inline_compose_command(repo_root, policy, &compose_args(policy, ["up", "-d"]));
     let ps = render_inline_compose_command(repo_root, policy, &compose_args(policy, ["ps"]));
-    let down = render_inline_compose_command(
-        repo_root,
-        policy,
-        &compose_args(policy, ["down", "--remove-orphans"]),
-    );
     let readiness_status = if health_wait {
         "waiting for readiness via detached container startup"
     } else {
@@ -109,7 +104,7 @@ pub(crate) fn render_inline_managed_lifecycle_command(
     format!(
         "sh -lc {}",
         shell_quote(&format!(
-            "state_path={lifecycle_state}; parent_pid=$PPID; mkdir -p \"$(dirname \"$state_path\")\"; printf '%s\\n' starting > \"$state_path\"; started=0; cleanup() {{ if [ \"$started\" = 1 ]; then printf '%s\\n' stopped > \"$state_path\"; {down} >/dev/null 2>&1 || true; else printf '%s\\n' failed > \"$state_path\"; fi; }}; trap 'cleanup' EXIT; trap 'exit 0' INT TERM; printf 'managed lifecycle: %s\\n' {readiness_status}; if ! {up}; then printf '%s\\n' 'managed lifecycle failed during container startup' 1>&2; exit 1; fi; started=1; printf '%s\\n' started > \"$state_path\"; {setup_sequence}{readiness_wait}printf '%s\\n' ready > \"$state_path\"; printf 'managed ready: %s\\n' {ready_banner}; printf 'Managed Container Lifecycle\\n\\n'; printf 'container: %s\\n' {label}; printf 'owner_task: %s\\n' {owner_task}; printf 'readiness: %s\\n' {readiness_status}; {dns_routes_section}printf 'ready_message: %s\\n\\n' {ready_banner}; {ps} || true; printf '\\n[info] lifecycle owner is idle; use compose status to refresh.\\n'; {idle_wait}",
+            "state_path={lifecycle_state}; parent_pid=$PPID; mkdir -p \"$(dirname \"$state_path\")\"; printf '%s\\n' starting > \"$state_path\"; started=0; cleanup() {{ if [ \"$started\" = 1 ]; then printf '%s\\n' stopped > \"$state_path\"; else printf '%s\\n' failed > \"$state_path\"; fi; }}; trap 'cleanup' EXIT; trap 'exit 0' INT TERM; printf 'managed lifecycle: %s\\n' {readiness_status}; if ! {up}; then printf '%s\\n' 'managed lifecycle failed during container startup' 1>&2; exit 1; fi; started=1; printf '%s\\n' started > \"$state_path\"; {setup_sequence}{readiness_wait}printf '%s\\n' ready > \"$state_path\"; printf 'managed ready: %s\\n' {ready_banner}; printf 'Managed Container Lifecycle\\n\\n'; printf 'container: %s\\n' {label}; printf 'owner_task: %s\\n' {owner_task}; printf 'readiness: %s\\n' {readiness_status}; {dns_routes_section}printf 'ready_message: %s\\n\\n' {ready_banner}; {ps} || true; printf '\\n[info] lifecycle owner is idle; use compose status to refresh.\\n'; {idle_wait}",
             label = shell_quote(&policy.name),
             owner_task = shell_quote(owner_task),
             readiness_status = shell_quote(readiness_status),

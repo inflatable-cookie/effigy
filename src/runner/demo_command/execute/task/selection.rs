@@ -436,7 +436,15 @@ container = { image = "alpine:latest", mount = "./:/workspace" }
         assert!(lifecycle
             .run
             .contains(".effigy/inline-workspaces/dev__app/docker-compose.yml"));
-        assert!(lifecycle.run.contains("'down'") && lifecycle.run.contains("'--remove-orphans'"));
+        assert!(lifecycle.run.contains("'up'") && lifecycle.run.contains("'-d'"));
+        // Runner finish owns teardown; the lifecycle EXIT trap only records
+        // state, including when an inline workspace is selected by a demo.
+        assert!(lifecycle.run.contains("stopped >"));
+        assert!(
+            !lifecycle.run.contains("'down'") && !lifecycle.run.contains("'--remove-orphans'"),
+            "demo lifecycle must leave teardown to runner finish: {}",
+            lifecycle.run
+        );
         assert!(
             standard.run.contains("'exec'")
                 && standard.run.contains("'-T'")

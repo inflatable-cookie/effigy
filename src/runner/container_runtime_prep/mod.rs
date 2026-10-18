@@ -557,6 +557,7 @@ pub(in crate::runner) fn ensure_primary_service_exec_ready_for_runtime(
         &policy.primary_service,
         Instant::now() + OWNED_EXEC_VERIFICATION_TIMEOUT,
     )?;
+    let live_exec_note = live_managed_exec_note(repo_root, policy);
     ensure_primary_service_exec_ready_with_recovery_using(
         policy,
         working_dir,
@@ -571,7 +572,37 @@ pub(in crate::runner) fn ensure_primary_service_exec_ready_for_runtime(
             )
         },
         || restart_primary_service(repo_root, policy, &binding),
+        live_exec_note,
     )
+}
+
+/// Why the exec-readiness recovery restart must not fire: a live managed run
+/// of this checkout is bound to this environment and exec'ing into its
+/// services. A recovery restart would SIGKILL those remote processes (the
+/// mass exit-137 signature). The note names the run for the refusal.
+///
+/// Lock holders establish liveness even when session.json is missing. A
+/// matching record only narrows the environment; unknown binding protects
+/// every environment in the checkout.
+fn live_managed_exec_note(repo_root: &Path, policy: &EffectiveContainerPolicy) -> Option<String> {
+    let holders = crate::runner::managed_settle::environment_lock_holders(repo_root, &policy.name);
+    if holders.is_empty() {
+        return None;
+    }
+    let named = holders
+        .iter()
+        .map(|holder| {
+            format!(
+                "`{}` (pid {}, run token {:?}; session record missing or lock-bound owner)",
+                holder.scope, holder.pid, holder.managed_run_token
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(format!(
+        "live task/profile lock holders protect environment `{}`: {named}",
+        policy.name
+    ))
 }
 
 /// Partial detached activation cannot grant restart authority to an unavailable
@@ -595,9 +626,23 @@ fn ensure_primary_service_exec_ready_with_recovery_using<T>(
     working_dir: &Path,
     mut probe: impl FnMut(Duration) -> Result<Option<T>, RunnerError>,
     mut restart: impl FnMut() -> Result<(), RunnerError>,
+    live_exec_note: Option<String>,
 ) -> Result<T, RunnerError> {
     if let Some(binding) = probe(Duration::from_secs(2))? {
         return Ok(binding);
+    }
+    if let Some(note) = live_exec_note {
+        // A live managed run is exec'ing into this environment; restarting
+        // the primary service would SIGKILL its remote processes. Keep
+        // probing with the post-restart window instead of ever mutating a
+        // running service under the run.
+        if let Some(binding) = probe(Duration::from_secs(15))? {
+            return Ok(binding);
+        }
+        return Err(RunnerError::task_invocation(format!(
+            "container `{}` is not exec-ready and its recovery restart was refused: {note}. The running service was not restarted; stop the managed run first (`effigy <task> stop`) or wait for the service to become exec-ready",
+            policy.name
+        )));
     }
     if restart().is_ok() {
         if let Some(binding) = probe(Duration::from_secs(15))? {
