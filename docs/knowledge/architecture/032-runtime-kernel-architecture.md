@@ -102,7 +102,7 @@ settles under a cleanup budget.
 
 ```text
 client: resolve → spawn supervisor (invocation on a pipe)
-supervisor: Run::begin → socket → "admitted" → setup steps (journalled)
+supervisor: Run::begin → socket intent → bind → receipt → "admitted" → setup steps (journalled)
   → attach(env, Borrow or Exclusive): Gate(Env), one transaction, release gate
     (EnvNotActive → ensure; the apply run inserts the attachment in its last commit)
   → wait_all(ExecReady, …) → workloads (local custody, remote custody) → Active
@@ -305,5 +305,76 @@ resolved through their owning run's settle, never reclaimed from liveness age.
 primitives. The run suite traces successful and closed-with-residue scenarios,
 then injects SIGKILL, ENOSPC and EPERM at every crossed journal boundary in a
 fresh HOME. Strict fake external objects and durable call/release logs exercise
-O1a/O1b, O2, O3, O5, O11 and O13 at the adapter boundary. Real process-group and
-remote custody closure proofs belong to the custody and fault-harness cuts.
+O1a/O1b, O2, O3, O5, O11 and O13 at the adapter boundary. Local process-group
+closure is covered by the custody proofs below; remote custody belongs to its
+adapter and fault-harness cuts.
+
+
+## Local custody and supervision implementation
+
+`Custody::spawn` accepts only an admitted `Run` with registered sentinel custody.
+The journal owns the intent and receipt. Prepared async-signal-safe child code
+establishes the process group and waits for a go byte; inherited sibling barriers,
+owner gates and sentinel writers close before it waits. Record failure kills and
+reaps the blocked child. After recording, the Run retains the process core even
+when the caller drops its handle. Owner cleanup retains the direct leader through
+group closure and bounded capture drain. PTY children own their terminal session;
+foreground children borrow the caller's terminal and restore its foreground group.
+
+Recovery signals a group only with fresh leader generation evidence. Linux 6.9's
+pidfd group operation targets the original kernel group; EINVAL selects the
+contract's older-kernel fallback after another identity check. macOS and older
+Linux retain the documented numeric check/signal window. After leader loss,
+member signals require both nonce and start identity, with a pidfd opened first
+on Linux. Unreadable or cleared environments grant no authority. Apple-protected
+binaries can omit their environment from `KERN_PROCARGS2`; that is `Unknown`,
+not a missing nonce that permits a group kill. The nonce qualification uses a
+controlled executable whose environment is observable.
+
+`SignalRouter` is installed once by binary main; libraries receive its root
+cancel token, which observes the signal mailbox without requiring an owner-loop
+poll. Cleanup tokens remain independent. Supervisor and sentinel are hidden
+same-binary re-exec entry points; product dispatch remains engine-lane work.
+The executable's file identity and digest are checked on both sides of startup.
+Invocation and explicit spawn environments travel over bounded pipes, never argv.
+Capture redacts before the rotating log, bounded tail or event queue; log ENOSPC
+changes capture metadata without changing the workload outcome.
+
+`Run::begin` starts the sentinel after admission and waits for its validated-main
+acknowledgement. One owner-gated transaction registers owner, supervisor and
+sentinel identities, then Run takes the sole death-pipe writer. Closed commits
+before the writer closes and the owner gate releases. Pure metadata names missing,
+dead and replaced sentinels as gaps. Sentinel EOF uses the same Run settle writer
+with a bounded gate wait; SIGSTOP leaves the pipe and gate held.
+
+Detached startup records socket intent before binding, then records the socket
+inode receipt. A bind fault starts no workload and settles `Closed(NotStarted)`;
+a failure to commit closure remains interrupted. This implements the 2026-10-19
+kernel-lane ruling recorded in contract 052 §5.8. Requests are durable before
+socket notices; only generation-fenced requests act, and peer credentials are
+checked. Owning-client EOF stops; secondary-client EOF does nothing; detach is a
+durable request. Front ends consume the same redacted log frames and typed final
+workload/exit outcome. No engine topology or command grammar lives in the kernel.
+
+### Clause coverage (§5.7–§5.8)
+
+| Clause | Implementation | Proof family |
+| --- | --- | --- |
+| I-P1/I-P2, K6; partial spawn | `custody`, child barrier, Run effect tickets | partial-spawn rollback; Kill/ENOSPC at fork, before record, before go, after go |
+| I-P3; group and streams | retained direct child and group inventory | exited leader with live descendant; PTY and foreground terminal restoration |
+| I-P4/I-P8, O12 | process-table trait; leader/pidfd or member nonce plus start | reused/foreign/mixed/cleared-environment strict fakes; race refusal; native nonce recovery |
+| I-P5/I-P6, K10/K12 | streaming redactor, rotating log, bounded queues; explicit env | split secret and ps argv; log ENOSPC preserves ring and success |
+| I-P7, K9; cascade/escalation | one main router; signal-sourced cancel token; durable escalation request | HUP/INT/TERM cascade; duplicate router refused; token observes repeated INT without polling |
+| I-SV1/I-SV4; startup | same-binary re-exec, checked invocation decoder, Run-owned registration/socket | replacement refusal; socket fault produces NotStarted; registration atomicity under Kill/ENOSPC |
+| I-SV2; owner and sentinel lifetime | sole owner death pipe, same settle, pure sentinel metadata | owner/supervisor SIGKILL; SIGSTOP does not settle; dead sentinel gap; descriptor closes exactly once in order |
+| I-SV3; clients and matrix | common events; owning versus detached/secondary liveness | owning-client kill matrix; detach then stop; secondary death; 288-cell front-end/prior/stop/attachment model |
+| K4; one writer | lifecycle, socket and process results enter through Run | source ratchet rejects journal writes in supervision/custody; idempotent settle and attachment release |
+
+`test:kernel:custody` builds the disposable, feature-gated same-binary fixture and
+runs the real-process, strict-fake, signal, registration and socket fault proofs.
+`test:kernel:run` owns the 288-cell matrix. `test:kernel:custody:linux` qualifies
+those proof families, identity and contexts in an isolated temporary Colima VM
+and ARM64 Linux container through host admission. It needs Colima and Docker
+client tools and leaves its stopped VM/cache and logs in its printed temporary
+directory. It never activates a Docker context or mounts the original checkout.
+The fixture binary requires `fault-injection` and is not a product executable.

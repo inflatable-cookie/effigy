@@ -8,8 +8,10 @@ families and retention (§7) are implemented with their proof lists and
 fault points. `qa:kernel-ratchet` enforces the committed production baseline
 in `config/kernel-ratchet.json`. The run journal and settle (§5.6), attachments and claims (§5.9) are implemented
 with generation-fenced tickets, positive completion, holder protection and
-journal-boundary fault proofs. Custody, signals, executable probes and the
-probe guard remain specified and unavailable. Engines have not adopted the kernel; the
+journal-boundary fault proofs. Local custody, signal routing, detached supervision
+and per-run sentinels (§5.7–§5.8) are implemented in the kernel, with a
+same-binary qualification harness. Executable probes and the probe guard
+remain specified and unavailable. Engines have not adopted the kernel; the
 mechanisms in the adoption map (§10) remain current behavior. QA-group `stop` and `hard_timeout_ms` stay unavailable: contract
 [051](051-bounded-qa-groups-contract.md) keeps refusing them until this
 kernel's run journal, custody and deadlines exist.
@@ -883,7 +885,7 @@ Detached startup:
 | 1 | client resolves the invocation (Observe) | none | error; nothing happened |
 | 2 | client spawns the supervisor through the kernel and hands it the invocation on a pipe | none | spawn error; nothing happened |
 | 3 | supervisor runs `Run::begin` | run `Admitted` | `Busy` or `PredecessorUnsettled` sent to the client; supervisor exits |
-| 4 | supervisor opens `sock/<run-id>.sock` (0600, peer-uid checked) and sends `admitted` | supervisor identity | pipe EOF before `admitted`: settle with nothing applied, `Closed(NotStarted)` |
+| 4 | supervisor commits socket intent, binds `sock/<run-id>.sock` (0600, peer-uid checked), records its receipt and sends `admitted` | supervisor identity | pipe EOF before `admitted`: settle with nothing applied, `Closed(NotStarted)` |
 | 5 | supervisor performs effects | events | failure: `Stopping`, settle |
 | 6 | the owning client renders (TUI or text). `--detach` sends `detach` and exits once `Active`. | request `detach` | owning-client EOF without detach: `stop` request, settle |
 | 7 | another process stops the run: request row, then a socket notice | request | socket unreachable and gate free: the requester settles as gate holder |
@@ -921,9 +923,11 @@ after `Admitted` whenever a run's custody is non-empty, in either placement.
 | --- | --- |
 | Supervisor Crash or Kill | The sentinel settles. |
 | Supervisor and sentinel both Crash or Kill | Status shows `interrupted`; the next Mutate on the owner, or `stop`, settles. |
-| ENOSPC on the socket path | Startup fails before `Admitted`. |
+| ENOSPC on the socket path | The admitted run launches no workload and settles with nothing applied: `Closed(NotStarted)`. If closing also fails, the run reads Interrupted under §5.6 recovery. |
 | Perm on the socket | The peer-uid check refuses. The request row remains; the supervisor reads requests when it polls the store. |
 | Clock | No time authority. |
+
+Planner ruling (effigy-a6, kernel lane owner, 2026-10-19): admission precedes socket bind, because K3 requires intent before effect.
 
 #### Proof
 

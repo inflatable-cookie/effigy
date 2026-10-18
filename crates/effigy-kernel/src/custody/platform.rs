@@ -1,0 +1,501 @@
+//! OS observations and generation-evidenced signals. Numeric recovery on macOS
+//! and pre-6.9 Linux has the contract's documented check/signal window; a pidfd
+//! is never used as permission for a numeric group kill.
+use super::*;
+use crate::ident::{self, ProcessStartIdentity, ProcessState};
+#[cfg(target_os = "linux")]
+use std::io::Read;
+#[cfg(target_os = "linux")]
+use std::os::fd::FromRawFd;
+
+#[derive(Debug, Clone)]
+pub(crate) struct Member {
+    pub identity: ProcessIdentity,
+    pub nonce: Observed<String>,
+}
+pub(crate) trait ProcessTable {
+    fn leader(&mut self, receipt: &ProcessReceipt) -> Observed<ProcessIdentity>;
+    fn members(&mut self, pgid: u32) -> Observed<Vec<Member>>;
+    fn signal_leader(&mut self, receipt: &ProcessReceipt, signal: i32)
+        -> Observed<SignalDelivered>;
+    fn signal_member(
+        &mut self,
+        member: &Member,
+        receipt: &ProcessReceipt,
+        signal: i32,
+    ) -> Observed<SignalDelivered>;
+}
+#[derive(Debug)]
+struct Host;
+fn gone(pgid: u32) -> Observed<Closure> {
+    Observed::Absent(AbsenceProof::GroupEmpty { pgid })
+}
+fn group_exists(pgid: u32) -> Observed<()> {
+    if pgid == 0 || pgid > i32::MAX as u32 {
+        return Observed::Unknown(unknown("invalid process group"));
+    }
+    // SAFETY: validated positive group, signal zero only observes existence.
+    if unsafe { libc::kill(-(pgid as i32), 0) } == 0 {
+        return Observed::Verified((), evidence());
+    }
+    let e = io::Error::last_os_error();
+    if e.raw_os_error() == Some(libc::ESRCH) {
+        Observed::Absent(AbsenceProof::GroupEmpty { pgid })
+    } else {
+        Observed::Unknown(unknown(e))
+    }
+}
+pub(super) fn owner_signal(receipt: &ProcessReceipt, signal: i32) -> Observed<SignalDelivered> {
+    // Caller holds its unreaped direct leader. The group number remains pinned.
+    numeric(receipt.pgid, true, signal)
+}
+fn numeric(pid: u32, group: bool, signal: i32) -> Observed<SignalDelivered> {
+    if pid == 0
+        || pid > i32::MAX as u32
+        || ![libc::SIGTERM, libc::SIGCONT, libc::SIGKILL, libc::SIGINT].contains(&signal)
+    {
+        return Observed::Unknown(unknown("invalid signal target"));
+    }
+    // SAFETY: positive, range-checked target and allowed signal; authority is
+    // established by the caller's unreaped child or immediate identity check.
+    let result = unsafe { libc::kill(if group { -(pid as i32) } else { pid as i32 }, signal) };
+    if result == 0 {
+        Observed::Verified(SignalDelivered { pid, group, signal }, evidence())
+    } else {
+        let e = io::Error::last_os_error();
+        if e.raw_os_error() == Some(libc::ESRCH) {
+            Observed::Absent(AbsenceProof::NoSuchProcess { pid })
+        } else {
+            Observed::Unknown(unknown(e))
+        }
+    }
+}
+fn not_earlier(member: &ProcessIdentity, receipt: &ProcessReceipt) -> bool {
+    if member.boot != receipt.identity.boot {
+        return false;
+    }
+    match (&member.start, &receipt.identity.start) {
+        (ProcessStartIdentity::LinuxTicks(a), ProcessStartIdentity::LinuxTicks(b)) => a >= b,
+        (
+            ProcessStartIdentity::MacOs {
+                seconds: a,
+                microseconds: aa,
+            },
+            ProcessStartIdentity::MacOs {
+                seconds: b,
+                microseconds: bb,
+            },
+        ) => (a, aa) >= (b, bb),
+        _ => false,
+    }
+}
+/// Closed means no live member; an unreaped leader/zombie supplies no workload
+/// and is reaped only by its owner. A vanished group has an ESRCH proof.
+pub(super) fn group_closed(pgid: u32, exclude: Option<u32>) -> Observed<Closure> {
+    if let Observed::Absent(_) = group_exists(pgid) {
+        return gone(pgid);
+    }
+    // An unreaped macOS zombie can leave killpg(0) returning EPERM. A successful
+    // group inventory is independent positive evidence of no live members; it
+    // permits reaping our pinned leader without signalling an unknown target.
+    match live_pids(pgid) {
+        Ok(pids) if pids.iter().all(|pid| Some(*pid) == exclude) => {
+            Observed::Verified(Closure, evidence())
+        }
+        Ok(_) => Observed::Unknown(unknown("group still has live members")),
+        Err(e) => Observed::Unknown(unknown(e)),
+    }
+}
+pub(super) fn recover(receipt: &ProcessReceipt, cx: &CleanupContext) -> Observed<Closure> {
+    recover_with(&mut Host, receipt, cx)
+}
+pub(crate) fn recover_with(
+    table: &mut impl ProcessTable,
+    receipt: &ProcessReceipt,
+    cx: &CleanupContext,
+) -> Observed<Closure> {
+    let grace = Instant::now()
+        .checked_add(Duration::from_millis(receipt.grace_millis))
+        .unwrap_or_else(Instant::now);
+    let mut killed = false;
+    loop {
+        if let Err(e) = cx.operation().check("custody recovery") {
+            return Observed::Unknown(unknown(format!("{e:?}")));
+        }
+        let signal = if Instant::now() >= grace {
+            killed = true;
+            libc::SIGKILL
+        } else {
+            libc::SIGTERM
+        };
+        // Every turn rechecks evidence, including after TERM/CONT and at KILL.
+        let mut group_authority = false;
+        match table.leader(receipt) {
+            Observed::Verified(current, _) if current == receipt.identity => {
+                group_authority = true;
+                for sig in [signal, libc::SIGCONT] {
+                    if let Observed::Unknown(reason) = table.signal_leader(receipt, sig) {
+                        return Observed::Unknown(reason);
+                    }
+                }
+            }
+            Observed::Unknown(reason) => return Observed::Unknown(reason),
+            _ => {}
+        }
+        match table.members(receipt.pgid) {
+            Observed::Absent(proof) => return Observed::Absent(proof),
+            Observed::Unknown(reason) => return Observed::Unknown(reason),
+            Observed::Verified(members, _) if members.is_empty() => {
+                return Observed::Verified(Closure, evidence())
+            }
+            Observed::Verified(_, _) if group_authority => {}
+            Observed::Verified(members, _) => {
+                let mut foreign = Vec::new();
+                for member in members {
+                    if member
+                        .nonce
+                        .verified()
+                        .is_none_or(|nonce| nonce != &receipt.nonce)
+                        || !not_earlier(&member.identity, receipt)
+                    {
+                        foreign.push(format!(
+                            "pid {} nonce={:?} age_verified={}",
+                            member.identity.pid,
+                            member.nonce,
+                            not_earlier(&member.identity, receipt)
+                        ));
+                        continue;
+                    }
+                    for sig in [signal, libc::SIGCONT] {
+                        if let Observed::Unknown(reason) =
+                            table.signal_member(&member, receipt, sig)
+                        {
+                            return Observed::Unknown(reason);
+                        }
+                    }
+                }
+                if !foreign.is_empty() {
+                    return Observed::Unknown(unknown(format!(
+                        "group contains members without generation evidence: {foreign:?}"
+                    )));
+                }
+            }
+        }
+        if killed {
+            std::thread::sleep(Duration::from_millis(2));
+        } else {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+}
+impl ProcessTable for Host {
+    fn leader(&mut self, r: &ProcessReceipt) -> Observed<ProcessIdentity> {
+        match ident::process_state(r.identity.pid) {
+            Observed::Verified(ProcessState::Zombie, _) => {
+                Observed::Absent(AbsenceProof::NoSuchProcess {
+                    pid: r.identity.pid,
+                })
+            }
+            Observed::Unknown(reason) => Observed::Unknown(reason),
+            _ => ident::process_identity(r.identity.pid),
+        }
+    }
+    fn members(&mut self, pgid: u32) -> Observed<Vec<Member>> {
+        if let Observed::Absent(proof) = group_exists(pgid) {
+            return Observed::Absent(proof);
+        }
+        let pids = match live_pids(pgid) {
+            Ok(p) => p,
+            Err(e) => return Observed::Unknown(unknown(e)),
+        };
+        let mut members = Vec::new();
+        for pid in pids {
+            match ident::process_identity(pid) {
+                Observed::Verified(identity, _) => members.push(Member {
+                    identity,
+                    nonce: read_nonce(pid),
+                }),
+                Observed::Absent(_) => {}
+                Observed::Unknown(reason) => return Observed::Unknown(reason),
+            }
+        }
+        Observed::Verified(members, evidence())
+    }
+    fn signal_leader(&mut self, r: &ProcessReceipt, signal: i32) -> Observed<SignalDelivered> {
+        #[cfg(target_os = "linux")]
+        {
+            let fd = match pidfd(r.identity.pid) {
+                Ok(fd) => fd,
+                Err(e) => return Observed::Unknown(unknown(e)),
+            };
+            if ident::process_identity(r.identity.pid).verified() != Some(&r.identity) {
+                return Observed::Unknown(unknown("leader changed before signal"));
+            }
+            // SAFETY: live pidfd, supported signal, null siginfo; flag 4 selects
+            // the original process group's kernel identity on Linux >=6.9.
+            let sent = unsafe {
+                libc::syscall(
+                    libc::SYS_pidfd_send_signal,
+                    fd.as_raw_fd(),
+                    signal,
+                    std::ptr::null::<libc::siginfo_t>(),
+                    4u32,
+                )
+            };
+            if sent == 0 {
+                return Observed::Verified(
+                    SignalDelivered {
+                        pid: r.pgid,
+                        group: true,
+                        signal,
+                    },
+                    evidence(),
+                );
+            }
+            let e = io::Error::last_os_error();
+            if e.raw_os_error() != Some(libc::EINVAL) {
+                return if e.raw_os_error() == Some(libc::ESRCH) {
+                    Observed::Absent(AbsenceProof::NoSuchProcess {
+                        pid: r.identity.pid,
+                    })
+                } else {
+                    Observed::Unknown(unknown(e))
+                };
+            }
+            // EINVAL is the capability probe for old kernels. Re-check once
+            // more immediately before the documented numeric-signal window.
+        }
+        if ident::process_identity(r.identity.pid).verified() != Some(&r.identity) {
+            return Observed::Unknown(unknown("leader changed before numeric signal"));
+        }
+        numeric(r.pgid, true, signal)
+    }
+    fn signal_member(
+        &mut self,
+        m: &Member,
+        r: &ProcessReceipt,
+        signal: i32,
+    ) -> Observed<SignalDelivered> {
+        #[cfg(target_os = "linux")]
+        let fd = match pidfd(m.identity.pid) {
+            Ok(fd) => fd,
+            Err(e) => return Observed::Unknown(unknown(e)),
+        };
+        // Open the descriptor before observing identity and environment. Neither
+        // a stale process table entry nor a bare numeric pid grants authority.
+        if ident::process_identity(m.identity.pid).verified() != Some(&m.identity)
+            || read_nonce(m.identity.pid).verified() != Some(&r.nonce)
+            || !not_earlier(&m.identity, r)
+        {
+            return Observed::Unknown(unknown("member generation unverified"));
+        }
+        #[cfg(target_os = "linux")]
+        {
+            // SAFETY: live per-process pidfd opened before evidence checks;
+            // flags zero targets the referenced process, never a numeric pid.
+            if unsafe {
+                libc::syscall(
+                    libc::SYS_pidfd_send_signal,
+                    fd.as_raw_fd(),
+                    signal,
+                    std::ptr::null::<libc::siginfo_t>(),
+                    0u32,
+                )
+            } == 0
+            {
+                return Observed::Verified(
+                    SignalDelivered {
+                        pid: m.identity.pid,
+                        group: false,
+                        signal,
+                    },
+                    evidence(),
+                );
+            }
+            let e = io::Error::last_os_error();
+            if e.raw_os_error() == Some(libc::ESRCH) {
+                Observed::Absent(AbsenceProof::NoSuchProcess {
+                    pid: m.identity.pid,
+                })
+            } else {
+                Observed::Unknown(unknown(e))
+            }
+        }
+        #[cfg(target_os = "macos")]
+        numeric(m.identity.pid, false, signal)
+    }
+}
+#[cfg(target_os = "linux")]
+fn pidfd(pid: u32) -> io::Result<OwnedFd> {
+    // SAFETY: positive process id with flags zero; result is a fresh fd.
+    let raw = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0u32) };
+    if raw < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: successful syscall returned a fresh owned fd.
+    Ok(unsafe { OwnedFd::from_raw_fd(raw as i32) })
+}
+fn live_pids(pgid: u32) -> io::Result<Vec<u32>> {
+    let mut live = Vec::new();
+    for pid in group_pids(pgid)? {
+        #[cfg(target_os = "linux")]
+        {
+            // SAFETY: pid came from the OS inventory; getpgid only observes it.
+            let group = unsafe { libc::getpgid(pid as i32) };
+            if group < 0 {
+                let e = io::Error::last_os_error();
+                if e.raw_os_error() == Some(libc::ESRCH) {
+                    continue;
+                }
+                return Err(e);
+            }
+            if group as u32 != pgid {
+                continue;
+            }
+        }
+        match ident::process_state(pid) {
+            Observed::Verified(ProcessState::Zombie, _) | Observed::Absent(_) => {}
+            Observed::Verified(_, _) => live.push(pid),
+            Observed::Unknown(r) => return Err(io::Error::other(format!("{r:?}"))),
+        }
+    }
+    Ok(live)
+}
+#[cfg(target_os = "linux")]
+fn group_pids(_pgid: u32) -> io::Result<Vec<u32>> {
+    let dir = crate::fs::DirFd::walk(std::path::Path::new("/proc"), crate::fs::Trust::Ancestor)
+        .map_err(io::Error::other)?;
+    Ok(dir
+        .list(1 << 20)
+        .map_err(io::Error::other)?
+        .iter()
+        .filter_map(|n| n.to_str()?.parse().ok())
+        .collect())
+}
+#[cfg(target_os = "macos")]
+fn group_pids(pgid: u32) -> io::Result<Vec<u32>> {
+    let mut pids = vec![0i32; 1 << 17];
+    // SAFETY: writable aligned allocation for the passed byte size, bounded
+    // below i32::MAX; proc_listallpids returns a count of initialized entries.
+    // Clear errno to distinguish a successful empty inventory from the
+    // libproc wrapper's zero-on-error return value.
+    // SAFETY: __error returns this thread's live errno slot.
+    unsafe {
+        *libc::__error() = 0;
+    }
+    let count = unsafe {
+        libc::proc_listpgrppids(
+            pgid as i32,
+            pids.as_mut_ptr().cast(),
+            (pids.len() * std::mem::size_of::<i32>()) as i32,
+        )
+    };
+    if count < 0 || count as usize >= pids.len() {
+        return Err(io::Error::other(
+            "process inventory unavailable or truncated",
+        ));
+    }
+    if count == 0 {
+        let error = io::Error::last_os_error();
+        if error.raw_os_error() != Some(0) {
+            return Err(error);
+        }
+    }
+    pids.truncate(count as usize);
+    Ok(pids
+        .into_iter()
+        .filter(|p| *p > 0)
+        .map(|p| p as u32)
+        .collect())
+}
+pub(super) fn read_nonce(pid: u32) -> Observed<String> {
+    match environment(pid) {
+        Ok(bytes) => {
+            let key = b"EFFIGY_CUSTODY_NONCE=";
+            match bytes
+                .split(|b| *b == 0)
+                .find_map(|entry| entry.strip_prefix(key))
+            {
+                Some(nonce) => match String::from_utf8(nonce.to_vec()) {
+                    Ok(nonce) => Observed::Verified(nonce, evidence()),
+                    Err(_) => Observed::Unknown(unknown("unparsable custody nonce")),
+                },
+                None => Observed::Unknown(unknown("custody nonce missing")),
+            }
+        }
+        Err(e) => Observed::Unknown(unknown(e)),
+    }
+}
+#[cfg(target_os = "linux")]
+fn environment(pid: u32) -> io::Result<Vec<u8>> {
+    use crate::fs::{DirFd, FileName, Trust};
+    let proc =
+        DirFd::walk(std::path::Path::new("/proc"), Trust::Ancestor).map_err(io::Error::other)?;
+    let dir = proc
+        .child(&pid.to_string(), Trust::Ancestor, false)
+        .map_err(io::Error::other)?
+        .ok_or_else(|| io::Error::from_raw_os_error(libc::ESRCH))?;
+    let (mut file, _) = dir
+        .open_file(
+            &FileName::new("environ").map_err(io::Error::other)?,
+            libc::O_RDONLY,
+            None,
+            Trust::Ancestor,
+        )
+        .map_err(io::Error::other)?
+        .ok_or_else(|| io::Error::from_raw_os_error(libc::ESRCH))?;
+    let mut bytes = Vec::new();
+    std::io::Read::by_ref(&mut file)
+        .take((1 << 20) + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > 1 << 20 {
+        return Err(io::Error::other("environment too large"));
+    }
+    Ok(bytes)
+}
+#[cfg(target_os = "macos")]
+fn environment(pid: u32) -> io::Result<Vec<u8>> {
+    let mut mib = [libc::CTL_KERN, libc::KERN_PROCARGS2, pid as i32];
+    let mut bytes = vec![0u8; 1 << 20];
+    let mut size = bytes.len();
+    // SAFETY: three initialized MIB integers and a writable, initialized byte
+    // allocation of size bytes. Null newp/zero newlen make this read-only.
+    if unsafe {
+        libc::sysctl(
+            mib.as_mut_ptr(),
+            3,
+            bytes.as_mut_ptr().cast(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    } != 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    if size > bytes.len() || size < 4 {
+        return Err(io::Error::other("invalid process environment size"));
+    }
+    bytes.truncate(size);
+    let argc = i32::from_ne_bytes(bytes[..4].try_into().map_err(io::Error::other)?);
+    if argc < 0 {
+        return Err(io::Error::other("invalid process argv count"));
+    }
+    let mut offset = 4;
+    while offset < bytes.len() && bytes[offset] != 0 {
+        offset += 1;
+    }
+    while offset < bytes.len() && bytes[offset] == 0 {
+        offset += 1;
+    }
+    for _ in 0..argc {
+        while offset < bytes.len() && bytes[offset] != 0 {
+            offset += 1;
+        }
+        offset = offset.saturating_add(1);
+    }
+    Ok(bytes
+        .get(offset..)
+        .ok_or_else(|| io::Error::other("truncated process environment"))?
+        .to_vec())
+}

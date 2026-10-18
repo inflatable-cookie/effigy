@@ -9,6 +9,18 @@ use std::io;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Point {
+    SocketBind,
+    CaptureWrite,
+    SpawnFork,
+    SpawnBeforeRecord,
+    SpawnBeforeGo,
+    SpawnAfterGo,
+    LifecycleBefore,
+    LifecycleCommit,
+    LifecycleAfter,
+    SentinelBeforeSettle,
+    SentinelAfterSettle,
+    SentinelClose,
     GateAcquire,
     BeginBefore,
     BeginGated,
@@ -55,8 +67,11 @@ pub(crate) enum Fault {
     Enospc,
     Eperm,
 }
+type Hook = Box<dyn Fn(Point)>;
 thread_local! {
+    static HOOK: RefCell<Option<Hook>> = const {RefCell::new(None)};
     static UNKNOWN: Cell<bool> = const { Cell::new(false) };
+    static NAMED: Cell<Option<(Point,Fault)>> = const {Cell::new(None)};
     static ARMED: Cell<Option<(usize, Fault)>> = const { Cell::new(None) };
     static CROSSED: Cell<usize> = const { Cell::new(0) };
     static TRACE: RefCell<Vec<Point>> = const { RefCell::new(Vec::new()) };
@@ -71,12 +86,24 @@ pub(crate) fn injected<T>() -> Option<Observed<T>> {
 }
 pub(crate) fn point(point: Point) -> io::Result<()> {
     TRACE.with(|trace| trace.borrow_mut().push(point));
+    HOOK.with(|hook| {
+        if let Some(callback) = hook.borrow().as_ref() {
+            callback(point);
+        }
+    });
     let index = CROSSED.with(|crossed| {
         let index = crossed.get();
         crossed.set(index + 1);
         index
     });
-    match ARMED.with(Cell::get) {
+    let named = NAMED.with(|cell| match cell.get() {
+        Some((armed, fault)) if armed == point => {
+            cell.set(None);
+            Some((index, fault))
+        }
+        _ => None,
+    });
+    match named.or_else(|| ARMED.with(Cell::get)) {
         Some((armed, fault)) if armed == index => match fault {
             Fault::Kill => loop {
                 // SAFETY: signalling our own pid; SIGKILL does not return.
@@ -89,7 +116,15 @@ pub(crate) fn point(point: Point) -> io::Result<()> {
     }
 }
 /// Resets the crossing counter and trace; `Some` arms one crossing.
+pub(crate) fn hook(callback: Option<Hook>) {
+    HOOK.with(|hook| *hook.borrow_mut() = callback);
+}
+pub(crate) fn arm_point(point: Point, fault: Fault) {
+    arm(None);
+    NAMED.with(|cell| cell.set(Some((point, fault))));
+}
 pub(crate) fn arm(fault: Option<(usize, Fault)>) {
+    NAMED.with(|cell| cell.set(None));
     ARMED.with(|armed| armed.set(fault));
     CROSSED.with(|crossed| crossed.set(0));
     TRACE.with(|trace| trace.borrow_mut().clear());

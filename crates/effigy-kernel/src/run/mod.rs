@@ -5,12 +5,16 @@
 mod attachments;
 mod claims;
 mod journal;
+mod lifecycle;
+pub use lifecycle::{metadata, RunMetadata, SentinelStatus};
 mod settle;
+mod socket;
 
 pub use attachments::{
     AttachMode, AttachmentTicket, Attachments, Holder, Liveness, TransitionPermit,
 };
 pub use claims::{Claims, ReservationToken};
+pub(crate) use settle::settle_interrupted_wait;
 pub use settle::{settle_interrupted, Reconciled, Settled, SettlementAdapter};
 
 use crate::ctx::{CleanupContext, EffectContext, Interrupt};
@@ -81,6 +85,11 @@ pub struct EffectTicket {
     run: RunId,
     owner: Fence,
     sequence: i64,
+}
+impl EffectTicket {
+    pub(crate) fn sequence(&self) -> i64 {
+        self.sequence
+    }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Phase {
@@ -177,6 +186,8 @@ pub struct BeginOpts {
     /// An explicit operator acknowledgement, scoped to these predecessors only.
     pub acknowledge: Vec<RunId>,
     pub next: Invocation,
+    /// Planned custody requires a re-executable sentinel before any workload.
+    pub custody: Option<crate::supervise::LifecyclePlan>,
 }
 #[derive(Debug)]
 pub struct Run<'a> {
@@ -192,6 +203,11 @@ pub struct Run<'a> {
     // Natural completion evidence is local to the live owner. Recovery never
     // manufactures success; only finish durably records the validated outcome.
     completed: std::collections::BTreeMap<i64, crate::outcome::RequiredObligation>,
+    sentinel: Option<crate::supervise::SentinelLease>,
+    processes: std::collections::BTreeMap<
+        i64,
+        std::sync::Arc<std::sync::Mutex<crate::custody::ProcessCore>>,
+    >,
 }
 impl<'a> Run<'a> {
     pub fn begin(
@@ -220,7 +236,7 @@ impl<'a> Run<'a> {
         crate::fault_point!(BeginGated)?;
         // Only an owner gate may span recovery callbacks or later effects (K14).
         guard.retain_owner(&inv.spec().owner);
-        let mut store = Store::open(cx, root)?;
+        let mut store = Store::open(&cx.child(std::time::Duration::from_secs(30)), root)?;
         let predecessors = journal::predecessors(store.conn(), &inv.spec().owner)?;
         for predecessor in predecessors {
             let mut previous = Self {
@@ -236,6 +252,8 @@ impl<'a> Run<'a> {
                 next: opts.next.clone(),
                 poisoned: false,
                 completed: Default::default(),
+                sentinel: None,
+                processes: Default::default(),
             };
             previous.settle_inner(cleanup, adapter)?;
             let residue = previous
@@ -264,18 +282,18 @@ impl<'a> Run<'a> {
             guard = previous.guard;
         }
         crate::fault_point!(BeginRecovered)?;
-        let generation = store.transaction(cx, |txn| {
+        let generation = store.transaction(&cx.child(std::time::Duration::from_secs(30)), |txn| {
             txn.resource(&inv.spec().owner, "run")?;
             let generation = txn.next_generation(&inv.spec().owner)?;
-            txn.conn().execute("INSERT INTO runs(run_id,owner,generation,kind,placement,phase,invocation,digest,created_at,updated_at) \
-                VALUES (?1,?2,?3,?4,'host','admitted',?5,?6,?7,?7)", params![opts.id.to_string(),
+            txn.conn().execute("INSERT INTO runs(run_id,owner,generation,kind,placement,phase,invocation,digest,created_at,updated_at,workload_outcome) \
+                VALUES (?1,?2,?3,?4,'host','admitted',?5,?6,?7,?7,?8)", params![opts.id.to_string(),
                 inv.spec().owner.name().to_string(), generation.get() as i64,
-                "operation", serde_json::to_string(inv)?, inv.digest().0.as_slice(), txn.now()])?;
+                if opts.custody.is_some() {"custody"}else{"operation"}, serde_json::to_string(inv)?, inv.digest().0.as_slice(), txn.now(), if opts.custody.is_some() {Some(serde_json::to_string(&WorkloadOutcome::NotStarted)?)}else{None}])?;
             Ok::<_, RunError>(generation)
         })?;
         crate::fault_point!(BeginAdmitted)?;
         guard.set_run(&opts.id); // Diagnostics never affect outcome (K10).
-        Ok(Self {
+        let mut run = Self {
             root,
             store,
             guard,
@@ -285,10 +303,58 @@ impl<'a> Run<'a> {
                 resource: inv.spec().owner.clone(),
                 generation,
             },
-            next: opts.next,
+            next: opts.next.clone(),
             poisoned: false,
             completed: Default::default(),
-        })
+            sentinel: None,
+            processes: Default::default(),
+        };
+        if let Some(plan) = opts.custody {
+            let registration = crate::supervise::spawn_sentinel(&run, root, &plan, &opts.next);
+            match registration.and_then(|registration| run.register_lifecycle(registration, &plan))
+            {
+                Ok(()) => {}
+                Err(error) => {
+                    run.settle_inner(cleanup, adapter)?;
+                    return Err(error);
+                }
+            }
+        }
+        Ok(run)
+    }
+    pub(crate) fn capture_log(
+        &self,
+        sequence: i64,
+        limits: &crate::ctx::Limits,
+    ) -> std::io::Result<crate::custody::capture::Log> {
+        crate::custody::capture::Log::open(self.root, self.id, sequence, limits)
+    }
+    pub(crate) fn has_sentinel(&self) -> bool {
+        self.sentinel.is_some()
+    }
+    pub(crate) fn intend_process(&mut self, spec: EffectSpec) -> Result<EffectTicket, RunError> {
+        self.intend_inner(spec)
+    }
+    pub(crate) fn retain_process(
+        &mut self,
+        sequence: i64,
+        core: std::sync::Arc<std::sync::Mutex<crate::custody::ProcessCore>>,
+    ) {
+        self.processes.insert(sequence, core);
+    }
+    pub(crate) fn rollback_processes(
+        &mut self,
+        cx: &CleanupContext,
+    ) -> Vec<crate::custody::StopReport> {
+        self.processes
+            .values()
+            .rev()
+            .map(|p| {
+                p.lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .stop(cx)
+            })
+            .collect()
     }
     pub fn id(&self) -> RunId {
         self.id
@@ -319,11 +385,14 @@ impl<'a> Run<'a> {
         self.can_effect()?;
         let result = (|| {
             crate::fault_point!(IntendBefore)?;
-            let sequence = self.store.transaction(&self.cx, |txn| {
-                journal::check_fence(txn.conn(), &self.owner)?;
-                journal::check_fence(txn.conn(), &spec.target)?;
-                journal::insert_effect(txn, self.id, &spec)
-            })?;
+            let sequence = self.store.transaction(
+                &self.cx.child(std::time::Duration::from_secs(30)),
+                |txn| {
+                    journal::check_fence(txn.conn(), &self.owner)?;
+                    journal::check_fence(txn.conn(), &spec.target)?;
+                    journal::insert_effect(txn, self.id, &spec)
+                },
+            )?;
             crate::fault_point!(IntendAfter)?;
             Ok(EffectTicket {
                 run: self.id,
@@ -381,22 +450,23 @@ impl<'a> Run<'a> {
             } else {
                 crate::fault_point!(AppliedBefore)?;
             }
-            self.store.transaction(&self.cx, |txn| {
-                journal::check_fence(txn.conn(), &self.owner)?;
-                let effect = journal::effect(txn.conn(), self.id, ticket.sequence)?;
-                journal::check_fence(txn.conn(), &effect.spec.target)?;
-                if !matches!(effect.state, EffectState::Intended | EffectState::Unknown) {
-                    return Err(RunError::Invalid("effect already completed".into()));
-                }
-                journal::write_effect(
-                    txn,
-                    self.id,
-                    ticket.sequence,
-                    state,
-                    receipt.as_ref(),
-                    reason.as_deref(),
-                )
-            })?;
+            self.store
+                .transaction(&self.cx.child(std::time::Duration::from_secs(30)), |txn| {
+                    journal::check_fence(txn.conn(), &self.owner)?;
+                    let effect = journal::effect(txn.conn(), self.id, ticket.sequence)?;
+                    journal::check_fence(txn.conn(), &effect.spec.target)?;
+                    if !matches!(effect.state, EffectState::Intended | EffectState::Unknown) {
+                        return Err(RunError::Invalid("effect already completed".into()));
+                    }
+                    journal::write_effect(
+                        txn,
+                        self.id,
+                        ticket.sequence,
+                        state,
+                        receipt.as_ref(),
+                        reason.as_deref(),
+                    )
+                })?;
             if state == EffectState::Failed {
                 crate::fault_point!(FailedAfter)?;
             } else {
@@ -437,14 +507,15 @@ impl<'a> Run<'a> {
         }
         let result = (|| {
             crate::fault_point!(PhaseBefore)?;
-            self.store.transaction(&self.cx, |txn| {
-                journal::check_fence(txn.conn(), &self.owner)?;
-                txn.conn().execute(
-                    "UPDATE runs SET phase=?2,updated_at=?3 WHERE run_id=?1",
-                    params![self.id.to_string(), phase.name(), txn.now()],
-                )?;
-                Ok::<_, RunError>(())
-            })?;
+            self.store
+                .transaction(&self.cx.child(std::time::Duration::from_secs(30)), |txn| {
+                    journal::check_fence(txn.conn(), &self.owner)?;
+                    txn.conn().execute(
+                        "UPDATE runs SET phase=?2,updated_at=?3 WHERE run_id=?1",
+                        params![self.id.to_string(), phase.name(), txn.now()],
+                    )?;
+                    Ok::<_, RunError>(())
+                })?;
             crate::fault_point!(PhaseAfter)?;
             Ok(())
         })();
@@ -484,7 +555,10 @@ impl<'a> Run<'a> {
             .iter()
             .filter(|e| e.spec.required)
             .map(|e| {
-                if e.state == EffectState::Applied && e.spec.kind.starts_with("kernel:") {
+                if e.state == EffectState::Applied
+                    && e.spec.kind.starts_with("kernel:")
+                    && e.spec.kind != crate::custody::KIND
+                {
                     crate::outcome::RequiredObligation::Applied
                 } else {
                     self.completed
@@ -502,7 +576,7 @@ impl<'a> Run<'a> {
         )
         .map_err(|_| RunError::Invalid("workload obligations incomplete".into()))?;
         let result = (|| {
-            self.store.transaction(&self.cx, |txn| {
+            self.store.transaction(&self.cx.child(std::time::Duration::from_secs(30)), |txn| {
             journal::check_fence(txn.conn(), &self.owner)?;
             crate::fault_point!(PhaseBefore)?;
             txn.conn().execute("UPDATE runs SET phase='stopping',workload_outcome=?2,updated_at=?3 WHERE run_id=?1",
@@ -518,6 +592,29 @@ impl<'a> Run<'a> {
         result
     }
 
+    /// Stop outcomes use the independent cleanup budget, never a cancelled
+    /// workload token. Natural success still requires finish's obligations.
+    pub fn interrupt(
+        &mut self,
+        cleanup: &CleanupContext,
+        workload: WorkloadOutcome,
+    ) -> Result<(), RunError> {
+        if !matches!(
+            workload,
+            WorkloadOutcome::Cancelled { .. }
+                | WorkloadOutcome::TimedOut { .. }
+                | WorkloadOutcome::NotStarted
+        ) || self.phase()? == Phase::Closed
+        {
+            return Err(RunError::Invalid("invalid interruption outcome".into()));
+        }
+        let cx = settle::cleanup_effects(cleanup)?;
+        self.store.transaction(&cx,|txn| {
+            journal::check_fence(txn.conn(),&self.owner)?;
+            txn.conn().execute("UPDATE runs SET phase='stopping',workload_outcome=?2,updated_at=?3 WHERE run_id=?1",params![self.id.to_string(),serde_json::to_string(&workload)?,txn.now()])?;
+            Ok::<_,RunError>(())
+        })
+    }
     pub fn settle(
         mut self,
         cleanup: &CleanupContext,
@@ -530,6 +627,7 @@ impl<'a> Run<'a> {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum RequestAction {
     Stop,
+    Escalate,
     Settle,
     Detach,
 }
@@ -547,9 +645,9 @@ pub fn request(cx: &EffectContext, root: &StateRoot, request: &Request) -> Resul
         .map_err(|_| RunError::Invalid("request needs Mutate".into()))?;
     cx.require(crate::ctx::Capability::HostAuthority)
         .map_err(|_| RunError::HostAuthorityRequired)?;
-    let mut store = Store::open(cx, root)?;
+    let mut store = Store::open(&cx.child(std::time::Duration::from_secs(30)), root)?;
     crate::fault_point!(RequestBefore)?;
-    store.transaction(cx, |txn| {
+    store.transaction(&cx.child(std::time::Duration::from_secs(30)), |txn| {
         journal::check_fence(txn.conn(), &request.expected)?;
         let record = journal::run(txn.conn(), request.run)?;
         if record.owner != request.expected.resource.name().to_string() || record.generation != request.expected.generation || record.phase == Phase::Closed {
@@ -578,7 +676,7 @@ impl Run<'_> {
         if request.run != self.id || request.expected != self.owner {
             return Err(RunError::Invalid("foreign request".into()));
         }
-        self.store.transaction(&self.cx, |txn| {
+        self.store.transaction(&self.cx.child(std::time::Duration::from_secs(30)), |txn| {
             journal::check_fence(txn.conn(), &request.expected)?;
             txn.conn().execute("UPDATE requests SET state='resolved',resolved_at=?2 WHERE request_id=?1 AND run_id=?3",
                 params![request.id.to_string(), txn.now(), self.id.to_string()])?;
@@ -662,4 +760,4 @@ pub fn status(
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

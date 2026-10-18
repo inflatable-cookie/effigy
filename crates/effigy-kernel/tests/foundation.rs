@@ -570,3 +570,18 @@ fn identity_wire_checks_nested_resources_task_fields_and_constituents() {
     resource["key"][2] = "".into();
     assert!(serde_json::from_value::<ResourceId>(resource).is_err());
 }
+
+#[test]
+fn context_effect_child_bounds_store_phases_without_extending_parent() {
+    let cx = context(EffectClass::Mutate, Placement::Host)
+        .effects()
+        .unwrap();
+    let child = cx.child(Duration::from_secs(30));
+    assert!(
+        child.operation().remaining().unwrap()
+            <= cx.operation().remaining().unwrap() + Duration::from_millis(1)
+    );
+    assert_eq!(child.operation().class(), cx.operation().class());
+    cx.operation().cancel_token().cancel(StopCause::Requested);
+    assert!(child.operation().check("phase").is_err());
+}

@@ -53,7 +53,7 @@ impl Claims {
         let clock = ident::boot_clock();
         let result = (|| {
             crate::fault_point!(ClaimReserveBefore)?;
-            let sequence=run.store.transaction(&run.cx,|txn| {
+            let sequence=run.store.transaction(&run.cx.child(std::time::Duration::from_secs(30)),|txn| {
                 journal::check_fence(txn.conn(),&run.owner)?;
                 for resource in &reservation.resources {
                     let row=txn.conn().query_row("SELECT state,quarantine_boot,quarantine_nanos FROM claims WHERE resource=?1",
@@ -103,7 +103,7 @@ impl Claims {
         check_token(run, token)?;
         let revision = i64::try_from(revision)
             .map_err(|_| RunError::Invalid("claim revision overflow".into()))?;
-        run.store.transaction(&run.cx,|txn| {
+        run.store.transaction(&run.cx.child(std::time::Duration::from_secs(30)),|txn| {
             journal::check_fence(txn.conn(),&run.owner)?;
             let effect=journal::effect(txn.conn(),run.id,token.effect.sequence)?;
             let reservation:Reservation=serde_json::from_value(effect.spec.payload)?;
