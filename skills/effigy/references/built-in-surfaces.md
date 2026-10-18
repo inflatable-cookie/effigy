@@ -49,15 +49,13 @@ also supports `--headless` / `EFFIGY_MANAGED_HEADLESS=1` plus task-local
 | `graph status` | Freshness trust (`freshness.state`) + counts |
 | `graph explore` | One-call agent navigation packet |
 | `graph affected` | Post-edit validation narrowing |
-| `graph context` | Lower-level ranked context items |
+| `graph explore --excerpts-only` | Lower-level ranked context items |
 | `graph search` | FTS term lookup |
-| `graph node` / `callers` / `callees` / `impact` | Symbol neighborhoods |
-| `graph watch` | Foreground incremental refresh (streaming JSON) |
+| `graph node <ID|PATH> [--in|--out]` | File and symbol neighborhoods |
 
 Trust states on `graph status --json`: `ready`, `refresh-recommended`,
-`degraded`, `missing-index`, `stale-index`. Reindex when not `ready` and
-`usable` is false. `stale-index` is usable navigation from the last complete
-snapshot and is not current.
+`degraded`, `missing-index`, `stale-index`, `refreshing`. Reindex when not `ready` and
+`usable` is false. `stale-index` is usable navigation from committed data and is not current.
 
 Guide: `docs/guides/076-code-graph-and-agent-workflows.md`
 
@@ -120,7 +118,6 @@ under `effigy release validate`, `release preflight`, `release proof`, and
 effigy --json <built-in>
 ```
 
-Exception: `graph watch --json` streams `effigy.graph.watch.event.v1`.
 
 Details: `json-envelope.md`, `docs/guides/017-json-output-contracts.md`.
 

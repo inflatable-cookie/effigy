@@ -12,15 +12,11 @@ use crate::GraphId;
 
 const DOC_REL_KIND: &str = "doc-rel";
 
-/// Resolve typed relations for one scope.
-///
-/// Live ids are read database-wide but never refreshed: a shared store may
-/// use an already-indexed sibling record to resolve an external relationship,
-/// and an unresolved boundary stays unresolved. Sibling records are never
-/// written and no sibling scope is walked.
+/// Resolve typed document relations against committed checkout records.
+/// Each source file's edges and references change together.
 pub(crate) fn resolve_typed_relations(
     store: &GraphStore,
-    scope: &GraphScope,
+    _scope: &GraphScope,
 ) -> Result<bool, CodeGraphError> {
     let mut live_ids = BTreeSet::new();
     for file in store.list_files()? {
@@ -30,7 +26,7 @@ pub(crate) fn resolve_typed_relations(
         live_ids.insert(symbol.id.to_string());
     }
     let mut by_source = BTreeMap::<String, (Vec<EdgeRecord>, Vec<ReferenceRecord>)>::new();
-    for edge in store.list_edges_in_scope(scope)? {
+    for edge in store.list_edges()? {
         if edge.kind == DOC_REL_KIND {
             by_source
                 .entry(edge.provenance.source_path.clone())
@@ -39,7 +35,7 @@ pub(crate) fn resolve_typed_relations(
                 .push(edge);
         }
     }
-    for reference in store.list_references_in_scope(scope)? {
+    for reference in store.list_references()? {
         if reference.kind == DOC_REL_KIND {
             by_source
                 .entry(reference.provenance.source_path.clone())

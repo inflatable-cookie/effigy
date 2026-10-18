@@ -160,8 +160,6 @@ This is the right surface for ambiguity and repo health, not a default greeting.
 
 For command modes that support JSON, append `--json` (or prefix with
 `effigy --json <command>`) to get an `effigy.command.v1` envelope.
-`effigy graph watch --json` instead emits newline-delimited
-`effigy.graph.watch.event.v1` events. Finite `system logs --json` and
 `container <NAME> logs --json` snapshots support JSON; their `--follow`
 modes reject it. `workspace` and interactive `container shell` have no JSON
 form. For a finite shell command, supply all required bounds:

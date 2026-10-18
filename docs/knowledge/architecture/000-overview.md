@@ -49,8 +49,7 @@ Use these docs intentionally:
   defines semantic core ownership, group-first command organization, provider
   placement, catalog-pack constraints, and release/distribution separation
 - [027-catalog-scoped-code-graph.md](027-catalog-scoped-code-graph.md) defines
-  catalog-derived graph scopes, lazy segmented indexing, and shared versus
-  independent storage
+  one checkout corpus, per-file transactions and cooperative refresh
 - [028-published-and-draft-task-surfaces.md](028-published-and-draft-task-surfaces.md)
   separates maintained published selectors from lifecycle-labelled provisional
   drafts without creating a second execution runtime
@@ -68,7 +67,7 @@ Use these docs intentionally:
 - [`contract/043`](../contracts/043-feature-placement-and-surface-migration-contract.md)
   defines feature-placement gates and alias-stable migration rules
 - [`contract/045`](../contracts/045-catalog-scoped-code-graph-contract.md)
-  defines catalog graph grammar, selection, storage, refresh, and query
+  defines checkout graph grammar, storage, refresh, and query
   isolation
 - [`contract/046`](../contracts/046-published-and-draft-task-surface-contract.md)
   defines published/draft manifest grammar, discovery, routing, reference

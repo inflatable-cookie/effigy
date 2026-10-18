@@ -20,11 +20,6 @@ use crate::support::{file_record_from_source, sha256_hex};
 use crate::walk::ScanEntry;
 use crate::GraphId;
 
-/// Metadata key prefix recording the topology fingerprint a scope was indexed
-/// under. Changing a catalog root, alias, segmentation, or independence
-/// invalidates only that scope.
-const SCOPE_CONFIG_KEY_PREFIX: &str = "graph_scope_config";
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IndexReport {
     pub indexed_files: usize,
@@ -46,11 +41,7 @@ struct ScanDelta {
     deleted_paths: Vec<String>,
 }
 
-/// Index the repository-owned workspace corpus.
-///
-/// This is the legacy whole-workspace entry point used by documentation
-/// authority and direct crate consumers; `effigy graph` selects catalog scopes
-/// explicitly. A workspace with no segmented catalog sees identical behavior.
+/// Index every supported file in this checkout.
 pub fn run_index(repo_root: &Path) -> Result<IndexReport, CodeGraphError> {
     run_index_in_scope(&repo_scope(repo_root)?)
 }
@@ -79,7 +70,7 @@ pub(crate) fn run_index_unlocked_in_scope(
             Err(error) => return Err(error.into()),
         }
     }
-    let existing_states = store.file_scan_state_map_in_scope(scope)?;
+    let existing_states = store.file_scan_state_map()?;
     let registry = ExtractorRegistry::for_docs_profile(profile_state.compiled().cloned());
     let current_extractors = extractor_version_map(registry.all());
     let keys = file_freshness_keys(&current_extractors, &current_fingerprint);
@@ -210,7 +201,7 @@ pub(crate) fn run_index_unlocked_in_scope(
     for extractor in registry.all() {
         store.save_extractor(&extractor.extractor_record())?;
     }
-    let counts = store.counts_in_scope(scope)?;
+    let counts = store.counts()?;
     let started_at = unix_epoch_millis_string();
     let run = IndexRunRecord {
         id: GraphId::new(index_run_id(scope, &started_at))?,
@@ -224,10 +215,6 @@ pub(crate) fn run_index_unlocked_in_scope(
     };
     store.save_index_run(&run)?;
     store.save_metadata(DOCS_PROFILE_FINGERPRINT_KEY, &current_fingerprint)?;
-    store.save_metadata(
-        &scope_config_key(scope),
-        &scope_config_fingerprint(scope, &current_extractors),
-    )?;
     store.delete_metadata(&relations_pending_key(scope))?;
     transaction.commit()?;
     crate::git::update_index_stamp(scope, &store)?;
@@ -239,7 +226,7 @@ pub(crate) fn run_index_unlocked_in_scope(
         changed_paths: delta.changed_paths,
         deleted_paths: delta.deleted_paths,
         skipped_paths,
-        failed_paths: store.failed_diagnostic_paths_in_scope(scope)?,
+        failed_paths: store.failed_diagnostic_paths()?,
         counts,
     })
 }
@@ -258,13 +245,11 @@ pub(crate) fn index_configuration_matches(
 ) -> Result<bool, CodeGraphError> {
     let profile = load_docs_profile_state(scope.workspace_root())?;
     let registry = ExtractorRegistry::for_docs_profile(profile.compiled().cloned());
-    let extractors = extractor_version_map(registry.all());
     Ok(store
         .metadata_value(DOCS_PROFILE_FINGERPRINT_KEY)?
         .as_deref()
         == Some(profile.fingerprint().as_str())
-        && store.metadata_value(&scope_config_key(scope))?.as_deref()
-            == Some(scope_config_fingerprint(scope, &extractors).as_str())
+        && store.extractor_version_map()? == extractor_version_map(registry.all())
         && store
             .metadata_value(&relations_pending_key(scope))?
             .is_none())
@@ -328,7 +313,7 @@ fn status_report(scope: &GraphScope) -> Result<GraphStatusPayload, CodeGraphErro
     let profile_state = load_docs_profile_state(scope.workspace_root())?;
     let file_states = store
         .as_ref()
-        .map(|store| store.file_scan_state_map_in_scope(scope))
+        .map(|store| store.file_scan_state_map())
         .transpose()?
         .unwrap_or_default();
     let registry = ExtractorRegistry::for_docs_profile(profile_state.compiled().cloned());
@@ -341,7 +326,7 @@ fn status_report(scope: &GraphScope) -> Result<GraphStatusPayload, CodeGraphErro
     }
     let counts = store
         .as_ref()
-        .map(|store| store.counts_in_scope(scope))
+        .map(|store| store.counts())
         .transpose()?
         .unwrap_or(GraphCountsPayload {
             files: 0,
@@ -354,7 +339,7 @@ fn status_report(scope: &GraphScope) -> Result<GraphStatusPayload, CodeGraphErro
         });
     let failed_paths = store
         .as_ref()
-        .map(|store| store.failed_diagnostic_paths_in_scope(scope))
+        .map(|store| store.failed_diagnostic_paths())
         .transpose()?
         .unwrap_or_default();
     let ready = counts.files > 0;
@@ -418,7 +403,7 @@ pub(crate) fn stale_paths_in_scope(
 ) -> Result<Vec<String>, CodeGraphError> {
     phase::enter(GraphPhase::FreshnessScan);
     let profile_state = load_docs_profile_state(scope.workspace_root())?;
-    let file_states = store.file_scan_state_map_in_scope(scope)?;
+    let file_states = store.file_scan_state_map()?;
     let current_entries = crate::walk::scan_repo_files_in_scope(scope)?;
     let current_extractors = extractor_version_map(
         ExtractorRegistry::for_docs_profile(profile_state.compiled().cloned()).all(),
@@ -455,48 +440,8 @@ fn repo_scope(repo_root: &Path) -> Result<GraphScope, CodeGraphError> {
     GraphScope::repo_root(repo_root)
 }
 
-/// Topology identity for one scope: alias, canonical root, segmentation,
-/// independence, prune set, and the extractor versions in play.
-fn scope_config_fingerprint(
-    scope: &GraphScope,
-    current_extractors: &BTreeMap<String, String>,
-) -> String {
-    let mut parts = vec![
-        format!("alias={}", scope.alias()),
-        format!("root={}", scope.relative_root()),
-        format!("segmented={}", scope.segmented()),
-        format!("independent={}", scope.independent()),
-    ];
-    for prune in scope.prune_relative_roots() {
-        parts.push(format!("prune={prune}"));
-    }
-    for (language, version) in current_extractors {
-        parts.push(format!("extractor={language}@{version}"));
-    }
-    parts.join("\n")
-}
-
-/// Whether a scope's recorded topology changed.
-///
-/// A scope that has never recorded a topology fingerprint is not invalidated:
-/// its files are compared normally, which also lets a repository-owned corpus
-/// (for example `docs context`) and the root code scope share file states
-/// without forcing each other into a full re-extraction.
-fn scope_config_key(scope: &GraphScope) -> String {
-    let key = scope.key();
-    if key.is_empty() {
-        SCOPE_CONFIG_KEY_PREFIX.to_owned()
-    } else {
-        format!("{SCOPE_CONFIG_KEY_PREFIX}:{key}")
-    }
-}
-
-fn index_run_id(scope: &GraphScope, started_at: &str) -> String {
-    if scope.relative_root().is_empty() {
-        format!("run:index:{started_at}")
-    } else {
-        format!("run:index:{}:{started_at}", scope.relative_root())
-    }
+fn index_run_id(_scope: &GraphScope, started_at: &str) -> String {
+    format!("run:index:{started_at}")
 }
 
 pub(crate) fn graph_freshness_payload(
@@ -537,7 +482,7 @@ pub(crate) fn graph_freshness_payload(
     }
 }
 
-/// Freshness for a deliberate read of the last complete snapshot.
+/// Freshness for a deliberate read of committed file generations.
 pub(crate) fn stale_index_freshness_payload(
     stale_paths: &[String],
     failed_path_count: usize,

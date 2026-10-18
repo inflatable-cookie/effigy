@@ -1,321 +1,148 @@
-use crate::tests::prelude::{
-    parse_command, Command, GraphArgs, GraphSubcommand, HelpTopic, PathBuf,
-};
+use crate::tests::prelude::{parse_command, Command, GraphSubcommand, HelpTopic};
+
+fn parse(args: &[&str]) -> Result<Command, effigy_cli::CliParseError> {
+    parse_command(args.iter().map(|arg| (*arg).to_owned()).collect::<Vec<_>>())
+}
 
 #[test]
-fn parse_graph_status_accepts_repo_and_json_flags() {
-    let command = parse_command(vec![
-        "graph".to_owned(),
-        "status".to_owned(),
-        "--repo".to_owned(),
-        "/tmp/repo".to_owned(),
-        "--json".to_owned(),
-    ])
-    .expect("parse should succeed");
-
+fn parse_graph_has_exactly_six_subcommands() {
     assert_eq!(
-        command,
-        Command::Graph(GraphArgs {
-            subcommand: GraphSubcommand::Status { refresh: false },
-            repo_override: Some(PathBuf::from("/tmp/repo")),
-            output_json: true,
-            catalog: None,
-            all_catalogs: false,
-            stale_index: false,
-        })
+        parse(&["graph"]).expect("help"),
+        Command::Help(HelpTopic::Graph)
     );
+    for args in [
+        vec!["index"],
+        vec!["status", "--refresh"],
+        vec!["search", "needle", "--limit", "2"],
+        vec!["node", "src/lib.rs"],
+        vec!["affected", "src/lib.rs", "--depth", "3", "--stdin"],
+        vec!["explore", "trace navigation"],
+    ] {
+        let args: Vec<_> = std::iter::once("graph")
+            .chain(args)
+            .chain(["--json"])
+            .collect();
+        let Command::Graph(graph) = parse(&args).expect("retained route") else {
+            panic!("graph command");
+        };
+        assert!(graph.output_json);
+    }
 }
 
 #[test]
-fn parse_graph_status_accepts_refresh_flag() {
-    let command = parse_command(vec![
-        "graph".to_owned(),
-        "status".to_owned(),
-        "--refresh".to_owned(),
-        "--json".to_owned(),
+fn parse_graph_node_direction_and_limit_are_explicit() {
+    for (flag, incoming, outgoing) in [("--in", true, false), ("--out", false, true)] {
+        let Command::Graph(graph) = parse(&[
+            "graph",
+            "node",
+            "symbol:rust:alpha",
+            flag,
+            "--limit",
+            "7",
+            "--stale-index",
+        ])
+        .expect("node") else {
+            panic!("graph");
+        };
+        assert_eq!(
+            graph.subcommand,
+            GraphSubcommand::Node {
+                id: "symbol:rust:alpha".to_owned(),
+                incoming,
+                outgoing,
+                limit: Some(7)
+            }
+        );
+        assert!(graph.stale_index);
+    }
+    assert!(parse(&["graph", "node", "x", "--in", "--out"]).is_err());
+}
+
+#[test]
+fn parse_graph_excerpts_accumulates_all_context_filters() {
+    let Command::Graph(graph) = parse(&[
+        "graph",
+        "explore",
+        "trace release",
+        "--excerpts-only",
+        "--max-files",
+        "4",
+        "--max-bytes",
+        "8000",
+        "--language",
+        "rust",
+        "--language",
+        "toml",
+        "--path",
+        "src/",
+        "--path",
+        "tests/",
+        "--repo",
+        "/fixture",
+        "--json",
     ])
-    .expect("parse should succeed");
-
-    assert_eq!(
-        command,
-        Command::Graph(GraphArgs {
-            subcommand: GraphSubcommand::Status { refresh: true },
-            repo_override: None,
-            output_json: true,
-            catalog: None,
-            all_catalogs: false,
-            stale_index: false,
-        })
-    );
-}
-
-#[test]
-fn parse_graph_context_accumulates_language_and_path_filters() {
-    let command = parse_command(vec![
-        "graph".to_owned(),
-        "context".to_owned(),
-        "trace release graph".to_owned(),
-        "--language".to_owned(),
-        "rust".to_owned(),
-        "--language".to_owned(),
-        "markdown".to_owned(),
-        "--path".to_owned(),
-        "src/runner".to_owned(),
-        "--path".to_owned(),
-        "docs/".to_owned(),
-        "--max-files".to_owned(),
-        "6".to_owned(),
-        "--max-bytes".to_owned(),
-        "8192".to_owned(),
-    ])
-    .expect("parse should succeed");
-
-    assert_eq!(
-        command,
-        Command::Graph(GraphArgs {
-            subcommand: GraphSubcommand::Context {
-                request: "trace release graph".to_owned(),
-                max_files: Some(6),
-                max_bytes: Some(8192),
-                languages: vec!["rust".to_owned(), "markdown".to_owned()],
-                paths: vec!["src/runner".to_owned(), "docs/".to_owned()],
-            },
-            repo_override: None,
-            output_json: false,
-            catalog: None,
-            all_catalogs: false,
-            stale_index: false,
-        })
-    );
-}
-
-#[test]
-fn parse_graph_explore_accepts_context_filters() {
-    let command = parse_command(vec![
-        "graph".to_owned(),
-        "explore".to_owned(),
-        "trace graph watch implementation".to_owned(),
-        "--language".to_owned(),
-        "rust".to_owned(),
-        "--path".to_owned(),
-        "crates/effigy-codegraph".to_owned(),
-        "--max-files".to_owned(),
-        "5".to_owned(),
-        "--max-bytes".to_owned(),
-        "12000".to_owned(),
-        "--json".to_owned(),
-    ])
-    .expect("parse should succeed");
-
-    assert_eq!(
-        command,
-        Command::Graph(GraphArgs {
-            subcommand: GraphSubcommand::Explore {
-                request: "trace graph watch implementation".to_owned(),
-                max_files: Some(5),
-                max_bytes: Some(12000),
-                languages: vec!["rust".to_owned()],
-                paths: vec!["crates/effigy-codegraph".to_owned()],
-            },
-            repo_override: None,
-            output_json: true,
-            catalog: None,
-            all_catalogs: false,
-            stale_index: false,
-        })
-    );
-}
-
-#[test]
-fn parse_graph_explore_accepts_stale_index() {
-    let command = parse_command(vec![
-        "graph".to_owned(),
-        "explore".to_owned(),
-        "trace graph watch implementation".to_owned(),
-        "--stale-index".to_owned(),
-        "--json".to_owned(),
-    ])
-    .expect("parse should succeed");
-
-    assert_eq!(
-        command,
-        Command::Graph(GraphArgs {
-            subcommand: GraphSubcommand::Explore {
-                request: "trace graph watch implementation".to_owned(),
-                max_files: None,
-                max_bytes: None,
-                languages: vec![],
-                paths: vec![],
-            },
-            repo_override: None,
-            output_json: true,
-            catalog: None,
-            all_catalogs: false,
-            stale_index: true,
-        })
-    );
-}
-
-#[test]
-fn parse_graph_index_rejects_stale_index() {
-    let error = parse_command(vec![
-        "graph".to_owned(),
-        "index".to_owned(),
-        "--stale-index".to_owned(),
-    ])
-    .expect_err("index cannot take --stale-index");
-    assert!(error.to_string().contains("--stale-index"));
-}
-
-#[test]
-fn parse_graph_search_accepts_flags_after_query() {
-    let command = parse_command(vec![
-        "graph".to_owned(),
-        "search".to_owned(),
-        "release".to_owned(),
-        "--limit".to_owned(),
-        "5".to_owned(),
-        "--json".to_owned(),
-    ])
-    .expect("parse should succeed");
-
-    assert_eq!(
-        command,
-        Command::Graph(GraphArgs {
-            subcommand: GraphSubcommand::Search {
-                query: "release".to_owned(),
-                limit: Some(5),
-            },
-            repo_override: None,
-            output_json: true,
-            catalog: None,
-            all_catalogs: false,
-            stale_index: false,
-        })
-    );
-}
-
-#[test]
-fn parse_graph_watch_accepts_debounce_repo_and_json_flags() {
-    let command = parse_command(vec![
-        "graph".to_owned(),
-        "watch".to_owned(),
-        "--debounce-ms".to_owned(),
-        "1000".to_owned(),
-        "--repo".to_owned(),
-        "/tmp/repo".to_owned(),
-        "--json".to_owned(),
-    ])
-    .expect("parse should succeed");
-
-    assert_eq!(
-        command,
-        Command::Graph(GraphArgs {
-            subcommand: GraphSubcommand::Watch { debounce_ms: 1000 },
-            repo_override: Some(PathBuf::from("/tmp/repo")),
-            output_json: true,
-            catalog: None,
-            all_catalogs: false,
-            stale_index: false,
-        })
-    );
-}
-
-#[test]
-fn parse_graph_affected_accepts_depth_limit_and_stdin() {
-    let command = parse_command(vec![
-        "graph".to_owned(),
-        "affected".to_owned(),
-        "src/lib.rs".to_owned(),
-        "--depth".to_owned(),
-        "3".to_owned(),
-        "--limit".to_owned(),
-        "12".to_owned(),
-        "--stdin".to_owned(),
-        "--json".to_owned(),
-    ])
-    .expect("parse should succeed");
-
-    assert_eq!(
-        command,
-        Command::Graph(GraphArgs {
-            subcommand: GraphSubcommand::Affected {
-                changed_paths: vec!["src/lib.rs".to_owned()],
-                read_stdin: true,
-                depth: 3,
-                limit: Some(12),
-            },
-            repo_override: None,
-            output_json: true,
-            catalog: None,
-            all_catalogs: false,
-            stale_index: false,
-        })
-    );
-}
-
-#[test]
-fn parse_graph_help_is_scoped() {
-    let command =
-        parse_command(vec!["graph".to_owned(), "--help".to_owned()]).expect("parse should succeed");
-    assert_eq!(command, Command::Help(HelpTopic::Graph));
-}
-
-#[test]
-fn parse_graph_accepts_catalog_selector_on_any_subcommand() {
-    let command = parse_command(vec![
-        "graph".to_owned(),
-        "explore".to_owned(),
-        "bovine desktop".to_owned(),
-        "--catalog".to_owned(),
-        "bovine-desktop".to_owned(),
-        "--json".to_owned(),
-    ])
-    .expect("parse should succeed");
-    let Command::Graph(graph) = command else {
-        panic!("expected graph command");
+    .expect("excerpts") else {
+        panic!("graph");
     };
-    assert_eq!(graph.catalog.as_deref(), Some("bovine-desktop"));
-    assert!(!graph.all_catalogs);
-
-    let command = parse_command(vec![
-        "graph".to_owned(),
-        "index".to_owned(),
-        "--all-catalogs".to_owned(),
-    ])
-    .expect("parse should succeed");
-    let Command::Graph(graph) = command else {
-        panic!("expected graph command");
-    };
-    assert!(graph.all_catalogs);
-    assert_eq!(graph.catalog, None);
+    assert_eq!(
+        graph.subcommand,
+        GraphSubcommand::Explore {
+            excerpts_only: true,
+            request: "trace release".to_owned(),
+            max_files: Some(4),
+            max_bytes: Some(8000),
+            languages: vec!["rust".to_owned(), "toml".to_owned()],
+            paths: vec!["src/".to_owned(), "tests/".to_owned()]
+        }
+    );
+    assert_eq!(
+        graph.repo_override.as_deref(),
+        Some(std::path::Path::new("/fixture"))
+    );
+    assert!(graph.output_json);
 }
 
 #[test]
-fn parse_graph_rejects_conflicting_or_unsupported_scope_selectors() {
-    let error = parse_command(vec![
-        "graph".to_owned(),
-        "status".to_owned(),
-        "--catalog".to_owned(),
-        "bovine".to_owned(),
-        "--all-catalogs".to_owned(),
-    ])
-    .expect_err("--catalog with --all-catalogs must fail");
-    assert!(error.to_string().contains("cannot be combined"), "{error}");
+fn parse_retired_graph_commands_name_their_replacements() {
+    for (command, replacement) in [
+        ("watch", "graph index"),
+        ("files", "graph search"),
+        ("callers", "graph node <ID> --in"),
+        ("callees", "graph node <ID> --out"),
+        ("impact", "graph node <ID|PATH>"),
+        ("context", "graph explore <REQUEST> --excerpts-only"),
+    ] {
+        let error = parse(&["graph", command])
+            .expect_err("retired command")
+            .to_string();
+        assert!(
+            error.contains("removed in v0.15") && error.contains(replacement),
+            "{error}"
+        );
+    }
+    for flag in ["--catalog", "--all-catalogs"] {
+        let error = parse(&["graph", "status", flag])
+            .expect_err("retired flag")
+            .to_string();
+        assert!(
+            error.contains(flag) && error.contains("whole checkout") && error.contains("--path"),
+            "{error}"
+        );
+    }
+}
 
-    let error = parse_command(vec![
-        "graph".to_owned(),
-        "watch".to_owned(),
-        "--all-catalogs".to_owned(),
-    ])
-    .expect_err("watch fan-out must fail");
-    assert!(error.to_string().contains("graph watch"), "{error}");
-
-    let error = parse_command(vec![
-        "graph".to_owned(),
-        "search".to_owned(),
-        "--catalog".to_owned(),
-    ])
-    .expect_err("missing catalog value must fail");
-    assert!(error.to_string().contains("--catalog"), "{error}");
+#[test]
+fn parse_graph_rejects_incomplete_or_invalid_requests() {
+    for args in [
+        vec!["node"],
+        vec!["search"],
+        vec!["explore"],
+        vec!["affected"],
+        vec!["node", "id", "--limit", "no"],
+        vec!["status", "--stale-index"],
+        vec!["index", "--stale-index"],
+    ] {
+        let args: Vec<_> = std::iter::once("graph").chain(args).collect();
+        assert!(parse(&args).is_err(), "{args:?}");
+    }
 }

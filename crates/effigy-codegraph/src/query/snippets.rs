@@ -27,7 +27,7 @@ pub(super) struct SourceEvidence {
 
 pub(super) fn indexed_source_matches<'a>(
     store: &GraphStore,
-    scope: &GraphScope,
+    _scope: &GraphScope,
     tokens: &[String],
     allowed_file_ids: impl IntoIterator<Item = &'a str>,
 ) -> Result<BTreeMap<String, BTreeSet<String>>, CodeGraphError> {
@@ -37,7 +37,7 @@ pub(super) fn indexed_source_matches<'a>(
         .collect::<BTreeSet<_>>();
     let mut matches = BTreeMap::<String, BTreeSet<String>>::new();
     for token in tokens {
-        for hit in store.source_search_in_scope(token, allowed.len().max(1), scope)? {
+        for hit in store.source_search(token, allowed.len().max(1))? {
             if !allowed.contains(hit.file_id.as_str()) {
                 continue;
             }

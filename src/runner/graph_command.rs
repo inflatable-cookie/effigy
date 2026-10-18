@@ -2,16 +2,13 @@ use std::path::Path;
 
 use effigy_cli::{GraphArgs, GraphSubcommand};
 use effigy_codegraph::json::{
-    GraphAffectedPayload, GraphCatalogOutcomePayload, GraphCatalogPayload, GraphCommandPayload,
-    GraphContextPayload, GraphExplorePayload, GraphFanOutPayload, GraphFilesPayload,
-    GraphFreshnessPayload, GraphImpactPayload, GraphIndexPayload, GraphNodePayload,
-    GraphRelatedNodesPayload, GraphSearchPayload, GraphStatusPayload,
+    GraphAffectedPayload, GraphCommandPayload, GraphContextPayload, GraphExplorePayload,
+    GraphFreshnessPayload, GraphIndexPayload, GraphNodePayload, GraphSearchPayload,
+    GraphStatusPayload,
 };
-use effigy_codegraph::scope::{GraphScope, GraphScopePlan, GraphScopeRequest};
 use effigy_codegraph::{
-    affected_in_scope, callees_in_scope, callers_in_scope, context_in_scope, explore_in_scope,
-    files_in_scope, impact_in_scope, node_in_scope, render_json, run_index_in_scope,
-    search_in_scope, status_in_scope, RefreshPolicy,
+    affected_in_scope, context_in_scope, explore_in_scope, node_with_options_in_scope, render_json,
+    run_index_in_scope, search_in_scope, status_in_scope, GraphScope, RefreshPolicy,
 };
 
 use crate::runner::command_context::resolve_active_command_context;
@@ -20,37 +17,35 @@ use super::error::RunnerError;
 
 pub(super) fn run_graph(args: GraphArgs) -> Result<String, RunnerError> {
     let context = resolve_active_command_context(args.repo_override.clone())?;
-    let invocation_cwd = context.invocation_cwd;
-    // When the invocation resolved to a catalog member rather than the
-    // workspace that declares it, use the owning workspace so `[catalog.graph]`
-    // posture and cwd selection apply.
     let repo_root = effigy_routing::owning_workspace_root(&context.resolved.resolved_root)
         .unwrap_or(context.resolved.resolved_root);
+    if orphaned_catalog_store_exists(&repo_root) {
+        eprintln!("warning: orphaned catalog graph stores under `.effigy/graph/catalogs/` are ignored; use `effigy graph index` to build the whole-checkout index");
+    }
     let args = prepare_args(args)?;
+    let operation = || run_graph_checkout(&repo_root, &args);
     match super::graph_time_budget::graph_time_budget()
         .filter(|_| subcommand_is_bounded(&args.subcommand))
     {
-        Some(budget) => {
-            let command = graph_command_label(&args.subcommand);
-            let worker_root = repo_root.clone();
-            let worker_args = args.clone();
-            let worker_cwd = invocation_cwd.clone();
-            super::graph_time_budget::run_bounded_graph_operation(
-                &repo_root,
-                command,
-                budget,
-                move || run_graph_scoped(&worker_root, &worker_args, &worker_cwd),
-            )
-        }
-        None => run_graph_scoped(&repo_root, &args, &invocation_cwd),
+        Some(budget) => super::graph_time_budget::run_bounded_graph_operation(
+            &repo_root,
+            graph_command_label(&args.subcommand),
+            budget,
+            operation,
+        ),
+        None => operation(),
     }
 }
 
-/// Read `--stdin` changed paths once, before any scope runs.
-///
-/// Fan-out runs the same subcommand once per catalog; reading stdin inside the
-/// per-scope operation would leave every scope after the first with an empty
-/// stream and silently change its input.
+fn orphaned_catalog_store_exists(repo_root: &Path) -> bool {
+    std::fs::read_dir(repo_root.join(".effigy/graph/catalogs")).is_ok_and(|entries| {
+        entries
+            .flatten()
+            .any(|entry| entry.path().join("graph.db").is_file())
+    })
+}
+
+/// Read changed paths once before bounded graph work starts.
 fn prepare_args(mut args: GraphArgs) -> Result<GraphArgs, RunnerError> {
     if let GraphSubcommand::Affected {
         changed_paths,
@@ -69,28 +64,18 @@ fn prepare_args(mut args: GraphArgs) -> Result<GraphArgs, RunnerError> {
 /// Whether a subcommand runs under the time budget.
 ///
 /// Queries do: they refresh a stale index behind the caller's back, so a slow
-/// walk shows up as an unexplained hang. `graph index` and `graph watch` are
-/// exempt — the caller explicitly asked for the long-running build.
+/// walk shows up as an unexplained hang. Explicit `graph index` is unbounded.
 fn subcommand_is_bounded(subcommand: &GraphSubcommand) -> bool {
-    !matches!(
-        subcommand,
-        GraphSubcommand::Index | GraphSubcommand::Watch { .. }
-    )
+    !matches!(subcommand, GraphSubcommand::Index)
 }
 
 fn graph_command_label(subcommand: &GraphSubcommand) -> &'static str {
     match subcommand {
         GraphSubcommand::Index => "graph index",
         GraphSubcommand::Status { .. } => "graph status",
-        GraphSubcommand::Watch { .. } => "graph watch",
         GraphSubcommand::Search { .. } => "graph search",
-        GraphSubcommand::Files { .. } => "graph files",
         GraphSubcommand::Node { .. } => "graph node",
-        GraphSubcommand::Callers { .. } => "graph callers",
-        GraphSubcommand::Callees { .. } => "graph callees",
-        GraphSubcommand::Impact { .. } => "graph impact",
         GraphSubcommand::Affected { .. } => "graph affected",
-        GraphSubcommand::Context { .. } => "graph context",
         GraphSubcommand::Explore { .. } => "graph explore",
     }
 }
@@ -99,72 +84,17 @@ fn graph_schema(subcommand: &GraphSubcommand) -> &'static str {
     match subcommand {
         GraphSubcommand::Index => "effigy.graph.index.v1",
         GraphSubcommand::Status { .. } => "effigy.graph.status.v1",
-        GraphSubcommand::Watch { .. } => "effigy.graph.watch.event.v1",
         GraphSubcommand::Search { .. } => "effigy.graph.search.v1",
-        GraphSubcommand::Files { .. } => "effigy.graph.files.v1",
         GraphSubcommand::Node { .. } => "effigy.graph.node.v1",
-        GraphSubcommand::Callers { .. } => "effigy.graph.callers.v1",
-        GraphSubcommand::Callees { .. } => "effigy.graph.callees.v1",
-        GraphSubcommand::Impact { .. } => "effigy.graph.impact.v1",
         GraphSubcommand::Affected { .. } => "effigy.graph.affected.v1",
-        GraphSubcommand::Context { .. } => "effigy.graph.context.v1",
         GraphSubcommand::Explore { .. } => "effigy.graph.explore.v1",
     }
 }
 
-/// Resolve the catalog scope plan for one invocation.
-///
-/// Explicit selection failures fail closed before any refresh. A repository
-/// with no effective catalog membership keeps the repository-owned scope, so
-/// graph commands still work outside Effigy monorepos.
-fn resolve_scope_plan(
-    repo_root: &Path,
-    args: &GraphArgs,
-    invocation_cwd: &Path,
-) -> Result<GraphScopePlan, RunnerError> {
-    let request = if args.all_catalogs {
-        GraphScopeRequest::AllCatalogs
-    } else if let Some(alias) = args.catalog.as_ref() {
-        GraphScopeRequest::Catalog(alias.clone())
-    } else {
-        GraphScopeRequest::Cwd
-    };
-    match effigy_routing::load_effective_catalogs(repo_root) {
-        Ok(catalogs) => {
-            effigy_codegraph::select_scopes(repo_root, &catalogs, &request, invocation_cwd)
-                .map_err(map_graph_error)
-        }
-        Err(effigy_routing::RoutingError::TaskCatalogsMissing { .. }) => {
-            if args.catalog.is_some() || args.all_catalogs {
-                return Err(map_graph_error(
-                    effigy_codegraph::CodeGraphError::validation(
-                        "catalog selection requires an effective catalog root manifest",
-                    ),
-                ));
-            }
-            GraphScope::repo_root(repo_root)
-                .map(GraphScopePlan::Single)
-                .map_err(map_graph_error)
-        }
-        Err(error) => Err(map_graph_error(
-            effigy_codegraph::CodeGraphError::validation(error.to_string()),
-        )),
-    }
-}
-
-fn run_graph_scoped(
-    repo_root: &Path,
-    args: &GraphArgs,
-    invocation_cwd: &Path,
-) -> Result<String, RunnerError> {
-    let plan = resolve_scope_plan(repo_root, args, invocation_cwd)?;
-    match plan {
-        GraphScopePlan::Single(scope) => {
-            let output = run_scope_operation(args, &scope)?;
-            Ok(render_single(repo_root, args, &scope, output))
-        }
-        GraphScopePlan::FanOut(scopes) => run_fan_out(repo_root, args, &scopes),
-    }
+fn run_graph_checkout(repo_root: &Path, args: &GraphArgs) -> Result<String, RunnerError> {
+    let root = GraphScope::repo_root(repo_root).map_err(map_graph_error)?;
+    let output = run_scope_operation(args, &root)?;
+    Ok(render_single(repo_root, args, output))
 }
 
 struct ScopeOutput {
@@ -196,39 +126,21 @@ fn run_scope_operation(args: &GraphArgs, scope: &GraphScope) -> Result<ScopeOutp
             let text = render_status_text(&payload);
             into_output(payload, text)
         }
-        GraphSubcommand::Watch { .. } => Err(RunnerError::task_invocation(
-            "`graph watch` is a streaming command and must run through the CLI entrypoint"
-                .to_owned(),
-        )),
         GraphSubcommand::Search { query, limit } => {
             let payload = search_in_scope(scope, query, *limit, policy).map_err(map_graph_error)?;
             let text = render_search_text(&payload);
             into_output(payload, text)
         }
-        GraphSubcommand::Files { limit } => {
-            let payload = files_in_scope(scope, *limit, policy).map_err(map_graph_error)?;
-            let text = render_files_text(&payload);
-            into_output(payload, text)
-        }
-        GraphSubcommand::Node { id } => {
-            let payload = node_in_scope(scope, id, policy).map_err(map_graph_error)?;
-            let text = render_node_text(id, &payload);
-            into_output(payload, text)
-        }
-        GraphSubcommand::Callers { id, limit } => {
-            let payload = callers_in_scope(scope, id, *limit, policy).map_err(map_graph_error)?;
-            let text = render_related_text("callers", &payload);
-            into_output(payload, text)
-        }
-        GraphSubcommand::Callees { id, limit } => {
-            let payload = callees_in_scope(scope, id, *limit, policy).map_err(map_graph_error)?;
-            let text = render_related_text("callees", &payload);
-            into_output(payload, text)
-        }
-        GraphSubcommand::Impact { target, limit } => {
+        GraphSubcommand::Node {
+            id,
+            incoming,
+            outgoing,
+            limit,
+        } => {
             let payload =
-                impact_in_scope(scope, target, *limit, policy).map_err(map_graph_error)?;
-            let text = render_impact_text(&payload);
+                node_with_options_in_scope(scope, id, *incoming, *outgoing, *limit, policy)
+                    .map_err(map_graph_error)?;
+            let text = render_node_text(id, &payload);
             into_output(payload, text)
         }
         GraphSubcommand::Affected {
@@ -242,33 +154,32 @@ fn run_scope_operation(args: &GraphArgs, scope: &GraphScope) -> Result<ScopeOutp
             let text = render_affected_text(&payload);
             into_output(payload, text)
         }
-        GraphSubcommand::Context {
-            request,
-            max_files,
-            max_bytes,
-            languages,
-            paths,
-        } => {
-            let payload = context_in_scope(
-                scope, request, *max_files, *max_bytes, languages, paths, policy,
-            )
-            .map_err(map_graph_error)?;
-            let text = render_context_text(&payload);
-            into_output(payload, text)
-        }
         GraphSubcommand::Explore {
+            excerpts_only,
             request,
             max_files,
             max_bytes,
             languages,
             paths,
         } => {
+            if *excerpts_only {
+                let payload = context_in_scope(
+                    scope, request, *max_files, *max_bytes, languages, paths, policy,
+                )
+                .map_err(map_graph_error)?;
+                let text = render_context_text(&payload);
+                let mut output = into_output(payload, text)?;
+                output.payload["mode"] = "excerpts-only".into();
+                return Ok(output);
+            }
             let payload = explore_in_scope(
                 scope, request, *max_files, *max_bytes, languages, paths, policy,
             )
             .map_err(map_graph_error)?;
             let text = render_explore_text(&payload);
-            into_output(payload, text)
+            let mut output = into_output(payload, text)?;
+            output.payload["mode"] = "navigation".into();
+            Ok(output)
         }
     }
 }
@@ -280,12 +191,7 @@ fn into_output(payload: impl serde::Serialize, text: String) -> Result<ScopeOutp
     Ok(ScopeOutput { text, payload })
 }
 
-fn render_single(
-    repo_root: &Path,
-    args: &GraphArgs,
-    scope: &GraphScope,
-    output: ScopeOutput,
-) -> String {
+fn render_single(repo_root: &Path, args: &GraphArgs, output: ScopeOutput) -> String {
     if !args.output_json {
         return output.text;
     }
@@ -295,74 +201,11 @@ fn render_single(
         graph_command_label(&args.subcommand),
         repo_root.display().to_string(),
         output.payload,
-    )
-    .with_catalog(GraphCatalogPayload::from_scope(scope));
+    );
     render_json(
         &envelope,
         &format!("{{\"schema\":\"{schema}\",\"schema_version\":1}}"),
     )
-}
-
-/// Explicit fan-out: every scope runs separately and reports its own outcome.
-///
-/// One catalog's failure is reported as a failed catalog instead of being
-/// folded into a success, and the command exits non-zero.
-fn run_fan_out(
-    repo_root: &Path,
-    args: &GraphArgs,
-    scopes: &[GraphScope],
-) -> Result<String, RunnerError> {
-    let mut outcomes = Vec::with_capacity(scopes.len());
-    let mut text_lines = Vec::new();
-    let mut failed = false;
-    for scope in scopes {
-        let catalog = GraphCatalogPayload::from_scope(scope);
-        match run_scope_operation(args, scope) {
-            Ok(output) => {
-                text_lines.push(format!("catalog {} ({}): ok", catalog.alias, catalog.root));
-                text_lines.extend(output.text.lines().map(|line| format!("  {line}")));
-                outcomes.push(GraphCatalogOutcomePayload {
-                    catalog,
-                    ok: true,
-                    error: None,
-                    payload: Some(output.payload),
-                });
-            }
-            Err(error) => {
-                failed = true;
-                let message = error.to_string();
-                text_lines.push(format!(
-                    "catalog {} ({}): failed: {message}",
-                    catalog.alias, catalog.root
-                ));
-                outcomes.push(GraphCatalogOutcomePayload {
-                    catalog,
-                    ok: false,
-                    error: Some(message),
-                    payload: None,
-                });
-            }
-        }
-    }
-    let rendered = if args.output_json {
-        let envelope = GraphCommandPayload::new(
-            "effigy.graph.fanout.v1",
-            graph_command_label(&args.subcommand),
-            repo_root.display().to_string(),
-            GraphFanOutPayload { catalogs: outcomes },
-        );
-        render_json(
-            &envelope,
-            "{\"schema\":\"effigy.graph.fanout.v1\",\"schema_version\":1}",
-        )
-    } else {
-        text_lines.join("\n")
-    };
-    if failed {
-        Err(RunnerError::task_invocation(rendered))
-    } else {
-        Ok(rendered)
-    }
 }
 
 fn render_index_text(payload: &GraphIndexPayload) -> String {
@@ -390,18 +233,6 @@ fn render_status_text(payload: &GraphStatusPayload) -> String {
         payload.counts.edges,
         payload.stale_paths.len()
     )
-}
-
-fn render_files_text(payload: &GraphFilesPayload) -> String {
-    let mut lines = freshness_lines(&payload.freshness);
-    lines.push(format!("graph files: {}", payload.files.len()));
-    for file in payload.files.iter().take(20) {
-        lines.push(format!(
-            "- {} [{}] {} bytes",
-            file.path, file.language_id, file.byte_size
-        ));
-    }
-    lines.join("\n")
 }
 
 fn render_search_text(payload: &GraphSearchPayload) -> String {
@@ -438,49 +269,23 @@ fn render_node_text(id: &str, payload: &GraphNodePayload) -> String {
         lines.push(format!("file: {} [{}]", file.path, file.language_id));
     }
     lines.push(format!(
-        "edges: {} references: {} diagnostics: {}",
-        payload.edges.len(),
-        payload.references.len(),
-        payload.diagnostics.len()
+        "direction: {} files: {} symbols: {}",
+        payload.direction,
+        payload.files.len(),
+        payload.symbols.len()
     ));
-    lines.join("\n")
-}
-
-fn render_related_text(label: &str, payload: &GraphRelatedNodesPayload) -> String {
-    let mut lines = freshness_lines(&payload.freshness);
-    lines.push(format!(
-        "graph {label} `{}`: {} nodes, {} edges",
-        payload.target_id,
-        payload.nodes.len(),
-        payload.edges.len()
-    ));
-    for symbol in payload.nodes.iter().take(20) {
+    for symbol in &payload.symbols {
         lines.push(format!(
             "- {} [{}] {}",
             symbol.display_name, symbol.kind, symbol.provenance.source_path
         ));
     }
-    lines.join("\n")
-}
-
-fn render_impact_text(payload: &GraphImpactPayload) -> String {
-    let mut lines = freshness_lines(&payload.freshness);
     lines.push(format!(
-        "graph impact `{}`: {} files, {} symbols, {} edges",
-        payload.target,
-        payload.files.len(),
-        payload.symbols.len(),
-        payload.edges.len()
+        "edges: {} references: {} diagnostics: {}",
+        payload.edges.len(),
+        payload.references.len(),
+        payload.diagnostics.len()
     ));
-    for file in payload.files.iter().take(10) {
-        lines.push(format!("- file {}", file.path));
-    }
-    for symbol in payload.symbols.iter().take(10) {
-        lines.push(format!(
-            "- symbol {} [{}] {}",
-            symbol.display_name, symbol.kind, symbol.provenance.source_path
-        ));
-    }
     lines.join("\n")
 }
 
@@ -523,7 +328,7 @@ fn render_affected_text(payload: &GraphAffectedPayload) -> String {
 fn render_context_text(payload: &GraphContextPayload) -> String {
     let mut lines = freshness_lines(&payload.freshness);
     lines.push(format!(
-        "graph context `{}`: {} items",
+        "graph explore `{}`: {} excerpt items",
         payload.request,
         payload.items.len()
     ));

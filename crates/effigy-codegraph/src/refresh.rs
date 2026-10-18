@@ -29,12 +29,8 @@ const LOCK_POLL_MS: u64 = 100;
 /// the lock as abandoned for lookup purposes.
 const STALE_HOLDER_WAIT_MS: u64 = 200;
 
-/// Cross-process exclusive lock guarding graph re-indexing of one scope.
-///
-/// Acquired by lazy refresh, `graph watch` batches, and explicit `graph index`
-/// runs, so parallel processes never race to rebuild the same scope. An
-/// independent catalog locks its own database directory; shared scopes lock
-/// the root graph directory.
+/// Cross-process exclusive lock guarding checkout refreshes.
+/// Lazy refresh and explicit indexing share the same lock.
 pub(crate) struct RefreshLock {
     file: File,
 }
@@ -313,22 +309,21 @@ pub(crate) fn run_index_exclusive_with_wait(
 }
 
 fn lock_busy_message(
-    scope: &GraphScope,
+    _scope: &GraphScope,
     wait_ms: u64,
     inspection: &RefreshLockInspection,
 ) -> String {
-    let catalog = format!("catalog `{}`", scope.alias());
     match inspection.identity.as_ref() {
         Some(identity) if identity.stale_holder => format!(
-            "graph refresh lock remained busy for {wait_ms}ms ({catalog}; stale holder pid {} age {}ms); run `effigy graph index --json` once the abandoned lock clears",
+            "graph refresh lock remained busy for {wait_ms}ms (stale holder pid {} age {}ms); run `effigy graph index --json` once the abandoned lock clears",
             identity.pid, identity.age_ms
         ),
         Some(identity) => format!(
-            "graph refresh lock remained busy for {wait_ms}ms ({catalog}; holder pid {} age {}ms); wait for that process or pass `--stale-index` to read the committed files",
+            "graph refresh lock remained busy for {wait_ms}ms (holder pid {} age {}ms); wait for that process or pass `--stale-index` to read the committed files",
             identity.pid, identity.age_ms
         ),
         None => format!(
-            "graph refresh lock remained busy for {wait_ms}ms ({catalog}); wait for the holder or pass `--stale-index` to read the committed files"
+            "graph refresh lock remained busy for {wait_ms}ms; wait for the holder or pass `--stale-index` to read the committed files"
         ),
     }
 }
@@ -380,14 +375,14 @@ pub(crate) fn ensure_fresh_with_wait_and_progress(
     if policy.stale_index {
         return committed_outcome(scope, store, &inspection, &[]);
     }
-    let ready = store.counts_in_scope(scope)?.files > 0;
+    let ready = store.counts()?.files > 0;
     if ready && crate::git::git_gate_says_fresh(scope, store)? {
         return Ok(RefreshOutcome {
             freshness: graph_freshness_payload(
                 true,
                 true,
                 &[],
-                store.failed_diagnostic_paths_in_scope(scope)?.len(),
+                store.failed_diagnostic_paths()?.len(),
             ),
             notes: Vec::new(),
             source: RefreshSource::Live,
@@ -440,10 +435,10 @@ fn current_outcome(
     let stale = stale_paths_in_scope(scope, store)?;
     Ok(RefreshOutcome {
         freshness: graph_freshness_payload(
-            store.counts_in_scope(scope)?.files > 0,
+            store.counts()?.files > 0,
             true,
             &stale,
-            store.failed_diagnostic_paths_in_scope(scope)?.len(),
+            store.failed_diagnostic_paths()?.len(),
         ),
         notes,
         source: RefreshSource::Live,
@@ -456,8 +451,8 @@ fn committed_outcome(
     inspection: &RefreshLockInspection,
     stale: &[String],
 ) -> Result<RefreshOutcome, CodeGraphError> {
-    let ready = store.counts_in_scope(scope)?.files > 0;
-    let failed = store.failed_diagnostic_paths_in_scope(scope)?.len();
+    let ready = store.counts()?.files > 0;
+    let failed = store.failed_diagnostic_paths()?.len();
     let mut freshness = if ready {
         stale_index_freshness_payload(stale, failed, inspection.held.then(|| inspection.payload()))
     } else {

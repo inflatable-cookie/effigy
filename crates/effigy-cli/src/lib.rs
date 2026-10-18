@@ -327,11 +327,7 @@ pub struct GraphArgs {
     pub subcommand: GraphSubcommand,
     pub repo_override: Option<PathBuf>,
     pub output_json: bool,
-    /// Explicit catalog scope selector (`--catalog <alias>`).
-    pub catalog: Option<String>,
-    /// Explicit fan-out selector (`--all-catalogs`).
-    pub all_catalogs: bool,
-    /// Read the last complete graph snapshot without waiting for or starting a refresh.
+    /// Read committed files without waiting for or starting a refresh.
     pub stale_index: bool,
 }
 
@@ -352,29 +348,14 @@ pub enum GraphSubcommand {
     Status {
         refresh: bool,
     },
-    Watch {
-        debounce_ms: u64,
-    },
     Search {
         query: String,
         limit: Option<usize>,
     },
-    Files {
-        limit: Option<usize>,
-    },
     Node {
         id: String,
-    },
-    Callers {
-        id: String,
-        limit: Option<usize>,
-    },
-    Callees {
-        id: String,
-        limit: Option<usize>,
-    },
-    Impact {
-        target: String,
+        incoming: bool,
+        outgoing: bool,
         limit: Option<usize>,
     },
     Affected {
@@ -383,14 +364,8 @@ pub enum GraphSubcommand {
         depth: usize,
         limit: Option<usize>,
     },
-    Context {
-        request: String,
-        max_files: Option<usize>,
-        max_bytes: Option<usize>,
-        languages: Vec<String>,
-        paths: Vec<String>,
-    },
     Explore {
+        excerpts_only: bool,
         request: String,
         max_files: Option<usize>,
         max_bytes: Option<usize>,

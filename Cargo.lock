@@ -902,7 +902,6 @@ dependencies = [
  "globset",
  "hex",
  "ignore",
- "notify",
  "pulldown-cmark",
  "rusqlite",
  "serde",

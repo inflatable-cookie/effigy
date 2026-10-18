@@ -8,7 +8,7 @@ pub(super) use effigy_cli::{
     ContractsSubcommand, DeferArgs, DemoArgs, DemoListGap, DemoListGroupBy, DemoListMode,
     DemoListQuery, DemoListStatus, DemoSubcommand, DeployArgs, DeploySubcommand, DepsArgs,
     DepsManager, DepsSubcommand, DocsArgs, DocsBlockRequirement, DocsSubcommand, DoctorArgs,
-    DraftArgs, DraftsArgs, ExecArgs, GatewayArgs, GatewayPrivateArgs, GatewaySubcommand, GraphArgs,
+    DraftArgs, DraftsArgs, ExecArgs, GatewayArgs, GatewayPrivateArgs, GatewaySubcommand,
     GraphSubcommand, HelpGroup, HelpTopic, InternalGatewayArgs, ReleaseArgs,
     ReleaseEvidenceSubcommand, ReleaseSubcommand, RhaiArgs, RhaiSubcommand, ServiceArgs,
     ServiceSubcommand, SkillArgs, SkillStdioMode, SkillSubcommand, StateArgs, StateSubcommand,

@@ -55,7 +55,7 @@ effigy --json tasks
 effigy --json doctor
 effigy --json test --plan
 effigy --json graph status
-effigy --json graph context "trace release orchestrator"
+effigy --json graph explore --excerpts-only "trace release orchestrator"
 ```
 
 ## Top-Level Contract
@@ -160,15 +160,9 @@ Operator workflow and recovery: [`077-local-dependency-linking.md`](077-local-de
 - `effigy.graph.index.v1`
 - `effigy.graph.status.v1`
 - `effigy.graph.search.v1`
-- `effigy.graph.files.v1`
 - `effigy.graph.node.v1`
-- `effigy.graph.callers.v1`
-- `effigy.graph.callees.v1`
-- `effigy.graph.impact.v1`
-- `effigy.graph.context.v1`
 - `effigy.graph.explore.v1`
 - `effigy.graph.affected.v1`
-- `effigy.graph.fanout.v1` (explicit `--all-catalogs` fan-out: one outcome per catalog)
 - `effigy.docs.context.v1`
 - `effigy.docs.context.sources.v1`
 - `deploy.model.v1`
@@ -248,7 +242,7 @@ effigy --json graph index
 effigy --json graph status
 effigy --json graph search release --limit 10
 effigy --json graph explore "trace deploy provider export" --max-files 6 --max-bytes 12288
-effigy --json graph context "trace deploy provider export" --max-files 8 --max-bytes 4096
+effigy --json graph explore --excerpts-only "trace deploy provider export" --max-files 8 --max-bytes 4096
 effigy --json graph affected src/runner/graph_command.rs --depth 2
 effigy --json deploy model --repo /path/to/workspace
 effigy --json deploy export <PROVIDER> --repo /path/to/workspace --path infra/deploy --plan
@@ -297,60 +291,32 @@ It is emitted at most once per process and never on stdout, so the
 selection payload — `effigy service list` and `effigy service pack status` —
 additionally carry the same facts in `result.selection`.
 
-## Graph Watch Streaming Exception
-
-`effigy graph watch --json` is intentionally different from the normal command
-envelope model.
-
-It is a long-running streaming command, so it emits newline-delimited JSON
-events with schema:
-
-- `effigy.graph.watch.event.v1`
-
-It does **not** wrap each event in `effigy.command.v1`.
-
-Use it like this:
-
-```bash
-effigy graph watch --json
-```
-
-Consume one JSON object per line. Current event kinds:
-
-- `started`
-- `refresh`
-- `dirty`
-- `reconcile`
-- `fatal`
-
 ## Graph Workflow Notes
 
-- Graph data queries refresh a stale or missing index before serving, so their
-  payloads are the post-refresh view. `graph status --json` is the honest
-  pre-refresh gate; when its `payload.freshness.state` is `missing-index`,
-  `refresh-recommended`, or `degraded`, reindex with
-  `graph status --refresh --json` (or let the next query refresh on demand).
-  `stale-index` means the lookup served the last complete snapshot on purpose
-  (`--stale-index` or a held refresh lock) and must not be treated as current.
-  Additive `freshness.lock` names the holder pid, age, and `stale_holder` when
-  a refresh lock was involved. Path lists (`stale_paths`, `failed_paths`) are
-  supporting detail.
-- In a monorepo, `[catalog.graph]` marks an existing catalog as a graph scope.
-  Every graph command payload carries additive catalog evidence at
-  `catalog.alias`, `catalog.root`, `catalog.selection` (`explicit`, `cwd`, or
-  `root`), `catalog.segmented`, and `catalog.independent`. Single-catalog
-  repositories keep their existing fields and values.
-- `--catalog <ALIAS>` selects exactly one effective segmented catalog,
-  `--all-catalogs` is the only fan-out, and the two cannot be combined. An
-  unknown, folded-only, or escaping alias fails before any refresh without
-  creating graph state.
-- `--all-catalogs` renders `effigy.graph.fanout.v1` with one complete outcome
-  per catalog (`ok`, `error`, and that catalog's own payload), and exits
-  non-zero when any catalog failed instead of reporting partial success.
-- `graph affected --json` narrows validation scope but does not claim exhaustive
-  test reachability.
-- `graph explore --json` and `graph context --json` are bounded packets; exact
-  token confirmation still belongs to `rg`.
+Graph uses one database for the checkout. The command envelope has no catalog
+selection or fan-out fields. Data queries refresh stale files lazily, while
+plain status is read-only. `freshness.state` includes `ready`,
+`refresh-recommended`, `degraded`, `missing-index`, `stale-index` and
+`refreshing`. Gate on `usable`; stale and refreshing data are not current.
+A concurrent writer is identified in `freshness.lock` and its committed-file
+progress is reported as `refreshing (n/N)`.
+
+`effigy.graph.node.v1` adds `target`, `direction`, `files` and `symbols` beside
+its seed `file`/`symbol`, edges, references, diagnostics and freshness.
+`--in` and `--out` select relationship direction; default is `both`.
+
+`effigy.graph.explore.v1` has two payload modes: `navigation` keeps primary
+owners, excerpts, relations, edit targets and likely tests. `excerpts-only`
+keeps ranked `items`, `request`, `overflow`, `freshness` and `notes`.
+Both modes use the same file, byte, language and path budgets.
+
+File updates commit graph, FTS and per-file freshness keys together. There is
+no snapshot copy or graph event stream. A cooperative timeout stops work at
+a safe boundary and returns `effigy.graph.timeout.v1` with the last phase,
+`done`, `total` and `committed: true`; counts can be null before indexing.
+Retries keep committed progress. `--stale-index` skips refresh and lock wait.
+Affected packets narrow likely validation and do not prove exhaustive test
+reachability. See the [graph guide](076-code-graph-and-agent-workflows.md).
 
 ## Payload Examples
 

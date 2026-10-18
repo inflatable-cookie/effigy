@@ -58,26 +58,9 @@ pub(crate) fn current_head(repo_root: &Path) -> Option<String> {
     }
 }
 
-/// Whether the working tree is clean **inside one scope**.
-///
-/// Git limits the status query to the scope's own pathspec, so a dirty or huge
-/// sibling catalog is never walked while checking this scope's freshness. The
-/// root scope excludes every segmented descendant; a catalog scope includes
-/// only its own root and excludes nested segmented catalogs.
+/// Whether the checkout is clean apart from graph-skipped output paths.
 pub(crate) fn working_tree_clean_for_scope(scope: &GraphScope) -> bool {
-    let mut pathspecs = Vec::new();
-    if scope.is_workspace() {
-        // The repository-owned corpus has no prunes, so git reports the whole
-        // worktree exactly as it did before catalog scopes existed.
-    } else if scope.relative_root().is_empty() {
-        pathspecs.push(".".to_owned());
-    } else {
-        pathspecs.push(scope.relative_root().to_owned());
-    }
-    for prune in scope.prune_relative_roots() {
-        pathspecs.push(format!(":(exclude){prune}"));
-    }
-    porcelain_status_paths(scope.workspace_root(), &pathspecs)
+    porcelain_status_paths(scope.workspace_root(), &[])
         .map(|paths| {
             paths
                 .iter()

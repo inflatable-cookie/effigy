@@ -264,17 +264,8 @@ Values:
 - `refresh-recommended` — reindex before trusting queries
 - `degraded` — partial problems; treat output as bounded guidance
 - `missing-index` — run `graph index` first
-- `stale-index` — last complete snapshot, read-only and not current
-
-## Graph Watch Event
-
-Definition:
-- Newline-delimited JSON event emitted by `effigy graph watch --json` with schema
-  `effigy.graph.watch.event.v1`.
-
-Notes:
-- this is a streaming exception and does not use the one-shot `effigy.command.v1`
-  envelope
+- `stale-index` — committed files, read-only and not current
+- `refreshing` — committed file generations while another writer advances through files
 
 ## Managed TUI Task
 

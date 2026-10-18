@@ -581,18 +581,11 @@ Companion references:
   "schema_version": 1,
   "command": "graph status",
   "repo_root": "/workspace/app",
-  "catalog": {
-    "alias": "bovine-desktop",
-    "root": "apps/bovine-desktop",
-    "selection": "explicit",
-    "segmented": true,
-    "independent": true
-  },
   "payload": {
     "ready": true,
     "index_present": true,
     "db_path": "/workspace/app/.effigy/graph/graph.db",
-    "storage_schema_version": 2,
+    "storage_schema_version": 3,
     "counts": {
       "files": 3184,
       "symbols": 30800,
@@ -621,8 +614,15 @@ Companion references:
       {
         "id": "rust",
         "version": "1.0.0",
-        "languages": ["rust"],
-        "capabilities": ["symbols", "references", "calls", "imports"]
+        "languages": [
+          "rust"
+        ],
+        "capabilities": [
+          "symbols",
+          "references",
+          "calls",
+          "imports"
+        ]
       }
     ]
   }
@@ -712,18 +712,19 @@ Companion references:
     "guidance": [
       "trust excerpts for first-pass orientation",
       "use rg for exact token verification before editing"
-    ]
+    ],
+    "mode": "navigation"
   }
 }
 ```
 
-### 6) Graph Context (`effigy.graph.context.v1`)
+### 6) Graph Explore Excerpts (`effigy.graph.explore.v1`)
 
 ```json
 {
-  "schema": "effigy.graph.context.v1",
+  "schema": "effigy.graph.explore.v1",
   "schema_version": 1,
-  "command": "graph context",
+  "command": "graph explore",
   "repo_root": "/workspace/app",
   "payload": {
     "request": "trace release orchestrator",
@@ -744,8 +745,16 @@ Companion references:
         "language_id": "rust",
         "name": "run_release",
         "range": {
-          "start": { "line": 14, "column": 0, "byte": 322 },
-          "end": { "line": 81, "column": 1, "byte": 2114 }
+          "start": {
+            "line": 14,
+            "column": 0,
+            "byte": 322
+          },
+          "end": {
+            "line": 81,
+            "column": 1,
+            "byte": 2114
+          }
         },
         "rank": 1,
         "score": 18,
@@ -775,7 +784,8 @@ Companion references:
     "notes": [
       "language filter: rust",
       "path filter: src/runner"
-    ]
+    ],
+    "mode": "excerpts-only"
   }
 }
 ```
@@ -789,7 +799,9 @@ Companion references:
   "command": "graph affected",
   "repo_root": "/workspace/app",
   "payload": {
-    "changed_paths": ["src/runner/graph_command.rs"],
+    "changed_paths": [
+      "src/runner/graph_command.rs"
+    ],
     "freshness": {
       "state": "ready",
       "summary": "graph index is current",
@@ -839,100 +851,35 @@ Companion references:
 }
 ```
 
-### 8) Graph Watch Event (`effigy.graph.watch.event.v1`)
+### 8) Graph Node (`effigy.graph.node.v1`)
 
-`graph watch --json` is newline-delimited event output, not a one-shot envelope.
+An unknown target keeps query metadata and returns empty collections:
 
 ```json
 {
-  "schema": "effigy.graph.watch.event.v1",
+  "schema": "effigy.graph.node.v1",
   "schema_version": 1,
-  "command": "graph watch",
+  "command": "graph node",
   "repo_root": "/workspace/app",
   "payload": {
-    "kind": "refresh",
-    "debounce_ms": 1000,
-    "changed_paths": ["src/lib.rs"],
-    "dirty": false,
-    "refresh_duration_ms": 231,
-    "index": {
-      "indexed_files": 3184,
-      "extractor_count": 5,
-      "counts": {
-        "files": 3184,
-        "symbols": 30801,
-        "edges": 138887,
-        "references": 62857,
-        "diagnostics": 6,
-        "extractors": 5,
-        "index_runs": 13
-      },
-      "stale_paths": [],
-      "new_paths": [],
-      "changed_paths": ["src/lib.rs"],
-      "deleted_paths": [],
-      "skipped_paths": [],
-      "failed_paths": []
-    },
-    "notes": []
-  }
-}
-```
-
-### 9) Graph Fan-Out (`effigy.graph.fanout.v1`)
-
-`--all-catalogs` is the only fan-out. Every scope reports its own complete
-outcome, including failures, and the command exits non-zero if any scope failed.
-
-```json
-{
-  "schema": "effigy.graph.fanout.v1",
-  "schema_version": 1,
-  "command": "graph index",
-  "repo_root": "/workspace/acowtancy",
-  "payload": {
-    "catalogs": [
-      {
-        "catalog": {
-          "alias": "acowtancy",
-          "root": ".",
-          "selection": "root",
-          "segmented": false,
-          "independent": false
-        },
-        "ok": true,
-        "payload": {
-          "indexed_files": 12,
-          "extractor_count": 5,
-          "counts": {
-            "files": 12,
-            "symbols": 44,
-            "edges": 91,
-            "references": 12,
-            "diagnostics": 0,
-            "extractors": 5,
-            "index_runs": 4
-          },
-          "stale_paths": [],
-          "new_paths": [],
-          "changed_paths": [],
-          "deleted_paths": [],
-          "skipped_paths": [],
-          "failed_paths": []
-        }
-      },
-      {
-        "catalog": {
-          "alias": "bovine-desktop",
-          "root": "apps/bovine-desktop",
-          "selection": "root",
-          "segmented": true,
-          "independent": true
-        },
-        "ok": false,
-        "error": "catalog `bovine-desktop` refresh lock remained busy for 10000ms"
-      }
-    ]
+    "target": "symbol:rust:missing",
+    "direction": "in",
+    "file": null,
+    "symbol": null,
+    "files": [],
+    "symbols": [],
+    "edges": [],
+    "references": [],
+    "diagnostics": [],
+    "freshness": {
+      "state": "ready",
+      "summary": "graph index is current",
+      "usable": true,
+      "stale": false,
+      "stale_path_count": 0,
+      "failed_path_count": 0,
+      "stale_paths": []
+    }
   }
 }
 ```

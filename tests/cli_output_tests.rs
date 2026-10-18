@@ -12,8 +12,8 @@ mod docs_context_tests;
 mod drafts_tests;
 #[path = "cli_output_tests/flat_command_execution_tests.rs"]
 mod flat_command_execution_tests;
-#[path = "cli_output_tests/graph_watch_tests.rs"]
-mod graph_watch_tests;
+#[path = "cli_output_tests/graph_surface_tests.rs"]
+mod graph_surface_tests;
 #[path = "cli_output_tests/help_and_flags_tests.rs"]
 mod help_and_flags_tests;
 #[path = "cli_output_tests/json_envelope_tests/mod.rs"]

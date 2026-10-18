@@ -2,13 +2,9 @@
 //! manifest tasks, unowned grouped spellings never reach a child built-in,
 //! direct routes stay warning-free, and existing selector precedence holds.
 
-use super::support::FixtureCommandExt;
 use serde_json::Value;
 use std::fs;
-use std::io::{BufRead, BufReader};
-use std::process::{Command, Stdio};
-use std::sync::mpsc;
-use std::time::{Duration, Instant};
+use std::process::Command;
 
 use super::support::{parse_stdout_json, run_cli_command, run_json_cli_command, temp_workspace};
 
@@ -201,74 +197,14 @@ fn direct_usage_and_runtime_errors_have_no_migration_metadata() {
 }
 
 #[test]
-fn graph_watch_json_stream_has_no_migration_stderr() {
-    let root = temp_workspace("flat-graph-watch");
-    fs::create_dir_all(root.join("src")).expect("mkdir src");
-    fs::write(root.join("src/lib.rs"), "pub fn alpha() {}\n").expect("write rust");
-
-    let mut child = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .args(["--json", "graph", "watch", "--debounce-ms", "100"])
-        .current_dir(&root)
-        .env("NO_COLOR", "1")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn_owned()
-        .expect("spawn graph watch");
-
-    let stdout = child.stdout.take().expect("stdout pipe");
-    let (tx, rx) = mpsc::channel::<String>();
-    let reader = std::thread::spawn(move || {
-        let reader = BufReader::new(stdout);
-        for line in reader.lines() {
-            let line = line.expect("stdout line");
-            if !line.trim().is_empty() && tx.send(line).is_err() {
-                break;
-            }
-        }
-    });
-
-    let deadline = Instant::now() + Duration::from_secs(10);
-    let mut lines = Vec::new();
-    while Instant::now() < deadline {
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        match rx.recv_timeout(remaining) {
-            Ok(line) => {
-                let matched = line.contains("effigy.graph.watch.event.v1");
-                lines.push(line);
-                if matched {
-                    break;
-                }
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                panic!("no watch event within 10s: {lines:?}")
-            }
-            Err(mpsc::RecvTimeoutError::Disconnected) => break,
-        }
-    }
-
-    child.kill().expect("kill graph watch");
-    let _ = child.wait();
-    let _ = reader.join();
-    let mut stderr = Vec::new();
-    use std::io::Read;
-    let _ = child
-        .stderr
-        .take()
-        .expect("stderr pipe")
-        .read_to_end(&mut stderr);
-    let stderr = String::from_utf8(stderr).unwrap_or_default();
-
-    let event: Value =
-        serde_json::from_str(lines.first().expect("watch event line")).expect("event json");
-    assert_eq!(event["schema"], "effigy.graph.watch.event.v1");
-    assert!(
-        !lines.iter().any(|line| line.contains("effigy.command.v1")),
-        "graph watch must stream events: {lines:?}"
-    );
-    assert!(
-        !stderr.contains("is deprecated") && !stderr.contains("legacy-direct-command"),
-        "graph watch stderr must stay migration-free: {stderr}"
-    );
+fn retired_graph_watch_returns_a_json_usage_error() {
+    let fixture = tempfile::tempdir().expect("private fixture");
+    let output = run_json_cli_command(fixture.path(), &["graph", "watch"]);
+    assert_eq!(output.status.code(), Some(2));
+    let payload = parse_stdout_json(&output);
+    assert_eq!(payload["ok"], false);
+    assert!(payload.to_string().contains("graph index"));
+    assert!(payload.to_string().contains("removed in v0.15"));
 }
 
 #[test]

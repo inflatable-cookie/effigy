@@ -17,26 +17,16 @@ pub struct ScanEntry {
     pub byte_size: u64,
 }
 
-/// Walk the whole workspace. Used by documentation-authority checks that must
-/// see every configured root; code-graph scopes use [`scan_repo_files_in_scope`].
+/// Walk supported files across the whole checkout.
 pub fn scan_repo_files(repo_root: &Path) -> Result<Vec<ScanEntry>, CodeGraphError> {
     scan_from(repo_root, repo_root, &[])
 }
 
-/// Walk one graph scope.
-///
-/// The walk starts at the scope's catalog root and prunes every segmented
-/// descendant before descent, so selecting one catalog never stats, reads, or
-/// fingerprints a sibling tree. Relative paths stay workspace-relative, so a
-/// shared database keeps one canonical path per file.
+/// Code navigation and documentation context share the checkout walk.
 pub(crate) fn scan_repo_files_in_scope(
     scope: &GraphScope,
 ) -> Result<Vec<ScanEntry>, CodeGraphError> {
-    scan_from(
-        scope.workspace_root(),
-        scope.catalog_root(),
-        &scope.prune_absolute_roots(),
-    )
+    scan_repo_files(scope.workspace_root())
 }
 
 fn scan_from(

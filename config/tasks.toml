@@ -11,8 +11,14 @@
 # Graph storage and CLI refresh contract; nextest bounds each case and leaks.
 "test:graph:storage" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-codegraph --lib --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail", timeout_ms = 600000 }
 "test:graph:runner" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(graph_) | test(docs_context_time_budget_tests::)' --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail", timeout_ms = 600000 }
-"check:graph" = "cargo check -p effigy-codegraph -p effigy-cli -p effigy --all-targets --profile test"
-"lint:graph" = "cargo clippy -p effigy-codegraph -p effigy-cli -p effigy --all-targets -- -D warnings"
+"test:graph:adoption" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-codegraph --lib --filterset 'test(builtin_init_actions_json_contract_has_versioned_shape) | test(graph_excerpts_payload_round_trips)' --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail", timeout_ms = 600000 }
+"test:graph:config" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-manifest -p effigy-routing --lib --filterset 'test(loaded_catalog::tests::) | test(owning_workspace_root_)' --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail", timeout_ms = 600000 }
+"test:graph:cli" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests --filterset 'test(graph_surface_tests::) | test(retired_graph_watch_) | test(documentation_graph_runtime_)' --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail", timeout_ms = 600000 }
+"test:graph:parity" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test documentation_coverage_tests --filterset 'test(project_local_and_distributed_effigy_skills_have_semantic_parity) | test(public_help_families_and_current_contract_paths_are_documented)' --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail", timeout_ms = 600000 }
+
+"test:graph:checkout" = { admission = "heavy", run = [ { id = "graph-checkout-build", run = "cargo build --bin effigy", timeout_ms = 600000 }, { id = "graph-checkout-smoke", run = "python3 tests/scripts/graph-checkout-smoke.py ./target/debug/effigy", timeout_ms = 600000 } ] }
+"check:graph" = "cargo check -p effigy-codegraph -p effigy-cli -p effigy-manifest -p effigy-routing -p effigy-builtin -p effigy --all-targets --profile test"
+"lint:graph" = "cargo clippy -p effigy-codegraph -p effigy-cli -p effigy-manifest -p effigy-routing -p effigy-builtin -p effigy --all-targets -- -D warnings"
 
 # Common local commands
 "fmt:check" = "cargo fmt --all -- --check"

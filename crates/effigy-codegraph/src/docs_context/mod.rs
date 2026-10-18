@@ -224,9 +224,7 @@ fn ensure_freshness(
     repo_root: &Path,
     progress: impl FnMut(RefreshPending),
 ) -> Result<(GraphStore, GraphFreshnessPayload), CodeGraphError> {
-    // Documentation context owns its corpus: it indexes the whole repository
-    // corpus and never prunes a configured documentation root or opens an
-    // independent catalog database. Catalog scopes stay untouched.
+    // Documentation context and navigation read the same checkout corpus.
     let scope = GraphScope::workspace(repo_root)?;
     let live = GraphStore::open(repo_root)?;
     let outcome = crate::refresh::ensure_fresh_with_progress(&scope, &live, progress)?;

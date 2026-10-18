@@ -413,10 +413,10 @@ fn graph_json_payloads_are_versioned() {
 }
 
 #[test]
-fn graph_context_payload_round_trips() {
+fn graph_excerpts_payload_round_trips() {
     let payload = GraphCommandPayload::new(
-        "effigy.graph.context.v1",
-        "graph context",
+        "effigy.graph.explore.v1",
+        "graph explore",
         "/tmp/repo",
         GraphContextPayload {
             request: "trace deploy provider export".to_owned(),
@@ -458,7 +458,7 @@ fn graph_context_payload_round_trips() {
     let json = serde_json::to_string(&payload).expect("serialize");
     let decoded: GraphCommandPayload<GraphContextPayload> =
         serde_json::from_str(&json).expect("deserialize");
-    assert_eq!(decoded.schema, "effigy.graph.context.v1");
+    assert_eq!(decoded.schema, "effigy.graph.explore.v1");
     assert_eq!(decoded.schema_version, GRAPH_JSON_SCHEMA_VERSION);
     assert_eq!(decoded.payload.request, "trace deploy provider export");
 }

@@ -92,10 +92,10 @@ Graph data queries refresh stale or missing indexes on demand, so start with
 report-only pre-refresh state; use explicit `graph index` for pre-warming or
 cache recovery. Use `rg` for exact tokens and final pre-edit proof.
 
-In a monorepo, a segmented catalog is an independently lazy graph scope.
-Plain `graph` commands use the invocation cwd's catalog or the root scope;
-`--catalog <ALIAS>` selects one explicitly and `--all-catalogs` is the only
-fan-out. JSON payloads name the selected scope under `catalog`.
+The graph indexes the whole checkout, including catalog members. Use
+`graph node <ID|PATH> --in` or `--out` for relationships, and
+`graph explore --excerpts-only` for a ranked excerpt packet. During a refresh,
+queries read committed files and report `refreshing (n/N)`. No watcher is needed.
 
 Details: `references/agent-operating-loop.md`, `references/graph-assist.md`.
 
@@ -201,9 +201,6 @@ effigy --json <command>
 Returns `effigy.command.v1` with command-specific data in `result` (or
 `error.details` for some failures); graph reports may nest their payload under
 `result.payload`.
-
-**Exception:** `effigy graph watch --json` streams `effigy.graph.watch.event.v1`
-lines — not the one-shot envelope.
 
 ```bash
 effigy --json tasks | jq -r '.result.catalog_tasks[].task'

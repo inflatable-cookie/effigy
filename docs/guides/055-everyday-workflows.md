@@ -122,7 +122,7 @@ effigy graph index
 effigy graph status --json
 effigy graph explore "trace deploy provider export" --max-files 6 --max-bytes 12288 --json
 git diff --name-only | effigy graph affected --stdin --json
-effigy graph context "trace deploy provider export" --max-files 8 --max-bytes 4096 --json
+effigy graph explore --excerpts-only "trace deploy provider export" --max-files 8 --max-bytes 4096 --json
 effigy graph search release --limit 10 --json
 ```
 
@@ -143,7 +143,7 @@ before trusting query output.
 If the repo is changing while you work:
 
 ```sh
-effigy graph watch --json
+effigy graph index --json
 ```
 
 Deep dive:

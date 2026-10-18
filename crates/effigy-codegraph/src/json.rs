@@ -45,17 +45,6 @@ pub struct GraphStatusPayload {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GraphWatchEventPayload {
-    pub kind: String,
-    pub debounce_ms: u64,
-    pub changed_paths: Vec<String>,
-    pub dirty: bool,
-    pub refresh_duration_ms: Option<u128>,
-    pub index: Option<GraphIndexPayload>,
-    pub notes: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GraphIndexPayload {
     pub indexed_files: usize,
     pub extractor_count: usize,
@@ -129,6 +118,10 @@ pub struct GraphSearchPayload {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GraphNodePayload {
+    pub target: String,
+    pub direction: String,
+    pub files: Vec<FileRecord>,
+    pub symbols: Vec<SymbolRecord>,
     pub freshness: GraphFreshnessPayload,
     pub file: Option<FileRecord>,
     pub symbol: Option<SymbolRecord>,
@@ -277,63 +270,13 @@ pub struct GraphIndexRunsPayload {
     pub runs: Vec<IndexRunRecord>,
 }
 
-/// Additive catalog evidence attached to every graph command payload.
-///
-/// It names the selected scope, the repository-relative catalog root, how the
-/// scope was selected, and its storage posture. Single-catalog repositories
-/// keep their existing fields and values; this object is additive.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GraphCatalogPayload {
-    pub alias: String,
-    pub root: String,
-    pub selection: String,
-    pub segmented: bool,
-    pub independent: bool,
-}
-
-impl GraphCatalogPayload {
-    pub fn from_scope(scope: &crate::scope::GraphScope) -> Self {
-        Self {
-            alias: scope.alias().to_owned(),
-            root: if scope.relative_root().is_empty() {
-                ".".to_owned()
-            } else {
-                scope.relative_root().to_owned()
-            },
-            selection: scope.selection().as_str().to_owned(),
-            segmented: scope.segmented(),
-            independent: scope.independent(),
-        }
-    }
-}
-
-/// One complete per-catalog outcome in an explicit fan-out report.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct GraphCatalogOutcomePayload {
-    pub catalog: GraphCatalogPayload,
-    pub ok: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub payload: Option<serde_json::Value>,
-}
-
-/// `--all-catalogs` payload: one outcome per selected scope.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct GraphFanOutPayload {
-    pub catalogs: Vec<GraphCatalogOutcomePayload>,
-}
-
+/// Common envelope for checkout graph command payloads.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GraphCommandPayload<T> {
     pub schema: String,
     pub schema_version: u8,
     pub command: String,
     pub repo_root: String,
-    /// Selected catalog scope. Absent only for explicit fan-out, whose
-    /// per-catalog outcomes carry their own catalog evidence.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub catalog: Option<GraphCatalogPayload>,
     pub payload: T,
 }
 
@@ -349,15 +292,8 @@ impl<T> GraphCommandPayload<T> {
             schema_version: GRAPH_JSON_SCHEMA_VERSION,
             command: command.into(),
             repo_root: repo_root.into(),
-            catalog: None,
             payload,
         }
-    }
-
-    /// Attach the selected scope's catalog evidence.
-    pub fn with_catalog(mut self, catalog: GraphCatalogPayload) -> Self {
-        self.catalog = Some(catalog);
-        self
     }
 }
 

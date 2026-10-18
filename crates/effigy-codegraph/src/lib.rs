@@ -1,7 +1,7 @@
 //! Native code-graph indexing and query support for Effigy.
 //!
 //! This crate owns the local graph artifact under `.effigy/graph/graph.db`,
-//! first-party language extraction, graph-query helpers, and watch-mode refresh.
+//! first-party language extraction, graph-query helpers.
 //! The SQLite store is an implementation detail. The CLI JSON payloads exposed
 //! through `effigy graph ... --json` are the stable machine-facing contract.
 //!
@@ -15,7 +15,6 @@
 //! - [`docs_context`] to retrieve bounded exact documentation sections with
 //!   provenance, budgets, and repository-owned kinds/relations
 //! - [`affected`] to narrow likely validation scope from changed-file input
-//! - [`watch_repo`] to keep the graph fresh from foreground filesystem events
 //!
 //! Recommended agent workflow:
 //! 1. query functions refresh a stale or missing index on demand, so graph
@@ -47,7 +46,6 @@ pub mod scope;
 pub mod storage;
 mod support;
 mod walk;
-pub mod watch;
 
 /// Pure usage validation so callers can reject empty queries and invalid
 /// budgets before starting bounded graph work.
@@ -57,7 +55,7 @@ pub use docs_context::validate_docs_context_request;
 pub use docs_context::{
     docs_context, docs_context_with_progress, DocsContextPayload, DocsContextRequest,
 };
-/// Shared error type for graph indexing, query, storage, and watch failures.
+/// Shared error type for graph indexing, query, storage failures.
 pub use error::CodeGraphError;
 /// Cheap index/refresh health snapshot for bounded-failure reporting.
 pub use health::{health, GraphHealthPayload};
@@ -77,12 +75,12 @@ pub use phase::{
 /// Query helpers over the stored graph.
 ///
 /// The plain names read the repository-owned workspace corpus; the
-/// `*_in_scope` variants read one catalog-derived [`GraphScope`].
+/// `*_in_scope` variants read one checkout-root [`GraphScope`].
 pub use query::{
     affected, affected_in_scope, callees, callees_in_scope, callers, callers_in_scope, context,
     context_in_scope, explore, explore_in_scope, files as query_files, files_in_scope, impact,
-    impact_in_scope, node, node_in_scope, search as query_search, search_in_scope,
-    PreparedAffectedQuery,
+    impact_in_scope, node, node_in_scope, node_with_options_in_scope, search as query_search,
+    search_in_scope, PreparedAffectedQuery,
 };
 /// Lazy on-query graph refresh (rebuilds stale indexes on demand) and the
 /// progress verdict reported while it runs.
@@ -90,14 +88,9 @@ pub use refresh::{
     ensure_fresh, inspect_refresh_lock, open_query_store, RefreshOutcome, RefreshPending,
     RefreshPolicy, RefreshSource,
 };
-/// Catalog-derived graph scopes: selection, pruning, and storage posture.
-pub use scope::{
-    build_scopes, select_scopes, GraphScope, GraphScopePlan, GraphScopeRequest, GraphScopeSelection,
-};
+/// Canonical checkout root used by graph consumers.
+pub use scope::GraphScope;
 /// Local SQLite-backed graph store.
 pub use storage::GraphStore;
-/// Foreground graph watch surface and typed watch events.
-pub use watch::{watch_repo, GraphWatchEvent, GraphWatchOptions};
-
 #[cfg(test)]
 mod tests;
