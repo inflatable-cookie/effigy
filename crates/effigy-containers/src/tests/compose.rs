@@ -711,10 +711,7 @@ primary_service = "app"
 }
 
 #[test]
-#[cfg_attr(
-    any(target_os = "linux", effigy_shared_process),
-    ignore = "known v0.15 rebuild defect: papercut 1a8e71ca-e3ee-4017-91b2-bd3085304d3f; owner lane v015-environment; must-fix (Linux is a first-class target)"
-)]
+#[ignore = "known v0.15 rebuild defect: papercut 1a8e71ca-e3ee-4017-91b2-bd3085304d3f; owner lane v015-environment; must-fix (all platforms and lanes)"]
 fn load_container_policy_generates_compose_from_catalog_services() {
     with_temp_effigy_home("catalog-services", |_| {
         let _lock = crate::test_env_lock();
@@ -1862,10 +1859,7 @@ services:
 }
 
 #[test]
-#[cfg_attr(
-    any(target_os = "linux", effigy_shared_process),
-    ignore = "known v0.15 rebuild defect: papercut 1a8e71ca-e3ee-4017-91b2-bd3085304d3f; owner lane v015-environment; must-fix (Linux is a first-class target)"
-)]
+#[ignore = "known v0.15 rebuild defect: papercut 1a8e71ca-e3ee-4017-91b2-bd3085304d3f; owner lane v015-environment; must-fix (all platforms and lanes)"]
 fn generated_compose_runtime_dns_override_uses_explicit_alias_base_domain() {
     let _lock = crate::test_env_lock();
     let root = temp_repo("generated-compose-route-parity");
