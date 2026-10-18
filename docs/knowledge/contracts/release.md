@@ -2,6 +2,30 @@
 
 Effigy ships a versioned binary through GitHub Releases and a Homebrew tap. The release configuration is in [`config/release.toml`](../../../config/release.toml). A human must explicitly request a release and confirm its version. Only `main` can be tagged. Do not publish Effigy's internal crates to crates.io.
 
+## Governing v0.15 direction — 2026-10-18
+
+Tom's answered Queue decision `5bcf44e4-7e9d-49ee-99d1-c6a46b47a93b`
+supersedes the interim candidate's release authorization and conditional
+publication-hold lifting described below:
+
+> "I think I would rather not do interim releases"
+
+Rebuild for v0.15 around a runtime kernel and thoroughly qualify the exact
+rebuilt candidate against every bundle-defined workflow that must keep
+working. Passing the earlier consumer proofs must not resume the old release
+flow. Do not prepare, execute, tag, dispatch publication or publish an interim
+release. The earlier authorizations and proof records remain historical
+evidence rather than authority to resume that flow.
+
+The agreed direction includes pinned bundles; heavy admission requiring both
+explicit `admission = "heavy"` and per-host opt-in; removal of root-bound
+gateway functionality; one detached managed supervisor per run; and a CI
+workflow correction. Lifecycle, kernel and security work uses Opus, Sol or
+Astra High. These are design constraints, not claims of implemented behavior
+or blanket permission to edit workflows. The cut list, service-catalog
+strategy and heavy-task model remain subject to the operator's Atlas
+discussion before rebuild briefs are admitted.
+
 ## Approved macOS checksum publication change
 
 Tom's authority relayed by the acowtancy planner on 2026-10-01 permits a bounded
