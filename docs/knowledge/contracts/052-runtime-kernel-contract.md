@@ -1,9 +1,12 @@
 # 052 - Runtime Kernel Contract
 
-Status: specified, not implemented. No `effigy-kernel` crate exists yet.
-Nothing here is available until the kernel lane lands it with the proofs in
-§12. Until then the mechanisms in the adoption map (§10) remain current
-behavior. QA-group `stop` and `hard_timeout_ms` stay unavailable: contract
+Status: foundation types are implemented in `crates/effigy-kernel/`: identity
+encoding v1, operation contexts and class capabilities, observation and Probe
+API types, outcomes, and macOS/Linux platform facts. `qa:kernel-ratchet`
+enforces the committed production baseline in `config/kernel-ratchet.json`.
+Gates, store, runs, custody, signals, executable probes and the probe guard
+remain specified and unavailable. Engines have not adopted the kernel; the
+mechanisms in the adoption map (§10) remain current behavior. QA-group `stop` and `hard_timeout_ms` stay unavailable: contract
 [051](051-bounded-qa-groups-contract.md) keeps refusing them until this
 kernel's run journal, custody and deadlines exist.
 
