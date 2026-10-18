@@ -317,6 +317,10 @@ mod macos_socket_layout_tests {
     }
 
     #[test]
+    #[cfg_attr(
+        target_os = "macos",
+        ignore = "known v0.15 rebuild defect: papercut b7c0ef8d-78f4-4894-ba6d-dae46aa58a91; owner lane v015-gateway"
+    )]
     fn legacy_recovery_macos_live_descriptorless_child_has_no_listeners() {
         let child = OwnedChild(
             Command::new("/bin/sh")

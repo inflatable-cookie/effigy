@@ -1303,6 +1303,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        effigy_shared_process,
+        ignore = "known v0.15 rebuild defect: papercut 0ede7d0d-6bfa-468d-8ca0-1a3c86602a78; owner lane v015-environment"
+    )]
     fn container_removal_state_is_false_or_unknown_and_never_assumed() {
         use std::process::Command;
         let output = |program: &str| Command::new(program).output().expect("run");

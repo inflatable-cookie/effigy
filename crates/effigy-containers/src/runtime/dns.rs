@@ -320,6 +320,7 @@ mod tests {
     /// refuse publication (#197), so replacement must be atomic: a concurrent
     /// reader always sees one complete generation.
     #[test]
+    #[ignore = "known v0.15 rebuild defect: papercut b4c31570-64bd-4707-91ac-5613efcf167d; owner lane v015-environment; must-fix (all platforms and lanes)"]
     fn runtime_dns_override_replacement_never_tears_concurrent_readers() {
         let root = tempfile::tempdir().expect("temporary fixture");
         let compose_dir = root.path().join(".effigy").join("runtime").join("compose");

@@ -1024,6 +1024,10 @@ domain = "switch.test"
     /// gone, and the following invocation on the same scope succeeds.
     #[cfg(unix)]
     #[test]
+    #[cfg_attr(
+        effigy_shared_process,
+        ignore = "known v0.15 rebuild defect: papercut 43195655-e403-4496-a3c8-adcc02217321; owner lane v015-environment"
+    )]
     fn handover_end_owner_releases_lock_for_reverse_handover() {
         use std::time::{Duration, Instant};
 

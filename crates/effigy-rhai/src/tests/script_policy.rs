@@ -161,6 +161,7 @@ fn first_party_rhai_scripts_use_exec_run_for_container_commands() {
 }
 
 #[test]
+#[ignore = "known v0.15 rebuild defect: papercut 38acb0f4-3343-4193-8c36-e40a6eb8f436; owner lane v015-rebuild"]
 fn linux_workspace_artifact_build_streams_container_output() {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()

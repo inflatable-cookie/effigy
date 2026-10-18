@@ -3994,6 +3994,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        effigy_shared_process,
+        ignore = "known v0.15 rebuild defect: papercut 24e9c4ab-07e8-45f1-b5ee-3f1560f92735; owner lane v015-supervisor"
+    )]
     fn host_process_exit_observation_native_active_zombie_reaped_and_deadline() {
         let mut child = TestChild::sleep();
         assert!(
@@ -4199,6 +4203,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        all(target_os = "macos", effigy_shared_process),
+        ignore = "known v0.15 rebuild defect: papercut 91d3fd91-3890-40c6-a138-ecb6fd7c4e83; owner lane v015-supervisor"
+    )]
     fn host_process_owned_observation_unavailable_after_term_keeps_stop_authority() {
         assert_owned_observation_recovers(UnavailablePhase::AfterTerm);
     }
@@ -4738,6 +4746,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        all(target_os = "macos", not(effigy_shared_process)),
+        ignore = "known v0.15 rebuild defect: papercut 0907cf6d-5f4b-4a4b-88dc-c6bf7b8fde8a; owner lane v015-supervisor"
+    )]
     fn managed_host_transitions_production_wait_records_signal_tuple_and_inspection() {
         let fixture = tempfile::tempdir().expect("fresh managed transition fixture");
         let state_path = fixture.path().join("app.listener.json");

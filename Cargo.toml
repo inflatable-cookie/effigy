@@ -48,6 +48,9 @@ license = "MIT"
 
 [workspace.lints]
 
+[workspace.lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(effigy_shared_process)"] }
+
 # Size-bounded private docs proof artifact; ordinary dev/release profiles stay unchanged.
 [profile.qualified-docs]
 inherits = "release"
