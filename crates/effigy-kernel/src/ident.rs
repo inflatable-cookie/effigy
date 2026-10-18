@@ -2,14 +2,14 @@
 use crate::observe::{AbsenceProof, Evidence, Observed, UnknownReason};
 use std::time::Duration;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct BootIdentity(String);
 impl BootIdentity {
     pub fn as_str(&self) -> &str {
         &self.0
     }
 }
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ProcessStartIdentity {
     LinuxTicks(u64),
     MacOs { seconds: u64, microseconds: u64 },
@@ -33,7 +33,7 @@ pub enum ProcessState {
     Stopped,
     Zombie,
 }
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ProcessIdentity {
     pub boot: BootIdentity,
     pub pid: u32,

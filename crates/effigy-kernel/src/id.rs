@@ -102,7 +102,7 @@ impl fmt::Display for RunId {
         f.write_str(&base32(&self.0))
     }
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Surface {
     Published,
     Draft,
@@ -308,21 +308,21 @@ impl fmt::Display for GateName {
         f.write_str(&self.0)
     }
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Digest(pub [u8; 32]);
 impl Digest {
     pub fn of(bytes: &[u8]) -> Self {
         Self(Sha256::digest(bytes).into())
     }
 }
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Route {
     Task,
     Builtin(String),
     ExecAlias(String),
     Defer(String),
 }
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ExecutionTarget {
     Host,
     Container {
@@ -333,26 +333,29 @@ pub enum ExecutionTarget {
     },
 }
 /// Names and references only. An environment value has no slot in this type.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnvBinding {
     pub provenance: String,
     pub secret_reference: Option<String>,
 }
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AttachmentMode {
     Borrow,
     Exclusive { stop_on_release: bool },
 }
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AttachmentRequest {
     pub environment: ResourceId,
     pub mode: AttachmentMode,
 }
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InvocationSpec {
     pub task: TaskId,
     pub route: Route,
-    #[serde(serialize_with = "serialize_argv")]
+    #[serde(
+        serialize_with = "serialize_argv",
+        deserialize_with = "deserialize_argv"
+    )]
     pub argv: Vec<OsString>,
     /// Checkout-relative coordinates, normalized at resolution.
     pub cwd: String,
@@ -384,6 +387,37 @@ impl ResolvedInvocation {
             spec,
             digest: Digest::of(&canonical),
         })
+    }
+    /// Maximum canonical invocation frame accepted from a helper pipe.
+    pub const MAX_WIRE_BYTES: usize = 1 << 20;
+
+    /// Decodes exactly the canonical wire representation emitted by Serialize.
+    /// Rebuilds through the existing constructor and checks schema, ordering,
+    /// normalization and digest together. This never resolves a selector again.
+    pub fn decode(bytes: &[u8]) -> Result<Self, IdentityError> {
+        if bytes.len() > Self::MAX_WIRE_BYTES {
+            return Err(IdentityError::TooLong);
+        }
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Wire {
+            schema: u16,
+            spec: InvocationSpec,
+            digest: Digest,
+        }
+        let wire: Wire =
+            serde_json::from_slice(bytes).map_err(|_| IdentityError::InvalidInvocation)?;
+        if wire.schema != 1 {
+            return Err(IdentityError::InvalidInvocation);
+        }
+        let invocation = Self::new(wire.spec)?;
+        if invocation.digest != wire.digest
+            || serde_json::to_vec(&invocation).map_err(|_| IdentityError::InvalidInvocation)?
+                != bytes
+        {
+            return Err(IdentityError::InvalidInvocation);
+        }
+        Ok(invocation)
     }
     pub fn digest(&self) -> &Digest {
         &self.digest
@@ -561,6 +595,38 @@ impl std::str::FromStr for RunId {
         let id = Self(bytes);
         if id.to_string() != value {
             return Err(IdentityError::InvalidInvocation);
+        }
+        Ok(id)
+    }
+}
+
+fn deserialize_argv<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<OsString>, D::Error> {
+    use std::os::unix::ffi::OsStringExt;
+    Vec::<Vec<u8>>::deserialize(d).map(|args| args.into_iter().map(OsString::from_vec).collect())
+}
+
+impl<'de> Deserialize<'de> for TaskId {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Wire {
+            checkout: CheckoutId,
+            catalog: String,
+            surface: Surface,
+            task: String,
+            profile: Option<String>,
+        }
+        let w = Wire::deserialize(d)?;
+        let id = Self::new(
+            w.checkout,
+            &w.catalog,
+            w.surface,
+            &w.task,
+            w.profile.as_deref(),
+        )
+        .map_err(serde::de::Error::custom)?;
+        if id.catalog != w.catalog || id.task != w.task || id.profile != w.profile {
+            return Err(serde::de::Error::custom("noncanonical task identity"));
         }
         Ok(id)
     }

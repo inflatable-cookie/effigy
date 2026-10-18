@@ -483,3 +483,42 @@ fn context_guest_checkout_token_minting_requires_host_authority() {
             .is_ok());
     }
 }
+
+#[test]
+fn identity_wire_roundtrip_preserves_non_utf8_and_rejects_invalid_frames() {
+    let inv = ResolvedInvocation::new(invocation()).unwrap();
+    let encoded = serde_json::to_vec(&inv).unwrap();
+    let decoded = ResolvedInvocation::decode(&encoded).unwrap();
+    assert_eq!(decoded.digest(), inv.digest());
+    assert_eq!(decoded.spec().argv, inv.spec().argv);
+    assert_eq!(serde_json::to_vec(&decoded).unwrap(), encoded);
+    for bytes in [
+        vec![],
+        b"{}".to_vec(),
+        vec![b' '; ResolvedInvocation::MAX_WIRE_BYTES + 1],
+    ] {
+        assert!(ResolvedInvocation::decode(&bytes).is_err());
+    }
+    let original: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
+    for (pointer, value) in [
+        ("/schema", serde_json::json!(2)),
+        ("/digest/0", serde_json::json!(255)),
+        ("/spec/cwd", serde_json::json!("./apps/api/")),
+        ("/spec/task/catalog", serde_json::json!("./apps/api")),
+        ("/spec/argv/0/0", serde_json::json!(256)),
+        ("/spec/owner/kind", serde_json::json!("Env")),
+    ] {
+        let mut tampered = original.clone();
+        *tampered.pointer_mut(pointer).unwrap() = value;
+        assert!(
+            ResolvedInvocation::decode(&serde_json::to_vec(&tampered).unwrap()).is_err(),
+            "{pointer}"
+        );
+    }
+    let mut padded = encoded.clone();
+    padded.push(b' ');
+    assert!(ResolvedInvocation::decode(&padded).is_err());
+    let mut unknown = original;
+    unknown["extra"] = true.into();
+    assert!(ResolvedInvocation::decode(&serde_json::to_vec(&unknown).unwrap()).is_err());
+}

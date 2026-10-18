@@ -21,6 +21,10 @@
 "lint:graph" = "cargo clippy -p effigy-codegraph -p effigy-cli -p effigy-manifest -p effigy-routing -p effigy-builtin -p effigy --all-targets -- -D warnings"
 
 # Kernel foundation: bounded, disjoint proof families; no engine adoption.
+"test:kernel:custody" = [
+  { run = "cargo build -p effigy-kernel --example custody-fixture", timeout_ms = 600000 },
+  { run = "EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/examples/custody-fixture cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --test custody --lib -E 'test(/^custody::tests::/) | binary(custody)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
+]
 "test:kernel:identity" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --test foundation -E 'test(identity_)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
 "test:kernel:context" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --test foundation -E 'test(context_)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
 "test:kernel:observed" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --test foundation -E 'test(observation_)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
