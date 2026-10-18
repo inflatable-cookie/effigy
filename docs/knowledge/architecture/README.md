@@ -19,7 +19,7 @@ Current technical authority for Effigy.
 | Bounded Doctor and Incremental Scan Architecture | [029-bounded-doctor-and-scan-cache.md](029-bounded-doctor-and-scan-cache.md) |
 | Docs-check source traversal | [030-docs-check-source-traversal.md](030-docs-check-source-traversal.md) |
 | Bounded QA groups runtime (proposed) | [031-bounded-qa-groups-runtime.md](031-bounded-qa-groups-runtime.md) |
-| Owned run supervision runtime (proposed) | [032-owned-run-supervision-runtime.md](032-owned-run-supervision-runtime.md) |
+| Runtime kernel architecture (proposed) | [032-runtime-kernel-architecture.md](032-runtime-kernel-architecture.md) |
 | Trusted host-run protocol client and default scheduler routing | [033-host-run-protocol-client.md](033-host-run-protocol-client.md) |
 | Gateway legacy upgrade and recovery | [034-gateway-legacy-upgrade-recovery.md](034-gateway-legacy-upgrade-recovery.md) |
 | Effigy Product Guardrails | [product-guardrails.md](product-guardrails.md) |

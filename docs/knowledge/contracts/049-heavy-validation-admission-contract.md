@@ -10,6 +10,13 @@ preserves output and exit results, handles nested calls, and reports owned
 container facts. Effigy no longer implements a heavy-admission store or a
 second scheduler.
 
+Kernel supersession (2026-10-18): the runtime kernel contract
+[052](052-runtime-kernel-contract.md) supersedes this contract's lifecycle and
+ownership sections: process groups and signal forwarding inside launched
+runs, container execution boundary ownership, and custody of owned
+containers whose facts are reported. Scheduler routing and protocol behavior
+stay here. What remains of heavy-task handling is open (Q-006).
+
 ## Scheduler ownership ruling
 
 Tom ruled on 2026-09-30: "The QA lease we added to Effigy should have been a

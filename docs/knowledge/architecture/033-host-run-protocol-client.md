@@ -14,8 +14,8 @@ scheduling or task-selection decisions.
 
 The client follows [contract 049](../contracts/049-heavy-validation-admission-contract.md)
 and the signed [Nucleus 010 pin](https://github.com/inflatable-cookie/nucleus/blob/59cca903426635dd3581002a67058919e012eb45/docs/knowledge/contracts/010-host-run-scheduling.md#client-protocol-v1).
-Contract [052](../contracts/052-owned-run-supervision-contract.md) remains
-proposed and is not implemented here.
+The runtime kernel contract [052](../contracts/052-runtime-kernel-contract.md)
+is specified and is not implemented here.
 
 ## Trust and discovery
 

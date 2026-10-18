@@ -24,18 +24,56 @@ allow = [
   "CHANGELOG.md",
   "docs/knowledge/contracts/049-heavy-validation-admission-contract.md",
   "docs/knowledge/contracts/051-bounded-qa-groups-contract.md",
-  "docs/knowledge/contracts/052-owned-run-supervision-contract.md",
+  "docs/knowledge/contracts/052-runtime-kernel-contract.md",
   "docs/guides/080-host-wide-validation-admission.md",
   "docs/knowledge/architecture/010-package-map.md",
   "docs/knowledge/architecture/031-bounded-qa-groups-runtime.md",
   "docs/knowledge/architecture/033-host-run-protocol-client.md",
-  "docs/knowledge/architecture/032-owned-run-supervision-runtime.md",
+  "docs/knowledge/architecture/032-runtime-kernel-architecture.md",
   "src/runner/host_scheduler/mod.rs",
   "src/runner/host_scheduler/submit.rs",
   "src/runner/host_scheduler/tests.rs",
   "crates/effigy-cli/src/command_surface/tests.rs",
   "tests/host_scheduler_integration.rs",
 ]
+
+[[retired]]
+id = "effigy-owned-run-control-proposal"
+retired = "2026-10-18"
+replacement = "Contract 052 is now the runtime kernel contract. Run identity, the run journal, stop, signals and deadlines are kernel primitives (Run, OwnedProcess, SignalRouter, OperationContext); engines own any command surface on top. The proposed run-id CLI, its JSON schemas and refusal codes, the opt-in witness placement and its workflow guide are not planned."
+owner = "docs/knowledge/contracts/052-runtime-kernel-contract.md"
+terms = [
+  "tasks run status",
+  "tasks run logs",
+  "tasks run stop",
+  "tasks run capabilities",
+  "effigy.run-status.v1",
+  "effigy.run-stop.v1",
+  "effigy.run-logs.v1",
+  "effigy.run-capabilities.v1",
+  "effigy.run-journal.v2",
+  "refused_foreign_checkout",
+  "unavailable_supervisor",
+  "unsupported_run_control",
+  "detached witness",
+]
+paths = [
+  "docs/knowledge/contracts/052-owned-run-supervision-contract.md",
+  "docs/knowledge/architecture/032-owned-run-supervision-runtime.md",
+  "docs/guides/082-owned-run-supervision-workflow.md",
+]
+config_keys = []
+allow = ["CHANGELOG.md"]
+
+[[retired]]
+id = "effigy-run-journal-on-admission-store"
+retired = "2026-10-18"
+replacement = "The kernel store is ~/.effigy/state/kernel.db (contract 052, store layout). No run journal reuses the retired heavy-admission store or a host-wide coordinator, and runs carry no capacity kind."
+owner = "docs/knowledge/contracts/052-runtime-kernel-contract.md"
+terms = ["host-wide coordinator", "capacity_lease", "evidence_only"]
+paths = []
+config_keys = []
+allow = ["CHANGELOG.md"]
 
 [[retired]]
 id = "effigy-rhai-storage-surface"

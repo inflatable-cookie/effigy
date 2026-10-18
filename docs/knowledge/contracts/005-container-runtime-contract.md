@@ -9,6 +9,15 @@ task execution in Effigy.
 It covers the execution surfaces that depend on a running local container
 environment, not production deployment export.
 
+Kernel supersession (2026-10-18): the runtime kernel contract
+[052](052-runtime-kernel-contract.md) supersedes this contract's lifecycle and
+ownership sections for v0.15: activation and session ownership, partial
+activation and recovery, `data_from` handover, owned service start after a
+Colima restart, managed host listener lifecycle, owned completion and stop
+authority, fallback ownership and failure semantics. Until the environment
+lane reconciles them, those sections describe current behavior, not target
+design.
+
 ## Purpose
 
 Effigy now has several public surfaces that rely on the same local runtime:
