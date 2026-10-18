@@ -221,7 +221,12 @@ refresh verifies the retained declaration rather than capturing a new baseline.
 Marked reconciliation also verifies its original marker inputs before any
 materialization. Attached and unrelated data preparation retain legacy behavior.
 A recorded *partial* activation reconciles only against its original admission;
-changed inputs refuse until `effigy container down`. A *completed* activation
+changed inputs refuse until `effigy container down`. With unchanged admitted
+inputs, a missing or stopped primary does not require operator intervention:
+verify every existing project container's checkout and scope ownership, including
+stopped siblings, then recover through ordinary Compose up. Unavailable inventory
+or foreign ownership still refuses and names the owning checkout's
+`effigy container down` command. A *completed* activation
 writes a completion marker beside its record. When its inputs later change, or
 when a running stack has no record at all (a stack started by an earlier
 release, by a container task, or whose record write failed), detached `up`
@@ -808,7 +813,8 @@ then names the failure and leaves the environment recoverable by its own
 `up` or `down`. The stop is recorded beside the environment's lease before
 the first effect, so its next `up` restarts it instead of refusing an
 unknown partial state; a recorded handover resolved by a healthy reconcile
-or a down is cleared, and genuinely unknown partial state still refuses. A
+or a down is cleared. An unchanged, ownership-verified partial or stopped stack
+also restarts without a handover record; unattributable state still refuses. A
 managed listener claiming a domain held by a `source = container` route from
 the same checkout and scope replaces it with the listener route in the same
 locked transaction, and the container environment may keep running.

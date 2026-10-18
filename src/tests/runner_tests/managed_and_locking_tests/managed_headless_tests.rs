@@ -152,6 +152,82 @@ fn managed_headless_status_logs_and_stop_control_live_session() {
     assert!(completed.contains("session: stopped"), "got: {completed}");
 }
 
+/// Failed workload children do not turn a later explicit stop into a failed
+/// run, and must not leave the task/profile locks blocking an immediate start.
+#[test]
+fn managed_headless_failed_children_stop_cleanly_and_restart() {
+    let _guard = lock_test();
+    for failed_children in [1, 2] {
+        let private = tempfile::tempdir().expect("private failed-child fixture");
+        let root = private.path().canonicalize().expect("canonical fixture");
+        let front = if failed_children == 2 {
+            "exit 9"
+        } else {
+            "while true; do sleep 1; done"
+        };
+        write_root_manifest(
+            &root,
+            &format!(
+                r#"[tasks.dev]
+mode = "tui"
+concurrent = [
+  {{ name = "api", run = "exit 7" }},
+  {{ name = "front", run = "{front}" }},
+  {{ name = "owner", run = "while true; do sleep 1; done" }}
+]
+"#
+            ),
+        );
+        let state_path = root.join(".effigy/runtime/managed/dev-default/session.json");
+        for _ in 0..2 {
+            // The prior state must not satisfy this generation's wait.
+            let _ = fs::remove_file(&state_path);
+            let root_for_thread = root.clone();
+            let run = std::thread::spawn(move || run_dev(&root_for_thread, &["--headless"]));
+            let deadline = std::time::Instant::now() + Duration::from_secs(15);
+            loop {
+                let raw = fs::read_to_string(&state_path).unwrap_or_default();
+                if raw.contains("exit=7") && (failed_children == 1 || raw.contains("exit=9")) {
+                    break;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "child failure not observed: {raw}"
+                );
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            run_dev(&root, &["stop"]).expect("failed-child stop settles");
+            let completed = run
+                .join()
+                .expect("join owner")
+                .expect("owner exits successfully");
+            assert!(completed.contains("session: stopped"), "{completed}");
+            let state: serde_json::Value =
+                serde_json::from_str(&fs::read_to_string(&state_path).expect("settled state"))
+                    .expect("parse settled state");
+            for process in state["processes"].as_array().expect("process records") {
+                let pid = process["pid"].as_u64().expect("process pid") as u32;
+                assert!(
+                    !effigy_process::process_is_running(pid),
+                    "surviving child {pid}"
+                );
+            }
+            let locks = root.join(".effigy/locks");
+            assert!(
+                !locks.exists()
+                    || fs::read_dir(locks).expect("lock directory").all(|entry| {
+                        !entry
+                            .expect("lock entry")
+                            .path()
+                            .extension()
+                            .is_some_and(|extension| extension == "lock")
+                    }),
+                "stop releases every task/profile lock"
+            );
+        }
+    }
+}
+
 #[test]
 fn managed_headless_run_skips_interactive_shell_without_tty_argv() {
     let _guard = lock_test();

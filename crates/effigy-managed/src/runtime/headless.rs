@@ -8,8 +8,7 @@ use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use effigy_process::{
-    process_is_descendant_of, process_is_running, terminate_process_tree, ProcessEventKind,
-    ProcessSupervisor,
+    process_is_descendant_of, process_is_running, ProcessEventKind, ProcessSupervisor,
 };
 use serde::{Deserialize, Serialize};
 use signal_hook::consts::{SIGINT, SIGTERM};
@@ -197,7 +196,15 @@ pub fn run_managed_task_headless(
             return Err(error);
         }
     };
-    let non_zero = headless_non_zero_exits(&state, &observed_non_zero);
+    // Explicit stop is a successful control operation even if children failed
+    // earlier. Their diagnostics stay in the session and logs. Cleanup failures
+    // are reported by the runner after the runtime returns.
+    let explicitly_stopped = shutdown_requested.load(Ordering::Relaxed) || stop_path.exists();
+    let non_zero = if explicitly_stopped {
+        Vec::new()
+    } else {
+        headless_non_zero_exits(&state, &observed_non_zero)
+    };
     state.status = if non_zero.is_empty() {
         "stopped".to_owned()
     } else if plan.fail_on_non_zero {
@@ -364,7 +371,7 @@ pub fn managed_headless_stop(
             .map(|process| (process.name.clone(), process.pid))
             .collect(),
     };
-    if running.is_empty() {
+    if !supervisor_running {
         return Ok(outcome(format!(
             "managed headless task `{task_name}` profile `{profile}` is not running"
         )));
@@ -372,25 +379,9 @@ pub fn managed_headless_stop(
     let stop_path = runtime_dir.join("stop.requested");
     fs::write(&stop_path, b"stop\n")
         .map_err(|error| ManagedError::task_invocation_failed_write(&stop_path, error))?;
-    for process in &running {
-        terminate_process_tree(process.pid, false);
-    }
-    let deadline = std::time::Instant::now() + SHUTDOWN_GRACE;
-    while std::time::Instant::now() < deadline
-        && running
-            .iter()
-            .any(|process| process_is_running(process.pid))
-    {
-        thread::sleep(Duration::from_millis(50));
-    }
-    for process in &running {
-        if process_is_running(state.supervisor_pid)
-            && process_is_running(process.pid)
-            && process_is_descendant_of(process.pid, state.supervisor_pid)
-        {
-            terminate_process_tree(process.pid, true);
-        }
-    }
+    // Only the owner orders the cascade: end remote exec groups while the
+    // environment is available, then host children, then container down.
+    // Killing clients here races that sequence, especially for failed children.
     // The cascade completion is judged by the caller, which can also see
     // the lock records: a supervisor that exited but is not reaped yet (a
     // zombie its parent has not collected) has already dropped its locks

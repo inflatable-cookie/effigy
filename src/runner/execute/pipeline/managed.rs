@@ -370,6 +370,15 @@ pub(in crate::runner) fn run_managed_task(
     finish_managed_task(
         result.map(Some).map_err(Into::into),
         lifecycle_cleanup.as_deref(),
+        || {
+            if let Some(policy) = container_binding.load_effective_policy(&repo_for_task)? {
+                crate::runner::host_container_lease::ensure_running_stack_admits_reactivation(
+                    &repo_for_task,
+                    &policy,
+                )?;
+            }
+            Ok(())
+        },
     )
 }
 
@@ -703,15 +712,18 @@ fn render_managed_lifecycle_cleanup_notice(command: &str) -> String {
 fn finish_managed_task(
     task_result: Result<Option<String>, RunnerError>,
     cleanup_command: Option<&str>,
+    admit_cleanup: impl FnOnce() -> Result<(), RunnerError>,
 ) -> Result<Option<String>, RunnerError> {
-    let cleanup_result = if task_result.is_ok() {
-        cleanup_command
-            .map(run_managed_lifecycle_cleanup)
-            .transpose()
-            .map(|_| ())
-    } else {
-        Ok(())
-    };
+    // Child failure does not revoke the run's responsibility for its env.
+    let cleanup_result = cleanup_command
+        .map(|command| {
+            // A startup refusal may have left a foreign stack untouched. It
+            // must not turn unconditional cleanup into teardown authority.
+            admit_cleanup()?;
+            run_managed_lifecycle_cleanup(command)
+        })
+        .transpose()
+        .map(|_| ());
     match (task_result, cleanup_result) {
         (Ok(output), Ok(())) => Ok(output),
         (Ok(_), Err(cleanup_error)) => Err(cleanup_error),
@@ -1334,19 +1346,40 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
-    fn finish_managed_task_preserves_primary_failure_without_running_cleanup() {
+    fn finish_managed_task_preserves_primary_failure_and_runs_cleanup() {
         let error = finish_managed_task(
             Err(RunnerError::task_invocation("task failed")),
             Some("missing-cleanup-command >/dev/null 2>&1"),
+            || Ok(()),
         )
         .expect_err("primary task failure should surface");
 
         let rendered = error.to_string();
         assert!(rendered.contains("task failed"), "got: {rendered}");
         assert!(
-            !rendered.contains("managed lifecycle cleanup also failed"),
+            rendered.contains("managed lifecycle cleanup also failed"),
             "got: {rendered}"
         );
+    }
+
+    #[test]
+    fn finish_managed_task_does_not_teardown_an_unverified_stack() {
+        let private = tempfile::tempdir().expect("private cleanup fixture");
+        let marker = private.path().join("cleanup-ran");
+        let command = format!(
+            "touch {}",
+            effigy_core::shell::shell_quote(&marker.display().to_string())
+        );
+        let error = finish_managed_task(
+            Err(RunnerError::task_invocation("startup refused")),
+            Some(&command),
+            || Err(RunnerError::task_invocation("foreign ownership")),
+        )
+        .expect_err("unverified cleanup refuses");
+        assert!(!marker.exists(), "no teardown effect");
+        let rendered = error.to_string();
+        assert!(rendered.contains("startup refused"), "{rendered}");
+        assert!(rendered.contains("foreign ownership"), "{rendered}");
     }
 
     #[test]

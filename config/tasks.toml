@@ -314,6 +314,14 @@
 # The settle controls (#200) live beside them: the whole-environment
 # handover's owner-settle unit proofs and the task-lock attribution rules
 # the settle depends on.
+# Focused recovery controls; bounded nextest execution also fails leaked handles.
+"check:managed:recovery" = [
+  "cargo check -p effigy -p effigy-managed -p effigy-containers --all-targets --profile test",
+  "cargo clippy -p effigy -p effigy-managed -p effigy-containers --all-targets -- -D warnings",
+]
+"test:managed:recovery" = [
+  { id = "managed-recovery-controls", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(managed_and_locking_tests::managed_headless_tests::) | test(finish_managed_task_) | test(reconcile_restarts_an_environment_a_handover_stopped)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
+]
 "test:managed:headless-lifecycle" = [
   { id = "managed-exec-readiness-render", run = "cargo test -p effigy-containers --lib session::tests:: -- --nocapture", timeout_ms = 300000 },
   { id = "managed-up-workspace-prep", run = "cargo test -p effigy --lib container_command::lifecycle::tests::up_workspace_permission -- --nocapture", timeout_ms = 300000 },

@@ -290,6 +290,10 @@ skipped process instead of spawning a child that would block on a TTY it
 can never receive. Startup prints the stop command for the task
 (`effigy dev stop`). SIGINT/SIGTERM to the headless owner settles the run
 through the same path as `effigy dev stop`, then the owner exits.
+An explicit stop exits successfully even when workload children previously
+failed. Their failure details remain in the session logs. Container cleanup
+also runs after a child failure; a cleanup failure still exits non-zero and
+names the failing command. Stopping keeps the environment's volumes.
 
 A stop reports settled only after the run's whole cascade finished:
 - every owned host process has ended, including the process groups the
