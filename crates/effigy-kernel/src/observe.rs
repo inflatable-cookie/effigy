@@ -54,6 +54,10 @@ impl Evidence {
 pub enum AbsenceProof {
     NoGateInode,
     GateFreeRunClosed,
+    NoStateRoot,
+    NoStore,
+    NoFile { name: String },
+    NoRow { table: String },
     BootChanged { recorded: String, current: String },
     NoSuchProcess { pid: u32 },
     StartIdentityDiffers { pid: u32 },
@@ -75,4 +79,8 @@ pub enum UnknownReason {
     Inconsistent(String),
     GuardUnavailable,
     Injected,
+    Untrusted(String),
+    HostAuthorityRequired,
+    StoreNeedsRecovery,
+    StoreUnreadable(String),
 }
