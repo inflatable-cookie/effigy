@@ -26,10 +26,9 @@ use crate::runner::execute::workspace_seeded::{
 };
 use effigy_containers::compose::compose_args;
 use effigy_containers::session::{
-    container_exec_command, managed_container_shell_command, managed_gateway_command,
-    managed_lifecycle_command, managed_lifecycle_shutdown_command, managed_shell_command,
-    managed_standard_exec_command, resolve_effigy_invocation_prefix, ManagedLifecycleRequest,
-    ManagedStandardExecRequest,
+    container_exec_command, managed_gateway_command, managed_lifecycle_command,
+    managed_lifecycle_shutdown_command, managed_shell_command, managed_standard_exec_command,
+    resolve_effigy_invocation_prefix, ManagedLifecycleRequest, ManagedStandardExecRequest,
 };
 use effigy_containers::{
     load_container_policy, ContainerCapturedExecOperation, EffectiveContainerPolicy,
@@ -191,8 +190,11 @@ pub(in crate::runner) fn run_managed_task(
     // owner-token rules. A managed run that does not own a settle identity
     // must not attribute its locks to a stale token left in the
     // environment.
-    let managed_run_token =
-        (execution_mode == ManagedExecutionMode::Headless).then(generate_managed_run_token);
+    let managed_run_token = matches!(
+        execution_mode,
+        ManagedExecutionMode::Headless | ManagedExecutionMode::Tui
+    )
+    .then(generate_managed_run_token);
     if let Some(token) = managed_run_token.as_deref() {
         std::env::set_var(effigy_managed::RUN_TOKEN_ENV, token);
     } else {
@@ -331,8 +333,11 @@ pub(in crate::runner) fn run_managed_task(
         None
     };
 
-    let end_container_process =
-        build_container_process_end_hook(&repo_for_task, container_binding, container_handoff)?;
+    let end_container_process = if execution_mode == ManagedExecutionMode::RenderPlan {
+        None
+    } else {
+        build_container_process_end_hook(&repo_for_task, container_binding, container_handoff)?
+    };
     let release_run_locks = managed_run_token.as_ref().map(|token| {
         let repo_root = preflight.resolved.resolved_root.clone();
         let token = token.clone();
@@ -358,6 +363,7 @@ pub(in crate::runner) fn run_managed_task(
         }
     });
 
+    let managed_profile = plan.profile.clone();
     let result = run_or_render_managed_task(
         &preflight.selector.task_name,
         &repo_for_task,
@@ -372,9 +378,26 @@ pub(in crate::runner) fn run_managed_task(
         lifecycle_cleanup.as_deref(),
         || {
             if let Some(policy) = container_binding.load_effective_policy(&repo_for_task)? {
-                crate::runner::host_container_lease::ensure_running_stack_admits_reactivation(
+                effigy_containers::exec::verify_owned_stack_for_shutdown(&repo_for_task, &policy)?;
+            }
+            Ok(())
+        },
+        || {
+            if let Some(release) = &release_run_locks {
+                release();
+            }
+        },
+        |error| {
+            if matches!(
+                execution_mode,
+                ManagedExecutionMode::Headless | ManagedExecutionMode::Tui
+            ) {
+                effigy_managed::runtime::record_managed_run_settle(
                     &repo_for_task,
-                    &policy,
+                    &preflight.selector.task_name,
+                    &managed_profile,
+                    managed_run_token.as_deref(),
+                    error.map(ToString::to_string),
                 )?;
             }
             Ok(())
@@ -613,10 +636,6 @@ fn normalize_managed_lifecycle_container_ref(container_name: &str) -> Option<&st
     }
 }
 
-fn normalize_managed_lifecycle_container_ref_is_named(container_name: &str) -> bool {
-    normalize_managed_lifecycle_container_ref(container_name).is_some()
-}
-
 fn managed_runtime_activation_plan(
     repo_root: &std::path::Path,
     policy: &EffectiveContainerPolicy,
@@ -713,6 +732,8 @@ fn finish_managed_task(
     task_result: Result<Option<String>, RunnerError>,
     cleanup_command: Option<&str>,
     admit_cleanup: impl FnOnce() -> Result<(), RunnerError>,
+    release_settled_locks: impl FnOnce(),
+    record_settle: impl FnOnce(Option<&RunnerError>) -> Result<(), RunnerError>,
 ) -> Result<Option<String>, RunnerError> {
     // Child failure does not revoke the run's responsibility for its env.
     let cleanup_result = cleanup_command
@@ -724,6 +745,30 @@ fn finish_managed_task(
         })
         .transpose()
         .map(|_| ());
+    // Down is the backstop even when a failed workload caused the runtime
+    // error. Once it succeeds, no exec holder can retain a live task lock.
+    if cleanup_result.is_ok() && (task_result.is_ok() || cleanup_command.is_some()) {
+        release_settled_locks();
+    }
+    let runtime_cleanup_error = task_result
+        .as_ref()
+        .err()
+        .filter(|error| !matches!(error, RunnerError::TaskManagedNonZeroExit { .. }));
+    if let Err(record_error) = record_settle(cleanup_result.as_ref().err().or_else(|| {
+        if cleanup_command.is_none() {
+            runtime_cleanup_error
+        } else {
+            None
+        }
+    })) {
+        let primary = task_result.as_ref().err().or(cleanup_result.as_ref().err());
+        return Err(match primary {
+            Some(primary) => RunnerError::task_invocation(format!(
+                "{primary}\nmanaged settle outcome could not be recorded: {record_error}"
+            )),
+            None => record_error,
+        });
+    }
     match (task_result, cleanup_result) {
         (Ok(output), Ok(())) => Ok(output),
         (Ok(_), Err(cleanup_error)) => Err(cleanup_error),
@@ -1067,88 +1112,24 @@ fn generate_managed_run_token() -> String {
     )
 }
 
-/// The command the exec adapter runs to end one recorded exec'd process
-/// group: TERM the group (falling back to the recorded leader for a
-/// session-less marker), wait for it to be gone, then KILL whatever is
-/// left. The command exits 0 only once the group is provably gone.
-fn container_exec_group_kill_command(pgid: u32) -> String {
-    format!(
-        "kill -TERM -- -{pgid} 2>/dev/null || kill -TERM {pgid} 2>/dev/null || true; i=0; while [ \"$i\" -lt 12 ]; do kill -0 -- -{pgid} 2>/dev/null || kill -0 {pgid} 2>/dev/null || exit 0; sleep 0.25; i=$((i+1)); done; kill -KILL -- -{pgid} 2>/dev/null || kill -KILL {pgid} 2>/dev/null || true; exit 0"
-    )
-}
-
-/// Build the settle hook that ends recorded exec'd process groups through
-/// the same exec surface their processes attached through. Handoff-local
-/// runs own their children as ordinary host processes of the inner
-/// checkout and need no remote termination.
+/// End recorded groups through label-verified full-ID runtime exec. Cleanup
+/// does not need exec readiness, and missing containers are already settled.
 fn build_container_process_end_hook(
     repo_root: &std::path::Path,
     container_binding: &ContainerExecutionBinding,
     container_handoff: bool,
 ) -> Result<Option<impl Fn(u32) -> Result<(), String>>, RunnerError> {
-    if container_handoff {
-        return Ok(None);
-    }
-    enum ExecSurface {
-        Inline {
-            policy: Box<EffectiveContainerPolicy>,
-        },
-        Named {
-            name: String,
-            executable: String,
-        },
-    }
-    let surface = match container_binding {
-        ContainerExecutionBinding::Inline { .. } => ExecSurface::Inline {
-            policy: Box::new(
-                container_binding
-                    .load_effective_policy(repo_root)?
-                    .ok_or_else(|| {
-                        RunnerError::task_invocation("missing inline workspace container policy")
-                    })?,
-            ),
-        },
-        ContainerExecutionBinding::Container { name, .. }
-            if name
-                .as_deref()
-                .is_some_and(normalize_managed_lifecycle_container_ref_is_named) =>
-        {
-            ExecSurface::Named {
-                name: name.as_deref().unwrap_or_default().to_owned(),
-                executable: resolve_effigy_invocation_prefix().map_err(RunnerError::Cwd)?,
-            }
-        }
-        _ => return Ok(None),
+    let policy = if container_handoff {
+        None
+    } else {
+        container_binding.load_effective_policy(repo_root)?
     };
     let repo_root = repo_root.to_path_buf();
-    Ok(Some(move |pgid: u32| {
-        let inner = container_exec_group_kill_command(pgid);
-        let rendered = match &surface {
-            ExecSurface::Inline { policy } => render_inline_compose_command(
-                &repo_root,
-                policy,
-                &compose_args(
-                    policy,
-                    [
-                        "exec",
-                        "-T",
-                        policy.primary_service.as_str(),
-                        "sh",
-                        "-lc",
-                        inner.as_str(),
-                    ],
-                ),
-            ),
-            ExecSurface::Named { name, executable } => {
-                managed_container_shell_command(executable, Some(name), &inner, &repo_root)
-            }
-        };
-        run_managed_lifecycle_cleanup_with_timeout(
-            &rendered,
-            std::time::Duration::from_secs(15),
-            std::time::Duration::from_millis(250),
-        )
-        .map_err(|error| error.to_string())
+    Ok(policy.map(|policy| {
+        move |pgid| {
+            effigy_containers::exec::end_owned_container_process_group(&repo_root, &policy, pgid)
+                .map_err(|error| error.to_string())
+        }
     }))
 }
 
@@ -1351,6 +1332,8 @@ mod tests {
             Err(RunnerError::task_invocation("task failed")),
             Some("missing-cleanup-command >/dev/null 2>&1"),
             || Ok(()),
+            || {},
+            |_| Ok(()),
         )
         .expect_err("primary task failure should surface");
 
@@ -1374,12 +1357,38 @@ mod tests {
             Err(RunnerError::task_invocation("startup refused")),
             Some(&command),
             || Err(RunnerError::task_invocation("foreign ownership")),
+            || panic!("foreign stack cannot authorize a lock sweep"),
+            |_| Ok(()),
         )
         .expect_err("unverified cleanup refuses");
         assert!(!marker.exists(), "no teardown effect");
         let rendered = error.to_string();
         assert!(rendered.contains("startup refused"), "{rendered}");
         assert!(rendered.contains("foreign ownership"), "{rendered}");
+    }
+
+    #[test]
+    fn finish_managed_task_reports_a_genuine_cleanup_failure() {
+        let recorded = std::cell::RefCell::new(None);
+        let error = finish_managed_task(
+            Ok(None),
+            Some("exit 19"),
+            || Ok(()),
+            || panic!("failed down cannot authorize a lock sweep"),
+            |error| {
+                *recorded.borrow_mut() = error.map(ToString::to_string);
+                Ok(())
+            },
+        )
+        .expect_err("down failed");
+        assert!(error
+            .to_string()
+            .contains("managed lifecycle cleanup failed"));
+        assert!(recorded
+            .borrow()
+            .as_ref()
+            .expect("recorded cleanup error")
+            .contains("exit 19"));
     }
 
     #[test]

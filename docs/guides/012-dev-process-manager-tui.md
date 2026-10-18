@@ -290,16 +290,18 @@ skipped process instead of spawning a child that would block on a TTY it
 can never receive. Startup prints the stop command for the task
 (`effigy dev stop`). SIGINT/SIGTERM to the headless owner settles the run
 through the same path as `effigy dev stop`, then the owner exits.
-An explicit stop exits successfully even when workload children previously
-failed. Their failure details remain in the session logs. Container cleanup
+TUI runs accept the same `effigy dev stop` and handover controls and settle on
+SIGINT/SIGTERM. An explicit stop exits successfully even when workload children
+previously failed. Their failure details remain in logs or the TUI summary. Container cleanup
 also runs after a child failure; a cleanup failure still exits non-zero and
-names the failing command. Stopping keeps the environment's volumes.
+names the failing command. `stop` checks the owner's final cleanup result
+before reporting success. Stopping keeps the environment's volumes.
 
 A stop reports settled only after the run's whole cascade finished:
 - every owned host process has ended, including the process groups the
   run exec'd into its container environment, which are ended through
-  the same exec surface they attached through (an in-container
-  `cargo run` cannot outlive the stop); a run that owns its
+  the container adapter after checking its full ID and ownership labels
+  (an in-container `cargo run` cannot outlive the stop); a run that owns its
   environment also brings it down, which ends what attaches to it;
 - every task lock the run and its children took has been released,
   through the lock owner-token rules. Processes the run started - on

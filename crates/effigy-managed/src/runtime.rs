@@ -2,7 +2,9 @@ use std::path::Path;
 
 use effigy_core::widgets::{KeyValue, SummaryCounts};
 use effigy_process::ProcessSupervisor;
-use effigy_tui::multiprocess::{run_multiprocess_tui, MultiProcessTuiOptions};
+use effigy_tui::multiprocess::{
+    run_multiprocess_tui_with_control, MultiProcessTuiControl, MultiProcessTuiOptions,
+};
 use effigy_ui::Renderer;
 
 use super::render_support::{managed_process_specs, write_managed_overview};
@@ -21,7 +23,8 @@ mod stream;
 
 pub use headless::{
     exec_group_file_path, live_headless_sessions, managed_headless_logs, managed_headless_status,
-    managed_headless_stop, run_managed_task_headless, session_runtime_dir, LiveHeadlessSession,
+    managed_headless_stop, managed_run_settle_error, record_managed_run_settle,
+    run_managed_task_headless, session_runtime_dir, LiveHeadlessSession,
     ManagedHeadlessStopOutcome, LIFECYCLE_CLEANUP_TIMEOUT_SECS, MANAGED_SETTLE_BUDGET,
 };
 
@@ -29,7 +32,13 @@ pub fn run_managed_task_tui(
     task_name: &str,
     repo_root: &Path,
     plan: ManagedTaskPlan,
+    settle: Option<&crate::ManagedRunSettle<'_>>,
 ) -> Result<String, ManagedError> {
+    let session = headless::TuiSessionControl::new(task_name, repo_root, &plan)?;
+    let owns_environment = plan
+        .processes
+        .iter()
+        .any(|process| process.role == crate::ManagedProcessRole::Lifecycle);
     let ManagedTaskPlan {
         processes,
         tab_order,
@@ -38,11 +47,29 @@ pub fn run_managed_task_tui(
         ..
     } = plan;
     let specs = managed_process_specs(processes);
-    let outcome = run_multiprocess_tui(
+    let poll = |supervisor: &ProcessSupervisor| session.poll(supervisor);
+    let before_shutdown = |supervisor: &ProcessSupervisor| {
+        session.poll(supervisor)?;
+        let result = session.end_exec_groups(settle);
+        // The runner's final down is the backstop for an owned environment.
+        if owns_environment {
+            Ok(())
+        } else {
+            result
+        }
+    };
+    let after_shutdown = |supervisor: &ProcessSupervisor| session.finish(supervisor);
+    let control = MultiProcessTuiControl {
+        poll: &poll,
+        before_shutdown: &before_shutdown,
+        after_shutdown: &after_shutdown,
+    };
+    let outcome = run_multiprocess_tui_with_control(
         repo_root.to_path_buf(),
         specs,
         tab_order,
         MultiProcessTuiOptions::default(),
+        Some(&control),
     )
     .map_err(|error| {
         ManagedError::Ui(format!(
@@ -53,7 +80,11 @@ pub fn run_managed_task_tui(
         task_name,
         &profile,
         fail_on_non_zero,
-        outcome.non_zero_exits,
+        if outcome.stopped_by_user {
+            Vec::new()
+        } else {
+            outcome.non_zero_exits
+        },
     )?;
     Ok(String::new())
 }

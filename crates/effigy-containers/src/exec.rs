@@ -1,6 +1,7 @@
 mod colima_runtime;
 mod healthcheck_timer;
 mod implementation;
+mod managed_stop;
 mod parse;
 mod participation;
 mod process;
@@ -15,9 +16,9 @@ pub use colima_runtime::{
 };
 pub use implementation::{
     capture_compose_ps, capture_running_container_stats,
-    capture_running_container_stats_for_profile, discover_compose_containers_all_states,
-    discover_running_compose_containers, infer_host_working_dir_for_container,
-    list_compose_containers_for_policy_including_stopped,
+    capture_running_container_stats_for_profile, compose_stack_is_running,
+    discover_compose_containers_all_states, discover_running_compose_containers,
+    infer_host_working_dir_for_container, list_compose_containers_for_policy_including_stopped,
     list_compose_containers_for_policy_including_stopped_with_deadline,
     list_compose_containers_for_policy_including_stopped_with_timeout,
     list_compose_containers_for_project_including_stopped, list_running_compose_containers,
@@ -33,6 +34,7 @@ pub use implementation::{
     verify_workspace_artifact_builder_declaration, ContainerExecError, OwnershipContext,
     RunningComposeContainerInventory, RuntimeInventoryFailure, VerifiedComposeContainer,
 };
+pub use managed_stop::{end_owned_container_process_group, verify_owned_stack_for_shutdown};
 pub use parse::{
     compose_status_is_running, parse_running_compose_containers, RunningComposeContainer,
     RunningComposeContainerProfiled, RunningContainerStats, RunningContainerStatsCapture,

@@ -8652,7 +8652,17 @@ case "$*" in
                   ;;
               esac
             done
-            printf "%s-app-1\tUp 10 seconds\t0.0.0.0:8080->80/tcp\t%s\t%s\tapp\tFalse\n" "$row_project" "$row_project" "${EFFIGY_TEST_OWNED_CHECKOUT:-$fixture_checkout}"
+            case "$*" in
+              *"{{.ID}}"*"{{.Status}}"*)
+                printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\tUp 10 seconds\tFalse\t%s\t\t\n' "${EFFIGY_TEST_OWNED_CHECKOUT:-$fixture_checkout}"
+                ;;
+              *"{{.ID}}"*)
+                printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\t%s\t%s\t\t\n' "$row_project" "${EFFIGY_TEST_OWNED_CHECKOUT:-$fixture_checkout}"
+                ;;
+              *)
+                printf "%s-app-1\tUp 10 seconds\t0.0.0.0:8080->80/tcp\t%s\t%s\tapp\tFalse\n" "$row_project" "$row_project" "${EFFIGY_TEST_OWNED_CHECKOUT:-$fixture_checkout}"
+                ;;
+            esac
             ;;
           *)
             printf "NAME                STATUS\napp                 running\n"
@@ -8753,7 +8763,7 @@ case "$*" in
                 last_arg="$arg"
               done
               case "$last_arg" in
-                kill\ -TERM*)
+                kill\ -TERM*|alive\(\)*)
                   sh -c "$last_arg"
                   ;;
                   *)
@@ -8898,7 +8908,17 @@ case "$subcmd" in
   ps)
     case "$*" in
       *"--format"*)
-        printf "fixture-web-dev-app-1\tUp 10 seconds\t0.0.0.0:8080->80/tcp\tfixture-web-dev\t%s\tapp\tFalse\n" "${EFFIGY_TEST_OWNED_CHECKOUT:-$fixture_checkout}"
+        case "$*" in
+          *"{{.ID}}"*"{{.Status}}"*)
+            printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\tUp 10 seconds\tFalse\t%s\t\t\n' "${EFFIGY_TEST_OWNED_CHECKOUT:-$fixture_checkout}"
+            ;;
+          *"{{.ID}}"*)
+            printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\tfixture-web-dev\t%s\t\t\n' "${EFFIGY_TEST_OWNED_CHECKOUT:-$fixture_checkout}"
+            ;;
+          *)
+            printf "fixture-web-dev-app-1\tUp 10 seconds\t0.0.0.0:8080->80/tcp\tfixture-web-dev\t%s\tapp\tFalse\n" "${EFFIGY_TEST_OWNED_CHECKOUT:-$fixture_checkout}"
+            ;;
+        esac
         ;;
       *)
         printf "NAME                STATUS\napp                 running\n"
@@ -10357,6 +10377,10 @@ detach_timeout_secs = 1
     let base_env: Vec<(String, String)> = vec![
         ("NO_COLOR".to_owned(), "1".to_owned()),
         (
+            "EFFIGY_TEST_DOWN_REMOVES_SERVICE".to_owned(),
+            "1".to_owned(),
+        ),
+        (
             "EFFIGY_EXECUTABLE".to_owned(),
             wrapper.display().to_string(),
         ),
@@ -10469,6 +10493,15 @@ detach_timeout_secs = 1
         "the remote holder process (pgid {pgid}) is live before the stop"
     );
 
+    // Stop must not require a ready inspect snapshot: a removed/tearing-down
+    // container may have no canonical inspect identity while labels still
+    // prove its current full runtime ID.
+    let inspect_file = root.join("owned-container-inspect.json");
+    let admitted_inspect = fs::read(&inspect_file).expect("retain startup inspect");
+    fs::write(&inspect_file, "[]").expect("inspect identity unavailable during stop");
+    let volume = root.join("retained-volume-data");
+    fs::write(&volume, "keep this data").expect("volume sentinel");
+
     let stop = Command::new(env!("CARGO_BIN_EXE_effigy"))
         .arg("dev")
         .arg("stop")
@@ -10528,6 +10561,15 @@ detach_timeout_secs = 1
         runtime_calls.contains(&format!("kill -TERM -- -{pgid}")),
         "the exec adapter was asked to end the recorded group: {runtime_calls}"
     );
+
+    assert!(!service_state.exists(), "stop brings the whole stack down");
+    assert_eq!(
+        fs::read_to_string(&volume).expect("retained volume"),
+        "keep this data"
+    );
+    assert!(!String::from_utf8_lossy(&first_exit.stdout)
+        .contains("canonical full container identity is missing"));
+    fs::write(&inspect_file, admitted_inspect).expect("restore startup inventory for restart");
 
     // An immediate restart has no lock conflict: it reaches running and
     // keeps a live remote holder, then settles cleanly through the same
@@ -10597,6 +10639,14 @@ detach_timeout_secs = 1
         "the restart run exits cleanly after its stop: stdout={} stderr={}",
         String::from_utf8_lossy(&second_exit.stdout),
         String::from_utf8_lossy(&second_exit.stderr)
+    );
+    assert!(
+        !service_state.exists(),
+        "restart stop brings the stack down"
+    );
+    assert_eq!(
+        fs::read_to_string(&volume).expect("retained volume"),
+        "keep this data"
     );
 }
 

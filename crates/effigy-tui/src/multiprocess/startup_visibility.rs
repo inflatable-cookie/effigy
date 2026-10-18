@@ -79,6 +79,17 @@ fn managed_tui_startup_visibility_production_pty() {
     );
     session.assert_terminal_restored();
 
+    let controlled = FixtureWorkspace::new();
+    let mut session = PtySession::spawn("controlled-stop-after-failure", controlled.path());
+    session.wait_for_or_panic("first-output");
+    std::thread::sleep(Duration::from_millis(200));
+    fs::write(controlled.path().join("stop.requested"), "stop").expect("request owner stop");
+    session.finish_successfully();
+    assert!(controlled.path().join("before-shutdown").exists());
+    assert!(controlled.path().join("after-shutdown").exists());
+    wait_for_pid_to_exit(&controlled.path().join("first.pid"));
+    session.assert_terminal_restored();
+
     let empty = FixtureWorkspace::new();
     let mut session = PtySession::spawn("empty", empty.path());
     session.finish_successfully();
@@ -197,6 +208,43 @@ fn run_child_case(case: &str, root: &Path) {
                     ProcessManagerError::Spawn { .. }
                 ))
             ));
+        }
+        "controlled-stop-after-failure" => {
+            let mut failed =
+                fixture_process("failed", &root.join("failed.pid"), "failed-output", root, 0);
+            failed.run = "exit 7".to_owned();
+            let processes = vec![
+                fixture_process("first", &root.join("first.pid"), "first-output", root, 0),
+                failed,
+            ];
+            let poll = |_: &ProcessSupervisor| Ok(root.join("stop.requested").exists());
+            let before = |_: &ProcessSupervisor| {
+                fs::write(root.join("before-shutdown"), "owned group cleanup")
+                    .map_err(|error| error.to_string())
+            };
+            let after = |_: &ProcessSupervisor| {
+                assert!(root.join("before-shutdown").exists());
+                fs::write(root.join("after-shutdown"), "host children ended")
+                    .map_err(|error| error.to_string())
+            };
+            let control = super::MultiProcessTuiControl {
+                poll: &poll,
+                before_shutdown: &before,
+                after_shutdown: &after,
+            };
+            let outcome = super::run_multiprocess_tui_with_control(
+                root.to_path_buf(),
+                processes,
+                Vec::new(),
+                MultiProcessTuiOptions::default(),
+                Some(&control),
+            )
+            .expect("controlled TUI stop");
+            assert!(outcome.stopped_by_user);
+            assert!(outcome
+                .non_zero_exits
+                .iter()
+                .any(|(name, _)| name == "failed"));
         }
         "empty" => assert!(matches!(
             super::run_multiprocess_tui(

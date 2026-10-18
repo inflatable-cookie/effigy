@@ -258,8 +258,11 @@ status mismatch) without copying backend output, process names or arguments.
 Inventory, exec readiness and exposure failures retain partial/unavailable
 state and do not tear down or restart running services. Reconciliation with
 `effigy container up --detach` verifies the exact canonical source/context and
-fresh owned full-ID bindings before registering exposure; missing primary,
-changed/legacy markers and unavailable observations refuse without Compose up.
+fresh owned full-ID bindings before registering exposure. Unchanged admitted
+inputs and verified checkout/scope ownership allow Compose up when any declared
+service is missing or stopped, including the primary. A complete running stack
+reconciles exposure without Compose up. Changed partial-admission inputs and
+unavailable ownership observations still refuse before Compose effects.
 The context persists as the detached owner after success, marked complete; only
 the selected temporary task lease is cleared. Explicit `container down` clears that context
 and keeps volumes. Attached bring-up keeps its existing cleanup policy.
@@ -771,7 +774,7 @@ declared claims — the live environment comes down whole with the ordinary
 `container down` semantics: managed host processes and listeners stopped,
 routes withdrawn, Compose containers stopped, all volumes kept, scope
 records cleared. Before the live environment comes down, the handover
-ends every live headless managed owner of the same checkout whose plan
+ends every live headless or TUI managed owner of the same checkout whose plan
 is bound to that environment, through the same path as
 `effigy <task> stop`, and waits for the owner's real settle: the stop
 cascade finishes whole - the owned host processes are gone, the
@@ -779,9 +782,9 @@ process groups the owner exec'd into the environment are ended through
 the exec adapter (or by the environment's own `container down`, which
 the cascade runs), and every task lock the run took is released
 through the lock owner-token rules. The wait uses the derived managed
-settle budget - the child shutdown grace, the managed lifecycle
-cleanup's own `container down` budget, and environment inspection
-slack - never a fixed guess. Because the owner's cascade already
+settle budget - a bounded remote cleanup attempt per exec child, the child
+shutdown grace, the managed lifecycle cleanup's own `container down` budget,
+and environment inspection slack - never a fixed guess. Because the owner's cascade already
 brought its environment down, the handover withdraws any routes an
 inline cascade could not, verifies the environment is down, and runs
 the ordinary down only as a backstop if a live remainder somehow
@@ -793,6 +796,17 @@ advises the stop that is already in progress. A stale lock from a dead
 holder is still reclaimed only by the existing lock rules; lock
 ownership is never weakened. One line names the handed-over environment and what
 moved.
+
+Headless and TUI runs publish the same owner/session identity and run token.
+Final cleanup records an optional completion result before owner locks release;
+`stop` checks it so an owner whose `container down` failed cannot report a
+successful settle merely because its process exited. Older session records
+retain the existing process/lock checks. Remote group cleanup resolves full
+container IDs from fresh checkout/scope labels, without an exec-readiness or
+published-port requirement. A missing container is already ended; an exec
+failure against a still-live exact container remains a failure. Whole-stack
+cleanup proves every project container's labels, including stopped services and
+orphans, before down and keeps every volume.
 
 A managed run's stop - `effigy <task> stop`, a SIGINT/SIGTERM settle,
 or a handover-driven stop - reports settled only after that same whole

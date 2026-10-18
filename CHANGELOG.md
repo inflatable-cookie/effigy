@@ -312,11 +312,13 @@ During v0.x, MINOR bumps may include breaking changes.
   1.2.0.
 
 ### Fixed
-- Managed headless stop lets the owner order remote and host child shutdown,
+- Managed headless and TUI stop lets the owner order remote and host child shutdown,
   exits successfully after earlier workload failures, and runs the bound
-  environment cleanup even when the managed runtime failed. Detached startup
-  recovers an unchanged, ownership-verified partial stack with a missing or
-  stopped primary through ordinary Compose up, keeping its volumes.
+  environment cleanup even when the managed runtime failed. Stop checks the
+  final cleanup result, and remote cleanup uses full-ID ownership labels even
+  when inspect identity or exec readiness is unavailable. Detached startup
+  recovers an unchanged, ownership-verified partial stack with missing or
+  stopped services through ordinary Compose up, keeping its volumes.
 - Headless `dev:container` app children now start and stay running on a
   healthy stack, on first start and after a handover. Three causes, found
   in the Acowtancy v0.15.0 adoption proof (#625): `container up` never ran

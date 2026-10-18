@@ -778,6 +778,9 @@ fn partial_activation_reconcile_pending(
         })?;
     let running = effigy_containers::exec::verify_owned_running_compose_rows(repo_root, &plan.policy, &running, deadline)
         .map_err(|_| RunnerError::task_invocation("partial activation reconciliation unavailable: current full-ID ownership/bindings could not be verified. No services were recreated"))?;
+    if !effigy_containers::exec::compose_stack_is_running(&plan.policy, &running)? {
+        return Ok(false);
+    }
     reconcile_partial_activation(repo_root, &plan.policy, &running)
 }
 
@@ -2156,6 +2159,37 @@ primary_service = "app"
             "a one-off run of the primary service is not the running primary"
         );
         assert!(!partial_reconcile_skips_compose_up(&policy, &[]));
+    }
+
+    #[test]
+    fn partial_activation_running_primary_does_not_hide_missing_or_stopped_siblings() {
+        let private = tempfile::tempdir().expect("private partial stack");
+        let compose = private.path().join("compose.yml");
+        fs::write(
+            &compose,
+            "services:\n  app:\n    image: app\n  db:\n    image: db\n",
+        )
+        .expect("compose");
+        let mut policy = test_policy(Vec::new());
+        policy.compose_files = vec![compose];
+        let primary = running_row("app", false);
+        assert!(!effigy_containers::exec::compose_stack_is_running(
+            &policy,
+            std::slice::from_ref(&primary)
+        )
+        .expect("missing sibling"));
+        let mut sibling = running_row("db", false);
+        sibling.status = "Exited (1)".to_owned();
+        assert!(!effigy_containers::exec::compose_stack_is_running(
+            &policy,
+            &[primary.clone(), sibling.clone()]
+        )
+        .expect("stopped sibling"));
+        sibling.status = "Up 10 seconds".to_owned();
+        assert!(
+            effigy_containers::exec::compose_stack_is_running(&policy, &[primary, sibling])
+                .expect("complete stack")
+        );
     }
 
     #[test]
