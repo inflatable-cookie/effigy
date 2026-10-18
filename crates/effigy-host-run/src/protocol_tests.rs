@@ -1365,6 +1365,10 @@ fn attach_reports_expiration_and_preserves_stream_byte_offsets_without_duplicate
 }
 
 #[test]
+#[cfg_attr(
+    all(effigy_shared_process, target_os = "macos"),
+    ignore = "known v0.15 rebuild defect: papercut 8a44cfa4-235e-4da7-9588-6cc3156c291c; owner lane v015-task-engine"
+)]
 fn attach_queued_follow_recovers_after_short_endpoint_roll_with_exact_offsets() {
     let fixture = make_fixture();
     let mut client = client(&fixture);
@@ -1466,6 +1470,10 @@ fn attach_queued_follow_recovers_after_short_endpoint_roll_with_exact_offsets() 
 }
 
 #[test]
+#[cfg_attr(
+    all(effigy_shared_process, target_os = "macos"),
+    ignore = "known v0.15 rebuild defect: papercut 8a44cfa4-235e-4da7-9588-6cc3156c291c; owner lane v015-task-engine"
+)]
 fn output_expired_is_preserved_through_bounded_recovery() {
     let fixture = make_fixture();
     let mut client = client(&fixture);

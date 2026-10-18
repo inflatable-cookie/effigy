@@ -438,7 +438,6 @@ fn write_executable(path: &Path, text: &str) {
 }
 
 #[test]
-#[ignore = "known v0.15 rebuild defect: papercut ce058b1e-c769-4102-9b0b-fcb0b925a713; owner lane v015-environment"]
 fn changed_input_partial_builder_recovers_through_the_maintained_artifact_task() {
     let _lock = crate::contract_test_support::lock_test();
     for backend in ["docker", "colima"] {
@@ -464,7 +463,6 @@ fn changed_input_partial_builder_recovers_through_the_maintained_artifact_task()
 }
 
 #[test]
-#[ignore = "known v0.15 rebuild defect: papercut ce058b1e-c769-4102-9b0b-fcb0b925a713; owner lane v015-environment"]
 fn unchanged_partial_completed_and_absent_builders_use_supported_task() {
     let _lock = crate::contract_test_support::lock_test();
     for state in ["partial", "complete", "absent"] {
@@ -549,7 +547,6 @@ fn foreign_missing_malformed_replaced_and_unbound_builders_refuse_before_build()
 }
 
 #[test]
-#[ignore = "known v0.15 rebuild defect: papercut ce058b1e-c769-4102-9b0b-fcb0b925a713; owner lane v015-environment"]
 fn failed_and_interrupted_changed_input_builds_retain_admission_and_retry() {
     let _lock = crate::contract_test_support::lock_test();
     for mode in ["build_fail", "interrupted"] {
@@ -603,7 +600,6 @@ fn concurrent_caller_and_expired_binding_have_no_effect() {
 }
 
 #[test]
-#[ignore = "known v0.15 rebuild defect: papercut ce058b1e-c769-4102-9b0b-fcb0b925a713; owner lane v015-environment"]
 fn both_handoffs_automatically_build_through_changed_input_partial_recovery() {
     let _lock = crate::contract_test_support::lock_test();
     for bounded in [false, true] {
@@ -737,7 +733,6 @@ fn concurrent_admission_or_source_change_refuses_before_exec() {
 }
 
 #[test]
-#[ignore = "known v0.15 rebuild defect: papercut ce058b1e-c769-4102-9b0b-fcb0b925a713; owner lane v015-environment"]
 fn interrupted_successful_backend_cannot_publish_task_success() {
     let _lock = crate::contract_test_support::lock_test();
     let fixture = Fixture::new(true, true, "docker");
@@ -795,7 +790,6 @@ fn interrupted_successful_backend_cannot_publish_task_success() {
 }
 
 #[test]
-#[ignore = "known v0.15 rebuild defect: papercut ce058b1e-c769-4102-9b0b-fcb0b925a713; owner lane v015-environment"]
 fn managed_namespace_builds_without_adopting_any_legacy_shape() {
     let _lock = crate::contract_test_support::lock_test();
     for scoped in [false, true] {
@@ -864,7 +858,6 @@ fn managed_namespace_builds_without_adopting_any_legacy_shape() {
 }
 
 #[test]
-#[ignore = "known v0.15 rebuild defect: papercut ce058b1e-c769-4102-9b0b-fcb0b925a713; owner lane v015-environment"]
 fn both_handoffs_migrate_the_authentic_legacy_namespace_without_manual_commands() {
     let _lock = crate::contract_test_support::lock_test();
     for backend in ["colima", "docker"] {
@@ -890,7 +883,6 @@ fn both_handoffs_migrate_the_authentic_legacy_namespace_without_manual_commands(
 }
 
 #[test]
-#[ignore = "known v0.15 rebuild defect: papercut ce058b1e-c769-4102-9b0b-fcb0b925a713; owner lane v015-environment"]
 fn migration_failures_never_accept_stale_output_and_reuse_the_new_builder_on_retry() {
     let _lock = crate::contract_test_support::lock_test();
     for bounded in [false, true] {

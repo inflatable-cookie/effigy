@@ -98,7 +98,6 @@ fn first_party_rhai_scripts_do_not_recursively_invoke_effigy() {
 }
 
 #[test]
-#[ignore = "known v0.15 rebuild defect: papercut eb02c8d8-d592-4c07-b40b-eed82b29c81d; owner lane v015-rebuild"]
 fn first_party_rhai_process_calls_are_allowlisted() {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()

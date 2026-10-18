@@ -182,7 +182,6 @@ fn managed_headless_status_logs_and_stop_control_live_session() {
 /// Failed workload children do not turn a later explicit stop into a failed
 /// run, and must not leave the task/profile locks blocking an immediate start.
 #[test]
-#[ignore = "known v0.15 rebuild defect: papercut 5e612108-e216-42e8-9690-88c9640eadaa; owner lane v015-supervisor"]
 fn managed_headless_failed_children_stop_cleanly_and_restart() {
     let _guard = lock_test();
     for failed_children in [1, 2] {
@@ -476,7 +475,6 @@ fn managed_headless_run_exits_on_sigint_with_no_surviving_processes() {
 /// A real consumer's cumulative child delays can exceed the settle budget.
 /// Control must work while startup is pending, without waiting those delays.
 #[test]
-#[ignore = "known v0.15 rebuild defect: papercut 5e612108-e216-42e8-9690-88c9640eadaa; owner lane v015-supervisor"]
 fn managed_headless_controls_settle_during_long_start_delay() {
     let _guard = lock_test();
     let private = tempfile::tempdir().expect("private delayed-start fixture");

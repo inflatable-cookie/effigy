@@ -4588,7 +4588,6 @@ fn container_scoped_clone_first_listener_up_and_switch_round_trip_hands_over() {
 /// strict publication verify refused (#197). Deterministic bounded policy
 /// loads stand in for the probes; the teardown keeps volumes.
 #[test]
-#[ignore = "known v0.15 rebuild defect: papercut a7d468ca-2a8f-4448-9008-bc12a142cd16; owner lane v015-gateway"]
 fn container_headless_managed_lifecycle_publishes_routes_in_scoped_data_from_clone() {
     let fixture = managed_host_fixture();
     let effects = HostEffectSentinels::new(fixture.path());

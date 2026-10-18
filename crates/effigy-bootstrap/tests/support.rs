@@ -129,6 +129,10 @@ pub fn commit_all(root: &Path, message: &str) {
         .arg("-C")
         .arg(root)
         .args(["commit", "-m", message])
+        .env("GIT_AUTHOR_NAME", "Effigy fixture")
+        .env("GIT_AUTHOR_EMAIL", "fixture@example.test")
+        .env("GIT_COMMITTER_NAME", "Effigy fixture")
+        .env("GIT_COMMITTER_EMAIL", "fixture@example.test")
         .output()
         .expect("git commit");
     assert!(commit.status.success(), "git commit failed: {commit:?}");
