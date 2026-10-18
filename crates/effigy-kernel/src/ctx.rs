@@ -205,6 +205,9 @@ impl ObserveContext {
     pub fn limits(&self) -> &Limits {
         &self.0.limits
     }
+    pub fn placement(&self) -> Placement {
+        self.0.placement
+    }
 }
 #[derive(Debug, Clone)]
 pub struct CleanupContext(OperationContext);

@@ -220,3 +220,36 @@ ordinary `qa:kernel-ratchet` never changes it. The ratchet tests include an
 added raw command against the real baseline and controls for rises, new pairs
 and unrecorded falls. This activates the baseline against the existing engines
 without migrating any of them.
+
+## Gate and store implementation
+
+`root` opens `~/.effigy/state/` from `$HOME`: for effects it creates the
+root 0700 and refuses guests before any filesystem call, untrusted
+components and network filesystems; for observation it never creates and
+reports absence or `Unknown`. The operator's spelling of `HOME` is resolved
+once; every component from `/` down is then reopened no-follow and
+owner-checked, and everything below `HOME` is descriptor-relative (`fs`).
+
+`gate` takes `LOCK_SH` on every scope gate, then `LOCK_EX` on each resource
+gate in canonical order, polling to the earlier of the wait's instant and
+the context deadline. `.scope` inodes are never unlinked; scope removal
+deletes only the scope directory under `LOCK_EX | LOCK_NB`. A probe of a
+never-created gate is `Absent(NoGateInode)`. The kernel enforces class
+capabilities by resource kind; whether a store is derived or a source is
+the engine lane's assignment. Gate acquisition refuses inside a store
+transaction (K14). On macOS one of two concurrent `O_CREAT` opens of the
+same new name can fail with ENOENT, so creating opens retry briefly.
+
+`store` holds schema 1 with the §7.2 tables; run, event, attachment, claim
+and request rows are written by their owning primitives. `record` provides
+`atomic_replace`, bounded `read_record` and `read_cache`, and the one-pointer
+`commit_generation`. `retention` follows §7.4 under a per-call removal
+budget. A tombstoned checkout's own resource rows do not hold its tombstone:
+once nothing unsettled, claimed or attached references it for 30 days, its
+gate scope, settled runs, resources and row are removed together.
+
+Fault points (`fault-injection`, test builds only) cover gate acquire, store
+commit before and after, and every `atomic_replace` step. `test:kernel:gate`
+and `test:kernel:store` run each traced point with ENOSPC and EPERM in
+process and SIGKILL in a re-executed child, plus the SIGSTOP, two-process
+scope-removal race and path-safety proofs.

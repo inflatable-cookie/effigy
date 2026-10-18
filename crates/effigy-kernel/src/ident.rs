@@ -14,6 +14,25 @@ pub enum ProcessStartIdentity {
     LinuxTicks(u64),
     MacOs { seconds: u64, microseconds: u64 },
 }
+impl ProcessStartIdentity {
+    /// Stable text form for diagnostic bodies; never parsed back as authority.
+    pub fn text(&self) -> String {
+        match self {
+            Self::LinuxTicks(ticks) => format!("linux:{ticks}"),
+            Self::MacOs {
+                seconds,
+                microseconds,
+            } => format!("macos:{seconds}.{microseconds:06}"),
+        }
+    }
+}
+/// Scheduler state, for diagnostics such as a stopped gate holder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub enum ProcessState {
+    Active,
+    Stopped,
+    Zombie,
+}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProcessIdentity {
     pub boot: BootIdentity,
@@ -102,6 +121,24 @@ pub fn process_identity(pid: u32) -> Observed<ProcessIdentity> {
         Err(error) => Observed::Unknown(failure(error)),
     }
 }
+pub fn process_state(pid: u32) -> Observed<ProcessState> {
+    #[cfg(all(test, feature = "fault-injection"))]
+    if let Some(injected) = crate::fault::injected() {
+        return injected;
+    }
+    if pid == 0 || pid > i32::MAX as u32 {
+        return Observed::Unknown(UnknownReason::Unparsable(
+            "pid outside process range".into(),
+        ));
+    }
+    match platform::state(pid) {
+        Ok(state) => Observed::Verified(state, evidence("kernel process state")),
+        Err(error) if matches!(error.raw_os_error(), Some(libc::ESRCH)) => {
+            Observed::Absent(AbsenceProof::NoSuchProcess { pid })
+        }
+        Err(error) => Observed::Unknown(failure(error)),
+    }
+}
 pub fn boot_clock() -> Observed<BootInstant> {
     #[cfg(all(test, feature = "fault-injection"))]
     if let Some(injected) = crate::fault::injected() {
@@ -135,6 +172,20 @@ fn parse_linux_start(stat: &str, expected_pid: u32) -> Option<ProcessStartIdenti
     let (_, rest) = stat.rsplit_once(')')?;
     let start = rest.split_whitespace().nth(19)?.parse::<u64>().ok()?;
     Some(ProcessStartIdentity::LinuxTicks(start))
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn parse_linux_state(stat: &str, expected_pid: u32) -> Option<ProcessState> {
+    let (pid, _) = stat.split_once(" (")?;
+    if pid.parse::<u32>().ok()? != expected_pid {
+        return None;
+    }
+    let (_, rest) = stat.rsplit_once(')')?;
+    Some(match rest.split_whitespace().next()? {
+        "T" | "t" => ProcessState::Stopped,
+        "Z" | "X" | "x" => ProcessState::Zombie,
+        _ => ProcessState::Active,
+    })
 }
 
 #[cfg(target_os = "linux")]
@@ -213,6 +264,10 @@ mod platform {
         let stat = read_proc(&[&pid.to_string(), "stat"], 8192, true)?;
         parse_linux_start(&stat, pid).ok_or_else(|| io::Error::from(io::ErrorKind::InvalidData))
     }
+    pub fn state(pid: u32) -> io::Result<ProcessState> {
+        let stat = read_proc(&[&pid.to_string(), "stat"], 8192, true)?;
+        parse_linux_state(&stat, pid).ok_or_else(|| io::Error::from(io::ErrorKind::InvalidData))
+    }
     pub fn clock() -> io::Result<Duration> {
         let mut time = std::mem::MaybeUninit::<libc::timespec>::uninit();
         // SAFETY: a supported clock id and aligned writable timespec storage.
@@ -256,6 +311,24 @@ mod platform {
         String::from_utf8(value.to_vec()).map_err(|_| io::Error::from(io::ErrorKind::InvalidData))
     }
     pub fn start(pid: u32) -> io::Result<ProcessStartIdentity> {
+        let info = bsdinfo(pid)?;
+        if info.pbi_start_tvusec >= 1_000_000 {
+            return Err(io::Error::from(io::ErrorKind::InvalidData));
+        }
+        Ok(ProcessStartIdentity::MacOs {
+            seconds: info.pbi_start_tvsec,
+            microseconds: info.pbi_start_tvusec,
+        })
+    }
+    pub fn state(pid: u32) -> io::Result<ProcessState> {
+        // SSTOP and SZOMB from the macOS SDK's sys/proc.h.
+        Ok(match bsdinfo(pid)?.pbi_status {
+            4 => ProcessState::Stopped,
+            5 => ProcessState::Zombie,
+            _ => ProcessState::Active,
+        })
+    }
+    fn bsdinfo(pid: u32) -> io::Result<libc::proc_bsdinfo> {
         let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::uninit();
         let size = std::mem::size_of::<libc::proc_bsdinfo>();
         // SAFETY: validated positive pid fits i32; PROC_PIDTBSDINFO takes no
@@ -279,13 +352,10 @@ mod platform {
         }
         // SAFETY: proc_pidinfo returned the full initialized structure size.
         let info = unsafe { info.assume_init() };
-        if info.pbi_pid != pid || info.pbi_start_tvusec >= 1_000_000 {
+        if info.pbi_pid != pid {
             return Err(io::Error::from(io::ErrorKind::InvalidData));
         }
-        Ok(ProcessStartIdentity::MacOs {
-            seconds: info.pbi_start_tvsec,
-            microseconds: info.pbi_start_tvusec,
-        })
+        Ok(info)
     }
     // ABI from the macOS SDK's mach/mach_time.h. libc does not export
     // mach_continuous_time, and its old timebase wrapper is deprecated.
@@ -331,6 +401,10 @@ mod tests {
         assert_eq!(parse_linux_start(&stat, 43), None);
         assert_eq!(parse_linux_start("42 (short) S 0", 42), None);
         assert_eq!(parse_linux_start(&stat.replace("98765", "bad"), 42), None);
+        assert_eq!(parse_linux_state(&stat, 42), Some(ProcessState::Active));
+        let stopped = stat.replace(") S ", ") T ");
+        assert_eq!(parse_linux_state(&stopped, 42), Some(ProcessState::Stopped));
+        assert_eq!(parse_linux_state(&stopped, 41), None);
     }
     #[test]
     fn boot_uuid_and_cross_boot_clock_are_strict() {
