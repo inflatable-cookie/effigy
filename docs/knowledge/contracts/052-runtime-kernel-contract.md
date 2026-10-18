@@ -1546,6 +1546,11 @@ operation that needs authority or live host facts.
   generation, full container id and VM boot id, and the operations and
   targets it allows. A hostname, source address, marker file or claimed run
   id grants nothing.
+- Capability issue: a Mutate request to the session run. The supervisor
+  holds the grant in memory as state of that run; it is never persisted, and
+  the run's settle ends every grant it issued. The first terminal opened
+  through Effigy gets its capability as part of the Prepare or workspace entry that
+  opens it.
 - Transport: TLS with the server identity pinned in the context, and the
   capability presented inside the authenticated stream. A bearer token over
   plain HTTP is not enough. Unix sockets do not cross Colima or Docker
@@ -1560,15 +1565,17 @@ operation that needs authority or live host facts.
   client gets. The resource identity is the same for host and guest origins;
   the origin is metadata only.
 - Placement: an admitted one-shot run gets a host owner process spawned by
-  the session supervisor, `Inline` with its sentinel. A managed run is
-  `Detached`. Container targets run in the container through remote custody
-  (§5.10); host targets run on the host.
+  the session supervisor, `Inline` with its sentinel; that owner is the run's
+  invoking process. A managed run is `Detached`. Container targets run in the
+  container through remote custody (§5.10); host targets run on the host.
 - Idempotence: the host records each request id before admission. A retried
   id returns the existing run or outcome and never admits a second run.
 - Streams: events, log frames, terminal input and resize travel on the
-  channel with bounded flow control. The guest client is a front end (I-SV3);
-  for a run it started, it is the owning client (§5.8): its stop request or
-  stream EOF without detach means stop and settle.
+  channel with bounded flow control. The guest client is a front end
+  (I-SV3). For an `Inline` run it started, its stop request or stream EOF
+  makes the session supervisor cancel the host owner, which settles (§5.2).
+  For a `Detached` run it started, it is the owning client (§5.8): stop
+  request or EOF without detach means stop and settle.
 - Disconnect: on disconnect, capability loss, generation mismatch or a host
   probe timeout, the client reports `Unknown` for every unfinished run and
   refuses further Mutate. It never falls back to local execution. A
@@ -1623,14 +1630,15 @@ coverage matrix (`synthesis/GUEST-EFFIGY.md` §2).
 
 | Matrix rows | In the guest | Mechanism |
 | --- | --- | --- |
-| Help, groups, version; `rhai surface`; `config` inspect, schema, reference, completion | local | Static; binary metadata and the context |
+| Help, groups, version; `--plan` and `test --plan`; `rhai surface`; `config` inspect, schema, reference, completion | local | Static; binary metadata and the context |
 | `tasks` listing and resolve; implicit bundle load; `bundle` inspect; `service` list and extract | local | Static against the pinned snapshot (§8.2). No fetch, lock or cache write. |
 | `graph` queries and status; `docs` checks and context; `scan`; `contracts` and `changelog` static checks; `skill tasks`; `state` plan; `artifact` inspect | local | Static and Observe reads of the mounted checkout and graph store. A stale index reports stale; a query never refreshes it (R2). |
-| App tasks with `run_in` `host`, `container` or `either`; shell commands; task references, sequences and setup steps; Rhai tasks and host APIs; `test`, suites and `--plan` execution; drafts; QA groups and members; heavy tasks; `skill run`; `watch` | channel | Admission request. The host resolves placement, gates `Task(TaskId)` (K5 excludes host and guest runs alike), journals and runs: container targets in the target container through remote custody, host targets on the host. Rhai effects are classified on the host (§5.3). |
+| App tasks with `run_in` `host`, `container` or `either`; shell commands; task references, sequences and setup steps; Rhai tasks and host APIs; `test` and suites; drafts; QA groups and members; heavy tasks; `skill run`; `watch` | channel | Admission request. The host resolves placement, gates `Task(TaskId)` (K5 excludes host and guest runs alike), journals and runs: container targets in the target container through remote custody, host targets on the host. Rhai effects are classified on the host (§5.3). |
 | `defer` | local inside an admitted workload; otherwise channel | Inside a workload it is that run's command, under its custody. From a shell it is an admission request targeting the current container. |
 | Workspace-only tasks, `workspace`, `system` | channel | Attach to the live workspace session run (§8.7); never a second shell or session. Lifecycle operations are requests. |
 | Managed TUI and headless (`dev`, profiles) | channel | Admission of a `Detached` managed run, child of the session run. The guest renders events; the host supervisor owns workloads and attachments. |
 | Managed `status`, `logs`, `stop`; `tasks status` | channel | Observe requests for status and logs; `stop` is a generation-fenced request (K7). Host and guest pids are never mixed. |
+| `tasks cache`, task-lock `unlock` | channel; `unlock` refused | Cache reads are host Observe requests; clears are RefreshDerived requests to the owning store engine. `unlock` refuses in both placements: there is no unlock command (I-G7). `migrate` and QA groups are in the Mutate and admission rows. |
 | `doctor` | local and channel | Manifest and tool checks local; runtime checks (backend, gateway, routes, catalog pack, ownership, volumes) are host Observe requests. |
 | `container shell`, bounded shell, `exec`, aliases | channel | Admission request; the host launches the command in the named service, including the current container, through remote custody. |
 | `container up`, `down`, `reset`, `retire` | channel | Mutate requests to the environment engine under R4. A guest `down` of its own environment follows §8.7. |
@@ -1659,7 +1667,8 @@ host, so overlapping app roles and shared data claims conflict there (§5.9).
   run (`runs.parent run`) with the guest client as owning client. Exiting it
   settles its own workloads and attachment, then returns to the terminal;
   invoking `dev` again admits another child run.
-- Exiting `dev` asks whether to keep the environment up (Tom, 2026-10-18).
+- Exiting `dev` asks whether to keep the environment up (Tom's ruling,
+  2026-10-18).
   Keep: the session run stays. Stop: the client requests `container down`,
   which follows the down path below.
 - Attach: the host `effigy workspace` and every guest terminal attach to the
@@ -1670,14 +1679,25 @@ host, so overlapping app roles and shared data claims conflict there (§5.9).
   K5 admits one unresolved run per owner, so a second `workspace` invocation
   attaches instead of starting a session. Every `dev` or task request takes
   its own owner gate on the host, whatever its origin.
-- Down from inside (Tom, 2026-10-18): the host accepts a guest `container
-  down` of its own environment when no holder other than the initiating
-  session run and its child runs is live or `Unknown`; otherwise it refuses
-  with `HeldBy`. On acceptance it returns an operation id, tells every
-  attached terminal that the container is stopping, requests the session run
-  to settle, then the environment run takes its permit once holders are
-  `Absent` (R4). A holder that attaches meanwhile makes the down refuse; the
-  outcome stays in the host journal for host status.
+- Down from inside (Tom's ruling, 2026-10-18) uses only existing
+  primitives; no run settles another by cascade:
+  1. The session supervisor observes the environment's holders. A live or
+     `Unknown` holder other than the session run and its own child runs
+     refuses with `HeldBy` before anything stops.
+  2. It sends an ordinary stop request to each of its child runs and waits,
+     under the request's deadline, for each to resolve and release its own
+     attachment. An unresolved child refuses the down and is reported.
+  3. It returns an operation id, then admits the down as its own `Detached`
+     environment run with `ClientMode::Detach`, outside the session's
+     custody, naming the session run as exempt (§5.9).
+  4. The down run holds `Gate(Env)` and rechecks holders; any holder other
+     than the session run refuses with `HeldBy`. It then requests the
+     session run to settle. The session supervisor tells every attached
+     terminal that the container is stopping, then settles itself and
+     releases its attachment.
+  5. The permit is issued once the only holder is the exempt run settling
+     itself, or none (R4, I-A1), and the down applies. Its outcome stays in
+     the host journal for host status.
 - The session ends when the environment goes down or the host closes it.
   Closing the last terminal does not end it; retention after that is the
   environment engine's idle policy (§3).
@@ -1685,14 +1705,18 @@ host, so overlapping app roles and shared data claims conflict there (§5.9).
 ### 8.8 Terminal enrolment
 
 Direct `docker exec` and editor terminals in the workspace container are
-enrolled automatically (Tom, 2026-10-18).
+enrolled automatically. Tom confirmed this on 2026-10-18, after the brief
+was written; lane document `v015-workspace-client` v2 records the ruling.
 
 - Workspace Prepare installs a narrow enrolment credential, 0600 for the
-  workspace user in guest-private storage (`/run/effigy/enrol/`). It is bound
-  to the environment generation and the container identity.
-- It authorises session enrolment only, never an effect. On enrolment the
-  host verifies the environment generation is current and the session run is
-  live, then issues a per-session capability (§8.3).
+  workspace user in guest-private storage (`/run/effigy/enrol/`), as a
+  journalled file effect of the Prepare run. It is bound to the environment
+  generation and the container identity.
+- It authorises session enrolment only, never an effect. Enrolment is a
+  Mutate request to the session run (§8.3): the host verifies the
+  environment generation is current and the session run is live, then
+  issues a per-session capability. A Static or Observe command never
+  enrols; without a capability it runs locally only.
 - A new environment generation revokes it. A missing, revoked or stale
   credential leaves local Static and Observe working and reports host access
   unavailable.
@@ -1724,7 +1748,7 @@ only, and host access needs a terminal opened through Effigy.
 | Rule | Holds because |
 | --- | --- |
 | R1 Host authority | The guest has no state root, gates or runs. Every effect is a host run under the owning engine's gate. Capabilities are host-kept grants; a request carries no authority beyond its capability, and the host re-resolves it. The state root and vault are never in the guest's mounts. |
-| R2 Pure reads | Local Static and Observe read an immutable context and the mounted checkout and write nothing. Host Observe requests create no run, token or log entry. Context publication and capability issue happen only in Prepare and Mutate. |
+| R2 Pure reads | Local Static and Observe read an immutable context and the mounted checkout and write nothing. Host Observe requests create no run, token or log entry. `--plan` is Static and admits nothing. Context publication and the enrolment credential are Prepare effects; capability issue and enrolment are Mutate requests to the session run. |
 | R3 Unknown grants nothing | Disconnect, stale generation or an unreachable host is `Unknown` for the client and refuses Mutate with no local fallback. The host acts only on its own `Verified` observations and fences every request by generation (K7). |
 
 ## 9. Authority map
