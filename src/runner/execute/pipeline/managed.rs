@@ -26,14 +26,14 @@ use crate::runner::execute::workspace_seeded::{
 };
 use effigy_containers::compose::compose_args;
 use effigy_containers::session::{
-    container_exec_command, managed_gateway_command, managed_lifecycle_command,
-    managed_lifecycle_shutdown_command, managed_shell_command, managed_standard_exec_command,
-    resolve_effigy_invocation_prefix, ManagedLifecycleRequest, ManagedStandardExecRequest,
+    container_exec_command, managed_container_shell_command, managed_gateway_command,
+    managed_lifecycle_command, managed_lifecycle_shutdown_command, managed_shell_command,
+    managed_standard_exec_command, resolve_effigy_invocation_prefix, ManagedLifecycleRequest,
+    ManagedStandardExecRequest,
 };
 use effigy_containers::{
     load_container_policy, ContainerCapturedExecOperation, EffectiveContainerPolicy,
 };
-use effigy_core::shell::shell_quote;
 use effigy_env::secret::SecretString;
 use effigy_execution::{ExecutionBindingInput, ExecutionSelectionPlan};
 use effigy_managed::command::resolve_managed_task_plan;
@@ -1128,12 +1128,7 @@ fn build_container_process_end_hook(
                 ),
             ),
             ExecSurface::Named { name, executable } => {
-                let repo = shell_quote(&repo_root.display().to_string());
-                format!(
-                    "env EFFIGY_INTERNAL_SUPPRESS_HEADER=1 {executable} container {name} shell --command {} --repo {repo}",
-                    shell_quote(&inner),
-                    name = shell_quote(name),
-                )
+                managed_container_shell_command(executable, Some(name), &inner, &repo_root)
             }
         };
         run_managed_lifecycle_cleanup_with_timeout(

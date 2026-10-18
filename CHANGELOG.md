@@ -16,8 +16,8 @@ During v0.x, MINOR bumps may include breaking changes.
   releases its task lock through the lock owner-token rules — printing one
   line naming each managed task ended. Owners bound to any other
   environment are never touched. Ending an owner that fails refuses the
-  handover before the environment is stopped and says to run
-  `effigy <task> stop`. Headless runs also never allocate an interactive
+  handover before the environment is stopped and names what is still
+  running. Headless runs also never allocate an interactive
   TTY: shell-role processes are skipped with a note instead of spawning a
   child that would block on a TTY, and SIGINT/SIGTERM to the headless owner
   settles the run through the stop path before exiting. A stale lock from

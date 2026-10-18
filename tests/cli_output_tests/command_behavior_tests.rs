@@ -8664,9 +8664,13 @@ case "$*" in
         for arg in "$@"; do
           queried="$arg"
         done
-        queried="${queried#/}"
-        row_project="${queried%-app-1}"
-        sed "s/fixture-web-dev-app-1/${queried}/g; s/fixture-web-dev/${row_project}/g" "${EFFIGY_TEST_OWNED_INSPECT_FILE:-$fixture_inspect}"
+        inspected="${queried#/}"
+        if [ "$inspected" = "fixture-web-dev-app-1" ]; then
+          /bin/cat "${EFFIGY_TEST_OWNED_INSPECT_FILE:-$fixture_inspect}"
+        else
+          row_project="${inspected%-app-1}"
+          /usr/bin/sed "s/fixture-web-dev-app-1/${queried}/g; s/fixture-web-dev/${row_project}/g" "${EFFIGY_TEST_OWNED_INSPECT_FILE:-$fixture_inspect}"
+        fi
         ;;
       start)
         printf "started\n"
@@ -11276,7 +11280,7 @@ fn cli_container_falls_back_to_colima_nerdctl_when_docker_is_missing() {
         .output()
         .expect("run effigy");
 
-    assert!(output.status.success(), "fallback up failed: {output:?}");
+    assert!(output.status.success(), "fallback up failed: {output:?}",);
     let parsed = parse_stdout_json(&output);
     assert_eq!(parsed["result"]["schema"], "effigy.container.up.v1");
     let invocations = fs::read_to_string(&colima_args).expect("read colima args");

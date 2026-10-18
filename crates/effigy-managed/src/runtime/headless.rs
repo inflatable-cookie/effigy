@@ -328,18 +328,11 @@ pub fn managed_headless_logs(
 /// What one stop request observed about the managed run it asked to stop.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ManagedHeadlessStopOutcome {
-    /// The request summary, as before: what was asked to stop.
+    /// The request summary: what the request ended.
     pub summary: String,
-    /// Whether the supervisor itself was gone after the request, meaning
-    /// its whole stop cascade (including a lifecycle `container down`)
-    /// has finished. An exited-but-unreaped supervisor still counts as not
-    /// settled here; callers refine with the lock records, which a zombie
-    /// has already dropped.
-    pub settled: bool,
     pub supervisor_pid: u32,
     pub run_token: Option<String>,
-    pub container_environment: Option<String>,
-    /// Recorded child processes still alive after the cascade budget.
+    /// Recorded child processes still alive after the request returned.
     pub surviving_processes: Vec<(String, u32)>,
 }
 
@@ -361,12 +354,10 @@ pub fn managed_headless_stop(
                 && process_is_descendant_of(process.pid, state.supervisor_pid)
         })
         .collect::<Vec<_>>();
-    let outcome = |summary: String, settled: bool| ManagedHeadlessStopOutcome {
+    let outcome = |summary: String| ManagedHeadlessStopOutcome {
         summary,
-        settled,
         supervisor_pid: state.supervisor_pid,
         run_token: state.run_token.clone(),
-        container_environment: state.container_environment.clone(),
         surviving_processes: running
             .iter()
             .filter(|process| process_is_running(process.pid))
@@ -374,10 +365,9 @@ pub fn managed_headless_stop(
             .collect(),
     };
     if running.is_empty() {
-        return Ok(outcome(
-            format!("managed headless task `{task_name}` profile `{profile}` is not running"),
-            !supervisor_running,
-        ));
+        return Ok(outcome(format!(
+            "managed headless task `{task_name}` profile `{profile}` is not running"
+        )));
     }
     let stop_path = runtime_dir.join("stop.requested");
     fs::write(&stop_path, b"stop\n")
@@ -405,10 +395,7 @@ pub fn managed_headless_stop(
     // the lock records: a supervisor that exited but is not reaped yet (a
     // zombie its parent has not collected) has already dropped its locks
     // and must not stall the settle budget here.
-    Ok(outcome(
-        format!("{} process(es) ended", running.len()),
-        !process_is_running(state.supervisor_pid),
-    ))
+    Ok(outcome(format!("{} process(es) ended", running.len())))
 }
 
 /// End every process group this run exec'd into its environment: read each

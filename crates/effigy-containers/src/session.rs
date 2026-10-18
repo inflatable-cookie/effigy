@@ -429,7 +429,7 @@ pub fn managed_lifecycle_state_path(
 /// adapter, because killing only the host exec clients never reaches the
 /// remote side. Every step is best effort: an unwritable marker still
 /// attaches and runs the command.
-fn render_tracked_exec_command(routed_command: &str, exec_group_file: Option<&Path>) -> String {
+pub fn render_tracked_exec_command(routed_command: &str, exec_group_file: Option<&Path>) -> String {
     let Some(group_file) = exec_group_file else {
         return routed_command.to_owned();
     };
