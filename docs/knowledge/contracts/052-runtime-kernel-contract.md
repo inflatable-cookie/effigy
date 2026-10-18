@@ -752,14 +752,18 @@ leader was reparented and its number is no longer pinned.
 
 | Observation | Signal authority |
 | --- | --- |
-| Leader alive with the recorded start and boot identity | signal the group. On Linux, through a pidfd opened before the identity check, which pins the number. |
+| Leader alive with the recorded start and boot identity | signal the group. On Linux 6.9 or later: open a pidfd, check identity, then call `pidfd_send_signal` with `PIDFD_SIGNAL_PROCESS_GROUP`, which targets the original group's kernel identity, not its number. Elsewhere (older Linux, macOS): a numeric group signal follows the identity check, with the window below. |
 | Leader gone or identity differs, and `kill(-pgid, 0)` returns `ESRCH` | none needed: `Absent` |
-| Leader gone or identity differs, and the group has members | signal each member individually, only if its environment carries the run's custody nonce and it started no earlier than the recorded spawn. On Linux, through a pidfd. Other members: `Unknown`, residue, never signalled. |
+| Leader gone or identity differs, and the group has members | signal each member individually, only if its environment carries the run's custody nonce and it started no earlier than the recorded spawn. On Linux, through a per-process pidfd opened before the check. Other members: `Unknown`, residue, never signalled. |
 | Process table or member environment unreadable | `Unknown`, residue |
 
-On macOS there is no pidfd, so a window between the per-member check and the
+Where no descriptor operation exists (macOS for any signal; Linux before
+6.9 for group signals), a window between the identity check and the numeric
 signal remains. It is documented, as contract 049 documents macOS identity
-limits, and closed nowhere by guessing.
+limits, and closed nowhere by guessing. Holding a pidfd never reserves a
+numeric pid or group id: once the last task using a number is gone, the
+number can be reused while the descriptor stays open. An open pidfd
+therefore never justifies a numeric `kill(-pgid)`.
 
 Signal handling by placement:
 
@@ -822,7 +826,12 @@ kernel restores it on exit.
   residue. The same holds for a foreign process sharing a pgid with a
   surviving nonce-carrying member.
 - Leader exits while a nonce-carrying descendant survives: owner stop kills
-  it through the pinned group; sentinel recovery kills it through the nonce.
+  it through the group, whose number the unreaped leader keeps allocated;
+  sentinel recovery kills it through the nonce.
+- Recovery verifies a live leader, which then exits, and a foreign group
+  takes the number before the signal (injected): with the group capability
+  nothing foreign is signalled. Without it, the case is the documented
+  window and is reported as such.
 - A descendant that clears its environment survives recovery as `Unknown`
   residue and is never signalled by group number.
 - No secret bytes appear in `ps -o args` during any run.
@@ -1182,18 +1191,18 @@ fork.
 | --- | --- | --- | --- |
 | 1 | On its first probe, spawn the guard. | Wait for registrations. | — |
 | 2 | Fork the probe into a new process group, blocked on a spawn barrier. Its environment carries `EFFIGY_PROBE_NONCE`, which names the observer's and the guard's pid and start identity, plus a sequence number. | — | Observer dies: the probe reads barrier EOF and exits without executing. |
-| 3 | Send the probe's pid, group, start identity, nonce and deadline to the guard. | Record them in memory. On Linux, open a pidfd for the blocked leader, which pins the group number for the guard's lifetime. Acknowledge. | No acknowledgement: the observer kills the unexecuted probe and returns `Unknown(GuardUnavailable)`. |
+| 3 | Send the probe's pid, group, start identity, nonce and deadline to the guard. | Record them in memory. On Linux, open a pidfd for the blocked leader and test `pidfd_send_signal(pidfd, 0, NULL, PIDFD_SIGNAL_PROCESS_GROUP)`: success records the group capability; `EINVAL` or `ENOSYS` records it as unavailable. Acknowledge, stating the capability. | No acknowledgement: the observer kills the unexecuted probe and returns `Unknown(GuardUnavailable)`. |
 | 4 | On the acknowledgement, release the barrier. The probe executes. | — | — |
-| 5 | Keep the leader unreaped, which pins the group number. Relay bounded output, kill the group at the deadline, verify closure, reap, then tell the guard the probe closed. | At the deadline plus grace, stop any registered probe still open: the backup for a hung or stopped observer. | Guard dies: the observer still owns and stops the probe; the outcome carries a warning. Observer dies: the guard reads EOF and stops every registered open probe. |
+| 5 | Keep the leader unreaped: a zombie still holds its pid, so the group number stays allocated. Relay bounded output, kill the group at the deadline, verify closure, reap, then tell the guard the probe closed. | At the deadline plus grace, stop any registered probe still open: the backup for a hung or stopped observer. | Guard dies: the observer still owns and stops the probe; the outcome carries a warning. Observer dies: the guard reads EOF and stops every registered open probe. |
 
 The guard is not the probe's parent, so it stops a probe by the recovery
 rule of I-P4, limited to the generation evidence it holds:
 
 | Process | Guard's evidence | Guard may signal |
 | --- | --- | --- |
-| Group member, Linux | the pidfd opened at registration, which keeps the group number pinned after the leader exits | the whole group |
-| Group member, macOS, leader alive with the registered start identity | verified leader | the whole group |
-| Group member, macOS, leader gone | the probe nonce and a start no earlier than the registration | that member only |
+| Group member, Linux with the group capability | the registration pidfd: `PIDFD_SIGNAL_PROCESS_GROUP` reaches exactly the original group's members, even after the leader exits, and returns `ESRCH` once none remain | the original group, by descriptor only |
+| Group member, macOS or Linux without the capability, leader alive with the registered start identity | verified leader (on Linux, the registration pidfd also shows whether it has exited) | the whole group by number, right after the check, with the documented window |
+| Group member, macOS or Linux without the capability, leader gone | the probe nonce and a start no earlier than the registration | that member only (on Linux, through a per-process pidfd) |
 | Process that left the group (new session) | the probe nonce and start time | that process only |
 | Anything else | none | nothing |
 
@@ -1204,8 +1213,8 @@ Observe) stops nonce-carrying processes by nonce and start time.
 
 | Who lives | Stopped within the bound | Outside the bound |
 | --- | --- | --- |
-| Observer | every group member, at the deadline (pinned group); nonce-carrying processes that left the group | a process that left the group and cleared its environment |
-| Guard only | Linux: every group member, plus nonce-carrying processes outside it, at the deadline plus grace. macOS: the whole group while the leader lives; after that, nonce-carrying processes. | macOS: a group member without the nonce after the leader exits. Both: a process that left the group and cleared its environment. |
+| Observer | every group member, at the deadline (the unreaped leader keeps the group number allocated); nonce-carrying processes that left the group | a process that left the group and cleared its environment |
+| Guard only | Linux with the group capability: every member of the original group, plus nonce-carrying processes outside it, at the deadline plus grace. macOS and Linux without it: the whole group while the leader lives; after that, nonce-carrying processes. | Without the group capability: a group member without the nonce after the leader exits. Everywhere: a process that left the group and cleared its environment. |
 | Neither | nonce-carrying processes, at the next maintenance step | any process without the nonce |
 
 Processes outside the bound are never signalled (I-P4, R3). Observe writes
@@ -1245,7 +1254,7 @@ of every other class use the same two calls for their probes.
 
 | Fault | Behavior |
 | --- | --- |
-| Crash, Kill of the observer | The guard reads EOF and stops every registered open probe within its evidence (pidfd, verified leader or nonce). Processes without evidence are left alone. Nothing was written, so nothing needs recovery. |
+| Crash, Kill of the observer | The guard reads EOF and stops every registered open probe within its evidence (group descriptor, verified leader or nonce). Processes without evidence are left alone. Nothing was written, so nothing needs recovery. |
 | Crash, Kill of the guard | The observer still owns each probe through its unreaped leader and kills the group at the deadline. New probes return `Unknown(GuardUnavailable)` until a new guard acknowledges. |
 | Crash, Kill of both | The probe is outside custody. Maintenance stops nonce-carrying processes; any others stay untouched. |
 | SIGSTOP of the observer | The guard stops open probes at the deadline plus grace. |
@@ -1274,9 +1283,15 @@ of every other class use the same two calls for their probes.
   - both SIGKILLed: the probe survives until maintenance, which stops it by
     nonce, while a foreign process with another or no nonce survives.
 - Observer SIGKILLed after the leader exits, leaving a descendant in the
-  group that cleared its environment: on Linux the guard stops it through
-  the pidfd-pinned group; on macOS it is left untouched and is outside
-  O14's bound.
+  group that cleared its environment: on Linux with the group capability the
+  guard stops it through the group descriptor; on macOS, and on Linux
+  without the capability, it is left untouched and is outside O14's bound.
+- Group capability unavailable (Linux before 6.9, or `EINVAL` injected at
+  registration): the guard uses only the fallback rules and never sends a
+  numeric group signal after the leader exits.
+- The original probe group empties and a foreign group takes its number
+  while the guard still holds the old pidfd: the descriptor signal returns
+  `ESRCH`, and the foreign group survives.
 - A descendant that leaves the group and clears its environment is never
   signalled, on either platform, by any owner.
 - Every probe case leaves an empty filesystem diff.
@@ -1498,6 +1513,7 @@ container, such as a CI job, is a Linux host with its own state root.
 | Process start identity | `proc_pidinfo` start seconds and microseconds, replacing whole-second `ps -o lstart=` | `/proc/<pid>/stat` field 22 |
 | Gate | `flock(2)` on APFS or HFS+ | `flock(2)` on a local filesystem |
 | Parent-death signal | none, so the sentinel | `PR_SET_PDEATHSIG` exists; not relied on, for one model |
+| Signal by descriptor | none; numeric signals after an identity check, with a documented window | per process: `pidfd_send_signal`; per group: `PIDFD_SIGNAL_PROCESS_GROUP` on Linux 6.9 or later, detected per pidfd, with the macOS rules as fallback. A pidfd never reserves a number. |
 | Group closure | `kill(-pgid, 0)` and process states | the same; cgroup v2 custody is a change trigger |
 | Terminal | `tcsetpgrp` | `tcsetpgrp` |
 | In-process clock | `Instant` (pauses in sleep) | `Instant` (pauses in suspend) |
