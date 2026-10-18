@@ -1,4 +1,9 @@
 [profile.default]
+# Bound workspace runs locally and on hosted CI, including lifecycle cases.
+# Focused profiles retain their stricter per-test limits.
+slow-timeout = { period = "360s", terminate-after = 1, grace-period = "2s" }
+leak-timeout = { period = "1s", result = "fail" }
+global-timeout = "2400s"
 # Keep failures, slow cases and leaky identities at the end of capped QA logs.
 status-level = "fail"
 final-status-level = "leak"
