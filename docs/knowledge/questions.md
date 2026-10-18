@@ -35,3 +35,47 @@ Q-001's publication block remains until exact-candidate release assurance
 completes; task 104's sidecar and fail-closed legacy policy are merged, with the
 documented TOCTOU and cross-UID proof limitation still visible. Decision:
 `634c5bd1-b3c9-4f18-88cc-4fd16d117b82`.
+
+## Q-003 — Production deployment ownership
+
+Status: open
+Asked: 2026-10-18
+
+Should production deployment be part of Effigy, or a separate tool? Tom would
+like Effigy to be a cohesive end-to-end development tool, but says this needs
+thinking through properly first. The current `deploy` surface reports success
+for obligations it never executes; see the October 2026 deep audit, analysis
+D8.
+
+## Q-004 — Relationship to Compose
+
+Status: open
+Asked: 2026-10-18
+
+Effigy is probably not a Compose replacement, but it has to understand
+Compose. Which parts of environment lifecycle Effigy owns, and which it
+delegates to Compose, needs its own discussion with Tom.
+
+## Q-005 — Service catalog strategy
+
+Status: open
+Asked: 2026-10-18
+
+The catalog-pack split was meant to let container services be added without
+new Effigy releases. Tom agrees that the split isn't helping much (2026-10-18).
+The goal still stands; the open question is what mechanism achieves it.
+
+## Q-006 — Heavy tasks
+
+Status: open
+Asked: 2026-10-18
+
+Agreed so far (Tom, 2026-10-18):
+
+- A task is heavy only when it is marked `admission = "heavy"` and the host has
+  opted in.
+- The `qa`/`ci`/`ci:fresh` name rule goes.
+- Host-wide scheduling is not in Effigy's scope.
+
+Open: what remains of heavy-task handling, if anything, and what shape it
+takes.

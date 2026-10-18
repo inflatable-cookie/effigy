@@ -1,5 +1,44 @@
 # Vision
 
+Effigy is a local development platform with a task-runner spine (Tom,
+2026-10-18). Tasks remain the main interaction. Its scope is managing a
+project's whole development environment: tasks, tests, local endpoints, and
+container environments for the projects that need them. Not every project
+needs containers. Effigy runs on macOS and Linux hosts, and it must also work
+inside the Linux containers it manages, even when the host is a Mac.
+
+## Who It Serves
+
+Agents use Effigy the most. Agents should find it powerful and featureful;
+humans should find it clean and simple. A person should be able to understand
+the model quickly, even when agents have generated many tasks. Workers
+should find it strict enough that they reuse its mechanisms rather than
+reinventing them in each change.
+
+Compatibility with older versions is not a priority before v1.0. Breaking
+changes are acceptable when the migration is built into the runtime. The
+acceptance test is that an existing user on v0.14.1 updates and everything
+keeps working without manual steps.
+
+## Runtime Backends
+
+Container environments run on Colima or Docker Desktop, and both stay
+supported. Apple Containers is a planned future backend. Users should be able to
+see, for each project, which backend it runs on and why.
+
+## Not In Scope
+
+- **A host-wide scheduler.** Host-wide scheduling was a wrong direction. If it
+  is needed, it belongs in a separate tool.
+- **A Compose replacement.** Effigy is probably not one, but it has to
+  understand Compose. The boundary is open: see Q-004 in
+  [questions](questions.md).
+- **Production deployment.** Whether Effigy owns it is open: see Q-003 in
+  [questions](questions.md). Tom would like Effigy to be a cohesive end-to-end
+  development tool, but this needs thinking through first.
+
+## Command Surface
+
 Effigy gives a monorepo one predictable command surface. A manifest owns task
 selection and execution; built-ins cover common operational jobs without
 hiding repository-specific tasks. The same selector and context should resolve
