@@ -69,7 +69,6 @@ fn opts(n: u8) -> BeginOpts {
         wait: Wait::FailFast,
         acknowledge: vec![],
         next: next(),
-        custody: None,
     }
 }
 fn begin<'a>(

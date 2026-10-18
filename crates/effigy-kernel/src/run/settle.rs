@@ -60,23 +60,7 @@ impl Run<'_> {
         {
             cleanup.operation().check("settle effect")?;
             crate::fault_point!(SettleEffectBefore)?;
-            if effect.spec.kind == crate::custody::KIND {
-                let (state, reason) = crate::custody::settle_effect(
-                    effect,
-                    self.processes.remove(&effect.sequence),
-                    cleanup,
-                );
-                self.store.transaction(&cx, |txn| {
-                    journal::write_effect(
-                        txn,
-                        self.id,
-                        effect.sequence,
-                        state,
-                        None,
-                        reason.as_deref(),
-                    )
-                })?;
-            } else if effect.spec.kind == attachments::KIND {
+            if effect.spec.kind == attachments::KIND {
                 self.settle_attachment(effect, &cx)?;
             } else if effect.spec.kind == claims::KIND {
                 self.settle_claims(effect, &cx)?;
@@ -140,11 +124,6 @@ impl Run<'_> {
                 ),
                 Err(error) => return Err(error),
             }
-        }
-        // K4: only Run closes the owner-only sentinel writer, after the Closed
-        // transaction and while its owner gate is still held.
-        if let Some(mut sentinel) = self.sentinel.take() {
-            sentinel.close(cleanup)?;
         }
         let result = if complete {
             Ok(Settled { run: self.id })
@@ -264,8 +243,6 @@ pub fn settle_interrupted(
         next,
         poisoned: false,
         completed: Default::default(),
-        sentinel: None,
-        processes: Default::default(),
     }
     .settle(cleanup, adapter)
 }

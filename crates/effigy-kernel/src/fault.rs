@@ -9,16 +9,6 @@ use std::io;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Point {
-    SpawnFork,
-    SpawnBeforeRecord,
-    SpawnBeforeGo,
-    SpawnAfterGo,
-    LifecycleBefore,
-    LifecycleCommit,
-    LifecycleAfter,
-    SentinelBeforeSettle,
-    SentinelAfterSettle,
-    SentinelClose,
     GateAcquire,
     BeginBefore,
     BeginGated,

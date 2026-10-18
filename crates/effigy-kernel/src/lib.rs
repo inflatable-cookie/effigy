@@ -6,7 +6,6 @@
 #![deny(missing_debug_implementations, unsafe_op_in_unsafe_fn)]
 
 pub mod ctx;
-pub mod custody;
 pub mod fs;
 pub mod gate;
 pub mod id;
@@ -18,9 +17,7 @@ pub mod record;
 pub mod retention;
 pub mod root;
 pub mod run;
-pub mod signal;
 pub mod store;
-pub mod supervise;
 
 #[cfg(all(test, feature = "fault-injection"))]
 mod fault;

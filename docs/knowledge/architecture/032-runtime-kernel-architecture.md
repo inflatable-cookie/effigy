@@ -192,6 +192,11 @@ respectively. The fixed canonical-bytes and gate-name table lives in
 A `ResolvedInvocation` owns immutable resolved facts. Its digest covers the
 `effigy.invocation` NUL/version-1 prefix and the serialized `InvocationSpec`
 field order, with sorted maps, canonical gate order and raw Unix argv bytes.
+`ResolvedInvocation::decode` accepts at most 1 MiB of the exact canonical
+serialized frame. It rebuilds through the identity constructors and checks
+schema, normalization, gate ordering and digest; unsupported schemas,
+noncanonical or tampered frames are refused. Unix argv byte arrays round-trip
+without Unicode conversion. The decoder performs no selector resolution or I/O.
 Plan, execution and status consume this same object. Outcome next commands
 require an engine-supplied parser at construction; kernel code contains no
 command grammar. Observe capabilities expose bounds and checks only, with no
