@@ -58,12 +58,33 @@ delegates to Compose, needs its own discussion with Tom.
 
 ## Q-005 — Service catalog strategy
 
-Status: open
+Status: answered
 Asked: 2026-10-18
+Answered: 2026-10-18 by Tom ("Yeah that sounds spot on")
 
-The catalog-pack split was meant to let container services be added without
-new Effigy releases. Tom agrees that the split isn't helping much (2026-10-18).
-The goal still stands; the open question is what mechanism achieves it.
+The goal stands: projects, bundles and third parties can add or change
+services, workspace images and configuration without an Effigy release. Pinned
+source is enough; there is no central registry.
+
+The mechanism is catalog sources, which are directories of service fragments
+resolved in this order:
+
+1. the project's `.effigy/catalog/`;
+2. a `catalog/` directory shipped inside each bundle;
+3. declared extra sources (`[catalog.sources.<name>]`, from git, OCI or a path,
+   pinned per checkout and updated by explicit sync like bundles);
+4. the compiled baseline.
+
+A name can be qualified (`source/service`), and `service list` and `config`
+show where each service came from. Fragments declare the capabilities and
+schema version they need, so an older Effigy names the version it requires.
+
+The installed catalog-pack runtime is retired. That covers the store,
+install/update/rollback/reset, the OCI channel, the workspace pack handoff and
+the support policy. The pack repository is archived and its fragments fold
+back into the baseline. Architecture
+[026](architecture/026-feature-placement-and-command-surface.md) §Service
+Catalogs is superseded and is rewritten by the implementing change.
 
 ## Q-006 — Heavy tasks
 
