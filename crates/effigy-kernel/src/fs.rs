@@ -610,7 +610,7 @@ fn filesystem(fd: RawFd) -> io::Result<FsKind> {
     })
 }
 /// macOS `f_fstypename` values for remote and userspace filesystems.
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", all(test, feature = "fault-injection")))]
 pub(crate) fn network_name(name: &str) -> bool {
     matches!(
         name,
@@ -619,7 +619,7 @@ pub(crate) fn network_name(name: &str) -> bool {
 }
 /// Linux `statfs.f_type` magics for NFS, SMB/CIFS, FUSE (sshfs), AFS, Coda,
 /// NCP, 9P and Ceph, from linux/magic.h and the filesystems' sources.
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", all(test, feature = "fault-injection")))]
 pub(crate) fn network_magic(magic: u64) -> bool {
     matches!(
         magic,

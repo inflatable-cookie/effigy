@@ -30,9 +30,10 @@
 "test:kernel:store" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib --test store -E 'test(store_)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
 "test:kernel:classes" = { run = "cargo test -p effigy-kernel --doc", timeout_ms = 120000 }
 "test:kernel:ratchet" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --test ratchet --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
-"check:kernel" = [{ task = "check:kernel:compile" }, { task = "check:kernel:clippy" }]
+"check:kernel" = [{ task = "check:kernel:compile" }, { task = "check:kernel:clippy" }, { task = "check:kernel:clippy:default" }]
 "check:kernel:compile" = { run = "cargo check -p effigy-kernel --all-targets --features fault-injection", timeout_ms = 600000 }
 "check:kernel:clippy" = { run = "cargo clippy -p effigy-kernel --all-targets --features fault-injection -- -D warnings", timeout_ms = 600000 }
+"check:kernel:clippy:default" = { run = "cargo clippy -p effigy-kernel --all-targets -- -D warnings", timeout_ms = 600000 }
 "fmt:kernel" = "cargo fmt -p effigy-kernel"
 "qa:kernel-ratchet" = { run = "cargo run -p effigy-kernel --example kernel-ratchet", timeout_ms = 600000 }
 # Explicit baseline maintenance; ordinary QA never rewrites the baseline.
