@@ -182,7 +182,7 @@ pub(in crate::runner) fn run_managed_task(
         )?;
         return Ok(None);
     };
-    // One headless run owns a settle identity that every process it starts
+    // One managed run owns a settle identity that every process it starts
     // carries: host children inherit the environment variable, and the
     // rendered exec commands inject it on the far side of the exec
     // surface. Lock records written anywhere in the run's tree name the
@@ -239,6 +239,10 @@ pub(in crate::runner) fn run_managed_task(
     }
     if !container_handoff
         && execution_mode == ManagedExecutionMode::Tui
+        && !plan
+            .processes
+            .iter()
+            .any(|process| process.role == ManagedProcessRole::Lifecycle)
         && matches!(
             container_binding,
             ContainerExecutionBinding::Container { .. }
@@ -332,6 +336,36 @@ pub(in crate::runner) fn run_managed_task(
     } else {
         None
     };
+
+    if let Some(command) = lifecycle_cleanup.as_deref() {
+        if let Some(policy) = container_binding.load_effective_policy(&repo_for_task)? {
+            if let Some(token) = effigy_managed::runtime::failed_managed_run_token(
+                &repo_for_task,
+                &preflight.selector.task_name,
+                &plan.profile,
+                &policy.name,
+            )? {
+                // Preserve partial-admission drift protection before any down.
+                // A completed admission may adopt changed inputs by its existing
+                // rule; a recorded partial must still match its original inputs.
+                crate::runner::host_container_lease::retire_stale_detached_admission(
+                    &repo_for_task,
+                    &policy,
+                )?;
+                crate::runner::host_container_lease::partial_activation_recorded(
+                    &repo_for_task,
+                    &policy,
+                )?;
+                effigy_containers::exec::verify_owned_stack_for_shutdown(&repo_for_task, &policy)?;
+                run_managed_lifecycle_cleanup(command)?;
+                crate::runner::managed_settle::release_run_lock_residue(
+                    &repo_for_task,
+                    Some(&token),
+                );
+                effigy_managed::runtime::clear_managed_run_failure(&repo_for_task, &token)?;
+            }
+        }
+    }
 
     let end_container_process = if execution_mode == ManagedExecutionMode::RenderPlan {
         None
@@ -745,22 +779,18 @@ fn finish_managed_task(
         })
         .transpose()
         .map(|_| ());
-    // Down is the backstop even when a failed workload caused the runtime
-    // error. Once it succeeds, no exec holder can retain a live task lock.
-    if cleanup_result.is_ok() && (task_result.is_ok() || cleanup_command.is_some()) {
-        release_settled_locks();
-    }
     let runtime_cleanup_error = task_result
         .as_ref()
         .err()
         .filter(|error| !matches!(error, RunnerError::TaskManagedNonZeroExit { .. }));
-    if let Err(record_error) = record_settle(cleanup_result.as_ref().err().or_else(|| {
-        if cleanup_command.is_none() {
-            runtime_cleanup_error
-        } else {
-            None
-        }
-    })) {
+    // Down ends container exec holders; a local cleanup error still prevents
+    // claiming that every owned process ended or sweeping its lock records.
+    if cleanup_result.is_ok() && runtime_cleanup_error.is_none() {
+        release_settled_locks();
+    }
+    if let Err(record_error) =
+        record_settle(cleanup_result.as_ref().err().or(runtime_cleanup_error))
+    {
         let primary = task_result.as_ref().err().or(cleanup_result.as_ref().err());
         return Err(match primary {
             Some(primary) => RunnerError::task_invocation(format!(
@@ -1365,6 +1395,30 @@ mod tests {
         let rendered = error.to_string();
         assert!(rendered.contains("startup refused"), "{rendered}");
         assert!(rendered.contains("foreign ownership"), "{rendered}");
+    }
+
+    #[test]
+    fn finish_managed_task_records_surviving_host_process_even_after_successful_down() {
+        let recorded = std::cell::RefCell::new(None);
+        let error = finish_managed_task(
+            Err(RunnerError::task_invocation(
+                "managed host cleanup failed: api pid 123",
+            )),
+            Some("true"),
+            || Ok(()),
+            || panic!("surviving host process cannot authorize a lock sweep"),
+            |error| {
+                *recorded.borrow_mut() = error.map(ToString::to_string);
+                Ok(())
+            },
+        )
+        .expect_err("host failure survives down");
+        assert!(error.to_string().contains("api pid 123"));
+        assert!(recorded
+            .borrow()
+            .as_ref()
+            .expect("recorded host error")
+            .contains("api pid 123"));
     }
 
     #[test]

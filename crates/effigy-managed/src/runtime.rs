@@ -22,9 +22,10 @@ mod redaction;
 mod stream;
 
 pub use headless::{
-    exec_group_file_path, live_headless_sessions, managed_headless_logs, managed_headless_status,
-    managed_headless_stop, managed_run_settle_error, record_managed_run_settle,
-    run_managed_task_headless, session_runtime_dir, LiveHeadlessSession,
+    clear_managed_run_failure, exec_group_file_path, failed_managed_run_token,
+    failed_managed_run_tokens, live_headless_sessions, managed_headless_logs,
+    managed_headless_status, managed_headless_stop, managed_run_settle_error,
+    record_managed_run_settle, run_managed_task_headless, session_runtime_dir, LiveHeadlessSession,
     ManagedHeadlessStopOutcome, LIFECYCLE_CLEANUP_TIMEOUT_SECS, MANAGED_SETTLE_BUDGET,
 };
 

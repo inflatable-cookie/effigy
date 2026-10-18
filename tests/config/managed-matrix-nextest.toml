@@ -1,0 +1,6 @@
+[profile.default]
+# Each parameterised test covers six cases, three with a >20s cascade and
+# each with an immediate restart. Force termination and fail leaked handles.
+slow-timeout = { period = "360s", terminate-after = 1, grace-period = "2s" }
+leak-timeout = { period = "2s", result = "fail" }
+global-timeout = "2400s"

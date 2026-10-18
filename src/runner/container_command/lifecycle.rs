@@ -752,6 +752,19 @@ fn partial_activation_reconcile_pending(
     if let Some(context) = &plan.admitted_context {
         context.verify(repo_root, &plan.policy, recorded || context.marker_required)?;
     }
+    let failed_runs =
+        effigy_managed::runtime::failed_managed_run_tokens(repo_root, &plan.policy.name);
+    if !failed_runs.is_empty() {
+        // Input admission above precedes teardown authority. Down ends any
+        // exec groups the dead owner could not end; volumes are kept.
+        effigy_containers::exec::verify_owned_stack_for_shutdown(repo_root, &plan.policy)?;
+        lifecycle_cleanup_failed_container_up(repo_root, &plan.policy)?;
+        for token in failed_runs {
+            crate::runner::managed_settle::release_run_lock_residue(repo_root, Some(&token));
+            effigy_managed::runtime::clear_managed_run_failure(repo_root, &token)?;
+        }
+        return Ok(false);
+    }
     // Without a record (a stack from an earlier release, a task-started stack,
     // or one whose stale record was retired) `compose up` applies the current
     // inputs, once any running containers are proven to be this checkout's.

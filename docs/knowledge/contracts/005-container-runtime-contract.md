@@ -261,7 +261,11 @@ state and do not tear down or restart running services. Reconciliation with
 fresh owned full-ID bindings before registering exposure. Unchanged admitted
 inputs and verified checkout/scope ownership allow Compose up when any declared
 service is missing or stopped, including the primary. A complete running stack
-reconciles exposure without Compose up. Changed partial-admission inputs and
+reconciles exposure without Compose up. If its recorded managed owner died
+with failed or incomplete settling, the next managed run or detached `up`
+first verifies admission and checkout/scope labels, brings the environment
+down with volumes kept, and releases that generation's attributed locks.
+It then starts normally, even when the primary had remained running. Changed partial-admission inputs and
 unavailable ownership observations still refuse before Compose effects.
 The context persists as the detached owner after success, marked complete; only
 the selected temporary task lease is cleared. Explicit `container down` clears that context
