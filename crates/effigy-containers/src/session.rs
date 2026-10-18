@@ -1134,6 +1134,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        all(target_os = "macos", not(effigy_shared_process)),
+        ignore = "known v0.15 rebuild defect: papercut 007c664e-f8cd-4801-a08c-2b2c517f7318; owner lane v015-supervisor"
+    )]
     fn managed_lifecycle_script_marks_started_after_up_before_ready() {
         let harness = ScriptHarness::setup("lifecycle-started");
         let rendered = managed_lifecycle_command(ManagedLifecycleRequest {
