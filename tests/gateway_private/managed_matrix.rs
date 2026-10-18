@@ -350,17 +350,16 @@ impl<'a> Case<'a> {
             "retained matrix data"
         );
         let deadline = Instant::now() + Duration::from_secs(5);
-        while pids
-            .iter()
-            .any(|pid| effigy_process::process_is_running(*pid))
-            && Instant::now() < deadline
-        {
+        while pids.iter().any(|pid| owned_process_is_live(*pid)) && Instant::now() < deadline {
             thread::sleep(Duration::from_millis(50));
         }
         for pid in pids {
             assert!(
-                !effigy_process::process_is_running(*pid),
-                "owned process {pid} survived"
+                !owned_process_is_live(*pid),
+                "owned process {pid} survived: {:?}",
+                Command::new("ps")
+                    .args(["-p", &pid.to_string(), "-o", "pid=,ppid=,stat=,command="])
+                    .output()
             );
         }
         let locks = self.root.join(".effigy/locks");
@@ -383,6 +382,49 @@ impl<'a> Case<'a> {
         );
     }
 }
+// A detached fake exec can be reparented when its client is deliberately
+// killed. Linux CI's PID 1 need not reap it promptly after down; a zombie has
+// ended and holds no locks, although kill(pid, 0) still reports its PID.
+// Never treat an unknown process observation as proof of termination.
+fn owned_process_is_live(pid: u32) -> bool {
+    if !effigy_process::process_is_running(pid) {
+        return false;
+    }
+    let state = Command::new("ps")
+        .args(["-p", &pid.to_string(), "-o", "stat="])
+        .output();
+    !state
+        .ok()
+        .filter(|output| output.status.success())
+        .is_some_and(|output| {
+            String::from_utf8_lossy(&output.stdout)
+                .trim_start()
+                .starts_with('Z')
+        })
+}
+
+#[test]
+fn managed_matrix_process_liveness_distinguishes_live_and_unreaped_children() {
+    assert!(
+        owned_process_is_live(std::process::id()),
+        "live owner must fail settle"
+    );
+    let mut child = Command::new("sh")
+        .args(["-c", "exit 0"])
+        .spawn()
+        .expect("short child");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while owned_process_is_live(child.id()) && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(10));
+    }
+    let exited = !owned_process_is_live(child.id());
+    // Reap only after observing it, so the control exercises an exited PID
+    // that the kernel still exposes rather than merely an absent process.
+    let status = child.wait().expect("reap control child");
+    assert!(status.success());
+    assert!(exited, "unreaped exited child must count as ended");
+}
+
 fn scheduler_root() -> OsString {
     std::env::var_os("EFFIGY_HOST_RUN_ROOT").unwrap_or_else(|| {
         PathBuf::from(std::env::var_os("HOME").expect("scheduler home"))
