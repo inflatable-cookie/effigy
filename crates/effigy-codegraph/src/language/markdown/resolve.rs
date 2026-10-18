@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path};
 
 use super::paths::slugify;
@@ -11,41 +11,6 @@ use crate::support::{decode_graph_path, encode_graph_path};
 use crate::GraphId;
 
 const DOC_REL_KIND: &str = "doc-rel";
-
-/// Demote already-resolved typed relations **inside one scope** so the next
-/// resolution pass can rebuild them. Sibling scopes keep their resolved
-/// relations untouched.
-pub(crate) fn demote_typed_relations(
-    store: &GraphStore,
-    scope: &GraphScope,
-) -> Result<bool, CodeGraphError> {
-    let mut changed = false;
-    for mut edge in store.list_edges_in_scope(scope)? {
-        if edge.kind != DOC_REL_KIND || edge.to_id.is_none() {
-            continue;
-        }
-        let Some(dest) = typed_edge_dest(&edge) else {
-            continue;
-        };
-        edge.to_id = None;
-        edge.unresolved_target = Some(dest);
-        store.save_edge(&edge)?;
-        changed = true;
-    }
-    for mut reference in store.list_references_in_scope(scope)? {
-        if reference.kind != DOC_REL_KIND || reference.target_id.is_none() {
-            continue;
-        }
-        let Some(dest) = typed_reference_dest(&reference) else {
-            continue;
-        };
-        reference.target_id = None;
-        reference.unresolved_target = Some(dest);
-        store.save_reference(&reference)?;
-        changed = true;
-    }
-    Ok(changed)
-}
 
 /// Resolve typed relations for one scope.
 ///
@@ -64,38 +29,57 @@ pub(crate) fn resolve_typed_relations(
     for symbol in store.list_symbols()? {
         live_ids.insert(symbol.id.to_string());
     }
-    let mut changed = false;
-    for mut edge in store.list_edges_in_scope(scope)? {
-        if edge.kind != DOC_REL_KIND {
-            continue;
-        }
-        let Some(dest) = typed_edge_dest(&edge) else {
-            continue;
-        };
-        let (to_id, unresolved_target) =
-            resolve_dest(&edge.provenance.source_path, &dest, &live_ids)?;
-        if edge.to_id != to_id || edge.unresolved_target != unresolved_target {
-            edge.to_id = to_id;
-            edge.unresolved_target = unresolved_target;
-            store.save_edge(&edge)?;
-            changed = true;
+    let mut by_source = BTreeMap::<String, (Vec<EdgeRecord>, Vec<ReferenceRecord>)>::new();
+    for edge in store.list_edges_in_scope(scope)? {
+        if edge.kind == DOC_REL_KIND {
+            by_source
+                .entry(edge.provenance.source_path.clone())
+                .or_default()
+                .0
+                .push(edge);
         }
     }
-    for mut reference in store.list_references_in_scope(scope)? {
-        if reference.kind != DOC_REL_KIND {
-            continue;
+    for reference in store.list_references_in_scope(scope)? {
+        if reference.kind == DOC_REL_KIND {
+            by_source
+                .entry(reference.provenance.source_path.clone())
+                .or_default()
+                .1
+                .push(reference);
         }
-        let Some(dest) = typed_reference_dest(&reference) else {
-            continue;
-        };
-        let (target_id, unresolved_target) =
-            resolve_dest(&reference.provenance.source_path, &dest, &live_ids)?;
-        if reference.target_id != target_id || reference.unresolved_target != unresolved_target {
-            reference.target_id = target_id;
-            reference.unresolved_target = unresolved_target;
-            store.save_reference(&reference)?;
-            changed = true;
+    }
+    let mut changed = false;
+    for (edges, references) in by_source.into_values() {
+        crate::deadline::check()?;
+        let transaction = store.transaction()?;
+        for mut edge in edges {
+            let Some(dest) = typed_edge_dest(&edge) else {
+                continue;
+            };
+            let (to_id, unresolved_target) =
+                resolve_dest(&edge.provenance.source_path, &dest, &live_ids)?;
+            if edge.to_id != to_id || edge.unresolved_target != unresolved_target {
+                edge.to_id = to_id;
+                edge.unresolved_target = unresolved_target;
+                store.save_edge(&edge)?;
+                changed = true;
+            }
         }
+        for mut reference in references {
+            let Some(dest) = typed_reference_dest(&reference) else {
+                continue;
+            };
+            let (target_id, unresolved_target) =
+                resolve_dest(&reference.provenance.source_path, &dest, &live_ids)?;
+            if reference.target_id != target_id || reference.unresolved_target != unresolved_target
+            {
+                reference.target_id = target_id;
+                reference.unresolved_target = unresolved_target;
+                store.save_reference(&reference)?;
+                changed = true;
+            }
+        }
+        transaction.commit()?;
     }
     Ok(changed)
 }

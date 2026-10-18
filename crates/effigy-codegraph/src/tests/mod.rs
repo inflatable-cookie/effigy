@@ -20,6 +20,7 @@ use std::path::Path;
 mod catalog_scopes;
 mod context_quality;
 mod docs_profile;
+pub(crate) mod file_transactions;
 mod git_gate;
 mod index_lifecycle;
 mod language_indexers;

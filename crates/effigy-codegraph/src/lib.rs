@@ -26,6 +26,7 @@
 //! 4. use [`affected`] when the question is which tests or tasks to run after edits
 //! 5. fall back to [`context`] or exact-search tools for lower-level confirmation
 
+pub mod deadline;
 pub mod docs_context;
 mod docs_profile;
 mod error;

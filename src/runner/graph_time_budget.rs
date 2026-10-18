@@ -6,7 +6,6 @@
 //! must not grow a second timeout model.
 
 use std::path::Path;
-use std::sync::mpsc;
 use std::time::Duration;
 
 use super::error::RunnerError;
@@ -34,21 +33,12 @@ pub(super) fn graph_time_budget() -> Option<Duration> {
     (millis > 0).then(|| Duration::from_millis(millis))
 }
 
-/// Run a graph-backed operation on a worker thread and give up on it after
-/// `budget`.
-///
-/// The worker is deliberately detached rather than cancelled: graph work runs
-/// under a cross-process refresh lock that the OS releases when the process
-/// exits, and a half-written index is worse than a slow one. The caller gets a
-/// bounded failure carrying the health snapshot; the CLI exits right after.
-///
-/// The operation is cloned for the worker so a spawn failure can still run it
-/// unbounded on the caller thread — an unbounded run beats refusing.
+/// Run graph work synchronously and stop refresh at its next safe boundary.
 pub(super) fn run_bounded_graph_operation(
     repo_root: &Path,
     command: &'static str,
     budget: Duration,
-    operation: impl Fn() -> Result<String, RunnerError> + Send + Clone + 'static,
+    operation: impl FnOnce() -> Result<String, RunnerError>,
 ) -> Result<String, RunnerError> {
     run_bounded_graph_value(repo_root, command, budget, operation)
 }
@@ -57,52 +47,31 @@ pub(super) fn run_bounded_graph_operation(
 /// output. Cross-repository routing needs the per-repository payload back so a
 /// timeout on one neighbour can be reported next to another's results; sharing
 /// this function keeps that inside the one timeout model.
-pub(super) fn run_bounded_graph_value<T: Send + 'static>(
+pub(super) fn run_bounded_graph_value<T>(
     repo_root: &Path,
     command: &'static str,
     budget: Duration,
-    operation: impl Fn() -> Result<T, RunnerError> + Send + Clone + 'static,
+    operation: impl FnOnce() -> Result<T, RunnerError>,
 ) -> Result<T, RunnerError> {
-    // Clear any phase left by earlier graph work in this process, so a bound
-    // that expires before the worker starts reports no phase rather than a
-    // previous command's.
     effigy_codegraph::reset_graph_phase();
-    let (sender, receiver) = mpsc::channel();
-    let worker_operation = operation.clone();
-    let spawned = std::thread::Builder::new()
-        .name(command.to_owned())
-        .spawn(move || {
-            let _ = sender.send(worker_operation());
-        });
-    if spawned.is_err() {
-        // No worker thread available: an unbounded run still beats refusing.
-        return operation();
+    let started = std::time::Instant::now();
+    let result = effigy_codegraph::deadline::with_deadline(budget, operation);
+    if started.elapsed() >= budget {
+        return Err(graph_timeout_error(repo_root, command, budget));
     }
-    match receiver.recv_timeout(budget) {
-        Ok(result) => result,
-        Err(mpsc::RecvTimeoutError::Timeout) => {
-            Err(graph_timeout_error(repo_root, command, budget))
-        }
-        // The worker died without sending; surface it as a bounded failure too.
-        Err(mpsc::RecvTimeoutError::Disconnected) => {
-            Err(graph_timeout_error(repo_root, command, budget))
-        }
-    }
+    result
 }
 
 fn graph_timeout_error(repo_root: &Path, command: &str, budget: Duration) -> RunnerError {
     let timeout_ms = budget.as_millis().min(u128::from(u64::MAX)) as u64;
     let health = effigy_codegraph::health(repo_root);
-    // Additive diagnostics: the detached worker keeps running, so its current
-    // phase is still readable here. Absent when nothing was recorded, so the
-    // field never claims knowledge the runtime does not have.
+    // The operation has stopped; the last phase records its safe boundary.
     let phase = effigy_codegraph::graph_phase_snapshot();
     let mut next = vec![
         "run `effigy graph status --json` to inspect index freshness".to_owned(),
         format!("raise the budget with `{GRAPH_TIMEOUT_ENV}=<ms>` (0 disables it)"),
         "run `effigy graph index --json` once to pay the cold build separately".to_owned(),
-        "pass `--stale-index` to read the last complete snapshot without waiting on a refresh lock"
-            .to_owned(),
+        "pass `--stale-index` to read committed files without waiting on a refresh lock".to_owned(),
     ];
     if let Some(phase) = phase.as_ref() {
         next.insert(0, describe_phase(phase));
@@ -116,6 +85,9 @@ fn graph_timeout_error(repo_root: &Path, command: &str, budget: Duration) -> Run
         "timeout_env": GRAPH_TIMEOUT_ENV,
         "health": health,
         "phase": phase,
+        "committed": true,
+        "done": phase.as_ref().and_then(|phase| phase.items_done),
+        "total": phase.as_ref().and_then(|phase| phase.items_total),
         "next": next,
     })
     .to_string();

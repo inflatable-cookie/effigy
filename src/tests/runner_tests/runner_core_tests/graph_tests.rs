@@ -544,7 +544,7 @@ fn graph_status_refresh_flag_remediates_stale_index() {
 }
 
 #[test]
-fn graph_explore_stale_index_uses_last_complete_snapshot() {
+fn graph_explore_stale_index_uses_committed_files() {
     let root = setup_graph_fixture("graph-explore-stale-index");
     run_command(Command::Graph(GraphArgs {
         subcommand: GraphSubcommand::Index,

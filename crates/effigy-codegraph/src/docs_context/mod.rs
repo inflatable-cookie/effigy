@@ -236,18 +236,14 @@ fn ensure_freshness(
     }
     let store = match outcome.source {
         crate::refresh::RefreshSource::Live => live,
-        crate::refresh::RefreshSource::CompleteSnapshot => GraphStore::open_complete_snapshot(
-            &scope,
-        )?
-        .ok_or_else(|| {
-            CodeGraphError::validation(
-                "last complete graph snapshot was reported but is missing; run `effigy graph index --json`",
-            )
-        })?,
         crate::refresh::RefreshSource::Unavailable => {
             return Err(CodeGraphError::validation(freshness.summary));
         }
     };
+    drop(store);
+    let store = GraphStore::open_read_only(&scope)?
+        .ok_or_else(|| CodeGraphError::validation("graph database disappeared after refresh"))?;
+    store.begin_read()?;
     Ok((store, freshness))
 }
 

@@ -80,6 +80,7 @@ fn scan_from(
             .is_none_or(|name| !SKIPPED_DIR_SEGMENTS.contains(&name))
     });
     for entry in walk.build() {
+        crate::deadline::check()?;
         let entry = entry.map_err(|error| {
             CodeGraphError::validation(format!(
                 "graph walk failed under {}: {error}",

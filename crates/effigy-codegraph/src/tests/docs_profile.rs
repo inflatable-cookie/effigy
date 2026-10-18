@@ -598,23 +598,13 @@ headings = ["See also"]
         Some("my ops.md#ops-heading")
     );
 
-    // The demote/resolve cycle rebuilds the same identity from the recovered
-    // destination instead of drifting.
+    // A stale resolved target is repaired from the original declaration.
     let scope = crate::scope::GraphScope::repo_root(temp.path()).expect("scope");
-    assert!(crate::language::markdown::demote_typed_relations(&store, &scope).expect("demote"));
-    let demoted: Vec<_> = store
-        .list_edges()
-        .expect("edges")
-        .into_iter()
-        .filter(|edge| {
-            edge.kind == "doc-rel"
-                && edge.provenance.source_path == "handbook/source.md"
-                && edge.unresolved_target.is_some()
-        })
-        .collect();
-    assert!(demoted.iter().any(|edge| {
-        edge.to_id.is_none() && edge.unresolved_target.as_deref() == Some("my ops.md#ops-heading")
-    }));
+    let mut stale = resolved.clone();
+    stale.to_id = Some(GraphId::new("file:missing.md").expect("stale target"));
+    store
+        .save_edge(&stale)
+        .expect("plant stale resolved target");
     assert!(crate::language::markdown::resolve_typed_relations(&store, &scope).expect("resolve"));
     let resolved_again: Vec<_> = store
         .list_edges()
@@ -1030,6 +1020,12 @@ fn markdown_extractor_version_bump_reindexes_unchanged_frontmatter_file() {
     assert_eq!(prior.version, "0.2.1");
     prior.version = "0.2.0".to_owned();
     store.save_extractor(&prior).expect("downgrade extractor");
+    let mut states = store.file_scan_state_map().expect("states");
+    let state = states.get_mut("notes/intro.md").expect("markdown state");
+    state.freshness_key = "previous-extractor-version".to_owned();
+    store
+        .save_file_scan_state(state)
+        .expect("downgrade per-file key");
 
     let status_payload = status(temp.path()).expect("status");
     assert!(

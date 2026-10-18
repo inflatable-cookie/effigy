@@ -1,5 +1,5 @@
-use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::path::Path;
+use std::time::Duration;
 
 use rusqlite::types::Value;
 use rusqlite::{params, Connection, MappedRows, OpenFlags, OptionalExtension};
@@ -23,6 +23,7 @@ pub struct FileScanStateRecord {
     pub language_id: String,
     pub modified_unix_ms: u128,
     pub byte_size: u64,
+    pub freshness_key: String,
 }
 
 pub struct GraphStore {
@@ -53,84 +54,40 @@ impl GraphStore {
     fn open_with_paths(paths: GraphPaths) -> Result<Self, CodeGraphError> {
         std::fs::create_dir_all(&paths.graph_dir)?;
         let connection = Connection::open(&paths.db_path)?;
-        connection.busy_timeout(Duration::from_secs(5))?;
+        connection.busy_timeout(
+            crate::deadline::remaining()
+                .unwrap_or(Duration::from_secs(5))
+                .min(Duration::from_secs(5)),
+        )?;
         let store = Self { paths, connection };
         store.initialize()?;
         Ok(store)
     }
 
-    /// Open the last complete snapshot for read-only navigation.
-    ///
-    /// Returns `None` when no snapshot has been published. The snapshot is a
-    /// self-contained copy taken at the end of a finished index run, so a
-    /// concurrent refresh cannot expose a partial live database through it.
-    pub fn open_complete_snapshot(scope: &GraphScope) -> Result<Option<Self>, CodeGraphError> {
+    /// Read committed rows without creating or migrating graph state.
+    pub fn open_read_only(scope: &GraphScope) -> Result<Option<Self>, CodeGraphError> {
         let paths = scope.paths();
-        if !paths.complete_db_path.is_file() {
+        if !paths.db_path.is_file() {
             return Ok(None);
         }
         let connection =
-            Connection::open_with_flags(&paths.complete_db_path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-        connection.busy_timeout(Duration::from_secs(1))?;
-        Ok(Some(Self { paths, connection }))
+            Connection::open_with_flags(&paths.db_path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        connection.busy_timeout(Duration::from_millis(100))?;
+        let store = Self { paths, connection };
+        if store.storage_schema_version()? != GRAPH_STORAGE_SCHEMA_VERSION {
+            return Ok(None);
+        }
+        Ok(Some(store))
     }
 
-    /// Copy the live database to the complete-snapshot path when a finished
-    /// index already exists and no snapshot has been published yet.
-    ///
-    /// Called under the refresh lock before mutation so concurrent readers can
-    /// keep using the last complete corpus.
-    pub(crate) fn preserve_complete_snapshot(&self) -> Result<(), CodeGraphError> {
-        if self.paths.complete_db_path.is_file() {
-            return Ok(());
-        }
-        if self.counts()?.files == 0 || !self.has_finished_index_run()? {
-            return Ok(());
-        }
-        self.snapshot_complete_index()
-    }
-
-    /// Replace the complete snapshot with a consistent copy of the live database.
-    ///
-    /// The copy is vacuumed into a unique sibling path and renamed onto the
-    /// canonical snapshot only after success, so a concurrent lookup never sees
-    /// a missing or half-written file and a failed publish leaves the prior
-    /// snapshot in place.
-    pub(crate) fn snapshot_complete_index(&self) -> Result<(), CodeGraphError> {
-        if self.counts()?.files == 0 || !self.has_finished_index_run()? {
-            return Ok(());
-        }
-        let dest = &self.paths.complete_db_path;
-        if let Some(parent) = dest.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let tmp = publishing_snapshot_path(dest);
-        remove_sqlite_sidecars(&tmp);
-        let _ = std::fs::remove_file(&tmp);
-        let _ = self
-            .connection
-            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
-        let tmp_str = tmp.to_str().ok_or_else(|| {
-            CodeGraphError::validation("complete graph snapshot path is not valid UTF-8")
-        })?;
-        if let Err(error) = self.connection.execute("VACUUM INTO ?1", [tmp_str]) {
-            remove_snapshot_file(&tmp);
-            return Err(error.into());
-        }
-        if let Err(error) = std::fs::rename(&tmp, dest) {
-            remove_snapshot_file(&tmp);
-            return Err(error.into());
-        }
+    pub(crate) fn begin_read(&self) -> Result<(), CodeGraphError> {
+        self.connection.execute_batch("BEGIN DEFERRED")?;
         Ok(())
     }
 
-    pub(crate) fn has_finished_index_run(&self) -> Result<bool, CodeGraphError> {
-        let count: i64 = self.connection.query_row(
-            "SELECT COUNT(*) FROM index_runs WHERE finished_at IS NOT NULL",
-            [],
-            |row| row.get(0),
-        )?;
-        Ok(count > 0)
+    /// RAII rollback covers every early return, including deadline expiry.
+    pub(crate) fn transaction(&self) -> Result<rusqlite::Transaction<'_>, CodeGraphError> {
+        Ok(self.connection.unchecked_transaction()?)
     }
 
     pub fn paths(&self) -> &GraphPaths {
@@ -504,14 +461,15 @@ impl GraphStore {
     pub fn save_file_scan_state(&self, record: &FileScanStateRecord) -> Result<(), CodeGraphError> {
         self.connection.execute(
             "INSERT OR REPLACE INTO file_scan_state
-             (path, content_hash, language_id, modified_unix_ms, byte_size)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+             (path, content_hash, language_id, modified_unix_ms, byte_size, freshness_key)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
                 record.path.as_str(),
                 record.content_hash.as_str(),
                 record.language_id.as_str(),
                 record.modified_unix_ms.to_string(),
                 record.byte_size as i64,
+                record.freshness_key,
             ],
         )?;
         Ok(())
@@ -525,15 +483,19 @@ impl GraphStore {
 
     pub fn delete_file_graph(&self, file_id: &str) -> Result<(), CodeGraphError> {
         self.connection.execute(
+            "DELETE FROM graph_search WHERE record_id = ?1
+             OR record_id IN (SELECT id FROM symbols WHERE file_id = ?1)
+             OR record_id IN (SELECT id FROM diagnostics WHERE file_id = ?1)",
+            params![file_id],
+        )?;
+        self.connection.execute(
             "DELETE FROM graph_references
-             WHERE file_id = ?1
-                OR target_id IN (SELECT id FROM symbols WHERE file_id = ?1)",
+             WHERE file_id = ?1",
             params![file_id],
         )?;
         self.connection.execute(
             "DELETE FROM edges
-             WHERE from_id IN (SELECT id FROM symbols WHERE file_id = ?1)
-                OR to_id IN (SELECT id FROM symbols WHERE file_id = ?1)",
+             WHERE from_id = ?1 OR from_id IN (SELECT id FROM symbols WHERE file_id = ?1)",
             params![file_id],
         )?;
         self.connection.execute(
@@ -551,7 +513,7 @@ impl GraphStore {
         &self,
     ) -> Result<std::collections::BTreeMap<String, FileScanStateRecord>, CodeGraphError> {
         let mut statement = self.connection.prepare(
-            "SELECT path, content_hash, language_id, modified_unix_ms, byte_size
+            "SELECT path, content_hash, language_id, modified_unix_ms, byte_size, freshness_key
              FROM file_scan_state
              ORDER BY path",
         )?;
@@ -563,6 +525,7 @@ impl GraphStore {
                 language_id: row.get(2)?,
                 modified_unix_ms: modified.parse::<u128>().map_err(to_sql_conversion_error)?,
                 byte_size: row.get::<_, i64>(4)? as u64,
+                freshness_key: row.get(5)?,
             })
         })?;
         let mut map = std::collections::BTreeMap::new();
@@ -592,6 +555,32 @@ impl GraphStore {
             .filter(|diagnostic| diagnostic.severity == crate::model::DiagnosticSeverity::Error)
             .map(|diagnostic| diagnostic.provenance.source_path)
             .collect())
+    }
+
+    pub(crate) fn refresh_file_search(
+        &self,
+        file: &FileRecord,
+        content: &str,
+    ) -> Result<(), CodeGraphError> {
+        self.connection.execute(
+            "INSERT INTO graph_search (record_type, record_id, text) VALUES ('file', ?1, ?2)",
+            params![file.id.as_str(), file.path],
+        )?;
+        if let Some(source) = normalized_source_search_text(file, content) {
+            self.connection.execute(
+                "INSERT INTO graph_search (record_type, record_id, text) VALUES ('source', ?1, ?2)",
+                params![file.id.as_str(), source],
+            )?;
+        }
+        self.connection.execute(
+            "INSERT INTO graph_search SELECT 'symbol', id, display_name || ' ' || canonical_name FROM symbols WHERE file_id = ?1",
+            params![file.id.as_str()],
+        )?;
+        self.connection.execute(
+            "INSERT INTO graph_search SELECT 'diagnostic', id, message FROM diagnostics WHERE file_id = ?1",
+            params![file.id.as_str()],
+        )?;
+        Ok(())
     }
 
     pub fn refresh_search_index(&self) -> Result<(), CodeGraphError> {
@@ -817,8 +806,10 @@ impl GraphStore {
             );
             ",
         )?;
+        let transaction = self.transaction()?;
         self.apply_storage_migrations()?;
         self.write_storage_schema_version(GRAPH_STORAGE_SCHEMA_VERSION)?;
+        transaction.commit()?;
         Ok(())
     }
 
@@ -853,6 +844,11 @@ impl GraphStore {
                 "graph storage schema {stored_version} is newer than supported schema {}",
                 GRAPH_STORAGE_SCHEMA_VERSION
             )));
+        }
+        if stored_version < 3 {
+            self.connection.execute_batch("ALTER TABLE file_scan_state ADD COLUMN freshness_key TEXT NOT NULL DEFAULT ''; DELETE FROM metadata WHERE key LIKE 'git_indexed_head%';")?;
+            #[cfg(test)]
+            crate::tests::file_transactions::boundary("<schema>", "migrated");
         }
         if stored_version < 2 {
             self.migrate_to_v2_source_search_backfill()?;
@@ -1083,7 +1079,7 @@ impl GraphStore {
     ) -> Result<std::collections::BTreeMap<String, FileScanStateRecord>, CodeGraphError> {
         let (clause, params) = scope_path_clause(scope, "path");
         let sql = format!(
-            "SELECT path, content_hash, language_id, modified_unix_ms, byte_size\n             FROM file_scan_state WHERE {clause} ORDER BY path"
+            "SELECT path, content_hash, language_id, modified_unix_ms, byte_size, freshness_key\n             FROM file_scan_state WHERE {clause} ORDER BY path"
         );
         let rows = self.query_values(&sql, params, |row| {
             let modified: String = row.get(3)?;
@@ -1093,6 +1089,7 @@ impl GraphStore {
                 language_id: row.get(2)?,
                 modified_unix_ms: modified.parse::<u128>().map_err(to_sql_conversion_error)?,
                 byte_size: row.get::<_, i64>(4)? as u64,
+                freshness_key: row.get(5)?,
             })
         })?;
         Ok(rows
@@ -1180,51 +1177,6 @@ impl GraphStore {
                 rank: Some(row.get(1)?),
             })
         })
-    }
-
-    /// Rebuild the search rows this scope owns, leaving sibling rows intact.
-    ///
-    /// Only scoped files are opened for source search text, so refreshing one
-    /// catalog never reads a sibling's bytes.
-    pub(crate) fn refresh_search_index_in_scope(
-        &self,
-        scope: &GraphScope,
-    ) -> Result<(), CodeGraphError> {
-        let (predicate, predicate_params) = scope_record_predicate(scope);
-        let delete_sql = format!("DELETE FROM graph_search WHERE {predicate}");
-        self.connection.execute(
-            &delete_sql,
-            rusqlite::params_from_iter(predicate_params.iter()),
-        )?;
-        for file in self.list_files_in_scope(scope)? {
-            self.connection.execute(
-                "INSERT INTO graph_search (record_type, record_id, text) VALUES (?1, ?2, ?3)",
-                params!["file", file.id.as_str(), file.path],
-            )?;
-            if let Some(source_text) = source_search_text(&self.paths.repo_root, &file) {
-                self.connection.execute(
-                    "INSERT INTO graph_search (record_type, record_id, text) VALUES (?1, ?2, ?3)",
-                    params!["source", file.id.as_str(), source_text],
-                )?;
-            }
-        }
-        for symbol in self.list_symbols_in_scope(scope)? {
-            self.connection.execute(
-                "INSERT INTO graph_search (record_type, record_id, text) VALUES (?1, ?2, ?3)",
-                params![
-                    "symbol",
-                    symbol.id.as_str(),
-                    format!("{} {}", symbol.display_name, symbol.canonical_name),
-                ],
-            )?;
-        }
-        for diagnostic in self.list_diagnostics_in_scope(scope)? {
-            self.connection.execute(
-                "INSERT INTO graph_search (record_type, record_id, text) VALUES (?1, ?2, ?3)",
-                params!["diagnostic", diagnostic.id.as_str(), diagnostic.message],
-            )?;
-        }
-        Ok(())
     }
 
     fn count_edges_in_scope(&self, scope: &GraphScope) -> Result<usize, CodeGraphError> {
@@ -1317,32 +1269,6 @@ fn scope_record_predicate(scope: &GraphScope) -> (String, Vec<Value>) {
     (predicate, params)
 }
 
-fn publishing_snapshot_path(dest: &Path) -> PathBuf {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    dest.with_file_name(format!(
-        "graph.complete.publishing-{}-{nanos}.db",
-        std::process::id()
-    ))
-}
-
-fn remove_snapshot_file(path: &Path) {
-    let _ = std::fs::remove_file(path);
-    remove_sqlite_sidecars(path);
-}
-
-fn remove_sqlite_sidecars(db_path: &Path) {
-    let Some(name) = db_path.file_name().and_then(|name| name.to_str()) else {
-        return;
-    };
-    if let Some(parent) = db_path.parent() {
-        let _ = std::fs::remove_file(parent.join(format!("{name}-wal")));
-        let _ = std::fs::remove_file(parent.join(format!("{name}-shm")));
-    }
-}
-
 fn collect_rows<T, F>(rows: MappedRows<'_, F>) -> Result<Vec<T>, CodeGraphError>
 where
     F: FnMut(&rusqlite::Row<'_>) -> rusqlite::Result<T>,
@@ -1370,6 +1296,13 @@ fn source_search_text(repo_root: &Path, file: &FileRecord) -> Option<String> {
         return None;
     }
     let content = std::fs::read_to_string(repo_root.join(&file.path)).ok()?;
+    normalized_source_search_text(file, &content)
+}
+
+fn normalized_source_search_text(file: &FileRecord, content: &str) -> Option<String> {
+    if file.byte_size > SOURCE_SEARCH_MAX_BYTES as u64 {
+        return None;
+    }
     let normalized = if strips_comment_only_lines(&file.path, &file.language_id) {
         content
             .lines()
@@ -1382,7 +1315,7 @@ fn source_search_text(repo_root: &Path, file: &FileRecord) -> Option<String> {
             .collect::<Vec<_>>()
             .join("\n")
     } else {
-        content
+        content.to_owned()
     };
     let trimmed = normalized.trim();
     if trimmed.is_empty() {

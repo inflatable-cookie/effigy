@@ -244,6 +244,11 @@ During v0.x, MINOR bumps may include breaking changes.
   endpoints, or trust behavior change.
 
 ### Changed
+- Graph refresh commits each file's graph, search data and freshness state
+  together, preserves incoming relationships, and resumes safely after a
+  timeout or interruption. Concurrent queries read committed files with
+  `refreshing` progress. Database snapshot copies and detached timeout workers
+  are removed; `graph status` is read-only.
 - A managed run's stop, a SIGINT/SIGTERM settle, and a handover-driven stop
   now report settled only after the whole stop cascade finished. `effigy
   <task> stop` and a handover wait for the supervisor's real cascade -

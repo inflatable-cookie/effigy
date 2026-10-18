@@ -127,6 +127,9 @@ pub(crate) fn git_gate_says_fresh(
     scope: &GraphScope,
     store: &GraphStore,
 ) -> Result<bool, CodeGraphError> {
+    if !crate::index::index_configuration_matches(scope, store)? {
+        return Ok(false);
+    }
     let Some(indexed_head) = store.metadata_value(&git_indexed_head_key(scope.key()))? else {
         return Ok(false);
     };
@@ -134,6 +137,13 @@ pub(crate) fn git_gate_says_fresh(
         return Ok(false);
     }
     Ok(current_head(scope.workspace_root()).as_deref() == Some(indexed_head.as_str()))
+}
+
+pub(crate) fn clear_index_stamp(
+    scope: &GraphScope,
+    store: &GraphStore,
+) -> Result<(), CodeGraphError> {
+    store.delete_metadata(&git_indexed_head_key(scope.key()))
 }
 
 /// Record (or clear) the git stamp for one scope after an index build.

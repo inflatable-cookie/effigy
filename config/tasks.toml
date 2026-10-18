@@ -8,6 +8,12 @@
   { rhai = "scripts/install-local-bin-links.rhai" },
 ]
 
+# Graph storage and CLI refresh contract; nextest bounds each case and leaks.
+"test:graph:storage" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-codegraph --lib --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail", timeout_ms = 600000 }
+"test:graph:runner" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(graph_) | test(docs_context_time_budget_tests::)' --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail", timeout_ms = 600000 }
+"check:graph" = "cargo check -p effigy-codegraph -p effigy-cli -p effigy --all-targets --profile test"
+"lint:graph" = "cargo clippy -p effigy-codegraph -p effigy-cli -p effigy --all-targets -- -D warnings"
+
 # Common local commands
 "fmt:check" = "cargo fmt --all -- --check"
 "fmt:apply" = "cargo fmt --all"
