@@ -49,12 +49,28 @@ D8.
 
 ## Q-004 — Relationship to Compose
 
-Status: open
+Status: answered
 Asked: 2026-10-18
+Answered: 2026-10-18 by Tom
 
-Effigy is probably not a Compose replacement, but it has to understand
-Compose. Which parts of environment lifecycle Effigy owns, and which it
-delegates to Compose, needs its own discussion with Tom.
+Effigy is the environment authority. It owns identity, the desired-state
+record, the render, data claims and holders, routes, and who may change an
+environment. Compose is the engine that applies the render on the Colima and
+Docker backends and reports what is running.
+
+- Direct `compose_file` mode is retired, provided the migration is clean (Tom:
+  "If there's a clean migration to managed catalog fragments for the two
+  projects, then let's do it"). For one release a `compose_file` container is
+  read as a project-layer catalog fragment, with a deprecation warning, and
+  `effigy container migrate` writes the fragment out. After that release the
+  key is retired, with an error naming the command.
+- The generated Compose stays internal: there is no mutating pass-through
+  (Tom: "Probably stay internal"). A read-only `effigy container render <env>`
+  shows the exact render, path and digest for the current generation.
+- The backend seam is "reconcile this environment from its render", not "run
+  Compose". Apple Containers, when adopted, brings its own answer to Compose
+  (Tom: "if we do Apple Containers, then we need to come with a solution for
+  Compose one way or another").
 
 ## Q-005 — Service catalog strategy
 
