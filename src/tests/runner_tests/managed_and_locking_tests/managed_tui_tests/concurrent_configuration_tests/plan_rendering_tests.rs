@@ -150,10 +150,11 @@ fn run_manifest_task_managed_tui_concurrent_plan_rendering_contract_table() {
                 "tab-order: lifecycle, api",
                 "lifecycle",
                 "container web up --detach",
-                "container web down",
+                "cleanup() { if",
+                "stopped >",
                 "shutdown-on-exit: lifecycle, api",
             ],
-            expected_absent: &[],
+            expected_absent: &["container web down"],
             setup: setup_lifecycle_entry,
         },
         ManagedOutputCase {
@@ -169,7 +170,7 @@ fn run_manifest_task_managed_tui_concurrent_plan_rendering_contract_table() {
                 "container web shell",
                 "shutdown-on-exit: lifecycle, api",
             ],
-            expected_absent: &[],
+            expected_absent: &["container web down"],
             setup: setup_lifecycle_and_shell_entry,
         },
         ManagedOutputCase {
@@ -182,7 +183,7 @@ fn run_manifest_task_managed_tui_concurrent_plan_rendering_contract_table() {
                 "shell --service workspace --command true",
                 "shell --service workspace",
             ],
-            expected_absent: &[],
+            expected_absent: &["container web down"],
             setup: setup_lifecycle_and_shell_service_entry,
         },
         ManagedOutputCase {
@@ -196,7 +197,7 @@ fn run_manifest_task_managed_tui_concurrent_plan_rendering_contract_table() {
                 "container web up --detach",
                 "container web shell",
             ],
-            expected_absent: &[],
+            expected_absent: &["container web down"],
             setup: setup_lifecycle_readiness_entry,
         },
         ManagedOutputCase {
@@ -209,7 +210,7 @@ fn run_manifest_task_managed_tui_concurrent_plan_rendering_contract_table() {
                 "readiness-wait: enabled",
                 "ready-message: http://project.test",
             ],
-            expected_absent: &[],
+            expected_absent: &["container web down"],
             setup: setup_lifecycle_gateway_and_readiness_entry,
         },
     ];
