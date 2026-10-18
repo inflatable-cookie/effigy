@@ -16,6 +16,7 @@ pub mod probe;
 pub mod record;
 pub mod retention;
 pub mod root;
+pub mod run;
 pub mod store;
 
 #[cfg(all(test, feature = "fault-injection"))]

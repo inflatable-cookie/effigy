@@ -1,5 +1,5 @@
 //! Explicit budgets and class capabilities; construction performs no I/O.
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -27,7 +27,7 @@ pub enum Deadline {
     At(Instant),
     Open(OpenReason),
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum StopCause {
     Signal(i32),
     Requested,

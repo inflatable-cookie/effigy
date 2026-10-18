@@ -2,10 +2,10 @@
 use crate::ctx::StopCause;
 use crate::id::{Generation, ResourceId};
 use crate::observe::{Observed, UnknownReason};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WorkloadOutcome {
     NotStarted,
     Succeeded,

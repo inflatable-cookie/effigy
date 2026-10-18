@@ -1,8 +1,8 @@
 //! Unknown is preserved as uncertainty; it never becomes an absence proof.
 use crate::id::{Generation, ResourceId};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Observed<T> {
     Verified(T, Evidence),
     Absent(AbsenceProof),
@@ -25,7 +25,7 @@ impl<T> Observed<T> {
 }
 /// Evidence is diagnostic metadata, never raw subprocess output or credentials.
 /// Its source is bounded; process/network capture bounds belong to cut 6.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Evidence {
     source: String,
     generation: Option<(ResourceId, Generation)>,
@@ -50,7 +50,7 @@ impl Evidence {
         self.generation.as_ref()
     }
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AbsenceProof {
     NoGateInode,
     GateFreeRunClosed,
@@ -65,12 +65,12 @@ pub enum AbsenceProof {
     NotInInventory { inventory: InventoryRef },
     ContainerGone { id: String },
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InventoryRef {
     pub source: String,
     pub generation: Generation,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UnknownReason {
     TimedOut { phase: String },
     PermissionDenied,

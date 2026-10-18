@@ -1,6 +1,6 @@
 //! Encoding v1. Identity inputs are resolved coordinates, never CLI grammar.
 use crate::ctx::{EffectClass, Placement};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -27,7 +27,7 @@ impl fmt::Display for IdentityError {
 }
 impl std::error::Error for IdentityError {}
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum CheckoutKind {
     Primary = 0,
@@ -35,7 +35,7 @@ pub enum CheckoutKind {
     EphemeralClone = 2,
     Machine = 3,
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CheckoutId {
     kind: CheckoutKind,
     token: [u8; 16],
@@ -59,7 +59,7 @@ impl CheckoutId {
         )
     }
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Generation(u64);
 impl Generation {
     pub fn new(value: u64) -> Self {
@@ -72,7 +72,7 @@ impl Generation {
         self.0.checked_add(1).map(Self)
     }
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunId([u8; 16]);
 impl RunId {
     /// Caller supplies cryptographic entropy. Time is only an ordering hint.
@@ -152,7 +152,7 @@ impl TaskId {
         )
     }
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum ResourceKind {
     Checkout = 0,
@@ -164,7 +164,7 @@ pub enum ResourceKind {
     Store = 6,
     Gateway = 7,
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Scope {
     Machine,
     Checkout(CheckoutId),
@@ -454,4 +454,114 @@ fn serialize_argv<S: serde::Serializer>(
 ) -> Result<S::Ok, S::Error> {
     let bytes: Vec<&[u8]> = argv.iter().map(|arg| arg.as_bytes()).collect();
     bytes.serialize(serializer)
+}
+
+// Recovery accepts only the exact normalized representation constructors emit.
+impl<'de> Deserialize<'de> for ResourceId {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Stored {
+            kind: ResourceKind,
+            scope: Scope,
+            key: Vec<Option<String>>,
+        }
+        let stored = Stored::deserialize(d)?;
+        let candidate = Self::new(stored.kind, stored.scope, stored.key);
+        let valid = candidate
+            .validate_record()
+            .map_err(serde::de::Error::custom)?;
+        if candidate != valid {
+            return Err(serde::de::Error::custom("noncanonical resource"));
+        }
+        Ok(valid)
+    }
+}
+impl ResourceId {
+    fn validate_record(&self) -> Result<Self, IdentityError> {
+        let field = |n: usize| {
+            self.key
+                .get(n)
+                .and_then(Option::as_deref)
+                .ok_or(IdentityError::InvalidInvocation)
+        };
+        let count = match self.kind {
+            ResourceKind::Task => 4,
+            ResourceKind::Data => 3,
+            ResourceKind::Endpoint => 2,
+            _ => 1,
+        };
+        if self.key.len() != count {
+            return Err(IdentityError::InvalidInvocation);
+        }
+        match (self.kind, self.scope) {
+            (ResourceKind::Env, Scope::Checkout(c)) => Self::environment(c, field(0)?),
+            (ResourceKind::Store, scope) => Self::store(scope, field(0)?),
+            (ResourceKind::Gateway, Scope::Machine) => Self::gateway(field(0)?),
+            (ResourceKind::Data, Scope::Machine) => Self::data(field(0)?, field(1)?, field(2)?),
+            (ResourceKind::Endpoint, Scope::Machine) => Self::endpoint(
+                match field(0)? {
+                    "domain" => EndpointKind::Domain,
+                    "address" => EndpointKind::Address,
+                    "port" => EndpointKind::Port,
+                    _ => return Err(IdentityError::InvalidEndpoint),
+                },
+                field(1)?,
+            ),
+            (ResourceKind::Task, Scope::Checkout(c)) => Ok(TaskId::new(
+                c,
+                field(0)?,
+                match field(1)? {
+                    "published" => Surface::Published,
+                    "draft" => Surface::Draft,
+                    _ => return Err(IdentityError::InvalidInvocation),
+                },
+                field(2)?,
+                self.key[3].as_deref(),
+            )?
+            .resource()),
+            (ResourceKind::Run, Scope::Machine) => Ok(field(0)?.parse::<RunId>()?.resource()),
+            (ResourceKind::Checkout, Scope::Machine)
+                if field(0)?.len() == 32
+                    && field(0)?
+                        .bytes()
+                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) =>
+            {
+                Ok(self.clone())
+            }
+            _ => Err(IdentityError::InvalidInvocation),
+        }
+    }
+}
+
+impl std::str::FromStr for RunId {
+    type Err = IdentityError;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        if value.len() != 26 {
+            return Err(IdentityError::InvalidInvocation);
+        }
+        let mut bytes = [0_u8; 16];
+        let mut accumulator = 0_u16;
+        let mut bits = 0;
+        let mut written = 0;
+        for byte in value.bytes() {
+            let digit = match byte {
+                b'a'..=b'z' => byte - b'a',
+                b'2'..=b'7' => byte - b'2' + 26,
+                _ => return Err(IdentityError::InvalidInvocation),
+            };
+            accumulator = (accumulator << 5) | u16::from(digit);
+            bits += 5;
+            if bits >= 8 {
+                bits -= 8;
+                bytes[written] = (accumulator >> bits) as u8;
+                written += 1;
+            }
+        }
+        let id = Self(bytes);
+        if id.to_string() != value {
+            return Err(IdentityError::InvalidInvocation);
+        }
+        Ok(id)
+    }
 }

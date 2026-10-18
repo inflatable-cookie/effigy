@@ -6,8 +6,10 @@ API types, outcomes, and macOS/Linux platform facts. Gates (§5.4), the store,
 records and `atomic_replace` (§5.5), the state root, its kernel-owned path
 families and retention (§7) are implemented with their proof lists and
 fault points. `qa:kernel-ratchet` enforces the committed production baseline
-in `config/kernel-ratchet.json`. Runs, custody, signals, executable probes and
-the probe guard remain specified and unavailable. Engines have not adopted the kernel; the
+in `config/kernel-ratchet.json`. The run journal and settle (§5.6), attachments and claims (§5.9) are implemented
+with generation-fenced tickets, positive completion, holder protection and
+journal-boundary fault proofs. Custody, signals, executable probes and the
+probe guard remain specified and unavailable. Engines have not adopted the kernel; the
 mechanisms in the adoption map (§10) remain current behavior. QA-group `stop` and `hard_timeout_ms` stay unavailable: contract
 [051](051-bounded-qa-groups-contract.md) keeps refusing them until this
 kernel's run journal, custody and deadlines exist.
