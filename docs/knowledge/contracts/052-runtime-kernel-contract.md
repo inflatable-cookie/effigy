@@ -66,7 +66,9 @@ hidden internal entry points: `__kernel-supervise`, `__kernel-sentinel` and
 | Term | Meaning |
 | --- | --- |
 | Host | The machine kernel that owns the state root (§7). macOS or Linux. |
-| Guest | A Linux container managed by a host Effigy. |
+| Guest | Effigy inside a container-mode workspace container managed by a host Effigy: a workspace client with no state of its own (§8). |
+| Host authority channel | The one authenticated, per-session protocol that carries a guest's requests to host engines (§8.3). |
+| Workspace session | The durable host run a container-mode workspace's terminals attach to (§8.7). |
 | Resource | Anything with one authority: task, run, environment, data, endpoint, store, gateway, checkout. |
 | Authority | The engine that alone may mutate a resource, acting while it holds the resource's gate. |
 | Gate | A never-unlinked host `flock` on a stable inode. Holding it is the holder's liveness. |
@@ -97,7 +99,7 @@ code settle it:
 | D4 | Meaning of a free gate | free gate + live record = interrupted | release permits reconciliation, not successor activation | Both. A free gate with a non-closed run reads `Interrupted`. A successor must settle it before its own run is admitted (K5). | X-sol §3: lock release does not prove grouped or remote work ended |
 | D5 | Effect classes | static, read, refresh, mutate | Static, Observe, RefreshDerived, PrepareSource, Mutate | Static, Observe, RefreshDerived, Prepare, Mutate | Brief |
 | D6 | Managed supervisor | detached | foreground stays foreground | One detached supervisor per managed run. Owning-client death means stop and settle. Attaching to a running stack leaves it running. | Tom ruling 5 |
-| D7 | Guest Effigy | isolate, opt-in, runs under the host run's token | cut auto-provisioning, host owner protocol | Delegation by construction; guest placement refuses host-authority effects; no guest-to-host channel in v0.15 (§8) | Lane rule 1; contract 049's host-resolved container exec |
+| D7 | Guest Effigy | isolate, opt-in, runs under the host run's token | cut auto-provisioning, host owner protocol | Workspace client in container mode only: local reads against a materialised context; every authority request over one authenticated host channel, re-resolved, gated and journalled on the host; a durable workspace session run; a version-locked Linux binary installed at Prepare. Hybrid mode has no guest (§8). | Lane rule 1; Tom 2026-10-18 (container mode needs full coverage); `synthesis/GUEST-EFFIGY.md` option (c) |
 | D8 | Endpoint store | `state.json` + lock | SQLite + effect outbox + reuse quarantine | Endpoint claims are kernel store rows; the gateway engine is their only writer; released addresses are quarantined | D1; X-sol gap 6 |
 | D9 | Remote registration | ack `{container_id, nonce, pgid}` | ack with namespace and start identity | In-band ack on the exec stream, plus the nonce in the remote environment for recovery; no bind-mount marker files | R1: guests never write host state |
 | D10 | Owner SIGKILL of a one-shot run | "no custody process outlives its run" incl. KILL | a small supervisor may outlive the front end | Inline runs with custody get a per-run sentinel that settles on owner death | X-opus K5 |
@@ -115,7 +117,7 @@ names the rule or invariant it relies on.
 
 | # | Rule | Forbidden states |
 | --- | --- | --- |
-| R1 | **Host authority.** Every mutable resource has exactly one authority and one gate. Gates and the store live on the host. Guests never lock host gates or write host records. Effigy in a guest keeps working (§8). | A guest holding or opening a host gate; a guest writing the host store; authority inferred from a hostname, heartbeat age or a file in a bind mount. |
+| R1 | **Host authority.** Every mutable resource has exactly one authority and one gate. Gates and the store live on the host. Guests never lock host gates or write host records. Effigy in a guest keeps working by requesting host authority (§8). | A guest holding or opening a host gate; a guest writing the host store; a host acting on a guest-resolved plan; authority inferred from a hostname, heartbeat age or a file in a bind mount. |
 | R2 | **Pure reads.** Static and Observe commands write nothing anywhere. Observe may run guarded, non-mutating probes (§5.11). | `help`, `status`, `tasks`, `--plan`, `graph status` or `doctor` creating, renaming or truncating a file, appending a Git exclude, allocating a port or address, rendering Compose, minting a scope token, fetching a bundle, writing the store or a journal, or acquiring a gate exclusively. |
 | R3 | **Unknown grants nothing.** An `Unknown` observation never authorises a kill, teardown, reclaim, reuse, displacement, restart or deletion. Destructive action needs the resource's own gate plus `Verified` ownership and identity, or `Absent` with proof. | A restart because an exec probe failed; reuse of a gateway whose identity could not be read; a route displaced because owner evidence was unreadable; git failure read as clean; a lock reclaimed because a heartbeat aged. |
 | R4 | **Holder protection.** Nothing stops, restarts, recreates, resets or hands over an environment while a live or unknown holder of a bound run exists, except that run's own settle releasing its own attachment. | Any `down`, restart, recreate, reset, handover or reap of an environment with a holder whose liveness is `Verified` or `Unknown`. |
@@ -860,7 +862,7 @@ impl SupervisorClient {
 | --- | --- | --- | --- | --- |
 | `Inline` | the invoking process | one-shot runs: tasks, sequences, tests, QA groups, delivery runs | not applicable | the sentinel settles |
 | `Detached` | one `__kernel-supervise` process per run, in its own session | managed runs; environment-owned runs (sidecars) | stop and settle, unless the client detached | the sentinel settles |
-| `Guest` | guest Effigy inside a host run's remote custody | nested work in a guest (§8) | covered by the host run | covered by the host run |
+| `Guest` | none: the guest workspace client owns no run; each admitted request is an `Inline` or `Detached` host run (§8.3) | the container-mode workspace client (§8) | its host runs follow their own placement | its host runs follow their own placement |
 
 Detached startup:
 
@@ -1431,8 +1433,8 @@ for the rest.
 | 7 | Leaf certificates | `~/.effigy/gateway/certs/` | gateway | `atomic_replace` | reissued on expiry or CA change | no |
 | 8 | Preserved CA | mkcert `CAROOT` | external | read only | never touched | no |
 | 9 | Pinned sources | config lane decides | config | `Gate(Store bundles)` + `atomic_replace` | while pinned | no |
-| 10 | Private vault | `<checkout>/.effigy/secrets/local.vault` (+ `.prev`) | secrets | `Gate(Store vault)` + pointer commit | previous generation kept | readable through the checkout; guest writes refused |
-| 11 | Key wraps | secrets lane decides | secrets | pointer commit with the vault | with the vault generation | no |
+| 10 | Private vault | `<checkout>/.effigy/secrets/local.vault` (+ `.prev`) | secrets | `Gate(Store vault)` + pointer commit | previous generation kept | no: masked from the workspace mount (§8.2) |
+| 11 | Key wraps | secrets lane decides | secrets | pointer commit with the vault | with the vault generation | no: masked from the workspace mount when beside the vault (§8.2) |
 | 12 | Machine preferences | `~/.effigy/config.toml` | config | `atomic_replace` | user-owned | no |
 | 13 | Graph store | `<checkout>/.effigy/graph/` | graph | RefreshDerived, `Gate(Store graph)` | per worktree | read |
 | 14 | Other derived caches | per owner | owners | RefreshDerived; corrupt is a miss | owner-defined | — |
@@ -1456,44 +1458,144 @@ an explicit maintenance command. Never in Static or Observe (K15).
 
 ## 8. Host and guest model
 
+A guest exists only in container mode: an environment that declares an
+operator workspace, such as Underlay `dev:container` or the DecodeLabs
+bundles, where the operator works inside the container. There the guest is a
+workspace client. It reads a materialised context locally and sends
+everything with authority to the host over one channel. The host resolves,
+gates, journals and runs the work. Hybrid mode (`dev:hybrid`), where only
+services run in containers, has no guest.
+
 ### 8.1 Placements
 
 | | Host | Guest |
 | --- | --- | --- |
-| Detected by | no host run context | the host-injected `EFFIGY_RUN_CONTEXT` (run id, generation, container id, nonce); it carries no credential |
-| State root | `~/.effigy/state` on the host | guest-local `$HOME/.effigy/state` inside the container, never a bind mount |
-| Gates | all host resources | guest-local resources only |
-| Store writes | yes | guest-local only |
-| Runs | yes | guest-local runs whose parent is the host run |
+| Exists in | every Effigy | container mode only: a workspace container of an environment that declares an operator workspace |
+| Detected by | no materialised context | a materialised context (§8.2) whose container identity matches the running container |
+| State root | `~/.effigy/state` on the host | none. The guest has no store, no gates and no runs. |
+| Gates | all resources | none; `Gate::acquire` returns `HostAuthorityRequired` |
+| Store writes | yes | none |
+| Runs | yes | none of its own. Each admitted request is a host run (§8.3). |
+| Authority | the owning engine | requests over the host authority channel (§8.3) |
 
-Container heuristics alone never mean guest placement. An unmanaged
-container, such as a CI job, is a Linux host with its own state root.
-`EFFIGY_RUN_CONTEXT` replaces the run-token and handoff variables.
+The mode boundary is the environment's declared operator workspace, never a
+mode or environment name. Hybrid mode provisions no guest binary, no context,
+no channel listener and no enrolment credential. Its service lifecycle uses
+the same host engines.
 
-### 8.2 What works in a guest
+Container heuristics alone never mean guest placement, and no user-exported
+variable confers placement or authority. An unmanaged container, such as a CI
+job, has no context: it is a Linux host with its own state root. The
+materialised context replaces the run-token and handoff variables.
 
-| Capability | In a guest | Why |
+### 8.2 Materialised context
+
+Workspace Prepare writes an immutable context into the container before the
+workspace is admitted:
+
+| Field | Content |
+| --- | --- |
+| Identity | host user, `CheckoutId`, environment `(ResourceId, Generation)`, full container id and VM boot id, the workspace session `RunId` (§8.7) |
+| Path map | host checkout path ↔ guest mount path, workdir, configured workspace user and `HOME` |
+| Sources | pinned bundle and catalog digests, manifest digests, and the rendered bundle and catalog snapshot they name |
+| Backend | backend descriptor: kind, profile or context, runtime, VM type |
+| Routes | declared and effective routes, service addresses and ports, gateway domains |
+| Channel | the host endpoint locator and the pinned server identity (§8.3); neither is a credential |
+| Binary | the expected Effigy version, digest and protocol version (§8.9) |
+
+- Location: `/run/effigy/context/<generation>/` inside the container,
+  outside the bind-mounted checkout, owned by root and read-only to the
+  workspace user. `/run/effigy/context/current` names the published
+  generation.
+- Refresh: the host publishes a new complete generation on every Prepare and
+  whenever a fact it carries changes on the host, then switches `current`.
+  It never edits a published generation. A guest invocation reads one
+  generation for its whole run.
+- Staleness: the context is input, not liveness proof. Every request carries
+  the context generation; the host refuses a stale one (K7) and the client
+  rereads `current`. A missing context means the workspace is unprepared:
+  commands that need it report unavailable. Nothing fetches, renders or
+  allocates as a fallback (R2).
+- Secret grants: an admitted run that needs secrets in the container gets a
+  grant: only its declared keys, written 0600 for the workspace user under
+  `/run/effigy/secrets/<run-id>/` as a journalled file effect, or passed in
+  the remote spawn spec's environment (K12). The run's settle removes the
+  grant. No shell gets every vault key.
+- The guest never opens the host vault. The workspace mount masks the vault,
+  its previous generation, key wraps and unlock credentials (§7.3 families
+  10–11) with an empty read-only overlay. Vault reads and writes are channel
+  requests to the secrets engine.
+
+Ordinary source edits and task outputs in the mounted checkout are workspace
+files, not host records. The context's authoritative inputs are host
+records; the guest reads them and never regenerates them.
+
+### 8.3 Host authority channel
+
+One authenticated, per-session, typed protocol carries every guest
+operation that needs authority or live host facts.
+
+- Server: the workspace session run's supervisor (§8.7) listens for its
+  session. The listener lives exactly as long as that run, so it adds no
+  daemon (I-SV2, §14).
+- Capability: an unguessable credential, issued by the host for one client
+  session and held in a 0600 file in guest-private storage
+  (`/run/effigy/client/`), never in the checkout, argv or a global
+  environment variable (K12). The host keeps the grant and binds it to the
+  host user, `CheckoutId`, session `RunId` and generation, environment
+  generation, full container id and VM boot id, and the operations and
+  targets it allows. A hostname, source address, marker file or claimed run
+  id grants nothing.
+- Capability issue: a Mutate request to the session run. The supervisor
+  holds the grant in memory as state of that run; it is never persisted, and
+  the run's settle ends every grant it issued. The first terminal opened
+  through Effigy gets its capability as part of the Prepare or workspace entry that
+  opens it.
+- Transport: TLS with the server identity pinned in the context, and the
+  capability presented inside the authenticated stream. A bearer token over
+  plain HTTP is not enough. Unix sockets do not cross Colima or Docker
+  Desktop file sharing, and the Docker API socket is never a channel.
+- Requests: a selector or typed operation, checkout-relative cwd, intended
+  target, expected context and environment generations, a request id and
+  bounded arguments. The host never accepts a host executable path, an
+  internal entry point, a guest-resolved plan or a caller-chosen state root.
+- Host side: the host re-resolves the request against its own records into
+  a `ResolvedInvocation` (§5.1), takes the canonical gates, journals effects
+  and returns the same typed plans, events, statuses and outcomes a host
+  client gets. The resource identity is the same for host and guest origins;
+  the origin is metadata only.
+- Placement: an admitted one-shot run gets a host owner process spawned by
+  the session supervisor, `Inline` with its sentinel; that owner is the run's
+  invoking process. A managed run is `Detached`. Container targets run in the
+  container through remote custody (§5.10); host targets run on the host.
+- Idempotence: the host records each request id before admission. A retried
+  id returns the existing run or outcome and never admits a second run.
+- Streams: events, log frames, terminal input and resize travel on the
+  channel with bounded flow control. The guest client is a front end
+  (I-SV3). For an `Inline` run it started, its stop request or stream EOF
+  makes the session supervisor cancel the host owner, which settles (§5.2).
+  For a `Detached` run it started, it is the owning client (§5.8): stop
+  request or EOF without detach means stop and settle.
+- Disconnect: on disconnect, capability loss, generation mismatch or a host
+  probe timeout, the client reports `Unknown` for every unfinished run and
+  refuses further Mutate. It never falls back to local execution. A
+  reconnect with the same request id reads the host's recorded outcome.
+- Reads: Observe requests run under `ObserveContext` on the host. They create
+  no run, token or journal entry and append no access log. Authenticating
+  with an existing capability writes nothing.
+- Authorisation: the same operator authorisation and elevation policy as the
+  host CLI. Container access is no new administrative or release authority.
+- Version: client and server negotiate the protocol version before any
+  request. A mismatch refuses before effects (§8.9).
+
+Transport candidates by backend. None is supported until qualified:
+
+| Backend | Candidate | Qualification |
 | --- | --- | --- |
-| Static and Observe: tasks, graph queries, docs context, `--plan`, status of guest runs | yes | pure reads of the mounted checkout |
-| Running tasks (`effigy <task>` in a shell or a task) | yes, as guest-local runs; children use `setpgid` only, so they stay in the host-registered session | the host run's remote custody covers the session |
-| Host-authority effects: environment lifecycle, endpoints, gateway, host processes, vault writes, source sync, checkout token minting, retire, maintenance | refused `host_authority_required`, naming the host command | R1 |
-| Exclusion against host runs of the same task | not provided | guests cannot see host gates; the host-routed path is the excluded one |
-| Host status of guest runs | not provided in v0.15 | no channel |
-
-### 8.3 Delegation
-
-- Host resolves, guest executes. A container-targeted task invoked on the
-  host is resolved, gated and journalled on the host, and its resolved
-  command runs through remote custody (raw exec), never through guest
-  Effigy. Contract 049's container execution boundary already does this for
-  authenticated host parents.
-- Guest Effigy in an image is opt-in and pinned by the image; it is never
-  downloaded or built at run time. That cut belongs to the environment lane.
-- There is no guest-to-host request channel in v0.15. Adding one is a change
-  trigger (§15) and needs: an authenticated per-run capability; a transport
-  qualified on every backend (Unix sockets do not cross Colima or Docker
-  Desktop file sharing, and host-gateway TCP differs per backend); and every
-  request re-resolved and gated on the host.
+| Docker Desktop (macOS) | `host.docker.internal:<port>`; the host listener binds only an address the Desktop host proxy reaches | supported Desktop versions, default and custom bridge networks, firewall and VPN, IPv4 and IPv6; container `127.0.0.1` is never the Mac |
+| Colima (docker or containerd; VZ or QEMU) | `host.lima.internal`, or the profile's `host.docker.internal` alias; the host prepares the profile's reachable endpoint, with an explicit forwarder adapter if needed | both runtimes and VM types; custom DNS disables the alias mappings; custom `gatewayAddress`; host-loopback reachability settings. `host-gateway` inside the VM is not the Mac. |
+| Linux Docker Engine | `extra_hosts: ["effigy-host:host-gateway"]`, or a verified host address; the listener binds a restricted bridge-reachable interface | user-defined bridges, configured gateway addresses, rootless Docker, firewall policy, IPv6; never silently host networking |
+| Apple Containers (later) | a verified vmnet endpoint or a reviewed native stream | no claim before qualification, including address changes on restart |
 
 ### 8.4 Backends
 
@@ -1518,6 +1620,136 @@ container, such as a CI job, is a Linux host with its own state root.
 | Terminal | `tcsetpgrp` | `tcsetpgrp` |
 | In-process clock | `Instant` (pauses in sleep) | `Instant` (pauses in suspend) |
 | Boot clock | `mach_continuous_time` | `CLOCK_BOOTTIME` |
+
+### 8.6 Coverage
+
+Container mode gives full coverage: each command either runs locally
+against the context, or reaches the correct host authority and gets the
+result or refusal a host client would get. Rows follow the investigation's
+coverage matrix (`synthesis/GUEST-EFFIGY.md` §2).
+
+| Matrix rows | In the guest | Mechanism |
+| --- | --- | --- |
+| Help, groups, version; `--plan` and `test --plan`; `rhai surface`; `config` inspect, schema, reference, completion | local | Static; binary metadata and the context |
+| `tasks` listing and resolve; implicit bundle load; `bundle` inspect; `service` list and extract | local | Static against the pinned snapshot (§8.2). No fetch, lock or cache write. |
+| `graph` queries and status; `docs` checks and context; `scan`; `contracts` and `changelog` static checks; `skill tasks`; `state` plan; `artifact` inspect | local | Static and Observe reads of the mounted checkout and graph store. A stale index reports stale; a query never refreshes it (R2). |
+| App tasks with `run_in` `host`, `container` or `either`; shell commands; task references, sequences and setup steps; Rhai tasks and host APIs; `test` and suites; drafts; QA groups and members; heavy tasks; `skill run`; `watch` | channel | Admission request. The host resolves placement, gates `Task(TaskId)` (K5 excludes host and guest runs alike), journals and runs: container targets in the target container through remote custody, host targets on the host. Rhai effects are classified on the host (§5.3). |
+| `defer` | local inside an admitted workload; otherwise channel | Inside a workload it is that run's command, under its custody. From a shell it is an admission request targeting the current container. |
+| Workspace-only tasks, `workspace`, `system` | channel | Attach to the live workspace session run (§8.7); never a second shell or session. Lifecycle operations are requests. |
+| Managed TUI and headless (`dev`, profiles) | channel | Admission of a `Detached` managed run, child of the session run. The guest renders events; the host supervisor owns workloads and attachments. |
+| Managed `status`, `logs`, `stop`; `tasks status` | channel | Observe requests for status and logs; `stop` is a generation-fenced request (K7). Host and guest pids are never mixed. |
+| `tasks cache`, task-lock `unlock` | channel; `unlock` refused | Cache reads are host Observe requests; clears are RefreshDerived requests to the owning store engine. `unlock` refuses in both placements: there is no unlock command (I-G7). `migrate` and QA groups are in the Mutate and admission rows. |
+| `doctor` | local and channel | Manifest and tool checks local; runtime checks (backend, gateway, routes, catalog pack, ownership, volumes) are host Observe requests. |
+| `container shell`, bounded shell, `exec`, aliases | channel | Admission request; the host launches the command in the named service, including the current container, through remote custody. |
+| `container up`, `down`, `reset`, `retire` | channel | Mutate requests to the environment engine under R4. A guest `down` of its own environment follows §8.7. |
+| `container status`, `stats`, `logs` | channel | Host Observe requests on the backend inventory. |
+| `container data`, `cache`, `volume`, `profile`, `eject`, `hosts`, `scope`, `ports` | local and channel | Declared configuration is local from the context; host facts are Observe requests; mutations, including `eject` source writes, are requests. |
+| `secrets` list, doctor, get, export | channel | Observe requests to the secrets engine; plaintext follows the host CLI's policy. |
+| `secrets` init, set, unset, import, unlock, lock, passphrase change; required task secrets | channel | Mutate requests to the secrets engine; task secrets arrive as per-run grants (§8.2). |
+| `deps` status, link, unlink, pin, unpin | channel | Status is Observe; changes are requests to the deps engine. |
+| `graph` index and watch; `bundle` sync; `service` pack install, rollback and remove; `config` user settings | channel | RefreshDerived, Prepare or Mutate requests to the owning store engine. The guest has no separate preference file. |
+| `state` apply, capture; `artifact` stage, capture, push; `init`; `docs` index writes; `migrate`; `release`, `deploy`, `bootstrap`, `demo`, `uninstall` | channel | Requests under the same authorisation as the host CLI. |
+| `gateway` subcommands | channel | Requests to the gateway engine; never a guest gateway. |
+| Hidden internal entry points | refused | Never exposed on the channel; a guest invocation refuses. |
+
+Exclusion covers workloads, data and endpoints, not only selectors: `dev`,
+`dev:container`, `dev:hybrid` and aliases resolve to their resources on the
+host, so overlapping app roles and shared data claims conflict there (§5.9).
+
+### 8.7 Workspace session run
+
+- The workspace session is a `Detached` run owned by `Task(TaskId)` of the
+  environment's workspace entry. It holds a `Borrow` attachment to the
+  environment and serves the channel (§8.3). Activating an environment that
+  declares an operator workspace admits it; its starter detaches, so no
+  terminal is its owning client.
+- It outlives `dev`. A `dev` invoked from the workspace terminal is a child
+  run (`runs.parent run`) with the guest client as owning client. Exiting it
+  settles its own workloads and attachment, then returns to the terminal;
+  invoking `dev` again admits another child run.
+- Exiting `dev` asks whether to keep the environment up (Tom's ruling,
+  2026-10-18).
+  Keep: the session run stays. Stop: the client requests `container down`,
+  which follows the down path below.
+- Attach: the host `effigy workspace` and every guest terminal attach to the
+  same session run as secondary clients (§5.8), and a host UI and a guest UI
+  can attach to one managed child run. A secondary client's death stops
+  nothing.
+- Duplicates are impossible. An environment has one workspace entry, and
+  K5 admits one unresolved run per owner, so a second `workspace` invocation
+  attaches instead of starting a session. Every `dev` or task request takes
+  its own owner gate on the host, whatever its origin.
+- Down from inside (Tom's ruling, 2026-10-18) uses only existing
+  primitives; no run settles another by cascade:
+  1. The session supervisor observes the environment's holders. A live or
+     `Unknown` holder other than the session run and its own child runs
+     refuses with `HeldBy` before anything stops.
+  2. It sends an ordinary stop request to each of its child runs and waits,
+     under the request's deadline, for each to resolve and release its own
+     attachment. An unresolved child refuses the down and is reported.
+  3. It returns an operation id, then admits the down as its own `Detached`
+     environment run with `ClientMode::Detach`, outside the session's
+     custody, naming the session run as exempt (§5.9).
+  4. The down run holds `Gate(Env)` and rechecks holders; any holder other
+     than the session run refuses with `HeldBy`. It then requests the
+     session run to settle. The session supervisor tells every attached
+     terminal that the container is stopping, then settles itself and
+     releases its attachment.
+  5. The permit is issued once the only holder is the exempt run settling
+     itself, or none (R4, I-A1), and the down applies. Its outcome stays in
+     the host journal for host status.
+- The session ends when the environment goes down or the host closes it.
+  Closing the last terminal does not end it; retention after that is the
+  environment engine's idle policy (§3).
+
+### 8.8 Terminal enrolment
+
+Direct `docker exec` and editor terminals in the workspace container are
+enrolled automatically. The ruling record is the `v015-workspace-client`
+lane's, not this contract's.
+
+- Workspace Prepare installs a narrow enrolment credential, 0600 for the
+  workspace user in guest-private storage (`/run/effigy/enrol/`), as a
+  journalled file effect of the Prepare run. It is bound to the environment
+  generation and the container identity.
+- It authorises session enrolment only, never an effect. Enrolment is a
+  Mutate request to the session run (§8.3): the host verifies the
+  environment generation is current and the session run is live, then
+  issues a per-session capability. A Static or Observe command never
+  enrols; without a capability it runs locally only.
+- A new environment generation revokes it. A missing, revoked or stale
+  credential leaves local Static and Observe working and reports host access
+  unavailable.
+- Every process running as the workspace user is inside this trust
+  boundary; the workspace is not a multi-tenant boundary.
+
+This subsection is separable. Without it, a direct terminal gets local reads
+only, and host access needs a terminal opened through Effigy.
+
+### 8.9 Binary provisioning
+
+- Each release publishes version-locked Linux x86_64 and aarch64 artifacts
+  with a checksum and provenance manifest naming the version, protocol
+  version, target and libc baseline, and catalog schema.
+- Workspace Prepare acquires the artifact on the host, verifies its digest,
+  and installs it into a guest-private executable store, selected per
+  workspace generation by an atomic pointer. The architecture comes from the
+  container image's platform, not the host's `uname`. An image whose libc
+  has no matching artifact refuses Prepare.
+- No run-time build or download: task, exec and terminal entry never fetch
+  or compile Effigy or look for a sibling checkout. A contributor's explicit
+  Prepare may build the artifact and record the same digest receipt.
+- A version or protocol mismatch between client, context and server refuses
+  before any effect, naming the host re-prepare command. A live executable is
+  never replaced under an active run (I-SV4).
+
+### 8.10 Rules under this design
+
+| Rule | Holds because |
+| --- | --- |
+| R1 Host authority | The guest has no state root, gates or runs. Every effect is a host run under the owning engine's gate. Capabilities are host-kept grants; a request carries no authority beyond its capability, and the host re-resolves it. The state root and vault are never in the guest's mounts. |
+| R2 Pure reads | Local Static and Observe read an immutable context and the mounted checkout and write nothing. Host Observe requests create no run, token or log entry. `--plan` is Static and admits nothing. Context publication and the enrolment credential are Prepare effects; capability issue and enrolment are Mutate requests to the session run. |
+| R3 Unknown grants nothing | Disconnect, stale generation or an unreachable host is `Unknown` for the client and refuses Mutate with no local fallback. The host acts only on its own `Verified` observations and fences every request by generation (K7). |
 
 ## 9. Authority map
 
@@ -1790,7 +2022,6 @@ to the rule and primitive that makes it structurally impossible.
 - No exactly-once claims across filesystem, engine or network boundaries.
 - No Compose replacement. The environment boundary stays open under Q-004.
 - No remote execution, plugins, marketplace or Windows support.
-- No guest-to-host request channel in v0.15.
 - No cgroup resource limits, and no OS-level enforcement beyond process
   groups and sessions.
 - No public command. Engines own every surface.
@@ -1798,7 +2029,7 @@ to the rule and primitive that makes it structurally impossible.
 ## 15. Change triggers
 
 Revisit this contract before: adding a daemon; coordinating across hosts;
-adding a guest-to-host channel; supporting network filesystems; adopting
-cgroup custody; adding a resource kind or encoding version; bumping the
-store's major schema; supporting Apple Containers; or relaxing any of
-R1–R5.
+adding a second guest-to-host channel or a guest outside container mode;
+supporting network filesystems; adopting cgroup custody; adding a resource
+kind or encoding version; bumping the store's major schema; supporting Apple
+Containers; or relaxing any of R1–R5.
