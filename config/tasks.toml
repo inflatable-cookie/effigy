@@ -376,6 +376,9 @@
 "test:host-process:dependent-replacement" = [
   { id = "published-dependent-replacement", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_host_dependent_replacement_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
 ]
+# Exercise the default CI resource reservation (the focused listener profile
+# deliberately uses a separate configuration).
+"test:host-process:dependent-replacement:ci" = { run = "cargo nextest run --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_host_dependent_replacement_)' --success-output immediate --no-fail-fast --retries 0 --no-tests fail -j 4", timeout_ms = 600000 }
 "test:host-process:exit-observation:matrix" = [
   { task = "test:host-process:exit-observation" },
   { task = "test:host-process:dependent-replacement" },

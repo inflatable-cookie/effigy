@@ -873,15 +873,21 @@ fn managed_host_dependent_replacement_preserves_routes_and_scope_teardown() {
     for (index, result) in startup_results.iter().enumerate() {
         if !result.status.success() {
             let (checkout, profile, ..) = &checkouts[index];
-            let log_path = checkout
+            let runtime = checkout
                 .join(".effigy/runtime/host-processes/web")
-                .join(profile)
-                .join("app.log");
-            println!(
-                "managed listener startup log for {profile}: {}",
-                fs::read_to_string(log_path)
-                    .unwrap_or_else(|error| format!("unavailable: {error}"))
-            );
+                .join(profile);
+            for name in [
+                "app.log",
+                "app.listener.json",
+                "consumer.log",
+                "consumer.listener.json",
+            ] {
+                println!(
+                    "managed listener startup diagnostic for {profile}/{name}: {}",
+                    fs::read_to_string(runtime.join(name))
+                        .unwrap_or_else(|error| format!("unavailable: {error}"))
+                );
+            }
         }
     }
     let reports = startup_results
