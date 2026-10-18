@@ -20,6 +20,22 @@
 "check:graph" = "cargo check -p effigy-codegraph -p effigy-cli -p effigy-manifest -p effigy-routing -p effigy-builtin -p effigy --all-targets --profile test"
 "lint:graph" = "cargo clippy -p effigy-codegraph -p effigy-cli -p effigy-manifest -p effigy-routing -p effigy-builtin -p effigy --all-targets -- -D warnings"
 
+# Kernel foundation: bounded, disjoint proof families; no engine adoption.
+"test:kernel:identity" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --test foundation -E 'test(identity_)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
+"test:kernel:context" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --test foundation -E 'test(context_)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
+"test:kernel:observed" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --test foundation -E 'test(observation_)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
+"test:kernel:outcome" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --test foundation -E 'test(outcome_)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
+"test:kernel:platform" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib --test platform --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
+"test:kernel:classes" = { run = "cargo test -p effigy-kernel --doc", timeout_ms = 120000 }
+"test:kernel:ratchet" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --test ratchet --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
+"check:kernel" = [{ task = "check:kernel:compile" }, { task = "check:kernel:clippy" }]
+"check:kernel:compile" = { run = "cargo check -p effigy-kernel --all-targets --features fault-injection", timeout_ms = 600000 }
+"check:kernel:clippy" = { run = "cargo clippy -p effigy-kernel --all-targets --features fault-injection -- -D warnings", timeout_ms = 600000 }
+"fmt:kernel" = "cargo fmt -p effigy-kernel"
+"qa:kernel-ratchet" = { run = "cargo run -p effigy-kernel --example kernel-ratchet", timeout_ms = 600000 }
+# Explicit baseline maintenance; ordinary QA never rewrites the baseline.
+"qa:kernel-ratchet:baseline" = { run = "cargo run -p effigy-kernel --example kernel-ratchet -- --inventory", timeout_ms = 600000 }
+
 # Common local commands
 "fmt:check" = "cargo fmt --all -- --check"
 "fmt:apply" = "cargo fmt --all"
@@ -1264,6 +1280,7 @@
   "cargo test -p effigy exec_readiness_recovery_ -- --nocapture",
 ]
 "qa:architecture" = [
+  { task = "qa:kernel-ratchet" },
   { task = "qa:architecture:runtime-container-drift" },
   { task = "qa:architecture:container-exec-readiness" },
 ]

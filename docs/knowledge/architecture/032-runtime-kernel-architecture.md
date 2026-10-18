@@ -1,7 +1,8 @@
 # 032 - Runtime Kernel Architecture
 
 Contract: [052](../contracts/052-runtime-kernel-contract.md)
-Status: proposed. No `effigy-kernel` crate exists. This note places the
+Status: foundation crate and QA ratchet implemented; runtime primitives and
+engine adoption remain specified. This note places the
 kernel in the codebase, names the processes it runs, and orders the kernel
 lane's implementation cuts. Contract 052 owns every rule and primitive; this
 note adds no semantics.
@@ -25,7 +26,7 @@ Dependency rules, enforced by `qa:architecture`:
 
 | From | May depend on | Must not depend on |
 | --- | --- | --- |
-| `effigy-kernel` | std, `libc`, `rusqlite` (bundled), `serde`, `serde_json`, `sha2` | any other Effigy crate; Tokio; any adapter |
+| `effigy-kernel` | std, `libc`, `rusqlite` (bundled), `serde`, `serde_json`, `sha2`, `unicode-normalization` (NFC identity fields) | any other Effigy crate; Tokio; any adapter |
 | adapters | `effigy-kernel` | engines, the façade |
 | engines | `effigy-kernel`, adapter traits | the façade, other engines' internals |
 | façade | engines | kernel internals beyond `Outcome` and contexts |
@@ -171,3 +172,44 @@ Engine migrations belong to the engine lanes and start only after cut 7.
 - Contracts [005](../contracts/005-container-runtime-contract.md) and
   [049](../contracts/049-heavy-validation-admission-contract.md) describe
   current behavior until their engine lanes reconcile them with 052.
+
+## Foundation API and QA
+
+Identity constructors consume resolved coordinates; selector grammar stays in
+engines. Catalog coordinates normalize separators and dot components without
+escaping the checkout. Unicode fields normalize to NFC with
+`unicode-normalization`. Encoding v1 tags follow the enum order in §5.1, from
+zero; checkout and run key tokens are lowercase hex and lowercase base32 text,
+respectively. The fixed canonical-bytes and gate-name table lives in
+`crates/effigy-kernel/tests/fixtures/identity-v1.json`.
+
+A `ResolvedInvocation` owns immutable resolved facts. Its digest covers the
+`effigy.invocation` NUL/version-1 prefix and the serialized `InvocationSpec`
+field order, with sorted maps, canonical gate order and raw Unix argv bytes.
+Plan, execution and status consume this same object. Outcome next commands
+require an engine-supplied parser at construction; kernel code contains no
+command grammar. Observe capabilities expose bounds and checks only, with no
+conversion back into an effect context. Runtime Gate/Store/Custody compile-fail
+proofs follow their primitives; foundation compile-fail tests exercise their
+required effect-capability boundary now.
+
+The crate is a Cargo default member alongside the façade, so existing macOS
+and Linux CI test jobs select its platform proofs. No engine depends on it yet.
+`test:kernel:<area>` selectors own the narrow proof families; `check:kernel`
+compiles all kernel targets and runs strict clippy. The `fault-injection`
+feature's observation hook exists only under `cfg(test)`.
+
+The ratchet's `syn`/`proc-macro2` parser and `tempfile` fixture dependencies are QA-only dev
+dependencies, never runtime dependencies. It parses source without host cfg
+expansion so platform-specific constructs are included on either host. It
+resolves imports and local receivers, inspects macro arguments, propagates
+state-path ownership through ordinary external module ancestors, and keeps
+`cfg(test)` items and `tests/` trees separate. State writes are gated in modules
+containing `.effigy` path literals or Effigy-home builders. Unparseable Rust or
+source symlinks fail the scan. Production file/construct counts must match the
+baseline exactly; a legitimate reduction lowers the baseline in that change.
+`qa:kernel-ratchet:baseline` explicitly regenerates the inventory for review;
+ordinary `qa:kernel-ratchet` never changes it. The ratchet tests include an
+added raw command against the real baseline and controls for rises, new pairs
+and unrecorded falls. This activates the baseline against the existing engines
+without migrating any of them.

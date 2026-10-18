@@ -1,6 +1,8 @@
 [workspace]
+default-members = [".", "crates/effigy-kernel"]
 exclude = ["crates/effigy-parent-fixtures-*"]
 members = [
+    "crates/effigy-kernel",
     "crates/effigy-bootstrap",
     "crates/effigy-artifacts",
     "crates/effigy-builtin",
