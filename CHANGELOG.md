@@ -312,6 +312,26 @@ During v0.x, MINOR bumps may include breaking changes.
   1.2.0.
 
 ### Fixed
+- A live managed headless run keeps its session record for its whole life:
+  the record is written atomically before the first child starts and updated
+  on every recorded state change, and it is never deleted while the owner is
+  alive. When the record is missing or unreadable under a live run anyway,
+  `effigy <task> status`, `logs` and `stop` still work: they find the owner
+  through its task/profile locks and run token, report from the locks and log
+  files, and deliver the stop through the same request the owner watches, so
+  a `dev:container`-style warm-up can always be inspected and stopped. The
+  controls refuse only when no live run of that task and profile exists, and
+  every start hint names the actual task and profile instead of a hardcoded
+  `effigy dev --headless`.
+- The container exec-readiness recovery restart never fires while a live
+  managed run of the checkout is bound to the same environment and exec'ing
+  into the primary service: a restart would SIGKILL every exec'd process at
+  once (the mass exit-137 signature). The recovery keeps probing with the
+  post-restart window and then refuses, naming the live run, without
+  restarting or recreating anything. Only a stopped run restores restart
+  authority. Found with the Acowtancy v0.15.0 qualifying proof (#634), whose
+  warm-up lost all three container execs to a same-instant teardown of the
+  workspace while the run was live.
 - Managed headless and TUI stop lets the owner order remote and host child shutdown,
   exits successfully after earlier workload failures, and runs the bound
   environment cleanup even when the managed runtime failed. Stop checks the
