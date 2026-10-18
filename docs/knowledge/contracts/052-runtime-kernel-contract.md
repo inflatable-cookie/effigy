@@ -1705,8 +1705,8 @@ host, so overlapping app roles and shared data claims conflict there (§5.9).
 ### 8.8 Terminal enrolment
 
 Direct `docker exec` and editor terminals in the workspace container are
-enrolled automatically. Tom confirmed this on 2026-10-18, after the brief
-was written; lane document `v015-workspace-client` v2 records the ruling.
+enrolled automatically. The ruling record is the `v015-workspace-client`
+lane's, not this contract's.
 
 - Workspace Prepare installs a narrow enrolment credential, 0600 for the
   workspace user in guest-private storage (`/run/effigy/enrol/`), as a
