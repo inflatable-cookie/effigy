@@ -1161,6 +1161,13 @@ mod tests {
         wait_for_state(&harness.state_path(), "started", 10);
         wait_for_state(&harness.state_path(), "ready", 10);
         let up_at = harness.invocations().find("up --detach").expect("up ran");
+        // The ready banner and the status invocation are a few prints apart:
+        // give the script a bounded moment to reach it under load.
+        let status_deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !harness.invocations().contains("status") {
+            assert!(std::time::Instant::now() < status_deadline, "status ran");
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
         let status_at = harness.invocations().find("status").expect("status ran");
         assert!(up_at < status_at);
         child.kill().expect("stop lifecycle script");
