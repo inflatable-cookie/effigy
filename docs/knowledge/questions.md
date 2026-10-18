@@ -104,15 +104,35 @@ Catalogs is superseded and is rewritten by the implementing change.
 
 ## Q-006 — Heavy tasks
 
-Status: open
+Status: answered
 Asked: 2026-10-18
+Answered: 2026-10-18 by Tom
 
-Agreed so far (Tom, 2026-10-18):
+Effigy offers generic heavy-task controls that any orchestrator may use, with
+no commitment to a particular workflow. Tom: "We need a solution where heavy
+tasks have generic controls that nucleus can choose to interact with if it
+needs to, without any commitment to any particular workflow in effigy".
+Encoding an orchestrator command into Effigy configuration was rejected
+because it "may only exist on one machine".
 
-- A task is heavy only when it is marked `admission = "heavy"` and the host has
-  opted in.
-- The `qa`/`ci`/`ci:fresh` name rule goes.
-- Host-wide scheduling is not in Effigy's scope.
+- **Classification.** A task may declare `admission = "heavy"`. It changes no
+  behaviour by itself and is exposed in `tasks --json` and `--plan --json`.
+  Heavy is the only class for now; the schema stays open for more.
+- **Gate hook.** When `EFFIGY_ADMISSION_HOOK` is set in the environment, by
+  whoever launched the agent or shell, Effigy calls it before a heavy run with
+  a small JSON request (run id, task, class, cwd). It waits, bounded, for admit
+  or deny, and holds the admission until the run ends. Nested calls receive an
+  opaque admitted marker and don't queue twice. With no hook set, heavy tasks
+  run normally. An environment variable is the only mechanism, because it
+  reaches agent-typed and nested invocations, which a flag cannot (Tom:
+  "Whichever is cleanest").
+- **Run control.** Every run, heavy or not, gets generic identity and control
+  from the kernel run journal: a caller-chosen `--run-id` idempotency key,
+  `runs` / `run status`, `run logs --follow` and `run stop`.
 
-Open: what remains of heavy-task handling, if anything, and what shape it
-takes.
+Retired with this: the Queue/Nucleus host-run client (`src/runner/host_scheduler`,
+`effigy-host-run`), parent tokens, scheduler override, exit codes 75 and 77,
+`--host-run-request-id` and `tasks request status|follow`, the `qa`/`ci`/`ci:fresh`
+name rule, and contract
+[049](contracts/049-heavy-validation-admission-contract.md)'s Effigy-side
+client obligations.
