@@ -425,6 +425,58 @@ fn managed_matrix_process_liveness_distinguishes_live_and_unreaped_children() {
     assert!(exited, "unreaped exited child must count as ended");
 }
 
+/// A recorded exec workload need not lead its group (notably with Linux
+/// shells/setsid). Fake down must model container death for that PID too.
+#[test]
+fn managed_matrix_down_ends_recorded_non_group_leader_workload() {
+    let private = tempfile::tempdir().expect("private fake-down fixture");
+    let root = private.path();
+    fs::create_dir(root.join("engine")).expect("engine");
+    fs::write(root.join("matrix-adapter.py"), ADAPTER).expect("adapter");
+    let mut command = Command::new("sh");
+    command
+        .args(["-c", "sleep 3600 & printf '%s\\n' \"$!\" > work.pid; wait"])
+        .current_dir(root)
+        .process_group(0);
+    let owner = ManagedSupervisor(command.spawn().expect("private process group"));
+    let marker = root.join("work.pid");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !marker.exists() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(10));
+    }
+    let pid = fs::read_to_string(marker)
+        .expect("recorded child")
+        .trim()
+        .parse::<u32>()
+        .expect("PID");
+    assert!(owned_process_is_live(pid));
+    assert_ne!(
+        nix::unistd::getpgid(Some(nix::unistd::Pid::from_raw(pid as i32)))
+            .expect("group")
+            .as_raw(),
+        pid as i32
+    );
+    let down = Command::new("python3")
+        .arg(root.join("matrix-adapter.py"))
+        .args(["down", "matrix-stack"])
+        .env("MATRIX_ROOT", root)
+        .output()
+        .expect("fake down");
+    assert!(down.status.success(), "{:?}", down);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while owned_process_is_live(pid) && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(10));
+    }
+    let ended = !owned_process_is_live(pid);
+    // End/reap our private group even when exercising the broken adapter, so
+    // a failing regression proof never leaves its deliberately detached work.
+    drop(owner);
+    assert!(
+        ended,
+        "fake down missed a live workload whose PID differs from its PGID"
+    );
+}
+
 fn scheduler_root() -> OsString {
     std::env::var_os("EFFIGY_HOST_RUN_ROOT").unwrap_or_else(|| {
         PathBuf::from(std::env::var_os("HOME").expect("scheduler home"))
@@ -622,15 +674,18 @@ fn managed_matrix_failed_stop_recovers_both_start_surfaces() {
 const ADAPTER: &str = r#"import sys,os,json,pathlib,subprocess,time,signal
 root=pathlib.Path(os.environ['MATRIX_ROOT']);state=root/'engine';args=sys.argv[2:];op=sys.argv[1]
 def kill_recorded():
- for p in root.glob('*.pid'):
-  try:
-   pid=int(p.read_text());os.killpg(pid,signal.SIGTERM)
-  except (ProcessLookupError,ValueError): pass
- time.sleep(.1)
- for p in root.glob('*.pid'):
-  try: os.killpg(int(p.read_text()),signal.SIGKILL)
-  except (ProcessLookupError,ValueError): pass
-  p.unlink(missing_ok=True)
+ records=list(root.glob('*.pid'))
+ # A real container down ends every workload, including non-group leaders.
+ # Keep group termination for descendants, but always signal the PID too.
+ for sig in (signal.SIGTERM,signal.SIGKILL):
+  for p in records:
+   try: pid=int(p.read_text())
+   except (FileNotFoundError,ValueError): continue
+   for send in (os.killpg,os.kill):
+    try: send(pid,sig)
+    except ProcessLookupError: pass
+  if sig==signal.SIGTERM: time.sleep(.1)
+ for p in records: p.unlink(missing_ok=True)
 if op=='down':
  if (state/'deny-down').exists(): sys.exit(71)
  if (state/'slow-down').exists(): time.sleep(float((state/'slow-down').read_text()))
