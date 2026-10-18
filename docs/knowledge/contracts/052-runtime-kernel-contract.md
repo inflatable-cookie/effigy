@@ -80,7 +80,7 @@ hidden internal entry points: `__kernel-supervise`, `__kernel-sentinel` and
 | Residue | An effect settle could not prove released. |
 | Settled | `Closed` with `Complete` cleanup. |
 | Resolved | Settled, or `Closed` with residue an operator explicitly acknowledged. Anything else is unresolved. |
-| Probe guard | A per-probe helper that owns an observation subprocess, bounded by its deadline, and writes nothing. |
+| Probe guard | A per-observer helper that backs up the observer's custody of its probe subprocesses. It writes nothing. |
 | Observed | `Verified`, `Absent` (with proof) or `Unknown` (with reason). |
 
 ## 3. Decisions where the audit designs differ
@@ -128,7 +128,7 @@ names the rule or invariant it relies on.
 | K3 | **Intent first.** No external effect without a committed intent. `Admitted` commits before the first effect of a run, including setup steps, env-schema commands, gateway ensure and spawn. Observation probes are not effects: they change nothing Effigy owns and run under a probe guard, never a journal (§5.11). | A child, container, route or file effect with no prior journal entry; publication before bind. |
 | K4 | **One settle.** One settle implementation, run only by the owner gate's holder, in reverse effect order. It is idempotent and resumable. | Two teardown authorities for one effect; cleanup only on the success path; settle reconstructed from directory scans. |
 | K5 | **One unresolved run per owner.** `Run::begin` admits a run only when every earlier run of its owner is settled, or that run's remaining residue was explicitly acknowledged. A non-closed predecessor is settled first; a `Closed` predecessor with `Incomplete` cleanup gets a settle retry first. | A successor running beside a predecessor's unsettled record or unacknowledged residue. |
-| K6 | **Custody closure.** No Effigy-spawned process outlives its run's settle, and no probe outlives its deadline plus grace. The owner exists before the first spawn. A spawn barrier prevents an unrecorded workload. Partial spawns roll back. Process groups are retained through stream close. Signals need positive generation evidence (I-P4). | Orphans after SIGTERM, SIGHUP or owner SIGKILL; leader exit read as group closure; client exit read as remote closure; a group or session signalled because its number is in use. |
+| K6 | **Custody closure.** No Effigy-spawned process outlives its run's settle. No probe outlives its deadline plus grace while its observer or its guard lives (§5.11). The owner exists before the first spawn. A spawn barrier prevents an unrecorded workload. Partial spawns roll back. Process groups are retained through stream close. Signals need positive generation evidence (I-P4). | Orphans after SIGTERM, SIGHUP or owner SIGKILL; leader exit read as group closure; client exit read as remote closure; a group or session signalled because its number is in use. |
 | K7 | **Fencing.** Every effect, request and callback carries `(ResourceId, Generation)`. A stale generation is refused. | A stale stop stopping a successor; a late callback deleting a successor's route. |
 | K8 | **Bounded.** Every kernel wait takes a deadline. Expiry cancels at a safe boundary and never detaches a writer. Only declared workload lifetimes are open-ended. | A `starting` loop that skips its deadline; curl without a time limit; a detached writer killed mid-transaction. |
 | K9 | **One signal router.** One router per process, installed in `main` before any spawn. Libraries take a cancel token and never install handlers. HUP, INT and TERM are handled. | A library swallowing INT or TERM; HUP killing an owner with no cascade. |
@@ -811,8 +811,8 @@ kernel restores it on exit.
 #### Proof
 
 - SIGINT, SIGTERM, SIGHUP and SIGKILL to the client, crossed with plain,
-  sequence, managed and container runs: no fixture-tagged process survives
-  settle.
+  sequence, managed and container runs: settle reports `Complete` and no
+  fixture-tagged process survives (O1a).
 - A failure spawning child 2 of 3 leaves no survivor and reports both errors.
 - A descendant that ignores TERM and keeps the stdout pipe open is killed,
   and capture ends at its drain deadline.
@@ -885,8 +885,8 @@ after `Admitted` whenever a run's custody is non-empty, in either placement.
 
 - I-SV1: one supervisor per detached run. It is the run's only writer.
 - I-SV2: per-run processes live exactly as long as their run plus its settle;
-  probe guards live as long as one probe. There is no resident daemon other
-  than the user gateway.
+  a probe guard lives as long as its observer's open probes. There is no
+  resident daemon other than the user gateway.
 - I-SV3: front ends (TUI, attached text, detached) read the same events and
   logs. A front end never changes topology or semantics (K11).
 - I-SV4: the supervisor and sentinel re-exec the binary identified at
@@ -1131,7 +1131,7 @@ pub enum AbsenceProof {
 
 pub enum UnknownReason {
     TimedOut { phase: String }, PermissionDenied, ToolUnavailable(String),
-    Unparsable(String), Inconsistent(String), Injected,
+    Unparsable(String), Inconsistent(String), GuardUnavailable, Injected,
 }
 
 pub trait Probe {
@@ -1172,21 +1172,42 @@ all produce an `ObserveContext`; Observe commands get nothing else.
 | Network | `connect`: local TCP connect, HTTP `GET` or `HEAD` without a body, Unix control sockets, DNS to the gateway; targets come from the resolved invocation, the store or endpoint claims; bounded response and per-attempt deadline | source acquisition (fetch, clone, pull), any other method, any target not derived from Effigy state |
 | Files and state | read-only opens; gate probes | any write, gate acquisition, store transaction |
 
-Probe guard protocol:
+Probe custody. The observer is the probe's parent and primary owner. One
+`__kernel-probe-guard` per observing process (the same binary, in its own
+process group, connected by a pipe) is the backup owner. Neither relies on a
+parent-death signal, which covers only the immediate child and is cleared on
+fork.
 
-| Step | Action | If the observer dies |
-| --- | --- | --- |
-| 1 | The observer spawns `__kernel-probe-guard` (the same binary) in a new process group, holding a pipe to it. | The guard reads EOF and exits. |
-| 2 | The guard spawns the probe in its own process group and keeps it unreaped. On Linux the probe also gets `PR_SET_PDEATHSIG` with the single-threaded guard as parent. | The guard kills the probe group, reaps, exits. |
-| 3 | The guard relays bounded output and kills the probe group at the deadline. | as step 2 |
-| 4 | The guard reports exit and closure, then exits. | — |
+| Step | Observer | Guard | If one dies at this step |
+| --- | --- | --- | --- |
+| 1 | On its first probe, spawn the guard. | Wait for registrations. | — |
+| 2 | Fork the probe into a new process group, blocked on a spawn barrier. Its environment carries `EFFIGY_PROBE_NONCE`, which names the observer's and the guard's pid and start identity, plus a sequence number. | — | Observer dies: the probe reads barrier EOF and exits without executing. |
+| 3 | Send the probe's pid, group, start identity, nonce and deadline to the guard. | Record them in memory; acknowledge. | No acknowledgement: the observer kills the unexecuted probe and returns `Unknown(GuardUnavailable)`. |
+| 4 | On the acknowledgement, release the barrier. The probe executes. | — | — |
+| 5 | Keep the leader unreaped, which pins the group number. Relay bounded output, kill the group at the deadline, verify closure, reap, then tell the guard the probe closed. | At the deadline plus grace, stop any registered probe still open: the backup for a hung or stopped observer. | Guard dies: the observer still owns and stops the probe; the outcome carries a warning. Observer dies: the guard reads EOF and stops every registered open probe. |
+
+The guard is not the probe's parent, so it stops a probe by the recovery
+rule of I-P4. It signals the group only while the leader is alive with the
+registered start identity (on Linux, through a pidfd). Otherwise it signals
+members individually, only where the member carries the probe nonce and
+started no earlier than the registration. Anything else is left alone.
+
+If the observer and the guard both die, the probe is outside custody. Its
+nonce names two owners whose absence the kernel can prove, so the kernel's
+maintenance step (Mutate class or the explicit maintenance command, never
+Observe) stops such processes by nonce and start time.
+
+| Who lives | Bound on a probe and its descendants |
+| --- | --- |
+| Observer | the probe deadline: the observer kills the pinned group |
+| Guard only | the probe deadline plus grace: the guard stops it by leader identity or nonce |
+| Neither | the next maintenance step on this host |
 
 Reconciliation with K3 and R2. A probe is not an effect: it changes nothing
 Effigy owns and uses only non-mutating commands and requests, so it needs no
 intent (K3) and leaves Observe pure (R2), with no file, store, gate or
-journal write. Its custody is the guard's and ends at the probe deadline plus
-a fixed grace, even if the observer is SIGKILLed (K6). Contexts of every
-other class use the same two calls for their probes.
+journal write. The registration lives only in the guard's memory. Contexts
+of every other class use the same two calls for their probes.
 
 #### Invariants
 
@@ -1195,8 +1216,11 @@ other class use the same two calls for their probes.
 - I-O2: a probe observes only. It has no write capability and never repairs,
   restarts or allocates. Its processes and I/O go only through
   `probe_process` and `connect`.
-- I-O6: no probe process outlives its deadline plus grace. Probe commands are
-  declared by adapters as non-mutating and verified by the read-only fixture.
+- I-O6: a probe executes only after the guard acknowledges its
+  registration. While its observer or its guard lives, no probe process or
+  descendant outlives the deadline plus grace. If both die, maintenance stops
+  it by nonce. Probe commands are declared by adapters as non-mutating and
+  verified by the read-only fixture.
 - I-O3: `wait_all` is one waiter with one deadline over an ordered list.
   Dependencies are typed facts, never sleeps.
 - I-O4: HTTP probes declare expected statuses (default 200–299), with a
@@ -1208,8 +1232,10 @@ other class use the same two calls for their probes.
 
 | Fault | Behavior |
 | --- | --- |
-| Crash, Kill of the observer | The probe guard reads EOF and kills the probe group. Nothing was written, so nothing needs recovery. |
-| Crash, Kill of the guard | On Linux the probe dies with it. On macOS the probe runs to its own bounded completion; status reports the guard loss. |
+| Crash, Kill of the observer | The guard reads EOF and stops every registered open probe by leader identity or nonce. Nothing was written, so nothing needs recovery. |
+| Crash, Kill of the guard | The observer still owns each probe through its unreaped leader and kills the group at the deadline. New probes return `Unknown(GuardUnavailable)` until a new guard acknowledges. |
+| Crash, Kill of both | The probe is outside custody until maintenance stops it by nonce. |
+| SIGSTOP of the observer | The guard stops open probes at the deadline plus grace. |
 | ENOSPC | Probes write nothing. |
 | Probe timeout | `Unknown(TimedOut)`; other findings are still reported. |
 | Tool missing | `Unknown(ToolUnavailable)`. |
@@ -1224,8 +1250,17 @@ other class use the same two calls for their probes.
 - On a permission-denied state root and checkout, a
   `git --no-optional-locks status` probe and an HTTP `GET` probe both
   complete with an empty filesystem diff.
-- SIGKILL of the observer mid-probe leaves no probe process after the
-  deadline plus grace.
+- On macOS and on Linux, each with a probe that hangs and one that forks a
+  descendant which outlives its leader:
+  - guard SIGKILLed: the observer stops the probe and the descendant at the
+    deadline;
+  - observer SIGKILLed: the guard stops both within the deadline plus grace;
+  - observer SIGSTOPped: the guard stops both at the deadline plus grace;
+  - guard dead before acknowledging: the probe never executes, and the
+    result is `Unknown`;
+  - both SIGKILLed: the probe survives until maintenance, which stops it by
+    nonce, while a foreign process with another or no nonce survives.
+- Every probe case leaves an empty filesystem diff.
 
 ### 5.12 `Outcome`
 
@@ -1610,7 +1645,8 @@ A v0.14.1 user updates and everything keeps working with no manual steps
 
 | Oracle | Must hold after recovery |
 | --- | --- |
-| O1 | No fixture-tagged process is alive. |
+| O1a | A run whose cleanup is `Complete` has no owned process alive: nothing in its recorded groups or sessions, and nothing carrying its custody nonce. |
+| O1b | A run whose cleanup is `Incomplete` lists every surviving owned or unidentifiable process as residue, keeps its protections (K5 blocks a successor unless acknowledged; R4 keeps its environment holds), and claims neither `Settled` nor `Succeeded`. A process survives only as listed residue. |
 | O2 | Every run is `Closed`, or reported `interrupted` with a parser-valid next command. |
 | O3 | At most one non-closed run per owner. |
 | O4 | Every gate is free unless a live process holds it. |
@@ -1623,6 +1659,7 @@ A v0.14.1 user updates and everything keeps working with no manual steps
 | O11 | No destructive environment call ran while an attachment existed. |
 | O12 | No signal reached a process without generation evidence (I-P4); foreign fixture processes all survive. |
 | O13 | No run was admitted beside an unresolved predecessor (K5). |
+| O14 | While its observer or its guard lives, no probe process outlives its deadline plus grace (I-O6). |
 
 ### 12.2 Strict fakes
 
@@ -1714,7 +1751,7 @@ to the rule and primitive that makes it structurally impossible.
   `effigy`.
 - No daemon beyond the user gateway, per-run processes (supervisor,
   sentinel) whose lifetime is one run and its settle, and probe guards whose
-  lifetime is one probe.
+  lifetime is their observer's open probes.
 - No exactly-once claims across filesystem, engine or network boundaries.
 - No Compose replacement. The environment boundary stays open under Q-004.
 - No remote execution, plugins, marketplace or Windows support.

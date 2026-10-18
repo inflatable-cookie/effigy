@@ -64,14 +64,15 @@ contexts.
  │   └─ effigy __kernel-supervise  (per run)    │              └──────────────────────────┘
  │        └─ effigy __kernel-sentinel (per run) │
  │ effigy status        observer                │
- │   └─ effigy __kernel-probe-guard (per probe) │
+ │   └─ effigy __kernel-probe-guard (backup)    │
  │ effigy gateway daemon  (user-owned, resident)│
  │ ~/.effigy/state/  kernel.db · gates · sock   │
  └──────────────────────────────────────────────┘
 ```
 
 - The only resident process is the user gateway. Supervisors and sentinels
-  live for one run and its settle; probe guards for one probe.
+  live for one run and its settle; a probe guard for its observer's open
+  probes.
 - Every per-run process re-execs the binary identified at startup.
 - Guests never see `~/.effigy/state`. Only immutable object closures may be
   mounted, read-only, through a backend.
@@ -117,8 +118,10 @@ apply or down → probes → commit applied generation
 
 ```text
 Observe command → ObserveContext only (no EffectContext, Run or journal)
-→ probe_process: __kernel-probe-guard owns the probe group, kills it at the
-  deadline or on observer EOF → bounded output
+→ probe_process: the observer forks the probe behind a barrier, registers it
+  with __kernel-probe-guard, releases it on acknowledgement, keeps the leader
+  unreaped and kills the group at the deadline; the guard stops it on
+  observer death or at the deadline plus grace → bounded output
 → connect: local TCP, HTTP GET or HEAD, control sockets, gateway DNS
 → Outcome; filesystem unchanged
 ```
@@ -147,7 +150,7 @@ Engine migrations belong to the engine lanes and start only after cut 7.
 | 3 | `run`: begin, journal, requests, settle; attachments and claims | journal-boundary kills; concurrent settle; closed-with-residue predecessor before `begin`; permit refusals; attach stalled between permit and apply |
 | 4 | `custody` and `signal`: barrier spawn, `spawn_all`, stop with the unreaped leader, nonce-evidenced recovery stop, router, sentinel, detached supervisor | signal × run-kind kill matrix; partial spawn; reused or foreign process group never signalled; secrets out of argv |
 | 5 | `remote`: adapter contract, wrapper, conformance suite; Docker and nerdctl adapters | conformance on the strict fake, then real-engine qualification |
-| 6 | `probe`: `ObserveContext` capabilities and the probe guard | `Unknown` injection; HTTP status policy; guarded subprocess and HTTP probes on a permission-denied root with an empty diff; observer SIGKILL leaves no probe |
+| 6 | `probe`: `ObserveContext` capabilities and the probe guard | `Unknown` injection; HTTP status policy; guarded subprocess and HTTP probes on a permission-denied root with an empty diff; guard SIGKILL, observer SIGKILL and SIGSTOP, both-dead and descendant cases on macOS and Linux |
 | 7 | `fault` harness and the full oracle suite green | §12.1 oracles over every scenario |
 | 8 | `qa:kernel-ratchet` active with its baseline | the gate fails on a new raw primitive |
 
