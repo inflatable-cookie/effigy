@@ -56,15 +56,17 @@ contexts.
 ## Processes
 
 ```text
- host                                                          guest (Linux container)
- ┌──────────────────────────────────────────────┐              ┌──────────────────────────┐
- │ effigy <task>        inline owner (client)   │──exec──────▶│ workload session (setsid)│
- │   └─ effigy __kernel-sentinel   (per run)    │  in-band ack │   └─ guest effigy (opt.) │
- │ effigy dev           owning client           │◀────────────│      state: guest $HOME  │
- │   └─ effigy __kernel-supervise  (per run)    │              └──────────────────────────┘
- │        └─ effigy __kernel-sentinel (per run) │
- │ effigy status        observer                │
- │   └─ effigy __kernel-probe-guard (backup)    │
+ host                                                          guest (container mode only)
+ ┌──────────────────────────────────────────────┐              ┌───────────────────────────┐
+ │ effigy <task>        inline owner (client)   │──exec──────▶│ workload session (setsid) │
+ │   └─ effigy __kernel-sentinel   (per run)    │  in-band ack │                           │
+ │ effigy dev           owning client           │◀────────────│                           │
+ │   └─ effigy __kernel-supervise  (per run)    │              │                           │
+ │        └─ effigy __kernel-sentinel (per run) │              │                           │
+ │ workspace session    __kernel-supervise      │◀──channel───│ effigy workspace client   │
+ │   └─ channel listener (per session)          │  TLS, pinned │   reads the context       │
+ │ effigy status        observer                │              │   no state, gates or runs │
+ │   └─ effigy __kernel-probe-guard (backup)    │              └───────────────────────────┘
  │ effigy gateway daemon  (user-owned, resident)│
  │ ~/.effigy/state/  kernel.db · gates · sock   │
  └──────────────────────────────────────────────┘
@@ -72,10 +74,14 @@ contexts.
 
 - The only resident process is the user gateway. Supervisors and sentinels
   live for one run and its settle; a probe guard for its observer's open
-  probes.
+  probes. The channel listener lives with its workspace session run.
 - Every per-run process re-execs the binary identified at startup.
-- Guests never see `~/.effigy/state`. Only immutable object closures may be
-  mounted, read-only, through a backend.
+- Guests never see `~/.effigy/state` or the vault. Only immutable object
+  closures may be mounted, read-only, through a backend.
+- In container mode the guest is a workspace client: local reads against a
+  materialised context, every authority request over the host channel, and
+  workloads in the container under host remote custody (contract §8).
+  Hybrid mode has no guest.
 
 ## Flows
 
