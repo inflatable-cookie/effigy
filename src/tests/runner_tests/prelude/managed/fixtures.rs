@@ -27,11 +27,23 @@ proof=@PROOF@
 printf 'docker:%s\n' "$*" >> "$log"
 if [ "$1" = ps ]; then
   case "$*" in
-    *--format*) python3 - "$proof" <<'PYPROOF'
+    *--format*) python3 - "$proof" "$@" <<'PYPROOF'
 import json,sys
 r=json.load(open(sys.argv[1]))
 if r:
- p=r['Config']['Labels']; print(r['Name'].lstrip('/')+'\tUp 1 minute\t\t'+p['com.docker.compose.project']+'\t'+p['com.effigy.checkout']+'\t'+p['com.docker.compose.service']+'\tFalse')
+ p=r['Config']['Labels']; args=sys.argv[2:]
+ for label in ['com.docker.compose.project','com.docker.compose.service']:
+  requested=next((arg.rsplit('=',1)[1] for arg in args if arg.startswith('label='+label+'=')),None)
+  if requested is not None and requested != p.get(label): sys.exit(0)
+ fmt=args[args.index('--format')+1]
+ if '{{.ID}}' in fmt:
+  if '{{.Status}}' in fmt:
+   values=[r['Id'],'Up 1 minute',p['com.docker.compose.oneoff'],p.get('com.docker.compose.project.working_dir',''),p['com.effigy.checkout'],p.get('com.effigy.scope','')]
+  else:
+   values=[r['Id'],p['com.docker.compose.project'],p.get('com.docker.compose.project.working_dir',''),p['com.effigy.checkout'],p.get('com.effigy.scope','')]
+ else:
+  values=[r['Name'].lstrip('/'),'Up 1 minute','',p['com.docker.compose.project'],p['com.effigy.checkout'],p['com.docker.compose.service'],'False']
+ print('\t'.join(values))
 PYPROOF
       ;;
   esac
