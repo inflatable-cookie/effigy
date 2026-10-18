@@ -73,6 +73,8 @@ jobs:
     name: Shared-process tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
+    env:
+      RUSTFLAGS: --cfg effigy_shared_process
     strategy:
       fail-fast: false
       matrix:

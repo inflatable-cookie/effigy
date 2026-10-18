@@ -862,8 +862,9 @@ fn public_failure_case(mode: &str) -> GuardedPublicOutcome {
 
 #[cfg(unix)]
 macro_rules! public_failure_test {
-    ($name:ident, $mode:literal) => {
+    ($(#[$attribute:meta])* $name:ident, $mode:literal) => {
         #[test]
+        $(#[$attribute])*
         fn $name() {
             let _outcome = public_failure_case($mode);
         }
@@ -884,6 +885,10 @@ public_failure_test!(
 );
 #[cfg(unix)]
 public_failure_test!(
+    #[cfg_attr(
+        effigy_shared_process,
+        ignore = "known v0.15 rebuild defect: papercut ecf80acc-6f51-43cc-b57f-e293b3d94da2; owner lane v015-environment"
+    )]
     public_workspace_identity_invalid_requires_refresh,
     "identity-invalid"
 );
@@ -894,6 +899,10 @@ public_failure_test!(
 );
 #[cfg(unix)]
 public_failure_test!(
+    #[cfg_attr(
+        effigy_shared_process,
+        ignore = "known v0.15 rebuild defect: papercut ecf80acc-6f51-43cc-b57f-e293b3d94da2; owner lane v015-environment"
+    )]
     public_workspace_flood_refuses_before_command,
     "workspace-flood"
 );

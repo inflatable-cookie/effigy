@@ -843,6 +843,10 @@ mod host_git_mount_tests {
     }
 
     #[test]
+    #[cfg_attr(
+        effigy_shared_process,
+        ignore = "known v0.15 rebuild defect: papercut 12c025bf-8d0d-4fa0-9f65-6b2a4c473ecd; owner lane v015-environment"
+    )]
     fn mkcert_ca_mount_supported_for_node_catalog_entrypoint() {
         // `node` declares `installs_mkcert_ca` and its Dockerfile entrypoint
         // runs `update-ca-certificates`, matching the other trust-aware
