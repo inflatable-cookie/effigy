@@ -1722,7 +1722,7 @@ fn attach_recovery_refuses_an_unexpected_authority_epoch_without_retry() {
 
 #[test]
 #[cfg_attr(
-    target_os = "macos",
+    all(target_os = "macos", not(effigy_shared_process)),
     ignore = "known v0.15 rebuild defect: papercut 8a44cfa4-235e-4da7-9588-6cc3156c291c; owner lane v015-task-engine"
 )]
 fn cancel_retries_the_same_run_during_endpoint_roll() {
