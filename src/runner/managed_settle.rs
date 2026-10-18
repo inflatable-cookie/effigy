@@ -242,6 +242,46 @@ fn exec_group_marker_count(runtime_dir: &Path) -> usize {
         .unwrap_or(0)
 }
 
+/// Live managed-run lock holders of this checkout: task/profile lock records
+/// carrying a managed run token whose holder is live on this host. This is
+/// the discovery that does not need the session record, so a live owner whose
+/// record is missing is still visible — the same discovery the missing-record
+/// stop settles through.
+pub(in crate::runner) fn live_managed_lock_holders(repo_root: &Path) -> Vec<TaskLockHolder> {
+    task_lock_holders(repo_root)
+        .into_iter()
+        .filter(|holder| holder.scope.starts_with("task:") || holder.scope.starts_with("profile:"))
+        .filter(|holder| holder.managed_run_token.is_some())
+        .filter(|holder| pid_record_is_comparable_here(holder.hostname.as_deref()))
+        .filter(|holder| effigy_managed::runtime::managed_owner_is_running(holder.pid))
+        .collect()
+}
+
+/// Refuse a judged-failed generation's recovery teardown while a live
+/// process still holds one of its run-token locks: the owner may have been
+/// misjudged dead through a stale or missing record, and tearing the
+/// environment down would SIGKILL everything it is exec'ing into.
+pub(in crate::runner) fn refuse_recovery_while_token_live(
+    repo_root: &Path,
+    token: &str,
+) -> Result<(), RunnerError> {
+    let holders = live_managed_lock_holders(repo_root)
+        .into_iter()
+        .filter(|holder| holder.managed_run_token.as_deref() == Some(token))
+        .collect::<Vec<_>>();
+    if holders.is_empty() {
+        return Ok(());
+    }
+    let named = holders
+        .iter()
+        .map(|holder| format!("`{}` (pid {})", holder.scope, holder.pid))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Err(RunnerError::task_invocation(format!(
+        "managed run token `{token}` is judged failed, but its task locks are still held by live process(es) {named}; the recovery teardown was refused because the run may still be live. Stop it with `effigy <task> stop` first"
+    )))
+}
+
 /// One process row of a missing-record status/logs view, named by its log
 /// file (`NN-<name>.log`) because the record that carried its PID is gone.
 struct LockViewProcess {
@@ -451,5 +491,76 @@ mod tests {
         assert!(!pid_record_is_comparable_here(Some(
             "not-this-host-namespace"
         )));
+    }
+
+    fn write_holder_lock(repo_root: &Path, pid: u32, token: &str, hostname: Option<&str>) {
+        let locks = repo_root.join(".effigy/locks");
+        std::fs::create_dir_all(&locks).expect("locks dir");
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_millis();
+        let hostname = hostname
+            .map(|host| format!(r#""hostname":"{host}","#))
+            .unwrap_or_default();
+        std::fs::write(
+            locks.join("task-dev.lock"),
+            format!(
+                r#"{{"scope":"task:dev","pid":{pid},"started_at_epoch_ms":{now},{hostname}"managed_run_token":"{token}"}}"#
+            ),
+        )
+        .expect("holder record");
+    }
+
+    /// A judged-failed generation whose run-token locks are still held by a
+    /// live process must not be torn down: the dead-owner judgment can be
+    /// wrong through a stale or missing record.
+    #[test]
+    fn recovery_teardown_refuses_while_token_locks_are_live() {
+        let private = tempfile::tempdir().expect("recovery refusal fixture");
+        write_holder_lock(private.path(), std::process::id(), "managedrun-live", None);
+        let error = refuse_recovery_while_token_live(private.path(), "managedrun-live")
+            .expect_err("live holder must refuse the recovery teardown");
+        let rendered = error.to_string();
+        assert!(rendered.contains("managedrun-live"), "{rendered}");
+        assert!(rendered.contains("task:dev"), "{rendered}");
+        assert!(rendered.contains("refused"), "{rendered}");
+
+        // A different token's live holder does not block this recovery.
+        refuse_recovery_while_token_live(private.path(), "managedrun-other")
+            .expect("another token's holder is not this generation");
+    }
+
+    #[test]
+    fn recovery_teardown_proceeds_for_actually_dead_holders() {
+        let private = tempfile::tempdir().expect("dead holder fixture");
+        write_holder_lock(private.path(), 999_999_999, "managedrun-dead", None);
+        refuse_recovery_while_token_live(private.path(), "managedrun-dead")
+            .expect("a dead holder grants teardown authority");
+    }
+
+    /// The live-owner discovery sees a live holder through its run token even
+    /// when its session record is missing.
+    #[test]
+    fn live_managed_lock_holders_sees_live_token_holders() {
+        let private = tempfile::tempdir().expect("discovery fixture");
+        write_holder_lock(
+            private.path(),
+            std::process::id(),
+            "managedrun-live",
+            Some("not-this-host-namespace"),
+        );
+        assert!(
+            live_managed_lock_holders(private.path()).is_empty(),
+            "a foreign-host holder names no local process"
+        );
+        write_holder_lock(private.path(), std::process::id(), "managedrun-live", None);
+        let holders = live_managed_lock_holders(private.path());
+        assert_eq!(holders.len(), 1);
+        assert_eq!(holders[0].scope, "task:dev");
+        assert_eq!(
+            holders[0].managed_run_token.as_deref(),
+            Some("managedrun-live")
+        );
     }
 }

@@ -375,6 +375,14 @@ pub(in crate::runner) fn run_managed_task(
                 &plan.profile,
                 &policy.name,
             )? {
+                // Never tear an environment down while a process of the
+                // judged-failed generation still holds a run-token lock: the
+                // dead-owner judgment can be wrong through a stale or missing
+                // record, and the down would SIGKILL a live run's execs.
+                crate::runner::managed_settle::refuse_recovery_while_token_live(
+                    &repo_for_task,
+                    &token,
+                )?;
                 // Preserve partial-admission drift protection before any down.
                 // A completed admission may adopt changed inputs by its existing
                 // rule; a recorded partial must still match its original inputs.

@@ -755,6 +755,13 @@ fn partial_activation_reconcile_pending(
     let failed_runs =
         effigy_managed::runtime::failed_managed_run_tokens(repo_root, &plan.policy.name);
     if !failed_runs.is_empty() {
+        // Never tear the environment down while a process of a judged-failed
+        // generation still holds its run-token locks: the dead-owner judgment
+        // can be wrong through a stale or missing record, and the down would
+        // SIGKILL a live run's execs.
+        for token in &failed_runs {
+            crate::runner::managed_settle::refuse_recovery_while_token_live(repo_root, token)?;
+        }
         // Input admission above precedes teardown authority. Down ends any
         // exec groups the dead owner could not end; volumes are kept.
         effigy_containers::exec::verify_owned_stack_for_shutdown(repo_root, &plan.policy)?;

@@ -96,13 +96,23 @@ service passes it. An unlabelled, foreign or wrong-checkout primary is neither
 exec'd nor restarted; the up reports not exec-ready. The shell and task exec
 that follow are gated by that readiness boundary.
 
-The recovery restart never fires while a live managed run of this checkout is
-bound to the same container environment: the run's own children are exec'ing
-into the primary service, and a restart would SIGKILL them (every exec client
-fails at once with exit 137). When the two-second probe finds no readiness and
-such a run is live, Effigy keeps probing with the post-restart window and then
-refuses, naming the live run, without restarting or recreating anything. The
-run being stopped is the only condition that restores restart authority.
+The recovery restart never fires while a live managed run of this checkout
+may be exec'ing into the same container environment: the run's own children
+are exec'ing into the primary service, and a restart would SIGKILL them
+(every exec client fails at once with exit 137). The live-run discovery uses
+session records and, when a run's record is missing or unreadable, its
+task/profile run-token lock holders — the same discovery a missing-record
+stop settles through. When the two-second probe finds no readiness and such
+a run is live, Effigy keeps probing with the post-restart window and then
+refuses, naming the run, without restarting or recreating anything. The run
+being stopped is the only condition that restores restart authority.
+
+A recovery teardown of a judged-failed managed generation (the next managed
+run's pre-up recovery, or a standalone `container up` recovering a recorded
+failure) refuses while any of that generation's run-token locks are still
+held by a live process. A stale or missing session record can make a live
+owner look dead; the refusal names the holders and leaves the environment —
+and everything exec'ing into it — untouched.
 
 An Effigy invocation that already runs inside its own workspace container
 (`EFFIGY_INTERNAL_CONTAINER_HANDOFF=1`) never calls host runtime commands.
