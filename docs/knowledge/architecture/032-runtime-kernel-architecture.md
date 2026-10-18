@@ -253,3 +253,52 @@ commit before and after, and every `atomic_replace` step. `test:kernel:gate`
 and `test:kernel:store` run each traced point with ENOSPC and EPERM in
 process and SIGKILL in a re-executed child, plus the SIGSTOP, two-process
 scope-removal race and path-safety proofs.
+
+## Run, attachment and claim implementation
+
+`run::Run` owns its store handle and owner gate. Admission acquires the
+invocation's gates in canonical order, then drops auxiliary gates before
+recovery or adapter calls (K14). A run ID is supplied by the engine and rejected
+on reuse. The owner generation and `Admitted` row commit together. Recovery
+uses the same settle implementation as normal shutdown; acknowledged residue
+remains visible and is retried before later admissions.
+
+Effect tickets bind a run, owner generation and journal sequence. The typed
+`EffectSpec` envelope in `events.target` contains the target fence, adapter
+payload, settlement and required-obligation flag. Callbacks recheck both owner
+and target generations. `applied` records occurrence; `completed` separately
+records the live owner's natural completion evidence. Only `finish` commits a
+validated workload outcome. Recovery never infers success from an applied
+spawn, absence or a free gate. A failed journal write prevents further effects
+on that handle. Status is a pure projection with an engine-validated next
+invocation for interruption and residue.
+
+`SettlementAdapter` observes exact ownership before release or reconciliation.
+Unknown preserves residue; retained and irreversible effects never call undo.
+Cleanup uses its independent context, writes each result before proceeding,
+and retains the gate through retryable close-commit failures until the cleanup
+budget ends. It preserves the workload outcome when retrying a closed run.
+
+Attachments and claim reservations commit with their journal effects in one
+transaction. Attachment acquisition follows the owner-to-environment canonical
+gate order. An environment transition permit borrows its gated run and checks
+holders again in each intent transaction. The kernel does not exempt an attached
+holder from destructive transitions: the exception is the holder's own release,
+which needs no environment gate. Unresolved external effects retain attachments
+and claims, including after a residue acknowledgement. Release policy stays in
+the environment engine; the recorded attachment mode remains available in the
+effect projection. `Attachments::publish_active` publishes a ready environment's
+applied generation under its owner gate.
+
+Claim reservations protect the complete conflict set. They release atomically
+with their journal result and retain exact reservation tokens through quarantine;
+a release retry cannot change a successor's claim or restart quarantine. Reuse
+requires a released row or positive boot-clock expiry. Pending claims are
+resolved through their owning run's settle, never reclaimed from liveness age.
+
+`test:kernel:run`, `test:kernel:attachments` and `test:kernel:claims` cover these
+primitives. The run suite traces successful and closed-with-residue scenarios,
+then injects SIGKILL, ENOSPC and EPERM at every crossed journal boundary in a
+fresh HOME. Strict fake external objects and durable call/release logs exercise
+O1a/O1b, O2, O3, O5, O11 and O13 at the adapter boundary. Real process-group and
+remote custody closure proofs belong to the custody and fault-harness cuts.

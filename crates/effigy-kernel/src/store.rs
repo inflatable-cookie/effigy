@@ -258,23 +258,33 @@ impl Store {
         cx: &EffectContext,
         f: impl FnOnce(&mut Txn<'_>) -> Result<T, StoreError>,
     ) -> Result<T, StoreError> {
+        self.transaction(cx, f)
+    }
+    /// Kernel primitives keep typed refusals inside the same atomic transaction.
+    pub(crate) fn transaction<T, E: From<StoreError>>(
+        &mut self,
+        cx: &EffectContext,
+        f: impl FnOnce(&mut Txn<'_>) -> Result<T, E>,
+    ) -> Result<T, E> {
         cx.operation()
             .check("store transaction")
             .map_err(StoreError::Interrupted)?;
         self.conn
-            .busy_timeout(busy_timeout(cx.operation().remaining())?)?;
+            .busy_timeout(busy_timeout(cx.operation().remaining())?)
+            .map_err(StoreError::from)?;
         let flag = TxnFlag::enter()?;
         let tx = self
             .conn
-            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(StoreError::from)?;
         let value = f(&mut Txn {
             conn: &tx,
             now: wall_ms(),
         })?;
-        crate::fault_point!(StoreCommitBefore)?;
-        tx.commit()?;
+        crate::fault_point!(StoreCommitBefore).map_err(StoreError::from)?;
+        tx.commit().map_err(StoreError::from)?;
         drop(flag);
-        crate::fault_point!(StoreCommitAfter)?;
+        crate::fault_point!(StoreCommitAfter).map_err(StoreError::from)?;
         Ok(value)
     }
     /// O6: integrity and foreign-key checks.
@@ -321,7 +331,6 @@ impl Store {
         root.dir().sync()?;
         Ok(aside)
     }
-    #[cfg(all(test, feature = "fault-injection"))]
     pub(crate) fn conn(&self) -> &Connection {
         &self.conn
     }
@@ -499,6 +508,9 @@ pub struct StoreReader {
     version: i64,
 }
 impl StoreReader {
+    pub(crate) fn conn(&self) -> &Connection {
+        &self.conn
+    }
     pub fn schema_version(&self) -> i64 {
         self.version
     }

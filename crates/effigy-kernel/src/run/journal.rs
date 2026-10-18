@@ -1,0 +1,131 @@
+//! Journal rows are private to the owner-gated Run API.
+use super::*;
+use crate::store::Txn;
+use rusqlite::{Connection, OptionalExtension};
+
+#[derive(Debug)]
+pub(super) struct RunRecord {
+    pub id: RunId,
+    pub owner: String,
+    pub generation: Generation,
+    pub phase: Phase,
+    pub workload: Option<WorkloadOutcome>,
+    pub acknowledged: bool,
+}
+pub(super) fn run(conn: &Connection, id: RunId) -> Result<RunRecord, RunError> {
+    let row = conn.query_row("SELECT owner,generation,phase,workload_outcome,residue_ack IS NOT NULL FROM runs WHERE run_id=?1",
+        [id.to_string()], |r| Ok((r.get::<_,String>(0)?,r.get::<_,i64>(1)?,r.get::<_,String>(2)?,r.get::<_,Option<String>>(3)?,r.get::<_,bool>(4)?)))?;
+    Ok(RunRecord {
+        id,
+        owner: row.0,
+        generation: Generation::new(row.1 as u64),
+        phase: Phase::parse(&row.2)?,
+        workload: row.3.map(|s| serde_json::from_str(&s)).transpose()?,
+        acknowledged: row.4,
+    })
+}
+pub(super) fn predecessors(
+    conn: &Connection,
+    owner: &ResourceId,
+) -> Result<Vec<RunRecord>, RunError> {
+    // Acknowledged residue remains listed and retried, even after a successor.
+    let mut stmt = conn.prepare("SELECT run_id FROM runs WHERE owner=?1 AND (phase<>'closed' OR cleanup_outcome IS NULL OR cleanup_outcome<>'complete') ORDER BY generation")?;
+    let ids = stmt
+        .query_map([owner.name().to_string()], |row| row.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    ids.iter()
+        .map(|id| {
+            run(
+                conn,
+                id.parse()
+                    .map_err(|e: crate::id::IdentityError| RunError::Store(e.into()))?,
+            )
+        })
+        .collect()
+}
+pub(super) fn check_fence(conn: &Connection, fence: &Fence) -> Result<(), RunError> {
+    let current = conn
+        .query_row(
+            "SELECT generation FROM resources WHERE name=?1",
+            [fence.resource.name().to_string()],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?
+        .map(|value| Generation::new(value as u64));
+    if current != Some(fence.generation) {
+        return Err(RunError::StaleGeneration {
+            expected: fence.clone(),
+            current,
+        });
+    }
+    Ok(())
+}
+pub(super) fn insert_effect(
+    txn: &mut crate::store::Txn<'_>,
+    id: RunId,
+    spec: &EffectSpec,
+) -> Result<i64, RunError> {
+    let record = run(txn.conn(), id)?;
+    if matches!(record.phase, Phase::Stopping | Phase::Closed) {
+        return Err(RunError::Invalid("run is stopping".into()));
+    }
+    let sequence: i64 = txn.conn().query_row(
+        "SELECT coalesce(max(seq),0)+1 FROM events WHERE run_id=?1",
+        [id.to_string()],
+        |r| r.get(0),
+    )?;
+    // target is the versioned typed effect envelope, including engine payload.
+    txn.conn().execute("INSERT INTO events(run_id,seq,effect_id,kind,target,settlement,state,wall_time) VALUES (?1,?2,?3,?4,?5,?6,'intended',?7)",
+        params![id.to_string(),sequence,sequence.to_string(),spec.kind,serde_json::to_string(spec)?,serde_json::to_string(&spec.settlement)?,txn.now()])?;
+    txn.conn().execute("UPDATE runs SET phase=CASE WHEN phase='admitted' THEN 'starting' ELSE phase END,updated_at=?2 WHERE run_id=?1", params![id.to_string(),txn.now()])?;
+    Ok(sequence)
+}
+pub(super) fn effects(conn: &Connection, id: RunId) -> Result<Vec<Effect>, RunError> {
+    let mut stmt = conn.prepare(
+        "SELECT seq,target,state,receipt,error FROM events WHERE run_id=?1 ORDER BY seq",
+    )?;
+    let rows = stmt
+        .query_map([id.to_string()], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, Option<String>>(3)?,
+                r.get::<_, Option<String>>(4)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    rows.into_iter()
+        .map(|(sequence, spec, state, receipt, reason)| {
+            Ok(Effect {
+                sequence,
+                spec: serde_json::from_str(&spec)?,
+                state: serde_json::from_value(Value::String(state))?,
+                receipt: receipt.map(|v| serde_json::from_str(&v)).transpose()?,
+                reason,
+            })
+        })
+        .collect()
+}
+pub(super) fn effect(conn: &Connection, id: RunId, seq: i64) -> Result<Effect, RunError> {
+    effects(conn, id)?
+        .into_iter()
+        .find(|e| e.sequence == seq)
+        .ok_or_else(|| RunError::Invalid("unknown effect ticket".into()))
+}
+pub(super) fn write_effect(
+    txn: &Txn<'_>,
+    id: RunId,
+    seq: i64,
+    state: EffectState,
+    receipt: Option<&Value>,
+    reason: Option<&str>,
+) -> Result<(), RunError> {
+    let state = serde_json::to_value(state)?;
+    let state = state
+        .as_str()
+        .ok_or_else(|| RunError::Invalid("effect state encoding".into()))?;
+    txn.conn().execute("UPDATE events SET state=?3,receipt=coalesce(?4,receipt),error=?5 WHERE run_id=?1 AND seq=?2",
+        params![id.to_string(),seq,state,receipt.map(serde_json::to_string).transpose()?,reason])?;
+    Ok(())
+}

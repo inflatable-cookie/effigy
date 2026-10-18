@@ -1,0 +1,914 @@
+use super::*;
+use crate::ctx::*;
+use crate::id::*;
+use crate::observe::*;
+use crate::outcome::{CleanupOutcome, Warning};
+use std::collections::BTreeMap;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
+
+fn context() -> EffectContext {
+    OperationContext::new(
+        Deadline::At(Instant::now() + Duration::from_secs(30)),
+        CancelToken::default(),
+        Limits {
+            capture_tail: 1024,
+            log_rotate: 4096,
+            log_keep: 2,
+            line_max: 512,
+            queue_bytes: 2048,
+            probe_concurrency: 2,
+        },
+        EffectClass::Mutate,
+        Placement::Host,
+    )
+    .effects()
+    .unwrap()
+}
+fn cleanup(cx: &EffectContext) -> CleanupContext {
+    cx.operation().cleanup(Duration::from_secs(10)).unwrap()
+}
+fn next() -> Invocation {
+    Invocation::validated(vec!["recover".into()], |args| args == ["recover"]).unwrap()
+}
+fn id(n: u8) -> RunId {
+    RunId::new(1, [n; 10]).unwrap()
+}
+fn owner() -> ResourceId {
+    TaskId::new(checkout(), "", Surface::Published, "task", None)
+        .unwrap()
+        .resource()
+}
+fn checkout() -> CheckoutId {
+    CheckoutId::new(CheckoutKind::EphemeralClone, [7; 16])
+}
+fn env() -> ResourceId {
+    ResourceId::environment(checkout(), "stack").unwrap()
+}
+fn inv(owner: ResourceId) -> ResolvedInvocation {
+    ResolvedInvocation::new(InvocationSpec {
+        task: TaskId::new(checkout(), "", Surface::Published, "task", None).unwrap(),
+        route: Route::Task,
+        argv: vec![],
+        cwd: "".into(),
+        target: ExecutionTarget::Host,
+        env: BTreeMap::new(),
+        owner,
+        gates: vec![],
+        attachments: vec![],
+        class: EffectClass::Mutate,
+        placement: Placement::Host,
+        provenance: BTreeMap::new(),
+    })
+    .unwrap()
+}
+fn opts(n: u8) -> BeginOpts {
+    BeginOpts {
+        id: id(n),
+        wait: Wait::FailFast,
+        acknowledge: vec![],
+        next: next(),
+    }
+}
+fn begin<'a>(
+    cx: &EffectContext,
+    root: &'a StateRoot,
+    owner: ResourceId,
+    n: u8,
+    fake: &mut Fake,
+) -> Run<'a> {
+    Run::begin(cx, root, &inv(owner), opts(n), &cleanup(cx), fake).unwrap()
+}
+fn home() -> tempfile::TempDir {
+    tempfile::Builder::new()
+        .prefix("effigy-run-")
+        .tempdir()
+        .unwrap()
+}
+
+/// A strict external-effect adapter: durable objects and a call log, no
+/// permissive fallback. A second application or release panics. Recovery must
+/// observe absence and skip undo after a crash at AdapterAfter.
+#[derive(Debug)]
+struct Fake {
+    home: PathBuf,
+    unknown: bool,
+    fail_release: bool,
+}
+impl Fake {
+    fn new(home: &Path) -> Self {
+        Self {
+            home: home.into(),
+            unknown: false,
+            fail_release: false,
+        }
+    }
+    fn path(&self, effect: &Effect) -> PathBuf {
+        let key = effect.spec.payload.as_str().expect("fake payload key");
+        assert!(!key.contains('/'));
+        self.home.join(key)
+    }
+    fn log(&self, action: &str, key: &str) {
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(self.home.join("calls"))
+            .unwrap();
+        writeln!(file, "{action} {key}").unwrap();
+        file.sync_all().unwrap();
+    }
+    fn calls(&self) -> Vec<String> {
+        std::fs::read_to_string(self.home.join("calls"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    }
+    fn apply(&self, run: &Run<'_>, ticket: &EffectTicket) {
+        assert!(!crate::store::in_transaction());
+        let effect = journal::effect(run.store.conn(), run.id, ticket.sequence).unwrap();
+        assert_eq!(effect.state, EffectState::Intended);
+        let path = self.path(&effect);
+        let mut file = std::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(path)
+            .unwrap();
+        file.write_all(
+            serde_json::to_string(&effect.spec.target)
+                .unwrap()
+                .as_bytes(),
+        )
+        .unwrap();
+        file.sync_all().unwrap();
+        self.log("apply", effect.spec.payload.as_str().unwrap());
+    }
+}
+impl SettlementAdapter for Fake {
+    fn observe(&mut self, effect: &Effect, _: &CleanupContext) -> Observed<Fence> {
+        assert!(!crate::store::in_transaction());
+        if self.unknown {
+            return Observed::Unknown(UnknownReason::Injected);
+        }
+        match std::fs::read(self.path(effect)) {
+            Ok(bytes) => {
+                Observed::Verified(serde_json::from_slice(&bytes).unwrap(), settle::evidence())
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                Observed::Absent(AbsenceProof::NoFile {
+                    name: effect.spec.payload.as_str().unwrap().into(),
+                })
+            }
+            Err(e) => panic!("unconfigured fake error: {e}"),
+        }
+    }
+    fn release(&mut self, effect: &Effect, _: &CleanupContext) -> Observed<()> {
+        assert!(!crate::store::in_transaction());
+        assert!(!self.unknown);
+        if self.fail_release {
+            return Observed::Unknown(UnknownReason::Injected);
+        }
+        std::fs::remove_file(self.path(effect)).expect("exactly one undo");
+        self.log("release", effect.spec.payload.as_str().unwrap());
+        Observed::Verified((), settle::evidence())
+    }
+    fn reconcile(&mut self, effect: &Effect, cx: &CleanupContext) -> Observed<Reconciled> {
+        self.release(effect, cx).map(|()| Reconciled::Released)
+    }
+}
+fn spec(run: &Run<'_>, key: &str, settlement: Settlement) -> EffectSpec {
+    EffectSpec {
+        target: run.fence().clone(),
+        kind: "fake".into(),
+        payload: Value::String(key.into()),
+        settlement,
+        required: true,
+    }
+}
+fn apply(run: &mut Run<'_>, fake: &Fake, key: &str) -> EffectTicket {
+    let ticket = run
+        .intend(spec(run, key, Settlement::Release(Value::Null)))
+        .unwrap();
+    fake.apply(run, &ticket);
+    run.applied(&ticket, Value::Bool(true)).unwrap();
+    run.completed(&ticket, crate::outcome::RequiredObligation::Applied)
+        .unwrap();
+    ticket
+}
+fn active_environment(cx: &EffectContext, root: &StateRoot, fake: &mut Fake) -> Fence {
+    let mut run = begin(cx, root, env(), 90, fake);
+    Attachments::publish_active(&mut run).unwrap();
+    let fence = run.fence().clone();
+    run.finish(WorkloadOutcome::Succeeded).unwrap();
+    run.settle(&cleanup(cx), fake).unwrap();
+    fence
+}
+fn reader(cx: &EffectContext, root: &StateRoot) -> crate::store::StoreReader {
+    match Store::read(&cx.operation().observe().unwrap(), root) {
+        Observed::Verified(reader, _) => reader,
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn run_reverse_settle_is_idempotent_and_preserves_workload_and_observability() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut fake = Fake::new(home.path());
+    let mut run = begin(&cx, &root, owner(), 1, &mut fake);
+    apply(&mut run, &fake, "owned-a");
+    apply(&mut run, &fake, "owned-b");
+    run.finish(WorkloadOutcome::Failed { code: 7 }).unwrap();
+    let mut outcome = run.settle(&cleanup(&cx), &mut fake).unwrap();
+    assert_eq!(outcome.cleanup(), CleanupOutcome::Complete);
+    assert_eq!(outcome.exit_code(), 7);
+    outcome.add_warning(Warning {
+        code: "ENOSPC".into(),
+        message: "status write failed".into(),
+    });
+    assert_eq!(outcome.exit_code(), 7);
+    assert_eq!(
+        fake.calls(),
+        [
+            "apply owned-a",
+            "apply owned-b",
+            "release owned-b",
+            "release owned-a"
+        ]
+    );
+    let retry = settle_interrupted(
+        &cx,
+        &root,
+        &owner(),
+        id(1),
+        next(),
+        &cleanup(&cx),
+        &mut fake,
+    )
+    .unwrap();
+    assert_eq!(retry.workload(), outcome.workload());
+    assert_eq!(retry.cleanup(), outcome.cleanup());
+    assert_eq!(fake.calls().len(), 4);
+}
+#[test]
+fn run_intended_absent_present_unknown_and_superseded() {
+    for mode in ["absent", "present", "unknown", "superseded"] {
+        let home = home();
+        let cx = context();
+        let root = StateRoot::effects(&cx, home.path()).unwrap();
+        let mut fake = Fake::new(home.path());
+        let mut run = begin(&cx, &root, owner(), 1, &mut fake);
+        let ticket = run
+            .intend(spec(&run, "owned", Settlement::Release(Value::Null)))
+            .unwrap();
+        if mode != "absent" {
+            fake.apply(&run, &ticket);
+        }
+        if mode == "superseded" {
+            std::fs::write(
+                home.path().join("owned"),
+                serde_json::to_string(&Fence {
+                    resource: owner(),
+                    generation: Generation::new(99),
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        }
+        fake.unknown = mode == "unknown";
+        drop(run);
+        let result = settle_interrupted(
+            &cx,
+            &root,
+            &owner(),
+            id(1),
+            next(),
+            &cleanup(&cx),
+            &mut fake,
+        )
+        .unwrap();
+        assert_eq!(result.workload(), &WorkloadOutcome::Interrupted);
+        assert_eq!(
+            result.cleanup(),
+            if mode == "unknown" {
+                CleanupOutcome::Incomplete
+            } else {
+                CleanupOutcome::Complete
+            }
+        );
+        assert_eq!(
+            home.path().join("owned").exists(),
+            matches!(mode, "unknown" | "superseded")
+        );
+    }
+}
+#[test]
+fn run_irreversible_retained_and_failed_effects_never_replay() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut fake = Fake::new(home.path());
+    let mut run = begin(&cx, &root, owner(), 1, &mut fake);
+    for (key, settlement) in [
+        ("retain", Settlement::Retain),
+        ("irreversible", Settlement::Irreversible),
+    ] {
+        let ticket = run.intend(spec(&run, key, settlement)).unwrap();
+        fake.apply(&run, &ticket);
+        run.applied(&ticket, Value::Null).unwrap();
+    }
+    let ticket = run
+        .intend(spec(&run, "failed", Settlement::Release(Value::Null)))
+        .unwrap();
+    run.failed(
+        &ticket,
+        AbsenceProof::NoFile {
+            name: "failed".into(),
+        },
+    )
+    .unwrap();
+    assert!(run.finish(WorkloadOutcome::Succeeded).is_err());
+    run.finish(WorkloadOutcome::Failed { code: 2 }).unwrap();
+    let result = run.settle(&cleanup(&cx), &mut fake).unwrap();
+    assert_eq!(result.cleanup(), CleanupOutcome::Complete);
+    assert_eq!(fake.calls(), ["apply retain", "apply irreversible"]);
+}
+#[test]
+fn run_closed_residue_blocks_until_explicit_ack_and_stays_retryable() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut fake = Fake::new(home.path());
+    let mut run = begin(&cx, &root, owner(), 1, &mut fake);
+    apply(&mut run, &fake, "owned");
+    run.finish(WorkloadOutcome::Succeeded).unwrap();
+    fake.unknown = true;
+    let result = run.settle(&cleanup(&cx), &mut fake).unwrap();
+    assert_eq!(result.cleanup(), CleanupOutcome::Incomplete);
+    assert_ne!(result.exit_code(), 0);
+    assert!(
+        matches!(Run::begin(&cx,&root,&inv(owner()),opts(2),&cleanup(&cx),&mut fake),Err(RunError::PredecessorUnsettled { run,.. }) if run==id(1))
+    );
+    let mut acknowledged = opts(2);
+    acknowledged.acknowledge.push(id(1));
+    let run = Run::begin(
+        &cx,
+        &root,
+        &inv(owner()),
+        acknowledged,
+        &cleanup(&cx),
+        &mut fake,
+    )
+    .unwrap();
+    assert_eq!(run.fence().generation, Generation::new(2));
+    assert!(home.path().join("owned").exists());
+    run.settle(&cleanup(&cx), &mut fake).unwrap();
+    fake.unknown = false;
+    let run = begin(&cx, &root, owner(), 3, &mut fake);
+    assert!(!home.path().join("owned").exists());
+    let previous = journal::run(run.store.conn(), id(1)).unwrap();
+    assert_eq!(previous.workload, Some(WorkloadOutcome::Succeeded));
+    assert!(previous.acknowledged);
+    run.settle(&cleanup(&cx), &mut fake).unwrap();
+}
+#[test]
+fn run_interrupted_predecessor_settles_before_admission_and_stale_requests_refuse() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut fake = Fake::new(home.path());
+    let mut run = begin(&cx, &root, owner(), 1, &mut fake);
+    let old = run.fence().clone();
+    apply(&mut run, &fake, "owned");
+    drop(run);
+    let observation = cx.operation().observe().unwrap();
+    let view = reader(&cx, &root);
+    assert!(matches!(
+        status(&observation, &root, &view, id(1), next()),
+        Observed::Verified(RunStatus::Interrupted { .. }, _)
+    ));
+    let run = begin(&cx, &root, owner(), 2, &mut fake);
+    assert!(!home.path().join("owned").exists());
+    assert!(matches!(
+        request(
+            &cx,
+            &root,
+            &Request {
+                id: id(40),
+                run: id(1),
+                expected: old,
+                action: RequestAction::Stop
+            }
+        ),
+        Err(RunError::StaleGeneration { .. })
+    ));
+    request(
+        &cx,
+        &root,
+        &Request {
+            id: id(41),
+            run: id(2),
+            expected: run.fence().clone(),
+            action: RequestAction::Stop,
+        },
+    )
+    .unwrap();
+    assert_eq!(run.requests().unwrap().len(), 1);
+    run.settle(&cleanup(&cx), &mut fake).unwrap();
+}
+#[test]
+fn run_callbacks_and_effects_refuse_stale_generation_and_new_effects_after_stopping() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut fake = Fake::new(home.path());
+    let mut run = begin(&cx, &root, owner(), 1, &mut fake);
+    let mut stale = spec(&run, "stale", Settlement::Retain);
+    stale.target.generation = Generation::new(0);
+    assert!(matches!(
+        run.intend(stale),
+        Err(RunError::StaleGeneration { .. })
+    ));
+    drop(run);
+    let mut run = begin(&cx, &root, owner(), 2, &mut fake);
+    let ticket = run
+        .intend(spec(&run, "owned", Settlement::Release(Value::Null)))
+        .unwrap();
+    // Strictly simulate a delayed callback with the wrong owner generation.
+    let mut stale = ticket.clone();
+    stale.owner.generation = Generation::new(1);
+    assert!(run.applied(&stale, Value::Null).is_err());
+    run.advance(Phase::Stopping).unwrap();
+    assert!(run.intend(spec(&run, "late", Settlement::Retain)).is_err());
+    run.settle(&cleanup(&cx), &mut fake).unwrap();
+}
+#[test]
+fn run_cleanup_uses_independent_token_and_expired_cleanup_never_undoes() {
+    for expired in [false, true] {
+        let home = home();
+        let cx = context();
+        let root = StateRoot::effects(&cx, home.path()).unwrap();
+        let mut fake = Fake::new(home.path());
+        let mut run = begin(&cx, &root, owner(), 1, &mut fake);
+        apply(&mut run, &fake, "owned");
+        cx.operation().cancel_token().cancel(StopCause::Requested);
+        let cleanup = cx
+            .operation()
+            .cleanup(if expired {
+                Duration::ZERO
+            } else {
+                Duration::from_secs(3)
+            })
+            .unwrap();
+        let result = run.settle(&cleanup, &mut fake);
+        if expired {
+            assert!(result.is_err());
+            assert!(home.path().join("owned").exists());
+        } else {
+            assert_eq!(result.unwrap().cleanup(), CleanupOutcome::Complete);
+            assert!(!home.path().join("owned").exists());
+        }
+    }
+}
+#[test]
+fn attachments_live_interrupted_and_unknown_holders_block_every_transition() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut fake = Fake::new(home.path());
+    let env_fence = active_environment(&cx, &root, &mut fake);
+    let mut holder = begin(&cx, &root, owner(), 1, &mut fake);
+    Attachments::attach(&mut holder, &env_fence, AttachMode::Borrow, Wait::FailFast).unwrap();
+    let mut transition = begin(&cx, &root, env(), 91, &mut fake);
+    for _policy in ["down", "failed recovery", "idle stop", "handover"] {
+        assert!(matches!(
+            Attachments::permit(&mut transition),
+            Err(RunError::HeldBy(_))
+        ));
+    }
+    let view = reader(&cx, &root);
+    let observed = cx.operation().observe().unwrap();
+    assert!(
+        matches!(Attachments::holders(&observed,&root,&view,&env()),Observed::Verified(ref holders,_) if matches!(holders[0].liveness,Observed::Verified(Liveness::Live,_)))
+    );
+    drop(holder);
+    assert!(
+        matches!(Attachments::holders(&observed,&root,&view,&env()),Observed::Verified(ref holders,_) if matches!(holders[0].liveness,Observed::Verified(Liveness::Interrupted,_)))
+    );
+    assert!(Attachments::permit(&mut transition).is_err());
+    // Holder settlement requires no environment gate and completes while the
+    // transition keeps that gate. Exactly one attachment release is durable.
+    settle_interrupted(
+        &cx,
+        &root,
+        &owner(),
+        id(1),
+        next(),
+        &cleanup(&cx),
+        &mut fake,
+    )
+    .unwrap();
+    assert!(Attachments::permit(&mut transition).is_ok());
+    assert!(fake.calls().is_empty());
+    transition.settle(&cleanup(&cx), &mut fake).unwrap();
+}
+#[test]
+fn attachments_residue_keeps_holder_and_claim_protection_even_when_acknowledged() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut fake = Fake::new(home.path());
+    let env_fence = active_environment(&cx, &root, &mut fake);
+    let mut holder = begin(&cx, &root, owner(), 1, &mut fake);
+    Attachments::attach(&mut holder, &env_fence, AttachMode::Borrow, Wait::FailFast).unwrap();
+    let data = ResourceId::data("fake", "local", "volume").unwrap();
+    Claims::reserve(&mut holder, std::slice::from_ref(&data), Duration::ZERO).unwrap();
+    apply(&mut holder, &fake, "owned");
+    fake.unknown = true;
+    assert_eq!(
+        holder.settle(&cleanup(&cx), &mut fake).unwrap().cleanup(),
+        CleanupOutcome::Incomplete
+    );
+    let view = reader(&cx, &root);
+    let observed = cx.operation().observe().unwrap();
+    assert!(
+        matches!(Attachments::holders(&observed,&root,&view,&env()),Observed::Verified(ref holders,_) if matches!(holders[0].liveness,Observed::Unknown(_)))
+    );
+    let mut transition = begin(&cx, &root, env(), 91, &mut fake);
+    assert!(Attachments::permit(&mut transition).is_err());
+    let mut other = begin(
+        &cx,
+        &root,
+        ResourceId::gateway("other").unwrap(),
+        3,
+        &mut fake,
+    );
+    assert!(matches!(
+        Claims::reserve(&mut other, &[data], Duration::ZERO),
+        Err(RunError::Conflict(_))
+    ));
+    drop(other);
+    let mut acknowledged = opts(2);
+    acknowledged.acknowledge.push(id(1));
+    let successor = Run::begin(
+        &cx,
+        &root,
+        &inv(owner()),
+        acknowledged,
+        &cleanup(&cx),
+        &mut fake,
+    )
+    .unwrap();
+    assert!(Attachments::permit(&mut transition).is_err());
+    drop(successor);
+    fake.unknown = false;
+    settle_interrupted(
+        &cx,
+        &root,
+        &owner(),
+        id(1),
+        next(),
+        &cleanup(&cx),
+        &mut fake,
+    )
+    .unwrap();
+    assert!(Attachments::permit(&mut transition).is_ok());
+    transition.settle(&cleanup(&cx), &mut fake).unwrap();
+}
+#[test]
+fn attachments_stalled_permit_excludes_concurrent_attach_and_intent_rechecks() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut fake = Fake::new(home.path());
+    let initial = active_environment(&cx, &root, &mut fake);
+    let mut transition = begin(&cx, &root, env(), 91, &mut fake);
+    let current = transition.fence().clone();
+    let mut permit = Attachments::permit(&mut transition).unwrap();
+    std::thread::scope(|scope| {
+        let join = scope.spawn(|| {
+            let cx = cx.clone();
+            let root = StateRoot::effects(&cx, home.path()).unwrap();
+            let mut fake = Fake::new(home.path());
+            let mut holder = begin(&cx, &root, owner(), 1, &mut fake);
+            assert!(matches!(
+                Attachments::attach(&mut holder, &initial, AttachMode::Borrow, Wait::FailFast),
+                Err(RunError::Gate(GateError::Busy { .. }))
+            ));
+            holder.settle(&cleanup(&cx), &mut fake).unwrap();
+        });
+        join.join().unwrap();
+        let spec = EffectSpec {
+            target: current,
+            kind: "fake".into(),
+            payload: Value::String("transition".into()),
+            settlement: Settlement::Retain,
+            required: true,
+        };
+        let ticket = permit.intend(spec).unwrap();
+        // The fake destructive action sees no attachment, even after a stalled permit.
+        let view = reader(&cx, &root);
+        assert!(
+            matches!(Attachments::holders(&cx.operation().observe().unwrap(),&root,&view,&env()),Observed::Verified(ref holders,_) if holders.is_empty())
+        );
+        permit.applied(&ticket, Value::Bool(true)).unwrap();
+        permit
+            .completed(&ticket, crate::outcome::RequiredObligation::Applied)
+            .unwrap();
+    });
+    transition.finish(WorkloadOutcome::Succeeded).unwrap();
+    transition.settle(&cleanup(&cx), &mut fake).unwrap();
+}
+#[test]
+fn claims_conflict_set_is_atomic_and_concurrent_starts_have_one_winner() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut fake = Fake::new(home.path());
+    let data = ResourceId::data("fake", "local", "volume").unwrap();
+    let port = ResourceId::endpoint(EndpointKind::Port, "8080").unwrap();
+    let mut first = begin(&cx, &root, owner(), 1, &mut fake);
+    let token = Claims::reserve(&mut first, std::slice::from_ref(&data), Duration::ZERO).unwrap();
+    Claims::commit(&mut first, &token, 1).unwrap();
+    std::thread::scope(|scope| {
+        scope
+            .spawn(|| {
+                let cx = cx.clone();
+                let root = StateRoot::effects(&cx, home.path()).unwrap();
+                let mut fake = Fake::new(home.path());
+                let mut other = begin(
+                    &cx,
+                    &root,
+                    ResourceId::gateway("hybrid").unwrap(),
+                    2,
+                    &mut fake,
+                );
+                assert!(matches!(
+                    Claims::reserve(&mut other, &[port.clone(), data.clone()], Duration::ZERO),
+                    Err(RunError::Conflict(_))
+                ));
+                let count: i64 = other
+                    .store
+                    .conn()
+                    .query_row(
+                        "SELECT count(*) FROM claims WHERE resource=?1",
+                        [port.name().to_string()],
+                        |r| r.get(0),
+                    )
+                    .unwrap();
+                assert_eq!(count, 0);
+                other.settle(&cleanup(&cx), &mut fake).unwrap();
+            })
+            .join()
+            .unwrap();
+    });
+    first.finish(WorkloadOutcome::Succeeded).unwrap();
+    first.settle(&cleanup(&cx), &mut fake).unwrap();
+}
+#[test]
+fn claims_quarantine_blocks_reuse_until_boot_deadline_and_release_is_once() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut fake = Fake::new(home.path());
+    let address = ResourceId::endpoint(EndpointKind::Address, "127.0.0.9").unwrap();
+    let mut run = begin(&cx, &root, owner(), 1, &mut fake);
+    Claims::reserve(
+        &mut run,
+        std::slice::from_ref(&address),
+        Duration::from_secs(60),
+    )
+    .unwrap();
+    run.settle(&cleanup(&cx), &mut fake).unwrap();
+    let store = Store::open(&cx, &root).unwrap();
+    let deadline: i64 = store
+        .conn()
+        .query_row("SELECT quarantine_nanos FROM claims", [], |r| r.get(0))
+        .unwrap();
+    settle_interrupted(
+        &cx,
+        &root,
+        &owner(),
+        id(1),
+        next(),
+        &cleanup(&cx),
+        &mut fake,
+    )
+    .unwrap();
+    assert_eq!(
+        store
+            .conn()
+            .query_row("SELECT quarantine_nanos FROM claims", [], |r| r
+                .get::<_, i64>(0))
+            .unwrap(),
+        deadline
+    );
+    let mut other = begin(&cx, &root, owner(), 2, &mut fake);
+    assert!(matches!(
+        Claims::reserve(&mut other, std::slice::from_ref(&address), Duration::ZERO),
+        Err(RunError::Conflict(_))
+    ));
+    drop(other);
+    // Strict clock fixture: a different boot ends quarantine; no wall timestamp.
+    store
+        .conn()
+        .execute("UPDATE claims SET quarantine_boot='previous-boot'", [])
+        .unwrap();
+    let mut next = begin(&cx, &root, owner(), 3, &mut fake);
+    Claims::reserve(&mut next, &[address], Duration::ZERO).unwrap();
+    next.settle(&cleanup(&cx), &mut fake).unwrap();
+}
+#[test]
+fn run_concurrent_settle_has_one_owner_and_no_double_undo() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut fake = Fake::new(home.path());
+    let mut run = begin(&cx, &root, owner(), 1, &mut fake);
+    apply(&mut run, &fake, "owned");
+    assert!(matches!(
+        settle_interrupted(
+            &cx,
+            &root,
+            &owner(),
+            id(1),
+            next(),
+            &cleanup(&cx),
+            &mut fake
+        ),
+        Err(RunError::Gate(GateError::Busy { .. }))
+    ));
+    drop(run);
+    let barrier = std::sync::Barrier::new(2);
+    std::thread::scope(|scope| {
+        let mut handles = vec![];
+        for _ in 0..2 {
+            let barrier = &barrier;
+            let home = &home;
+            handles.push(scope.spawn(move || {
+                let cx = context();
+                let root = StateRoot::effects(&cx, home.path()).unwrap();
+                let mut fake = Fake::new(home.path());
+                barrier.wait();
+                match settle_interrupted(
+                    &cx,
+                    &root,
+                    &owner(),
+                    id(1),
+                    next(),
+                    &cleanup(&cx),
+                    &mut fake,
+                ) {
+                    Ok(result) => assert_eq!(result.cleanup(), CleanupOutcome::Complete),
+                    Err(RunError::Gate(GateError::Busy { .. })) => {}
+                    other => panic!("{other:?}"),
+                }
+            }));
+        }
+        for handle in handles {
+            handle.join().unwrap();
+        }
+    });
+    assert_eq!(fake.calls(), ["apply owned", "release owned"]);
+}
+#[test]
+fn run_identity_recovery_roundtrips_and_rejects_noncanonical_records() {
+    for resource in [
+        owner(),
+        env(),
+        id(1).resource(),
+        checkout().resource(),
+        ResourceId::gateway("main").unwrap(),
+        ResourceId::store(Scope::Machine, "cache").unwrap(),
+    ] {
+        let encoded = serde_json::to_string(&resource).unwrap();
+        assert_eq!(
+            serde_json::from_str::<ResourceId>(&encoded).unwrap(),
+            resource
+        );
+    }
+    assert_eq!(id(1).to_string().parse::<RunId>().unwrap(), id(1));
+    assert!("z".repeat(26).parse::<RunId>().is_err());
+    assert!(serde_json::from_value::<ResourceId>(
+        serde_json::json!({"kind":"Env","scope":"Machine","key":["test"]})
+    )
+    .is_err());
+}
+
+#[cfg(feature = "fault-injection")]
+mod faults;
+
+#[test]
+fn run_applied_spawn_is_not_natural_completion() {
+    for code in [0, 7] {
+        let home = home();
+        let cx = context();
+        let root = StateRoot::effects(&cx, home.path()).unwrap();
+        let mut fake = Fake::new(home.path());
+        let mut run = begin(&cx, &root, owner(), 1, &mut fake);
+        let ticket = run
+            .intend(spec(&run, "owned", Settlement::Release(Value::Null)))
+            .unwrap();
+        fake.apply(&run, &ticket);
+        run.applied(&ticket, Value::Bool(true)).unwrap();
+        assert!(run.finish(WorkloadOutcome::Succeeded).is_err());
+        run.completed(
+            &ticket,
+            crate::outcome::RequiredObligation::ProcessExit(code),
+        )
+        .unwrap();
+        if code == 0 {
+            run.finish(WorkloadOutcome::Succeeded).unwrap();
+        } else {
+            assert!(run.finish(WorkloadOutcome::Succeeded).is_err());
+            run.finish(WorkloadOutcome::Failed { code }).unwrap();
+        }
+        run.settle(&cleanup(&cx), &mut fake).unwrap();
+    }
+}
+#[test]
+fn claims_simultaneous_reservations_commit_exactly_one_conflict_set() {
+    let home = home();
+    let barrier = std::sync::Barrier::new(2);
+    let wins = std::thread::scope(|scope| {
+        let handles = (1..=2)
+            .map(|n| {
+                let home = &home;
+                let barrier = &barrier;
+                scope.spawn(move || {
+                    let cx = context();
+                    let root = StateRoot::effects(&cx, home.path()).unwrap();
+                    let mut fake = Fake::new(home.path());
+                    let resource = ResourceId::gateway(&format!("start-{n}")).unwrap();
+                    let mut run = begin(&cx, &root, resource, n, &mut fake);
+                    let data = ResourceId::data("fake", "local", "shared").unwrap();
+                    barrier.wait();
+                    let won = match Claims::reserve(&mut run, &[data], Duration::ZERO) {
+                        Ok(token) => {
+                            Claims::commit(&mut run, &token, 1).unwrap();
+                            true
+                        }
+                        Err(RunError::Conflict(_)) => false,
+                        other => panic!("{other:?}"),
+                    };
+                    barrier.wait(); // Keep the winner's reservation until both attempted.
+                    run.settle(&cleanup(&cx), &mut fake).unwrap();
+                    won
+                })
+            })
+            .collect::<Vec<_>>();
+        handles
+            .into_iter()
+            .map(|h| usize::from(h.join().unwrap()))
+            .sum::<usize>()
+    });
+    assert_eq!(wins, 1);
+}
+
+#[test]
+fn claims_prepare_and_refresh_classes_cannot_reserve_resources() {
+    for class in [EffectClass::Prepare, EffectClass::RefreshDerived] {
+        let home = home();
+        let original = context();
+        let op = OperationContext::new(
+            original.operation().deadline(),
+            CancelToken::default(),
+            original.operation().limits().clone(),
+            class,
+            Placement::Host,
+        );
+        let cx = op.effects().unwrap();
+        let root = StateRoot::effects(&cx, home.path()).unwrap();
+        let mut fake = Fake::new(home.path());
+        let mut spec = inv(ResourceId::store(Scope::Machine, "source").unwrap())
+            .spec()
+            .clone();
+        spec.class = class;
+        let mut run = Run::begin(
+            &cx,
+            &root,
+            &ResolvedInvocation::new(spec).unwrap(),
+            opts(1),
+            &cleanup(&cx),
+            &mut fake,
+        )
+        .unwrap();
+        assert!(matches!(
+            Claims::reserve(
+                &mut run,
+                &[ResourceId::data("fake", "local", "data").unwrap()],
+                Duration::ZERO
+            ),
+            Err(RunError::Invalid(_))
+        ));
+        let claims: i64 = run
+            .store
+            .conn()
+            .query_row("SELECT count(*) FROM claims", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(claims, 0);
+        run.settle(&cleanup(&cx), &mut fake).unwrap();
+    }
+}

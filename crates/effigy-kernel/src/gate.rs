@@ -111,11 +111,17 @@ impl std::error::Error for GateError {}
 #[derive(Debug)]
 pub struct GateGuard {
     gates: Vec<(ResourceId, File)>,
-    scopes: Vec<File>,
+    scopes: Vec<(String, File)>,
 }
 impl GateGuard {
     pub fn ids(&self) -> impl Iterator<Item = &ResourceId> {
         self.gates.iter().map(|(id, _)| id)
+    }
+    /// Admission releases auxiliary resource gates before any adapter call (K14).
+    pub(crate) fn retain_owner(&mut self, owner: &ResourceId) {
+        self.gates.retain(|(id, _)| id == owner);
+        self.scopes
+            .retain(|(scope, _)| *scope == scope_name(owner.scope()));
     }
     pub fn covers(&self, id: &ResourceId) -> bool {
         self.gates.iter().any(|(held, _)| held == id)
@@ -210,7 +216,7 @@ impl Gate {
                 .find(|id| &scope_name(id.scope()) == name)
                 .expect("scope of an id");
             lock(cx, &file, libc::LOCK_SH, deadline, started, wait, first)?;
-            guard.scopes.push(file);
+            guard.scopes.push((name.clone(), file));
             // Recreated after a removal; removal cannot run while we hold SH.
             let dir = gates.child(name, Trust::Private, true)?.expect("created");
             scope_dirs.push((name.clone(), dir));
