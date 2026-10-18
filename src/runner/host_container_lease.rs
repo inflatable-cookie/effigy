@@ -702,6 +702,14 @@ fn reap_host_container_lease(
             clear_host_container_lease(repo_root, &policy)?;
             return Ok(());
         }
+        // Expiry never outranks a live task, including a successor whose
+        // session record has not landed yet. Keep the lease on refusal.
+        crate::runner::managed_settle::refuse_environment_mutation(
+            repo_root,
+            &policy.name,
+            None,
+            None,
+        )?;
         if is_primary_service_running(repo_root, &policy)? {
             let _ = shutdown_container(repo_root, &policy);
         }
@@ -1121,6 +1129,41 @@ mod tests {
             .runtime()
             .operations_for(ScriptedPhase::ColimaStatus)
             .is_empty());
+    }
+
+    #[test]
+    fn reaper_refuses_an_ordinary_live_task_without_a_session_record() {
+        let private = tempfile::tempdir().expect("private reaper fixture");
+        let repo_root = private.path().join("repo");
+        std::fs::create_dir(&repo_root).expect("repo");
+        std::fs::write(repo_root.join("effigy.toml"), "[containers]\ndefault = \"web\"\n[containers.web]\ncompose_file = \"compose.yml\"\nprimary_service = \"app\"\n").expect("manifest");
+        std::fs::write(
+            repo_root.join("compose.yml"),
+            "services:\n  app:\n    image: alpine\n",
+        )
+        .expect("compose");
+        let _env = lease_env(&private.path().join("leases"));
+        let policy = effigy_containers::load_container_policy(&repo_root, None).expect("policy");
+        write_expired_lease(&repo_root, &policy, "prior-lease");
+        let _holder = crate::runner::locking::io::acquire_scopes_with_wait(
+            &repo_root,
+            &[effigy_builtin::LockScope::Task("seed".to_owned())],
+            0,
+        )
+        .expect("ordinary live task lock");
+        let script = stopped_liveness_script();
+        let error = super::run_host_container_lease_reaper_for_tests(
+            &repo_root,
+            &policy.name,
+            "prior-lease",
+        )
+        .expect_err("live task outranks expired lease");
+        assert!(error.to_string().contains("task:seed"));
+        assert!(super::host_container_lease_path(&repo_root, &policy).exists());
+        assert!(
+            script.runtime().operations().is_empty(),
+            "no runtime call under the live holder"
+        );
     }
 
     #[test]

@@ -377,6 +377,14 @@ notice before waiting if administrator approval may be needed. If startup times
 out, run `effigy gateway status` before retrying; an unknown process identity
 keeps its records held for reconciliation.
 
+Managed startup delays remain interruptible: status shows delayed children as
+`pending`, logs can be read before they produce output, and stop cancels those
+children before they launch. Lifecycle shell exit never stops containers;
+the managed owner's finish runs the single environment shutdown. While a run
+holds its task/profile locks, recovery, lease expiry and another environment's
+handover cannot stop its containers before that run settles. Use the task's
+`stop` control before an unrelated explicit `container down`.
+
 ## 9) Validation Checklist
 
 1. Run `effigy dev` from repo root and verify the expected default profile

@@ -257,6 +257,63 @@ pub(in crate::runner) fn live_managed_lock_holders(repo_root: &Path) -> Vec<Task
         .collect()
 }
 
+/// Locks establish liveness; a matching session only narrows the environment.
+/// Missing records cannot grant destructive authority, so unbound holders
+/// protect every environment in this checkout until they settle.
+pub(in crate::runner) fn environment_lock_holders(
+    repo_root: &Path,
+    environment: &str,
+) -> Vec<TaskLockHolder> {
+    let sessions = effigy_managed::runtime::live_headless_sessions(repo_root);
+    crate::runner::locking::io::live_task_lock_holders(repo_root)
+        .into_iter()
+        .filter(|holder| {
+            sessions
+                .iter()
+                .find(|session| {
+                    pid_record_is_comparable_here(holder.hostname.as_deref())
+                        && session.supervisor_pid == holder.pid
+                        && session.run_token == holder.managed_run_token
+                })
+                .and_then(|session| session.container_environment.as_deref())
+                .is_none_or(|bound| bound == environment)
+        })
+        .collect()
+}
+
+/// Only the run's own stop may mutate its environment under its live locks.
+/// Pre-spawn recovery may exempt its newly acquired local owner lock; a
+/// handover may exempt the incoming run, whose environment is not the target.
+pub(in crate::runner) fn refuse_environment_mutation(
+    repo_root: &Path,
+    environment: &str,
+    exempt_pid: Option<u32>,
+    exempt_token: Option<&str>,
+) -> Result<(), RunnerError> {
+    let holders = environment_lock_holders(repo_root, environment)
+        .into_iter()
+        .filter(|holder| {
+            !exempt_pid.is_some_and(|caller| {
+                pid_record_is_comparable_here(holder.hostname.as_deref())
+                    && (caller == holder.pid
+                        || (holder.managed_run_token.is_none()
+                            && effigy_process::process_is_descendant_of(caller, holder.pid)))
+            })
+        })
+        .filter(|holder| {
+            exempt_token.is_none_or(|token| holder.managed_run_token.as_deref() != Some(token))
+        })
+        .map(|holder| format!("`{}` (pid {})", holder.scope, holder.pid))
+        .collect::<Vec<_>>();
+    if holders.is_empty() {
+        return Ok(());
+    }
+    Err(RunnerError::task_invocation(format!(
+        "refused to stop, restart or recreate environment `{environment}` while live task/profile lock holders exist: {}. End the bound run through its own stop first",
+        holders.join(", ")
+    )))
+}
+
 /// Refuse a judged-failed generation's recovery teardown while a live
 /// process still holds one of its run-token locks: the owner may have been
 /// misjudged dead through a stale or missing record, and tearing the
@@ -537,6 +594,46 @@ mod tests {
         write_holder_lock(private.path(), 999_999_999, "managedrun-dead", None);
         refuse_recovery_while_token_live(private.path(), "managedrun-dead")
             .expect("a dead holder grants teardown authority");
+    }
+
+    #[test]
+    fn environment_recovery_refuses_a_different_live_successor_token() {
+        let private = tempfile::tempdir().expect("successor fixture");
+        write_holder_lock(
+            private.path(),
+            std::process::id(),
+            "managedrun-successor",
+            None,
+        );
+        // The old token alone appears recoverable, but the environment's
+        // task/profile lock belongs to a live successor. No down is allowed.
+        refuse_recovery_while_token_live(private.path(), "managedrun-old")
+            .expect("old holder ended");
+        let error = refuse_environment_mutation(private.path(), "stack", None, None)
+            .expect_err("successor protects environment");
+        assert!(error.to_string().contains("task:dev"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn explicit_stop_exempts_its_calling_host_task_but_not_a_managed_ancestor() {
+        let private = tempfile::tempdir().expect("calling task fixture");
+        let parent_pid = nix::unistd::getppid().as_raw() as u32;
+        write_holder_lock(private.path(), parent_pid, "managedrun-parent", None);
+        refuse_environment_mutation(private.path(), "stack", Some(std::process::id()), None)
+            .expect_err("a managed ancestor must use its own stop token");
+        let lock = private.path().join(".effigy/locks/task-dev.lock");
+        let mut record: serde_json::Value =
+            serde_json::from_slice(&fs::read(&lock).expect("lock")).expect("record");
+        record
+            .as_object_mut()
+            .expect("object")
+            .remove("managed_run_token");
+        fs::write(lock, record.to_string()).expect("ordinary calling task");
+        refuse_environment_mutation(private.path(), "stack", Some(std::process::id()), None)
+            .expect("an explicit down may finish its own calling host task");
+        refuse_environment_mutation(private.path(), "stack", None, None)
+            .expect_err("a reaper cannot borrow the calling-task exemption");
     }
 
     /// The live-owner discovery sees a live holder through its run token even

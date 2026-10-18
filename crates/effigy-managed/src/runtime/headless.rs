@@ -160,34 +160,12 @@ pub fn run_managed_task_headless(
             .map_err(|error| ManagedError::task_invocation_failed_write(&stop_path, error))?;
     }
     write_state(&state_path, &state)?;
-    let specs = managed_process_specs(supervised.iter().cloned());
-    let supervisor = match ProcessSupervisor::spawn(repo_root.to_path_buf(), specs) {
-        Ok(supervisor) => supervisor,
-        Err(error) => {
-            // No child ever started; record the failure so the run is not
-            // mistaken for an interrupted live generation.
-            state.status = "failed".to_owned();
-            state.settle_complete = Some(true);
-            let _ = write_state(&state_path, &state);
-            return Err(ManagedError::Process(error));
-        }
-    };
-    let _cleanup = SupervisorCleanup(&supervisor);
-    state.started_at_unix_ms = unix_time_ms();
-    let pid_by_name = supervisor
-        .process_ids()
-        .into_iter()
-        .collect::<HashMap<_, _>>();
-    for process in &mut state.processes {
-        if let Some(pid) = pid_by_name.get(&process.name) {
-            process.pid = *pid;
-            process.status = "running".to_owned();
-        }
-    }
-    write_state(&state_path, &state)?;
-
+    // Startup delays must not block status/logs/stop or signal handling.
     let shutdown_requested = Arc::new(AtomicBool::new(false));
     let (signal_handle, signal_thread) = install_signal_handler(shutdown_requested.clone())?;
+    let specs = managed_process_specs(supervised.iter().cloned());
+    let supervisor = ProcessSupervisor::spawn_progressively(repo_root.to_path_buf(), specs);
+    let _cleanup = SupervisorCleanup(&supervisor);
     let shutdown_on_exit = supervised
         .iter()
         .filter(|process| process.shutdown_on_exit)
@@ -206,6 +184,8 @@ pub fn run_managed_task_headless(
     });
     signal_handle.close();
     let _ = signal_thread.join();
+    supervisor.cancel_startup();
+    refresh_spawned_pids(&supervisor, &mut state);
     // End the process groups this run exec'd into its environment through
     // the exec adapter while the environment is still up: their remote
     // effigy processes then release their locks through the ordinary guard
@@ -423,6 +403,7 @@ fn headless_stop_command(task_name: &str, profile: &str) -> String {
 /// environment to find the owners it must end.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LiveHeadlessSession {
+    pub run_token: Option<String>,
     pub task: String,
     pub profile: String,
     pub supervisor_pid: u32,
@@ -451,6 +432,7 @@ pub fn live_headless_sessions(repo_root: &Path) -> Vec<LiveHeadlessSession> {
             continue;
         }
         live.push(LiveHeadlessSession {
+            run_token: state.run_token,
             task: state.task,
             profile: state.profile,
             supervisor_pid: state.supervisor_pid,
@@ -803,6 +785,21 @@ struct HeadlessSupervisionContext<'a> {
     stop_path: &'a Path,
 }
 
+fn refresh_spawned_pids(supervisor: &ProcessSupervisor, state: &mut HeadlessSessionState) {
+    for (name, pid) in supervisor.process_ids() {
+        if let Some(process) = state
+            .processes
+            .iter_mut()
+            .find(|process| process.name == name)
+        {
+            process.pid = pid;
+            if process.status == "pending" {
+                process.status = "running".to_owned();
+            }
+        }
+    }
+}
+
 fn supervise_headless(
     context: HeadlessSupervisionContext<'_>,
 ) -> Result<HashSet<String>, ManagedError> {
@@ -894,9 +891,31 @@ fn supervise_headless(
                 }
             }
             ProcessEventKind::Stdout | ProcessEventKind::Stderr => {}
-            ProcessEventKind::Starting
-            | ProcessEventKind::Started
-            | ProcessEventKind::StartupFailed => {}
+            ProcessEventKind::Started => {
+                if let Some(process) = state
+                    .processes
+                    .iter_mut()
+                    .find(|process| process.name == event.process)
+                {
+                    if let Some((_, pid)) = supervisor
+                        .process_ids()
+                        .into_iter()
+                        .find(|(name, _)| *name == event.process)
+                    {
+                        process.pid = pid;
+                        if process.status == "pending" {
+                            process.status = "running".to_owned();
+                        }
+                    }
+                }
+                write_state(state_path, state)?;
+            }
+            ProcessEventKind::StartupFailed => {
+                if let Some(error) = supervisor.take_startup_error() {
+                    return Err(ManagedError::Process(error));
+                }
+            }
+            ProcessEventKind::Starting => {}
         }
     }
     for ((process, _), redactor) in redactors {

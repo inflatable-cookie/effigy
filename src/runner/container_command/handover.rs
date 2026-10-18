@@ -389,6 +389,12 @@ pub(super) fn stop_peer_data_services(
         if active.is_empty() {
             continue;
         }
+        crate::runner::managed_settle::refuse_environment_mutation(
+            repo_root,
+            &handover.environment,
+            Some(std::process::id()),
+            None,
+        )?;
         let services = active.into_iter().collect::<Vec<_>>();
         let mut tail = vec![std::ffi::OsString::from("stop")];
         tail.extend(services.iter().map(std::ffi::OsString::from));
@@ -509,6 +515,13 @@ fn execute_handover(
     // owner's whole stop cascade - including its own `container <env>
     // down` - finishes before the handover continues.
     let owner_notes = end_headless_managed_owners(repo_root, target)?;
+    let incoming_token = std::env::var(effigy_managed::RUN_TOKEN_ENV).ok();
+    crate::runner::managed_settle::refuse_environment_mutation(
+        repo_root,
+        &target.environment,
+        Some(std::process::id()),
+        incoming_token.as_deref(),
+    )?;
     stop_host_processes_best_effort(repo_root, Some(&target.environment));
     let ordinary_down = |deregister_gateway_routes: &dyn Fn(
         &EffectiveContainerPolicy,

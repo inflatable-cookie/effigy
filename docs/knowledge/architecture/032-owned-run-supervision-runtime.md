@@ -61,7 +61,9 @@ The design reuses what exists today and names the gap.
   graceful signal forwarding, not a general run journal or stop surface.
 - `crates/effigy-managed` runs a supervisor process for a headless managed
   session, records `session.json` before its first child starts and on every
-  recorded state change, and stops by pid plus descendant proof. That
+  recorded state change, and stops by pid plus descendant proof. Child startup
+  uses the existing progressive supervisor so configured delays remain cancellable;
+  started children publish their PIDs as startup events arrive. That
   supervisor is the owner process itself. When the record is missing or
   unreadable while a run is live, the stop, status and logs controls find the
   owner through its task/profile locks and run token and settle it through

@@ -1632,7 +1632,8 @@ fn live_managed_exec_note_discovers_owners_without_a_session_record() {
         "got: {note}"
     );
 
-    // A record written by another host names no local process.
+    // A foreign PID namespace is protected by its heartbeat lease, not by
+    // a coincidentally matching local PID.
     fs::write(
         locks.join("task-dev.lock"),
         format!(
@@ -1642,8 +1643,8 @@ fn live_managed_exec_note_discovers_owners_without_a_session_record() {
     )
     .expect("foreign holder record");
     assert!(
-        live_managed_exec_note(repo_root, &policy).is_none(),
-        "a foreign-host lock holder is not a live local run"
+        live_managed_exec_note(repo_root, &policy).is_some(),
+        "an unexpired foreign-host lock protects its environment"
     );
 }
 

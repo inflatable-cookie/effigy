@@ -383,6 +383,12 @@ pub(in crate::runner) fn run_managed_task(
                     &repo_for_task,
                     &token,
                 )?;
+                crate::runner::managed_settle::refuse_environment_mutation(
+                    &repo_for_task,
+                    &policy.name,
+                    Some(std::process::id()),
+                    None,
+                )?;
                 // Preserve partial-admission drift protection before any down.
                 // A completed admission may adopt changed inputs by its existing
                 // rule; a recorded partial must still match its original inputs.
@@ -450,6 +456,12 @@ pub(in crate::runner) fn run_managed_task(
         lifecycle_cleanup.as_deref(),
         || {
             if let Some(policy) = container_binding.load_effective_policy(&repo_for_task)? {
+                crate::runner::managed_settle::refuse_environment_mutation(
+                    &repo_for_task,
+                    &policy.name,
+                    Some(std::process::id()),
+                    managed_run_token.as_deref(),
+                )?;
                 effigy_containers::exec::verify_owned_stack_for_shutdown(&repo_for_task, &policy)?;
             }
             Ok(())
@@ -746,13 +758,20 @@ fn build_managed_lifecycle_cleanup_command(
         }
         _ => {
             let executable = resolve_effigy_invocation_prefix().map_err(RunnerError::Cwd)?;
-            Ok(managed_lifecycle_shutdown_command(
+            let command = managed_lifecycle_shutdown_command(
                 repo_root,
                 container_binding
                     .container_name()
                     .and_then(normalize_managed_lifecycle_container_ref),
                 &executable,
-            ))
+            );
+            Ok(match std::env::var(effigy_managed::RUN_TOKEN_ENV) {
+                Ok(token) => format!(
+                    "env EFFIGY_INTERNAL_MANAGED_STOP_TOKEN={} {command}",
+                    effigy_core::shell::shell_quote(&token)
+                ),
+                Err(_) => command,
+            })
         }
     }
 }

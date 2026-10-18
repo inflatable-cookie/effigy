@@ -581,46 +581,27 @@ pub(in crate::runner) fn ensure_primary_service_exec_ready_for_runtime(
 /// services. A recovery restart would SIGKILL those remote processes (the
 /// mass exit-137 signature). The note names the run for the refusal.
 ///
-/// Discovery is by session records and by task/profile locks: a live owner
-/// whose session record is missing or unreadable is still visible through
-/// its run-token lock holders. Lock-discovered owners carry no recorded
-/// environment, so they refuse the restart for every environment of this
-/// checkout — never restarting under a live run is the safe direction.
+/// Lock holders establish liveness even when session.json is missing. A
+/// matching record only narrows the environment; unknown binding protects
+/// every environment in the checkout.
 fn live_managed_exec_note(repo_root: &Path, policy: &EffectiveContainerPolicy) -> Option<String> {
-    let bound = effigy_managed::runtime::live_headless_sessions(repo_root)
-        .into_iter()
-        .filter(|session| session.container_environment.as_deref() == Some(policy.name.as_str()))
-        .collect::<Vec<_>>();
-    let unbound = crate::runner::managed_settle::live_managed_lock_holders(repo_root)
-        .into_iter()
-        .filter(|holder| {
-            !bound
-                .iter()
-                .any(|session| session.supervisor_pid == holder.pid)
-        })
-        .collect::<Vec<_>>();
-    if bound.is_empty() && unbound.is_empty() {
+    let holders = crate::runner::managed_settle::environment_lock_holders(repo_root, &policy.name);
+    if holders.is_empty() {
         return None;
     }
-    let mut named = bound
+    let named = holders
         .iter()
-        .map(|session| {
+        .map(|holder| {
             format!(
-                "`{}` (profile `{}`, owner pid {}, bound to environment `{}`)",
-                session.task, session.profile, session.supervisor_pid, policy.name
+                "`{}` (pid {}, run token {:?}; session record missing or lock-bound owner)",
+                holder.scope, holder.pid, holder.managed_run_token
             )
         })
-        .collect::<Vec<_>>();
-    named.extend(unbound.iter().map(|holder| {
-        format!(
-            "`{}` (pid {}, live task lock with run token, session record missing)",
-            holder.scope, holder.pid
-        )
-    }));
+        .collect::<Vec<_>>()
+        .join(", ");
     Some(format!(
-        "live managed run(s) of this checkout are exec'ing into environment `{}`: {}",
-        policy.name,
-        named.join(", ")
+        "live task/profile lock holders protect environment `{}`: {named}",
+        policy.name
     ))
 }
 

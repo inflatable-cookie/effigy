@@ -323,25 +323,20 @@ During v0.x, MINOR bumps may include breaking changes.
   controls refuse only when no live run of that task and profile exists, and
   every start hint names the actual task and profile instead of a hardcoded
   `effigy dev --headless`.
-- The Acowtancy v0.15.0 qualifying proof (#634) lost all three warm-up
-  container execs to simultaneous SIGKILLs (exit 137): the Lima port-forward
-  record shows an ordered full-stack `compose down` racing the live warm-up —
-  the workspace's published ports stopped at exactly the moment the three
-  execs died, postgres and mysql followed seconds later, and the stack never
-  came back (hence the later exec-readiness timeout). A recovery teardown
-  that judges a managed generation dead now refuses while any of that
-  generation's run-token locks are still held by a live process, in both the
-  next managed run and a standalone `container up`: a stale or missing
-  session record can make a live owner look dead, and tearing the
-  environment down kills everything it is exec'ing into.
-- The container exec-readiness recovery restart (a different reachable kill
-  path from the #634 incident) never fires while a live managed run of the
-  checkout may be exec'ing into the primary service. The live-run discovery
-  uses session records and, when a run's record is missing or unreadable,
-  its task/profile run-token lock holders; the recovery keeps probing with
-  the post-restart window and then refuses, naming what it saw, without
-  restarting or recreating anything. Only a stopped run restores restart
-  authority.
+- Container lifecycle mutations respect live task/profile lock holders, even
+  when a session record is absent. Lifecycle EXIT traps only record state;
+  runner finish owns exactly one down per managed stop. Failed-generation
+  recovery and lease expiry cannot down a live successor's environment, and
+  handover must settle bound runs before stopping their environment. A live
+  holder with unknown binding blocks mutation. Compose up uses `--no-recreate`
+  under live holders, and exec-readiness recovery observes without restarting.
+  The #634 warm-up exit-137s were caused by the proof harness's explicit
+  `container stack down` cleanup after the missing-record stop failure, as
+  confirmed by its command journal and Lima's ordered shutdown; the restart
+  guard is separate hardening.
+- Headless startup delays no longer block control requests or signal handling.
+  The record is published before startup and updated as children start, and
+  stop cancels children still waiting for their start delay.
 - Managed headless and TUI stop lets the owner order remote and host child shutdown,
   exits successfully after earlier workload failures, and runs the bound
   environment cleanup even when the managed runtime failed. Stop checks the

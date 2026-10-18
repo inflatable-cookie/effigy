@@ -471,3 +471,44 @@ fn managed_headless_run_exits_on_sigint_with_no_surviving_processes() {
         );
     }
 }
+
+/// A real consumer's cumulative child delays can exceed the settle budget.
+/// Control must work while startup is pending, without waiting those delays.
+#[test]
+fn managed_headless_controls_settle_during_long_start_delay() {
+    let _guard = lock_test();
+    let private = tempfile::tempdir().expect("private delayed-start fixture");
+    let root = private.path().to_path_buf();
+    write_root_manifest(
+        &root,
+        r#"[tasks.dev]
+mode = "tui"
+concurrent = [
+  { name = "later", run = "touch child-started", start = 1, start_after_ms = 120000 }
+]
+"#,
+    );
+    let state_path = root.join(".effigy/runtime/managed/dev-default/session.json");
+    let run_root = root.clone();
+    let run = std::thread::spawn(move || run_dev(&run_root, &["--headless"]));
+    wait_for_path_exists(&state_path, Duration::from_secs(5), "pre-spawn record");
+    let raw = fs::read_to_string(&state_path).expect("readable before spawn");
+    let state: serde_json::Value = serde_json::from_str(&raw).expect("atomic state");
+    assert_eq!(state["processes"][0]["status"], "pending");
+    assert!(run_dev(&root, &["status"])
+        .expect("status during startup")
+        .contains("pending"));
+    run_dev(&root, &["logs", "later"]).expect("logs during startup");
+    run_dev(&root, &["stop"]).expect("stop cancels pending startup");
+    run.join()
+        .expect("owner joins")
+        .expect("pending startup settles");
+    assert!(
+        !root.join("child-started").exists(),
+        "cancelled children must never start"
+    );
+    let state: serde_json::Value =
+        serde_json::from_slice(&fs::read(&state_path).expect("settled record"))
+            .expect("settled state");
+    assert_eq!(state["settle_complete"], true);
+}

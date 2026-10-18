@@ -307,6 +307,13 @@ impl<'a> Case<'a> {
                 && self.root.join("work-api.pid").exists()
                 && self.root.join("work-jobs.pid").exists()
                 && recorded_failures == failures
+                && state
+                    .as_ref()
+                    .and_then(|state| state["processes"].as_array())
+                    .is_some_and(|rows| {
+                        rows.iter()
+                            .all(|row| row["pid"].as_u64().is_some_and(|pid| pid > 0))
+                    })
             {
                 let mut pids = state.expect("session")["processes"]
                     .as_array()
@@ -339,6 +346,27 @@ impl<'a> Case<'a> {
             );
             thread::sleep(Duration::from_millis(50));
         }
+    }
+    fn down_count(&self) -> usize {
+        fs::read_to_string(self.state.join("down-events"))
+            .unwrap_or_default()
+            .lines()
+            .filter(|line| *line == "matrix-stack")
+            .count()
+    }
+    fn shell(&self, script: &str) -> Command {
+        let template = self.command(&[]);
+        let mut command = Command::new("/bin/sh");
+        command
+            .args(["-c", script])
+            .current_dir(&self.root)
+            .process_group(0);
+        for (key, value) in template.get_envs() {
+            if let Some(value) = value {
+                command.env(key, value);
+            }
+        }
+        command
     }
     fn assert_down(&self, pids: &[u32]) {
         assert!(
@@ -558,6 +586,7 @@ fn matrix(children: usize, stop: Stop) {
             );
             let mut owner = case.spawn(tui, "owner");
             let pids = case.ready(&mut owner, children);
+            let down_before = case.down_count();
             let stop_started = Instant::now();
             match stop {
                 Stop::Request => case.success(&["serve", "stop"]),
@@ -569,6 +598,11 @@ fn matrix(children: usize, stop: Stop) {
                 Stop::Handover => case.success(&["container", "other", "up", "--detach"]),
             }
             owner.finish(true);
+            assert_eq!(
+                case.down_count(),
+                down_before + 1,
+                "exactly one down per stop cell"
+            );
             if slow {
                 assert!(
                     stop_started.elapsed() >= Duration::from_secs(21),
@@ -585,6 +619,11 @@ fn matrix(children: usize, stop: Stop) {
             let restarted_pids = case.ready(&mut restarted, children);
             case.success(&["serve", "stop"]);
             restarted.finish(true);
+            assert_eq!(
+                case.down_count(),
+                down_before + 2,
+                "exactly one down for the restarted run"
+            );
             case.assert_down(&restarted_pids);
             case.success(&["container", "other", "down"]);
         }
@@ -640,6 +679,7 @@ fn managed_matrix_failed_stop_recovers_both_start_surfaces() {
         let old_pids = case.ready(&mut owner, 0);
         fs::write(case.state.join("deny-down"), "fail down").expect("down fault");
         fs::write(case.state.join("deny-exec"), "leave old exec groups").expect("exec fault");
+        let down_before = case.down_count();
         let stop = case.run(&["serve", "stop"]);
         assert!(
             !stop.status.success(),
@@ -651,6 +691,11 @@ fn managed_matrix_failed_stop_recovers_both_start_surfaces() {
             String::from_utf8_lossy(&stop.stderr)
         );
         owner.finish(false);
+        assert_eq!(
+            case.down_count(),
+            down_before + 1,
+            "exactly one attempted down on failure"
+        );
         assert!(case.state.join("active-matrix-stack").exists());
         fs::remove_file(case.state.join("deny-down")).expect("clear down fault");
         fs::remove_file(case.state.join("deny-exec")).expect("clear exec fault");
@@ -659,6 +704,7 @@ fn managed_matrix_failed_stop_recovers_both_start_surfaces() {
         }
         let mut restarted = case.spawn(standalone, "recovered-owner");
         let new_pids = case.ready(&mut restarted, 0);
+        let recovered_downs = case.down_count();
         // Exercise the second OS signal, independently from matrix SIGINT.
         nix::sys::signal::kill(
             nix::unistd::Pid::from_raw(restarted.child.0.id() as i32),
@@ -666,6 +712,11 @@ fn managed_matrix_failed_stop_recovers_both_start_surfaces() {
         )
         .expect("SIGTERM owned owner");
         restarted.finish(true);
+        assert_eq!(
+            case.down_count(),
+            recovered_downs + 1,
+            "exactly one down on recovered stop"
+        );
         case.assert_down(&old_pids);
         case.assert_down(&new_pids);
     }
@@ -726,13 +777,246 @@ fn managed_matrix_missing_record_stop_and_live_views() {
         String::from_utf8_lossy(&logs.stderr)
     );
 
+    let down_before = case.down_count();
     case.success(&["serve", "stop"]);
     owner.finish(true);
+    assert_eq!(
+        case.down_count(),
+        down_before + 1,
+        "exactly one down without the record"
+    );
     case.assert_down(&pids);
     let raw = fs::read_to_string(&state_path).expect("record rewritten by the owner cascade");
     let state: Value = serde_json::from_str(&raw).expect("record parses");
     assert_eq!(state["status"], "stopped");
     assert_eq!(state["settle_complete"], true);
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Authority {
+    PreviousGeneration,
+    Reaper,
+    ExitTrap,
+    MissingRecordHandover,
+}
+
+fn authority_matrix(authority: Authority) {
+    let fixture = managed_host_fixture();
+    let effects = HostEffectSentinels::new(fixture.path());
+    let bin = std::env::split_paths(&effects.env_path)
+        .next()
+        .expect("fake directory");
+    write_switch_fake_docker(&bin.join("docker"));
+    let foreign_ca = fixture.path().join("foreign-ca");
+    fs::create_dir(&foreign_ca).expect("CA");
+    let mut cleanup = GatewayCleanup::new(&effects, &foreign_ca);
+    let (gateway, _) =
+        start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut cleanup);
+    let port = TcpListener::bind("127.0.0.1:0")
+        .expect("port")
+        .local_addr()
+        .expect("address")
+        .port();
+    let case = Case::new(
+        &fixture.path().join("authority"),
+        &gateway,
+        &effects,
+        &foreign_ca,
+        port,
+    );
+    // Keep the successor in startup while the stale generation is observed.
+    if matches!(authority, Authority::PreviousGeneration) {
+        let manifest_path = case.root.join("effigy.toml");
+        let manifest = fs::read_to_string(&manifest_path).expect("manifest");
+        fs::write(
+            manifest_path,
+            manifest.replace("start = 2", "start = 2, start_after_ms = 4000"),
+        )
+        .expect("startup delay");
+    }
+    let mut owner = case.spawn(false, "live-owner");
+    let session = case
+        .root
+        .join(".effigy/runtime/managed/serve-default/session.json");
+    let deadline = Instant::now() + Duration::from_secs(35);
+    while !session.exists() || !case.state.join("active-matrix-stack").exists() {
+        assert!(
+            Instant::now() < deadline,
+            "successor startup: {}",
+            fs::read_to_string(&owner.output).unwrap_or_default()
+        );
+        thread::sleep(Duration::from_millis(25));
+    }
+    let down_before = case.down_count();
+    let mut observed_pids = Vec::new();
+    match authority {
+        Authority::PreviousGeneration => {
+            let mut prior: Value =
+                serde_json::from_slice(&fs::read(&session).expect("session")).expect("state");
+            assert!(
+                prior["processes"]
+                    .as_array()
+                    .expect("processes")
+                    .iter()
+                    .any(|row| row["status"] == "pending"),
+                "successor must still be starting"
+            );
+            prior["task"] = "prior".into();
+            prior["supervisor_pid"] = 999_999_999u32.into();
+            prior["run_token"] = "managedrun-prior".into();
+            prior["settle_complete"] = false.into();
+            let dir = case.root.join(".effigy/runtime/managed/prior-default");
+            fs::create_dir_all(&dir).expect("prior directory");
+            fs::write(dir.join("session.json"), prior.to_string()).expect("unsettled prior record");
+            let up = case.run(&["container", "stack", "up", "--detach"]);
+            assert!(
+                !up.status.success(),
+                "stale generation must not authorize down under successor"
+            );
+            assert!(
+                String::from_utf8_lossy(&up.stderr).contains("live task/profile lock"),
+                "{}",
+                String::from_utf8_lossy(&up.stderr)
+            );
+            fs::remove_file(dir.join("session.json")).expect("clear injected record");
+        }
+        Authority::Reaper => {
+            observed_pids = case.ready(&mut owner, 0);
+            assert!(!observed_pids.is_empty());
+            let dir = case
+                .home
+                .join(".effigy/runtime/host-container-leases/matrix/matrix-stack");
+            fs::create_dir_all(&dir).expect("lease directory");
+            // A stale sleeper may survive a newer persistent owner. Remove
+            // the marker to exercise the lock guard, rather than that shortcut.
+            let _ = fs::remove_file(dir.join("stack.persistent"));
+            let lease = serde_json::json!({"schema":"effigy.host-container-lease.v1","schema_version":1,"token":"expired-prior","container_name":"stack","profile":"matrix","project_name":"matrix-stack","expires_at_epoch_ms":0});
+            fs::write(dir.join("stack.json"), lease.to_string()).expect("expired lease");
+            let reaper = case.run(&[
+                "__container-lease-reaper",
+                "--repo-root",
+                case.root.to_str().expect("root"),
+                "--container",
+                "stack",
+                "--token",
+                "expired-prior",
+            ]);
+            assert!(
+                !reaper.status.success(),
+                "reaper must refuse under the live run"
+            );
+            assert!(
+                String::from_utf8_lossy(&reaper.stderr).contains("live task/profile lock"),
+                "{}",
+                String::from_utf8_lossy(&reaper.stderr)
+            );
+            assert!(
+                dir.join("stack.json").exists(),
+                "refusal must retain the lease"
+            );
+        }
+        Authority::ExitTrap => {
+            observed_pids = case.ready(&mut owner, 0);
+            let rendered = effigy_containers::session::managed_lifecycle_command(
+                effigy_containers::session::ManagedLifecycleRequest {
+                    repo_root: &case.root,
+                    container_name: Some("stack"),
+                    owner_task: "prior",
+                    health_wait: false,
+                    health_wait_timeout_secs: 10,
+                    ready_message: None,
+                    dns_route_lines: &[],
+                    readiness_probe_urls: &[],
+                    setup_commands: &[],
+                    executable: case.root.join("effigy-wrapper").to_str().expect("wrapper"),
+                    secrets_required: false,
+                },
+            );
+            let output =
+                fs::File::create(case.root.join("prior-lifecycle.out")).expect("prior log");
+            // The background exec makes the rendered shell a direct child
+            // of the parent we kill. Its normal parent-death loop runs EXIT.
+            let script = format!("exec {rendered} & wait");
+            let mut parent = ManagedSupervisor(
+                case.shell(&script)
+                    .stdout(output.try_clone().expect("log"))
+                    .stderr(output)
+                    .spawn()
+                    .expect("prior parent"),
+            );
+            let marker = case
+                .root
+                .join(".effigy/runtime/managed-lifecycle/prior-stack.state");
+            let deadline = Instant::now() + Duration::from_secs(25);
+            while fs::read_to_string(&marker).unwrap_or_default().trim() != "ready" {
+                assert!(Instant::now() < deadline, "prior lifecycle readiness");
+                thread::sleep(Duration::from_millis(25));
+            }
+            parent.0.kill().expect("kill only prior parent");
+            parent.0.wait().expect("reap prior parent");
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while fs::read_to_string(&marker).unwrap_or_default().trim() != "stopped" {
+                assert!(
+                    Instant::now() < deadline,
+                    "parent death must execute EXIT trap"
+                );
+                thread::sleep(Duration::from_millis(25));
+            }
+        }
+        Authority::MissingRecordHandover => {
+            observed_pids = case.ready(&mut owner, 0);
+            fs::remove_file(&session).expect("remove live session");
+            let handover = case.run(&["container", "other", "up", "--detach"]);
+            assert!(
+                !handover.status.success(),
+                "an unbound live holder must prevent handover down"
+            );
+            assert!(
+                String::from_utf8_lossy(&handover.stderr).contains("live task/profile lock"),
+                "{}",
+                String::from_utf8_lossy(&handover.stderr)
+            );
+        }
+    }
+    assert_eq!(
+        case.down_count(),
+        down_before,
+        "{authority:?} must issue no down"
+    );
+    assert!(
+        case.state.join("active-matrix-stack").exists(),
+        "live environment survives"
+    );
+    let pids = if observed_pids.is_empty() {
+        case.ready(&mut owner, 0)
+    } else {
+        observed_pids
+    };
+    case.success(&["serve", "stop"]);
+    owner.finish(true);
+    assert_eq!(
+        case.down_count(),
+        down_before + 1,
+        "only the live run's own stop downs once"
+    );
+    case.assert_down(&pids);
+}
+
+#[test]
+fn managed_matrix_unsettled_previous_record_under_live_startup() {
+    authority_matrix(Authority::PreviousGeneration);
+}
+#[test]
+fn managed_matrix_reaper_under_live_holder() {
+    authority_matrix(Authority::Reaper);
+}
+#[test]
+fn managed_matrix_exit_trap_on_parent_death() {
+    authority_matrix(Authority::ExitTrap);
+}
+#[test]
+fn managed_matrix_missing_record_handover_preserves_live_holder() {
+    authority_matrix(Authority::MissingRecordHandover);
 }
 
 const ADAPTER: &str = r#"import sys,os,json,pathlib,subprocess,time,signal
@@ -751,6 +1035,7 @@ def kill_recorded():
   if sig==signal.SIGTERM: time.sleep(.1)
  for p in records: p.unlink(missing_ok=True)
 if op=='down':
+ with (state/'down-events').open('a') as events: events.write(args[0]+'\n')
  if (state/'deny-down').exists(): sys.exit(71)
  if (state/'slow-down').exists(): time.sleep(float((state/'slow-down').read_text()))
  kill_recorded()
