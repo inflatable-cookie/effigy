@@ -879,10 +879,9 @@ domain = "switch.test"
     }
 
     /// A fabricated live headless session: a session-leader `sh`
-    /// supervisor that spawns one owned `sleep` child, reaps it, and
-    /// exits when it dies — the same shape `managed_headless_stop`
-    /// settles. The supervisor's own session keeps the stop path's
-    /// process-tree signals inside the fixture.
+    /// supervisor that observes its session stop request, ends its owned
+    /// `sleep` child, reaps it and exits. The owner orders the cascade;
+    /// the request-side caller never sends competing process signals.
     #[cfg(unix)]
     struct FixtureOwner {
         supervisor: ReapedChild,
@@ -891,13 +890,14 @@ domain = "switch.test"
     }
 
     #[cfg(unix)]
-    fn spawn_session_owner() -> FixtureOwner {
+    fn spawn_session_owner(stop_path: &Path) -> FixtureOwner {
         use std::io::BufRead;
         use std::os::unix::process::CommandExt;
 
         let mut supervisor = std::process::Command::new("sh");
         supervisor
-            .args(["-c", "sleep 60 & echo $!; wait"])
+            .args(["-c", "sleep 60 & child=$!; echo $child; while [ ! -f \"$1\" ] && kill -0 \"$child\" 2>/dev/null; do sleep 0.05; done; kill -TERM \"$child\" 2>/dev/null || true; wait \"$child\" 2>/dev/null || true", "fixture-owner"])
+            .arg(stop_path)
             .stdout(std::process::Stdio::piped());
         // SAFETY: `pre_exec` runs in the forked child before `exec`;
         // `setsid` moves the supervisor into its own session so the
@@ -1141,8 +1141,12 @@ run = "printf reverse-ok"
         let temp = tempfile::tempdir().expect("handover owner fixture");
         let repo_root = temp.path().join("repo");
         fs::create_dir_all(&repo_root).expect("mkdir repo");
-        let mut losing = spawn_session_owner();
-        let mut other = spawn_session_owner();
+        let mut losing = spawn_session_owner(
+            &repo_root.join(".effigy/runtime/managed/site-default/stop.requested"),
+        );
+        let mut other = spawn_session_owner(
+            &repo_root.join(".effigy/runtime/managed/other-default/stop.requested"),
+        );
         let losing_pid = losing.owned_pid;
         let other_pid = other.owned_pid;
         write_live_headless_session(

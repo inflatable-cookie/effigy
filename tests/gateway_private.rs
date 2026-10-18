@@ -1,3 +1,6 @@
+#[path = "gateway_private/managed_matrix.rs"]
+mod managed_matrix;
+
 use std::ffi::OsString;
 use std::fs;
 use std::io::{Read, Write};
@@ -870,15 +873,21 @@ fn managed_host_dependent_replacement_preserves_routes_and_scope_teardown() {
     for (index, result) in startup_results.iter().enumerate() {
         if !result.status.success() {
             let (checkout, profile, ..) = &checkouts[index];
-            let log_path = checkout
+            let runtime = checkout
                 .join(".effigy/runtime/host-processes/web")
-                .join(profile)
-                .join("app.log");
-            println!(
-                "managed listener startup log for {profile}: {}",
-                fs::read_to_string(log_path)
-                    .unwrap_or_else(|error| format!("unavailable: {error}"))
-            );
+                .join(profile);
+            for name in [
+                "app.log",
+                "app.listener.json",
+                "consumer.log",
+                "consumer.listener.json",
+            ] {
+                println!(
+                    "managed listener startup diagnostic for {profile}/{name}: {}",
+                    fs::read_to_string(runtime.join(name))
+                        .unwrap_or_else(|error| format!("unavailable: {error}"))
+                );
+            }
         }
     }
     let reports = startup_results
@@ -4971,7 +4980,12 @@ struct ManagedSupervisor(std::process::Child);
 impl Drop for ManagedSupervisor {
     fn drop(&mut self) {
         if self.0.try_wait().ok().flatten().is_none() {
-            let _ = self.0.kill();
+            let pid = nix::unistd::Pid::from_raw(self.0.id() as i32);
+            if nix::unistd::getpgid(Some(pid)).ok() == Some(pid) {
+                effigy_process::terminate_process_tree(self.0.id(), true);
+            } else {
+                let _ = self.0.kill();
+            }
         }
         let _ = self.0.wait();
     }
@@ -4999,11 +5013,30 @@ project_from_filters() {
 }
 if [ "${1-}" = ps ]; then
   requested=$(project_from_filters "$@")
+  if [ -n "${MATRIX_EXEC:-}" ]; then
+    python3 "$MATRIX_ADAPTER" ps "$@"
+    exit $?
+  fi
   if [ -n "$requested" ] && [ -f "$state/active-$requested" ]; then
-    cat "$state/ps-$requested.txt"
+    case "$*" in
+        *"{{.ID}}"*) python3 - "$state" "$requested" "$*" <<'LABELS'
+import sys,json,pathlib
+state=pathlib.Path(sys.argv[1]);project=sys.argv[2];args=sys.argv[3]
+service=next((a.rsplit('=',1)[1] for a in args.split() if a.startswith('label=com.docker.compose.service=')),None)
+for row in (state/('ps-'+project+'.txt')).read_text().splitlines():
+ name,status,ports,project,wd,svc,oneoff=row.split('\t')
+ if service and service!=svc: continue
+ proof=json.loads((state/('inspect-'+name+'.json')).read_text())[0];labels=proof['Config']['Labels'];ident=proof['Id']
+ values=[ident,status,labels.get('com.docker.compose.oneoff',''),labels.get('com.docker.compose.project.working_dir',''),labels.get('com.effigy.checkout',''),labels.get('com.effigy.scope','')] if '{{.Status}}' in args else [ident,project,labels.get('com.docker.compose.project.working_dir',''),labels.get('com.effigy.checkout',''),labels.get('com.effigy.scope','')]
+ print('\t'.join(values))
+LABELS
+          ;;
+        *) cat "$state/ps-$requested.txt" ;;
+    esac
   fi
   exit 0
 elif [ "${1-}" = inspect ]; then
+  if [ -n "${MATRIX_EXEC:-}" ]; then python3 "$MATRIX_ADAPTER" inspect "$@"; exit $?; fi
   [ -f "$state/inspect-${2-}.json" ] && cat "$state/inspect-${2-}.json"
   exit 0
 elif [ "${1-}" = exec ]; then
@@ -5015,6 +5048,7 @@ elif [ "${1-}" = exec ]; then
       *) break ;;
     esac
   done
+  if [ -n "${MATRIX_EXEC:-}" ]; then python3 "$MATRIX_ADAPTER" exec "$@"; exit $?; fi
   [ "${1-}" = aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ] || exit 96
   exit 0
 elif [ "${1-}" = compose ]; then
@@ -5029,8 +5063,13 @@ elif [ "${1-}" = compose ]; then
     esac
   done
   case "${1-}" in
-    up) : > "$state/active-$project" ;;
-    down) rm -f "$state/active-$project" ;;
+    up)
+      : > "$state/active-$project"
+      if [ -n "${MATRIX_EXEC:-}" ]; then rm -f "$state/missing-$project" "$state/stopped-$project"; fi
+      ;;
+    down)
+      if [ -n "${MATRIX_EXEC:-}" ]; then python3 "$MATRIX_ADAPTER" down "$project"; else rm -f "$state/active-$project"; fi
+      ;;
     ps) printf '[]\n' ;;
     exec)
       shift
@@ -5041,6 +5080,11 @@ elif [ "${1-}" = compose ]; then
       # access); everything else stays silent success like the other
       # non-modeled calls.
       args="$*"
+      if [ -n "${MATRIX_EXEC:-}" ]; then
+        case "$args" in
+          *".pgid"*) python3 "$MATRIX_ADAPTER" payload "$@"; exit $? ;;
+        esac
+      fi
       case "$args" in
         *effigy-perm-inspect-batch*)
           record=0

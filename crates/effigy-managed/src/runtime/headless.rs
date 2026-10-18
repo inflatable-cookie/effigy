@@ -8,8 +8,7 @@ use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use effigy_process::{
-    process_is_descendant_of, process_is_running, terminate_process_tree, ProcessEventKind,
-    ProcessSupervisor,
+    process_is_descendant_of, process_is_running, ProcessEventKind, ProcessSupervisor,
 };
 use serde::{Deserialize, Serialize};
 use signal_hook::consts::{SIGINT, SIGTERM};
@@ -61,6 +60,12 @@ struct HeadlessSessionState {
     #[serde(default)]
     run_token: Option<String>,
     processes: Vec<HeadlessProcessState>,
+    /// Final runner cleanup outcome, written before its task guards release.
+    /// Absent on sessions created by older versions.
+    #[serde(default)]
+    settle_complete: Option<bool>,
+    #[serde(default)]
+    settle_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -91,6 +96,10 @@ pub fn run_managed_task_headless(
     // lifecycle is ready; they contribute nothing to readiness, so the
     // headless supervisor skips them with a note instead of spawning a
     // child that would block on a TTY it can never receive.
+    let owns_environment = plan
+        .processes
+        .iter()
+        .any(|process| process.role == ManagedProcessRole::Lifecycle);
     let (supervised, skipped_shells) = split_headless_processes(plan.processes);
     for skipped in &skipped_shells {
         println!(
@@ -124,6 +133,8 @@ pub fn run_managed_task_headless(
         .into_iter()
         .collect::<HashMap<_, _>>();
     let mut state = HeadlessSessionState {
+        settle_complete: Some(false),
+        settle_error: None,
         schema: HEADLESS_STATE_SCHEMA.to_owned(),
         task: task_name.to_owned(),
         profile: plan.profile.clone(),
@@ -180,14 +191,19 @@ pub fn run_managed_task_headless(
     // rules. Killing only the host exec clients never reaches the remote
     // side, and a surviving in-container `cargo run` would keep its task
     // locks alive past this stop.
-    end_container_exec_groups(&runtime_dir, &state, settle);
+    let exec_cleanup = end_container_exec_groups(&runtime_dir, &state, settle);
     supervisor.terminate_all_graceful(SHUTDOWN_GRACE);
-    reconcile_final_diagnostics(&supervisor, &mut state);
+    let host_cleanup = verify_host_children_ended(&supervisor, &mut state);
     // Release lock records the run's processes still hold: a SIGKILLed
     // holder never drops its guard, and the env's teardown is not always
     // part of this run's own cascade (a hybrid run attaches to an
     // environment it does not own).
-    release_run_locks(settle);
+    if exec_cleanup.is_ok() && host_cleanup.is_ok() {
+        release_run_locks(settle);
+    }
+    if !owns_environment {
+        exec_cleanup?;
+    }
 
     let observed_non_zero = match loop_result {
         Ok(observed) => observed,
@@ -197,7 +213,15 @@ pub fn run_managed_task_headless(
             return Err(error);
         }
     };
-    let non_zero = headless_non_zero_exits(&state, &observed_non_zero);
+    // Explicit stop is a successful control operation even if children failed
+    // earlier. Their diagnostics stay in the session and logs. Cleanup failures
+    // are reported by the runner after the runtime returns.
+    let explicitly_stopped = shutdown_requested.load(Ordering::Relaxed) || stop_path.exists();
+    let non_zero = if explicitly_stopped {
+        Vec::new()
+    } else {
+        headless_non_zero_exits(&state, &observed_non_zero)
+    };
     state.status = if non_zero.is_empty() {
         "stopped".to_owned()
     } else if plan.fail_on_non_zero {
@@ -207,6 +231,7 @@ pub fn run_managed_task_headless(
     };
     write_state(&state_path, &state)?;
     let summary = render_headless_summary(&runtime_dir, &state);
+    host_cleanup?;
     policy::enforce_non_zero_exit_policy(
         task_name,
         &plan.profile,
@@ -214,6 +239,131 @@ pub fn run_managed_task_headless(
         non_zero,
     )?;
     Ok(summary)
+}
+
+/// The TUI publishes the same session identity as headless execution so stop
+/// and handover can ask its owner to run the same settle cascade.
+pub(super) struct TuiSessionControl {
+    runtime_dir: PathBuf,
+    state_path: PathBuf,
+    stop_path: PathBuf,
+    state: std::cell::RefCell<HeadlessSessionState>,
+    shutdown_requested: Arc<AtomicBool>,
+    signal_handle: signal_hook::iterator::Handle,
+    signal_thread: Option<thread::JoinHandle<()>>,
+}
+
+impl TuiSessionControl {
+    pub(super) fn new(
+        task: &str,
+        repo_root: &Path,
+        plan: &ManagedTaskPlan,
+    ) -> Result<Self, ManagedError> {
+        let runtime_dir = managed_runtime_dir(repo_root, task, &plan.profile);
+        fs::create_dir_all(&runtime_dir)
+            .map_err(|error| ManagedError::task_invocation_failed_write(&runtime_dir, error))?;
+        let stop_path = runtime_dir.join("stop.requested");
+        if stop_path.exists() {
+            fs::remove_file(&stop_path)
+                .map_err(|error| ManagedError::task_invocation_failed_write(&stop_path, error))?;
+        }
+        let state_path = runtime_dir.join("session.json");
+        let state = HeadlessSessionState {
+            settle_complete: Some(false),
+            settle_error: None,
+            schema: HEADLESS_STATE_SCHEMA.to_owned(),
+            task: task.to_owned(),
+            profile: plan.profile.clone(),
+            supervisor_pid: std::process::id(),
+            status: "running".to_owned(),
+            started_at_unix_ms: unix_time_ms(),
+            container_environment: plan.container_environment.clone(),
+            run_token: std::env::var(crate::RUN_TOKEN_ENV)
+                .ok()
+                .filter(|token| !token.is_empty()),
+            processes: plan
+                .processes
+                .iter()
+                .enumerate()
+                .map(|(index, process)| HeadlessProcessState {
+                    name: process.name.clone(),
+                    pid: 0,
+                    status: "pending".to_owned(),
+                    log: process_log_path(&runtime_dir, index, &process.name),
+                    container_exec: process.exec_group_file.is_some(),
+                })
+                .collect(),
+        };
+        write_state(&state_path, &state)?;
+        let shutdown_requested = Arc::new(AtomicBool::new(false));
+        let (signal_handle, signal_thread) = install_signal_handler(shutdown_requested.clone())?;
+        Ok(Self {
+            runtime_dir,
+            state_path,
+            stop_path,
+            state: std::cell::RefCell::new(state),
+            shutdown_requested,
+            signal_handle,
+            signal_thread: Some(signal_thread),
+        })
+    }
+
+    pub(super) fn poll(&self, supervisor: &ProcessSupervisor) -> Result<bool, String> {
+        let mut state = self.state.borrow_mut();
+        let pids = supervisor
+            .process_ids()
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+        let diagnostics = supervisor
+            .exit_diagnostics()
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+        let mut changed = false;
+        for process in &mut state.processes {
+            if let Some(pid) = pids.get(&process.name) {
+                if process.pid != *pid {
+                    process.pid = *pid;
+                    process.status = "running".to_owned();
+                    changed = true;
+                }
+            }
+            if let Some(diagnostic) = diagnostics.get(&process.name) {
+                if process.status != *diagnostic {
+                    process.status.clone_from(diagnostic);
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            write_state(&self.state_path, &state).map_err(|error| error.to_string())?;
+        }
+        Ok(self.shutdown_requested.load(Ordering::Relaxed) || self.stop_path.exists())
+    }
+
+    pub(super) fn end_exec_groups(
+        &self,
+        settle: Option<&ManagedRunSettle<'_>>,
+    ) -> Result<(), String> {
+        end_container_exec_groups(&self.runtime_dir, &self.state.borrow(), settle)
+            .map_err(|error| error.to_string())
+    }
+
+    pub(super) fn finish(&self, supervisor: &ProcessSupervisor) -> Result<(), String> {
+        let mut state = self.state.borrow_mut();
+        let ended = verify_host_children_ended(supervisor, &mut state);
+        state.status = if ended.is_ok() { "stopped" } else { "failed" }.to_owned();
+        write_state(&self.state_path, &state).map_err(|error| error.to_string())?;
+        ended.map_err(|error| error.to_string())
+    }
+}
+
+impl Drop for TuiSessionControl {
+    fn drop(&mut self) {
+        self.signal_handle.close();
+        if let Some(thread) = self.signal_thread.take() {
+            let _ = thread.join();
+        }
+    }
 }
 
 struct SupervisorCleanup<'a>(&'a ProcessSupervisor);
@@ -273,7 +423,7 @@ pub fn live_headless_sessions(repo_root: &Path) -> Vec<LiveHeadlessSession> {
             continue;
         };
         refresh_running_state(&mut state);
-        if state.status != "running" {
+        if state.status != "running" && state.settle_complete != Some(false) {
             continue;
         }
         if !process_is_running(state.supervisor_pid) {
@@ -293,6 +443,135 @@ impl Drop for SupervisorCleanup<'_> {
     fn drop(&mut self) {
         self.0.terminate_all();
     }
+}
+
+// An exited-but-unreaped owner has already lost its locks and cannot settle
+// further. Unknown process observations remain live, so recovery never gains
+// teardown authority merely because process inspection failed.
+fn managed_owner_is_running(pid: u32) -> bool {
+    if !process_is_running(pid) {
+        return false;
+    }
+    let output = std::process::Command::new("ps")
+        .args(["-p", &pid.to_string(), "-o", "stat="])
+        .output();
+    !output
+        .ok()
+        .filter(|output| output.status.success())
+        .is_some_and(|output| {
+            String::from_utf8_lossy(&output.stdout)
+                .trim_start()
+                .starts_with('Z')
+        })
+}
+
+/// Residue of this task's previous dead owner, before a new run replaces its
+/// session. A failed or interrupted settle may require an owned down before up.
+pub fn failed_managed_run_token(
+    repo_root: &Path,
+    task: &str,
+    profile: &str,
+    environment: &str,
+) -> Result<Option<String>, ManagedError> {
+    let path = managed_runtime_dir(repo_root, task, profile).join("session.json");
+    if !path.exists() {
+        return Ok(None);
+    }
+    let state = read_state(&path)?;
+    if state.container_environment.as_deref() != Some(environment)
+        || managed_owner_is_running(state.supervisor_pid)
+        || (state.settle_complete != Some(false) && state.settle_error.is_none())
+    {
+        return Ok(None);
+    }
+    Ok(state.run_token)
+}
+
+/// Failed dead owners bound to one environment, for a standalone container up.
+pub fn failed_managed_run_tokens(repo_root: &Path, environment: &str) -> Vec<String> {
+    let Ok(entries) = fs::read_dir(repo_root.join(".effigy/runtime/managed")) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter_map(|entry| {
+            let state = read_state(&entry.path().join("session.json")).ok()?;
+            (state.container_environment.as_deref() == Some(environment)
+                && !managed_owner_is_running(state.supervisor_pid)
+                && (state.settle_complete == Some(false) || state.settle_error.is_some()))
+            .then_some(state.run_token)
+            .flatten()
+        })
+        .collect()
+}
+
+/// Mark only a dead generation recovered after its verified environment went
+/// down. A concurrent new generation's identity is never overwritten.
+pub fn clear_managed_run_failure(repo_root: &Path, token: &str) -> Result<(), ManagedError> {
+    let Ok(entries) = fs::read_dir(repo_root.join(".effigy/runtime/managed")) else {
+        return Ok(());
+    };
+    for entry in entries.flatten() {
+        let path = entry.path().join("session.json");
+        let Ok(mut state) = read_state(&path) else {
+            continue;
+        };
+        if state.run_token.as_deref() != Some(token)
+            || managed_owner_is_running(state.supervisor_pid)
+        {
+            continue;
+        }
+        state.settle_complete = Some(true);
+        state.settle_error = None;
+        state.status = "stopped".to_owned();
+        write_state(&path, &state)?;
+    }
+    Ok(())
+}
+
+/// Persist the runner's final cleanup outcome before its owner locks drop.
+pub fn record_managed_run_settle(
+    repo_root: &Path,
+    task: &str,
+    profile: &str,
+    run_token: Option<&str>,
+    error: Option<String>,
+) -> Result<(), ManagedError> {
+    let path = managed_runtime_dir(repo_root, task, profile).join("session.json");
+    let mut state = read_state(&path)?;
+    if state.supervisor_pid != std::process::id() || state.run_token.as_deref() != run_token {
+        return Err(ManagedError::task_invocation(
+            "managed session changed before cleanup completed",
+        ));
+    }
+    state.settle_complete = Some(true);
+    state.settle_error = error;
+    if state.settle_error.is_some() {
+        state.status = "failed".to_owned();
+    }
+    write_state(&path, &state)
+}
+
+/// Read only the stopped generation's cleanup outcome. Legacy sessions have
+/// no completion field and retain their existing lock/process settle rules.
+pub fn managed_run_settle_error(
+    repo_root: &Path,
+    task: &str,
+    profile: &str,
+    run_token: Option<&str>,
+) -> Result<Option<String>, ManagedError> {
+    let state = read_state(&managed_runtime_dir(repo_root, task, profile).join("session.json"))?;
+    if state.run_token.as_deref() != run_token {
+        return Err(ManagedError::task_invocation(
+            "managed session was replaced before its stop settled",
+        ));
+    }
+    if state.settle_complete == Some(false) {
+        return Ok(Some(
+            "owner exited before recording its final cleanup outcome".to_owned(),
+        ));
+    }
+    Ok(state.settle_error)
 }
 
 pub fn managed_headless_status(
@@ -332,6 +611,8 @@ pub struct ManagedHeadlessStopOutcome {
     pub summary: String,
     pub supervisor_pid: u32,
     pub run_token: Option<String>,
+    /// Includes a bounded remote cleanup attempt for every exec child.
+    pub settle_budget: Duration,
     /// Recorded child processes still alive after the request returned.
     pub surviving_processes: Vec<(String, u32)>,
 }
@@ -358,13 +639,21 @@ pub fn managed_headless_stop(
         summary,
         supervisor_pid: state.supervisor_pid,
         run_token: state.run_token.clone(),
+        settle_budget: MANAGED_SETTLE_BUDGET
+            + Duration::from_secs(
+                15 * state
+                    .processes
+                    .iter()
+                    .filter(|process| process.container_exec)
+                    .count() as u64,
+            ),
         surviving_processes: running
             .iter()
             .filter(|process| process_is_running(process.pid))
             .map(|process| (process.name.clone(), process.pid))
             .collect(),
     };
-    if running.is_empty() {
+    if !supervisor_running {
         return Ok(outcome(format!(
             "managed headless task `{task_name}` profile `{profile}` is not running"
         )));
@@ -372,25 +661,9 @@ pub fn managed_headless_stop(
     let stop_path = runtime_dir.join("stop.requested");
     fs::write(&stop_path, b"stop\n")
         .map_err(|error| ManagedError::task_invocation_failed_write(&stop_path, error))?;
-    for process in &running {
-        terminate_process_tree(process.pid, false);
-    }
-    let deadline = std::time::Instant::now() + SHUTDOWN_GRACE;
-    while std::time::Instant::now() < deadline
-        && running
-            .iter()
-            .any(|process| process_is_running(process.pid))
-    {
-        thread::sleep(Duration::from_millis(50));
-    }
-    for process in &running {
-        if process_is_running(state.supervisor_pid)
-            && process_is_running(process.pid)
-            && process_is_descendant_of(process.pid, state.supervisor_pid)
-        {
-            terminate_process_tree(process.pid, true);
-        }
-    }
+    // Only the owner orders the cascade: end remote exec groups while the
+    // environment is available, then host children, then container down.
+    // Killing clients here races that sequence, especially for failed children.
     // The cascade completion is judged by the caller, which can also see
     // the lock records: a supervisor that exited but is not reaped yet (a
     // zombie its parent has not collected) has already dropped its locks
@@ -406,13 +679,14 @@ fn end_container_exec_groups(
     runtime_dir: &Path,
     state: &HeadlessSessionState,
     settle: Option<&ManagedRunSettle<'_>>,
-) {
+) -> Result<(), ManagedError> {
     let Some(settle) = settle else {
-        return;
+        return Ok(());
     };
     let Some(end) = settle.end_container_process else {
-        return;
+        return Ok(());
     };
+    let mut failures = Vec::new();
     for process in &state.processes {
         if !process.container_exec {
             continue;
@@ -422,12 +696,17 @@ fn end_container_exec_groups(
             continue;
         };
         if let Err(error) = end(pgid) {
-            println!(
-                "[headless] could not end exec'd process group for `{}` (pgid {pgid}): {error}",
-                process.name
-            );
+            failures.push(format!("process `{}` (pgid {pgid}): {error}", process.name));
         }
         let _ = fs::remove_file(&marker);
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(ManagedError::task_invocation(format!(
+            "managed exec cleanup failed: {}",
+            failures.join("; ")
+        )))
     }
 }
 
@@ -606,6 +885,42 @@ fn reconcile_final_diagnostics(supervisor: &ProcessSupervisor, state: &mut Headl
         if let Some(diagnostic) = diagnostics.get(&process.name) {
             process.status.clone_from(diagnostic);
         }
+    }
+}
+
+/// SIGKILL delivery is asynchronous; allow it to settle, then report exactly
+/// which local child could not be reaped instead of suppressing it as a prior
+/// workload failure on an explicit stop.
+fn verify_host_children_ended(
+    supervisor: &ProcessSupervisor,
+    state: &mut HeadlessSessionState,
+) -> Result<(), ManagedError> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        reconcile_final_diagnostics(supervisor, state);
+        let residue = state
+            .processes
+            .iter()
+            .filter(|process| {
+                process.status == "running" || process.status.starts_with("wait-error=")
+            })
+            .map(|process| {
+                format!(
+                    "process `{}` (pid {}): {}",
+                    process.name, process.pid, process.status
+                )
+            })
+            .collect::<Vec<_>>();
+        if residue.is_empty() {
+            return Ok(());
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(ManagedError::task_invocation(format!(
+                "managed host cleanup failed: {}",
+                residue.join("; ")
+            )));
+        }
+        thread::sleep(Duration::from_millis(25));
     }
 }
 
@@ -944,6 +1259,71 @@ mod tests {
     }
 
     #[test]
+    fn tui_session_registers_its_owner_and_observes_task_stop() {
+        let private = tempfile::tempdir().expect("private TUI session");
+        let mut process = headless_spec_in(
+            "api",
+            ManagedProcessRole::Standard,
+            private.path().to_path_buf(),
+        );
+        process.run = "sleep 30".to_owned();
+        let plan = crate::ManagedTaskPlan {
+            mode: "tui".to_owned(),
+            profile: "default".to_owned(),
+            processes: vec![process],
+            tab_order: Vec::new(),
+            fail_on_non_zero: true,
+            passthrough: Vec::new(),
+            gateway_auto_start: false,
+            readiness: crate::ManagedTaskReadiness::default(),
+            container_environment: Some("stack".to_owned()),
+        };
+        let session =
+            super::TuiSessionControl::new("dev", private.path(), &plan).expect("register TUI");
+        let supervisor = effigy_process::ProcessSupervisor::spawn(
+            private.path().to_path_buf(),
+            crate::render_support::managed_process_specs(plan.processes),
+        )
+        .expect("spawn TUI child");
+        let _cleanup = super::SupervisorCleanup(&supervisor);
+        assert!(!session.poll(&supervisor).expect("initial poll"));
+        let owners = super::live_headless_sessions(private.path());
+        assert_eq!(owners.len(), 1);
+        assert_eq!(owners[0].container_environment.as_deref(), Some("stack"));
+        super::managed_headless_stop(private.path(), "dev", "default").expect("task stop");
+        assert!(session.poll(&supervisor).expect("stop poll"));
+        supervisor.terminate_all_graceful(std::time::Duration::from_secs(1));
+        session.finish(&supervisor).expect("record stopped session");
+        assert_eq!(
+            super::live_headless_sessions(private.path()).len(),
+            1,
+            "owner remains discoverable during container cleanup"
+        );
+        let token = session.state.borrow().run_token.clone();
+        super::record_managed_run_settle(private.path(), "dev", "default", token.as_deref(), None)
+            .expect("record settled session");
+        assert!(super::live_headless_sessions(private.path()).is_empty());
+        assert_eq!(
+            super::managed_run_settle_error(private.path(), "dev", "default", token.as_deref())
+                .expect("read settle"),
+            None
+        );
+        super::record_managed_run_settle(
+            private.path(),
+            "dev",
+            "default",
+            token.as_deref(),
+            Some("container down failed".to_owned()),
+        )
+        .expect("record genuine failure");
+        assert_eq!(
+            super::managed_run_settle_error(private.path(), "dev", "default", token.as_deref())
+                .expect("read failure"),
+            Some("container down failed".to_owned())
+        );
+    }
+
+    #[test]
     fn headless_run_records_container_environment_in_session() {
         let temp = tempfile::tempdir().expect("headless env fixture");
         let plan = crate::ManagedTaskPlan {
@@ -976,6 +1356,69 @@ mod tests {
             Some("stack"),
             "{raw}"
         );
+    }
+
+    #[test]
+    fn failed_run_recovery_requires_a_dead_matching_generation() {
+        let private = tempfile::tempdir().expect("recovery fixture");
+        let path =
+            super::managed_runtime_dir(private.path(), "dev", "default").join("session.json");
+        std::fs::create_dir_all(path.parent().expect("session directory")).expect("create session");
+        let mut state = super::HeadlessSessionState {
+            schema: super::HEADLESS_STATE_SCHEMA.to_owned(),
+            task: "dev".to_owned(),
+            profile: "default".to_owned(),
+            supervisor_pid: std::process::id(),
+            status: "stopped".to_owned(),
+            started_at_unix_ms: 0,
+            container_environment: Some("stack".to_owned()),
+            run_token: Some("old-generation".to_owned()),
+            processes: Vec::new(),
+            settle_complete: Some(false),
+            settle_error: Some("down failed".to_owned()),
+        };
+        super::write_state(&path, &state).expect("live owner");
+        assert_eq!(
+            super::failed_managed_run_token(private.path(), "dev", "default", "stack").unwrap(),
+            None
+        );
+        super::clear_managed_run_failure(private.path(), "old-generation").unwrap();
+        assert_eq!(
+            super::read_state(&path).unwrap().settle_complete,
+            Some(false)
+        );
+        // Keep our own exited child unreaped: immediate restart must recover
+        // before the invoking parent collects its owner exit status.
+        let mut child = std::process::Command::new("true")
+            .spawn()
+            .expect("short owner");
+        state.supervisor_pid = child.id();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while super::managed_owner_is_running(child.id()) {
+            assert!(std::time::Instant::now() < deadline, "short owner exits");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        super::write_state(&path, &state).expect("unreaped dead owner");
+        assert_eq!(
+            super::failed_managed_run_token(private.path(), "dev", "default", "foreign").unwrap(),
+            None
+        );
+        assert_eq!(
+            super::failed_managed_run_tokens(private.path(), "stack"),
+            vec!["old-generation"]
+        );
+        super::clear_managed_run_failure(private.path(), "another-generation").unwrap();
+        assert_eq!(
+            super::read_state(&path).unwrap().settle_complete,
+            Some(false)
+        );
+        super::clear_managed_run_failure(private.path(), "old-generation").unwrap();
+        assert!(super::failed_managed_run_tokens(private.path(), "stack").is_empty());
+        child.wait().expect("reap recovered owner");
+        state.settle_complete = None;
+        state.settle_error = None;
+        super::write_state(&path, &state).expect("older compatible state");
+        assert!(super::failed_managed_run_tokens(private.path(), "stack").is_empty());
     }
 
     #[test]

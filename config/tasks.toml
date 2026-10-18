@@ -51,7 +51,7 @@
 # Managed TUI startup must render and remain cancellable while ordered child
 # startup delays are still pending. The PTY test follows the production path.
 "test:tui:startup-visibility" = [
-  { id = "tui-startup-visibility", run = "cargo test -p effigy-tui --lib multiprocess::startup_visibility::managed_tui_startup_visibility_production_pty -- --nocapture", timeout_ms = 240000 },
+  { id = "tui-startup-visibility", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-tui --lib --filterset 'test(multiprocess::startup_visibility::managed_tui_startup_visibility_production_pty)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 240000 },
 ]
 "check:tui:startup-visibility" = [
   "cargo check -p effigy-process -p effigy-tui --all-targets --profile test",
@@ -148,10 +148,9 @@
   "cargo test -p effigy-containers --lib invalid_linked_worktree_admin_directory_is_refused -- --nocapture",
 ]
 "test:containers:data-from" = [
-  "cargo test -p effigy-manifest --lib container_data_from -- --nocapture",
-  "cargo test -p effigy-doctor --lib validate_manifest_schema_accepts_container_data_from -- --nocapture",
-  "cargo test -p effigy-containers --lib tests::data_from -- --nocapture",
-  "cargo test -p effigy-containers --lib policy::data_from -- --nocapture",
+  { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-manifest --lib --filterset 'test(container_data_from)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
+  { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-doctor --lib --filterset 'test(validate_manifest_schema_accepts_container_data_from)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
+  { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib --filterset 'test(tests::data_from) | test(policy::data_from)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
 ]
 # Detached-activation admission over the runtime Compose inputs: the strict
 # publication verify reads the per-environment generated payload, workspace,
@@ -314,17 +313,40 @@
 # The settle controls (#200) live beside them: the whole-environment
 # handover's owner-settle unit proofs and the task-lock attribution rules
 # the settle depends on.
+# Focused recovery controls; bounded nextest execution also fails leaked handles.
+"check:managed:recovery" = [
+  "cargo check -p effigy -p effigy-managed -p effigy-containers -p effigy-tui -p effigy-process --all-targets --profile test",
+  "cargo clippy -p effigy -p effigy-managed -p effigy-containers -p effigy-tui -p effigy-process --all-targets -- -D warnings",
+]
+"test:managed:matrix" = { run = "cargo nextest run --config-file tests/config/managed-matrix-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_matrix_) & !test(managed_matrix_failed_stop_)' --success-output immediate --no-fail-fast --retries 0 --no-tests fail -j 2", timeout_ms = 2500000 }
+"test:managed:matrix:all-failed" = { run = "cargo nextest run --config-file tests/config/managed-matrix-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_matrix_all_failed_)' --success-output immediate --no-fail-fast --retries 0 --no-tests fail -j 2", timeout_ms = 2500000 }
+"test:managed:failed-stop" = { run = "cargo nextest run --config-file tests/config/managed-matrix-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_matrix_failed_stop_)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 }
+"test:managed:recovery" = [
+  { id = "managed-shutdown-labels", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib --filterset 'test(legacy_admission_tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
+  { task = "test:managed:session-runtime" },
+  { task = "test:tui:startup-visibility" },
+  { task = "test:managed:recovery-controls" },
+]
+"test:managed:session-runtime" = [
+  { id = "managed-session-runtime", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-managed --lib --filterset 'test(runtime::headless::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
+]
+"test:managed:recovery-controls" = [
+  { id = "managed-recovery-controls", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(managed_and_locking_tests::managed_headless_tests::) | test(finish_managed_task_) | test(reconcile_restarts_an_environment_a_handover_stopped) | test(partial_activation_running_primary_)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
+]
 "test:managed:headless-lifecycle" = [
-  { id = "managed-exec-readiness-render", run = "cargo test -p effigy-containers --lib session::tests:: -- --nocapture", timeout_ms = 300000 },
-  { id = "managed-up-workspace-prep", run = "cargo test -p effigy --lib container_command::lifecycle::tests::up_workspace_permission -- --nocapture", timeout_ms = 300000 },
+  { id = "managed-exec-readiness-render", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib --filterset 'test(session::tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 300000 },
+  { id = "managed-up-workspace-prep", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(container_command::lifecycle::tests::up_workspace_permission)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 300000 },
   { id = "managed-handoff-local-exec", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(bounded_exec::tests::handoff_local_tests::handoff_container_)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
-  { id = "managed-inline-exec-render", run = "cargo test -p effigy --lib execute::pipeline::managed::tests::inline_managed -- --nocapture", timeout_ms = 300000 },
-  { id = "managed-headless-controls", run = "cargo test -p effigy --lib managed_and_locking_tests::managed_headless_tests -- --nocapture", timeout_ms = 600000 },
-  { id = "managed-headless-healthy-stack", run = "cargo test --test cli_output_tests cli_managed_headless_lifecycle_reaches_running_on_healthy_stack -- --nocapture", timeout_ms = 600000 },
-  { id = "managed-headless-settle-e2e", run = "cargo test --test cli_output_tests cli_managed_headless_stop_settles_remote_exec_children_and_locks -- --nocapture", timeout_ms = 600000 },
-  { id = "managed-handover-slow-down-e2e", run = "cargo test --test cli_output_tests cli_forward_handover_waits_for_owner_whose_stop_cascade_is_slow -- --nocapture", timeout_ms = 600000 },
-  { id = "managed-handover-owner-settle", run = "cargo test -p effigy --lib container_command::handover::tests:: -- --nocapture", timeout_ms = 600000 },
-  { id = "managed-lock-attribution", run = "cargo test -p effigy --lib managed_and_locking_tests::locking_tests:: -- --nocapture", timeout_ms = 600000 },
+  { id = "managed-inline-exec-render", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(execute::pipeline::managed::tests::inline_managed)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 300000 },
+  { id = "managed-headless-controls", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(managed_and_locking_tests::managed_headless_tests)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
+  { id = "managed-headless-healthy-stack", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests --filterset 'test(cli_managed_headless_lifecycle_reaches_running_on_healthy_stack)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
+  { id = "managed-headless-settle-e2e", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests --filterset 'test(cli_managed_headless_stop_settles_remote_exec_children_and_locks)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
+  { id = "managed-handover-slow-down-e2e", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests --filterset 'test(cli_forward_handover_waits_for_owner_whose_stop_cascade_is_slow)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
+  { task = "test:managed:handover-settle" },
+]
+"test:managed:handover-settle" = [
+  { id = "managed-handover-owner-settle", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(container_command::handover::tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
+  { id = "managed-lock-attribution", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(managed_and_locking_tests::locking_tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
 ]
 "proof:managed:host-readiness" = [
   { id = "managed-host-readiness-probe", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(managed_host_readiness_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
@@ -354,6 +376,9 @@
 "test:host-process:dependent-replacement" = [
   { id = "published-dependent-replacement", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_host_dependent_replacement_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
 ]
+# Exercise the default CI resource reservation (the focused listener profile
+# deliberately uses a separate configuration).
+"test:host-process:dependent-replacement:ci" = { run = "cargo nextest run --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_host_dependent_replacement_)' --success-output immediate --no-fail-fast --retries 0 --no-tests fail -j 4", timeout_ms = 600000 }
 "test:host-process:exit-observation:matrix" = [
   { task = "test:host-process:exit-observation" },
   { task = "test:host-process:dependent-replacement" },

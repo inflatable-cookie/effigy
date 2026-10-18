@@ -496,9 +496,9 @@ pub(in crate::runner) fn mark_detached_activation_complete(
 }
 
 /// Record, before a handover stops this environment, that the stop was a
-/// deliberate handover to another environment of the same checkout. A later
-/// `up` reads it to restart normally instead of refusing an unknown partial
-/// state; `down` and a completed activation clear it.
+/// deliberate handover to another environment of the same checkout.
+/// Retain the handover's provenance until `down` or a completed activation
+/// clears it. Recovery also accepts owned stopped stacks without this record.
 pub(in crate::runner) fn record_environment_handover(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
@@ -542,6 +542,7 @@ pub(in crate::runner) fn record_environment_handover(
 /// The recorded handover stop for this environment, when one is still
 /// unresolved. A record whose context no longer matches this checkout's scope
 /// or identity is stale and reads as absent.
+#[cfg(test)]
 pub(in crate::runner) fn environment_handover_recorded(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,

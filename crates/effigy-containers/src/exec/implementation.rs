@@ -490,6 +490,45 @@ mod legacy_admission_tests {
     }
 
     #[test]
+    fn shutdown_uses_full_ids_and_checkout_scope_labels_without_inspect() {
+        let private = tempfile::tempdir().expect("private shutdown labels");
+        let root = private.path().canonicalize().expect("canonical checkout");
+        let mut context = unscoped_context(&root);
+        let policy = policy("acme");
+        let id = "a".repeat(64);
+        for checkout_column in [
+            format!("{}\t", root.display()),
+            format!("\t{}", root.display()),
+        ] {
+            let row = format!("{id}\tacme\t{checkout_column}\t\n");
+            context
+                .verify_shutdown_listing(&policy, row.as_bytes())
+                .expect("Docker working_dir or nerdctl checkout label");
+        }
+        context
+            .verify_shutdown_listing(&policy, b"")
+            .expect("already gone");
+        for row in [
+            format!("short\tacme\t{}\t\t\n", root.display()),
+            format!("{id}\tforeign\t{}\t\t\n", root.display()),
+            format!("{id}\tacme\t/unknown-checkout\t\t\n"),
+            format!("{id}\tacme\t{}\t\tforeign-scope\n", root.display()),
+        ] {
+            assert!(
+                context
+                    .verify_shutdown_listing(&policy, row.as_bytes())
+                    .is_err(),
+                "{row}"
+            );
+        }
+        context.scope_token = Some("owned-scope".to_owned());
+        let row = format!("{id}\tacme\t{}\t\towned-scope\n", root.display());
+        context
+            .verify_shutdown_listing(&policy, row.as_bytes())
+            .expect("matching scoped ownership");
+    }
+
+    #[test]
     fn legacy_unlabelled_admission_requires_identity_and_this_checkout_mount() {
         let checkout = tempfile::tempdir().expect("checkout fixture");
         let canonical = checkout.path().canonicalize().expect("canonical checkout");
@@ -813,6 +852,24 @@ pub fn verify_owned_running_compose_rows(
         .map(|verified| verified.into_iter().map(|binding| binding.row).collect())
 }
 
+/// Whether all declared services, including the primary, are running. The
+/// caller separately verifies ownership before using this to avoid Compose up.
+pub fn compose_stack_is_running(
+    policy: &EffectiveContainerPolicy,
+    rows: &[RunningComposeContainer],
+) -> Result<bool, ContainerExecError> {
+    let mut declared = super::restart_recovery::declared_service_names(&policy.compose_files)?;
+    declared.insert(policy.primary_service.clone());
+    Ok(declared.iter().all(|service| {
+        rows.iter().any(|row| {
+            row.project_name.as_deref() == Some(policy.project_name.as_str())
+                && row.service.as_deref() == Some(service.as_str())
+                && !row.oneoff
+                && super::parse::compose_status_is_running(&row.status)
+        })
+    }))
+}
+
 /// Whether every container of `policy`'s project may be brought under a fresh
 /// activation by this checkout: each must be proven owned by this checkout and
 /// scope, or be a pre-ownership-label container (no checkout, working-directory
@@ -1101,6 +1158,38 @@ impl OwnershipContext {
                 .and_then(|path| Path::new(path).canonicalize().ok())
                 .as_ref()
                 == Some(&self.canonical)
+    }
+
+    /// Verify every full-ID project row before teardown, including stopped
+    /// containers and orphans. Unlike exec/publication this needs no running
+    /// state, inspect snapshot, declared service, or port associations.
+    pub(super) fn verify_shutdown_listing(
+        &self,
+        policy: &EffectiveContainerPolicy,
+        stdout: &[u8],
+    ) -> Result<(), ContainerExecError> {
+        for line in String::from_utf8_lossy(stdout)
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+        {
+            let fields = line.split('\t').collect::<Vec<_>>();
+            if let [id, project, working_dir, checkout, scope] = fields[..] {
+                fn present(value: &str) -> Option<&str> {
+                    (!value.is_empty()).then_some(value)
+                }
+                if super::healthcheck_timer::parse_full_container_id(id).is_some()
+                    && project == policy.project_name
+                    && self.owns(present(working_dir).or(present(checkout)), present(scope))
+                {
+                    continue;
+                }
+            }
+            return Err(ContainerExecError::Failure {
+                command: "verify managed shutdown ownership".to_owned(), code: None,
+                stdout: String::new(), stderr: "project container has unknown or foreign full-ID/checkout/scope ownership; no teardown ran".to_owned(),
+            });
+        }
+        Ok(())
     }
 
     /// Prove that an [`owned_service_listing_args`] listing holds exactly one

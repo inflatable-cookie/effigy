@@ -10,6 +10,15 @@ final-status-level = "leak"
 filter = 'test(/^command_behavior_tests::(cli_deep_doctor_timeout_terminates_(git_identity|health_process)_tree|cli_fast_doctor_timeout_terminates_cargo_metadata_tree|doctor_git_cli_(serial_observer_counterexample|deliberately_late_descendant))$/) | test(/^execution::doctor_inventory::tests::doctor_git_timeout_(process_group_evidence|before_status_is_incomplete_evidence)$/)'
 threads-required = "num-test-threads"
 
+[[profile.default.overrides]]
+# This proof cold-starts three managed stacks and their listener/dependent
+# supervisors concurrently. Keep its production startup deadlines intact while
+# reserving runner capacity, as in the focused listener validation.
+filter = 'binary(gateway_private) & test(managed_host_dependent_replacement_)'
+threads-required = "num-test-threads"
+slow-timeout = { period = "120s", terminate-after = 1, grace-period = "2s" }
+leak-timeout = { period = "1s", result = "fail" }
+
 [profile.doctor-process]
 inherits = "default"
 

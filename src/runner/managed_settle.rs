@@ -36,13 +36,20 @@ pub(in crate::runner) fn stop_and_settle_headless_run(
     // exited-but-unreaped supervisor (a zombie its parent has not collected
     // yet) settles as soon as its lock records are gone instead of stalling
     // the budget.
-    let deadline = std::time::Instant::now() + effigy_managed::runtime::MANAGED_SETTLE_BUDGET;
+    let deadline = std::time::Instant::now() + outcome.settle_budget;
     loop {
         let supervisor_still_holds = task_lock_holders(repo_root).into_iter().any(|holder| {
             holder.pid == outcome.supervisor_pid
                 && pid_record_is_comparable_here(holder.hostname.as_deref())
         });
-        if !effigy_process::process_is_running(outcome.supervisor_pid) || !supervisor_still_holds {
+        let children_ended = outcome
+            .surviving_processes
+            .iter()
+            .all(|(_, pid)| !effigy_process::process_is_running(*pid));
+        if children_ended
+            && (!effigy_process::process_is_running(outcome.supervisor_pid)
+                || !supervisor_still_holds)
+        {
             break;
         }
         if std::time::Instant::now() >= deadline {
@@ -69,6 +76,19 @@ pub(in crate::runner) fn stop_and_settle_headless_run(
     }
     if !residue.is_empty() {
         return Err(did_not_settle(task_name, profile, &residue));
+    }
+
+    if let Some(error) = effigy_managed::runtime::managed_run_settle_error(
+        repo_root,
+        task_name,
+        profile,
+        outcome.run_token.as_deref(),
+    )
+    .map_err(RunnerError::from)?
+    {
+        return Err(RunnerError::task_invocation(format!(
+            "managed task `{task_name}` stop did not settle: {error}"
+        )));
     }
 
     // The cascade has ended: the run no longer holds anything itself.

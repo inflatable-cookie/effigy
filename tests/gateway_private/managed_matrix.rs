@@ -1,0 +1,725 @@
+//! The requested 3 × 3 × 2 × 3 lifecycle matrix. UI mode alternates across
+//! cases, covering every stop path in both modes without adding a fifth axis.
+use super::*;
+use std::os::unix::process::CommandExt;
+
+#[derive(Clone, Copy, Debug)]
+enum Stop {
+    Request,
+    Signal,
+    Handover,
+}
+#[derive(Clone, Copy, Debug)]
+enum Prior {
+    Fresh,
+    Partial,
+    Stopped,
+}
+
+struct Case<'a> {
+    root: PathBuf,
+    state: PathBuf,
+    home: PathBuf,
+    gateway: &'a Path,
+    effects: &'a HostEffectSentinels,
+    foreign_ca: &'a Path,
+    log: PathBuf,
+}
+impl<'a> Case<'a> {
+    fn new(
+        base: &Path,
+        gateway: &'a Path,
+        effects: &'a HostEffectSentinels,
+        foreign_ca: &'a Path,
+        port: u16,
+    ) -> Self {
+        fs::create_dir_all(base).expect("case root");
+        let root = base.canonicalize().expect("canonical case");
+        let state = root.join("engine");
+        let home = root.join("home");
+        fs::create_dir(&state).expect("private engine state");
+        fs::create_dir(&home).expect("private home");
+        let bin = std::env::split_paths(&effects.env_path)
+            .next()
+            .expect("fake binary directory");
+        fs::write(
+            home.join(".profile"),
+            format!("PATH='{}':$PATH\nexport PATH\n", bin.display()),
+        )
+        .expect("login path");
+        let wrapper = root.join("effigy-wrapper");
+        fs::write(
+            &wrapper,
+            format!(
+                "#!/bin/sh\nexport PATH='{}':$PATH\nexec '{}' \"$@\"\n",
+                bin.display(),
+                EFFIGY
+            ),
+        )
+        .expect("wrapper");
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o700))
+            .expect("executable wrapper");
+        fs::write(
+            root.join("compose.yml"),
+            "services:\n  app:\n    image: alpine\n  db:\n    image: alpine\n",
+        )
+        .expect("compose");
+        let mut manifest = String::from("[tasks.serve]\nmode = \"tui\"\nworkspace = \"app\"\ncontainer_lifecycle = true\nconcurrent = [\n  { role = \"lifecycle\", start = 1 },\n");
+        for child in ["api", "jobs"] {
+            let run = format!(
+                "env EFFIGY_INTERNAL_CONTAINER_HANDOFF=1 '{}' hold-{child}",
+                wrapper.display()
+            );
+            manifest.push_str(&format!(
+                "  {{ name = \"{child}\", run = {}, start = 2 }},\n",
+                toml_quote(&run)
+            ));
+        }
+        manifest.push_str("]\n");
+        for child in ["api", "jobs"] {
+            let run = format!("printf '%s\\n' \"$$\" > '{}/work-{child}.pid'; if [ -f '{}/fail-{child}' ]; then exit 7; fi; exec sleep 3600", root.display(), root.display());
+            manifest.push_str(&format!(
+                "[tasks.hold-{child}]\nrun_in = \"host\"\nrun = {}\n",
+                toml_quote(&run)
+            ));
+        }
+        manifest.push_str("[systems]\ndefault = \"dev\"\n[systems.dev]\ndefault_workspace = \"app\"\n[systems.dev.workspaces.app]\ncontainer = \"stack\"\n[containers]\ndefault = \"stack\"\n");
+        for environment in ["stack", "other"] {
+            manifest.push_str(&format!("[containers.{environment}]\ndriver = \"colima\"\nstartup = \"detached\"\nprofile = \"matrix\"\ncompose_file = \"compose.yml\"\nproject_name = \"matrix-{environment}\"\nprimary_service = \"app\"\nworking_dir = {}\n[containers.{environment}.host]\nports = [\"{port}:8080\"]\n[containers.{environment}.dns]\nroutes = [{{ domain = \"matrix.test\", tls = false, service = \"app\", port = {port} }}]\n[containers.{environment}.lifecycle]\non_task_exit = \"stop\"\ndetach_timeout_secs = 1\n", toml_quote(&root.display().to_string())));
+            let project = format!("matrix-{environment}");
+            let mut rows = String::new();
+            for (service, id) in [("app", "a".repeat(64)), ("db", "b".repeat(64))] {
+                let name = format!("{project}-{service}-1");
+                let ports = if service == "app" {
+                    format!("127.0.0.1:{port}->8080/tcp")
+                } else {
+                    String::new()
+                };
+                rows.push_str(&format!(
+                    "{name}\tUp 1 minute\t{ports}\t{project}\t{}\t{service}\tFalse\n",
+                    root.display()
+                ));
+                let published = if service == "app" {
+                    serde_json::json!({"8080/tcp":[{"HostIp":"127.0.0.1","HostPort":port.to_string()}]})
+                } else {
+                    serde_json::json!({})
+                };
+                let proof = serde_json::json!([{"Id":id,"Name":format!("/{name}"),"State":{"Status":"running","Running":true},"Config":{"Labels":{"com.docker.compose.project":project,"com.docker.compose.service":service,"com.docker.compose.oneoff":"False","com.effigy.checkout":root}},"NetworkSettings":{"Ports":published}}]);
+                fs::write(
+                    state.join(format!("inspect-{name}.json")),
+                    proof.to_string(),
+                )
+                .expect("owned proof");
+            }
+            fs::write(state.join(format!("ps-{project}.txt")), rows).expect("owned inventory");
+        }
+        fs::write(root.join("effigy.toml"), manifest).expect("manifest");
+        fs::write(root.join("volume-data"), "retained matrix data").expect("volume sentinel");
+        fs::write(root.join("matrix-adapter.py"), ADAPTER).expect("private adapter");
+        Self {
+            log: root.join("docker.log"),
+            root,
+            state,
+            home,
+            gateway,
+            effects,
+            foreign_ca,
+        }
+    }
+    fn command(&self, args: &[&str]) -> Command {
+        let mut command = Command::new(EFFIGY);
+        command
+            .args(args)
+            .current_dir(&self.root)
+            .env("HOME", &self.home)
+            .env("EFFIGY_TEST_CONTAINERS_HOME", self.home.join(".effigy"))
+            .env("EFFIGY_HOST_RUN_ROOT", scheduler_root())
+            .env("PATH", &self.effects.env_path)
+            .env("EFFIGY_EXECUTABLE", self.root.join("effigy-wrapper"))
+            .env("COLIMA_HOME", self.home.join("colima"))
+            .env("EFFIGY_COMPOSE_BACKEND", "docker")
+            .env("EFFIGY_DISABLE_HOST_CONTAINER_LEASE_REAPER", "1")
+            .env("EFFIGY_TEST_SKIP_WORKSPACE_EFFIGY_HANDOFF", "1")
+            .env(
+                effigy_gateway::private_state::PRIVATE_STATE_ROOT_ENV,
+                self.gateway,
+            )
+            .env("EFFIGY_GATEWAY_MKCERT_BIN", &self.effects.private_mkcert)
+            .env("EFFECT_LOG", &self.effects.log)
+            .env("MKCERT_CALLS", &self.effects.mkcert_calls)
+            .env("CAROOT", self.foreign_ca)
+            .env("FOREIGN_CAROOT", self.foreign_ca)
+            .env("FAKE_DOCKER_LOG", &self.log)
+            .env("FAKE_OWNED_STATE", &self.state)
+            .env("MATRIX_EXEC", "1")
+            .env("MATRIX_ADAPTER", self.root.join("matrix-adapter.py"))
+            .env("MATRIX_ROOT", &self.root)
+            .env("NO_COLOR", "1")
+            .env_remove("EFFIGY_MANAGED_HEADLESS")
+            .env_remove("EFFIGY_MANAGED_TUI");
+        command
+    }
+    fn run(&self, args: &[&str]) -> Output {
+        self.command(args).output().expect("bounded fixture CLI")
+    }
+    fn success(&self, args: &[&str]) {
+        let output = self.run(args);
+        assert!(
+            output.status.success(),
+            "{args:?}: {} {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    fn prepare(&self, prior: Prior) {
+        if matches!(prior, Prior::Fresh) {
+            return;
+        }
+        self.success(&["container", "stack", "up", "--detach"]);
+        // Keep the exact admitted inputs and remove only the completion mark:
+        // this is a recorded partial activation, not an unrecorded adoption.
+        fn remove_complete(dir: &Path) {
+            if let Ok(entries) = fs::read_dir(dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_dir() {
+                        remove_complete(&path);
+                    } else if path
+                        .file_name()
+                        .is_some_and(|name| name == "stack.complete")
+                    {
+                        fs::remove_file(path).expect("partial admission");
+                    }
+                }
+            }
+        }
+        remove_complete(&self.home);
+        let marker = match prior {
+            Prior::Partial => "missing-matrix-stack",
+            Prior::Stopped => "stopped-matrix-stack",
+            Prior::Fresh => unreachable!(),
+        };
+        fs::write(self.state.join(marker), "prior owned state").expect("prior state");
+    }
+    fn spawn(&self, tui: bool, name: &str) -> Owner {
+        let output = self.root.join(format!("{name}.out"));
+        let file = fs::File::create(&output).expect("owner log");
+        let mut command = self.command(if tui {
+            &["serve"]
+        } else {
+            &["serve", "--headless"]
+        });
+        command.process_group(0);
+        if tui {
+            use nix::pty::{openpty, Winsize};
+            let pair = openpty(
+                Some(&Winsize {
+                    ws_row: 24,
+                    ws_col: 100,
+                    ws_xpixel: 0,
+                    ws_ypixel: 0,
+                }),
+                None,
+            )
+            .expect("private PTY");
+            let slave = fs::File::from(pair.slave);
+            command
+                .stdin(slave.try_clone().expect("PTY stdin"))
+                .stdout(slave.try_clone().expect("PTY stdout"))
+                .stderr(slave);
+            command.env("EFFIGY_MANAGED_TUI", "1");
+            let child = command.spawn().expect("TUI owner");
+            let mut master = fs::File::from(pair.master);
+            let reader = thread::spawn(move || {
+                let mut file = file;
+                let mut buffer = [0; 4096];
+                let mut recent = Vec::new();
+                while let Ok(count) = master.read(&mut buffer) {
+                    if count == 0 {
+                        break;
+                    }
+                    let _ = file.write_all(&buffer[..count]);
+                    recent.extend_from_slice(&buffer[..count]);
+                    if recent.windows(4).any(|bytes| bytes == b"\x1b[6n") {
+                        let _ = master.write_all(b"\x1b[1;1R");
+                        recent.clear();
+                    } else if recent.len() > 4 {
+                        recent.drain(..recent.len() - 4);
+                    }
+                }
+            });
+            Owner {
+                child: ManagedSupervisor(child),
+                reader: Some(reader),
+                output,
+            }
+        } else {
+            command
+                .stdin(Stdio::null())
+                .stdout(file.try_clone().expect("stdout"))
+                .stderr(file);
+            Owner {
+                child: ManagedSupervisor(command.spawn().expect("headless owner")),
+                reader: None,
+                output,
+            }
+        }
+    }
+    fn ready(&self, owner: &mut Owner, failures: usize) -> Vec<u32> {
+        let path = self
+            .root
+            .join(".effigy/runtime/managed/serve-default/session.json");
+        let deadline = Instant::now() + Duration::from_secs(45);
+        loop {
+            assert!(
+                owner.child.0.try_wait().expect("poll owner").is_none(),
+                "owner exited: {} lifecycle={} engine={}",
+                fs::read_to_string(&owner.output).unwrap_or_default(),
+                fs::read_to_string(
+                    self.root
+                        .join(".effigy/runtime/managed/serve-default/01-lifecycle.log")
+                )
+                .unwrap_or_default(),
+                fs::read_to_string(&self.log).unwrap_or_default()
+            );
+            let state = fs::read(&path)
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok());
+            let recorded_failures = state
+                .as_ref()
+                .and_then(|state| state["processes"].as_array())
+                .map(|rows| {
+                    rows.iter()
+                        .filter(|row| {
+                            matches!(row["name"].as_str(), Some("api" | "jobs"))
+                                && row["status"].as_str().is_some_and(|status| {
+                                    status.starts_with("exit=") && status != "exit=0"
+                                })
+                        })
+                        .count()
+                })
+                .unwrap_or(0);
+            let lifecycle = self
+                .root
+                .join(".effigy/runtime/managed-lifecycle/serve-stack.state");
+            if fs::read_to_string(lifecycle).unwrap_or_default().trim() == "ready"
+                && self.root.join("work-api.pid").exists()
+                && self.root.join("work-jobs.pid").exists()
+                && recorded_failures == failures
+            {
+                let mut pids = state.expect("session")["processes"]
+                    .as_array()
+                    .expect("processes")
+                    .iter()
+                    .filter_map(|row| row["pid"].as_u64().map(|pid| pid as u32))
+                    .collect::<Vec<_>>();
+                for entry in fs::read_dir(&self.root).expect("case files").flatten() {
+                    if entry
+                        .path()
+                        .extension()
+                        .is_some_and(|extension| extension == "pid")
+                    {
+                        pids.push(
+                            fs::read_to_string(entry.path())
+                                .expect("PID record")
+                                .trim()
+                                .parse()
+                                .expect("PID"),
+                        );
+                    }
+                }
+                return pids;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "readiness timed out: session={state:?} owner={} engine={}",
+                fs::read_to_string(&owner.output).unwrap_or_default(),
+                fs::read_to_string(&self.log).unwrap_or_default()
+            );
+            thread::sleep(Duration::from_millis(50));
+        }
+    }
+    fn assert_down(&self, pids: &[u32]) {
+        assert!(
+            !self.state.join("active-matrix-stack").exists(),
+            "whole environment down"
+        );
+        assert_eq!(
+            fs::read_to_string(self.root.join("volume-data")).expect("volume"),
+            "retained matrix data"
+        );
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while pids.iter().any(|pid| owned_process_is_live(*pid)) && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(50));
+        }
+        for pid in pids {
+            assert!(
+                !owned_process_is_live(*pid),
+                "owned process {pid} survived: {:?}",
+                Command::new("ps")
+                    .args(["-p", &pid.to_string(), "-o", "pid=,ppid=,stat=,command="])
+                    .output()
+            );
+        }
+        let locks = self.root.join(".effigy/locks");
+        if locks.exists() {
+            for entry in fs::read_dir(locks).expect("locks").flatten() {
+                assert!(
+                    entry
+                        .path()
+                        .extension()
+                        .is_none_or(|extension| extension != "lock"),
+                    "residual lock: {}",
+                    entry.path().display()
+                );
+            }
+        }
+        let log = fs::read_to_string(&self.log).expect("runtime calls");
+        assert!(
+            !log.contains("down -v") && !log.contains("--volumes"),
+            "volumes removed"
+        );
+    }
+}
+// A detached fake exec can be reparented when its client is deliberately
+// killed. Linux CI's PID 1 need not reap it promptly after down; a zombie has
+// ended and holds no locks, although kill(pid, 0) still reports its PID.
+// Never treat an unknown process observation as proof of termination.
+fn owned_process_is_live(pid: u32) -> bool {
+    if !effigy_process::process_is_running(pid) {
+        return false;
+    }
+    let state = Command::new("ps")
+        .args(["-p", &pid.to_string(), "-o", "stat="])
+        .output();
+    !state
+        .ok()
+        .filter(|output| output.status.success())
+        .is_some_and(|output| {
+            String::from_utf8_lossy(&output.stdout)
+                .trim_start()
+                .starts_with('Z')
+        })
+}
+
+#[test]
+fn managed_matrix_process_liveness_distinguishes_live_and_unreaped_children() {
+    assert!(
+        owned_process_is_live(std::process::id()),
+        "live owner must fail settle"
+    );
+    let mut child = Command::new("sh")
+        .args(["-c", "exit 0"])
+        .spawn()
+        .expect("short child");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while owned_process_is_live(child.id()) && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(10));
+    }
+    let exited = !owned_process_is_live(child.id());
+    // Reap only after observing it, so the control exercises an exited PID
+    // that the kernel still exposes rather than merely an absent process.
+    let status = child.wait().expect("reap control child");
+    assert!(status.success());
+    assert!(exited, "unreaped exited child must count as ended");
+}
+
+/// A recorded exec workload need not lead its group (notably with Linux
+/// shells/setsid). Fake down must model container death for that PID too.
+#[test]
+fn managed_matrix_down_ends_recorded_non_group_leader_workload() {
+    let private = tempfile::tempdir().expect("private fake-down fixture");
+    let root = private.path();
+    fs::create_dir(root.join("engine")).expect("engine");
+    fs::write(root.join("matrix-adapter.py"), ADAPTER).expect("adapter");
+    let mut command = Command::new("sh");
+    command
+        .args(["-c", "sleep 3600 & printf '%s\\n' \"$!\" > work.pid; wait"])
+        .current_dir(root)
+        .process_group(0);
+    let owner = ManagedSupervisor(command.spawn().expect("private process group"));
+    let marker = root.join("work.pid");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !marker.exists() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(10));
+    }
+    let pid = fs::read_to_string(marker)
+        .expect("recorded child")
+        .trim()
+        .parse::<u32>()
+        .expect("PID");
+    assert!(owned_process_is_live(pid));
+    assert_ne!(
+        nix::unistd::getpgid(Some(nix::unistd::Pid::from_raw(pid as i32)))
+            .expect("group")
+            .as_raw(),
+        pid as i32
+    );
+    let down = Command::new("python3")
+        .arg(root.join("matrix-adapter.py"))
+        .args(["down", "matrix-stack"])
+        .env("MATRIX_ROOT", root)
+        .output()
+        .expect("fake down");
+    assert!(down.status.success(), "{:?}", down);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while owned_process_is_live(pid) && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(10));
+    }
+    let ended = !owned_process_is_live(pid);
+    // End/reap our private group even when exercising the broken adapter, so
+    // a failing regression proof never leaves its deliberately detached work.
+    drop(owner);
+    assert!(
+        ended,
+        "fake down missed a live workload whose PID differs from its PGID"
+    );
+}
+
+fn scheduler_root() -> OsString {
+    std::env::var_os("EFFIGY_HOST_RUN_ROOT").unwrap_or_else(|| {
+        PathBuf::from(std::env::var_os("HOME").expect("scheduler home"))
+            .join(".local/state/host-run")
+            .into_os_string()
+    })
+}
+struct Owner {
+    child: ManagedSupervisor,
+    reader: Option<JoinHandle<()>>,
+    output: PathBuf,
+}
+impl Owner {
+    fn finish(mut self, success: bool) {
+        let deadline = Instant::now() + Duration::from_secs(145);
+        let exit = loop {
+            if let Some(status) = self.child.0.try_wait().expect("owner wait") {
+                break status;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "owner did not settle: {}",
+                fs::read_to_string(&self.output).unwrap_or_default()
+            );
+            thread::sleep(Duration::from_millis(50));
+        };
+        assert_eq!(
+            exit.success(),
+            success,
+            "owner status {exit}: {}",
+            fs::read_to_string(&self.output).unwrap_or_default()
+        );
+        if let Some(reader) = self.reader.take() {
+            reader.join().expect("PTY output drained");
+        }
+    }
+}
+
+fn matrix(children: usize, stop: Stop) {
+    let fixture = managed_host_fixture();
+    let effects = HostEffectSentinels::new(fixture.path());
+    let bin = std::env::split_paths(&effects.env_path)
+        .next()
+        .expect("fake directory");
+    write_switch_fake_docker(&bin.join("docker"));
+    let foreign_ca = fixture.path().join("foreign-ca");
+    fs::create_dir(&foreign_ca).expect("foreign CA");
+    let mut cleanup = GatewayCleanup::new(&effects, &foreign_ca);
+    let (gateway, _) =
+        start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut cleanup);
+    let port = TcpListener::bind("127.0.0.1:0")
+        .expect("private port")
+        .local_addr()
+        .expect("port")
+        .port();
+    for (prior_index, prior) in [Prior::Fresh, Prior::Partial, Prior::Stopped]
+        .into_iter()
+        .enumerate()
+    {
+        for slow in [false, true] {
+            let case = Case::new(
+                &fixture.path().join(format!("case-{prior_index}-{slow}")),
+                &gateway,
+                &effects,
+                &foreign_ca,
+                port,
+            );
+            case.prepare(prior);
+            for child in ["api", "jobs"].into_iter().take(children) {
+                fs::write(case.root.join(format!("fail-{child}")), "fail").expect("child failure");
+            }
+            if slow {
+                fs::write(case.state.join("slow-down"), "21").expect("slow cascade");
+            }
+            let tui =
+                (prior_index + children + usize::from(slow) + stop as usize).is_multiple_of(2);
+            eprintln!(
+                "matrix children={children} stop={stop:?} prior={prior:?} slow={slow} tui={tui}"
+            );
+            let mut owner = case.spawn(tui, "owner");
+            let pids = case.ready(&mut owner, children);
+            let stop_started = Instant::now();
+            match stop {
+                Stop::Request => case.success(&["serve", "stop"]),
+                Stop::Signal => nix::sys::signal::kill(
+                    nix::unistd::Pid::from_raw(owner.child.0.id() as i32),
+                    nix::sys::signal::Signal::SIGINT,
+                )
+                .expect("SIGINT owned supervisor"),
+                Stop::Handover => case.success(&["container", "other", "up", "--detach"]),
+            }
+            owner.finish(true);
+            if slow {
+                assert!(
+                    stop_started.elapsed() >= Duration::from_secs(21),
+                    "slow cascade was skipped"
+                );
+            }
+            case.assert_down(&pids);
+            // The restart must recover immediately with the same declaration.
+            let _ = fs::remove_file(case.state.join("slow-down"));
+            for child in ["api", "jobs"] {
+                let _ = fs::remove_file(case.root.join(format!("work-{child}.pid")));
+            }
+            let mut restarted = case.spawn(tui, "restart");
+            let restarted_pids = case.ready(&mut restarted, children);
+            case.success(&["serve", "stop"]);
+            restarted.finish(true);
+            case.assert_down(&restarted_pids);
+            case.success(&["container", "other", "down"]);
+        }
+    }
+}
+macro_rules! matrix_case {
+    ($name:ident, $children:expr, $stop:ident) => {
+        #[test]
+        fn $name() {
+            matrix($children, Stop::$stop);
+        }
+    };
+}
+matrix_case!(managed_matrix_running_stop, 0, Request);
+matrix_case!(managed_matrix_some_failed_stop, 1, Request);
+matrix_case!(managed_matrix_all_failed_stop, 2, Request);
+matrix_case!(managed_matrix_running_signal, 0, Signal);
+matrix_case!(managed_matrix_some_failed_signal, 1, Signal);
+matrix_case!(managed_matrix_all_failed_signal, 2, Signal);
+matrix_case!(managed_matrix_running_handover, 0, Handover);
+matrix_case!(managed_matrix_some_failed_handover, 1, Handover);
+matrix_case!(managed_matrix_all_failed_handover, 2, Handover);
+
+/// A real down failure must be reported by stop, and both a following
+/// managed run and standalone up must recover the old owned processes/locks.
+#[test]
+fn managed_matrix_failed_stop_recovers_both_start_surfaces() {
+    let fixture = managed_host_fixture();
+    let effects = HostEffectSentinels::new(fixture.path());
+    let bin = std::env::split_paths(&effects.env_path)
+        .next()
+        .expect("fake directory");
+    write_switch_fake_docker(&bin.join("docker"));
+    let foreign_ca = fixture.path().join("foreign-ca");
+    fs::create_dir(&foreign_ca).expect("CA");
+    let mut cleanup = GatewayCleanup::new(&effects, &foreign_ca);
+    let (gateway, _) =
+        start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut cleanup);
+    let port = TcpListener::bind("127.0.0.1:0")
+        .expect("private port")
+        .local_addr()
+        .expect("port")
+        .port();
+    for standalone in [false, true] {
+        let case = Case::new(
+            &fixture.path().join(format!("failed-{standalone}")),
+            &gateway,
+            &effects,
+            &foreign_ca,
+            port,
+        );
+        let mut owner = case.spawn(false, "failed-owner");
+        let old_pids = case.ready(&mut owner, 0);
+        fs::write(case.state.join("deny-down"), "fail down").expect("down fault");
+        fs::write(case.state.join("deny-exec"), "leave old exec groups").expect("exec fault");
+        let stop = case.run(&["serve", "stop"]);
+        assert!(
+            !stop.status.success(),
+            "a genuine down failure must not report settled"
+        );
+        assert!(
+            String::from_utf8_lossy(&stop.stderr).contains("cleanup failed"),
+            "{}",
+            String::from_utf8_lossy(&stop.stderr)
+        );
+        owner.finish(false);
+        assert!(case.state.join("active-matrix-stack").exists());
+        fs::remove_file(case.state.join("deny-down")).expect("clear down fault");
+        fs::remove_file(case.state.join("deny-exec")).expect("clear exec fault");
+        if standalone {
+            case.success(&["container", "stack", "up", "--detach"]);
+        }
+        let mut restarted = case.spawn(standalone, "recovered-owner");
+        let new_pids = case.ready(&mut restarted, 0);
+        // Exercise the second OS signal, independently from matrix SIGINT.
+        nix::sys::signal::kill(
+            nix::unistd::Pid::from_raw(restarted.child.0.id() as i32),
+            nix::sys::signal::Signal::SIGTERM,
+        )
+        .expect("SIGTERM owned owner");
+        restarted.finish(true);
+        case.assert_down(&old_pids);
+        case.assert_down(&new_pids);
+    }
+}
+
+const ADAPTER: &str = r#"import sys,os,json,pathlib,subprocess,time,signal
+root=pathlib.Path(os.environ['MATRIX_ROOT']);state=root/'engine';args=sys.argv[2:];op=sys.argv[1]
+def kill_recorded():
+ records=list(root.glob('*.pid'))
+ # A real container down ends every workload, including non-group leaders.
+ # Keep group termination for descendants, but always signal the PID too.
+ for sig in (signal.SIGTERM,signal.SIGKILL):
+  for p in records:
+   try: pid=int(p.read_text())
+   except (FileNotFoundError,ValueError): continue
+   for send in (os.killpg,os.kill):
+    try: send(pid,sig)
+    except ProcessLookupError: pass
+  if sig==signal.SIGTERM: time.sleep(.1)
+ for p in records: p.unlink(missing_ok=True)
+if op=='down':
+ if (state/'deny-down').exists(): sys.exit(71)
+ if (state/'slow-down').exists(): time.sleep(float((state/'slow-down').read_text()))
+ kill_recorded()
+ (state/('active-'+args[0])).unlink(missing_ok=True)
+ sys.exit(0)
+if op=='payload' or (op=='exec' and '.pgid' in args[-1]):
+ payload=args[-1].replace('/usr/local/bin/effigy',str(root/'effigy-wrapper'))
+ with open(root/('remote-'+str(os.getpid())+'.out'),'wb') as log:
+  child=subprocess.Popen(['sh','-c',payload],start_new_session=True,stdout=log,stderr=log)
+  (root/('remote-'+str(os.getpid())+'.pid')).write_text(str(child.pid))
+  sys.exit(child.wait())
+if op=='exec':
+ if (state/'deny-exec').exists(): sys.exit(72)
+ if args[-1].startswith('alive()'): sys.exit(subprocess.call(['sh','-c',args[-1]]))
+ sys.exit(0)
+if op=='inspect':
+ proof=json.loads((state/('inspect-'+args[-1]+'.json')).read_text());project=proof[0]['Config']['Labels']['com.docker.compose.project']
+ if (state/('stopped-'+project)).exists(): proof[0]['State']={'Status':'exited','Running':False}
+ print(json.dumps(proof));sys.exit(0)
+if op=='ps':
+ project=next((a.rsplit('=',1)[1] for a in args if a.startswith('label=com.docker.compose.project=')),None)
+ service=next((a.rsplit('=',1)[1] for a in args if a.startswith('label=com.docker.compose.service=')),None)
+ if not project: sys.exit(0)
+ stopped=(state/('stopped-'+project)).exists()
+ if not (state/('active-'+project)).exists() or (stopped and '--all' not in args): sys.exit(0)
+ fmt=args[args.index('--format')+1] if '--format' in args else ''
+ for line in (state/('ps-'+project+'.txt')).read_text().splitlines():
+  name,status,ports,proj,wd,svc,oneoff=line.split('\t')
+  if (service and service!=svc) or ((state/('missing-'+project)).exists() and svc=='app'): continue
+  if stopped: status='Exited (1)'
+  proof=json.loads((state/('inspect-'+name+'.json')).read_text())[0];labels=proof['Config']['Labels']
+  if '{{.ID}}' in fmt:
+   values=[proof['Id'],status,oneoff,'',labels['com.effigy.checkout'],''] if '{{.Status}}' in fmt else [proof['Id'],proj,'',labels['com.effigy.checkout'],'']
+  else: values=[name,status,ports,proj,wd,svc,oneoff]
+  print('\t'.join(values))
+"#;

@@ -729,10 +729,7 @@ fn detached_partial_activation_error(
     ))
 }
 
-/// A recorded partial activation whose primary service still runs reconciles
-/// without `compose up`, so running services and exec sessions are not
-/// recreated. Missing primary, unavailable inventory or changed admission
-/// context refuses rather than falling back to `compose up`.
+/// Record the original admission inputs before detached activation effects.
 fn record_admitted_context(repo_root: &Path, plan: &ContainerUpPlan) -> Result<(), RunnerError> {
     let context = plan.admitted_context.as_ref().ok_or_else(|| {
         RunnerError::task_invocation("detached activation admission snapshot missing")
@@ -755,6 +752,19 @@ fn partial_activation_reconcile_pending(
     if let Some(context) = &plan.admitted_context {
         context.verify(repo_root, &plan.policy, recorded || context.marker_required)?;
     }
+    let failed_runs =
+        effigy_managed::runtime::failed_managed_run_tokens(repo_root, &plan.policy.name);
+    if !failed_runs.is_empty() {
+        // Input admission above precedes teardown authority. Down ends any
+        // exec groups the dead owner could not end; volumes are kept.
+        effigy_containers::exec::verify_owned_stack_for_shutdown(repo_root, &plan.policy)?;
+        lifecycle_cleanup_failed_container_up(repo_root, &plan.policy)?;
+        for token in failed_runs {
+            crate::runner::managed_settle::release_run_lock_residue(repo_root, Some(&token));
+            effigy_managed::runtime::clear_managed_run_failure(repo_root, &token)?;
+        }
+        return Ok(false);
+    }
     // Without a record (a stack from an earlier release, a task-started stack,
     // or one whose stale record was retired) `compose up` applies the current
     // inputs, once any running containers are proven to be this checkout's.
@@ -765,6 +775,12 @@ fn partial_activation_reconcile_pending(
         )?;
         return Ok(false);
     }
+    // Compose up can also start stopped siblings. Verify all project rows
+    // before permitting recovery, even when the primary is already running.
+    crate::runner::host_container_lease::ensure_running_stack_admits_reactivation(
+        repo_root,
+        &plan.policy,
+    )?;
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
     let running =
         effigy_containers::exec::list_running_compose_containers_for_policy_with_deadline(repo_root, &plan.policy, Some(deadline)).map_err(|error| {
@@ -775,13 +791,16 @@ fn partial_activation_reconcile_pending(
         })?;
     let running = effigy_containers::exec::verify_owned_running_compose_rows(repo_root, &plan.policy, &running, deadline)
         .map_err(|_| RunnerError::task_invocation("partial activation reconciliation unavailable: current full-ID ownership/bindings could not be verified. No services were recreated"))?;
+    if !effigy_containers::exec::compose_stack_is_running(&plan.policy, &running)? {
+        return Ok(false);
+    }
     reconcile_partial_activation(repo_root, &plan.policy, &running)
 }
 
 /// Decide what a recorded partial activation does next: a verified running
-/// primary reconciles without `compose up`; a handover-stopped environment
-/// restarts with `compose up`; anything else is genuinely unknown state and
-/// refuses.
+/// primary reconciles without `compose up`; a verified partial or stopped
+/// environment restarts with `compose up`. The caller verifies admission and
+/// ownership before this decision.
 fn reconcile_partial_activation(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
@@ -793,17 +812,10 @@ fn reconcile_partial_activation(
         crate::runner::host_container_lease::clear_environment_handover_record(repo_root, policy)?;
         return Ok(true);
     }
-    // A handover that stopped this environment's services is a known state,
-    // not an unknown partial failure: restart with Compose up.
-    if crate::runner::host_container_lease::environment_handover_recorded(repo_root, policy)?
-        .is_some()
-    {
-        return Ok(false);
-    }
-    Err(RunnerError::task_invocation(format!(
-        "partially activated container `{}` has no verified running primary; reconciliation unavailable. No compose up, restart or teardown ran. Inspect the selected scope with `effigy container status`; retry `effigy container up --detach` after the owned primary is running, or explicitly stop with `effigy container down`",
-        policy.name
-    )))
+    // Admission inputs and every existing project's ownership were verified
+    // by the caller. A missing primary is a recoverable owned partial/stopped
+    // stack; ordinary Compose up restores it and its missing siblings.
+    Ok(false)
 }
 
 fn partial_reconcile_skips_compose_up(
@@ -2163,6 +2175,37 @@ primary_service = "app"
     }
 
     #[test]
+    fn partial_activation_running_primary_does_not_hide_missing_or_stopped_siblings() {
+        let private = tempfile::tempdir().expect("private partial stack");
+        let compose = private.path().join("compose.yml");
+        fs::write(
+            &compose,
+            "services:\n  app:\n    image: app\n  db:\n    image: db\n",
+        )
+        .expect("compose");
+        let mut policy = test_policy(Vec::new());
+        policy.compose_files = vec![compose];
+        let primary = running_row("app", false);
+        assert!(!effigy_containers::exec::compose_stack_is_running(
+            &policy,
+            std::slice::from_ref(&primary)
+        )
+        .expect("missing sibling"));
+        let mut sibling = running_row("db", false);
+        sibling.status = "Exited (1)".to_owned();
+        assert!(!effigy_containers::exec::compose_stack_is_running(
+            &policy,
+            &[primary.clone(), sibling.clone()]
+        )
+        .expect("stopped sibling"));
+        sibling.status = "Up 10 seconds".to_owned();
+        assert!(
+            effigy_containers::exec::compose_stack_is_running(&policy, &[primary, sibling])
+                .expect("complete stack")
+        );
+    }
+
+    #[test]
     fn reconcile_restarts_an_environment_a_handover_stopped() {
         let (temp, _lease_home) = isolated_lease_home();
         let policy = test_policy(Vec::new());
@@ -2174,13 +2217,9 @@ primary_service = "app"
             })
             .collect::<Vec<_>>();
 
-        let error = reconcile_partial_activation(temp.path(), &policy, &stopped)
-            .expect_err("an unknown stopped partial state refuses");
         assert!(
-            error
-                .to_string()
-                .contains("has no verified running primary; reconciliation unavailable"),
-            "{error}"
+            !reconcile_partial_activation(temp.path(), &policy, &stopped)
+                .expect("an ownership-verified stopped partial stack restarts")
         );
 
         record_partial_activation(temp.path(), &policy).expect("record partial activation");

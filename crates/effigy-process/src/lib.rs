@@ -322,7 +322,8 @@ impl ProcessSupervisor {
             .is_none_or(|worker| worker.finished.load(Ordering::Acquire))
     }
 
-    pub(crate) fn cancel_startup(&self) {
+    /// Cancel and join pending startup before inspecting or stopping owned children.
+    pub fn cancel_startup(&self) {
         let Some(worker) = &self.startup_worker else {
             return;
         };
