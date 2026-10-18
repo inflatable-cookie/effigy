@@ -1,12 +1,12 @@
 # 031 - Bounded QA Groups Runtime
 
 Contract: [051](../contracts/051-bounded-qa-groups-contract.md)
-Run supervision: [052](../contracts/052-owned-run-supervision-contract.md),
-[032](032-owned-run-supervision-runtime.md)
+Run supervision: [052](../contracts/052-runtime-kernel-contract.md),
+[032](032-runtime-kernel-architecture.md)
 Status: active. The resolver, plan surface, coordinator, and run records are
 implemented; stop/hard-timeout enforcement remains refused pending the
 owned-run supervision contract
-[052](../contracts/052-owned-run-supervision-contract.md) (proposed and
+[052](../contracts/052-runtime-kernel-contract.md) (proposed and
 unavailable until implementation), and status reconciliation reports
 interrupted owners as `unknown`, never a pass.
 
@@ -184,10 +184,11 @@ confirms descendant cleanup before claiming cancellation.
 Current task status is selector-scoped; current managed-session status/logs/
 stop only cover the managed session; Queue/Nucleus own host-wide heavy waiting
 and scheduler state. General stop attribution for ordinary and non-heavy runs,
-nested process trees, PID reuse, and owner loss is owned by the separate
-[owned run supervision contract](../contracts/052-owned-run-supervision-contract.md)
-and [runtime](032-owned-run-supervision-runtime.md). Group controls must reuse
-that supervision boundary. They do not introduce a second cancellation system.
+nested process trees, PID reuse, and owner loss is owned by the
+[runtime kernel contract](../contracts/052-runtime-kernel-contract.md)
+and its [architecture](032-runtime-kernel-architecture.md). Group controls must
+reuse the kernel's run, custody and deadline. They do not introduce a second
+cancellation system.
 
 If the coordinator survives an interrupted owner, it may record a cancelled
 or unknown member from supervisor evidence. If the owner itself is killed and

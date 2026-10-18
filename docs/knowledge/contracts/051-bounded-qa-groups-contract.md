@@ -4,13 +4,13 @@ Status: active. The grammar, commands, and schemas below are implemented
 through the `tasks qa-group` surfaces. Two reviewed controls remain
 unavailable and are rejected with precise prerequisite diagnostics:
 `hard_timeout_ms` and `qa-group stop` wait on owned-run supervision
-([052](052-owned-run-supervision-contract.md), proposed and unavailable until
+([052](052-runtime-kernel-contract.md), proposed and unavailable until
 implementation). Until that lands, status records incomplete owner loss as
 `unknown`, never a pass.
 
 Owner: task selection and execution maintainers
 Architecture: [031](../architecture/031-bounded-qa-groups-runtime.md)
-Run supervision: [052](052-owned-run-supervision-contract.md)
+Run supervision: [052](052-runtime-kernel-contract.md)
 Agent workflow: [081](../../guides/081-bounded-qa-groups-workflow.md)
 
 ## Purpose and proof boundary
@@ -161,7 +161,7 @@ Required group fields are:
 `expected_wall_ms` and `expectation_basis` are a pair. Both may be absent,
 which means expected cost is `unknown`; one without the other is invalid.
 `hard_timeout_ms` would be a separate policy. It is unavailable until
-[052](052-owned-run-supervision-contract.md) can safely enforce it for every
+[052](052-runtime-kernel-contract.md) can safely enforce it for every
 resolved route, so the grammar parses it only to reject the definition with
 the precise contract 052 prerequisite; no definition carrying it validates.
 
@@ -407,7 +407,7 @@ Current availability after the contract 051 implementation:
 | Queue/Nucleus scheduler routing | Implemented. | Unset or `EFFIGY_HOST_SCHEDULER=1` selects the scheduler. A heavy group is submitted whole under [049](049-heavy-validation-admission-contract.md#scheduler-routing); the launched child owns the ledger, and nested members reuse its validated token. A run settled before launch leaves a completed record with outcome `capacity_timeout` or `cancelled`. |
 | Draft admission | Implemented. | `[drafts]` accept the same optional `admission = "heavy"` metadata as `[tasks]`; direct draft plans/runs/inventory carry it additively, and temporary groups may select draft members explicitly. |
 | Group run status and logs | Implemented. | Runs persist a definition snapshot, head/worktree context, member ledger, and run-scoped pipeline-redacted logs; `tasks qa-group status/logs` read them live and after completion. |
-| Ordinary process stop | Unavailable. | Parsing exists so the command can refuse before any side effect with the precise prerequisite: the owned-run supervision contract [052](052-owned-run-supervision-contract.md), proposed and unavailable until implementation. |
+| Ordinary process stop | Unavailable. | Parsing exists so the command can refuse before any side effect with the precise prerequisite: the owned-run supervision contract [052](052-runtime-kernel-contract.md), proposed and unavailable until implementation. |
 | `hard_timeout_ms` | Unavailable. | Definitions naming it fail validation with the same contract 052 prerequisite diagnostic. |
 | Owner loss and PID reuse | Preserved fail-closed. | Run records keep owner PID plus start/boot identity; a live record whose owner is gone reconciles to `unknown`, never a pass, and never credits a reused PID. |
 | Owner `SIGKILL` | Honest incomplete evidence. | A dead owner cannot write a final record; status stays `unknown`/incomplete. Never a fabricated complete receipt. |
@@ -419,7 +419,7 @@ confirmed gone. Logs are run-scoped and redact secrets. A caller interrupt can
 cancel its own scheduler-waiting group without affecting another scheduler run.
 
 Owned-run supervision (contract
-[052](052-owned-run-supervision-contract.md)) remains the prerequisite for
+[052](052-runtime-kernel-contract.md)) remains the prerequisite for
 claiming control of ordinary non-heavy runs, nested children, or owner loss.
 It owns run identity and generation, supervisor placement, ordered stop and
 hard-timeout semantics, the interruption evidence taxonomy, and the
@@ -586,7 +586,7 @@ Implementation sequence:
    execution, records, and versioned JSON shipped through the
    `tasks qa-group` surfaces (task effigy#051), including the contract 046
    draft `admission` metadata extension they depended on.
-2. Land contract [052](052-owned-run-supervision-contract.md) before claiming
+2. Land contract [052](052-runtime-kernel-contract.md) before claiming
    general run-scoped stop, signal attribution, or safe cancellation of
    non-heavy/nested runs. The `stop` command and `hard_timeout_ms` stay
    refused with that prerequisite until then.

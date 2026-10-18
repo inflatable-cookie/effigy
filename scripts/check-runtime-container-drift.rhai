@@ -129,6 +129,6 @@ if failure_count > 0 {
         + "Either route the call through the current request/plan/manager surface, or add\n"
         + "a deliberate temporary path-scoped allowance in scripts/check-runtime-container-drift.rhai\n"
         + "and document the boundary in docs/knowledge/architecture/022-runtime-architecture-sanity-audit.md\n"
-        + "plus contracts 011, 012, 013, 015, and 052-owned-run-supervision-contract.md.\n"
+        + "plus contracts 011, 012, 013, 015, and 052-runtime-kernel-contract.md.\n"
         + "Do not waive a whole directory or a production file because it also holds fixtures.";
 }
