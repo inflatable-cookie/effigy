@@ -671,6 +671,70 @@ fn managed_matrix_failed_stop_recovers_both_start_surfaces() {
     }
 }
 
+/// The "record missing" dimension: a live headless run whose session.json is
+/// removed underneath it keeps status/logs working (reported from locks and
+/// logs) and its stop settles through the task/profile locks and run token.
+#[test]
+fn managed_matrix_missing_record_stop_and_live_views() {
+    let fixture = managed_host_fixture();
+    let effects = HostEffectSentinels::new(fixture.path());
+    let bin = std::env::split_paths(&effects.env_path)
+        .next()
+        .expect("fake directory");
+    write_switch_fake_docker(&bin.join("docker"));
+    let foreign_ca = fixture.path().join("foreign-ca");
+    fs::create_dir(&foreign_ca).expect("foreign CA");
+    let mut cleanup = GatewayCleanup::new(&effects, &foreign_ca);
+    let (gateway, _) =
+        start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut cleanup);
+    let port = TcpListener::bind("127.0.0.1:0")
+        .expect("private port")
+        .local_addr()
+        .expect("port")
+        .port();
+    let case = Case::new(
+        &fixture.path().join("missing-record"),
+        &gateway,
+        &effects,
+        &foreign_ca,
+        port,
+    );
+    let mut owner = case.spawn(false, "missing-record-owner");
+    let pids = case.ready(&mut owner, 0);
+    let state_path = case
+        .root
+        .join(".effigy/runtime/managed/serve-default/session.json");
+    fs::remove_file(&state_path).expect("remove session record under the live run");
+
+    let status = case.run(&["serve", "status"]);
+    assert!(
+        status.status.success(),
+        "status must work from locks without the record: {} {}",
+        String::from_utf8_lossy(&status.stdout),
+        String::from_utf8_lossy(&status.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&status.stdout).contains("session record missing"),
+        "{}",
+        String::from_utf8_lossy(&status.stdout)
+    );
+    let logs = case.run(&["serve", "logs", "api"]);
+    assert!(
+        logs.status.success(),
+        "logs must work without the record: {} {}",
+        String::from_utf8_lossy(&logs.stdout),
+        String::from_utf8_lossy(&logs.stderr)
+    );
+
+    case.success(&["serve", "stop"]);
+    owner.finish(true);
+    case.assert_down(&pids);
+    let raw = fs::read_to_string(&state_path).expect("record rewritten by the owner cascade");
+    let state: Value = serde_json::from_str(&raw).expect("record parses");
+    assert_eq!(state["status"], "stopped");
+    assert_eq!(state["settle_complete"], true);
+}
+
 const ADAPTER: &str = r#"import sys,os,json,pathlib,subprocess,time,signal
 root=pathlib.Path(os.environ['MATRIX_ROOT']);state=root/'engine';args=sys.argv[2:];op=sys.argv[1]
 def kill_recorded():

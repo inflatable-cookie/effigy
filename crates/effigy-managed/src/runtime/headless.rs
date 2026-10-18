@@ -125,13 +125,9 @@ pub fn run_managed_task_headless(
         .cloned()
         .collect::<Vec<_>>();
     let mut log_files = open_process_logs(&runtime_dir, &process_names)?;
-    let specs = managed_process_specs(supervised.iter().cloned());
-    let supervisor = ProcessSupervisor::spawn(repo_root.to_path_buf(), specs)?;
-    let _cleanup = SupervisorCleanup(&supervisor);
-    let pid_by_name = supervisor
-        .process_ids()
-        .into_iter()
-        .collect::<HashMap<_, _>>();
+    // The session record exists before the first child starts: status, logs
+    // and stop must never observe a live run through a missing record. The
+    // spawned PIDs are filled in right after the supervisor starts.
     let mut state = HeadlessSessionState {
         settle_complete: Some(false),
         settle_error: None,
@@ -150,8 +146,8 @@ pub fn run_managed_task_headless(
             .enumerate()
             .map(|(index, process)| HeadlessProcessState {
                 name: process.name.clone(),
-                pid: pid_by_name.get(&process.name).copied().unwrap_or_default(),
-                status: "running".to_owned(),
+                pid: 0,
+                status: "pending".to_owned(),
                 log: process_log_path(&runtime_dir, index, &process.name),
                 container_exec: process.exec_group_file.is_some(),
             })
@@ -162,6 +158,31 @@ pub fn run_managed_task_headless(
     if stop_path.exists() {
         fs::remove_file(&stop_path)
             .map_err(|error| ManagedError::task_invocation_failed_write(&stop_path, error))?;
+    }
+    write_state(&state_path, &state)?;
+    let specs = managed_process_specs(supervised.iter().cloned());
+    let supervisor = match ProcessSupervisor::spawn(repo_root.to_path_buf(), specs) {
+        Ok(supervisor) => supervisor,
+        Err(error) => {
+            // No child ever started; record the failure so the run is not
+            // mistaken for an interrupted live generation.
+            state.status = "failed".to_owned();
+            state.settle_complete = Some(true);
+            let _ = write_state(&state_path, &state);
+            return Err(ManagedError::Process(error));
+        }
+    };
+    let _cleanup = SupervisorCleanup(&supervisor);
+    state.started_at_unix_ms = unix_time_ms();
+    let pid_by_name = supervisor
+        .process_ids()
+        .into_iter()
+        .collect::<HashMap<_, _>>();
+    for process in &mut state.processes {
+        if let Some(pid) = pid_by_name.get(&process.name) {
+            process.pid = *pid;
+            process.status = "running".to_owned();
+        }
     }
     write_state(&state_path, &state)?;
 
@@ -448,7 +469,7 @@ impl Drop for SupervisorCleanup<'_> {
 // An exited-but-unreaped owner has already lost its locks and cannot settle
 // further. Unknown process observations remain live, so recovery never gains
 // teardown authority merely because process inspection failed.
-fn managed_owner_is_running(pid: u32) -> bool {
+pub fn managed_owner_is_running(pid: u32) -> bool {
     if !process_is_running(pid) {
         return false;
     }
@@ -554,13 +575,20 @@ pub fn record_managed_run_settle(
 
 /// Read only the stopped generation's cleanup outcome. Legacy sessions have
 /// no completion field and retain their existing lock/process settle rules.
+/// A missing record has no recorded outcome: the stop that settles without
+/// one reports success through the locks, and the owner's own exit cascade
+/// rewrites the record when it can.
 pub fn managed_run_settle_error(
     repo_root: &Path,
     task: &str,
     profile: &str,
     run_token: Option<&str>,
 ) -> Result<Option<String>, ManagedError> {
-    let state = read_state(&managed_runtime_dir(repo_root, task, profile).join("session.json"))?;
+    let path = managed_runtime_dir(repo_root, task, profile).join("session.json");
+    if !path.exists() {
+        return Ok(None);
+    }
+    let state = read_state(&path)?;
     if state.run_token.as_deref() != run_token {
         return Err(ManagedError::task_invocation(
             "managed session was replaced before its stop settled",
@@ -574,15 +602,31 @@ pub fn managed_run_settle_error(
     Ok(state.settle_error)
 }
 
+/// Whether the session record of this task/profile is readable as the current
+/// schema. A stop, status and logs request uses it to choose the locks-based
+/// fallback while a run is live without its record.
+pub fn managed_headless_state_readable(repo_root: &Path, task_name: &str, profile: &str) -> bool {
+    read_state(&managed_runtime_dir(repo_root, task_name, profile).join("session.json")).is_ok()
+}
+
 pub fn managed_headless_status(
     repo_root: &Path,
     task_name: &str,
     profile: &str,
 ) -> Result<String, ManagedError> {
     let runtime_dir = managed_runtime_dir(repo_root, task_name, profile);
-    let mut state = read_state(&runtime_dir.join("session.json"))?;
+    let mut state = read_state(&runtime_dir.join("session.json"))
+        .map_err(|error| headless_state_hint(error, task_name))?;
     refresh_running_state(&mut state);
     Ok(render_headless_summary(&runtime_dir, &state))
+}
+
+/// Name the actual task in the start hint: a `dev:container` run is never
+/// restarted with `effigy dev --headless`.
+fn headless_state_hint(error: ManagedError, task_name: &str) -> ManagedError {
+    ManagedError::task_invocation(format!(
+        "{error}; start it with `effigy {task_name} --headless`"
+    ))
 }
 
 pub fn managed_headless_logs(
@@ -594,7 +638,7 @@ pub fn managed_headless_logs(
 ) -> Result<String, ManagedError> {
     let runtime_dir = managed_runtime_dir(repo_root, task_name, profile);
     let state_path = runtime_dir.join("session.json");
-    let state = read_state(&state_path)?;
+    let state = read_state(&state_path).map_err(|error| headless_state_hint(error, task_name))?;
     let selected = selected_processes(&state, process)?;
     if !follow {
         return read_log_snapshot(&selected);
@@ -1006,7 +1050,7 @@ fn write_state(path: &Path, state: &HeadlessSessionState) -> Result<(), ManagedE
 fn read_state(path: &Path) -> Result<HeadlessSessionState, ManagedError> {
     let raw = fs::read_to_string(path).map_err(|error| {
         ManagedError::task_invocation(format!(
-            "managed headless state is unavailable at {}: {error}; start it with `effigy dev --headless`",
+            "managed headless state is unavailable at {}: {error}",
             path.display()
         ))
     })?;
@@ -1028,7 +1072,10 @@ fn refresh_running_state(state: &mut HeadlessSessionState) {
         state.status = "orphaned".to_owned();
     }
     for process in &mut state.processes {
-        if process.status == "running"
+        // A pending record (pid 0) has not been spawned yet; it is neither
+        // running nor exited.
+        if process.pid != 0
+            && process.status == "running"
             && (!supervisor_running
                 || !process_is_running(process.pid)
                 || !process_is_descendant_of(process.pid, state.supervisor_pid))
@@ -1427,6 +1474,31 @@ mod tests {
         assert_eq!(
             headless_stop_command("dev", "admin"),
             "effigy dev stop admin"
+        );
+    }
+
+    #[test]
+    fn missing_record_reports_are_readable_and_name_the_actual_task() {
+        let temp = tempfile::tempdir().expect("missing record fixture");
+        assert!(
+            !super::managed_headless_state_readable(temp.path(), "dev:container", "default"),
+            "no record at all is not readable"
+        );
+        let error = super::managed_headless_status(temp.path(), "dev:container", "default")
+            .expect_err("missing record");
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains("managed headless state is unavailable"),
+            "got: {rendered}"
+        );
+        assert!(
+            rendered.contains("start it with `effigy dev:container --headless`"),
+            "the hint names the actual task: {rendered}"
+        );
+        assert_eq!(
+            super::managed_run_settle_error(temp.path(), "dev:container", "default", None)
+                .expect("absent record has no recorded outcome"),
+            None
         );
     }
 

@@ -280,7 +280,9 @@ concurrent; use `effigy dev` for daily runtime.
 entry concurrently in the same resolved order as the TUI, and keeps the same
 setup, lifecycle, shutdown, schema-env, and local-dev secret paths. It writes:
 
-- `.effigy/runtime/managed/<task>-<profile>/session.json`
+- `.effigy/runtime/managed/<task>-<profile>/session.json`, atomically, before
+  the first child starts and on every recorded state change; the record is
+  never deleted while the owner is alive
 - one numbered log file per process in that directory
 
 Headless runs never allocate an interactive TTY. Shell-role processes only
@@ -329,6 +331,15 @@ effigy dev stop admin
 `status` reports each process PID, state, and log path. A failed headless run
 includes the failing process's log path and tail in the task error, so lifecycle
 startup failures do not collapse to an unexplained exit code.
+
+If the session record is ever missing or unreadable while a run is live,
+`status`, `logs` and `stop` still work: they find the live owner through its
+task/profile locks and run token, report from the locks and the log files, and
+deliver the stop through the same `stop.requested` path the owner watches.
+The stop settles through the ordinary cascade and the owner's exit rewrites
+the record. They refuse only when no live run of that task and profile exists,
+and the refusal names the actual task and profile in its start hint
+(`effigy <task> --headless`).
 
 Concurrent children wait while the lifecycle reports `starting` and only
 then poll container exec readiness. The wait shares the task's readiness

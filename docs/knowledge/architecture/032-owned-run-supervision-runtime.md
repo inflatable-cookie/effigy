@@ -60,8 +60,12 @@ The design reuses what exists today and names the gap.
   `process_run.rs` registers each spawned group only inside that scope; this is
   graceful signal forwarding, not a general run journal or stop surface.
 - `crates/effigy-managed` runs a supervisor process for a headless managed
-  session, records `session.json`, and stops by pid plus descendant proof.
-  That supervisor is the owner process itself.
+  session, records `session.json` before its first child starts and on every
+  recorded state change, and stops by pid plus descendant proof. That
+  supervisor is the owner process itself. When the record is missing or
+  unreadable while a run is live, the stop, status and logs controls find the
+  owner through its task/profile locks and run token and settle it through
+  the same cascade; a missing record never blocks a stop of a live run.
 - `src/runner/host_process.rs` already runs a detached, `setsid`, per-entry
   supervisor with a PID file and signal/escalation handling for container
   host processes. It is the existing shape for a surviving witness.

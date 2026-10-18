@@ -272,6 +272,117 @@ fn managed_headless_run_skips_interactive_shell_without_tty_argv() {
     assert!(completed.contains("session: stopped"), "got: {completed}");
 }
 
+/// A live run whose session record is removed underneath it still stops:
+/// status and logs report from the task/profile locks and the log files, and
+/// the stop settles through the run token with exit 0. The owner's own exit
+/// cascade rewrites the record.
+#[test]
+fn managed_headless_stop_settles_with_missing_session_record() {
+    let _guard = lock_test();
+    let root = temp_workspace("managed-headless-missing-record");
+    write_long_running_headless_manifest(&root);
+    let state_path = root.join(".effigy/runtime/managed/dev-default/session.json");
+    let root_for_thread = root.clone();
+    let run = std::thread::spawn(move || run_dev(&root_for_thread, &["--headless"]));
+
+    wait_for_path_exists(
+        &state_path,
+        Duration::from_secs(5),
+        "managed headless state",
+    );
+    // The record is on disk before the first child produces output.
+    let front_log = root.join(".effigy/runtime/managed/dev-default/01-front.log");
+    wait_for_path_exists(&front_log, Duration::from_secs(5), "front log");
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let raw = fs::read_to_string(&front_log).unwrap_or_default();
+        if raw.contains("front ready") {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "front never produced output"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        state_path.is_file(),
+        "the record must exist while children run"
+    );
+
+    // Remove the record under the live run.
+    fs::remove_file(&state_path).expect("remove session record");
+
+    // Concurrent status and logs still work, reported from locks and logs.
+    let status = run_dev(&root, &["status"]).expect("status without record");
+    assert!(status.contains("session: running"), "got: {status}");
+    assert!(
+        status.contains("session record missing"),
+        "status must say how it was derived: {status}"
+    );
+    let logs = run_dev(&root, &["logs", "api"]).expect("logs without record");
+    assert!(logs.contains("api ready"), "got: {logs}");
+    assert!(!logs.contains("front ready"), "got: {logs}");
+
+    let stop = run_dev(&root, &["stop"]).expect("stop without record");
+    assert!(
+        stop.contains("settled managed headless task `dev`"),
+        "{stop}"
+    );
+    assert!(
+        stop.contains("session record was missing"),
+        "the stop must name the fallback path: {stop}"
+    );
+    let completed = run
+        .join()
+        .expect("headless thread join")
+        .expect("missing-record stop should be clean");
+    assert!(completed.contains("session: stopped"), "got: {completed}");
+
+    // The owner's exit cascade rewrote the record with its settle outcome.
+    let raw = fs::read_to_string(&state_path).expect("settled record rewritten");
+    let state: serde_json::Value = serde_json::from_str(&raw).expect("record parses");
+    assert_eq!(state["status"], "stopped");
+    assert_eq!(state["settle_complete"], true);
+    let locks = root.join(".effigy/locks");
+    assert!(
+        !locks.exists()
+            || fs::read_dir(locks).expect("lock directory").all(|entry| {
+                !entry
+                    .expect("lock entry")
+                    .path()
+                    .extension()
+                    .is_some_and(|extension| extension == "lock")
+            }),
+        "stop releases every task/profile lock"
+    );
+}
+
+/// With no live run at all, a missing session record refuses with the actual
+/// task and profile named in the hint.
+#[test]
+fn managed_headless_missing_record_refusal_names_task_and_profile() {
+    let _guard = lock_test();
+    let root = temp_workspace("managed-headless-missing-refusal");
+    write_long_running_headless_manifest(&root);
+    let error = run_dev(&root, &["stop"]).expect_err("nothing to stop");
+    let rendered = error.to_string();
+    assert!(
+        rendered.contains("no live managed run of task `dev` (profile `default`)"),
+        "got: {rendered}"
+    );
+    assert!(
+        rendered.contains("start it with `effigy dev --headless`"),
+        "got: {rendered}"
+    );
+    let error = run_dev(&root, &["status"]).expect_err("nothing to report");
+    let rendered = error.to_string();
+    assert!(
+        rendered.contains("start it with `effigy dev --headless`"),
+        "got: {rendered}"
+    );
+}
+
 /// SIGINT to the headless owner settles the run through the stop path
 /// and exits within a bounded time, with no surviving owned process.
 /// Unix-only: Windows has no SIGINT delivery to emulate here.

@@ -82,20 +82,50 @@ pub(in crate::runner) fn run_managed_task(
                 .into());
             }
             let output = match command {
-                "status" => effigy_managed::runtime::managed_headless_status(
-                    &selection.catalog.catalog_root,
-                    &preflight.selector.task_name,
-                    profile,
-                )
-                .map_err(RunnerError::from),
-                "logs" => effigy_managed::runtime::managed_headless_logs(
-                    &selection.catalog.catalog_root,
-                    &preflight.selector.task_name,
-                    profile,
-                    process,
-                    follow,
-                )
-                .map_err(RunnerError::from),
+                "status" => {
+                    if effigy_managed::runtime::managed_headless_state_readable(
+                        &selection.catalog.catalog_root,
+                        &preflight.selector.task_name,
+                        profile,
+                    ) {
+                        effigy_managed::runtime::managed_headless_status(
+                            &selection.catalog.catalog_root,
+                            &preflight.selector.task_name,
+                            profile,
+                        )
+                        .map_err(RunnerError::from)
+                    } else {
+                        crate::runner::managed_settle::headless_status_from_locks(
+                            &selection.catalog.catalog_root,
+                            &preflight.selector.task_name,
+                            profile,
+                        )
+                    }
+                }
+                "logs" => {
+                    if effigy_managed::runtime::managed_headless_state_readable(
+                        &selection.catalog.catalog_root,
+                        &preflight.selector.task_name,
+                        profile,
+                    ) {
+                        effigy_managed::runtime::managed_headless_logs(
+                            &selection.catalog.catalog_root,
+                            &preflight.selector.task_name,
+                            profile,
+                            process,
+                            follow,
+                        )
+                        .map_err(RunnerError::from)
+                    } else {
+                        crate::runner::managed_settle::headless_logs_from_locks(
+                            &selection.catalog.catalog_root,
+                            &preflight.selector.task_name,
+                            profile,
+                            process,
+                            follow,
+                        )
+                    }
+                }
                 "stop" => crate::runner::managed_settle::stop_and_settle_headless_run(
                     &selection.catalog.catalog_root,
                     &preflight.selector.task_name,
