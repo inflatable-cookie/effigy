@@ -867,6 +867,7 @@ fn exec_readiness_recovery_restarts_once_then_accepts_longer_probe_window() {
                 Ok(())
             }
         },
+        None,
     )
     .expect("recovery should succeed after restart");
 
@@ -894,6 +895,7 @@ fn exec_readiness_recovery_fails_when_probe_never_recovers() {
                 Ok(())
             }
         },
+        None,
     )
     .expect_err("recovery should fail when probe never succeeds");
 
@@ -902,6 +904,97 @@ fn exec_readiness_recovery_fails_when_probe_never_recovers() {
         "expected typed exec-ready error, got {error}"
     );
     assert_eq!(*restarted.lock().expect("restart lock"), 1);
+}
+
+/// A live managed run bound to this environment is exec'ing into the primary
+/// service. The exec-readiness recovery must never restart that service: a
+/// restart would SIGKILL the run's remote processes (the mass exit-137
+/// signature). The recovery keeps probing with the post-restart window and
+/// then refuses, naming the live run, without mutating anything.
+#[test]
+fn exec_readiness_recovery_refuses_restart_while_live_managed_run_execs() {
+    let policy = test_policy(PathBuf::from("docker-compose.yml"));
+    let working_dir = Path::new("/workspace-root/demo");
+    let probes = Arc::new(Mutex::new(Vec::<Duration>::new()));
+    let restarted = Arc::new(Mutex::new(0usize));
+
+    let error = ensure_primary_service_exec_ready_with_recovery_using(
+        &policy,
+        working_dir,
+        {
+            let probes = Arc::clone(&probes);
+            move |timeout| {
+                probes.lock().expect("probes lock").push(timeout);
+                Ok(None::<()>)
+            }
+        },
+        {
+            let restarted = Arc::clone(&restarted);
+            move || {
+                *restarted.lock().expect("restart lock") += 1;
+                Ok(())
+            }
+        },
+        Some(
+            "live managed run(s) of this checkout are exec'ing into environment `demo`: `serve` (profile `default`, owner pid 4242)"
+                .to_owned(),
+        ),
+    )
+    .expect_err("recovery must refuse the restart for a live managed run");
+
+    let rendered = error.to_string();
+    assert_eq!(
+        *restarted.lock().expect("restart lock"),
+        0,
+        "no restart may run under a live managed run's execs"
+    );
+    assert!(
+        rendered.contains("recovery restart was refused"),
+        "got: {rendered}"
+    );
+    assert!(rendered.contains("owner pid 4242"), "got: {rendered}");
+    assert_eq!(
+        *probes.lock().expect("probes lock"),
+        vec![Duration::from_secs(2), Duration::from_secs(15)],
+        "the longer observation window replaces the restart"
+    );
+}
+
+/// A live-run note does not turn a healthy service into a refusal: the
+/// longer probe succeeds without any restart.
+#[test]
+fn exec_readiness_recovery_with_live_run_still_accepts_late_readiness() {
+    let policy = test_policy(PathBuf::from("docker-compose.yml"));
+    let working_dir = Path::new("/workspace-root/demo");
+    let probes = Arc::new(Mutex::new(Vec::<Duration>::new()));
+    let restarted = Arc::new(Mutex::new(0usize));
+
+    ensure_primary_service_exec_ready_with_recovery_using(
+        &policy,
+        working_dir,
+        {
+            let probes = Arc::clone(&probes);
+            move |timeout| {
+                probes.lock().expect("probes lock").push(timeout);
+                Ok((timeout == Duration::from_secs(15)).then_some(()))
+            }
+        },
+        {
+            let restarted = Arc::clone(&restarted);
+            move || {
+                *restarted.lock().expect("restart lock") += 1;
+                Ok(())
+            }
+        },
+        Some("live managed run(s) of this checkout are exec'ing into environment `demo`: `serve` (profile `default`, owner pid 4242)".to_owned()),
+    )
+    .expect("late readiness must still succeed without a restart");
+
+    assert_eq!(*restarted.lock().expect("restart lock"), 0);
+    assert_eq!(
+        *probes.lock().expect("probes lock"),
+        vec![Duration::from_secs(2), Duration::from_secs(15)]
+    );
 }
 
 #[test]

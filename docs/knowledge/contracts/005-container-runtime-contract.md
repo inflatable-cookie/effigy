@@ -96,6 +96,14 @@ service passes it. An unlabelled, foreign or wrong-checkout primary is neither
 exec'd nor restarted; the up reports not exec-ready. The shell and task exec
 that follow are gated by that readiness boundary.
 
+The recovery restart never fires while a live managed run of this checkout is
+bound to the same container environment: the run's own children are exec'ing
+into the primary service, and a restart would SIGKILL them (every exec client
+fails at once with exit 137). When the two-second probe finds no readiness and
+such a run is live, Effigy keeps probing with the post-restart window and then
+refuses, naming the live run, without restarting or recreating anything. The
+run being stopped is the only condition that restores restart authority.
+
 An Effigy invocation that already runs inside its own workspace container
 (`EFFIGY_INTERNAL_CONTAINER_HANDOFF=1`) never calls host runtime commands.
 `container shell --command`, `container exec`, and `exec` resolve the policy

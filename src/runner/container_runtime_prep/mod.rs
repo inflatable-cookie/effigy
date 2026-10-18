@@ -557,6 +557,7 @@ pub(in crate::runner) fn ensure_primary_service_exec_ready_for_runtime(
         &policy.primary_service,
         Instant::now() + OWNED_EXEC_VERIFICATION_TIMEOUT,
     )?;
+    let live_exec_note = live_managed_exec_note(repo_root, policy);
     ensure_primary_service_exec_ready_with_recovery_using(
         policy,
         working_dir,
@@ -571,7 +572,36 @@ pub(in crate::runner) fn ensure_primary_service_exec_ready_for_runtime(
             )
         },
         || restart_primary_service(repo_root, policy, &binding),
+        live_exec_note,
     )
+}
+
+/// Why the exec-readiness recovery restart must not fire: a live managed run
+/// of this checkout is bound to this environment and exec'ing into its
+/// services. A recovery restart would SIGKILL those remote processes (the
+/// mass exit-137 signature). The note names the run for the refusal.
+fn live_managed_exec_note(repo_root: &Path, policy: &EffectiveContainerPolicy) -> Option<String> {
+    let live = effigy_managed::runtime::live_headless_sessions(repo_root)
+        .into_iter()
+        .filter(|session| session.container_environment.as_deref() == Some(policy.name.as_str()))
+        .collect::<Vec<_>>();
+    if live.is_empty() {
+        return None;
+    }
+    let named = live
+        .iter()
+        .map(|session| {
+            format!(
+                "`{}` (profile `{}`, owner pid {})",
+                session.task, session.profile, session.supervisor_pid
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(format!(
+        "live managed run(s) of this checkout are exec'ing into environment `{}`: {named}",
+        policy.name
+    ))
 }
 
 /// Partial detached activation cannot grant restart authority to an unavailable
@@ -595,9 +625,23 @@ fn ensure_primary_service_exec_ready_with_recovery_using<T>(
     working_dir: &Path,
     mut probe: impl FnMut(Duration) -> Result<Option<T>, RunnerError>,
     mut restart: impl FnMut() -> Result<(), RunnerError>,
+    live_exec_note: Option<String>,
 ) -> Result<T, RunnerError> {
     if let Some(binding) = probe(Duration::from_secs(2))? {
         return Ok(binding);
+    }
+    if let Some(note) = live_exec_note {
+        // A live managed run is exec'ing into this environment; restarting
+        // the primary service would SIGKILL its remote processes. Keep
+        // probing with the post-restart window instead of ever mutating a
+        // running service under the run.
+        if let Some(binding) = probe(Duration::from_secs(15))? {
+            return Ok(binding);
+        }
+        return Err(RunnerError::task_invocation(format!(
+            "container `{}` is not exec-ready and its recovery restart was refused: {note}. The running service was not restarted; stop the managed run first (`effigy <task> stop`) or wait for the service to become exec-ready",
+            policy.name
+        )));
     }
     if restart().is_ok() {
         if let Some(binding) = probe(Duration::from_secs(15))? {
