@@ -5,7 +5,9 @@ encoding v1, operation contexts and class capabilities, observation and Probe
 API types, outcomes, and macOS/Linux platform facts. Gates (§5.4), the store,
 records and `atomic_replace` (§5.5), the state root, its kernel-owned path
 families and retention (§7) are implemented with their proof lists and
-fault points. `qa:kernel-ratchet` enforces the committed production baseline
+fault points. Immutable object closures, run-owned staging settlement and fenced
+object reference transactions (§7.1–§7.4) are implemented in `objects`, with
+`test:kernel:objects` concurrency and fault proofs. `qa:kernel-ratchet` enforces the committed production baseline
 in `config/kernel-ratchet.json`. The run journal and settle (§5.6), attachments and claims (§5.9) are implemented
 with generation-fenced tickets, positive completion, holder protection and
 journal-boundary fault proofs. Local custody, signal routing, detached supervision

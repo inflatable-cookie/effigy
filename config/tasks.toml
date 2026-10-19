@@ -50,6 +50,11 @@
   { run = "cargo build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 },
   { run = "EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture cargo nextest run --config-file tests/config/kernel-faults-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib -E 'test(/^faults::matrix::/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 1800000 },
 ]
+"test:kernel:objects" = [
+  { run = "cargo build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 },
+  { task = "test:kernel:objects:runner" },
+]
+"test:kernel:objects:runner" = { run = "EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture cargo nextest run --config-file tests/config/kernel-faults-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib -E 'test(/^objects::tests::/) | test(store_retention_keeps_referenced_objects_and_three_superseded) | test(/^faults::scenarios::faults_objects_/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 1800000 }
 "test:kernel:identity" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --test foundation -E 'test(identity_)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
 "test:kernel:context" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --test foundation -E 'test(context_)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
 "test:kernel:observed" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --test foundation -E 'test(observation_)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }

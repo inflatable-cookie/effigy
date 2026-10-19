@@ -304,6 +304,22 @@ impl DirFd {
         }
         Ok(())
     }
+    /// Rename between two already verified directories, without resolving paths.
+    pub(crate) fn move_to(
+        &self,
+        from: &FileName,
+        target: &Self,
+        to: &FileName,
+    ) -> Result<(), FsError> {
+        let path = target.join(to.as_str());
+        let a = cstring(from.as_str().as_bytes(), &path)?;
+        let b = cstring(to.as_str().as_bytes(), &path)?;
+        // SAFETY: live directory descriptors and validated single components.
+        if unsafe { libc::renameat(self.raw(), a.as_ptr(), target.raw(), b.as_ptr()) } != 0 {
+            return Err(FsError::io("rename", &path, &io::Error::last_os_error()));
+        }
+        Ok(())
+    }
     pub(crate) fn link(&self, from: &FileName, to: &FileName) -> Result<(), FsError> {
         let path = self.join(to.as_str());
         let a = cstring(from.as_str().as_bytes(), &path)?;

@@ -108,11 +108,16 @@ pub fn retain(
         left -= 1;
     }
 
+    let object_guard = crate::objects::lock(cx, root)?;
+
     // Objects not referenced by a desired or last-applied generation and not
     // among the newest 3 superseded per resource.
     let objects: Vec<String> = store.txn(cx, |txn| {
         let mut statement = txn.conn().prepare(
             "SELECT digest FROM objects o WHERE NOT EXISTS (\
+               SELECT 1 FROM events e WHERE e.kind='kernel:object-staging' AND \
+               e.state IN ('intended','applied','unknown','residue') AND \
+               json_extract(e.target,'$.payload')=o.digest) AND NOT EXISTS (\
                SELECT 1 FROM object_refs r WHERE r.digest=o.digest AND \
                (r.role IN ('desired','last_applied') OR (r.role='superseded' AND (\
                  SELECT count(*) FROM object_refs n WHERE n.resource=r.resource \
@@ -123,15 +128,18 @@ pub fn retain(
                 row.get(0)
             })?
             .collect::<Result<Vec<String>, _>>()?;
-        for digest in &digests {
-            txn.conn()
-                .execute("DELETE FROM objects WHERE digest=?1", [digest])?;
-        }
         Ok(digests)
     })?;
     for digest in &objects {
-        objects_dir.remove_tree(&FileName::new(digest)?, TREE_DEPTH)?;
+        objects_dir.remove_tree(&FileName::new(digest)?, TREE_DEPTH + 4)?;
+        objects_dir.sync()?;
+        store.txn(cx, |txn| {
+            txn.conn()
+                .execute("DELETE FROM objects WHERE digest=?1", [digest])?;
+            Ok(())
+        })?;
     }
+    drop(object_guard);
     report.objects = objects.len();
     left -= objects.len().min(left);
 
