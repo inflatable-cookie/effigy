@@ -1371,6 +1371,15 @@ fn load_or_allocate_loopback_ip_with_inventory(
         return Ok(None);
     };
     let path = home.join("gateway").join("loopback-ips.json");
+    // Snapshot before probing: K14 forbids runtime inventory under the global
+    // registry lock. Only unchanged snapshot entries may be reclaimed later.
+    let snapshot = LoopbackRegistry::load(&path)
+        .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))?;
+    let inventory = if !snapshot.is_empty() && snapshot.get(identity).is_none() {
+        Some(discover_inventory())
+    } else {
+        None
+    };
     let _lock = RouteTableLock::acquire(&path)
         .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))?;
     let mut registry = LoopbackRegistry::load(&path)
@@ -1426,16 +1435,26 @@ fn load_or_allocate_loopback_ip_with_inventory(
     let prune = if registry.is_empty() {
         LoopbackPruneOutcome::default()
     } else {
-        let inventory = discover_inventory();
-        match route_table.as_ref() {
-            Some(route_table) => {
-                prune_loopback_assignments(&mut registry, route_table, &inventory)
+        match (route_table.as_ref(), inventory.as_ref()) {
+            (Some(route_table), Some(inventory)) => {
+                let mut candidates = registry.clone();
+                candidates.assignments.retain(|identity, assignment| {
+                    snapshot.get(identity) == Some(assignment)
+                });
+                let outcome = prune_loopback_assignments(&mut candidates, route_table, inventory);
+                if outcome.changed {
+                    registry.assignments.retain(|identity, assignment| {
+                        snapshot.get(identity) != Some(assignment)
+                            || candidates.get(identity).is_some()
+                    });
+                }
+                outcome
             }
-            None => LoopbackPruneOutcome {
+            _ => LoopbackPruneOutcome {
                 changed: false,
                 skipped_reason: Some(format!(
-                    "skipped stale loopback reclamation because the gateway route inventory could not be read; all uncertain assignments were preserved ({})",
-                    route_table_error.as_deref().unwrap_or("unknown error")
+                    "skipped stale loopback reclamation because no complete pre-lock inventory is available; all uncertain assignments were preserved ({})",
+                    route_table_error.as_deref().unwrap_or("registry changed after the read")
                 )),
             },
         }
@@ -1930,6 +1949,67 @@ mod tests {
                 reloaded.get(&identity).map(|assignment| assignment.ip),
                 Some(ip)
             );
+        });
+    }
+
+    #[test]
+    fn loopback_inventory_runs_without_registry_lock_and_preserves_concurrent_assignments() {
+        let home = tempfile::tempdir().expect("private state");
+        with_test_effigy_home(home.path(), || {
+            let path = home.path().join("gateway/loopback-ips.json");
+            full_project_registry().save(&path).expect("full registry");
+            let changed = project_loopback_identity("stale-2", Path::new("/tmp/stale-2"));
+            let ip = load_or_allocate_loopback_ip_with_inventory(
+                "project:new:/tmp/new",
+                None,
+                "/tmp/new",
+                || {
+                    // A second opener must acquire the lock while runtime
+                    // inventory executes. try_lock makes a regression bounded.
+                    let file = std::fs::OpenOptions::new()
+                        .create(true)
+                        .truncate(false)
+                        .read(true)
+                        .write(true)
+                        .open(path.with_extension("lock"))
+                        .expect("private lock");
+                    file.try_lock()
+                        .expect("inventory must not hold global lock");
+                    let mut current = LoopbackRegistry::load(&path).expect("current registry");
+                    let old = project_loopback_identity("stale-1", Path::new("/tmp/stale-1"));
+                    let assignment = current.deallocate(&old).expect("replace old assignment");
+                    current
+                        .assignments
+                        .insert("project:late:/tmp/late".into(), assignment);
+                    current
+                        .assignments
+                        .get_mut(&changed)
+                        .expect("change existing assignment")
+                        .scope = "/tmp/new-owner".into();
+                    current.save(&path).expect("concurrent allocation");
+                    RunningComposeContainerInventory::default()
+                },
+            )
+            .expect("allocate after inventory")
+            .expect("assigned IP");
+            let registry = LoopbackRegistry::load(&path).expect("published registry");
+            assert_eq!(registry.len(), 3);
+            assert_eq!(
+                registry
+                    .get("project:late:/tmp/late")
+                    .expect("late assignment retained")
+                    .ip
+                    .to_string(),
+                "127.1.0.1"
+            );
+            assert_eq!(
+                registry
+                    .get(&changed)
+                    .expect("changed assignment retained")
+                    .scope,
+                "/tmp/new-owner"
+            );
+            assert_eq!(ip.to_string(), "127.1.0.3");
         });
     }
 

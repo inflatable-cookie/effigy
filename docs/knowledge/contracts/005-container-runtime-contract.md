@@ -1403,6 +1403,16 @@ Composer cache mount without creating their directories. Activation calls
 including detached admission and task preparation. Media sources are revalidated
 against the checkout at Prepare; other host mounts remain user-owned.
 
+### Loopback inventory and registry exclusion
+
+Runtime inventory for loopback reclamation runs before the global registry
+lock is acquired (K14). Allocation reloads the registry under that lock and
+only reclaims entries identical to its pre-inventory snapshot. Assignments
+added or changed during inventory are preserved. Missing or incomplete
+inventory permits no reclamation. Existing uncontested assignments require
+no runtime probe. The registry remains the legacy allocation owner until
+the gateway endpoint-store migration.
+
 ## Container manager contract
 
 Runner-facing container operations must route through `ContainerManager`.

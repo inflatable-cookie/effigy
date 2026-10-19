@@ -332,6 +332,7 @@ During v0.x, MINOR bumps may include breaking changes.
   through the runtime kernel and atomically select complete encrypted
   generations. Existing vaults migrate on their next write, retaining the
   previous generation and preventing concurrent updates from being lost.
+- Loopback allocation probes the runtime before taking its global registry lock and preserves assignments added or changed during that probe.
 - A live managed headless run keeps its session record for its whole life:
   the record is written atomically before the first child starts and updated
   on every recorded state change, and it is never deleted while the owner is

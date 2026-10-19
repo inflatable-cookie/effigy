@@ -30,6 +30,7 @@
 
 "test:containers:mount-prepare" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers -p effigy --lib -E 'test(policy::mounts::) | test(tests::compose::) | test(tests::volumes_reports::) | test(container_runtime_prep::tests::) | test(container_command::lifecycle::tests::)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 }
 "test:containers:mount-prepare:workspace" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib -E 'test(workspace::tests::)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 }
+"test:containers:loopback-inventory" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib -E 'test(policy_support::generated_compose::tests::) | test(linked_worktrees_get_distinct_effective_hosts_and_primary_keeps_declared) | test(runtime::loopback::)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 }
 "qa:containers:render-static" = [{ task = "fmt:check" }, { task = "qa:kernel-ratchet" }]
 
 # Kernel foundation: bounded, disjoint proof families; no engine adoption.
