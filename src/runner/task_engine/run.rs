@@ -128,6 +128,9 @@ pub(in crate::runner) struct TaskRun {
     target: TaskTarget,
     /// Held for the run's life; the run's settle stops the hook.
     admission: Option<super::admission::Admission>,
+    /// Named by a caller's `--run-id` key: its output is logged for
+    /// `effigy run logs`.
+    keyed: bool,
 }
 
 impl TaskRun {
@@ -287,6 +290,7 @@ impl TaskRun {
                 shared: None,
                 target: request.target.clone(),
                 admission: None,
+                keyed: false,
             };
             run.admit(request.admission, admission)?;
             return Ok(run);
@@ -328,6 +332,7 @@ impl TaskRun {
             shared,
             target: request.target.clone(),
             admission: None,
+            keyed: request.key.is_some(),
         };
         run.admit(request.admission, admission)?;
         Ok(run)
@@ -361,6 +366,7 @@ impl TaskRun {
                         shared: None,
                         target,
                         admission: None,
+                        keyed: false,
                     },
                 );
                 for warning in run.close(WorkloadOutcome::NotStarted) {
@@ -388,6 +394,11 @@ impl TaskRun {
 
     pub(in crate::runner) fn target(&self) -> &TaskTarget {
         &self.target
+    }
+
+    /// Whether a caller's `--run-id` key names this run.
+    pub(in crate::runner) fn keyed(&self) -> bool {
+        self.keyed
     }
 
     /// Records the workload outcome, settles every effect and releases the

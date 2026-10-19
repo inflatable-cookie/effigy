@@ -103,10 +103,12 @@ the journal only.
   (`Gate::signal_holder`), never a pattern kill. An interrupted run is settled
   directly under its gate.
 
-Output is captured, and so logged, unless both stdout and stderr are
-terminals. Effigy relays captured text output as it arrives. A terminal run
-keeps its terminal and has no log; `run logs` says so and still reports the
-outcome.
+A plain run named by `--run-id` captures its output, and so logs it, unless
+both stdout and stderr are terminals; Effigy relays it as it arrives, with
+declared secrets redacted (K12). `--json` runs capture as before. Any other
+text run keeps the operator's descriptors untouched and has no log, so a task
+that prints a secret into a pipe still delivers it. `run logs` reports a
+missing log and still reports the outcome.
 
 ### Follow guarantees
 

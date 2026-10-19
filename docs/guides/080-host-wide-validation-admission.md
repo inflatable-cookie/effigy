@@ -71,7 +71,8 @@ effigy run stop ci-1234                   # stop it and its whole process group
 A repeat of `--run-id ci-1234` never starts a second run: it attaches to the
 first and exits with that run's result, even when the run already finished.
 
-Logs exist when the run's stdout or stderr was not a terminal. A follower that
+A run started with `--run-id` logs its output, redacted, unless both stdout
+and stderr were terminals; other runs keep no log. A follower that
 loses its connection resumes exactly where it stopped:
 
 ```sh

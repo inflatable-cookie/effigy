@@ -12,7 +12,7 @@ const RUNS_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
     notices: text_lines![
         "Every task run has an identity in the kernel run journal, heavy or not.",
         "`effigy --run-id <key> <task>` names a run with your own key. A repeat with the same key attaches to that run and exits with its result; it never starts a second run.",
-        "A run reads by its run id or its key. Logs are each stream's captured output when the run's stdout or stderr was not a terminal.",
+        "A run reads by its run id or its key. A run started with `--run-id` logs each stream's output (redacted) unless both were terminals; other runs keep no log.",
         "`run logs --follow` ends when the run settles. Resume a lost follow with the byte offsets you already received; expired bytes are reported, never skipped.",
         "`run stop` asks the run's owner to stop through the kernel journal; the owner stops the task's whole process group and settles the run."
     ],

@@ -7,10 +7,11 @@
 //! outlives the run. Text and JSON differ only in how captured output is
 //! rendered (K11): text relays it as it arrives, JSON keeps a tail.
 //!
-//! Output is captured, and so logged for `effigy run logs`, unless both
-//! stdout and stderr are terminals; a terminal task keeps the terminal. A
-//! `run stop` request reaches the owner through the journal and stops the
-//! task's group as a signal would.
+//! A run named by `--run-id` captures its output, and so logs it for
+//! `effigy run logs`, unless both stdout and stderr are terminals; this
+//! process relays it as it arrives. Other text runs keep inheriting the
+//! operator's descriptors untouched. A `run stop` request reaches the owner
+//! through the journal and stops the task's group as a signal would.
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -70,8 +71,9 @@ pub(in crate::runner) fn run_plain(
     run: &mut TaskRun,
     command: PlainCommand<'_>,
 ) -> Result<PlainExit, RunnerError> {
-    let relay =
-        !command.capture && !(std::io::stdout().is_terminal() && std::io::stderr().is_terminal());
+    let relay = !command.capture
+        && run.keyed()
+        && !(std::io::stdout().is_terminal() && std::io::stderr().is_terminal());
     let spec = ProcessSpec {
         argv: vec![
             OsString::from("/bin/sh"),

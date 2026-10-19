@@ -18,10 +18,6 @@ During v0.x, MINOR bumps may include breaking changes.
   command starts (`effigy.admission.v1` details). Nested heavy runs inherit
   `EFFIGY_ADMITTED` and never queue twice. `qa`, `ci` and `ci:fresh` are no
   longer heavy by name. Exit 75 now means only a held task lock; 77 is gone.
-- Text output of a task whose stdout or stderr is not a terminal is captured
-  into the run's log and relayed as it arrives (declared secrets redacted),
-  so `effigy run logs` can replay or follow it. A task on a terminal keeps
-  the terminal.
 - Task runs are now kernel runs. Every invocation resolves once to a task
   identity (catalog path relative to the root, task name), so `build` from
   inside a catalog, `api/build` and `./apps/api/build` share one lock and one
@@ -110,7 +106,9 @@ During v0.x, MINOR bumps may include breaking changes.
   and `effigy run stop <run>` stops it through a fenced kernel request. A
   lost follower never loses or duplicates output, a terminal run without
   logs still reports its real result, and expired log bytes are reported
-  (closes papercut 910c578a).
+  (closes papercut 910c578a). A plain run named by `--run-id` whose stdout or
+  stderr is not a terminal is captured, relayed as it arrives with declared
+  secrets redacted, and logged; other runs keep their descriptors untouched.
 - `tasks --json` rows and `--plan --json` carry `"admission": "heavy"` for a
   classified task.
 - Keep CLI presentation local and bounded: banner sizing never launches `tput`, and version metadata reads environment or installed stamps without running Git. Unstamped development binaries report the package version.

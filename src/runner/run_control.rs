@@ -482,8 +482,8 @@ fn logs(
             }
             Event::LogsGone => {
                 eprintln!(
-                    "effigy: run {id} kept no output log (its output went to a terminal, or \
-                     retention removed it); its outcome is below"
+                    "effigy: run {id} kept no output log (it ran without `--run-id`, its \
+                     output went to a terminal, or retention removed it); its outcome is below"
                 );
                 Ok(())
             }
