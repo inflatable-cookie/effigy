@@ -1480,7 +1480,7 @@ for the rest.
 | 6 | Run logs | `state/runs/` | owner run | `OwnedProcess` capture | 8 MiB per stream, 2 rotations; 2 GiB total, oldest settled first | no |
 | 7 | Leaf certificates | `~/.effigy/gateway/certs/` | gateway | `atomic_replace` | reissued on expiry or CA change | no |
 | 8 | Preserved CA | mkcert `CAROOT` | external | read only | never touched | no |
-| 9 | Pinned sources | config lane decides | config | `Gate(Store bundles)` + `atomic_replace` | while pinned | no |
+| 9 | Pinned sources | `<checkout>/.effigy/sources.lock.json`; `.effigy/cache/sources/` | config | `Gate(Store bundles)` + `atomic_replace` | while pinned | no |
 | 10 | Private vault | `<checkout>/.effigy/secrets/local.vault` (+ `.prev`) | secrets | `Gate(Store vault)` + pointer commit | previous generation kept | no: masked from the workspace mount (§8.2) |
 | 11 | Key wraps | secrets lane decides | secrets | pointer commit with the vault | with the vault generation | no: masked from the workspace mount when beside the vault (§8.2) |
 | 12 | Machine preferences | `~/.effigy/config.toml` | config | `atomic_replace` | user-owned | no |

@@ -81,7 +81,7 @@ fn assert_typed_graph_timeout(
 }
 
 #[test]
-fn docs_cold_refresh_fails_within_a_deliberately_tiny_bound() {
+fn docs_cold_read_is_bounded_and_never_prepares() {
     let root = docs_graph_fixture("docs-cold-tiny-bound");
     let _env = EnvGuard::set_many(&[("EFFIGY_GRAPH_TIMEOUT_MS", Some(TINY_BOUND_MS.to_owned()))]);
     let started = Instant::now();
@@ -89,15 +89,20 @@ fn docs_cold_refresh_fails_within_a_deliberately_tiny_bound() {
         .expect_err("cold refresh must fail inside the tiny bound");
     let elapsed = started.elapsed();
 
-    assert_typed_graph_timeout(error, "docs context", 1);
+    if error.rendered_output().is_some() {
+        assert_typed_graph_timeout(error, "docs context", 1);
+    } else {
+        assert!(error.to_string().contains("effigy graph index"));
+    }
     assert!(
         elapsed < Duration::from_secs(5),
-        "cold docs refresh exceeded the bound: {elapsed:?}"
+        "cold read exceeded its bound: {elapsed:?}"
     );
+    assert!(!root.join(".effigy/graph").exists());
 }
 
 #[test]
-fn docs_stale_refresh_fails_within_a_deliberately_tiny_bound() {
+fn docs_stale_read_is_bounded_and_never_refreshes() {
     let root = docs_graph_fixture("docs-stale-tiny-bound");
     run_graph_index(&root);
     fs::write(
@@ -107,15 +112,19 @@ fn docs_stale_refresh_fails_within_a_deliberately_tiny_bound() {
     .expect("stale the index");
 
     let _env = EnvGuard::set_many(&[("EFFIGY_GRAPH_TIMEOUT_MS", Some(TINY_BOUND_MS.to_owned()))]);
+    let before = fs::read(root.join(".effigy/graph/graph.db")).unwrap();
     let started = Instant::now();
-    let error = run_command(docs_context_command(&root, "contracts", false))
-        .expect_err("stale refresh must fail inside the tiny bound");
-    let elapsed = started.elapsed();
-
-    assert_typed_graph_timeout(error, "docs context", 1);
-    assert!(
-        elapsed < Duration::from_secs(5),
-        "stale docs refresh exceeded the bound: {elapsed:?}"
+    match run_command(docs_context_command(&root, "contracts", true)) {
+        Ok(output) => {
+            let payload: serde_json::Value = serde_json::from_str(&output).unwrap();
+            assert_eq!(payload["freshness"]["stale"], true);
+        }
+        Err(error) => assert_typed_graph_timeout(error, "docs context", 1),
+    }
+    assert!(started.elapsed() < Duration::from_secs(5));
+    assert_eq!(
+        fs::read(root.join(".effigy/graph/graph.db")).unwrap(),
+        before
     );
 }
 
