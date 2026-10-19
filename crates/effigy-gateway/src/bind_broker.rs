@@ -276,8 +276,8 @@ mod tests {
             assert!(authorize(501, 501, [endpoint.parse().unwrap(), good[1]]).is_err());
         }
     }
-    #[test]
-    fn broker_passes_listeners_and_reacquires_after_client_restart() {
+    #[tokio::test]
+    async fn broker_passes_listeners_and_reacquires_after_client_restart() {
         let uid = nix::unistd::Uid::effective().as_raw();
         assert_ne!(uid, 0, "qualification must run as an operator");
         // Ephemeral listeners qualify transport/adoption without installing a
@@ -315,42 +315,40 @@ mod tests {
                 .unwrap();
             let listeners = receive_reply(&mut client, expected).unwrap();
             thread.join().unwrap();
-            for listener in [&listeners.http, &listeners.https] {
-                listener.set_nonblocking(true).unwrap();
-                let mut client =
-                    std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
-                let peer = client.local_addr().unwrap();
-                client.write_all(b"1").unwrap();
-                let deadline = std::time::Instant::now() + Duration::from_secs(3);
-                // Concurrent listener probes can leave aborted connections in
-                // the accept queue on macOS. Prove our own stream, with a
-                // bounded wait for transient accept errors or unrelated peers.
-                let mut accepted = loop {
-                    assert!(
-                        std::time::Instant::now() < deadline,
-                        "fixture accept timed out"
-                    );
-                    match listener.accept() {
-                        Ok((stream, address)) if address == peer => break stream,
-                        Ok(_) => {}
-                        Err(error)
-                            if matches!(
-                                error.kind(),
-                                io::ErrorKind::WouldBlock
-                                    | io::ErrorKind::Interrupted
-                                    | io::ErrorKind::ConnectionAborted
-                            ) => {}
-                        Err(error) => panic!("fixture accept failed: {error}"),
-                    }
-                    std::thread::sleep(Duration::from_millis(1));
-                };
-                accepted
-                    .set_read_timeout(Some(Duration::from_secs(3)))
-                    .unwrap();
-                let mut byte = [0];
-                accepted.read_exact(&mut byte).unwrap();
-                assert_eq!(byte, *b"1");
-                drop(client);
+            let (http, https) = listeners.into_tokio().unwrap();
+            for listener in [http, https] {
+                tokio::time::timeout(Duration::from_secs(3), async {
+                    let mut client = tokio::net::TcpStream::connect(listener.local_addr().unwrap())
+                        .await
+                        .unwrap();
+                    let peer = client.local_addr().unwrap();
+                    tokio::io::AsyncWriteExt::write_all(&mut client, b"1")
+                        .await
+                        .unwrap();
+                    // An aborted queued connection does not identify our
+                    // client. Accept its peer and prove bytes on that stream.
+                    let mut accepted = loop {
+                        match listener.accept().await {
+                            Ok((stream, address)) if address == peer => break stream,
+                            Ok(_) => {}
+                            Err(error)
+                                if matches!(
+                                    error.kind(),
+                                    io::ErrorKind::Interrupted | io::ErrorKind::ConnectionAborted
+                                ) => {}
+                            Err(error) => panic!("fixture accept failed: {error}"),
+                        }
+                        tokio::task::yield_now().await;
+                    };
+                    let mut byte = [0];
+                    tokio::io::AsyncReadExt::read_exact(&mut accepted, &mut byte)
+                        .await
+                        .unwrap();
+                    assert_eq!(byte, *b"1");
+                    drop(client);
+                })
+                .await
+                .expect("fixture listener exchange timed out");
             }
         }
     }
