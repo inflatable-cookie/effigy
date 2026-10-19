@@ -71,17 +71,8 @@ pub(super) fn run_skill_passthrough_with_context(
 }
 
 pub(super) fn run_command_with_cwd(cmd: Command, cwd: &Path) -> Result<String, RunnerError> {
-    if let Command::Task(task) = &cmd {
-        let observes = task
-            .args
-            .iter()
-            .take_while(|arg| arg.as_str() != "--")
-            .any(|arg| matches!(arg.as_str(), "--plan" | "--help" | "-h"))
-            || task
-                .args
-                .first()
-                .is_some_and(|arg| matches!(arg.as_str(), "status" | "logs" | "stop"));
-        if task.name.rsplit('/').next() == Some("dev") && !observes {
+    if let Command::Task(_) = &cmd {
+        if crate::runner::bundle_command::is_source_prepare_command(&cmd) {
             let root = crate::runner::command_context::active_runtime_context()
                 .map(|context| context.command_root().to_path_buf())
                 .unwrap_or_else(|| cwd.into());

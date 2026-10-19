@@ -56,6 +56,14 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(effigy_shared_process)"] }
 inherits = "release"
 strip = "symbols"
 
+# Custody fingerprints the real CLI in development proofs. Keep the cryptographic
+# compressor optimized, as in release builds, even for large debug executables.
+[profile.dev.package."sha2:0.11.0"]
+opt-level = 3
+
+[profile.test.package."sha2:0.11.0"]
+opt-level = 3
+
 [package]
 name = "effigy"
 version.workspace = true

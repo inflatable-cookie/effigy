@@ -7,6 +7,28 @@ use std::path::{Path, PathBuf};
 
 use super::error::RunnerError;
 
+/// Syntax-only classification shared by binary signal setup and dev dispatch.
+/// It does not resolve a manifest or acquire source authority.
+pub(crate) fn is_source_prepare_command(command: &effigy_cli::Command) -> bool {
+    match command {
+        effigy_cli::Command::Bundle(args) => matches!(args.subcommand, BundleSubcommand::Sync),
+        effigy_cli::Command::Bootstrap(_) => true,
+        effigy_cli::Command::Task(task) => {
+            task.name.rsplit('/').next() == Some("dev")
+                && !task
+                    .args
+                    .iter()
+                    .take_while(|arg| arg.as_str() != "--")
+                    .any(|arg| matches!(arg.as_str(), "--plan" | "--help" | "-h"))
+                && !task
+                    .args
+                    .first()
+                    .is_some_and(|arg| matches!(arg.as_str(), "status" | "logs" | "stop"))
+        }
+        _ => false,
+    }
+}
+
 pub(super) fn run_bundle(args: BundleArgs) -> Result<String, RunnerError> {
     match args.subcommand {
         BundleSubcommand::Inspect => {

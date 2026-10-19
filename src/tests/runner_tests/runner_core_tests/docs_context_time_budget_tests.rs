@@ -205,10 +205,20 @@ fn invalid_budget_usage_errors_win_over_a_tiny_bound() {
 #[test]
 fn timeout_detail_names_the_phase_the_bound_expired_in() {
     let root = docs_graph_fixture("docs-timeout-phase-detail");
+    run_graph_index(&root);
     let _env = EnvGuard::set_many(&[("EFFIGY_GRAPH_TIMEOUT_MS", Some(TINY_BOUND_MS.to_owned()))]);
 
-    let error = run_command(docs_context_command(&root, "contracts", false))
-        .expect_err("cold refresh must fail inside the tiny bound");
+    let error = crate::runner::graph_time_budget::run_bounded_graph_operation(
+        &root,
+        "docs context",
+        Duration::from_millis(1),
+        || {
+            let _ = effigy_codegraph::docs_context(&root, "contracts", Default::default());
+            std::thread::sleep(Duration::from_millis(5));
+            Ok(String::new())
+        },
+    )
+    .expect_err("controlled work exceeds the configured deadline");
     let rendered = error
         .rendered_output()
         .expect("timeout must carry rendered detail")

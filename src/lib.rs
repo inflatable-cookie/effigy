@@ -76,6 +76,16 @@ mod testing_tests;
 pub fn run_main(raw_args: Vec<String>) -> std::io::Result<()> {
     use effigy_kernel::signal::{RouterPolicy, SignalRouter};
     let entry = raw_args.first().map(String::as_str).unwrap_or("");
+    // Only source-capable commands and kernel helpers own this router. Legacy
+    // commands retain their existing signal policy until their owner adopts it.
+    let uses_kernel = entry.starts_with("__kernel-")
+        || effigy_cli::parse_command(raw_args.clone())
+            .as_ref()
+            .is_ok_and(runner::bundle_command::is_source_prepare_command);
+    if !uses_kernel {
+        run_cli(raw_args);
+        return Ok(());
+    }
     let policy = match entry {
         "__kernel-sentinel" => RouterPolicy::Sentinel,
         "__kernel-supervise" => RouterPolicy::Supervisor,
