@@ -16,6 +16,95 @@ enum Prior {
     Stopped,
 }
 
+// This is the fake Docker backend's data-plane proxy. Bind port 0 in the
+// component that keeps the socket, and publish only after listen succeeds.
+// Its real command identifies it as docker-proxy to the unchanged host-listener
+// validator; no listener inventory is stubbed or suppressed.
+struct MatrixProxy {
+    address: SocketAddr,
+    _owner: ManagedSupervisor,
+}
+
+impl MatrixProxy {
+    fn bind(root: &Path) -> Self {
+        let script = root.join("matrix-docker-proxy.py");
+        let report = root.join("matrix-proxy.address");
+        let output = root.join("matrix-proxy.log");
+        fs::write(&script, PROXY).expect("private Docker proxy script");
+        let log = fs::File::create(&output).expect("proxy log");
+        let mut command = Command::new("python3");
+        command
+            .arg(&script)
+            .arg(&report)
+            .stdin(Stdio::null())
+            .stdout(log.try_clone().expect("proxy stdout"))
+            .stderr(log)
+            .process_group(0);
+        let mut owner = ManagedSupervisor(command.spawn().expect("private Docker proxy"));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            assert!(
+                owner.0.try_wait().expect("poll proxy").is_none(),
+                "proxy exited before publication: {}",
+                fs::read_to_string(&output).unwrap_or_default()
+            );
+            if let Ok(address) = fs::read_to_string(&report) {
+                return Self {
+                    address: address.parse().expect("bound proxy address"),
+                    _owner: owner,
+                };
+            }
+            assert!(
+                Instant::now() < deadline,
+                "proxy did not publish its address"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+}
+
+#[test]
+fn managed_matrix_proxy_keeps_its_published_port_during_a_concurrent_claim() {
+    let fixture = tempfile::tempdir().expect("private proxy fixture");
+    let proxy = MatrixProxy::bind(fixture.path());
+    let address = proxy.address;
+    // Force the old gap: another listener tries to claim the published port
+    // before the case starts. The proxy must still own the bound socket.
+    let contender = thread::spawn(move || TcpListener::bind(address));
+    assert_eq!(
+        contender
+            .join()
+            .expect("concurrent claim")
+            .unwrap_err()
+            .kind(),
+        std::io::ErrorKind::AddrInUse
+    );
+    let response = private_gateway_http_response(address).expect("proxy response");
+    assert!(response.contains("matrix proxy"), "{response}");
+    let pid = proxy._owner.0.id();
+    drop(proxy);
+    assert!(!owned_process_is_live(pid), "proxy must be reaped on drop");
+}
+
+const PROXY: &str = r#"import pathlib,socket,sys
+server=socket.socket()
+server.bind(('127.0.0.1',0))
+server.listen()
+report=pathlib.Path(sys.argv[1])
+pending=report.with_suffix('.next')
+pending.write_text('127.0.0.1:'+str(server.getsockname()[1]))
+pending.replace(report)
+while True:
+ connection,_=server.accept()
+ with connection:
+  connection.settimeout(1)
+  try:
+   connection.recv(4096)
+   connection.sendall(b'HTTP/1.1 200 OK\r\nContent-Length: 12\r\nConnection: close\r\n\r\nmatrix proxy')
+  except OSError:
+   pass
+"#;
+
 struct Case<'a> {
     root: PathBuf,
     state: PathBuf,
@@ -24,6 +113,7 @@ struct Case<'a> {
     effects: &'a HostEffectSentinels,
     foreign_ca: &'a Path,
     log: PathBuf,
+    _proxy: MatrixProxy,
 }
 impl<'a> Case<'a> {
     fn new(
@@ -31,10 +121,11 @@ impl<'a> Case<'a> {
         gateway: &'a Path,
         effects: &'a HostEffectSentinels,
         foreign_ca: &'a Path,
-        port: u16,
     ) -> Self {
         fs::create_dir_all(base).expect("case root");
         let root = base.canonicalize().expect("canonical case");
+        let proxy = MatrixProxy::bind(&root);
+        let port = proxy.address.port();
         let state = root.join("engine");
         let home = root.join("home");
         fs::create_dir(&state).expect("private engine state");
@@ -125,6 +216,7 @@ impl<'a> Case<'a> {
             gateway,
             effects,
             foreign_ca,
+            _proxy: proxy,
         }
     }
     fn command(&self, args: &[&str]) -> Command {
@@ -555,11 +647,6 @@ fn matrix(children: usize, stop: Stop) {
     let mut cleanup = GatewayCleanup::new(&effects, &foreign_ca);
     let (gateway, _) =
         start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut cleanup);
-    let port = TcpListener::bind("127.0.0.1:0")
-        .expect("private port")
-        .local_addr()
-        .expect("port")
-        .port();
     for (prior_index, prior) in [Prior::Fresh, Prior::Partial, Prior::Stopped]
         .into_iter()
         .enumerate()
@@ -570,7 +657,6 @@ fn matrix(children: usize, stop: Stop) {
                 &gateway,
                 &effects,
                 &foreign_ca,
-                port,
             );
             case.prepare(prior);
             for child in ["api", "jobs"].into_iter().take(children) {
@@ -662,18 +748,12 @@ fn managed_matrix_failed_stop_recovers_both_start_surfaces() {
     let mut cleanup = GatewayCleanup::new(&effects, &foreign_ca);
     let (gateway, _) =
         start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut cleanup);
-    let port = TcpListener::bind("127.0.0.1:0")
-        .expect("private port")
-        .local_addr()
-        .expect("port")
-        .port();
     for standalone in [false, true] {
         let case = Case::new(
             &fixture.path().join(format!("failed-{standalone}")),
             &gateway,
             &effects,
             &foreign_ca,
-            port,
         );
         let mut owner = case.spawn(false, "failed-owner");
         let old_pids = case.ready(&mut owner, 0);
@@ -738,17 +818,11 @@ fn managed_matrix_missing_record_stop_and_live_views() {
     let mut cleanup = GatewayCleanup::new(&effects, &foreign_ca);
     let (gateway, _) =
         start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut cleanup);
-    let port = TcpListener::bind("127.0.0.1:0")
-        .expect("private port")
-        .local_addr()
-        .expect("port")
-        .port();
     let case = Case::new(
         &fixture.path().join("missing-record"),
         &gateway,
         &effects,
         &foreign_ca,
-        port,
     );
     let mut owner = case.spawn(false, "missing-record-owner");
     let pids = case.ready(&mut owner, 0);
@@ -812,17 +886,11 @@ fn authority_matrix(authority: Authority) {
     let mut cleanup = GatewayCleanup::new(&effects, &foreign_ca);
     let (gateway, _) =
         start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut cleanup);
-    let port = TcpListener::bind("127.0.0.1:0")
-        .expect("port")
-        .local_addr()
-        .expect("address")
-        .port();
     let case = Case::new(
         &fixture.path().join("authority"),
         &gateway,
         &effects,
         &foreign_ca,
-        port,
     );
     // Keep the successor in startup while the stale generation is observed.
     if matches!(authority, Authority::PreviousGeneration) {

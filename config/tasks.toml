@@ -365,6 +365,10 @@
   "cargo clippy -p effigy -p effigy-managed -p effigy-containers -p effigy-tui -p effigy-process --all-targets -- -D warnings",
 ]
 "test:managed:matrix" = { run = "cargo nextest run --config-file tests/config/managed-matrix-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_matrix_) & !test(managed_matrix_failed_stop_)' --success-output immediate --no-fail-fast --retries 0 --no-tests fail -j 2", timeout_ms = 2500000 }
+# The matrix cases own their fake Docker proxy socket from bind through teardown.
+"test:fixtures:matrix-port" = [{ task = "test:managed:matrix" }, { task = "test:managed:failed-stop" }]
+"check:fixtures:matrix-port" = { run = "cargo check -p effigy --test gateway_private --profile test", timeout_ms = 600000 }
+"lint:fixtures:matrix-port" = { run = "cargo clippy -p effigy --test gateway_private -- -D warnings", timeout_ms = 600000 }
 "test:managed:matrix:all-failed" = { run = "cargo nextest run --config-file tests/config/managed-matrix-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_matrix_all_failed_)' --success-output immediate --no-fail-fast --retries 0 --no-tests fail -j 2", timeout_ms = 2500000 }
 "test:managed:failed-stop" = { run = "cargo nextest run --config-file tests/config/managed-matrix-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_matrix_failed_stop_)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 }
 "test:managed:recovery" = [
