@@ -7,6 +7,9 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- Generated host-port inspection leaves unassigned bindings explicit and keeps
+  `ports.json` unchanged. The first Prepare assigns ports through the existing
+  gateway allocator; later reads preserve those assignments.
 - Guest-local container shell and exec resolve manifest execution coordinates
   without rendering host policy or touching host runtime state. Missing host
   Compose files and catalogs no longer prevent local guest execution.

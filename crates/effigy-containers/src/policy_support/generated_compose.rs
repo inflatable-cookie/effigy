@@ -973,7 +973,10 @@ fn resolve_shared_service_bindings(
         }
         let parsed_bindings = effective_ports
             .iter()
-            .map(|raw| parse_port_binding(raw))
+            .map(|raw| {
+                let raw = raw.replace(crate::policy::ports::UNASSIGNED_PORT_LABEL, "0");
+                parse_port_binding(&raw)
+            })
             .collect::<Result<Vec<_>, _>>()?;
         let binding = parsed_bindings
             .iter()
@@ -1118,7 +1121,7 @@ fn inject_service_env_vars(
 }
 
 fn apply_generated_compose_port_policy(
-    repo_root: &Path,
+    _repo_root: &Path,
     project_name: &str,
     explicit_bindings: &[PortBinding],
     loopback_rules: &[LoopbackPortRule],
@@ -1130,10 +1133,6 @@ fn apply_generated_compose_port_policy(
     let mut effective_ports = Vec::new();
 
     let mut registry = None;
-    let _port_lock = effigy_home_dir()
-        .map(|home| RouteTableLock::acquire(&home.join("ports.json")))
-        .transpose()
-        .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))?;
 
     for service_name in compose_document.sorted_service_names() {
         let Some(service) = compose_document.services.get_mut(&service_name) else {
@@ -1166,32 +1165,45 @@ fn apply_generated_compose_port_policy(
                 used_explicit_ports.insert(binding.container);
             }
             let host_port = if let Some(explicit) = explicit.filter(|_| !scope_explicit_ports) {
-                explicit.host
+                Some(explicit.host)
             } else {
                 if registry.is_none() {
                     registry = Some(load_port_registry()?.unwrap_or_default());
                 }
-                let registry = registry.as_mut().expect("registry exists");
-                registry
-                    .assign_port(
-                        project_name,
-                        &repo_root.display().to_string(),
-                        &service_name,
-                        binding.container,
-                    )
-                    .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))?
+                registry.as_mut().and_then(|registry| {
+                    let port =
+                        registry.assigned_port(project_name, &service_name, binding.container);
+                    // An old container-port-only binding belongs to the first
+                    // service, just as Prepare's allocator will migrate it.
+                    // Consume it only in this read snapshot; never save here.
+                    if let Some(allocation) = registry.allocations.get_mut(project_name) {
+                        if !allocation
+                            .assigned_ports
+                            .contains_key(&format!("{service_name}:{}", binding.container))
+                        {
+                            allocation
+                                .assigned_ports
+                                .remove(&binding.container.to_string());
+                        }
+                    }
+                    port
+                })
             };
+            let rendered_host = host_port.map_or_else(
+                || crate::policy::ports::UNASSIGNED_PORT_EXPRESSION.to_owned(),
+                |port| port.to_string(),
+            );
             rewritten_ports.push(GeneratedComposePort::String(format!(
-                "{publish_address}:{host_port}:{}",
+                "{publish_address}:{rendered_host}:{}",
                 binding.container
             )));
-            effective_ports.push(format!("{host_port}:{}", binding.container));
+            let reported_host = host_port.map_or_else(
+                || crate::policy::ports::UNASSIGNED_PORT_LABEL.to_owned(),
+                |port| port.to_string(),
+            );
+            effective_ports.push(format!("{reported_host}:{}", binding.container));
         }
         *ports = rewritten_ports;
-    }
-
-    if let Some(registry) = registry.as_ref() {
-        save_port_registry(registry)?;
     }
 
     if !explicit_bindings.is_empty() {
@@ -1482,16 +1494,6 @@ fn load_port_registry() -> Result<Option<PortRegistry>, ContainerPolicyError> {
     let path = home.join("ports.json");
     PortRegistry::load(&path)
         .map(Some)
-        .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))
-}
-
-fn save_port_registry(registry: &PortRegistry) -> Result<(), ContainerPolicyError> {
-    let Some(home) = effigy_home_dir() else {
-        return Ok(());
-    };
-    let path = home.join("ports.json");
-    registry
-        .save(&path)
         .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))
 }
 
@@ -2238,6 +2240,9 @@ services:
     fn typed_generated_compose_port_policy_honours_custom_publish_address() {
         let tempdir = tempfile::tempdir().expect("tempdir");
         with_test_effigy_home(tempdir.path(), || {
+            // Explicit bindings do not depend on an unrelated allocation store.
+            std::fs::write(tempdir.path().join("ports.json"), "invalid registry").unwrap();
+
             let mut compose_document = GeneratedComposeDocument::parse(
                 "acme",
                 "test parse",
@@ -2280,7 +2285,7 @@ services:
     }
 
     #[test]
-    fn typed_generated_compose_port_policy_allocates_unpinned_ports() {
+    fn typed_generated_compose_port_policy_leaves_unpinned_ports_unassigned() {
         let tempdir = tempfile::tempdir().expect("tempdir");
         with_test_effigy_home(tempdir.path(), || {
             let mut compose_document = GeneratedComposeDocument::parse(
@@ -2314,7 +2319,12 @@ services:
             assert_eq!(effective_ports.len(), 2);
             assert_eq!(effective_ports[0], "18080:80");
             assert!(effective_ports[1].ends_with(":9000"));
-            assert_ne!(effective_ports[1], "9000:9000");
+            assert_eq!(
+                effective_ports[1],
+                "unassigned (assigned on first prepare):9000"
+            );
+            assert!(!tempdir.path().join("ports.json").exists());
+            assert!(!tempdir.path().join("ports.lock").exists());
 
             let ports = compose_document
                 .services
@@ -2328,7 +2338,7 @@ services:
             assert!(matches!(
                 &ports[1],
                 GeneratedComposePort::String(raw)
-                    if raw == &format!("127.0.0.1:{}", effective_ports[1])
+                    if raw == &format!("127.0.0.1:{}:9000", crate::policy::ports::UNASSIGNED_PORT_EXPRESSION)
             ));
         });
     }
@@ -2379,6 +2389,16 @@ services:
         with_test_effigy_home(home.path(), || {
             let mut assigned = Vec::new();
             for (project, repo) in [("app-wt-one", "/tmp/one"), ("app-wt-two", "/tmp/two")] {
+                effigy_gateway::ports::prepare_ports(
+                    &home.path().join("ports.json"),
+                    &[effigy_gateway::ports::PortRequest {
+                        project_name: project.to_owned(),
+                        project_path: repo.to_owned(),
+                        service_name: "app".to_owned(),
+                        container_port: 80,
+                    }],
+                )
+                .unwrap();
                 let mut document = GeneratedComposeDocument::parse(
                     project,
                     "test",

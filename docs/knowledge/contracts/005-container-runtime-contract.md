@@ -1377,6 +1377,24 @@ Compose file or catalog does not prevent an already-running guest from
 executing locally. Bounded guest commands preserve the same deadline, output
 budgets and JSON schema as host-routed commands.
 
+### Generated host-port preparation
+
+Host-port resolution reads existing `ports.json` assignments without allocating,
+locking or migrating them. Missing bindings report `unassigned (assigned on
+first prepare)` and render a Compose placeholder that refuses execution until
+prepared. Shared-service JSON reports `target_port: null` with that label in
+`allocation` until assigned. Explicit fixed host ports remain usable without
+an allocation.
+
+Prepare calls the existing gateway-domain `ports::prepare_ports` allocator,
+then resolves again before admission and publication. The allocator loads,
+assigns and atomically saves all requested bindings under its existing short
+registry lock; it performs no runtime inventory under that lock. Existing
+assignments, including legacy container-port keys, retain their port numbers.
+This remains the legacy single writer until the gateway endpoint-store
+migration (#224) imports `ports.json` and owns persistent reservations. Kernel
+run-scoped Claims do not implement this temporary persistent allocation seam.
+
 ## Container manager contract
 
 Runner-facing container operations must route through `ContainerManager`.

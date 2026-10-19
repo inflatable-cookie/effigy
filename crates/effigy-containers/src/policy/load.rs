@@ -162,6 +162,8 @@ pub fn load_container_policy_for_creation(
     repo_root: &Path,
     requested_name: Option<&str>,
 ) -> Result<(EffectiveContainerPolicy, Vec<WorkspaceExtraMountDecision>), ContainerPolicyError> {
+    let policy = load_container_policy(repo_root, requested_name)?;
+    super::ports::prepare_container_policy_ports(&policy)?;
     load_container_policy_with_workspace_decisions(repo_root, requested_name, None, true)
 }
 

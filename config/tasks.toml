@@ -22,8 +22,11 @@
 
 # Guest execution must never enter host-policy rendering (#218).
 "test:containers:guest-execution" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-containers --lib -E 'test(bounded_exec::) | test(container_exec_working_dir)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 }
-"check:containers:render" = "cargo check -p effigy-containers -p effigy --all-targets --profile test"
-"lint:containers:render" = "cargo clippy -p effigy-containers -p effigy --all-targets -- -D warnings"
+"check:containers:render" = "cargo check -p effigy-gateway -p effigy-runtime -p effigy-containers -p effigy --all-targets --profile test"
+"lint:containers:render" = "cargo clippy -p effigy-gateway -p effigy-runtime -p effigy-containers -p effigy --all-targets -- -D warnings"
+"test:containers:port-prepare" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-gateway -p effigy-containers -p effigy-runtime -p effigy --lib -E 'test(ports::tests::) | test(policy_support::generated_compose::tests::) | test(tests::compose::) | test(container_runtime_prep::tests::) | test(container_command::lifecycle::tests::) | test(data::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 }
+"test:containers:port-prepare:legacy" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib -E 'test(legacy_port_alias_is_read_once_then_prepared_for_each_service) | test(generated_port_reads_leave_registry_untouched_and_prepare_is_stable)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 }
+"test:containers:port-prepare:report" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib -E 'test(status_report_renders_shared_service_targets)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 }
 "qa:containers:render-static" = [{ task = "fmt:check" }, { task = "qa:kernel-ratchet" }]
 
 # Kernel foundation: bounded, disjoint proof families; no engine adoption.

@@ -288,6 +288,9 @@ fn prepare_container_up(
                     c.startup == Some(effigy_manifest::ManifestContainerStartup::Detached)
                 }));
     operation.active = declared_detached;
+    // Allocation is a Prepare effect, before admission captures the render.
+    let preparation_policy = load_container_policy(repo_root, name)?;
+    effigy_containers::policy::ports::prepare_container_policy_ports(&preparation_policy)?;
     let (mut policy, mut preparation_admission) = if declared_detached {
         // A record of an earlier admission whose inputs have changed since is
         // retired here, before admission compares against it.

@@ -281,6 +281,16 @@ primary_service = "app"
         report.json["shared_services"][0]["project_name"],
         "effigy-shared-mariadb-deadbeef"
     );
+    policy.shared_services[0].host_port = 0;
+    let unassigned = status_report(&policy, "containerd", true, None, None, None, None);
+    assert!(unassigned
+        .success_text
+        .contains(crate::policy::ports::UNASSIGNED_PORT_LABEL));
+    assert!(unassigned.json["shared_services"][0]["target_port"].is_null());
+    assert_eq!(
+        unassigned.json["shared_services"][0]["allocation"],
+        crate::policy::ports::UNASSIGNED_PORT_LABEL
+    );
 }
 
 #[test]
