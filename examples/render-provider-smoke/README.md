@@ -43,8 +43,11 @@ effigy deploy plan uat
 effigy deploy status uat
 ```
 
-`deploy apply` is intentionally blocked while
-`provider.preflight_scope = "environment"` is set.
+`deploy apply` and `deploy redeploy` are not yet supported in v0.15, regardless
+of `preflight_scope`, service IDs or `--yes`. This fixture exercises provider
+preflight/status, not deployment execution. Model/export remain supported;
+full execution design is in Queue's deploy lane (Q-003). See the
+[deployment guide](../../docs/guides/074-deployment-guide.md).
 
 ## Service Check
 

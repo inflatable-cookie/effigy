@@ -228,6 +228,45 @@ added raw command against the real baseline and controls for rises, new pairs
 and unrecorded falls. This activates the baseline against the existing engines
 without migrating any of them.
 
+## Immutable object closures
+
+`objects::Closure` computes a versioned SHA-256 digest from sorted relative
+file names and bytes without I/O. `Objects::publish_desired` runs through a
+Prepare or Mutate owner, journals `kernel:object-staging` before creating
+`staging/<run-id>/<digest>`, writes and fsyncs every file, seals descendants,
+then renames the complete directory into `objects/<digest>`. The root is sealed
+0500 after the rename (macOS needs write permission while moving `..`) and
+before publication. Files are 0400. A repeated digest verifies the existing
+closure and reuses it. All filesystem operations after the trusted root open
+are descriptor-relative.
+
+Publication inserts the object row and desired reference in the same Store
+transaction. `Objects::promote` compares the expected desired digest, changes
+last-applied and superseded references together, and sequences them under the
+owning run's generation fence. `Objects::reset` drops only its owner's
+references. `Objects::resolve` reads and verifies a complete closure under an
+Observe capability; it returns absence or Unknown without creating a family,
+performing migrations or acquiring a gate.
+
+Publication, reference changes, staging settlement and object retention share
+the short machine `Store(objects)` gate. Retention excludes desired,
+last-applied, the newest three superseded references per resource, and every
+in-flight staging effect. Settle removes run-owned staging even when a crash
+occurred before the staging receipt, and reclaims an unreferenced publication.
+Retention removes an unreferenced directory before deleting its row, so an
+interrupted reclaim can be retried without an untracked directory leak.
+
+The Store's additive schema-1 `backend` column holds exact engine, context and
+selection-source metadata on the resource. Observe can read an older store
+without adding the column; its next effect open performs that migration.
+
+`test:kernel:objects` covers deterministic closure identity, safe names,
+idempotent publication, concurrent publication and retention, promotion races,
+sibling reset, old-store read purity and guest refusal. The fault-suite object
+scenario injects at staging, file writes, sealing, rename, publication,
+reference transactions and cleanup, and checks complete old-or-new closures,
+store integrity and pure reads after recovery.
+
 ## Gate and store implementation
 
 `root` opens `~/.effigy/state/` from `$HOME`: for effects it creates the

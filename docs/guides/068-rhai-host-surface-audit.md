@@ -65,7 +65,7 @@ Policy:
 | Scan | `scan::god_files`, `scan::generated_assets`, `scan::generated_in_src`, `scan::duplicate_blocks`, `scan::comment_ratio`, `scan::attention_markers`, `scan::stale_suppressions` | Exposed |
 | Cache | `cache::inspect`, `cache::invalidate` | Exposed |
 | Contracts | `contracts::check_json`, `contracts::validate_selection` | Exposed |
-| Deploy | `deploy::model`, `deploy::emit`, `deploy::plan`, `deploy::apply`, `deploy::status`, `deploy::history`, `deploy::redeploy`, `deploy::provider_context`, `deploy::provider_context_path`, `deploy::provider_report_path`, `deploy::provider_report` | Exposed |
+| Deploy | `deploy::model`, `deploy::emit`, `deploy::plan`, `deploy::apply`, `deploy::status`, `deploy::history`, `deploy::redeploy`, `deploy::provider_context`, `deploy::provider_context_path`, `deploy::provider_report_path`, `deploy::provider_report` | Exposed; apply/redeploy refuse in v0.15 |
 | Distribution | `distribution::validate_metadata`, `distribution::check_glibc_floor`, `distribution::preflight`, `distribution::first_publish`, `distribution::validate_artifacts`, `distribution::generate_closeout`, `distribution::write_summary` | Exposed |
 | System | `system::status`, `system::logs` | Exposed |
 | Demo | `demo::list`, `demo::inspect`, `demo::history` | Exposed |
@@ -223,17 +223,18 @@ let result = state::capture_set(#{
 if !result["ok"] { throw("capture-set failed"); }
 ```
 
-### Plan-first deploy orchestration
+### Deploy inspection
 
 ```rhai
 let plan = deploy::plan(#{ env: "uat", write_report: true });
 if !plan["ok"] { throw("deploy plan failed"); }
-
-if env("EFFIGY_DEPLOY_YES") == "1" {
-    let apply = deploy::apply(#{ env: "uat", yes: true });
-    if !apply["ok"] { throw("deploy apply failed"); }
-}
 ```
+
+`deploy::apply` and `deploy::redeploy` remain exposed for compatibility but
+refuse as not yet supported in v0.15, including with `yes: true`. They return
+the same `not_supported` failure as the CLI and cannot execute a deployment.
+Model/export remain supported. Full execution design is in Queue's deploy lane
+(Q-003); see [guide 074](074-deployment-guide.md).
 
 ### Distribution preflight plus artifact validation
 

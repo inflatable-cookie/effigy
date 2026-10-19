@@ -13,6 +13,12 @@ pub(super) fn prepare_runtime_mounts_stage(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> Result<(), RunnerError> {
+    if effigy_containers::policy::ports::prepare_container_policy_ports(policy)? {
+        // Existing callers retain their policy; refresh the Compose inputs
+        // before the following idempotent up stage consumes them.
+        effigy_containers::load_container_policy(repo_root, Some(&policy.name))?;
+    }
+    effigy_containers::policy::mounts::prepare_container_mount_sources(policy)?;
     prepare_host_bind_mount_dirs(repo_root, policy)
 }
 

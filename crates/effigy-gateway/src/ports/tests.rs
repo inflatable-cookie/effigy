@@ -331,3 +331,71 @@ fn load_nonexistent_returns_empty() {
     let reg = PortRegistry::load(Path::new("/nonexistent/ports.json")).unwrap();
     assert!(reg.is_empty());
 }
+
+#[test]
+fn read_assignment_preserves_absence_and_legacy_bytes_until_prepare() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("ports.json");
+    assert_eq!(
+        PortRegistry::load(&path)
+            .unwrap()
+            .assigned_port("app", "web", 80),
+        None
+    );
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    let mut registry = PortRegistry::new();
+    registry.allocate("app", "/fixture/app").unwrap();
+    registry
+        .allocations
+        .get_mut("app")
+        .unwrap()
+        .assigned_ports
+        .insert("80".into(), 8100);
+    registry.save(&path).unwrap();
+    let before = std::fs::read(&path).unwrap();
+    assert_eq!(
+        PortRegistry::load(&path)
+            .unwrap()
+            .assigned_port("app", "web", 80),
+        Some(8100)
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    let request = PortRequest {
+        project_name: "app".into(),
+        project_path: "/fixture/app".into(),
+        service_name: "web".into(),
+        container_port: 80,
+    };
+    prepare_ports(&path, std::slice::from_ref(&request)).unwrap();
+    let prepared = std::fs::read(&path).unwrap();
+    let registry = PortRegistry::load(&path).unwrap();
+    assert_eq!(registry.assigned_port("app", "web", 80), Some(8100));
+    assert!(!registry
+        .get("app")
+        .unwrap()
+        .assigned_ports
+        .contains_key("80"));
+    prepare_ports(&path, std::slice::from_ref(&request)).unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), prepared);
+}
+
+#[test]
+fn prepare_port_requests_commit_together_or_preserve_the_registry() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("ports.json");
+    let mut registry = PortRegistry::new();
+    registry
+        .allocate_at("app", "/fixture/app", 8100, 1)
+        .unwrap();
+    registry.save(&path).unwrap();
+    let before = std::fs::read(&path).unwrap();
+    let requests = [80, 9000].map(|container_port| PortRequest {
+        project_name: "app".into(),
+        project_path: "/fixture/app".into(),
+        service_name: "web".into(),
+        container_port,
+    });
+    assert!(prepare_ports(&path, &requests).is_err());
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+}

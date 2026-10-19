@@ -1286,7 +1286,9 @@ artifact_policy = "digest-preferred"
 adapter = "railway"
 ```
 
-Plan with `effigy deploy plan uat`, apply with `effigy deploy apply uat --yes`.
+Inspect intended work with `effigy deploy plan uat`. Model/export remain
+supported; `deploy apply` and `deploy redeploy` are not yet supported in v0.15,
+even with `--yes`. Full execution design is in Queue's deploy lane (Q-003).
 See [`074-deployment-guide.md`](074-deployment-guide.md).
 
 ## Notes

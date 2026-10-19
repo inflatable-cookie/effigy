@@ -8,6 +8,15 @@
   { rhai = "scripts/install-local-bin-links.rhai" },
 ]
 
+# Deploy execution refusal plus unchanged model/export and legacy readers.
+"test:deploy" = [
+  { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(deploy_tests::) | test(deploy_contract_tests::) | test(run_rhai_feature_refuses_deploy_execution)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests --filterset 'test(cli_json_mode_deploy_)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { task = "test:graph:parity" },
+]
+"check:deploy" = { run = "cargo check -p effigy -p effigy-cli --all-targets --profile test", timeout_ms = 600000 }
+"lint:deploy" = { run = "cargo clippy -p effigy -p effigy-cli --all-targets -- -D warnings", timeout_ms = 600000 }
+
 # Graph storage and CLI refresh contract; nextest bounds each case and leaks.
 "test:graph:storage" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-codegraph --lib --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail", timeout_ms = 600000 }
 "test:graph:runner" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(graph_) | test(docs_context_time_budget_tests::)' --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail", timeout_ms = 600000 }
@@ -19,6 +28,19 @@
 "test:graph:checkout" = { admission = "heavy", run = [ { id = "graph-checkout-build", run = "cargo build --bin effigy", timeout_ms = 600000 }, { id = "graph-checkout-smoke", run = "python3 tests/scripts/graph-checkout-smoke.py ./target/debug/effigy", timeout_ms = 600000 } ] }
 "check:graph" = "cargo check -p effigy-codegraph -p effigy-cli -p effigy-manifest -p effigy-routing -p effigy-builtin -p effigy --all-targets --profile test"
 "lint:graph" = "cargo clippy -p effigy-codegraph -p effigy-cli -p effigy-manifest -p effigy-routing -p effigy-builtin -p effigy --all-targets -- -D warnings"
+
+# Guest execution must never enter host-policy rendering (#218).
+"test:containers:guest-execution" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-containers --lib -E 'test(bounded_exec::) | test(container_exec_working_dir)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 }
+"check:containers:render" = "cargo check -p effigy-gateway -p effigy-runtime -p effigy-containers -p effigy --all-targets --profile test"
+"lint:containers:render" = "cargo clippy -p effigy-gateway -p effigy-runtime -p effigy-containers -p effigy --all-targets -- -D warnings"
+"test:containers:port-prepare" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-gateway -p effigy-containers -p effigy-runtime -p effigy --lib -E 'test(ports::tests::) | test(policy_support::generated_compose::tests::) | test(tests::compose::) | test(container_runtime_prep::tests::) | test(container_command::lifecycle::tests::) | test(data::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 }
+"test:containers:port-prepare:legacy" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib -E 'test(legacy_port_alias_is_read_once_then_prepared_for_each_service) | test(generated_port_reads_leave_registry_untouched_and_prepare_is_stable)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 }
+"test:containers:port-prepare:report" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib -E 'test(status_report_renders_shared_service_targets)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 }
+
+"test:containers:mount-prepare" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers -p effigy --lib -E 'test(policy::mounts::) | test(tests::compose::) | test(tests::volumes_reports::) | test(container_runtime_prep::tests::) | test(container_command::lifecycle::tests::)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 }
+"test:containers:mount-prepare:workspace" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib -E 'test(workspace::tests::)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 }
+"test:containers:loopback-inventory" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib -E 'test(policy_support::generated_compose::tests::) | test(linked_worktrees_get_distinct_effective_hosts_and_primary_keeps_declared) | test(runtime::loopback::)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 }
+"qa:containers:render-static" = [{ task = "fmt:check" }, { task = "qa:kernel-ratchet" }]
 
 # Kernel foundation: bounded, disjoint proof families; no engine adoption.
 "test:kernel:remote" = [
@@ -50,6 +72,11 @@
   { run = "cargo build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 },
   { run = "EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture cargo nextest run --config-file tests/config/kernel-faults-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib -E 'test(/^faults::matrix::/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 1800000 },
 ]
+"test:kernel:objects" = [
+  { run = "cargo build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 },
+  { task = "test:kernel:objects:runner" },
+]
+"test:kernel:objects:runner" = { run = "EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture cargo nextest run --config-file tests/config/kernel-faults-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib -E 'test(/^objects::tests::/) | test(store_retention_keeps_referenced_objects_and_three_superseded) | test(/^faults::scenarios::faults_objects_/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 1800000 }
 "test:kernel:identity" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --test foundation -E 'test(identity_)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
 "test:kernel:context" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --test foundation -E 'test(context_)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
 "test:kernel:observed" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --test foundation -E 'test(observation_)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }

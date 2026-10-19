@@ -932,6 +932,42 @@ fn cli_json_mode_missing_task_wraps_runner_failure() {
 }
 
 #[test]
+fn cli_json_mode_deploy_execution_refuses_with_nonzero_exit() {
+    let root = temp_workspace("cli-json-deploy-refusal");
+    fs::write(root.join("effigy.toml"), "").expect("write manifest");
+    for operation in ["apply", "redeploy"] {
+        for yes in [false, true] {
+            let mut command = Command::new(env!("CARGO_BIN_EXE_effigy"));
+            command
+                .args(["--json", "deploy", operation, "uat", "--repo"])
+                .arg(&root);
+            if operation == "redeploy" {
+                command.args(["--deployment", "missing"]);
+            }
+            if yes {
+                command.arg("--yes");
+            }
+            let output = command
+                .env("NO_COLOR", "1")
+                .output()
+                .expect("run deploy refusal");
+            assert!(!output.status.success());
+            let parsed: Value = serde_json::from_slice(&output.stdout).expect("json envelope");
+            assert_eq!(parsed["schema"], "effigy.command.v1");
+            assert_eq!(parsed["ok"], false);
+            assert_eq!(
+                parsed["error"]["details"]["schema"],
+                "effigy.deploy.apply.v1"
+            );
+            assert_eq!(parsed["error"]["details"]["reason"], "not_supported");
+            assert_eq!(parsed["error"]["details"]["operation"], operation);
+        }
+    }
+    assert!(!root.join(".effigy/reports/deploy").exists());
+    assert!(!root.join(".effigy/runtime/deploy").exists());
+}
+
+#[test]
 fn cli_json_mode_deploy_model_wraps_deploy_payload() {
     let root = temp_workspace("cli-json-deploy-model");
     setup_workspace_app_path_bundle(&root);

@@ -43,8 +43,8 @@ pub(super) fn run_deploy(args: DeployArgs) -> Result<String, RunnerError> {
             write_report,
             args.output_json,
         ),
-        DeploySubcommand::Apply { env, yes } => {
-            transaction::run_deploy_apply(&resolved.resolved_root, &env, yes, args.output_json)
+        DeploySubcommand::Apply { env, .. } => {
+            transaction::refuse_deploy_execution("apply", &env, args.output_json)
         }
         DeploySubcommand::Status { env } => {
             transaction::run_deploy_status(&resolved.resolved_root, &env, args.output_json)
@@ -52,17 +52,9 @@ pub(super) fn run_deploy(args: DeployArgs) -> Result<String, RunnerError> {
         DeploySubcommand::History { env, limit } => {
             transaction::run_deploy_history(&resolved.resolved_root, &env, limit, args.output_json)
         }
-        DeploySubcommand::Redeploy {
-            env,
-            deployment,
-            yes,
-        } => transaction::run_deploy_redeploy(
-            &resolved.resolved_root,
-            &env,
-            &deployment,
-            yes,
-            args.output_json,
-        ),
+        DeploySubcommand::Redeploy { env, .. } => {
+            transaction::refuse_deploy_execution("redeploy", &env, args.output_json)
+        }
     }
 }
 

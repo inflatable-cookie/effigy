@@ -93,6 +93,9 @@ impl StateRoot {
         self.writable
     }
     /// A family directory. Read-only roots never create; `Ok(None)` is absence.
+    pub(crate) fn read_family(&self, family: Family) -> Result<Option<DirFd>, FsError> {
+        self.dir.child(family.dir_name(), Trust::Private, false)
+    }
     pub(crate) fn family(&self, family: Family) -> Result<Option<DirFd>, FsError> {
         self.dir
             .child(family.dir_name(), Trust::Private, self.writable)

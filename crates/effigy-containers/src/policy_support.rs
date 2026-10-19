@@ -5,5 +5,5 @@ pub use generated_compose::with_test_effigy_home;
 #[cfg(test)]
 pub(crate) use generated_compose::with_test_loopback_inventory;
 pub(crate) use generated_compose::{
-    effigy_home_dir, resolve_compose_source, validate_media_mounts,
+    effigy_home_dir, parse_media_mount, resolve_compose_source, validate_media_mounts,
 };

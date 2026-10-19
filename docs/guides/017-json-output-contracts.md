@@ -168,7 +168,7 @@ Operator workflow and recovery: [`077-local-dependency-linking.md`](077-local-de
 - `deploy.model.v1`
 - `effigy.deploy.export.v1`
 - `effigy.deploy.plan.v1`
-- `effigy.deploy.apply.v1`
+- `effigy.deploy.apply.v1` (v0.15 apply/redeploy refusal in `error.details`)
 - `effigy.deploy.status.v1`
 - `effigy.deploy.history.v1`
 - `effigy.init.v1`
@@ -203,6 +203,11 @@ Operator workflow and recovery: [`077-local-dependency-linking.md`](077-local-de
 - `effigy.docs.qualified.resolution.v1` (`docs qualified resolve`)
 - `effigy.state-stack.lineage.v1`
 - `effigy.state-stack.apply.v1`
+
+In v0.15, `deploy apply` and `deploy redeploy` exit nonzero with the existing
+`effigy.command.v1` envelope, `ok: false`, and `error.details.reason` set to
+`not_supported`. Supplying `--yes` does not enable execution. Full execution
+design is in the deploy lane (Q-003); see [guide 074](074-deployment-guide.md).
 
 Draft runs reuse `effigy.task.run.v1` unchanged for published payloads. When the
 selected surface is a draft, that payload additionally carries `surface:
@@ -246,7 +251,7 @@ effigy --json graph affected src/runner/graph_command.rs --depth 2
 effigy --json deploy model --repo /path/to/workspace
 effigy --json deploy export <PROVIDER> --repo /path/to/workspace --path infra/deploy --plan
 effigy --json deploy plan uat --repo /path/to/workspace
-effigy --json deploy apply uat --repo /path/to/workspace --yes
+effigy --json deploy history uat --repo /path/to/workspace
 effigy --json test --plan
 effigy --json test
 effigy --json watch --owner effigy --once test

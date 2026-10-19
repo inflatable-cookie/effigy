@@ -281,6 +281,16 @@ primary_service = "app"
         report.json["shared_services"][0]["project_name"],
         "effigy-shared-mariadb-deadbeef"
     );
+    policy.shared_services[0].host_port = 0;
+    let unassigned = status_report(&policy, "containerd", true, None, None, None, None);
+    assert!(unassigned
+        .success_text
+        .contains(crate::policy::ports::UNASSIGNED_PORT_LABEL));
+    assert!(unassigned.json["shared_services"][0]["target_port"].is_null());
+    assert_eq!(
+        unassigned.json["shared_services"][0]["allocation"],
+        crate::policy::ports::UNASSIGNED_PORT_LABEL
+    );
 }
 
 #[test]
@@ -313,7 +323,7 @@ working_subdir = "managed-volumes"
 }
 
 #[test]
-fn generated_compose_policy_includes_declared_media_mounts_and_prepares_source_dirs() {
+fn generated_compose_policy_defers_media_source_dirs_until_prepare() {
     let _lock = crate::test_env_lock();
     let root = temp_repo("managed-media");
     fs::write(
@@ -348,6 +358,10 @@ catalog = "mariadb"
         policy.declared_media_mounts,
         vec!["storage/uploads:/var/www/html/storage/uploads".to_owned()]
     );
+    assert!(!root.join("storage").exists());
+    crate::validate_container_policy(&root, &policy).expect("validate without creating media");
+    assert!(!root.join("storage").exists());
+    crate::policy::mounts::prepare_container_mount_sources(&policy).expect("prepare media");
     assert!(root.join("storage/uploads").is_dir());
 
     let compose = fs::read_to_string(&policy.compose_files[0]).expect("read compose");

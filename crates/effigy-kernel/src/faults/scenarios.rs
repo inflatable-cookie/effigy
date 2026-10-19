@@ -1361,8 +1361,181 @@ fn faults_vault_write_resolves_one_complete_generation() {
     drive(&Vault);
 }
 
+// Immutable publication, promotion and staging settlement at every fault boundary.
+struct ObjectPublication;
+fn object_value(value: &str) -> crate::objects::Closure {
+    crate::objects::Closure::new(BTreeMap::from([
+        ("compose.yaml".into(), value.as_bytes().to_vec()),
+        (
+            "catalog/app/Dockerfile".into(),
+            format!("FROM {value}").into_bytes(),
+        ),
+    ]))
+    .expect("closure")
+}
+fn object_write(home: &Path, n: u8, value: &str) -> Result<(), RunError> {
+    let cx = mutate();
+    let root = StateRoot::effects(&cx, home).expect("root");
+    let mut fake = Fake::new(home);
+    let mut run = begin(&cx, &root, task(0), n, None, vec![], &mut fake)?;
+    let value = object_value(value);
+    crate::objects::Objects::publish_desired(&mut run, &value)?;
+    crate::objects::Objects::promote(&mut run, value.digest())?;
+    run.finish(WorkloadOutcome::Succeeded)?;
+    run.settle(&cleanup(&cx), &mut fake).map(drop)
+}
+impl Scenario for ObjectPublication {
+    fn name(&self) -> &'static str {
+        "objects"
+    }
+    fn oracles(&self) -> &'static [Oracle] {
+        &[Oracle::O3, Oracle::O4, Oracle::O6, Oracle::O7, Oracle::O10]
+    }
+    fn required(&self) -> &'static [Point] {
+        &[
+            Point::ObjectStageBefore,
+            Point::ObjectStageCreated,
+            Point::ObjectWriteBefore,
+            Point::ObjectWriteAfter,
+            Point::ObjectSealBefore,
+            Point::ObjectSealAfter,
+            Point::ObjectRenameBefore,
+            Point::ObjectRenameAfter,
+            Point::ObjectRootSealBefore,
+            Point::ObjectRootSealAfter,
+            Point::ObjectPublishBefore,
+            Point::ObjectPublishAfter,
+            Point::ObjectRefBefore,
+            Point::ObjectRefAfter,
+            Point::ObjectCleanupBefore,
+            Point::ObjectCleanupAfter,
+        ]
+    }
+    fn owners(&self) -> Vec<ResourceId> {
+        vec![task(0)]
+    }
+    fn prepare(&self, home: &Path) {
+        object_write(home, 1, "old").expect("old object");
+    }
+    fn run(&self, home: &Path) -> Option<i32> {
+        object_write(home, 2, "new").ok().map(|()| 0)
+    }
+    fn facts(&self, home: &Path, world: &mut World) {
+        let root = match StateRoot::observe(&observe(), home) {
+            Observed::Verified(root, _) => root,
+            other => panic!("{other:?}"),
+        };
+        for role in [
+            crate::objects::Role::Desired,
+            crate::objects::Role::LastApplied,
+        ] {
+            let read = crate::objects::Objects::resolve(&observe(), &root, &task(0), role);
+            let actual = read
+                .verified()
+                .map(|object| object.closure.digest().as_bytes().to_vec());
+            world.replaced.push((
+                format!("object {role:?}"),
+                vec![
+                    object_value("old").digest().as_bytes().to_vec(),
+                    object_value("new").digest().as_bytes().to_vec(),
+                ],
+                actual,
+            ));
+        }
+        // Recovery must remove all journalled staging, including a crash
+        // before its receipt. Only complete desired/applied objects remain.
+        if let Ok(entries) = std::fs::read_dir(root.path().join("staging")) {
+            assert_eq!(
+                entries.count(),
+                0,
+                "abandoned object staging survived recovery"
+            );
+        }
+    }
+}
+#[test]
+fn faults_objects_publish_promote_and_settle_preserve_complete_closures() {
+    drive(&ObjectPublication);
+}
+
+struct ObjectReset;
+impl Scenario for ObjectReset {
+    fn name(&self) -> &'static str {
+        "objects-reset"
+    }
+    fn oracles(&self) -> &'static [Oracle] {
+        &[Oracle::O3, Oracle::O4, Oracle::O6, Oracle::O7, Oracle::O10]
+    }
+    fn required(&self) -> &'static [Point] {
+        &[Point::ObjectRefBefore, Point::ObjectRefAfter]
+    }
+    fn owners(&self) -> Vec<ResourceId> {
+        vec![task(0), task(1)]
+    }
+    fn prepare(&self, home: &Path) {
+        object_write(home, 1, "old").expect("old object");
+        let cx = mutate();
+        let root = StateRoot::effects(&cx, home).expect("root");
+        let mut fake = Fake::new(home);
+        let mut sibling = begin(&cx, &root, task(1), 3, None, vec![], &mut fake).expect("sibling");
+        crate::objects::Objects::publish_desired(&mut sibling, &object_value("old"))
+            .expect("shared object");
+        sibling
+            .settle(&cleanup(&cx), &mut fake)
+            .expect("settled sibling");
+    }
+    fn run(&self, home: &Path) -> Option<i32> {
+        let cx = mutate();
+        let root = StateRoot::effects(&cx, home).expect("root");
+        let mut fake = Fake::new(home);
+        let mut run = begin(&cx, &root, task(0), 2, None, vec![], &mut fake).ok()?;
+        crate::objects::Objects::reset(&mut run).ok()?;
+        run.settle(&cleanup(&cx), &mut fake).ok().map(|_| 0)
+    }
+    fn facts(&self, home: &Path, world: &mut World) {
+        let root = match StateRoot::observe(&observe(), home) {
+            Observed::Verified(root, _) => root,
+            other => panic!("{other:?}"),
+        };
+        let mut actual = vec![];
+        for role in [
+            crate::objects::Role::Desired,
+            crate::objects::Role::LastApplied,
+        ] {
+            let result = crate::objects::Objects::resolve(&observe(), &root, &task(0), role);
+            match result {
+                Observed::Absent(_) => actual.push(b'-'),
+                Observed::Verified(object, _) => {
+                    assert_eq!(object.closure, object_value("old"));
+                    actual.push(b'+');
+                }
+                other => panic!("reset reference is unknown: {other:?}"),
+            }
+        }
+        world.replaced.push((
+            "object reset references".into(),
+            vec![b"++".to_vec(), b"--".to_vec()],
+            Some(actual),
+        ));
+        let sibling = crate::objects::Objects::resolve(
+            &observe(),
+            &root,
+            &task(1),
+            crate::objects::Role::Desired,
+        );
+        assert_eq!(
+            sibling.verified().expect("sibling survived reset").closure,
+            object_value("old")
+        );
+    }
+}
+#[test]
+fn faults_objects_reset_is_atomic_and_preserves_sibling() {
+    drive(&ObjectReset);
+}
+
 pub(super) fn by_name(name: &str) -> &'static dyn Scenario {
-    let fixed: [&'static dyn Scenario; 7] = [
+    let fixed: [&'static dyn Scenario; 9] = [
         &ManagedAttach,
         &Environment,
         &Residue,
@@ -1370,6 +1543,8 @@ pub(super) fn by_name(name: &str) -> &'static dyn Scenario {
         &ObserveProbes,
         &Endpoint,
         &Vault,
+        &ObjectPublication,
+        &ObjectReset,
     ];
     STEPS
         .iter()

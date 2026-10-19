@@ -88,7 +88,7 @@ Guide: `docs/guides/079-documentation-graph-profiles-and-context.md`
 | Built-in | Purpose |
 |----------|---------|
 | `state` | Layered schema/seed/capture stacks |
-| `deploy` | Model, export, plan/apply transactions |
+| `deploy` | Model, export, plan/status/history; apply/redeploy refuse in v0.15 (guide 074 / Q-003) |
 | `artifact` | OCI/local data artifacts |
 | `demo` | Proof demos (list, run, browser, history) |
 | `bundle` | Bundle source inspect/sync |

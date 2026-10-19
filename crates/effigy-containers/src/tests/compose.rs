@@ -144,6 +144,13 @@ fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result
     Ok(())
 }
 
+fn load_prepared_policy(
+    root: &Path,
+    name: Option<&str>,
+) -> Result<crate::EffectiveContainerPolicy, crate::ContainerPolicyError> {
+    crate::load_container_policy_for_creation(root, name).map(|(policy, _)| policy)
+}
+
 #[test]
 fn linked_worktrees_generate_distinct_compose_resources_and_source_mounts() {
     with_temp_effigy_home("linked-worktree-resources", |_| {
@@ -163,7 +170,7 @@ host_ports = ["41001:41001"]
         let mut policies = Vec::new();
         for (name, checkout) in ["one", "two"].into_iter().zip(&checkouts) {
             assert_linked_worktree_git_layout(&primary, checkout, name);
-            let policy = load_container_policy(checkout, None).unwrap();
+            let policy = load_prepared_policy(checkout, None).unwrap();
             let compose = fs::read_to_string(&policy.compose_files[0]).unwrap();
             assert!(
                 compose.contains(&checkout.display().to_string()),
@@ -474,7 +481,7 @@ host_ports = ["41001:41001"]
         fs::create_dir_all(operator.join(".git")).unwrap();
         fs::write(operator.join(".git/config"), "[core]\n").unwrap();
         fs::write(operator.join("effigy.toml"), manifest).unwrap();
-        let operator_policy = load_container_policy(&operator, None).unwrap();
+        let operator_policy = load_prepared_policy(&operator, None).unwrap();
         assert_eq!(operator_policy.project_name, "shared-dev");
 
         let mut identities = Vec::new();
@@ -487,7 +494,7 @@ host_ports = ["41001:41001"]
             )
             .unwrap();
             fs::write(checkout.join("effigy.toml"), manifest).unwrap();
-            let policy = load_container_policy(&checkout, None).unwrap();
+            let policy = load_prepared_policy(&checkout, None).unwrap();
             assert!(
                 policy.project_name.starts_with("shared-dev-ec-"),
                 "{}",
@@ -519,7 +526,7 @@ host_ports = ["41001:41001"]
             "[effigy]\n\truntimeScope = ephemeral\n",
         )
         .unwrap();
-        let recreated = load_container_policy(&root.join("clone-one"), None).unwrap();
+        let recreated = load_prepared_policy(&root.join("clone-one"), None).unwrap();
         assert_ne!(recreated.project_name, identities[0].0);
         assert_ne!(recreated.declared_ports, identities[0].1);
     });
@@ -739,7 +746,7 @@ variant = "default"
         )
         .expect("write manifest");
 
-        let policy = load_container_policy(&root, None).expect("policy");
+        let policy = load_prepared_policy(&root, None).expect("policy");
 
         assert_eq!(policy.primary_service, "app");
         assert_eq!(policy.compose_source, EffectiveComposeSource::Generated);
@@ -1008,7 +1015,7 @@ variant = "default"
         )
         .expect("write manifest");
 
-        let policy = load_container_policy(&root, None).expect("policy");
+        let policy = load_prepared_policy(&root, None).expect("policy");
         let compose =
             fs::read_to_string(root.join(".effigy/runtime/compose/web.generated.compose.yml"))
                 .expect("compose");
@@ -1122,7 +1129,7 @@ variant = "default"
         )
         .expect("write manifest");
 
-        let first = load_container_policy(&root, None).expect("first policy");
+        let first = load_prepared_policy(&root, None).expect("first policy");
         let second = load_container_policy(&root, None).expect("second policy");
         assert!(!first.ports_declared_explicitly);
         assert_eq!(first.declared_ports, second.declared_ports);
@@ -1175,7 +1182,7 @@ catalog = "phpmyadmin"
         )
         .expect("write manifest");
 
-        let policy = load_container_policy(&root, None).expect("policy");
+        let policy = load_prepared_policy(&root, None).expect("policy");
         let compose =
             fs::read_to_string(root.join(".effigy/runtime/compose/web.generated.compose.yml"))
                 .expect("read generated compose");
@@ -1234,7 +1241,7 @@ catalog = "minio"
         )
         .expect("write manifest");
 
-        let policy = load_container_policy(&root, None).expect("policy");
+        let policy = load_prepared_policy(&root, None).expect("policy");
         let compose =
             fs::read_to_string(root.join(".effigy/runtime/compose/stack.generated.compose.yml"))
                 .expect("compose");
@@ -1286,7 +1293,7 @@ catalog = "minio"
         assert!(registry.get(&policy.project_name).is_none());
         assert_eq!(registry.len(), 1, "one project allocation: {registry:?}");
 
-        let regenerated = load_container_policy(&root, None).expect("regenerated policy");
+        let regenerated = load_prepared_policy(&root, None).expect("regenerated policy");
         assert_eq!(regenerated.project_name, policy.project_name);
         let regenerated_registry = effigy_gateway::loopback::LoopbackRegistry::load(&loopback_path)
             .expect("regenerated registry");
@@ -1443,7 +1450,7 @@ working_dir = "/var/www/html"
 
 #[test]
 fn generated_php_workspace_does_not_mount_host_composer_home_by_default() {
-    with_temp_effigy_home("catalog-php-composer-home-default-off", |_| {
+    with_temp_effigy_home("catalog-php-composer-home-default-off", |home| {
         let _lock = crate::test_env_lock();
         let root = temp_repo("catalog-php-composer-home-default-off");
         let host_composer_home = root.join("host-composer-home");
@@ -1474,6 +1481,9 @@ working_dir = "/var/www/html"
         let policy = with_test_host_composer_home(Some(&host_composer_home), || {
             load_container_policy(&root, Some("web")).expect("policy")
         });
+        assert!(!home.join("shared/composer-cache").exists());
+        crate::policy::mounts::prepare_container_mount_sources(&policy).expect("prepare cache");
+        assert!(home.join("shared/composer-cache").is_dir());
         let rewritten = fs::read_to_string(&policy.compose_files[0]).expect("read compose");
 
         assert!(
@@ -1596,7 +1606,7 @@ working_dir = "/var/www/html"
         .expect("write manifest");
 
         let policy = with_test_host_composer_home(Some(&host_composer_home), || {
-            load_container_policy(&root, Some("web")).expect("policy")
+            load_prepared_policy(&root, Some("web")).expect("policy")
         });
         let rewritten = fs::read_to_string(&policy.compose_files[0]).expect("read compose");
 
@@ -1671,7 +1681,7 @@ variant = "default"
         )
         .expect("write manifest");
 
-        let policy = load_container_policy(&root, None).expect("policy");
+        let policy = load_prepared_policy(&root, None).expect("policy");
         assert_eq!(policy.shared_services.len(), 1);
         let shared = &policy.shared_services[0];
         assert_eq!(shared.service_name, "db");
@@ -1757,7 +1767,7 @@ variant = "default"
         )
         .expect("write manifest");
 
-        let policy = load_container_policy(&root, None).expect("policy");
+        let policy = load_prepared_policy(&root, None).expect("policy");
         let shared = &policy.shared_services[0];
         let shared_compose = fs::read_to_string(&shared.compose_file).expect("read shared compose");
 
@@ -2111,4 +2121,105 @@ working_dir = "/var/www/html"
         rewritten.contains(":/var/www/html/node_modules:ro"),
         "rewritten compose should keep the nginx read-only node_modules mirror mount: {rewritten}"
     );
+}
+
+fn with_private_port_prepare_fixture(run: impl FnOnce(PathBuf, PathBuf)) {
+    let fixture = tempfile::tempdir().unwrap();
+    let home = fixture.path().join("home/.effigy");
+    let root = fixture.path().join("repo");
+    fs::create_dir_all(&home).unwrap();
+    fs::create_dir(&root).unwrap();
+    crate::policy_support::with_test_effigy_home(&home, || run(root, home.clone()));
+}
+
+#[test]
+fn generated_port_reads_leave_registry_untouched_and_prepare_is_stable() {
+    with_private_port_prepare_fixture(|root, home| {
+        let _lock = crate::test_env_lock();
+        fs::write(
+            root.join("effigy.toml"),
+            r#"
+[containers]
+default = "web"
+[containers.web]
+primary_service = "app"
+[containers.web.services.app]
+catalog = "node"
+"#,
+        )
+        .unwrap();
+        let read = load_container_policy(&root, None).unwrap();
+        assert!(read
+            .declared_ports
+            .iter()
+            .any(|port| port.starts_with(crate::policy::ports::UNASSIGNED_PORT_LABEL)));
+        let compose = fs::read_to_string(&read.compose_files[0]).unwrap();
+        assert!(compose.contains(crate::policy::ports::UNASSIGNED_PORT_EXPRESSION));
+        let again = load_container_policy(&root, None).unwrap();
+        assert_eq!(read.declared_ports, again.declared_ports);
+        assert!(!home.join("ports.json").exists());
+        assert!(!home.join("ports.lock").exists());
+        let prepared = load_prepared_policy(&root, None).unwrap();
+        assert!(prepared
+            .declared_ports
+            .iter()
+            .all(|port| !port.contains("unassigned")));
+        let bytes = fs::read(home.join("ports.json")).unwrap();
+        let after = load_container_policy(&root, None).unwrap();
+        assert_eq!(after.declared_ports, prepared.declared_ports);
+        assert_eq!(fs::read(home.join("ports.json")).unwrap(), bytes);
+        let repeated = load_prepared_policy(&root, None).unwrap();
+        assert_eq!(repeated.declared_ports, prepared.declared_ports);
+        assert_eq!(fs::read(home.join("ports.json")).unwrap(), bytes);
+    });
+}
+
+#[test]
+fn legacy_port_alias_is_read_once_then_prepared_for_each_service() {
+    with_private_port_prepare_fixture(|root, home| {
+        let _lock = crate::test_env_lock();
+        fs::write(
+            root.join("effigy.toml"),
+            r#"
+[containers]
+default = "web"
+[containers.web]
+project_name = "legacy-ports"
+primary_service = "first"
+[containers.web.services.first]
+catalog = "node"
+[containers.web.services.second]
+catalog = "node"
+"#,
+        )
+        .unwrap();
+        let mut registry = effigy_gateway::ports::PortRegistry::new();
+        registry
+            .allocate("legacy-ports", &root.display().to_string())
+            .unwrap();
+        registry
+            .allocations
+            .get_mut("legacy-ports")
+            .unwrap()
+            .assigned_ports
+            .insert("3000".into(), 8100);
+        registry.save(&home.join("ports.json")).unwrap();
+        let before = fs::read(home.join("ports.json")).unwrap();
+        let read = load_container_policy(&root, None).unwrap();
+        assert_eq!(read.declared_ports[0], "8100:3000");
+        assert!(read.declared_ports[1].contains("unassigned"));
+        assert_eq!(fs::read(home.join("ports.json")).unwrap(), before);
+        let prepared = load_prepared_policy(&root, None).unwrap();
+        // The existing allocator gives port 3000 its preferred +30 offset.
+        assert_eq!(prepared.declared_ports, ["8100:3000", "8130:3000"]);
+        let registry = effigy_gateway::ports::PortRegistry::load(&home.join("ports.json")).unwrap();
+        assert_eq!(
+            registry.assigned_port("legacy-ports", "first", 3000),
+            Some(8100)
+        );
+        assert_eq!(
+            registry.assigned_port("legacy-ports", "second", 3000),
+            Some(8130)
+        );
+    });
 }

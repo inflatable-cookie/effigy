@@ -769,89 +769,135 @@ fn run_deploy_plan_rejects_invalid_provider_check_status() {
 }
 
 #[test]
-fn run_deploy_apply_writes_latest_and_history_reports() {
-    let root = setup_deploy_transaction_fixture("deploy-apply-transaction");
-    let out = run_command(Command::Deploy(DeployArgs {
-        subcommand: DeploySubcommand::Apply {
-            env: "uat".to_owned(),
-            yes: true,
-        },
-        repo_override: Some(root.clone()),
-        output_json: true,
-    }))
-    .expect("run deploy apply");
-
-    let parsed = parse_json_output_with_schema_version(&out, "effigy.deploy.apply.v1", 1);
-    assert_eq!(parsed["status"].as_str(), Some("succeeded"));
-    let report_path = parsed["written_report_path"]
-        .as_str()
-        .expect("written report");
-    let history_path = parsed["written_history_path"]
-        .as_str()
-        .expect("written history");
-    assert!(
-        root.join(report_path).exists(),
-        "missing report {report_path}"
-    );
-    assert!(
-        root.join(history_path).exists(),
-        "missing history {history_path}"
-    );
-
-    let history = run_command(Command::Deploy(DeployArgs {
-        subcommand: DeploySubcommand::History {
-            env: "uat".to_owned(),
-            limit: Some(5),
-        },
-        repo_override: Some(root),
-        output_json: true,
-    }))
-    .expect("run deploy history");
-    let parsed_history =
-        parse_json_output_with_schema_version(&history, "effigy.deploy.history.v1", 1);
-    assert_eq!(
-        parsed_history["entries"].as_array().expect("entries").len(),
-        1
-    );
+fn run_deploy_apply_refuses_all_unexecuted_obligations_without_effects() {
+    let root = setup_deploy_transaction_fixture("deploy-apply-refused");
+    for phase in ["preflight", "apply"] {
+        write_provider_phase_script(
+            &root.join("providers/render"),
+            phase,
+            r#"throw "must not run";"#,
+        );
+    }
+    for env in ["uat", "production", "missing"] {
+        for yes in [false, true] {
+            for output_json in [false, true] {
+                let error = run_command(Command::Deploy(DeployArgs {
+                    subcommand: DeploySubcommand::Apply {
+                        env: env.to_owned(),
+                        yes,
+                    },
+                    repo_override: Some(root.clone()),
+                    output_json,
+                }))
+                .expect_err("unsupported apply must fail");
+                let text = error.to_string();
+                let details = error.json_error_details().unwrap_or(&text);
+                for obligation in [
+                    "state",
+                    "hooks",
+                    "health",
+                    "release gates",
+                    "digest pins",
+                    "provider",
+                ] {
+                    assert!(
+                        details.contains(obligation),
+                        "missing {obligation}: {details}"
+                    );
+                }
+                assert!(details.contains("not yet supported in v0.15"));
+                if output_json {
+                    let parsed =
+                        parse_json_output_with_schema_version(details, "effigy.deploy.apply.v1", 1);
+                    assert_eq!(parsed["ok"], false);
+                    assert_eq!(parsed["reason"], "not_supported");
+                    assert_eq!(parsed["status"], "blocked");
+                    assert_eq!(parsed["operation"], "apply");
+                }
+            }
+        }
+    }
+    assert!(!root.join(".effigy/reports/deploy").exists());
+    assert!(!root.join(".effigy/runtime/deploy").exists());
 }
 
 #[test]
-fn run_deploy_status_reports_latest_after_apply() {
-    let root = setup_deploy_transaction_fixture("deploy-status-transaction");
-    run_command(Command::Deploy(DeployArgs {
-        subcommand: DeploySubcommand::Apply {
-            env: "uat".to_owned(),
-            yes: true,
-        },
-        repo_override: Some(root.clone()),
-        output_json: true,
-    }))
-    .expect("run deploy apply");
-
+fn run_deploy_status_reads_legacy_report_after_refused_redeploy() {
+    let root = setup_deploy_transaction_fixture("deploy-legacy-status");
+    let report_dir = root.join(".effigy/reports/deploy/uat");
+    fs::create_dir_all(report_dir.join("history")).expect("mkdir reports");
+    let legacy = r#"{"schema":"effigy.deploy.apply.v1","schema_version":1,"deployment_id":"legacy","provider":"render","status":"succeeded"}"#;
+    fs::write(report_dir.join("latest.json"), legacy).expect("write latest");
+    fs::write(report_dir.join("history/legacy.json"), legacy).expect("write history");
+    for deployment in ["legacy", "missing", "../../untrusted"] {
+        for yes in [false, true] {
+            for output_json in [false, true] {
+                let error = run_command(Command::Deploy(DeployArgs {
+                    subcommand: DeploySubcommand::Redeploy {
+                        env: "uat".to_owned(),
+                        deployment: deployment.to_owned(),
+                        yes,
+                    },
+                    repo_override: Some(root.clone()),
+                    output_json,
+                }))
+                .expect_err("redeploy must refuse even with historical success");
+                let text = error.to_string();
+                let details = error.json_error_details().unwrap_or(&text);
+                assert!(details.contains("not yet supported"));
+                if output_json {
+                    let parsed =
+                        parse_json_output_with_schema_version(details, "effigy.deploy.apply.v1", 1);
+                    assert_eq!(parsed["ok"], false);
+                    assert_eq!(parsed["reason"], "not_supported");
+                    assert_eq!(parsed["operation"], "redeploy");
+                }
+            }
+        }
+    }
+    assert_eq!(
+        fs::read_to_string(report_dir.join("latest.json")).expect("read latest"),
+        legacy
+    );
+    assert_eq!(
+        fs::read_to_string(report_dir.join("history/legacy.json")).expect("read history"),
+        legacy
+    );
+    assert_eq!(
+        fs::read_dir(report_dir.join("history"))
+            .expect("history")
+            .count(),
+        1
+    );
+    assert!(!root.join(".effigy/runtime/deploy").exists());
     let out = run_command(Command::Deploy(DeployArgs {
         subcommand: DeploySubcommand::Status {
             env: "uat".to_owned(),
         },
+        repo_override: Some(root.clone()),
+        output_json: true,
+    }))
+    .expect("legacy status remains readable");
+    let parsed = parse_json_output_with_schema_version(&out, "effigy.deploy.status.v1", 1);
+    assert_eq!(parsed["latest"]["deployment_id"], "legacy");
+    let out = run_command(Command::Deploy(DeployArgs {
+        subcommand: DeploySubcommand::History {
+            env: "uat".to_owned(),
+            limit: None,
+        },
         repo_override: Some(root),
         output_json: true,
     }))
-    .expect("run deploy status");
-
-    let parsed = parse_json_output_with_schema_version(&out, "effigy.deploy.status.v1", 1);
-    assert!(
-        parsed["latest"].is_object(),
-        "latest should be present: {parsed}"
-    );
-    assert!(
-        parsed["provider_status"].is_object(),
-        "provider status should be present: {parsed}"
-    );
+    .expect("legacy history remains readable");
+    let parsed = parse_json_output_with_schema_version(&out, "effigy.deploy.history.v1", 1);
+    assert_eq!(parsed["entries"][0]["deployment_id"], "legacy");
 }
 
 #[test]
-fn run_deploy_redeploy_replays_history_entry() {
-    let root = setup_deploy_transaction_fixture("deploy-redeploy-transaction");
-    let apply = run_command(Command::Deploy(DeployArgs {
+fn run_deploy_apply_refuses_without_deploy_configuration() {
+    let root = temp_workspace("deploy-apply-no-configuration");
+    write_root_manifest(&root, "");
+    let error = run_command(Command::Deploy(DeployArgs {
         subcommand: DeploySubcommand::Apply {
             env: "uat".to_owned(),
             yes: true,
@@ -859,27 +905,80 @@ fn run_deploy_redeploy_replays_history_entry() {
         repo_override: Some(root.clone()),
         output_json: true,
     }))
-    .expect("run deploy apply");
-    let parsed_apply = parse_json_output_with_schema_version(&apply, "effigy.deploy.apply.v1", 1);
-    let deployment_id = parsed_apply["deployment_id"]
-        .as_str()
-        .expect("deployment id")
-        .to_owned();
+    .expect_err("even an empty environment cannot execute");
+    assert!(error
+        .json_error_details()
+        .expect("details")
+        .contains("not_supported"));
+    assert!(!root.join(".effigy/reports/deploy").exists());
+}
 
-    let out = run_command(Command::Deploy(DeployArgs {
-        subcommand: DeploySubcommand::Redeploy {
-            env: "uat".to_owned(),
-            deployment: deployment_id,
-            yes: true,
-        },
-        repo_override: Some(root),
+#[test]
+fn run_deploy_acowtancy_infra_config_preserves_model_and_export() {
+    // Snapshot of Acowtancy infra/deploy.toml (2026-10-19). Keep its environment
+    // tables and provider-specific fields; only substitute a local export fake.
+    let root = setup_deploy_transaction_fixture("deploy-acowtancy-config");
+    let manifest_path = root.join("effigy.toml");
+    let manifest = fs::read_to_string(&manifest_path).expect("read fixture manifest");
+    let bundle = manifest
+        .split("[deploy.providers.render]")
+        .next()
+        .expect("bundle config");
+    fs::create_dir_all(root.join("infra")).expect("mkdir infra");
+    let config = include_str!("../../../../tests/fixtures/deploy/acowtancy-deploy.toml");
+    fs::write(root.join("infra/deploy.toml"), config).expect("write consumer config");
+    write_root_manifest(
+        &root,
+        &format!("[manifest]\ninclude = [\"infra/deploy.toml\"]\n{bundle}"),
+    );
+    for env in ["uat", "production"] {
+        let error = run_command(Command::Deploy(DeployArgs {
+            subcommand: DeploySubcommand::Apply {
+                env: env.to_owned(),
+                yes: true,
+            },
+            repo_override: Some(root.clone()),
+            output_json: true,
+        }))
+        .expect_err("consumer apply must refuse without fetching its provider");
+        assert!(error
+            .json_error_details()
+            .expect("details")
+            .contains("not_supported"));
+    }
+    let model = run_command(Command::Deploy(DeployArgs {
+        subcommand: DeploySubcommand::Model,
+        repo_override: Some(root.clone()),
         output_json: true,
     }))
-    .expect("run deploy redeploy");
-
-    let parsed = parse_json_output_with_schema_version(&out, "effigy.deploy.apply.v1", 1);
-    assert_eq!(parsed["status"].as_str(), Some("succeeded"));
-    assert!(parsed["source_deployment"].as_str().is_some());
+    .expect("model with Acowtancy deploy configuration");
+    let model = parse_json_output_with_schema_version(&model, "deploy.model.v1", 1);
+    assert_eq!(model["services"][2]["name"], "api");
+    write_test_deploy_export_provider(&root, "render", "acme-api", "acme-jobs");
+    let local_config = config.replace(
+        r#"{ type = "git", url = "git@github.com:inflatable-cookie/effigy-provider-render.git", ref = "main" }"#,
+        r#"{ type = "path", dir = "providers/render" }"#,
+    );
+    assert_ne!(
+        config, local_config,
+        "must substitute the external provider"
+    );
+    fs::write(root.join("infra/deploy.toml"), local_config).expect("use local export provider");
+    for plan in [true, false] {
+        let out = run_command(Command::Deploy(DeployArgs {
+            subcommand: DeploySubcommand::Export {
+                provider: "render".to_owned(),
+                path: root.join("infra/render"),
+                plan,
+            },
+            repo_override: Some(root.clone()),
+            output_json: true,
+        }))
+        .expect("export with Acowtancy deploy configuration");
+        let parsed = parse_json_output_with_schema_version(&out, "effigy.deploy.export.v1", 1);
+        assert_eq!(parsed["files"][0], "render.yaml");
+        assert_eq!(root.join("infra/render/render.yaml").exists(), !plan);
+    }
 }
 
 #[test]

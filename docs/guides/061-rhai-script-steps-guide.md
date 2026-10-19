@@ -197,7 +197,7 @@ Current v1 helpers:
   - `state::capture(options_map)`
   - `state::capture_set(options_map)`
   - `state::history(options_map)`
-- deploy helpers:
+- deploy helpers (`apply`/`redeploy` refuse in v0.15):
   - `deploy::model()`
   - `deploy::emit(options_map)`
   - `deploy::plan(options_map)`
@@ -566,21 +566,22 @@ if !result["ok"] {
 }
 ```
 
-Plan-first deploy automation with an explicit apply gate:
+Inspect a deployment plan:
 
 ```rhai
 let plan = deploy::plan(#{ env: "uat", write_report: true });
 if !plan["ok"] {
     throw("deploy plan failed");
 }
-
-if env("EFFIGY_DEPLOY_YES") == "1" {
-    let apply = deploy::apply(#{ env: "uat", yes: true });
-    if !apply["ok"] {
-        throw("deploy apply failed");
-    }
-}
 ```
+
+`deploy::apply` and `deploy::redeploy` remain exposed for compatibility but
+refuse as not yet supported in v0.15, including with `yes: true`. They return
+the same `not_supported` failure as the CLI and cannot execute a deployment.
+Model/export remain supported. Full execution design is in Queue's deploy lane
+([Q-003](../knowledge/questions.md#q-003--production-deployment-ownership)); see
+[guide 074](074-deployment-guide.md) and the
+[Rhai surface audit](068-rhai-host-surface-audit.md).
 
 Distribution preflight plus artifact validation from one Rhai task:
 
