@@ -8,7 +8,7 @@ impl Drop for Abort {
         self.0.abort();
     }
 }
-async fn upstream(label: &'static str) -> (SocketAddr, Arc<AtomicUsize>, Abort) {
+async fn upstream(label: &'static str, close_first: bool) -> (SocketAddr, Arc<AtomicUsize>, Abort) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let count = Arc::new(AtomicUsize::new(0));
@@ -18,7 +18,11 @@ async fn upstream(label: &'static str) -> (SocketAddr, Arc<AtomicUsize>, Abort) 
         loop {
             let (stream, _) = listener.accept().await.unwrap();
             stream.set_nodelay(true).unwrap();
-            connections.fetch_add(1, Ordering::Relaxed);
+            let number = connections.fetch_add(1, Ordering::Relaxed);
+            if close_first && number == 0 {
+                drop(stream);
+                continue;
+            }
             clients.spawn(async move {
                 let service = service_fn(move |req: Request<Incoming>| async move {
                     let close = req.uri().path() == "/close";
@@ -91,8 +95,8 @@ fn client() -> reqwest::Client {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn pool_honours_close_streaming_concurrency_and_target_changes() {
-    let (first, count, _first) = upstream("first").await;
-    let (second, _, _second) = upstream("second").await;
+    let (first, count, _first) = upstream("first", false).await;
+    let (second, _, _second) = upstream("second", false).await;
     let (address, table, stop, server) = proxy(route(first)).await;
     let client = client();
     let url = format!("http://{address}");
@@ -151,7 +155,7 @@ async fn pool_honours_close_streaming_concurrency_and_target_changes() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn cached_managed_connection_refuses_revocation_and_changed_identity() {
     let fixture = tempfile::tempdir().unwrap();
-    let (upstream, count, _upstream) = upstream("managed").await;
+    let (upstream, count, _upstream) = upstream("managed", true).await;
     let identity = crate::identity::read_live_process_identity(std::process::id()).unwrap();
     let availability = fixture.path().join("listener.json");
     let state = |status| serde_json::json!({"schema":"effigy.managed.host-listener-state.v1", "owner":"pool", "runtime_generation":"runtime", "generation":"child", "status":status});
@@ -185,6 +189,7 @@ async fn cached_managed_connection_refuses_revocation_and_changed_identity() {
         .await
         .unwrap();
     assert_eq!(response.text().await.unwrap(), "managed");
+    assert!(count.load(Ordering::Relaxed) >= 2, "the first request must recover a prepared socket closed by the upstream before any request bytes");
     crate::locks::write_tolerant(&table).revision = 1;
     let response = client
         .get(&url)

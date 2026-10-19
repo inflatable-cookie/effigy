@@ -241,7 +241,16 @@ impl Upstreams {
                 {
                     let mut state = crate::locks::write_tolerant(&prepared.state);
                     if let Some(socket) = state.socket.take() {
-                        return Ok(socket);
+                        // An upstream may close a prepared socket before the
+                        // first request (header/idle timeout). Never hand that
+                        // dead connection to the first browser request.
+                        if socket
+                            .try_read(&mut [0_u8; 1])
+                            .is_err_and(|error| error.kind() == io::ErrorKind::WouldBlock)
+                        {
+                            return Ok(socket);
+                        }
+                        // EOF, reset or unsolicited HTTP bytes: prepare afresh.
                     }
                     state.demand = true;
                 }
