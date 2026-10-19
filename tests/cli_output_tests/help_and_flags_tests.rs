@@ -960,3 +960,40 @@ fn cli_public_task_help_json_disables_forced_color() {
     assert!(text.contains("launch"), "{text}");
     assert!(!text.contains('\u{1b}'), "{text}");
 }
+
+#[test]
+fn cli_config_help_and_schema_omit_retired_vault_keys() {
+    let root = temp_workspace("config-help-vault-retirement");
+    for args in [
+        ["config", "--help"],
+        ["help", "config"],
+        ["config", "--schema"],
+    ] {
+        let output = run_help_cli(&root, &args);
+        assert!(
+            output.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8(output.stdout).expect("UTF-8 config output");
+        let (_, vault_and_keys) = stdout.split_once("[secrets.vault]").expect("vault section");
+        let (vault_source, _) = vault_and_keys
+            .split_once("[secrets.keys.")
+            .expect("secret keys section");
+        let vault: toml::Value = toml::from_str(vault_source).expect("vault example must be TOML");
+        assert_eq!(
+            vault.get("path").and_then(toml::Value::as_str),
+            Some(".effigy/secrets/local.vault")
+        );
+        for key in ["identity", "unlock", "external"] {
+            assert!(
+                vault.get(key).is_none(),
+                "{args:?} advertises retired vault key {key}"
+            );
+        }
+        assert!(
+            !stdout.contains("key-and-passphrase"),
+            "{args:?} advertises a retired policy"
+        );
+    }
+}

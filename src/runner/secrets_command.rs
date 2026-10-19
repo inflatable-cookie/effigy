@@ -3,10 +3,7 @@ use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 use effigy_cli::{SecretsArgs, SecretsExportFormat, SecretsSubcommand};
-use effigy_manifest::{
-    ManifestSecretTarget, ManifestSecretsBackend, ManifestSecretsConfig,
-    ManifestSecretsUnlockPolicy, ManifestSecretsVaultIdentity,
-};
+use effigy_manifest::{ManifestSecretTarget, ManifestSecretsBackend, ManifestSecretsConfig};
 use effigy_secrets::{
     inspect_vault_permissions, local_dev_unlock_key_path, local_unlock_credential_path,
     read_local_unlock_passphrase, seal_local_unlock_passphrase, LocalDevUnlockKey, SecretValue,
@@ -923,8 +920,6 @@ fn secrets_payload(
         "vault": secrets.and_then(|config| config.vault.as_ref()).map(|vault| {
             json!({
                 "path": vault.path.as_deref(),
-                "identity": vault.identity.map(vault_identity_label),
-                "unlock": vault.unlock.map(unlock_policy_label),
             })
         }),
         "external": secrets.and_then(|config| config.external.as_ref()).map(|external| {
@@ -1484,21 +1479,6 @@ fn secret_backend_label(backend: ManifestSecretsBackend) -> &'static str {
     match backend {
         ManifestSecretsBackend::EffigyVault => "effigy-vault",
         ManifestSecretsBackend::External => "external",
-    }
-}
-
-fn vault_identity_label(identity: ManifestSecretsVaultIdentity) -> &'static str {
-    match identity {
-        ManifestSecretsVaultIdentity::SshAgent => "ssh-agent",
-        ManifestSecretsVaultIdentity::Passphrase => "passphrase",
-    }
-}
-
-fn unlock_policy_label(policy: ManifestSecretsUnlockPolicy) -> &'static str {
-    match policy {
-        ManifestSecretsUnlockPolicy::Passphrase => "passphrase",
-        ManifestSecretsUnlockPolicy::KeyAndPassphrase => "key-and-passphrase",
-        ManifestSecretsUnlockPolicy::External => "external",
     }
 }
 

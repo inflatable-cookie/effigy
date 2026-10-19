@@ -65,6 +65,12 @@ During v0.x, MINOR bumps may include breaking changes.
   credential or prompt.
 
 ### Removed
+- Retire `[secrets.vault].identity`, `[secrets.vault].unlock` and
+  `[secrets.vault].external` after consumer cleanup. Delete these lines; they
+  only restated the passphrase default. Errors name the declaring file and line.
+  Secrets list/doctor JSON drops `vault.identity` and `vault.unlock` (recorded
+  in the `effigy.secrets.v1` schema change log); vaults and runtime unlocks keep
+  their behavior.
 - Retire `effigy watch`, `effigy tasks migrate`, managed stream mode,
   transition-evidence receipts, pre-0.14 `gateway recover`, the unused
   user-runtime scaffold, and qualified private docs assurance. Removed command
@@ -72,8 +78,7 @@ During v0.x, MINOR bumps may include breaking changes.
   use `--headless`. Existing transition files remain untouched.
 - Reject the `[manifest].root` key with removal guidance. Ignore the
   user-global `~/.effigy/catalog/` override with a one-release warning; move
-  custom fragments to each repository's `infra/dev/catalog/`. Secrets policy
-  keys remain unchanged pending consumer cleanup.
+  custom fragments to each repository's `infra/dev/catalog/`.
 - `effigy tasks unlock`. A task's lock releases itself when its run exits and
   is never taken from a live run; the command now refuses with that
   explanation. Find a live holder with `effigy tasks status <task>`.

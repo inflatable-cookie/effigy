@@ -86,8 +86,6 @@ backend = "effigy-vault"
 
 [secrets.vault]
 path = ".effigy/secrets/local.vault"
-identity = "passphrase"
-unlock = "passphrase"
 
 [secrets.keys.api_token]
 required = false
@@ -137,8 +135,6 @@ backend = "effigy-vault"
 
 [secrets.vault]
 path = ".effigy/secrets/local.vault"
-identity = "passphrase"
-unlock = "passphrase"
 
 [secrets.keys.api_token]
 required = false
@@ -188,8 +184,6 @@ backend = "effigy-vault"
 
 [secrets.vault]
 path = ".effigy/secrets/local.vault"
-identity = "passphrase"
-unlock = "passphrase"
 
 [secrets.keys.api_token]
 required = false
@@ -442,8 +436,6 @@ backend = "effigy-vault"
 
 [secrets.vault]
 path = ".effigy/secrets/local.vault"
-identity = "passphrase"
-unlock = "passphrase"
 
 [secrets.keys.api_token]
 required = false

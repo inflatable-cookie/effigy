@@ -54,6 +54,8 @@ fn secrets_list_json_reports_declarations_without_values() {
         parsed["vault"]["path"].as_str(),
         Some(".effigy/secrets/local.vault")
     );
+    assert!(parsed["vault"].get("identity").is_none());
+    assert!(parsed["vault"].get("unlock").is_none());
     let keys = parsed["keys"].as_array().expect("keys array");
     assert_eq!(keys.len(), 1);
     assert_eq!(keys[0]["name"].as_str(), Some("database_url"));
@@ -165,8 +167,6 @@ backend = "effigy-vault"
 
 [secrets.vault]
 path = ".effigy/secrets/local.vault"
-identity = "passphrase"
-unlock = "passphrase"
 generate = { rhai = "scripts/generate-dev-secrets.rhai", run_in = "host" }
 
 [secrets.keys.database_url]
@@ -234,8 +234,6 @@ backend = "effigy-vault"
 
 [secrets.vault]
 path = ".effigy/secrets/local.vault"
-identity = "passphrase"
-unlock = "passphrase"
 
 [secrets.keys.openai_api_key]
 required = false
@@ -534,6 +532,8 @@ fn secrets_doctor_reports_locked_vault_without_passphrase() {
     .expect("locked doctor should warn but succeed");
 
     let parsed = parse_json_output_with_schema_version(&out, "effigy.secrets.v1", 1);
+    assert!(parsed["vault"].get("identity").is_none());
+    assert!(parsed["vault"].get("unlock").is_none());
     assert_eq!(parsed["vault_state"]["status"].as_str(), Some("locked"));
     assert_eq!(parsed["ok"].as_bool(), Some(true));
 }
@@ -843,8 +843,6 @@ backend = "effigy-vault"
 
 [secrets.vault]
 path = ".effigy/secrets/local.vault"
-identity = "ssh-agent"
-unlock = "key-and-passphrase"
 
 [secrets.keys.database_url]
 required = true
