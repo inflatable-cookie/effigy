@@ -456,7 +456,14 @@ gates/<scope-name>/<rid-name>.gate LOCK_EX by the holder; never unlinked while t
   A successor never sees a free gate with a stale terminal write still
   pending.
 - I-G6: gate descriptors are `O_CLOEXEC`. A spawned workload never inherits a
-  gate.
+  gate across exec; custody closes unrelated descriptors before its spawn
+  barrier (§5.7). A concurrent fork can temporarily copy a gate's open file
+  description before those closes or exec. Normal release explicitly issues
+  `LOCK_UN` before closing: guard drop, partial-acquisition rollback,
+  auxiliary-gate release and scope removal release the shared description
+  even while such a child still has a descriptor. Resource locks release
+  before scope locks. There is no post-release grace window for `probe` or
+  `acquire`; K2 and the probe states above are unchanged.
 - I-G7: there is no unlock command. A refusing alias may exist for one minor.
 
 #### Failure model
@@ -481,6 +488,10 @@ gates/<scope-name>/<rid-name>.gate LOCK_EX by the holder; never unlinked while t
 - A guest-placement acquire of a host resource returns
   `HostAuthorityRequired` without touching the state root.
 - A forked workload never holds a gate after the owner dies.
+- Force a concurrent fork to retain its descriptors before exec: guard drop
+  immediately probes `Free` and permits a successor without waiting for the
+  child. Partial-acquisition rollback also releases its resource and scope
+  locks while the child retains them.
 
 ### 5.5 `Store`, records and `atomic_replace`
 
