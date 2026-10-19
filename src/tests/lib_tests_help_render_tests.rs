@@ -299,7 +299,7 @@ fn render_graph_help_shows_exactly_the_retained_surface() {
             && !rendered.contains("--all-catalogs")
             && !rendered.contains("--debounce-ms")
     );
-    assert!(rendered.contains("Use `graph status` only for a report-only freshness check"));
+    assert!(rendered.contains("Status always reports without writing"));
     assert!(rendered.contains("refreshing (n/N)"));
     assert!(rendered.contains("graph.backup-"));
     assert!(!rendered.contains("rm -rf .effigy/graph"));

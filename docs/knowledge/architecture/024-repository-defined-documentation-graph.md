@@ -169,7 +169,7 @@ cross-repository source routing has its own opt-in boundary.
 Profile content participates in graph freshness. Changing profile weights or
 kinds reindexes the semantic layer even when Markdown bytes are unchanged.
 Exact section spans come from the parser, not generated summaries. Search,
-relations, and source text share the same database and lazy refresh lifecycle
+relations, and source text share the same database and explicit index lifecycle
 as the code graph.
 
 ## Non-Goals

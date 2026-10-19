@@ -42,9 +42,6 @@
       "std.process.Command.new": 4,
       "std.process.Command.output": 4
     },
-    "crates/effigy-codegraph/src/refresh.rs": {
-      "fs2.FileExt.lock": 4
-    },
     "crates/effigy-containers/src/colima.rs": {
       "std.process.Command.new": 1,
       "std.process.Command.output": 1,

@@ -65,7 +65,7 @@ Guide: `docs/guides/076-code-graph-and-agent-workflows.md`
 returns exact Markdown sections with path, span, kind, authority, currentness,
 fields, typed relation path, and match reason, as `effigy.docs.context.v1`.
 Defaults are 8 sections, 24000 bytes, 1 hop; maxima are 32, 100000, 3. It shares
-the graph database and lazy refresh - no second index. Semantics come from the
+the read-only graph database - no second index. Semantics come from the
 selected repository's committed `[docs_policy.graph]` block, never from an
 installed skill; baseline mode works with no profile.
 

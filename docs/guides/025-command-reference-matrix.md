@@ -604,14 +604,15 @@ environment in `session.json` so a whole-environment handover can end
   the normal child capture reports
 - `state history` is read-only; it scans report JSON files and ignores malformed
   files with warnings instead of maintaining an index
-- graph queries lazily refresh one checkout corpus; each file commits graph rows,
-  search data and freshness together, and deadlines preserve committed progress
+- graph queries read one checkout corpus without writes or implicit refresh;
+  explicit `graph index` commits each file's graph, search and freshness together
 - concurrent queries read committed files with `refreshing (n/N)`; `--stale-index`
-  skips refresh and returns `stale-index` or `refreshing`, never current
+  explicitly labels data `stale-index` or `refreshing`, never current
 - graph query budgets default to 120000ms; `EFFIGY_GRAPH_TIMEOUT_MS=<MS>`
   overrides the cooperative deadline and `0` disables it; explicit index is unbounded
-- `graph status --json` is report-only; use `graph status --refresh` to update it; gate on
+- `graph status --json` is report-only; use `graph index` to update it; gate on
   `freshness.state` and `freshness.usable`
+- legacy `graph status --refresh` warns and returns read-only status for one release
 - the graph walk prunes `.git/`, `.effigy/`, `.venv/`, `__pycache__/`,
   `coverage/`, `dist/`, `node_modules/`, `target/`, `vendor/`, `.svelte-kit/`,
   `.next/`, `.nuxt/`, `.output/`, `.turbo/`, and `.parcel-cache/` at any depth

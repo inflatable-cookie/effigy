@@ -120,7 +120,7 @@ fn docs_stale_refresh_fails_within_a_deliberately_tiny_bound() {
 }
 
 #[test]
-fn docs_cold_and_warm_queries_succeed_when_the_bound_is_disabled() {
+fn docs_disabled_bound_still_requires_an_explicit_index() {
     let root = docs_graph_fixture("docs-bound-disabled");
     let _env = EnvGuard::set_many(&[(
         "EFFIGY_GRAPH_TIMEOUT_MS",
@@ -128,8 +128,10 @@ fn docs_cold_and_warm_queries_succeed_when_the_bound_is_disabled() {
     )]);
 
     let cold = run_command(docs_context_command(&root, "contracts", false))
-        .expect("bound 0 must not disable the query, only the timeout");
-    assert!(cold.contains("docs context"), "text output: {cold}");
+        .expect_err("disabled timeout does not permit read-time preparation");
+    assert!(cold.to_string().contains("effigy graph index"));
+    assert!(!root.join(".effigy/graph").exists());
+    run_graph_index(&root);
 
     let warm = run_command(docs_context_command(&root, "contracts", true))
         .expect("warm query with a disabled bound must succeed");
@@ -252,10 +254,11 @@ fn timeout_detail_names_the_phase_the_bound_expired_in() {
 }
 
 #[test]
-fn graph_search_timeout_behavior_is_unchanged() {
+fn cold_graph_search_is_bounded_and_never_builds() {
     let root = docs_graph_fixture("graph-search-tiny-bound");
     let _env = EnvGuard::set_many(&[("EFFIGY_GRAPH_TIMEOUT_MS", Some(TINY_BOUND_MS.to_owned()))]);
-    let error = run_command(Command::Graph(GraphArgs {
+    let started = Instant::now();
+    let result = run_command(Command::Graph(GraphArgs {
         subcommand: GraphSubcommand::Search {
             query: "release_helper".to_owned(),
             limit: Some(10),
@@ -263,10 +266,17 @@ fn graph_search_timeout_behavior_is_unchanged() {
         repo_override: Some(root.clone()),
         output_json: true,
         stale_index: false,
-    }))
-    .expect_err("cold graph search must stay bounded");
-
-    assert_typed_graph_timeout(error, "graph search", 1);
+    }));
+    match result {
+        Ok(output) => {
+            let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
+            assert_eq!(parsed["payload"]["freshness"]["state"], "missing-index");
+            assert_eq!(parsed["payload"]["freshness"]["usable"], false);
+        }
+        Err(error) => assert_typed_graph_timeout(error, "graph search", 1),
+    }
+    assert!(started.elapsed() < Duration::from_secs(5));
+    assert!(!root.join(".effigy/graph").exists());
 }
 
 fn run_graph_index(root: &std::path::Path) {

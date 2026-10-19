@@ -12,7 +12,8 @@ effigy graph explore "<question>" --max-files 6 --max-bytes 12288 --json
 git diff --name-only | effigy graph affected --stdin --json
 ```
 
-Both queries refresh a stale or missing index before reading it.
+Both queries read existing data without refreshing. Run `graph index` explicitly
+when the packet reports missing or stale data.
 
 See `graph-assist.md`.
 

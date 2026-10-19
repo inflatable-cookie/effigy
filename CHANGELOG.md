@@ -7,6 +7,11 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- Graph reads, documentation context and doctor never refresh or create graph
+  files. Explicit `graph index` uses a kernel store gate and migrates existing
+  WAL databases to rollback journaling. Until migration, reads report stale
+  with an index hint. The legacy status `--refresh` flag warns and remains
+  report-only for one release.
 - Checkout bundle and declared catalog source pins in `.effigy/sources.lock.json`.
   Help, version, completion, inventory, plans, status, config views, doctor and
   graph read paths no longer acquire or refresh bundle sources or append Git

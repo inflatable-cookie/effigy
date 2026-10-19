@@ -391,7 +391,7 @@ fn release_graph_smoke() {
 }
 
 #[test]
-fn graph_query_text_auto_refreshes_stale_index() {
+fn graph_query_text_reports_stale_index() {
     let root = setup_graph_fixture("graph-text-auto-refresh");
     run_command(Command::Graph(GraphArgs {
         subcommand: GraphSubcommand::Index,
@@ -416,7 +416,7 @@ fn graph_query_text_auto_refreshes_stale_index() {
     .expect("graph status should succeed");
     assert!(status.contains("trust: refresh-recommended"));
 
-    // ...while queries refresh on the fly instead of returning stale data.
+    // Queries also stay read-only and return committed data with a stale notice.
     let search = run_command(Command::Graph(GraphArgs {
         subcommand: GraphSubcommand::Search {
             query: "release".to_owned(),
@@ -427,9 +427,8 @@ fn graph_query_text_auto_refreshes_stale_index() {
         stale_index: false,
     }))
     .expect("graph search should succeed");
-    assert!(search.contains("graph trust: ready"));
-    assert!(search.contains("graph auto-refreshed"));
-    assert!(!search.contains("paths require reindex"));
+    assert!(search.contains("graph trust: refresh-recommended"));
+    assert!(search.contains("effigy graph index"));
 }
 
 #[test]
@@ -456,7 +455,7 @@ fn graph_status_json_reports_missing_index_trust_state() {
 }
 
 #[test]
-fn graph_status_refresh_flag_remediates_stale_index() {
+fn graph_status_refresh_compatibility_flag_stays_read_only() {
     let root = setup_graph_fixture("graph-status-refresh");
     run_command(Command::Graph(GraphArgs {
         subcommand: GraphSubcommand::Index,
@@ -485,7 +484,7 @@ fn graph_status_refresh_flag_remediates_stale_index() {
         Some("refresh-recommended")
     );
 
-    // `status --refresh` rebuilds on demand and reports the fresh state.
+    // The one-release compatibility flag warns but cannot mutate on a read.
     let refreshed = run_command(Command::Graph(GraphArgs {
         subcommand: GraphSubcommand::Status { refresh: true },
         repo_override: Some(root),
@@ -495,19 +494,10 @@ fn graph_status_refresh_flag_remediates_stale_index() {
     .expect("graph status --refresh should succeed");
     let refreshed = parse_json_output_with_schema_version(&refreshed, "effigy.graph.status.v1", 1);
     assert_eq!(
-        refreshed["payload"]["freshness"]["state"].as_str(),
-        Some("ready")
+        refreshed["payload"]["freshness"]["state"],
+        "refresh-recommended"
     );
-    assert_eq!(
-        refreshed["payload"]["freshness"]["usable"].as_bool(),
-        Some(true)
-    );
-    assert!(
-        refreshed["payload"]["freshness"]["summary"]
-            .as_str()
-            .is_some_and(|summary| summary.contains("graph auto-refreshed")),
-        "refresh note should surface in the summary"
-    );
+    assert_eq!(refreshed["payload"]["freshness"]["usable"], true);
 }
 
 #[test]

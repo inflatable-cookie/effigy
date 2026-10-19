@@ -31,7 +31,7 @@ fn graph_store_initializes_graph_dir_and_reopens() {
         GRAPH_STORAGE_SCHEMA_VERSION
     );
     let journal_mode = reopened.journal_mode().expect("journal mode");
-    assert_eq!(journal_mode.to_ascii_lowercase(), "wal");
+    assert_eq!(journal_mode.to_ascii_lowercase(), "delete");
 }
 
 #[test]

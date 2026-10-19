@@ -1894,7 +1894,7 @@ Current mechanisms and their kernel replacements. Evidence is at main
 | Demo spawn and group signal | `src/runner/demo_command/execute.rs:48` | `OwnedProcess` |
 | Vault written in place, unlocked | `src/runner/secret_vault.rs:177-194`; `crates/effigy-rhai/src/rhai_secrets.rs:665` | `Gate(Store vault)` + pointer commit (§5.5) |
 | Deps state: try-only lock, local atomic helper | `crates/effigy-deps/src/state.rs:497`, `:573` | gate with deadline; `atomic_replace` |
-| Graph refresh: try-lock, snapshot copy, detached worker | `crates/effigy-codegraph/src/refresh.rs:107`; `crates/effigy-codegraph/src/storage.rs:116`; `src/runner/graph_time_budget.rs:77` | RefreshDerived; cooperative deadline (I-CX3); corpus semantics are graph-lane |
+| Graph reads and explicit refresh | `crates/effigy-codegraph/src/refresh.rs`; `storage.rs`; graph contract 045 | RefreshDerived owns a kernel store gate; Observe probes only. Queries never refresh; rollback-journal readers create no files. Existing WAL is migrated by explicit index. |
 | Catalog pack store lock | `crates/effigy-catalog/src/pack/store.rs:343` | `Gate`, or removal under Q-005 |
 | Pending-facts journal with file and directory `fsync` | `crates/effigy-host-run/src/secure_fs.rs:299-308` | the pattern `atomic_replace` absorbs |
 | Doctor publication marker | `crates/effigy-scan/src/execution/doctor_inventory.rs:586` | `Gate` |

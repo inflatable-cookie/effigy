@@ -41,9 +41,8 @@ unfamiliar tree — **before** spraying `rg` or opening many files.
 effigy graph explore "<question>" --max-files 6 --max-bytes 12288 --json
 ```
 
-Graph queries build or refresh the index on demand. Use `graph status` only
-when you need the report-only pre-refresh state, and explicit `graph index`
-only to pre-warm a large repo or recover a broken cache.
+Graph queries never refresh or write state. Use `graph status` for freshness
+diagnostics and explicit `graph index` when a packet reports missing or stale data.
 
 Details: `graph-assist.md`.
 

@@ -130,8 +130,8 @@ fn public_help_families_and_current_contract_paths_are_documented() {
     );
     assert!(!root.contains("start with `doctor`, `tasks`, and `test --plan`"));
     let graph_guide = read("docs/guides/076-code-graph-and-agent-workflows.md");
-    assert!(graph_guide.contains("Plain `graph status` is report-only"));
-    assert!(graph_guide.contains("`--refresh` is the explicit mutating exception"));
+    assert!(graph_guide.contains("Status is always report-only"));
+    assert!(graph_guide.contains("flag warns for one release; update with `graph index`"));
     assert!(root.contains(".result.catalog_tasks[].task"));
     assert!(root.contains(".result.targets[].name"));
     assert!(!root.contains(".tasks[].name"));

@@ -898,8 +898,9 @@ name = "effigy-codegraph"
 version = "0.14.1"
 dependencies = [
  "aho-corasick",
+ "effigy-core",
+ "effigy-kernel",
  "effigy-manifest",
- "fs2",
  "globset",
  "hex",
  "ignore",

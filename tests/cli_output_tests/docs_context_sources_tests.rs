@@ -73,14 +73,11 @@ fn commit(repo: &Path) {
 /// repository, one checkout that never opted in, and one directory that is not
 /// a checkout at all. Both shared repositories carry the same term.
 fn unique_portfolio(label: &str) -> PathBuf {
-    let root = std::env::temp_dir().join(format!(
-        "effigy-docs-sources-{label}-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock")
-            .as_nanos()
-    ));
+    let root = tempfile::Builder::new()
+        .prefix(label)
+        .tempdir()
+        .expect("fresh fixture")
+        .keep();
     let repos = root.join("repos");
 
     let atlas = repos.join("shared-atlas");
@@ -123,11 +120,31 @@ fn unique_portfolio(label: &str) -> PathBuf {
     root
 }
 
+// Ranking and portfolio fixtures prepare their graph explicitly. Pure/cold
+// command behavior is covered separately without this preparation helper.
+fn run_prepared_docs(cwd: &Path, args: &[&str]) -> Output {
+    for root in ["shared-atlas", "baseline-notes"]
+        .into_iter()
+        .map(|name| cwd.join("repos").join(name))
+        .filter(|root| root.is_dir())
+    {
+        let prepared = Command::new(env!("CARGO_BIN_EXE_effigy"))
+            .args(["graph", "index"])
+            .current_dir(root)
+            .env("HOME", cwd)
+            .output()
+            .expect("prepare fixture graph");
+        assert!(prepared.status.success(), "{prepared:?}");
+    }
+    run_docs(cwd, args)
+}
+
 fn run_docs(cwd: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_effigy"))
         .args(args)
         .current_dir(cwd)
         .env("NO_COLOR", "1")
+        .env("HOME", cwd)
         .output()
         .expect("run docs command")
 }
@@ -164,7 +181,7 @@ fn statuses(payload: &Value) -> Vec<(String, String)> {
 #[test]
 fn sources_routing_answers_opted_in_repositories_and_reports_the_rest() {
     let root = unique_portfolio("membership");
-    let output = run_docs(
+    let output = run_prepared_docs(
         &root,
         &[
             "--json",
@@ -225,7 +242,7 @@ fn sources_routing_answers_opted_in_repositories_and_reports_the_rest() {
 #[test]
 fn a_directory_passed_to_sources_stands_for_a_portfolio_naming_it() {
     let root = unique_portfolio("directory");
-    let output = run_docs(
+    let output = run_prepared_docs(
         &root,
         &[
             "--json",
@@ -251,7 +268,7 @@ fn a_directory_passed_to_sources_stands_for_a_portfolio_naming_it() {
 #[test]
 fn only_selects_by_handle_and_reports_an_unknown_handle_as_disallowed() {
     let root = unique_portfolio("only");
-    let output = run_docs(
+    let output = run_prepared_docs(
         &root,
         &[
             "--json",
@@ -284,7 +301,7 @@ fn a_working_tree_excerpt_is_never_labelled_as_committed_bytes() {
     contents.push_str("\nAn uncommitted amendment to the reconciliation window.\n");
     std::fs::write(&charter, contents).expect("write charter");
 
-    let output = run_docs(
+    let output = run_prepared_docs(
         &root,
         &[
             "--json",
@@ -316,7 +333,7 @@ fn dirty_manifest_cannot_opt_in_or_opt_out_of_sources() {
     write(&vault.join("effigy.toml"), SHARED_BASELINE);
     let atlas = root.join("repos/shared-atlas");
     write(&atlas.join("effigy.toml"), NEVER_SHARED);
-    let output = run_docs(
+    let output = run_prepared_docs(
         &root,
         &[
             "--json",
@@ -351,7 +368,7 @@ fn duplicate_basename_is_a_usage_error_before_query() {
         &root.join("portfolio.toml"),
         "[portfolio]\ndirectories = [\"repos\", \"other\"]\n",
     );
-    let output = run_docs(
+    let output = run_prepared_docs(
         &root,
         &[
             "--json",
@@ -399,7 +416,7 @@ fn quoted_and_renamed_paths_have_conservative_source_identity() {
         "# Tolerance ledger untracked\n",
     );
 
-    let output = run_docs(
+    let output = run_prepared_docs(
         &root,
         &[
             "--json",
@@ -431,7 +448,7 @@ fn quoted_and_renamed_paths_have_conservative_source_identity() {
             "{name}: {result}"
         );
     }
-    let text = run_docs(
+    let text = run_prepared_docs(
         &root,
         &[
             "docs",
@@ -450,7 +467,7 @@ fn quoted_and_renamed_paths_have_conservative_source_identity() {
 #[test]
 fn a_no_match_query_is_a_successful_empty_report_per_repository() {
     let root = unique_portfolio("empty");
-    let output = run_docs(
+    let output = run_prepared_docs(
         &root,
         &[
             "--json",
@@ -473,7 +490,7 @@ fn a_no_match_query_is_a_successful_empty_report_per_repository() {
 }
 
 #[test]
-fn every_repository_timing_out_fails_and_still_lists_every_status() {
+fn unprepared_repositories_fail_without_creating_indexes() {
     let root = unique_portfolio("timeout");
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
         .args([
@@ -486,26 +503,30 @@ fn every_repository_timing_out_fails_and_still_lists_every_status() {
         ])
         .current_dir(&root)
         .env("NO_COLOR", "1")
-        .env("EFFIGY_GRAPH_TIMEOUT_MS", "1")
+        .env("HOME", &root)
         .output()
         .expect("run docs command");
     assert!(!output.status.success(), "{output:?}");
     assert_eq!(
         statuses(&failure_payload(&output)),
         vec![
-            ("baseline-notes".to_owned(), "timeout".to_owned()),
+            ("baseline-notes".to_owned(), "invalid".to_owned()),
             ("loose-notes".to_owned(), "invalid".to_owned()),
             ("private-vault".to_owned(), "not-shared".to_owned()),
-            ("shared-atlas".to_owned(), "timeout".to_owned()),
+            ("shared-atlas".to_owned(), "invalid".to_owned()),
             ("absent-directory".to_owned(), "missing".to_owned()),
         ]
     );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("effigy graph index"));
+    for name in ["shared-atlas", "baseline-notes"] {
+        assert!(!root.join("repos").join(name).join(".effigy").exists());
+    }
 }
 
 #[test]
 fn a_missing_or_unparsable_portfolio_is_a_usage_error() {
     let root = unique_portfolio("usage");
-    let missing = run_docs(
+    let missing = run_prepared_docs(
         &root,
         &["docs", "context", "tolerance", "--sources", "no-such.toml"],
     );
@@ -516,7 +537,7 @@ fn a_missing_or_unparsable_portfolio_is_a_usage_error() {
         "[portfolio]\ndirectories = [\"repos/*\"]\n",
     )
     .expect("write portfolio");
-    let globbed = run_docs(
+    let globbed = run_prepared_docs(
         &root,
         &["docs", "context", "tolerance", "--sources", "globbed.toml"],
     );
@@ -533,7 +554,7 @@ fn a_missing_or_unparsable_portfolio_is_a_usage_error() {
         "[portfolio]\ndirectories = [\"repos\"]\ndepth = 2\n",
     )
     .expect("write portfolio");
-    let unknown = run_docs(
+    let unknown = run_prepared_docs(
         &root,
         &["docs", "context", "tolerance", "--sources", "unknown.toml"],
     );
@@ -543,7 +564,7 @@ fn a_missing_or_unparsable_portfolio_is_a_usage_error() {
 #[test]
 fn text_output_groups_results_and_states_identity_next_to_the_span() {
     let root = unique_portfolio("text");
-    let output = run_docs(
+    let output = run_prepared_docs(
         &root,
         &[
             "docs",
@@ -571,7 +592,7 @@ fn text_output_groups_results_and_states_identity_next_to_the_span() {
 #[test]
 fn docs_help_documents_the_cross_repository_surface() {
     let root = unique_portfolio("help");
-    let output = run_docs(&root, &["docs", "--help"]);
+    let output = run_prepared_docs(&root, &["docs", "--help"]);
     assert!(output.status.success(), "{output:?}");
     let rendered = String::from_utf8_lossy(&output.stdout).into_owned();
     assert!(rendered.contains("--sources <PATH>"), "{rendered}");

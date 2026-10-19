@@ -59,15 +59,32 @@ impl GraphStore {
         Ok(store)
     }
 
+    pub(crate) fn has_wal(scope: &GraphScope) -> bool {
+        let path = scope.paths().db_path;
+        if path.with_extension("db-wal").exists() {
+            return true;
+        }
+        use std::io::Read;
+        let mut header = [0u8; 20];
+        std::fs::File::open(path)
+            .and_then(|mut file| file.read_exact(&mut header))
+            .is_ok()
+            && (header[18] == 2 || header[19] == 2)
+    }
+
     /// Read committed rows without creating or migrating graph state.
     pub fn open_read_only(scope: &GraphScope) -> Result<Option<Self>, CodeGraphError> {
         let paths = scope.paths();
-        if !paths.db_path.is_file() {
+        if !paths.db_path.is_file() || Self::has_wal(scope) {
             return Ok(None);
         }
         let connection =
             Connection::open_with_flags(&paths.db_path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         connection.busy_timeout(Duration::from_millis(100))?;
+        connection.pragma_update(None, "temp_store", "MEMORY")?;
+        // A closed WAL database can retain WAL mode without sidecars. Inspect
+        // the SQLite header before opening: even a readonly WAL open may write.
+        // The index writer is the sole WAL-to-DELETE migration authority.
         let store = Self { paths, connection };
         if store.storage_schema_version()? != GRAPH_STORAGE_SCHEMA_VERSION {
             return Ok(None);
@@ -824,11 +841,14 @@ impl GraphStore {
             .pragma_update(None, "synchronous", "NORMAL")?;
         self.connection
             .pragma_update(None, "temp_store", "MEMORY")?;
-        let _ = self
-            .connection
-            .query_row("PRAGMA journal_mode = WAL", [], |row| {
-                row.get::<_, String>(0)
-            });
+        let mode: String =
+            self.connection
+                .query_row("PRAGMA journal_mode = DELETE", [], |row| row.get(0))?;
+        if !mode.eq_ignore_ascii_case("delete") {
+            return Err(CodeGraphError::validation(
+                "graph storage requires rollback journal mode",
+            ));
+        }
         Ok(())
     }
 

@@ -100,28 +100,6 @@ fn porcelain_entry_is_walk_skipped(line: &str) -> bool {
     crate::walk::should_skip_path(path.trim())
 }
 
-/// Git skip-gate: true only when the stored index stamp exists, the current
-/// HEAD matches it, and the working tree is clean — the indexed tree then
-/// provably equals the current tree, so the freshness walk can be skipped.
-///
-/// Conservative by construction: every failure mode returns `false`, which
-/// just means "run the scan-state walk" (the behavior before the gate).
-pub(crate) fn git_gate_says_fresh(
-    scope: &GraphScope,
-    store: &GraphStore,
-) -> Result<bool, CodeGraphError> {
-    if !crate::index::index_configuration_matches(scope, store)? {
-        return Ok(false);
-    }
-    let Some(indexed_head) = store.metadata_value(&git_indexed_head_key(scope.key()))? else {
-        return Ok(false);
-    };
-    if !working_tree_clean_for_scope(scope) {
-        return Ok(false);
-    }
-    Ok(current_head(scope.workspace_root()).as_deref() == Some(indexed_head.as_str()))
-}
-
 pub(crate) fn clear_index_stamp(
     scope: &GraphScope,
     store: &GraphStore,
