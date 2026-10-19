@@ -218,7 +218,7 @@ routes = [
 catalog = "workspace-rust-bun"
 "#;
         let (primary, checkouts) = create_linked_worktree_fixture(&root, manifest, &["one", "two"]);
-        let primary_policy = load_container_policy(&primary, None).unwrap();
+        let primary_policy = load_prepared_policy(&primary, None).unwrap();
         assert_eq!(primary_policy.dns_domain.as_deref(), Some("app.test"));
         assert_eq!(primary_policy.dns_routes[0].declared(), "app.test");
         assert_eq!(primary_policy.dns_routes[0].domain, "app.test");
@@ -228,7 +228,7 @@ catalog = "workspace-rust-bun"
             assert_linked_worktree_git_layout(&primary, checkout, name);
             let (policy, inventory_calls) = crate::policy_support::with_test_loopback_inventory(
                 fixture_inventory(&preceding_policies),
-                || load_container_policy(checkout, None).unwrap(),
+                || load_prepared_policy(checkout, None).unwrap(),
             );
             assert_eq!(
                 inventory_calls, 1,
@@ -2220,6 +2220,56 @@ catalog = "node"
         assert_eq!(
             registry.assigned_port("legacy-ports", "second", 3000),
             Some(8130)
+        );
+    });
+}
+
+#[test]
+fn loopback_reads_do_not_allocate_and_explicit_ports_still_prepare() {
+    with_temp_effigy_home("loopback-read-prepare", |home| {
+        let _lock = crate::test_env_lock();
+        let fixture = tempfile::tempdir().expect("private checkout");
+        let root = fixture.path().canonicalize().expect("canonical checkout");
+        fs::write(
+            root.join("effigy.toml"),
+            r#"
+[containers]
+default = "web"
+[containers.web]
+primary_service = "app"
+[containers.web.host]
+ports = ["41001:3000"]
+[containers.web.services.app]
+catalog = "node"
+"#,
+        )
+        .expect("manifest");
+        let registry_path = home.join("gateway/loopback-ips.json");
+        let (_, probes) =
+            crate::policy_support::with_test_loopback_inventory(fixture_inventory(&[]), || {
+                let policy = load_container_policy(&root, None).expect("read policy");
+                assert_eq!(policy.declared_ports, ["41001:3000"]);
+                assert!(!registry_path.exists());
+                assert!(!home.join("gateway/loopback-ips.lock").exists());
+                crate::policy::ports::prepare_container_policy_ports(&policy).expect("prepare");
+            });
+        assert_eq!(probes, 0, "empty registry needs no runtime inventory");
+        let before = fs::read(&registry_path).expect("prepared loopback");
+        let (_, probes) =
+            crate::policy_support::with_test_loopback_inventory(fixture_inventory(&[]), || {
+                let policy = load_container_policy(&root, None).expect("read prepared policy");
+                crate::policy::ports::prepare_container_policy_ports(&policy)
+                    .expect("repeat prepare");
+                load_container_policy(&root, None).expect("repeat read");
+            });
+        assert_eq!(probes, 0, "reads and stable Prepare must not inventory");
+        assert_eq!(
+            fs::read(&registry_path).expect("unchanged registry"),
+            before
+        );
+        assert!(
+            !home.join("ports.json").exists(),
+            "explicit ports need no allocation"
         );
     });
 }

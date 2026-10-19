@@ -1243,7 +1243,7 @@ fn project_loopback_port_rules(
     config: &ManifestContainerConfig,
 ) -> Result<Vec<LoopbackPortRule>, ContainerPolicyError> {
     let source = repo_root.display().to_string();
-    let Some(loopback_ip) = load_or_allocate_loopback_ip(
+    let Some(loopback_ip) = read_loopback_ip(
         &project_loopback_identity(project_name, repo_root),
         Some(project_name),
         &source,
@@ -1282,7 +1282,7 @@ fn shared_service_loopback_port_rules(
     let Some(container_port) = capabilities.loopback_alias_port else {
         return Ok(Vec::new());
     };
-    let Some(loopback_ip) = load_or_allocate_loopback_ip(
+    let Some(loopback_ip) = read_loopback_ip(
         &format!("shared:{project_name}"),
         None,
         &output_dir.display().to_string(),
@@ -1296,6 +1296,67 @@ fn shared_service_loopback_port_rules(
         container_port,
         keep_runtime_host_binding: true,
     }])
+}
+
+/// Policy reads neither allocate nor migrate loopback identities. The legacy
+/// project-only key remains readable until Prepare imports it for this checkout.
+fn read_loopback_ip(
+    identity: &str,
+    legacy_identity: Option<&str>,
+    source: &str,
+) -> Result<Option<std::net::Ipv4Addr>, ContainerPolicyError> {
+    let Some(home) = effigy_home_dir() else {
+        return Ok(None);
+    };
+    let registry = LoopbackRegistry::load(&home.join("gateway/loopback-ips.json"))
+        .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))?;
+    let routes = RouteTable::load(&home.join("gateway/routes.json"))
+        .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))?;
+    let reserved = reserved_loopback_ips_for_other_projects(&routes, source);
+    let assignment = registry.get(identity).or_else(|| {
+        legacy_identity.and_then(|legacy| {
+            registry.get(legacy).filter(|assignment| {
+                assignment.scope == source
+                    && !registry.assignments.iter().any(|(other_identity, other)| {
+                        other_identity != legacy && other.ip == assignment.ip
+                    })
+            })
+        })
+    });
+    Ok(assignment
+        .filter(|assignment| !reserved.contains(&assignment.ip))
+        .map(|assignment| assignment.ip))
+}
+
+/// Allocate only at the host Prepare seam, including environments whose ports
+/// are already assigned or entirely explicit. Reuse the existing allocator and
+/// its pre-lock inventory rather than introducing a second allocation path.
+pub(crate) fn prepare_container_policy_loopbacks(
+    policy: &crate::EffectiveContainerPolicy,
+) -> Result<bool, ContainerPolicyError> {
+    if policy.compose_source != crate::EffectiveComposeSource::Generated {
+        return Ok(false);
+    }
+    let mut changed = false;
+    for shared in &policy.shared_services {
+        let fragment = layered_catalog_resolver(None).resolve(&shared.catalog)?;
+        if fragment.schema.capabilities.loopback_alias_port.is_none() {
+            continue;
+        }
+        let root = shared.compose_file.parent().ok_or_else(|| {
+            ContainerPolicyError::TaskInvocation("shared Compose file has no parent".into())
+        })?;
+        let identity = format!("shared:{}", shared.project_name);
+        let source = root.display().to_string();
+        let before = read_loopback_ip(&identity, None, &source)?;
+        let after = load_or_allocate_loopback_ip(&identity, None, &source)?;
+        changed |= before != after;
+    }
+    let identity = project_loopback_identity(&policy.project_name, &policy.repo_root);
+    let source = policy.repo_root.display().to_string();
+    let before = read_loopback_ip(&identity, Some(&policy.project_name), &source)?;
+    let after = load_or_allocate_loopback_ip(&identity, Some(&policy.project_name), &source)?;
+    Ok(changed || before != after)
 }
 
 fn load_or_allocate_loopback_ip(
@@ -1922,6 +1983,46 @@ mod tests {
                 .expect("fill private loopback pool");
         }
         registry
+    }
+
+    #[test]
+    fn loopback_read_preserves_legacy_assignment_until_prepare() {
+        let home = tempfile::tempdir().expect("private state");
+        with_test_effigy_home(home.path(), || {
+            let source = home.path().join("checkout").display().to_string();
+            let path = home.path().join("gateway/loopback-ips.json");
+            let mut registry = LoopbackRegistry::new();
+            let ip = registry
+                .allocate("old-project", &source)
+                .expect("legacy assignment")
+                .ip;
+            registry.save(&path).expect("legacy registry");
+            let before = std::fs::read(&path).expect("registry bytes");
+            let identity = project_loopback_identity("old-project", Path::new(&source));
+            let (_, probes) =
+                with_test_loopback_inventory(RunningComposeContainerInventory::default(), || {
+                    assert_eq!(
+                        read_loopback_ip(&identity, Some("old-project"), &source).unwrap(),
+                        Some(ip)
+                    );
+                    assert_eq!(
+                        read_loopback_ip(&identity, Some("old-project"), "foreign").unwrap(),
+                        None
+                    );
+                    assert_eq!(std::fs::read(&path).unwrap(), before);
+                    assert!(!path.with_extension("lock").exists());
+                });
+            assert_eq!(probes, 0);
+            let (prepared, _) =
+                with_test_loopback_inventory(RunningComposeContainerInventory::default(), || {
+                    load_or_allocate_loopback_ip(&identity, Some("old-project"), &source)
+                        .expect("prepare legacy assignment")
+                });
+            assert_eq!(prepared, Some(ip));
+            let migrated = LoopbackRegistry::load(&path).expect("migrated registry");
+            assert!(migrated.get("old-project").is_none());
+            assert_eq!(migrated.get(&identity).map(|value| value.ip), Some(ip));
+        });
     }
 
     #[test]

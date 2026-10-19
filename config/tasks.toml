@@ -96,6 +96,7 @@
 "test:containers:mount-prepare:workspace" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib -E 'test(workspace::tests::)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 }] }
 "test:containers:loopback-inventory" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib -E 'test(policy_support::generated_compose::tests::) | test(linked_worktrees_get_distinct_effective_hosts_and_primary_keeps_declared) | test(runtime::loopback::)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 }] }
 "qa:containers:render-static" = { visibility = "internal", group = "Maintenance", run = [{ task = "fmt:check" }, { task = "qa:kernel-ratchet" }] }
+"test:containers:loopback-prepare" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib -E 'test(loopback_read_preserves_legacy_assignment_until_prepare) | test(loopback_reads_do_not_allocate_and_explicit_ports_still_prepare)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 }
 
 # Kernel foundation: bounded, disjoint proof families; no engine adoption.
 "test:kernel:remote" = { visibility = "internal", group = "Maintenance", run = [

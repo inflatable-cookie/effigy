@@ -1286,6 +1286,18 @@ against the checkout at Prepare; other host mounts remain user-owned.
 
 ### Loopback inventory and registry exclusion
 
+Policy resolution reads existing loopback assignments without taking the
+registry lock, allocating, migrating or probing runtime inventory. A missing
+assignment stays absent until Prepare. Project-only legacy keys are read only
+when owned by the same checkout and uncontested; Prepare imports them to the
+checkout-qualified key while keeping the address. Assignments reserved by
+another project's gateway routes are not used.
+
+The host Prepare seam prepares loopbacks before ports, including shared
+services and environments with only explicit ports or no published ports.
+Existing activation, task preparation and data-workflow entry points all use
+this seam. No manifest change is required for existing consumers.
+
 Runtime inventory for loopback reclamation runs before the global registry
 lock is acquired (K14). Allocation reloads the registry under that lock and
 only reclaims entries identical to its pre-inventory snapshot. Assignments
