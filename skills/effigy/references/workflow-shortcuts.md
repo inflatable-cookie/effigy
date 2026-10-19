@@ -91,7 +91,6 @@ effigy init                        # idempotent baseline repo setup
 effigy init --check --json         # no-write setup report for agents/tools
 ```
 
-
 ## Repo scanners
 
 ```bash

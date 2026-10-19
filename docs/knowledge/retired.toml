@@ -121,6 +121,7 @@ paths = [
 ]
 config_keys = ["EFFIGY_ADMISSION_DIR", "EFFIGY_ADMISSION_LEASE_ID"]
 allow = [
+  "docs/guides/083-v0.14.0-consumer-migration.md",
   "CHANGELOG.md",
   "docs/knowledge/contracts/049-heavy-validation-admission-contract.md",
   "docs/knowledge/contracts/051-bounded-qa-groups-contract.md",
@@ -201,7 +202,7 @@ owner = "docs/knowledge/README.md"
 terms = ["roadmap card", "generation index", "lifecycle record", "northstar:lifecycle", "chatterbox handoff"]
 paths = [".northstar/lifecycle/", "docs/roadmaps/", "docs/handoffs/", "docs/logs/"]
 config_keys = ["northstar/queue:hook", "paseo.queue.control.v4"]
-allow = ["CHANGELOG.md"]
+allow = ["docs/guides/083-v0.14.0-consumer-migration.md", "CHANGELOG.md"]
 
 [[retired]]
 id = "effigy-strict-planning-lane"
@@ -231,7 +232,7 @@ owner = "docs/guides/056-northstar-effigy-consumer-repo-contract.md"
 terms = ["paseo.queue.control.v5"]
 paths = [".paseo/queue.json", "crates/effigy-catalog/starters/northstar/.paseo/"]
 config_keys = []
-allow = ["CHANGELOG.md"]
+allow = ["docs/guides/083-v0.14.0-consumer-migration.md", "CHANGELOG.md"]
 
 [[retired]]
 id = "effigy-papercuts-command"
@@ -241,7 +242,7 @@ owner = "docs/knowledge/vision.md"
 terms = ["effigy papercuts", "PAPERCUTS.md", "effigy-papercuts"]
 paths = ["docs/knowledge/contracts/036-papercuts-discovery-contract.md", "docs/guides/078-papercuts-discovery-and-capture.md", "crates/effigy-papercuts/"]
 config_keys = ["effigy.papercuts.v1", "effigy.papercuts.add.v1"]
-allow = ["CHANGELOG.md"]
+allow = ["docs/guides/083-v0.14.0-consumer-migration.md", "CHANGELOG.md"]
 
 [[retired]]
 id = "repository-planning-files"
