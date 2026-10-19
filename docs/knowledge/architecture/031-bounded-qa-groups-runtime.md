@@ -139,30 +139,21 @@ members.
 ## Admission and timing
 
 Before any side effect, the resolver classifies all resolved members and their
-known nested task references. Heavy groups use the Queue/Nucleus host-run
-scheduler. The scheduler launches one complete group invocation before the
-group record and members are created; nested heavy tasks reuse its validated
-parent token. No Effigy lease store or local lease acquisition remains.
-
-The same heavy classification submits the whole group to the host-run
-scheduler (contract
-[049](../contracts/049-heavy-validation-admission-contract.md#scheduler-routing)).
-The scheduler launches this invocation with a run token; that child validates
-the token, owns the one ledger and records `backend` correlation. Members run
-in place under the validated scheduler run. `EFFIGY_HOST_SCHEDULER=0` is
-retired and rejected. Preflight, including `needs_planner`, runs before submit.
-Only a run the scheduler settles without launching writes a record from the
-submitting process.
+known nested task references. A group with a heavy member is admitted once,
+through `EFFIGY_ADMISSION_HOOK` when it is set (contract
+[049](../contracts/049-heavy-validation-admission-contract.md)), before its
+first member; members and their nested heavy tasks run inside that admission
+and never queue again. With no hook set, a heavy group runs like any other.
+Preflight, including `needs_planner`, runs before admission.
 
 A route whose nested admission shape cannot be resolved fails the plan rather
-than discovering heavy work after launch and submitting it as a second run. A
-group with only non-heavy members submits no scheduler run and makes no OS
-resource cap claim.
+than discovering heavy work after launch. A group with only non-heavy members
+calls no hook and makes no OS resource cap claim.
 
 Timing is attached to the run ledger:
 
-- `admission_wait_ms` is the scheduler-reported capacity wait, when available;
-- scheduler launch to final cleanup is `execution_wall_ms`, including setup,
+- `admission_wait_ms` is the admission hook's wait, when a hook admitted the group;
+- admission to final cleanup is `execution_wall_ms`, including setup,
   compilation, member work, and cleanup;
 - member start/end times provide per-member wall time;
 - cold/warm build times remain null unless the runtime measured them.
@@ -170,7 +161,7 @@ Timing is attached to the run ledger:
 The expected wall time is compared only with execution wall time. Exceeding
 expectation records `budget_state = over_budget`; it does not kill, skip, or
 reorder work. A configured hard timeout is a separate policy and requires a
-supervisor that can stop the full process tree. The scheduler capacity
+supervisor that can stop the full process tree. The hook's admission
 deadline remains independent of the run deadline.
 
 ## Inspect and stop
@@ -182,8 +173,8 @@ ID to its supervised process generation, records signal attribution, and
 confirms descendant cleanup before claiming cancellation.
 
 Current task status is selector-scoped; current managed-session status/logs/
-stop only cover the managed session; Queue/Nucleus own host-wide heavy waiting
-and scheduler state. General stop attribution for ordinary and non-heavy runs,
+stop only cover the managed session; any host-wide heavy waiting belongs to the
+admission hook's owner. General stop attribution for ordinary and non-heavy runs,
 nested process trees, PID reuse, and owner loss is owned by the
 [runtime kernel contract](../contracts/052-runtime-kernel-contract.md)
 and its [architecture](032-runtime-kernel-architecture.md). Group controls must
@@ -219,8 +210,8 @@ pruning.
 
 Temporary groups resolve draft-task classification from the typed definition.
 `[drafts]` accepts the same optional `admission = "heavy"` metadata as
-`[tasks]`; direct heavy drafts route through the scheduler, and group members
-reuse a validated parent token.
+`[tasks]`; a direct heavy draft calls the hook like a task, and group members
+run inside the group's admission.
 
 ## Boundaries
 

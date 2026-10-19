@@ -3,29 +3,6 @@ use serde_json::json;
 use std::path::Path;
 
 #[test]
-fn contract_fixture_failure_category_does_not_echo_captured_output_or_private_fields() {
-    let payload = json!({"result":{"members":[{
-        "summary":"runner error: invalid_parent_token: private-path-and-secret",
-        "stdout":"secret-output", "token":"secret-token"
-    }]}});
-    assert_eq!(
-        super::fixture_group_refusal_category(payload.to_string().as_bytes()),
-        Some("invalid_parent_token")
-    );
-    assert_eq!(
-        super::fixture_group_refusal_category(b"secret-not-json"),
-        None
-    );
-    let payload = json!({"error":{"details":{"members":[{
-        "summary":"command output invalid_parent_token: arbitrary-data"
-    }]}}});
-    assert_eq!(
-        super::fixture_group_refusal_category(payload.to_string().as_bytes()),
-        None
-    );
-}
-
-#[test]
 fn contract_fixture_arguments_preserve_spaces_quotes_and_paired_roots() {
     let repo = tempfile::tempdir().expect("repo");
     let root = repo.path().join("repo with 'quoted' paths");

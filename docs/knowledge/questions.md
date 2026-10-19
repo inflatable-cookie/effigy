@@ -147,3 +147,8 @@ Retired with this: the Queue/Nucleus host-run client (`src/runner/host_scheduler
 name rule, and contract
 [049](contracts/049-heavy-validation-admission-contract.md)'s Effigy-side
 client obligations.
+
+Implemented by effigy#227 (2026-10-19): contract
+[049](contracts/049-heavy-validation-admission-contract.md) holds the hook
+protocol and run control, and `retired.toml` `effigy-host-run-client` the
+retirement.

@@ -48,8 +48,8 @@ container. A catalog that owns its own system uses that system's namespace.
 Human and JSON selector plans render the command with this runtime path. The
 plan's catalog and `cwd` fields remain host-side selection evidence; they are
 not an assertion that a host directory exists inside the container. Task
-schema and env-file discovery, cache inputs, configuration and scheduler
-control paths remain host-rooted. Literal command text, user arguments,
+schema and env-file discovery, cache inputs, configuration and run-control
+paths remain host-rooted. Literal command text, user arguments,
 secret values and bundle/skill source paths are not rewritten by replacing a
 host-path substring. This contract does not promise that a selected service
 has mounted a path merely because a command was mapped successfully.
@@ -60,7 +60,7 @@ metadata for that inner resolution. Mixed container sequences retain their
 existing handoff route; host-owned aggregate task references resolve each
 standard leaf independently. This change does not enable inline standard
 routing, alter managed command mapping or interpret builtin `exec` raw argv as
-manifest placeholders. It transfers no scheduler credentials into a container
+manifest placeholders. It transfers no host credentials into a container
 and establishes no real Linux or remote cancellation proof.
 
 ## Optional workspace mounts at creation

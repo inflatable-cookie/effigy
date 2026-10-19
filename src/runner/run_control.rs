@@ -26,7 +26,7 @@ use super::task_engine::{
 
 const RUN_SCHEMA: &str = "effigy.run.v1";
 const RUNS_SCHEMA: &str = "effigy.runs.v1";
-const LOGS_SCHEMA: &str = "effigy.run-logs.v1";
+const LOGS_SCHEMA: &str = "effigy.run.logs.v1";
 /// One log read; a follower loops until it reaches the log's end.
 const READ_MAX: usize = 256 * 1024;
 /// How long a follower keeps retrying an unreadable journal before it

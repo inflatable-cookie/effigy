@@ -7,6 +7,21 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Breaking
+- Heavy tasks no longer go through the Queue/Nucleus host-run client
+  (Q-006). `admission = "heavy"` is metadata only: with no hook set a heavy
+  task runs like any other, CI runners included. When the launcher sets
+  `EFFIGY_ADMISSION_HOOK`, a heavy run calls it with an
+  `effigy.admission-request.v1` request in `EFFIGY_ADMISSION_REQUEST` and
+  waits, bounded by `EFFIGY_ADMISSION_HOOK_TIMEOUT_MS`, for `admit` or
+  `deny <reason>`. The admitted hook is held under the run's custody until
+  the run settles; deny, timeout or a crash refuses the run before its
+  command starts (`effigy.admission.v1` details). Nested heavy runs inherit
+  `EFFIGY_ADMITTED` and never queue twice. `qa`, `ci` and `ci:fresh` are no
+  longer heavy by name. Exit 75 now means only a held task lock; 77 is gone.
+- Text output of a task whose stdout or stderr is not a terminal is captured
+  into the run's log and relayed as it arrives (declared secrets redacted),
+  so `effigy run logs` can replay or follow it. A task on a terminal keeps
+  the terminal.
 - Task runs are now kernel runs. Every invocation resolves once to a task
   identity (catalog path relative to the root, task name), so `build` from
   inside a catalog, `api/build` and `./apps/api/build` share one lock and one
@@ -57,6 +72,12 @@ During v0.x, MINOR bumps may include breaking changes.
   credential or prompt.
 
 ### Removed
+- Retire the host-run client: `src/runner/host_scheduler`, the
+  `effigy-host-run` crate, `HOST_RUN_TOKEN`/`HOST_RUN_ID` parent tokens,
+  `EFFIGY_SCHEDULER_OVERRIDE`, `EFFIGY_HOST_RUN_ROOT`, the private-parent
+  fixture harness and contract 049's client obligations.
+  `--host-run-request-id` and `effigy tasks request status|follow` refuse with
+  the replacement: `--run-id <key>` and `effigy run status|logs|stop <key>`.
 - Retire `effigy watch`, `effigy tasks migrate`, managed stream mode,
   transition-evidence receipts, pre-0.14 `gateway recover`, the unused
   user-runtime scaffold, and qualified private docs assurance. Removed command
@@ -79,6 +100,19 @@ During v0.x, MINOR bumps may include breaking changes.
   lists the families still present.
 
 ### Added
+- Run control for every run (Q-006): `effigy --run-id <key> <task>` names a
+  run with a caller key, and a repeat or a racing second invocation attaches
+  to it and exits with its result instead of starting another. `effigy runs`
+  lists runs (`effigy.runs.v1`), `effigy run status <run>` reports one
+  (`effigy.run.v1`), `effigy run logs <run> [--follow]` reads its output by
+  exact byte offset and ends on settle with the run's exit code
+  (`effigy.run.logs.v1`; resume with `--stdout-offset`/`--stderr-offset`),
+  and `effigy run stop <run>` stops it through a fenced kernel request. A
+  lost follower never loses or duplicates output, a terminal run without
+  logs still reports its real result, and expired log bytes are reported
+  (closes papercut 910c578a).
+- `tasks --json` rows and `--plan --json` carry `"admission": "heavy"` for a
+  classified task.
 - Keep CLI presentation local and bounded: banner sizing never launches `tput`, and version metadata reads environment or installed stamps without running Git. Unstamped development binaries report the package version.
 - Graph reads, documentation context and doctor never refresh or create graph
   files. Explicit `graph index` uses a kernel store gate and migrates existing
