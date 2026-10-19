@@ -1,7 +1,7 @@
 //! Journal-first local process custody (§5.7). No signal handlers live here.
 pub(crate) mod capture;
-mod platform;
-mod spawn;
+pub(crate) mod platform;
+pub(crate) mod spawn;
 use crate::ctx::{CleanupContext, EffectContext, OperationContext};
 use crate::ident::ProcessIdentity;
 use crate::observe::{AbsenceProof, Evidence, Observed, UnknownReason};
@@ -65,6 +65,32 @@ pub struct ProcessSpec {
     pub lifetime: Lifetime,
     pub terminal: Terminal,
     pub label: String,
+}
+impl ProcessSpec {
+    /// Shared spawn preflight: secret bytes never reach ps-visible argv.
+    pub(crate) fn validated_secrets(&self) -> io::Result<Vec<Vec<u8>>> {
+        let secrets: Vec<_> = self
+            .env
+            .values()
+            .filter_map(|v| match v {
+                EnvValue::Secret(v) => Some(v.0.clone()),
+                _ => None,
+            })
+            .collect();
+        if self.argv.is_empty()
+            || self.argv.iter().any(|arg| {
+                secrets
+                    .iter()
+                    .any(|secret| arg.as_bytes().windows(secret.len()).any(|w| w == secret))
+            })
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "empty argv or secret in argv",
+            ));
+        }
+        Ok(secrets)
+    }
 }
 impl std::fmt::Debug for ProcessSpec {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -150,7 +176,7 @@ pub(crate) struct ProcessCore {
     terminal: Option<spawn::TerminalLease>,
     pty: bool,
 }
-struct Redactor {
+pub(crate) struct Redactor {
     display: RedactionPass,
     final_check: RedactionPass,
 }
@@ -160,7 +186,7 @@ impl std::fmt::Debug for Redactor {
     }
 }
 impl Redactor {
-    fn new(secrets: Vec<Vec<u8>>) -> Self {
+    pub(crate) fn new(secrets: Vec<Vec<u8>>) -> Self {
         Self {
             display: RedactionPass::new(secrets.clone(), b"[REDACTED]"),
             // A secret can itself contain the display marker, or a replacement
@@ -170,7 +196,7 @@ impl Redactor {
             final_check: RedactionPass::new(secrets, b"\0"),
         }
     }
-    fn push(&mut self, bytes: &[u8], eof: bool) -> Vec<u8> {
+    pub(crate) fn push(&mut self, bytes: &[u8], eof: bool) -> Vec<u8> {
         let display = self.display.push(bytes, eof);
         self.final_check.push(&display, eof)
     }
@@ -238,23 +264,9 @@ impl Custody {
             ));
         }
         cx.operation().check("spawn").map_err(RunError::from)?;
-        let secrets: Vec<Vec<u8>> = spec
-            .env
-            .values()
-            .filter_map(|v| match v {
-                EnvValue::Secret(v) => Some(v.0.clone()),
-                _ => None,
-            })
-            .collect();
-        if spec.argv.is_empty()
-            || spec.argv.iter().any(|arg| {
-                secrets
-                    .iter()
-                    .any(|s| arg.as_bytes().windows(s.len()).any(|w| w == s))
-            })
-        {
-            return Err(SpawnError::Refused("empty argv or secret in argv".into()));
-        }
+        let secrets = spec
+            .validated_secrets()
+            .map_err(|e| SpawnError::Refused(e.to_string()))?;
         let mut redact = Redactor::new(secrets.clone());
         let label = String::from_utf8_lossy(&redact.push(spec.label.as_bytes(), true)).into_owned();
         // Only a digest and a redacted label enter the journal. Never env values.

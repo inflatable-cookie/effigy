@@ -39,7 +39,7 @@ fn nonblock(fd: &OwnedFd) -> io::Result<()> {
     Ok(())
 }
 #[derive(Debug)]
-pub(super) struct TerminalLease {
+pub(crate) struct TerminalLease {
     fd: RawFd,
     previous: libc::pid_t,
 }
@@ -76,7 +76,7 @@ impl Drop for TerminalLease {
     }
 }
 #[derive(Debug)]
-pub(super) struct Blocked {
+pub(crate) struct Blocked {
     pub pid: u32,
     barrier: Option<OwnedFd>,
     status: OwnedFd,
@@ -85,6 +85,20 @@ pub(super) struct Blocked {
 }
 impl Blocked {
     pub fn fork(spec: &ProcessSpec, nonce: &str, cx: &OperationContext) -> io::Result<Self> {
+        Self::fork_with_nonce(spec, "EFFIGY_CUSTODY_NONCE", nonce, cx)
+    }
+    pub(crate) fn fork_with_nonce(
+        spec: &ProcessSpec,
+        key: &str,
+        nonce: &str,
+        cx: &OperationContext,
+    ) -> io::Result<Self> {
+        if !["EFFIGY_CUSTODY_NONCE", "EFFIGY_PROBE_NONCE"].contains(&key) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "invalid nonce key",
+            ));
+        }
         let argv = spec
             .argv
             .iter()
@@ -99,7 +113,13 @@ impl Blocked {
         }
         let mut env = Vec::new();
         for (key, value) in &spec.env {
-            if key.as_bytes().contains(&b'=') || key.as_bytes() == b"EFFIGY_CUSTODY_NONCE" {
+            if key.as_bytes().contains(&b'=')
+                || [
+                    b"EFFIGY_CUSTODY_NONCE".as_slice(),
+                    b"EFFIGY_PROBE_NONCE".as_slice(),
+                ]
+                .contains(&key.as_bytes())
+            {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
                     "reserved or invalid environment key",
@@ -118,7 +138,7 @@ impl Blocked {
             );
         }
         env.push(
-            CString::new(format!("EFFIGY_CUSTODY_NONCE={nonce}"))
+            CString::new(format!("{key}={nonce}"))
                 .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid nonce"))?,
         );
         let mut args: Vec<_> = argv.iter().map(|a| a.as_ptr()).collect();
@@ -332,7 +352,7 @@ impl Drop for Blocked {
         }
     }
 }
-pub(super) fn peek(pid: u32) -> io::Result<Option<Exit>> {
+pub(crate) fn peek(pid: u32) -> io::Result<Option<Exit>> {
     // SAFETY: zeroed storage is valid for siginfo_t; waitid initializes it.
     let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
     // SAFETY: positive direct child pid; WNOWAIT deliberately retains it.
@@ -361,7 +381,7 @@ pub(super) fn peek(pid: u32) -> io::Result<Option<Exit>> {
         },
     }))
 }
-pub(super) fn reap(pid: u32) -> io::Result<Option<Exit>> {
+pub(crate) fn reap(pid: u32) -> io::Result<Option<Exit>> {
     let mut status = 0;
     // SAFETY: direct child pid and initialized writable status.
     let result = unsafe { libc::waitpid(pid as i32, &mut status, libc::WNOHANG) };

@@ -43,3 +43,7 @@ bench = false
 [[test]]
 name = "custody"
 required-features = ["fault-injection"]
+
+[[test]]
+name = "probe"
+required-features = ["fault-injection"]

@@ -177,7 +177,10 @@ impl OperationContext {
         if matches!(self.deadline, Deadline::Open(_)) {
             return Err(ClassError);
         }
-        Ok(ObserveContext(self.clone()))
+        Ok(ObserveContext {
+            operation: self.clone(),
+            probes: None,
+        })
     }
     pub fn effects(&self) -> Result<EffectContext, ClassError> {
         match self.class {
@@ -197,34 +200,44 @@ pub struct ClassError;
 /// fn write(cx: &ObserveContext) { cx.effects(); }
 /// ```
 /// ```compile_fail
-/// # use effigy_kernel::ctx::{ObserveContext, EffectContext};
-/// fn acquire(_: &EffectContext) {}
-/// fn observe(cx: &ObserveContext) { acquire(cx); }
+/// # use effigy_kernel::{ctx::ObserveContext, gate::{Gate, Wait}, root::StateRoot};
+/// fn acquire(cx: &ObserveContext, root: &StateRoot) {
+///     Gate::acquire(cx, root, &[], Wait::FailFast);
+/// }
 /// ```
 /// ```compile_fail
-/// # use effigy_kernel::ctx::{ObserveContext, EffectContext};
-/// fn spawn(_: &EffectContext) {}
-/// fn observe(cx: &ObserveContext) { spawn(cx); }
+/// # use effigy_kernel::{ctx::ObserveContext, custody::{Custody, ProcessSpec}, run::Run};
+/// fn spawn(cx: &ObserveContext, run: &mut Run<'_>, spec: ProcessSpec) {
+///     Custody::spawn(run, spec, cx);
+/// }
 /// ```
 /// ```compile_fail
-/// # use effigy_kernel::ctx::{ObserveContext, EffectContext};
-/// fn txn(_: &EffectContext) {}
-/// fn observe(cx: &ObserveContext) { txn(cx); }
+/// # use effigy_kernel::{ctx::ObserveContext, store::Store};
+/// fn txn(cx: &ObserveContext, store: &mut Store) {
+///     store.txn(cx, |_| Ok(()));
+/// }
+/// ```
+/// ```compile_fail
+/// # use effigy_kernel::{ctx::ObserveContext, probe::maintain};
+/// fn maintenance(cx: &ObserveContext) { maintain(cx); }
 /// ```
 #[derive(Debug, Clone)]
-pub struct ObserveContext(OperationContext);
+pub struct ObserveContext {
+    pub(crate) operation: OperationContext,
+    pub(crate) probes: Option<std::sync::Arc<crate::probe::ProbeRuntime>>,
+}
 impl ObserveContext {
     pub fn check(&self, phase: &str) -> Result<(), Interrupt> {
-        self.0.check(phase)
+        self.operation.check(phase)
     }
     pub fn remaining(&self) -> Duration {
-        self.0.remaining().unwrap_or(Duration::ZERO)
+        self.operation.remaining().unwrap_or(Duration::ZERO)
     }
     pub fn limits(&self) -> &Limits {
-        &self.0.limits
+        &self.operation.limits
     }
     pub fn placement(&self) -> Placement {
-        self.0.placement
+        self.operation.placement
     }
 }
 #[derive(Debug, Clone)]

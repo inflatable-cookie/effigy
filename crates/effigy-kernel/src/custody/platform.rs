@@ -45,11 +45,11 @@ fn group_exists(pgid: u32) -> Observed<()> {
         Observed::Unknown(unknown(e))
     }
 }
-pub(super) fn owner_signal(receipt: &ProcessReceipt, signal: i32) -> Observed<SignalDelivered> {
+pub(crate) fn owner_signal(receipt: &ProcessReceipt, signal: i32) -> Observed<SignalDelivered> {
     // Caller holds its unreaped direct leader. The group number remains pinned.
     numeric(receipt.pgid, true, signal)
 }
-fn numeric(pid: u32, group: bool, signal: i32) -> Observed<SignalDelivered> {
+pub(crate) fn numeric(pid: u32, group: bool, signal: i32) -> Observed<SignalDelivered> {
     if pid == 0
         || pid > i32::MAX as u32
         || ![libc::SIGTERM, libc::SIGCONT, libc::SIGKILL, libc::SIGINT].contains(&signal)
@@ -70,7 +70,7 @@ fn numeric(pid: u32, group: bool, signal: i32) -> Observed<SignalDelivered> {
         }
     }
 }
-fn not_earlier(member: &ProcessIdentity, receipt: &ProcessReceipt) -> bool {
+pub(crate) fn not_earlier(member: &ProcessIdentity, receipt: &ProcessReceipt) -> bool {
     if member.boot != receipt.identity.boot {
         return false;
     }
@@ -91,7 +91,7 @@ fn not_earlier(member: &ProcessIdentity, receipt: &ProcessReceipt) -> bool {
 }
 /// Closed means no live member; an unreaped leader/zombie supplies no workload
 /// and is reaped only by its owner. A vanished group has an ESRCH proof.
-pub(super) fn group_closed(pgid: u32, exclude: Option<u32>) -> Observed<Closure> {
+pub(crate) fn group_closed(pgid: u32, exclude: Option<u32>) -> Observed<Closure> {
     if let Observed::Absent(_) = group_exists(pgid) {
         return gone(pgid);
     }
@@ -365,7 +365,7 @@ impl ProcessTable for Host {
     }
 }
 #[cfg(target_os = "linux")]
-fn pidfd(pid: u32) -> io::Result<OwnedFd> {
+pub(crate) fn pidfd(pid: u32) -> io::Result<OwnedFd> {
     // SAFETY: positive process id with flags zero; result is a fresh fd.
     let raw = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0u32) };
     if raw < 0 {
@@ -374,7 +374,7 @@ fn pidfd(pid: u32) -> io::Result<OwnedFd> {
     // SAFETY: successful syscall returned a fresh owned fd.
     Ok(unsafe { OwnedFd::from_raw_fd(raw as i32) })
 }
-fn live_pids(pgid: u32) -> io::Result<Vec<u32>> {
+pub(super) fn live_pids(pgid: u32) -> io::Result<Vec<u32>> {
     let mut live = Vec::new();
     for pid in group_pids(pgid)? {
         #[cfg(target_os = "linux")]
@@ -401,7 +401,7 @@ fn live_pids(pgid: u32) -> io::Result<Vec<u32>> {
     Ok(live)
 }
 #[cfg(target_os = "linux")]
-fn group_pids(_pgid: u32) -> io::Result<Vec<u32>> {
+pub(crate) fn group_pids(_pgid: u32) -> io::Result<Vec<u32>> {
     let dir = crate::fs::DirFd::walk(std::path::Path::new("/proc"), crate::fs::Trust::Ancestor)
         .map_err(io::Error::other)?;
     Ok(dir
@@ -412,7 +412,7 @@ fn group_pids(_pgid: u32) -> io::Result<Vec<u32>> {
         .collect())
 }
 #[cfg(target_os = "macos")]
-fn group_pids(pgid: u32) -> io::Result<Vec<u32>> {
+pub(crate) fn group_pids(pgid: u32) -> io::Result<Vec<u32>> {
     let mut pids = vec![0i32; 1 << 17];
     // SAFETY: writable aligned allocation for the passed byte size, bounded
     // below i32::MAX; proc_listallpids returns a count of initialized entries.
@@ -423,11 +423,18 @@ fn group_pids(pgid: u32) -> io::Result<Vec<u32>> {
         *libc::__error() = 0;
     }
     let count = unsafe {
-        libc::proc_listpgrppids(
-            pgid as i32,
-            pids.as_mut_ptr().cast(),
-            (pids.len() * std::mem::size_of::<i32>()) as i32,
-        )
+        if pgid == 0 {
+            libc::proc_listallpids(
+                pids.as_mut_ptr().cast(),
+                (pids.len() * std::mem::size_of::<i32>()) as i32,
+            )
+        } else {
+            libc::proc_listpgrppids(
+                pgid as i32,
+                pids.as_mut_ptr().cast(),
+                (pids.len() * std::mem::size_of::<i32>()) as i32,
+            )
+        }
     };
     if count < 0 || count as usize >= pids.len() {
         return Err(io::Error::other(
@@ -448,9 +455,11 @@ fn group_pids(pgid: u32) -> io::Result<Vec<u32>> {
         .collect())
 }
 pub(super) fn read_nonce(pid: u32) -> Observed<String> {
+    read_nonce_key(pid, b"EFFIGY_CUSTODY_NONCE=")
+}
+pub(crate) fn read_nonce_key(pid: u32, key: &[u8]) -> Observed<String> {
     match environment(pid) {
         Ok(bytes) => {
-            let key = b"EFFIGY_CUSTODY_NONCE=";
             match bytes
                 .split(|b| *b == 0)
                 .find_map(|entry| entry.strip_prefix(key))
@@ -542,7 +551,7 @@ fn environment(pid: u32) -> io::Result<Vec<u8>> {
 // A process exiting between TERM and CONT is positive absence, not an unknown
 // generation. Only Verified permits a signal; changed generations are reobserved
 // through the nonce path on the next recovery turn.
-fn generation(expected: &ProcessIdentity) -> Observed<()> {
+pub(crate) fn generation(expected: &ProcessIdentity) -> Observed<()> {
     match ident::process_identity(expected.pid) {
         Observed::Verified(current, _) if current == *expected => {
             Observed::Verified((), evidence())
