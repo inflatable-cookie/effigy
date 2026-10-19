@@ -259,15 +259,31 @@ Platform mutations belong to `gateway setup`; the three existing JSON
 registries remain the route/allocation input until endpoint-store adoption.
 
 Direct low-port binding is not a qualified macOS transport. An unprivileged
-bind to `127.1.0.1:80` returned `EACCES` on the operator host. The launchd
-listener handoff is the fallback: setup owns the privileged listener
-installation, while serving remains in the operator account. Reboot and
-consumer qualification remain operator-run actions.
+bind to `127.1.0.1:80` returned `EACCES` on the operator host. The selected
+fallback (planner ruling, 2026-10-19) is a minimal root bind broker. Setup
+installs a root-owned helper image and a per-operator LaunchDaemon whose Unix
+socket is root-owned, group-connectable (0660), and under the root-owned run
+directory. Its arguments pin the operator UID. `getpeereid` must match that UID
+before the broker reads a fixed-size request. Only TCP 80 and 443 at
+127.0.0.1 or the setup-installed 127.1.0.1–50 range are accepted. No wildcard
+bind, route/state reads, client accepts, TLS or HTTP processing run as root.
+The broker sends two listening descriptors using SCM_RIGHTS and drops its
+copies. The operator validates exact endpoints, listening state, identity and
+close-on-exec before adoption. Refused/partial exchanges publish nothing.
 
-The kernel process spawn barrier closes descriptors above stderr and its
-internal barrier descriptors. `ProcessSpec` and detached startup currently
-carry no inherited-listener capability. A launchd activation cannot simply
-be wrapped in detached custody: the socket needs explicit descriptor
-transfer, ownership validation, rollback and recovery proofs before that
-path can serve through an `OwnedProcess`. Do not work around this by
-retaining arbitrary descriptors, elevating a runtime, or bypassing custody.
+The daemon starts normally under kernel custody, then requests its listeners
+after exec. No listener crosses the custody spawn barrier and no inherited-FD
+kernel API is added. Dropping a daemon's listeners releases them; its next
+Run can acquire a new pair through the same broker. Status and ordinary
+lifecycle remain unprivileged. Linux uses the executable-local
+CAP_NET_BIND_SERVICE adapter; setup never changes the host port threshold.
+Both adapters refuse foreign setup output before changing it.
+
+The accepted prerequisite kernel APIs remain Run replace_file/enable_custody,
+pure latest-run/effects projections, gateway control-socket placement and
+setup-only descriptor-relative ownership transfer. They require independent
+review with this engine change. The executable fingerprint size limit is
+owned by task #220, not this task.
+
+Reboot, actual launchd activation and CBS/Acowtancy URL qualification remain
+operator-run actions on the exact candidate. The guide records the steps.

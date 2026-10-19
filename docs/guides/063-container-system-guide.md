@@ -1294,7 +1294,7 @@ Safety rules:
 `[containers.<name>.dns]` integrates with the gateway:
 
 - route registration and cleanup happen during container lifecycle
-- `tls = true` works with `effigy gateway setup-tls`
+- `tls = true` works after `effigy gateway setup`
 - when TLS is enabled, plain HTTP requests are redirected to HTTPS
 
 TCP catalog services such as postgres, mariadb, redis, and memcached also get
@@ -1317,6 +1317,70 @@ routes = [
   { domain = "app.s3.acme.test", tls = true },
 ]
 ```
+
+### Operator gateway setup and control
+
+Run `effigy gateway setup` from your normal user account once. This is the
+administrator step: it installs resolver and loopback prerequisites and trusts
+your existing mkcert CA. Install mkcert first. The daemon, route registration,
+and ordinary `up`, `down` and `status` run as your user and never elevate.
+
+```sh
+effigy gateway setup
+# Add a public development suffix explicitly when needed:
+effigy gateway setup --suffix dev.example.org
+effigy gateway up
+effigy gateway status --json
+effigy gateway down
+```
+
+Setup includes suffixes already present in the route table and the managed
+`test` suffix. Re-run setup when adding a new resolver suffix. macOS receives
+scoped `/etc/resolver` files and a native loopback alias boot job. If direct
+loopback port 80/443 binds are denied, a root-owned, socket-activated bind
+broker supplies only those listeners. Its setup-pinned operator UID is checked
+with `getpeereid`; allowed addresses are `127.0.0.1` and `127.1.0.1` through
+`127.1.0.50`. It transfers descriptors after the user daemon starts, then drops
+its copies. It never reads routes, certificates or user state, or serves traffic.
+The helper image is copied into a root-owned private directory, rather than
+executed from a user-writable installation.
+
+Linux setup installs a systemd dummy-link split-DNS unit with no default-route
+role. It applies only `CAP_NET_BIND_SERVICE` to the installed Effigy executable;
+it does not lower the host-wide unprivileged-port threshold. Replacing that
+binary removes its file capability, so run setup again after an executable
+upgrade. Foreign unit files and foreign executable capabilities are preserved
+with an error. This adapter requires systemd-resolved and the documented `ip`
+and `resolvectl` tools.
+
+The daemon uses a kernel Run and owned process custody. Its generation-fenced
+control socket lives under `~/.effigy/gateway/runtime/`. Status has a shared
+three-second observation budget and verifies ownership, custody, control socket,
+HTTP readiness, HTTPS listener acceptance and DNS response. An unknown
+observation is reported as unavailable; it never authorizes a stop or replacement.
+HTTP/HTTPS accept readiness probes and initial TCP aliases bind before DNS
+or lifecycle readiness is published.
+
+An ordinary command encountering the old root gateway reports `setup_required`
+and directs you to `effigy gateway setup`. Setup verifies and stops only the
+recorded live v0.14.1 process generation, transfers the explicit legacy JSON
+registries and leaf certificates to your account without changing their bytes,
+and starts the operator daemon. Unknown process identity prevents migration.
+URLs, loopback IPs, generated 100-port ranges and pins remain unchanged. Routes,
+loopback allocations and port ranges still use their JSON files; endpoint-store
+migration is a separate change.
+
+For explicit platform removal, first stop dependent consumers, then run
+`effigy gateway setup --remove`. This stops the operator daemon and removes
+only verified setup-owned platform output. Routes, leaf certificates and mkcert
+CA trust are preserved. This removal command is also an administrator action.
+
+Qualification on Tom's Mac remains a separate operator-run check: after setup,
+reboot, run `effigy gateway up`, start the CBS and Acowtancy workflows, and
+check their recorded HTTP/HTTPS and database URLs. Confirm that status/up/down
+and both workflows request no administrator access. Capture status and URL
+results on the exact candidate. The private fixture proofs do not establish
+cross-boot resolution or trust on a real installation.
 
 ### Private gateway for disposable consumers
 
@@ -1411,150 +1475,28 @@ conflicts, but leaves live checkout routes alone.
 
 ### User gateway listener handoff (SOURCE candidate; operator-run install)
 
-The exact loopback ports `80` and `443` cannot be bound by an unprivileged
-daemon (architecture 034). The implemented route is launchd socket
-activation: an administrator-installed launchd definition owns exactly two
-loopback sockets — TCP `127.0.0.1:80` (socket name `http`) and TCP
-`127.0.0.1:443` (socket name `https`) — and hands them to a gateway daemon
-running as you. The daemon validates every handed descriptor (exact family,
-type, listening state, endpoint, no duplicates) before adopting it, keeps
-DNS (UDP `127.0.0.1:15353`) and TCP aliases on their ordinary unprivileged
-paths, and refuses fail-closed without publishing a record when activation
-is missing or malformed.
-
-Status: **SOURCE implementation candidate.** Definition bytes, descriptor
-adoption, and refusals are privately qualified on ephemeral loopback
-fixtures. The administrator install, live activation, and cross-boot
-restore below are **unexecuted** and remain yours alone; no agent, task, or
-workflow runs them (architecture 034). Everything here targets macOS only;
-other platforms refuse the handoff.
-
-Generate and review the definition (operator, unprivileged; installs
-nothing):
-
-```sh
-effigy gateway setup-listener-handoff > dev.effigy.gateway.user.plist
-```
-
-Install and start (administrator; you run each step yourself):
-
-```sh
-# 1. Follow the task-155 migration order first: confirm the old root-owned
-#    gateway generation with `effigy gateway status`, stop it through the
-#    bounded interactive `effigy gateway down` path for v0.14.1 records,
-#    and verify absence with `effigy gateway status`.
-# 2. Install the reviewed definition root-owned and not world-writable;
-#    launchd refuses other modes.
-sudo cp dev.effigy.gateway.user.plist /Library/LaunchDaemons/dev.effigy.gateway.user.plist
-sudo chown root:wheel /Library/LaunchDaemons/dev.effigy.gateway.user.plist
-sudo chmod 0644 /Library/LaunchDaemons/dev.effigy.gateway.user.plist
-# 3. Register and start the job (RunAtLoad plus KeepAlive in the definition
-#    keep it running and restore it at boot).
-sudo launchctl bootstrap system /Library/LaunchDaemons/dev.effigy.gateway.user.plist
-```
-
-Verify (operator):
-
-```sh
-effigy gateway status            # running, standard endpoints, your records
-sudo launchctl print system/dev.effigy.gateway.user   # job state and sockets
-```
-
-Rollback (administrator):
-
-```sh
-sudo launchctl bootout system/dev.effigy.gateway.user
-sudo rm /Library/LaunchDaemons/dev.effigy.gateway.user.plist
-```
-
-Boundaries that stay true regardless of the handoff:
-
-- `effigy gateway down` cannot durably stop a KeepAlive launchd job —
-  launchd restarts it. Use `launchctl bootout` (above) to stop it.
-- The definition carries no trust claim. launchd does not verify the
-  executable's contents; regenerate the definition after changing the
-  Effigy install so the reviewed executable path stays exact.
-- Resolver files, `lo0` aliases (which need reapplying after reboot), and
-  CA trust stay separate administrator steps from the task-155 inventory.
-  The daemon never writes `/etc/resolver`, never deletes setup, and the
-  handoff changes no route-table, registry, certificate, or generation
-  contract.
-- Until you have executed the install and a real reboot restore, consumer
-  gateways must keep using the existing root or private startup paths.
-
-Check and remove the handoff (operator, unprivileged; both read-only):
-
-```sh
-effigy gateway listener-handoff-status          # human-readable observation
-effigy gateway listener-handoff-status --json   # bounded command envelope
-effigy gateway remove-listener-handoff          # checked plan, unexecuted
-```
-
-`listener-handoff-status` reports the fixed definition's identity and the
-launchd job as distinct findings. `definition` is `verified` only when the
-file is root-owned, not group/other-writable, not a symlink, within the byte
-bound, parses as the exact generator shape, and names the resolved operator
-(`UserName`/`GroupName`/`HOME`) and the current canonical executable. Otherwise
-it names the finding (`foreign_owner`, `unsafe_mode`, `symlink`, `changed`,
-`shape_mismatch`, `operator_mismatch`, `program_stale`, `program_missing`, and
-so on); `program: stale` or `program: missing` is the moved/missing executable
-case. `job` is `loaded_running`, `loaded_not_running`, `confirmed_absent`, or a
-bounded unavailable state (`permission_denied`, `capture_timed_out`,
-`capture_truncated`, `nonzero_exit`, `malformed`, `association_mismatch`,
-`unavailable`, `unsupported`). Label, PID, file checksum and the displayed
-path are observations, never authority to signal or remove anything.
-
-`remove-listener-handoff` prints only the fixed administrator plan below, and
-only when the definition verifies for the current operator and executable and
-the job observation is determinate. It runs no `sudo`, `launchctl` or `rm`.
-Foreign, stale, changed or uncertain definitions and loaded jobs refuse before
-any usable plan is produced.
-
-```text
-# UNEXECUTED plan. Re-run `effigy gateway listener-handoff-status` first and
-# confirm definition: verified, program: current, operator: matching, and a
-# determinate job observation; stop if anything is foreign, stale or unknown.
-sudo launchctl bootout system/dev.effigy.gateway.user
-sudo rm /Library/LaunchDaemons/dev.effigy.gateway.user.plist
-```
-
-The two commands do not stop the gateway: the build-156 KeepAlive consequence
-still holds, so `effigy gateway down` cannot durably stop the job and only the
-`bootout` step above does. After an operator-executed removal, verifying success
-and starting a supported gateway remain operator steps; nothing restarts
-automatically, and resolver files, `lo0` aliases, CA trust and routes are not
-touched by the plan.
+The experimental `setup-listener-handoff`, `listener-handoff-status` and
+`remove-listener-handoff` commands retain their source-only inspection and
+unexecuted-plan behavior. They do not install or control the standard gateway.
+Use `gateway setup` and ordinary kernel-owned lifecycle commands for the
+operator gateway. Its bind broker transfers listeners after exec; it does not
+pass launchd sockets through the custody spawn barrier. Descriptor validation
+is shared with the experimental adoption proof.
 
 ### Route-table trust
 
-The gateway daemon can run elevated (to bind `:80`/`:443` and write resolver
-files), and it reverse-proxies to whatever upstream each route names. So it
-verifies its route table before trusting it: Effigy writes `routes.json`
-owner-only (`0o600`) with a managed marker, and the daemon refuses a
-group/other-writable or unmarked table, keeping its last-known-good routes
-instead. `effigy gateway status` reports `route_table_trust` and
-`effigy doctor` warns when the table is untrusted. If you upgrade from a build
-that predates this and see an "untrusted" warning, re-run `effigy container up`
-(or re-register routes) once to re-stamp the table. The full model is in
+The operator daemon reverse-proxies to the upstream each route names. Effigy
+writes `routes.json` owner-only (`0o600`) with a managed marker. An untrusted,
+unreadable or group/other-writable replacement is refused while the daemon
+keeps its last-known-good table. Re-registering routes stamps the current format.
+The full route-table model is in
 [`033-gateway-route-table-trust-contract.md`](../knowledge/contracts/033-gateway-route-table-trust-contract.md).
 
-If gateway identity is unreadable to the current user, `effigy gateway status`
-may request the existing bounded, read-only administrator verification; a
-lifecycle command may request the existing bounded administrator operation.
-Approve that visible request in an interactive terminal. Reuse is different
-from authority: publishing or withdrawing routes writes the owner-checked
-route table directly, and a managed task start (`effigy dev:container` in a
-headless session, for example) only reuses an already-running daemon. So an
-authenticated, running gateway whose identity is unreadable is reused without
-replacement on those paths — headless included — with one printed note that
-the identity could not be verified. Only operations that signal, stop,
-replace, recover, or start a second gateway still require a verified identity
-and refuse with the bounded diagnosis. If the identity or
-lifecycle wait times out, run `effigy gateway status` before
-retrying; Effigy keeps records when the process generation is unknown and does
-not infer a match from a responding HTTP endpoint or PID file. To restart only
-the repository's managed development session while keeping the shared gateway
-available, use the task-local sequence in
+Status never requests administrator verification. A legacy root-owned or
+unknown identity directs the operator to setup, preserving its records until
+setup can establish process ownership. A responding endpoint or decimal PID
+alone never authorizes a stop. To restart only a repository's managed session
+while keeping the gateway available, use the task-local sequence in
 [`012-dev-process-manager-tui.md`](012-dev-process-manager-tui.md#restart-the-managed-dev-session).
 
 ## Troubleshooting: stale SSH-agent forwarding

@@ -15,7 +15,7 @@ use effigy_kernel::outcome::Invocation;
 use effigy_kernel::probe::{HttpReadMethod, ObservationTarget, ProbeIo, StatusSet};
 use effigy_kernel::root::StateRoot;
 use effigy_kernel::run::{
-    self, Fence, Reconciled, Request, RequestAction, RunError, RunStatus, SettlementAdapter,
+    self, Fence, Reconciled, Request, RequestAction, RunStatus, SettlementAdapter,
 };
 use effigy_kernel::store::Store;
 use effigy_kernel::supervise::{self, ClientMode, Executable};
@@ -499,16 +499,5 @@ mod tests {
         let before = Instant::now();
         assert!(self_test(&config, Duration::from_millis(80)).is_err());
         assert!(before.elapsed() < Duration::from_secs(2));
-    }
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn macos_operator_can_bind_low_ports_on_the_gateway_loopback_aliases() {
-        assert!(!nix::unistd::Uid::effective().is_root());
-        for n in 1..=50 {
-            let ip = std::net::Ipv4Addr::new(127, 1, 0, n);
-            for port in [80, 443] {
-                std::net::TcpListener::bind((ip,port)).unwrap_or_else(|e|panic!("unprivileged bind {ip}:{port}: {e}; configure the setup aliases before this qualification"));
-            }
-        }
     }
 }

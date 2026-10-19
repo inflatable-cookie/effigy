@@ -113,8 +113,12 @@ impl Drop for TestGatewayHomeGuard {
 }
 
 pub(super) fn run_gateway(args: GatewayArgs) -> Result<String, RunnerError> {
-    if let GatewaySubcommand::Setup { ref suffixes } = args.subcommand {
-        return run_gateway_setup(suffixes, args.output_json);
+    if let GatewaySubcommand::Setup {
+        ref suffixes,
+        remove,
+    } = args.subcommand
+    {
+        return run_gateway_setup(suffixes, remove, args.output_json);
     }
     let config = gateway_config_with_private(args.private.as_ref())?;
     match args.subcommand {
@@ -1248,7 +1252,7 @@ fn run_gateway_setup_tls_with_config(
     output_json: bool,
 ) -> Result<String, RunnerError> {
     if !config.is_private() {
-        return run_gateway_setup(&[], output_json);
+        return run_gateway_setup(&[], false, output_json);
     }
     let tls_config = gateway_tls_config(config)?;
 
@@ -1914,7 +1918,11 @@ enum GatewayUpState {
 #[cfg(test)]
 mod tests;
 
-fn run_gateway_setup(extra: &[String], output_json: bool) -> Result<String, RunnerError> {
+fn run_gateway_setup(
+    extra: &[String],
+    remove: bool,
+    output_json: bool,
+) -> Result<String, RunnerError> {
     use effigy_gateway::{operator, setup};
     let execute = || -> std::io::Result<String> {
         if nix::unistd::Uid::effective().is_root() {
@@ -1926,6 +1934,9 @@ fn run_gateway_setup(extra: &[String], output_json: bool) -> Result<String, Runn
                 .ok_or_else(|| std::io::Error::other("root account missing"))?
                 .dir;
             setup::session(&root_home, true, |run, cx| {
+                if remove {
+                    return setup::remove_platform(run, cx, uid, &suffixes);
+                }
                 setup::migrate_root(&config, uid, |snapshot| {
                     stop_gateway_process_for_replacement(snapshot)
                         .map_err(|e| std::io::Error::other(e.to_string()))
@@ -1948,14 +1959,19 @@ fn run_gateway_setup(extra: &[String], output_json: bool) -> Result<String, Runn
         suffixes.extend(extra.iter().cloned());
         suffixes.sort();
         suffixes.dedup();
+        if remove {
+            operator::down(&config)?;
+        }
         setup::session(&home, false, |run, cx| {
             // mkcert uses this operator's preserved CA. It is never run by the daemon.
-            if !TlsConfig::mkcert_available() {
+            if !remove && !TlsConfig::mkcert_available() {
                 return Err(std::io::Error::other(
                     "install mkcert, then run `effigy gateway setup`",
                 ));
             }
-            setup::command(run, cx, vec!["mkcert".into(), "-install".into()], true)?;
+            if !remove {
+                setup::command(run, cx, vec!["mkcert".into(), "-install".into()], true)?;
+            }
             let mut argv = vec![
                 "/usr/bin/sudo".into(),
                 "-H".into(),
@@ -1964,16 +1980,25 @@ fn run_gateway_setup(extra: &[String], output_json: bool) -> Result<String, Runn
                 "gateway".into(),
                 "setup".into(),
             ];
+            if remove {
+                argv.push("--remove".into());
+            }
             for suffix in &suffixes {
                 argv.extend(["--suffix".into(), suffix.into()]);
             }
             setup::command(run, cx, argv, true)?;
+            if remove {
+                return setup::remove_receipt(run, cx, &home);
+            }
             // Re-read the now operator-owned legacy state, preserving every manual route.
             suffixes.extend(setup::approved_suffixes(&config, extra)?);
             suffixes.sort();
             suffixes.dedup();
             setup::save_receipt(run, cx, &home, suffixes)
         })?;
+        if remove {
+            return Ok("Gateway platform setup removed; routes and certificates preserved".into());
+        }
         let result = operator::up(&config)?;
         Ok(if output_json {
             serde_json::to_string(&result).map_err(std::io::Error::other)?

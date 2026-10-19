@@ -955,27 +955,33 @@ async fn bind_private_gateway_listeners(
             addr: config.dns.bind_addr.to_string(),
             reason: error.to_string(),
         })?;
-    let proxy = TcpListener::bind(config.proxy.bind_addr)
-        .await
-        .map_err(|error| GatewayError::ProxyBindError {
-            addr: config.proxy.bind_addr.to_string(),
-            reason: error.to_string(),
-        })?;
-    let https_bind_addr =
-        config
-            .proxy
-            .tls_bind_addr
-            .ok_or_else(|| GatewayError::ProxyBindError {
-                addr: "<missing>".to_owned(),
-                reason: "private gateway requires an HTTPS listener".to_owned(),
-            })?;
-    let https =
-        TcpListener::bind(https_bind_addr)
-            .await
-            .map_err(|error| GatewayError::ProxyBindError {
-                addr: https_bind_addr.to_string(),
-                reason: format!("HTTPS bind failed: {error}"),
-            })?;
+    let https_bind_addr = config.proxy.tls_bind_addr.ok_or_else(|| {
+        GatewayError::Io(std::io::Error::other("gateway requires an HTTPS listener"))
+    })?;
+    let direct = async {
+        let proxy = TcpListener::bind(config.proxy.bind_addr).await?;
+        let https = TcpListener::bind(https_bind_addr).await?;
+        Ok::<_, std::io::Error>((proxy, https))
+    }
+    .await;
+    #[cfg(target_os = "macos")]
+    let direct = match direct {
+        Err(error)
+            if !config.is_private() && error.kind() == std::io::ErrorKind::PermissionDenied =>
+        {
+            let endpoints = [config.proxy.bind_addr, https_bind_addr];
+            let handed =
+                tokio::task::spawn_blocking(move || crate::bind_broker::request(endpoints))
+                    .await
+                    .map_err(std::io::Error::other)??;
+            Ok(handed.into_tokio()?)
+        }
+        other => other,
+    };
+    let (proxy, https) = direct.map_err(|error| GatewayError::ProxyBindError {
+        addr: config.proxy.bind_addr.to_string(),
+        reason: format!("listener acquisition failed: {error}"),
+    })?;
     let listeners = PrivateGatewayListeners {
         dns_addr: dns.local_addr().map_err(GatewayError::Io)?,
         proxy_addr: proxy.local_addr().map_err(GatewayError::Io)?,
@@ -1336,17 +1342,8 @@ async fn run_gateway_with_cancel(
     // Create shutdown channel.
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
-    // Reconcile route-driven `/etc/resolver/` files against the
-    // initial route table. Best-effort — we run as root here, but
-    // surfacing fs errors aborts the daemon, which is wrong for a
-    // resolver-side concern. Just log and continue.
     // Resolver and alias installation belongs exclusively to gateway setup.
-
-    // Set up file watcher for route table.
-    // When routes change, the watcher reloads the table, clears the
-    // DNS cache so new routes are picked up immediately, and
-    // re-reconciles `/etc/resolver/` so non-managed-TLD route domains
-    // get system resolver files written/removed in lockstep.
+    // Route reloads update the table and clear the DNS cache without host mutations.
     let watcher_table = Arc::clone(&shared_table);
     let watcher_cache = Arc::clone(&dns_cache);
     let watcher_path = runtime_config.route_table_path.clone();

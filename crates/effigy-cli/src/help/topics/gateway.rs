@@ -15,7 +15,7 @@ pub(crate) fn render_gateway_help<R: HelpRenderer + ?Sized>(renderer: &mut R) ->
             "Experimental, not for general use: `setup-listener-handoff`, `listener-handoff-status` and `remove-listener-handoff` print or inspect a launchd definition for a user-owned gateway. They install, run and remove nothing (guide 063).",
         ],
         &[
-            "effigy gateway setup [--suffix <DOMAIN>] [--json]",
+            "effigy gateway setup [--suffix <DOMAIN>] [--remove] [--json]",
             "effigy gateway up [--private-state-root <DIR>] [--dns-addr <IP:PORT>] [--proxy-addr <IP:PORT>] [--https-addr <IP:PORT>] [--json]",
             "effigy gateway down [--private-state-root <DIR>] [--json]",
             "effigy gateway status [--private-state-root <DIR>] [--json]",

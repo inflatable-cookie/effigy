@@ -1,5 +1,5 @@
 //! The sole standard gateway administrator action. Native platform jobs never
-//! execute Effigy as root. JSON routes remain the operator's source of truth.
+//! serve application traffic as root. JSON routes remain the operator's source of truth.
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::io::{self, Read};
@@ -22,6 +22,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::operator::{self, error};
 use crate::server::GatewayConfig;
+#[cfg(any(target_os = "macos", test))]
+mod broker;
 const MARKER: &str = "Managed by Effigy gateway setup v1";
 const MAX_FILE: u64 = 8 << 20;
 
@@ -215,6 +217,21 @@ pub fn command(
     argv: Vec<OsString>,
     terminal: bool,
 ) -> io::Result<Vec<u8>> {
+    let (code, output) = command_outcome(run, cx, argv, terminal)?;
+    if code != 0 {
+        return Err(error(format!(
+            "gateway setup adapter failed (exit {code}): {}",
+            String::from_utf8_lossy(&output)
+        )));
+    }
+    Ok(output)
+}
+fn command_outcome(
+    run: &mut Run<'_>,
+    cx: &EffectContext,
+    argv: Vec<OsString>,
+    terminal: bool,
+) -> io::Result<(i32, Vec<u8>)> {
     let env: BTreeMap<_, _> = std::env::vars_os()
         .map(|(key, value)| (key, EnvValue::Plain(value)))
         .collect();
@@ -242,15 +259,9 @@ pub fn command(
     };
     child.complete(run, exit).map_err(error)?;
     let output = child.tail();
-    if exit.code != 0 {
-        return Err(error(format!(
-            "gateway setup adapter failed (exit {}): {}",
-            exit.code,
-            String::from_utf8_lossy(&output)
-        )));
-    }
-    Ok(output)
+    Ok((exit.code, output))
 }
+
 #[derive(Debug)]
 struct Bytes(Vec<u8>);
 impl Record for Bytes {
@@ -338,8 +349,39 @@ pub fn apply_platform(
             &macos_boot_job(),
             false,
         )?;
-        // Apply aliases now; launchd runs the same fixed commands after reboot.
+        let (uid, _) = authenticated_operator()?;
+        let user = nix::unistd::User::from_uid(nix::unistd::Uid::from_raw(uid))
+            .map_err(error)?
+            .ok_or_else(|| error("operator account missing"))?;
+        let library = DirFd::open(Path::new("/Library")).map_err(error)?;
+        let helpers = library
+            .prepare_child(
+                cx,
+                &FileName::new("PrivilegedHelperTools").map_err(error)?,
+                0o755,
+            )
+            .map_err(error)?;
+        broker::install(
+            run,
+            cx,
+            &jobs,
+            &helpers,
+            (uid, user.gid.as_raw()),
+            &std::env::current_exe()?,
+            |run, cx, argv| command_outcome(run, cx, argv, false),
+        )?;
+        // Observe the real interface before adding missing aliases. Repeated
+        // setup never treats a failed or unavailable observation as absence.
+        let interfaces = command(run, cx, vec!["/sbin/ifconfig".into(), "lo0".into()], false)?;
+        let interfaces = String::from_utf8(interfaces).map_err(error)?;
         for n in 1..=50 {
+            let address = format!("127.1.0.{n}");
+            if interfaces.lines().any(|line| {
+                line.split_whitespace().collect::<Vec<_>>().get(..2)
+                    == Some(&["inet", address.as_str()])
+            }) {
+                continue;
+            }
             command(
                 run,
                 cx,
@@ -428,6 +470,133 @@ pub fn save_receipt(
     )
     .map_err(error)
 }
+fn remove_managed(
+    run: &mut Run<'_>,
+    cx: &EffectContext,
+    dir: &DirFd,
+    name: &str,
+) -> io::Result<()> {
+    match read_record::<Bytes>(
+        &cx.operation().observe().map_err(error)?,
+        dir,
+        &FileName::new(name).map_err(error)?,
+    ) {
+        Observed::Absent(_) => return Ok(()),
+        Observed::Verified(bytes, _) if String::from_utf8_lossy(&bytes.0).contains(MARKER) => {}
+        other => return Err(error(format!("preserving foreign setup output: {other:?}"))),
+    }
+    // Verified directory ownership and the setup gate exclude concurrent
+    // writers. Custody journals this exact, non-recursive removal command.
+    command(
+        run,
+        cx,
+        vec!["/bin/rm".into(), dir.path().join(name).into()],
+        false,
+    )?;
+    Ok(())
+}
+pub fn remove_receipt(run: &mut Run<'_>, cx: &EffectContext, home: &Path) -> io::Result<()> {
+    read_receipt(home)?;
+    command(
+        run,
+        cx,
+        vec![
+            "/bin/rm".into(),
+            home.join(".effigy/gateway/setup.json").into(),
+        ],
+        false,
+    )?;
+    Ok(())
+}
+/// Explicit setup teardown preserves route registries, certificates and CA
+/// trust. It changes only positively identified platform output.
+pub fn remove_platform(
+    run: &mut Run<'_>,
+    cx: &EffectContext,
+    uid: u32,
+    suffixes: &[String],
+) -> io::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        let jobs = DirFd::open(Path::new("/Library/LaunchDaemons")).map_err(error)?;
+        let helpers = DirFd::open(Path::new("/Library/PrivilegedHelperTools")).map_err(error)?;
+        broker::remove(run, cx, &jobs, &helpers, uid, |run, cx, argv| {
+            command_outcome(run, cx, argv, false)
+        })?;
+        let resolvers = DirFd::open(Path::new("/private/etc/resolver")).map_err(error)?;
+        for suffix in suffixes {
+            remove_managed(run, cx, &resolvers, suffix)?;
+        }
+        let alias_job = "dev.effigy.gateway.loopback.plist";
+        if broker::owned_job(cx, &jobs, alias_job)? {
+            broker::stop_job(
+                run,
+                cx,
+                "dev.effigy.gateway.loopback",
+                (&jobs.path().join(alias_job), Path::new("/bin/sh")),
+                &mut |run, cx, argv| command_outcome(run, cx, argv, false),
+            )?;
+            remove_managed(run, cx, &jobs, alias_job)?;
+            let interfaces = command(run, cx, vec!["/sbin/ifconfig".into(), "lo0".into()], false)?;
+            let interfaces = String::from_utf8(interfaces).map_err(error)?;
+            for n in 1..=50 {
+                let address = format!("127.1.0.{n}");
+                if interfaces.lines().any(|line| {
+                    line.split_whitespace().collect::<Vec<_>>().get(..2)
+                        == Some(&["inet", address.as_str()])
+                }) {
+                    command(
+                        run,
+                        cx,
+                        vec![
+                            "/sbin/ifconfig".into(),
+                            "lo0".into(),
+                            "-alias".into(),
+                            address.into(),
+                        ],
+                        false,
+                    )?;
+                }
+            }
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let systemd = DirFd::open(Path::new("/etc/systemd/system")).map_err(error)?;
+        let name = "effigy-gateway-dns.service";
+        match read_record::<Bytes>(
+            &cx.operation().observe().map_err(error)?,
+            &systemd,
+            &FileName::new(name).map_err(error)?,
+        ) {
+            Observed::Verified(bytes, _) if String::from_utf8_lossy(&bytes.0).contains(MARKER) => {
+                command(
+                    run,
+                    cx,
+                    vec![
+                        "/usr/bin/systemctl".into(),
+                        "disable".into(),
+                        "--now".into(),
+                        name.into(),
+                    ],
+                    false,
+                )?;
+                remove_managed(run, cx, &systemd, name)?;
+                command(
+                    run,
+                    cx,
+                    vec!["/usr/bin/systemctl".into(), "daemon-reload".into()],
+                    false,
+                )?;
+            }
+            Observed::Absent(_) => {}
+            other => return Err(error(format!("preserving foreign DNS unit: {other:?}"))),
+        }
+        remove_bind_capability()?;
+    }
+    let _ = (uid, suffixes);
+    Ok(())
+}
 /// Repair only the three explicit legacy registries and leaf-certificate
 /// files after the authenticated root daemon has stopped. Never recurse or
 /// change CA material. Descriptor operations preserve every input byte.
@@ -478,6 +647,21 @@ pub fn adopt_legacy_files(home: &Path, uid: u32) -> io::Result<()> {
             .adopt_setup_entry(&cx, &certs_name, true, MAX_FILE)
             .map_err(error)?;
     }
+    effigy
+        .adopt_setup_entry(
+            &cx,
+            &FileName::new("gateway").map_err(error)?,
+            true,
+            MAX_FILE,
+        )
+        .map_err(error)?;
+    dir.adopt_setup_entry(
+        &cx,
+        &FileName::new(".effigy").map_err(error)?,
+        true,
+        MAX_FILE,
+    )
+    .map_err(error)?;
     Ok(())
 }
 
@@ -553,8 +737,7 @@ fn migrate_root_with(
 }
 
 #[cfg(target_os = "linux")]
-fn install_bind_capability() -> io::Result<()> {
-    use std::os::fd::AsRawFd;
+fn bind_capability_file() -> io::Result<std::fs::File> {
     let path = std::env::current_exe()?;
     let file = std::fs::OpenOptions::new()
         .read(true)
@@ -570,17 +753,54 @@ fn install_bind_capability() -> io::Result<()> {
     {
         return Err(error("installed gateway binary changed during setup"));
     }
+    Ok(file)
+}
+#[cfg(target_os = "linux")]
+const BIND_CAPABILITY: [u8; 20] = [1, 0, 0, 2, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+#[cfg(target_os = "linux")]
+fn verify_bind_capability(file: &std::fs::File) -> io::Result<bool> {
+    use std::os::fd::AsRawFd;
+    let mut bytes = [0u8; 24];
+    // SAFETY: live owned descriptor and initialized writable buffer of exactly
+    // the reported size; the fixed attribute name is NUL-terminated.
+    let count = unsafe {
+        libc::fgetxattr(
+            file.as_raw_fd(),
+            c"security.capability".as_ptr(),
+            bytes.as_mut_ptr().cast(),
+            bytes.len(),
+        )
+    };
+    if count < 0 {
+        let failure = io::Error::last_os_error();
+        if failure.raw_os_error() == Some(libc::ENODATA) {
+            return Ok(false);
+        }
+        return Err(failure);
+    }
+    if count as usize != BIND_CAPABILITY.len() || bytes[..count as usize] != BIND_CAPABILITY {
+        return Err(error("preserving foreign executable capability"));
+    }
+    Ok(true)
+}
+#[cfg(target_os = "linux")]
+/// Apply the exact binary-local low-port capability during authorized setup.
+pub fn install_bind_capability() -> io::Result<()> {
+    use std::os::fd::AsRawFd;
+    let file = bind_capability_file()?;
+    if verify_bind_capability(&file)? {
+        return Ok(());
+    }
     // Linux vfs_cap_data revision 2, effective flag, permitted bit 10 only.
     // File capabilities do not grant privilege to arbitrary child programs.
-    let capability: [u8; 20] = [1, 0, 0, 2, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
     // SAFETY: verified live descriptor, fixed NUL-terminated xattr name and
     // exactly initialized Linux capability bytes. No path is reopened.
     if unsafe {
         libc::fsetxattr(
             file.as_raw_fd(),
             c"security.capability".as_ptr(),
-            capability.as_ptr().cast(),
-            capability.len(),
+            BIND_CAPABILITY.as_ptr().cast(),
+            BIND_CAPABILITY.len(),
             0,
         )
     } != 0
@@ -590,11 +810,26 @@ fn install_bind_capability() -> io::Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
+/// Remove only the exact capability installed by this adapter.
+pub fn remove_bind_capability() -> io::Result<()> {
+    use std::os::fd::AsRawFd;
+    let file = bind_capability_file()?;
+    if !verify_bind_capability(&file)? {
+        return Ok(());
+    }
+    // SAFETY: descriptor stays live; the fixed attribute name is NUL-terminated.
+    if unsafe { libc::fremovexattr(file.as_raw_fd(), c"security.capability".as_ptr()) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
-    fn with_run(work: impl FnOnce(&mut Run<'_>, &EffectContext, &Path)) {
+    pub(super) fn with_run(work: impl FnOnce(&mut Run<'_>, &EffectContext, &Path)) {
         let home = tempfile::tempdir().unwrap();
         let op = operator::context(Duration::from_secs(10), EffectClass::Mutate);
         let cx = op.effects().unwrap();
@@ -735,5 +970,54 @@ mod tests {
         assert!(linux.contains("ExecStop=/usr/sbin/ip link delete effigy-gw"));
         assert!(!linux.contains("resolved.conf"));
         assert!(!linux.contains("resolv.conf"));
+    }
+    #[test]
+    #[ignore = "requires explicit redacted operator snapshot; run proof:gateway:operator:migration"]
+    fn root_gateway_migration_preserves_redacted_operator_snapshot() {
+        let source = PathBuf::from(
+            std::env::var_os("EFFIGY_GATEWAY_MIGRATION_SNAPSHOT").expect("explicit snapshot path"),
+        );
+        let home = tempfile::tempdir().unwrap();
+        let gateway = home.path().join(".effigy/gateway");
+        std::fs::create_dir_all(&gateway).unwrap();
+        let config = GatewayConfig::standard(gateway.clone());
+        let mut originals = Vec::new();
+        for (name, target) in [
+            ("routes.json", gateway.join("routes.json")),
+            ("loopback-ips.json", gateway.join("loopback-ips.json")),
+            ("ports.json", home.path().join(".effigy/ports.json")),
+        ] {
+            let bytes = std::fs::read(source.join(name)).unwrap();
+            std::fs::write(&target, &bytes).unwrap();
+            std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600)).unwrap();
+            originals.push((target, bytes));
+        }
+        let before = crate::routes::RouteTable::load(&config.route_table_path)
+            .unwrap()
+            .len();
+        assert!(before > 0, "snapshot must contain real route mappings");
+        let uid = nix::unistd::Uid::effective().as_raw();
+        crate::identity::publish_current_gateway(&config.pid_file_path, uid).unwrap();
+        crate::identity::publish_gateway_version(&config.pid_file_path, "0.14.1").unwrap();
+        migrate_root_with(
+            &config,
+            uid,
+            |_| Ok(Some(0)),
+            |snapshot| {
+                crate::identity::remove_if_unchanged(snapshot).map_err(error)?;
+                Ok(())
+            },
+        )
+        .unwrap();
+        for (path, bytes) in originals {
+            assert_eq!(std::fs::read(path).unwrap(), bytes);
+        }
+        assert_eq!(
+            crate::routes::RouteTable::load(&config.route_table_path)
+                .unwrap()
+                .len(),
+            before
+        );
+        println!("preserved {before} redacted operator routes and every allocation byte");
     }
 }

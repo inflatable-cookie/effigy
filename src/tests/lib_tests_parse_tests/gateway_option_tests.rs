@@ -276,6 +276,30 @@ fn parse_gateway_setup_accepts_explicit_public_suffixes() {
     )
     .unwrap();
     assert!(
-        matches!(command, effigy_cli::Command::Gateway(effigy_cli::GatewayArgs { subcommand: effigy_cli::GatewaySubcommand::Setup { suffixes }, output_json: true, .. }) if suffixes == ["dev.cumberland.co.uk"])
+        matches!(command, effigy_cli::Command::Gateway(effigy_cli::GatewayArgs { subcommand: effigy_cli::GatewaySubcommand::Setup { suffixes, remove: false }, output_json: true, .. }) if suffixes == ["dev.cumberland.co.uk"])
     );
+}
+
+#[test]
+fn parse_gateway_setup_remove_is_explicit_and_rejects_private_mode() {
+    let command =
+        effigy_cli::parse_command(["gateway", "setup", "--remove"].map(String::from)).unwrap();
+    assert!(matches!(
+        command,
+        effigy_cli::Command::Gateway(effigy_cli::GatewayArgs {
+            subcommand: effigy_cli::GatewaySubcommand::Setup { remove: true, .. },
+            ..
+        })
+    ));
+    assert!(effigy_cli::parse_command(
+        [
+            "gateway",
+            "setup",
+            "--remove",
+            "--private-state-root",
+            "/unused"
+        ]
+        .map(String::from)
+    )
+    .is_err());
 }

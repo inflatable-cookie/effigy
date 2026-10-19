@@ -1,5 +1,23 @@
 fn main() {
     let raw_args: Vec<String> = std::env::args().skip(1).collect();
+    #[cfg(target_os = "macos")]
+    if raw_args
+        .first()
+        .is_some_and(|arg| arg == "__gateway-bind-broker")
+    {
+        let result = match raw_args.as_slice() {
+            [_, uid] => uid
+                .parse()
+                .map_err(std::io::Error::other)
+                .and_then(effigy_gateway::bind_broker::entry),
+            _ => Err(std::io::Error::other("expected setup-pinned operator UID")),
+        };
+        if let Err(error) = result {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+        return;
+    }
     if raw_args == ["__gateway-run"]
         || raw_args
             .first()
