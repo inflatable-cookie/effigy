@@ -5,6 +5,9 @@
 //! any spawn; library callers pass its cancellation token.
 #![deny(missing_debug_implementations, unsafe_op_in_unsafe_fn)]
 
+#[cfg(feature = "fault-injection")]
+pub mod fault_injection;
+
 pub mod ctx;
 pub mod custody;
 pub mod fs;
@@ -42,6 +45,8 @@ macro_rules! fault_point {
         let result = $crate::fault::point($crate::fault::Point::$point);
         #[cfg(not(all(test, feature = "fault-injection")))]
         let result = ::std::io::Result::<()>::Ok(());
+        #[cfg(feature = "fault-injection")]
+        let result = result.and_then(|()| $crate::fault_injection::point(stringify!($point)));
         result
     }};
 }

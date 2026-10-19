@@ -2,7 +2,9 @@
 //!
 //! This crate owns the storage and redaction types for Effigy's built-in
 //! secret vault. It deliberately does not expose CLI behavior or runtime
-//! injection. Encryption is added in the next `g05.003` card.
+//! injection. File persistence uses the runtime kernel.
+
+pub mod storage;
 
 use std::collections::BTreeMap;
 use std::fmt;

@@ -284,6 +284,10 @@
       "std.process.Command.spawn": 1,
       "std.process.Command.status": 1
     },
+    "crates/effigy-rhai/src/rhai_secrets.rs": {
+      "std.fs.OpenOptions.write": 0,
+      "std::fs::write": 0
+    },
     "crates/effigy-runtime/src/qa_group_status.rs": {
       "nix::sys::signal::kill": 1,
       "std::fs::remove_file": 1,
@@ -305,6 +309,10 @@
       "std.process.Command.new": 2,
       "std::fs::remove_file": 2,
       "std::fs::rename": 1
+    },
+    "crates/effigy-secrets/src/storage.rs": {
+      "std.fs.OpenOptions.write": 0,
+      "std::fs::write": 0
     },
     "crates/effigy-state/src/paths.rs": {
       "std::fs::write": 2
@@ -508,6 +516,10 @@
     "src/runner/secret_session.rs": {
       "std::env::remove_var": 1,
       "std::env::set_var": 3
+    },
+    "src/runner/secret_vault.rs": {
+      "std.fs.OpenOptions.write": 0,
+      "std::fs::write": 0
     },
     "src/runner/secrets_command.rs": {
       "std.fs.OpenOptions.write": 3,
@@ -826,6 +838,12 @@
       "std.process.Command.spawn": 1,
       "std.process.Command.status": 1,
       "std::fs::write": 16
+    },
+    "crates/effigy-secrets/src/storage/tests.rs": {
+      "std.process.Command.new": 3,
+      "std.process.Command.spawn": 1,
+      "std.process.Command.status": 2,
+      "std::fs::write": 3
     },
     "crates/effigy-state/src/tests.rs": {
       "std::fs::write": 2
