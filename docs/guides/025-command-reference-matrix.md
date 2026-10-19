@@ -263,6 +263,7 @@ Common values:
 effigy service list [--repo <PATH>] [--json]
 effigy service extract <SERVICE> [--repo <PATH>] [--dir <PATH>] [--json]
 effigy exec [--repo <PATH>] [--service <NAME>] [--json] <COMMAND> [ARGS...]
+effigy gateway setup [--suffix <DOMAIN>] [--remove] [--json]
 effigy gateway <up|down|status|setup-tls> [--private-state-root <DIR>] [--json]
 effigy gateway setup-listener-handoff [--json]
 effigy gateway listener-handoff-status [--json]
@@ -454,9 +455,12 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
   supplied; primary-service commands use the declared `workspace_user` and
   `workspace_home`, interactive callers retain a TTY, and non-console callers
   run without one
-- ordinary `gateway up`, `gateway down`, and `gateway setup-tls` may request
-  host admin approval; private mode does not request privilege, install trust,
-  change host resolver files, or provision host loopback aliases
+- standard `gateway setup` is the administrator step for resolver, loopback,
+  TLS trust and low-port prerequisites; `gateway setup --remove` tears down
+  verified platform output. Ordinary `up`, `down`, `status` and route registration
+  run as the operator without elevation. Standard `setup-tls` translates to setup;
+  private mode does not request privilege, install trust, change host resolver
+  files, or provision host loopback aliases
 - `EFFIGY_GATEWAY_PRIVATE_STATE_ROOT=<DIR>` selects the same caller-owned
   instance for container route registration and managed startup; clients must
   explicitly trust `<DIR>/ca/rootCA.pem` and resolve each route name to the

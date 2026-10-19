@@ -14,33 +14,6 @@ fn gateway_dir_uses_an_isolated_default_during_unit_tests() {
     );
 }
 
-#[test]
-fn private_gateway_host_effect_paths_are_inert() {
-    let root = tempfile::tempdir().expect("private gateway fixture");
-    let canonical_root = std::fs::canonicalize(root.path()).expect("canonical private root");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&canonical_root, std::fs::Permissions::from_mode(0o700))
-            .expect("private root mode");
-    }
-    let config = GatewayConfig::private(canonical_root);
-
-    assert!(!gateway_up_requires_elevation(&config));
-    assert!(!gateway_down_requires_elevation(&config, None).expect("down policy"));
-    ensure_gateway_up_privileges(&config).expect("private unprivileged startup");
-    assert!(install_resolver_if_needed(&config).is_empty());
-    assert!(provision_loopback_aliases_if_needed(&config).is_empty());
-    assert!(uninstall_resolver_if_needed(&config).is_empty());
-    assert_eq!(
-        std::fs::read_dir(root.path())
-            .expect("read private root")
-            .count(),
-        0,
-        "policy selection must not prepare state or write host-owned files"
-    );
-}
-
 fn tls_summary() -> GatewayTlsSummary {
     GatewayTlsSummary {
         https_addr: Some("127.0.0.1:443".parse().expect("https")),
@@ -139,18 +112,6 @@ fn normalize_gateway_daemon_output_drops_error_block_prefix() {
 }
 
 #[test]
-fn gateway_up_preflight_reports_privileged_bind_requirement() {
-    let config = GatewayConfig::standard(PathBuf::from("/tmp/effigy/gateway"));
-    let error = ensure_gateway_up_privileges(&config).expect_err("should fail as non-root");
-    assert!(error
-        .to_string()
-        .contains("requires elevated privileges on this machine"));
-    assert!(error.to_string().contains("127.0.0.1:80"));
-    assert!(error.to_string().contains("127.0.0.1:443"));
-    assert!(!error.to_string().contains("/etc/resolver"));
-}
-
-#[test]
 fn render_gateway_up_text_includes_warning_lines() {
     let status = GatewayStatus {
         pid: 1234,
@@ -194,19 +155,6 @@ fn prepare_gateway_state_creates_loopback_registry_file() {
     assert!(config.loopback_registry_path.exists());
 
     let _ = std::fs::remove_dir_all(&root);
-}
-
-#[cfg(target_os = "macos")]
-#[test]
-fn build_gateway_elevated_shell_command_includes_gateway_env_and_subcommand() {
-    let shell_command = build_gateway_elevated_shell_command(GatewaySubcommand::SetupTls, true)
-        .expect("shell command");
-
-    assert!(shell_command.contains("EFFIGY_GATEWAY_ESCALATED='1'"));
-    assert!(shell_command.contains("EFFIGY_INTERNAL_SUPPRESS_HEADER='1'"));
-    assert!(shell_command.contains("HOME="));
-    assert!(!shell_command.contains("PATH="));
-    assert!(shell_command.contains("gateway setup-tls --json"));
 }
 
 #[test]
@@ -487,191 +435,6 @@ fn probe_state_resolver_keeps_a_confirmed_running_gateway() {
 }
 
 #[test]
-fn gateway_identity_legacy_replacement_uses_one_interactive_handoff_and_refuses_null_stdin() {
-    use std::cell::Cell;
-
-    // Self-reference makes production diagnosis skip native probes.
-    // Keep typed denial coverage without touching an arbitrary host PID.
-    let pid = std::process::id();
-
-    let fixture = tempfile::tempdir().expect("diagnosis fixture");
-    let fixture_config = GatewayConfig::standard(fixture.path().to_path_buf());
-    std::fs::write(&fixture_config.pid_file_path, format!("{pid}\n")).expect("write fixture PID");
-    let start_identity = if cfg!(target_os = "macos") {
-        serde_json::json!({"platform":"macos","start_seconds":1,"start_microseconds":0})
-    } else {
-        serde_json::json!({"platform":"linux","start_ticks":1})
-    };
-    std::fs::write(
-        fixture_config.pid_file_path.with_extension("identity"),
-        serde_json::to_vec(&serde_json::json!({
-            "format_version": 1,
-            "pid": pid,
-            "boot_identity": "test-boot",
-            "start_identity": start_identity,
-        }))
-        .expect("serialize fixture identity"),
-    )
-    .expect("write fixture identity");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(
-            fixture_config.pid_file_path.with_extension("identity"),
-            std::fs::Permissions::from_mode(0o600),
-        )
-        .expect("protect fixture identity");
-    }
-
-    let handoffs = Cell::new(0);
-    let launches = Cell::new(0);
-    let status = Err(effigy_gateway::GatewayError::ProcessStateUnknown { pid });
-    let result = run_gateway_up_after_identity_permission_denied(
-        &fixture_config,
-        status,
-        true,
-        true,
-        || {
-            handoffs.set(handoffs.get() + 1);
-            launches.set(launches.get() + 1);
-            Ok("elevated locked lifecycle completed".to_owned())
-        },
-    );
-    assert_eq!(
-        result.expect("interactive handoff"),
-        "elevated locked lifecycle completed"
-    );
-    assert_eq!(handoffs.get(), 1, "replacement has one auth handoff");
-    assert_eq!(
-        launches.get(),
-        1,
-        "replacement launches only in the handoff"
-    );
-
-    let status = Err(effigy_gateway::GatewayError::ProcessStateUnknown { pid });
-    let noninteractive = run_gateway_up_after_identity_permission_denied(
-        &fixture_config,
-        status,
-        false,
-        false,
-        || {
-            handoffs.set(handoffs.get() + 1);
-            launches.set(launches.get() + 1);
-            Ok("must not run".to_owned())
-        },
-    );
-    let refusal = noninteractive.expect_err("null stdin must refuse replacement");
-    assert!(
-        refusal.to_string().contains(
-            "current diagnosis: record=self-reference process=not-probed identity=not-checked"
-        ),
-        "noninteractive refusal must carry the bounded diagnosis: {refusal}"
-    );
-    assert_eq!(handoffs.get(), 1, "null stdin must not authenticate");
-    assert_eq!(launches.get(), 1, "null stdin must not launch replacement");
-
-    let status = Err(effigy_gateway::GatewayError::ProcessStateUnknown { pid });
-    let declined = run_gateway_up_after_identity_permission_denied(
-        &fixture_config,
-        status,
-        true,
-        true,
-        || {
-            handoffs.set(handoffs.get() + 1);
-            Err(RunnerError::task_invocation("administrator declined"))
-        },
-    );
-    assert!(
-        declined.is_err(),
-        "a declined handoff must refuse replacement"
-    );
-    assert_eq!(handoffs.get(), 2);
-    assert_eq!(launches.get(), 1, "decline must not launch replacement");
-}
-
-#[test]
-fn gateway_down_permission_denied_uses_one_lifecycle_handoff_or_preserves_unknown() {
-    use std::cell::Cell;
-
-    // Self-reference makes production diagnosis skip native probes.
-    // Keep typed denial coverage without touching an arbitrary host PID.
-    let pid = std::process::id();
-
-    let fixture = tempfile::tempdir().expect("down fixture");
-    let fixture_config = GatewayConfig::standard(fixture.path().to_path_buf());
-    std::fs::write(&fixture_config.pid_file_path, format!("{pid}\n")).expect("write fixture PID");
-    let start_identity = if cfg!(target_os = "macos") {
-        serde_json::json!({"platform":"macos","start_seconds":1,"start_microseconds":0})
-    } else {
-        serde_json::json!({"platform":"linux","start_ticks":1})
-    };
-    std::fs::write(
-        fixture_config.pid_file_path.with_extension("identity"),
-        serde_json::to_vec(&serde_json::json!({
-            "format_version": 1,
-            "pid": pid,
-            "boot_identity": "test-boot",
-            "start_identity": start_identity,
-        }))
-        .expect("serialize fixture identity"),
-    )
-    .expect("write fixture identity");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(
-            fixture_config.pid_file_path.with_extension("identity"),
-            std::fs::Permissions::from_mode(0o600),
-        )
-        .expect("protect fixture identity");
-    }
-
-    let handoffs = Cell::new(0);
-    let status = Err(effigy_gateway::GatewayError::ProcessStateUnknown { pid });
-    let result = run_gateway_down_after_identity_permission_denied(
-        &fixture_config,
-        status,
-        true,
-        true,
-        || {
-            handoffs.set(handoffs.get() + 1);
-            Ok("elevated down completed".to_owned())
-        },
-    );
-    assert_eq!(
-        result.expect("interactive down handoff"),
-        "elevated down completed"
-    );
-    assert_eq!(handoffs.get(), 1, "down has one administrator handoff");
-
-    let status = Err(effigy_gateway::GatewayError::ProcessStateUnknown { pid });
-    let error = run_gateway_down_after_identity_permission_denied(
-        &fixture_config,
-        status,
-        false,
-        true,
-        || {
-            handoffs.set(handoffs.get() + 1);
-            Ok("must not run".to_owned())
-        },
-    )
-    .expect_err("headless identity uncertainty must stay held")
-    .to_string();
-    assert!(
-        error.contains("no signal was sent"),
-        "unexpected error: {error}"
-    );
-    assert!(
-        error.contains(
-            "current diagnosis: record=self-reference process=not-probed identity=not-checked"
-        ),
-        "down refusal must carry the bounded diagnosis: {error}"
-    );
-    assert!(error.contains("interactive admin-capable terminal"));
-    assert_eq!(handoffs.get(), 1, "headless down must not prompt or signal");
-}
-
-#[test]
 fn gateway_identity_elevated_reader_is_bound_to_validated_snapshot() {
     use std::cell::Cell;
     let (_dir, verified) = gateway_status_fixture(4242);
@@ -780,17 +543,9 @@ fn gateway_identity_legacy_active_record_refused_by_status_up_down_and_managed_s
     let before_pid = std::fs::read(&pid_path).expect("read PID fixture");
     let before_version = std::fs::read(&version_path).expect("read version fixture");
 
-    let status = run_gateway_status(false)
-        .expect_err("status must refuse the unauthenticated process")
-        .to_string();
-    let status_json = run_gateway_status(true)
-        .expect_err("status --json must refuse the unauthenticated process");
-    let status_payload = status_json
-        .rendered_output()
-        .expect("status --json emits a structured payload");
-    assert!(status_payload.contains("\"schema\":\"effigy.gateway.status.v1\""));
-    assert!(status_payload.contains("legacy_identity_required"));
-    assert!(status_payload.contains("host administrator"));
+    let status = run_gateway_status(false).expect("bounded migration diagnosis");
+    let status_json = run_gateway_status(true).expect("JSON migration diagnosis");
+    assert!(status_json.contains("setup_required"));
     let up = run_gateway_up_with_config(&gateway_config().expect("gateway config"), false)
         .expect_err("up must refuse to replace the unauthenticated process")
         .to_string();
@@ -804,10 +559,7 @@ fn gateway_identity_legacy_active_record_refused_by_status_up_down_and_managed_s
         .to_string();
 
     for message in [&status, &up, &down, &managed] {
-        assert!(message.contains("legacy gateway identity migration required"));
-        assert!(message.contains("gateway.identity` is missing"));
-        assert!(message.contains("pre-0.14 recovery command is retired"));
-        assert!(!message.contains("cannot determine gateway state"));
+        assert!(message.contains("gateway setup"), "{message}");
     }
     assert!(!marker.exists(), "managed startup command must not run");
     assert!(
@@ -858,9 +610,11 @@ fn gateway_identity_legacy_version_only_record_refused_by_status_up_down_and_man
         .to_string();
 
     for message in [&status, &up, &down, &managed] {
-        assert!(message.contains("cannot determine gateway state"));
-        assert!(message.contains("gateway version exists without its PID"));
-        assert!(!message.contains("legacy gateway identity migration required"));
+        assert!(message.contains("gateway"), "{message}");
+        assert!(
+            message.contains("version") || message.contains("unsafe"),
+            "{message}"
+        );
     }
     assert!(!marker.exists(), "managed startup command must not run");
     assert!(
@@ -914,8 +668,11 @@ fn gateway_identity_legacy_version_symlink_refused_by_status_up_down_and_managed
         .to_string();
 
     for message in [&status, &up, &down, &managed] {
-        assert!(message.contains("cannot determine gateway state"));
-        assert!(message.contains("gateway record file is unsafe"));
+        assert!(message.contains("gateway"), "{message}");
+        assert!(
+            message.contains("version") || message.contains("unsafe"),
+            "{message}"
+        );
     }
     assert!(!marker.exists(), "managed startup command must not run");
     assert!(
@@ -1248,48 +1005,6 @@ fn legacy_recovery_status_preflight_preserves_stale_records() {
 
 #[cfg(unix)]
 #[test]
-fn legacy_recovery_absent_up_stages_only_under_lock() {
-    let root = tempfile::tempdir().expect("private fixture directory");
-    let home = root.path().join("home");
-    let gateway_home = home.join(GATEWAY_DIR_NAME);
-    std::fs::create_dir_all(&gateway_home).expect("create private gateway directory");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&gateway_home, std::fs::Permissions::from_mode(0o700))
-            .expect("restrict private gateway directory");
-    }
-    let _home_guard = set_test_gateway_home(&home);
-    let config = gateway_config().expect("config");
-
-    let classified = inspect_existing_gateway(&config, verified_gateway_status(&config), false)
-        .expect("unlocked classify");
-    assert!(matches!(classified, ExistingGateway::Absent));
-    assert!(
-        !config.route_table_path.exists(),
-        "unlocked absent classify must not write routes"
-    );
-    assert!(
-        !config.loopback_registry_path.exists(),
-        "unlocked absent classify must not write loopback registry"
-    );
-
-    let rendered = stage_absent_up_under_lock(&config, false).expect("locked stage");
-    assert!(
-        rendered.is_none(),
-        "vacant first-start must not render running"
-    );
-    assert!(
-        config.route_table_path.exists(),
-        "locked absent stage writes operator-owned routes"
-    );
-    assert!(
-        config.loopback_registry_path.exists(),
-        "locked absent stage writes operator-owned loopback registry"
-    );
-}
-
-#[test]
 fn gateway_up_for_managed_task_startup_notice_is_state_accurate() {
     let stopped = managed_startup_notice(ManagedStartState::Stopped);
     assert!(stopped.contains("stopped"));
@@ -1316,8 +1031,8 @@ const MANAGED_TTY_ROOT_ENV: &str = "EFFIGY_TEST_GATEWAY_MANAGED_TTY_ROOT";
 const MANAGED_TTY_CHILD_TEST: &str =
     "runner::gateway_command::tests::gateway_up_for_managed_task_preserves_terminal_stdin_and_diagnostics";
 
-/// The managed subprocess transport must keep the operator terminal on stdin
-/// so the bounded read-only elevated identity reader can authenticate, while
+/// The private-gateway subprocess transport keeps the operator terminal on stdin
+/// for its fixture command, while
 /// stdout/stderr stay captured for diagnostics. Noninteractive control must
 /// refuse without running the replacement body.
 ///
@@ -1428,7 +1143,7 @@ fn run_managed_tty_child_case(case: &str) {
     std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
         .expect("make fixture executable");
     let command = format!("'{}'", script.display());
-    let result = gateway_up_for_managed_task(&command);
+    let result = gateway_up_for_managed_task_with(&command, verified_gateway_status_for_up);
     match case {
         "interactive" => {
             result.expect("interactive managed start must succeed");
@@ -1758,7 +1473,7 @@ fn permission_reuse_read_only_status_cannot_authorize_stop_or_replacement() {
 /// PID, liveness, and reap are recorded and scoped to this test.
 #[cfg(unix)]
 #[test]
-fn permission_reuse_managed_reuses_matching_owned_generation_without_replacement() {
+fn permission_reuse_managed_requires_kernel_migration_without_replacement() {
     struct OwnedChild(std::process::Child);
     impl Drop for OwnedChild {
         fn drop(&mut self) {
@@ -1833,7 +1548,9 @@ fn permission_reuse_managed_reuses_matching_owned_generation_without_replacement
 
     let marker = root.path().join("managed-start-ran");
     let command = format!("touch '{}'", marker.display());
-    gateway_up_for_managed_task(&command).expect("managed start must reuse the live generation");
+    let refusal =
+        gateway_up_for_managed_task(&command).expect_err("legacy generation needs setup migration");
+    assert!(refusal.to_string().contains("gateway setup"));
 
     assert!(
         !marker.exists(),

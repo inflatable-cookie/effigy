@@ -6,12 +6,13 @@
 //! The production adoption refusal (outside launchd) is genuine evidence that
 //! the daemon cannot silently start this way without the administrator setup.
 
+#[cfg(target_os = "macos")]
+use super::ActivationFailure;
 use super::{
     close_owned_fd, parse_launchd_definition, production_specs, validate_and_adopt,
-    validate_launchd_definition, ActivationFailure, DescriptorRefusal, HandedSocketSpec,
-    HandoffIdentity, ListenerHandoffError, ListenerHandoffSetup, PlistValue,
-    HANDOFF_HTTPS_SOCKET_NAME, HANDOFF_HTTP_SOCKET_NAME, HANDOFF_RUN_FLAG, HANDOFF_RUN_SUBCOMMAND,
-    LAUNCHD_JOB_LABEL,
+    validate_launchd_definition, DescriptorRefusal, HandedSocketSpec, HandoffIdentity,
+    ListenerHandoffError, ListenerHandoffSetup, PlistValue, HANDOFF_HTTPS_SOCKET_NAME,
+    HANDOFF_HTTP_SOCKET_NAME, HANDOFF_RUN_FLAG, HANDOFF_RUN_SUBCOMMAND, LAUNCHD_JOB_LABEL,
 };
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, UdpSocket};
 use std::os::fd::{AsFd, AsRawFd, FromRawFd, IntoRawFd, OwnedFd, RawFd};
@@ -629,7 +630,10 @@ fn listener_handoff_daemon_startup_refuses_without_launchd_and_writes_no_record(
         .build()
         .expect("tokio runtime");
     let error = runtime
-        .block_on(crate::server::run_gateway(config))
+        .block_on(crate::server::run_operator_gateway(
+            config,
+            effigy_kernel::ctx::CancelToken::default(),
+        ))
         .expect_err("handoff adoption must refuse outside launchd");
     let crate::error::GatewayError::ListenerHandoff(_) = &error else {
         panic!("expected a listener handoff refusal, got {error:?}");

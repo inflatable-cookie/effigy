@@ -433,8 +433,7 @@
       "std.process.Command.spawn": 1
     },
     "src/runner/gateway_command/elevation.rs": {
-      "std.process.Command.new": 7,
-      "std.process.Command.output": 3,
+      "std.process.Command.new": 2,
       "std.process.Command.spawn": 2
     },
     "src/runner/gateway_command/mod.rs": {
@@ -688,6 +687,10 @@
       "std.process.Command.new": 7,
       "std.process.Command.spawn": 7
     },
+    "crates/effigy-gateway/src/setup.rs": {
+      "std::fs::remove_file": 1,
+      "std::fs::write": 3
+    },
     "crates/effigy-gateway/src/tls/tests.rs": {
       "std::env::set_var": 1
     },
@@ -883,7 +886,7 @@
       "std.process.Command.new": 5,
       "std.process.Command.output": 1,
       "std.process.Command.spawn": 4,
-      "std::fs::write": 31
+      "std::fs::write": 27
     },
     "src/runner/host_container_lease.rs": {
       "std::fs::write": 8

@@ -8,13 +8,14 @@ pub(crate) fn render_gateway_help<R: HelpRenderer + ?Sized>(renderer: &mut R) ->
         &[
             "Operate Effigy's local DNS and reverse-proxy gateway for `*.test` routes.",
             "Containers with `[containers.<name>.dns]` register and remove their routes as they start and stop.",
-            "Run `gateway setup-tls` once per machine before using `tls = true` routes; plain HTTP then redirects to HTTPS.",
+            "Run `gateway setup` once to install resolver, loopback and TLS trust prerequisites; the daemon runs as your user.",
             "`gateway repair` finds route-table conflicts and removes stale container routes with `--yes`.",
-            "On macOS, `gateway up` and `gateway down` manage `/etc/resolver/test` and ask for admin approval when needed.",
+            "`gateway up`, `down`, `status` and route registration never request administrator access; run setup to migrate a v0.14.1 root daemon.",
             "`--private-state-root <DIR>` (or `EFFIGY_GATEWAY_PRIVATE_STATE_ROOT=<DIR>` for managed startup) runs a disposable, unprivileged loopback gateway with its own CA. It never touches host trust or resolver state; clients trust `<DIR>/ca/rootCA.pem` and use the reported addresses.",
             "Experimental, not for general use: `setup-listener-handoff`, `listener-handoff-status` and `remove-listener-handoff` print or inspect a launchd definition for a user-owned gateway. They install, run and remove nothing (guide 063).",
         ],
         &[
+            "effigy gateway setup [--suffix <DOMAIN>] [--remove] [--json]",
             "effigy gateway up [--private-state-root <DIR>] [--dns-addr <IP:PORT>] [--proxy-addr <IP:PORT>] [--https-addr <IP:PORT>] [--json]",
             "effigy gateway down [--private-state-root <DIR>] [--json]",
             "effigy gateway status [--private-state-root <DIR>] [--json]",
@@ -26,6 +27,7 @@ pub(crate) fn render_gateway_help<R: HelpRenderer + ?Sized>(renderer: &mut R) ->
             "effigy --json gateway status",
         ],
         &[
+            ("--suffix <DOMAIN>", "Setup only: approve an additional public resolver suffix"),
             ("--json", "Render machine-readable gateway payloads"),
             ("--yes", "Apply repairable route-table cleanup"),
             ("--private-state-root <DIR>", "Use an existing owner-only fixture state root without host trust, resolver, alias, or privilege effects"),
@@ -39,7 +41,7 @@ pub(crate) fn render_gateway_help<R: HelpRenderer + ?Sized>(renderer: &mut R) ->
             "effigy gateway status --json",
             "effigy gateway repair",
             "effigy gateway repair --yes",
-            "effigy gateway setup-tls",
+            "effigy gateway setup",
             "effigy gateway listener-handoff-status --json",
             "effigy gateway remove-listener-handoff",
             "effigy gateway down",

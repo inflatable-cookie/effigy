@@ -1197,4 +1197,85 @@ fn run_log_write_failure_is_reported_as_truncation() {
     };
     assert_eq!(read.bytes, b"kept");
     assert!(read.truncated, "a failed write is never a silent end");
+
+#[test]
+fn gateway_control_socket_lives_in_trusted_runtime_and_settles_exact_inode() {
+    let home = tempfile::Builder::new()
+        .prefix("g219-")
+        .tempdir_in("/tmp")
+        .unwrap();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut fake = Fake::new(home.path());
+    let resource = ResourceId::gateway("operator").unwrap();
+    let mut run = begin(&cx, &root, resource.clone(), 61, &mut fake);
+    let listener = run.control_socket().unwrap();
+    let path = control_socket_path(&root, &resource, run.id());
+    assert!(path.starts_with(
+        std::fs::canonicalize(home.path())
+            .unwrap()
+            .join(".effigy/gateway/runtime")
+    ));
+    assert!(std::os::unix::net::UnixStream::connect(&path).is_ok());
+    drop(listener);
+    run.settle(&cleanup(&cx), &mut fake).unwrap();
+    assert!(!path.exists());
+}
+#[test]
+fn gateway_setup_replace_is_journalled_and_preserved_on_recovery() {
+    use crate::fs::{DirFd, FileName};
+    use crate::record::ReplaceOpts;
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut fake = Fake::new(home.path());
+    let resource = ResourceId::store(Scope::Machine, "gateway-setup").unwrap();
+    let mut run = begin(&cx, &root, resource.clone(), 62, &mut fake);
+    let dir = DirFd::open(home.path()).unwrap();
+    run.replace_file(
+        &dir,
+        &FileName::new("setup-output").unwrap(),
+        b"owned platform output",
+        ReplaceOpts::default(),
+    )
+    .unwrap();
+    assert_eq!(run.effects().unwrap().len(), 1);
+    drop(run);
+    settle_interrupted(
+        &cx,
+        &root,
+        &resource,
+        id(62),
+        next(),
+        &cleanup(&cx),
+        &mut fake,
+    )
+    .unwrap();
+    assert_eq!(
+        std::fs::read(home.path().join("setup-output")).unwrap(),
+        b"owned platform output"
+    );
+}
+#[test]
+fn gateway_store_latest_run_tracks_generation_and_absence() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut fake = Fake::new(home.path());
+    let resource = ResourceId::gateway("operator").unwrap();
+    let run = begin(&cx, &root, resource.clone(), 63, &mut fake);
+    let observe = cx.operation().observe().unwrap();
+    let reader = match Store::read(&observe, &root) {
+        Observed::Verified(reader, _) => reader,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(reader.latest_run(&resource).verified().unwrap().0, id(63));
+    assert!(matches!(
+        reader.latest_run(&ResourceId::gateway("missing").unwrap()),
+        Observed::Absent(_)
+    ));
+    run.settle(&cleanup(&cx), &mut fake).unwrap();
+    let run = begin(&cx, &root, resource.clone(), 64, &mut fake);
+    assert_eq!(reader.latest_run(&resource).verified().unwrap().0, id(64));
+    run.settle(&cleanup(&cx), &mut fake).unwrap();
 }

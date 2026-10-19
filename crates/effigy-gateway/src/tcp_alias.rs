@@ -30,10 +30,57 @@ struct ActiveTcpAlias {
 
 pub async fn run_tcp_alias_manager(
     route_table: Arc<RwLock<RouteTable>>,
-    mut shutdown: watch::Receiver<bool>,
+    shutdown: watch::Receiver<bool>,
 ) -> Result<(), GatewayError> {
-    let mut active = HashMap::<String, ActiveTcpAlias>::new();
+    run_manager(route_table, shutdown, HashMap::new()).await
+}
 
+pub(crate) async fn run_tcp_alias_manager_ready(
+    route_table: Arc<RwLock<RouteTable>>,
+    shutdown: watch::Receiver<bool>,
+    ready: tokio::sync::oneshot::Sender<Result<(), String>>,
+) -> Result<(), GatewayError> {
+    let mut active = HashMap::new();
+    let prepared =
+        (|| {
+            let desired = desired_tcp_aliases(&crate::locks::read_tolerant(&route_table));
+            let mut listeners = Vec::new();
+            for (key, alias) in desired {
+                let listener = std::net::TcpListener::bind((alias.bind_ip, alias.bind_port))
+                    .map_err(|error| GatewayError::TcpAliasBindError {
+                        addr: key.clone(),
+                        reason: error.to_string(),
+                    })?;
+                listener.set_nonblocking(true)?;
+                listeners.push((key, alias, TcpListener::from_std(listener)?));
+            }
+            for (key, alias, listener) in listeners {
+                let (stop, stop_rx) = watch::channel(false);
+                let desired = alias.clone();
+                let handle = tokio::spawn(async move {
+                    let _ = run_single_tcp_alias_on(listener, alias, stop_rx).await;
+                });
+                active.insert(
+                    key,
+                    ActiveTcpAlias {
+                        shutdown: stop,
+                        handle,
+                        desired,
+                    },
+                );
+            }
+            Ok::<_, GatewayError>(())
+        })();
+    let _ = ready.send(prepared.as_ref().map(|_| ()).map_err(ToString::to_string));
+    prepared?;
+    run_manager(route_table, shutdown, active).await
+}
+
+async fn run_manager(
+    route_table: Arc<RwLock<RouteTable>>,
+    mut shutdown: watch::Receiver<bool>,
+    mut active: HashMap<String, ActiveTcpAlias>,
+) -> Result<(), GatewayError> {
     loop {
         reconcile_tcp_aliases(&route_table, &mut active);
 
@@ -163,7 +210,7 @@ fn parse_tcp_target(raw: &str) -> Result<SocketAddr, GatewayError> {
 
 async fn run_single_tcp_alias(
     desired: DesiredTcpAlias,
-    mut shutdown: watch::Receiver<bool>,
+    shutdown: watch::Receiver<bool>,
 ) -> Result<(), GatewayError> {
     let bind_addr = SocketAddr::V4(SocketAddrV4::new(desired.bind_ip, desired.bind_port));
     let listener =
@@ -173,6 +220,15 @@ async fn run_single_tcp_alias(
                 addr: bind_addr.to_string(),
                 reason: error.to_string(),
             })?;
+    run_single_tcp_alias_on(listener, desired, shutdown).await
+}
+
+async fn run_single_tcp_alias_on(
+    listener: TcpListener,
+    desired: DesiredTcpAlias,
+    mut shutdown: watch::Receiver<bool>,
+) -> Result<(), GatewayError> {
+    let bind_addr = listener.local_addr()?;
     info!(
         domains = ?desired.domains,
         bind = %bind_addr,

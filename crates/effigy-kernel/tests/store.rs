@@ -495,3 +495,45 @@ fn store_pointer_commit_selects_one_complete_generation() {
         Observed::Unknown(UnknownReason::Inconsistent(_))
     ));
 }
+
+#[test]
+fn store_setup_owner_transfer_refuses_symlinks_links_and_guest_authority() {
+    let home = home();
+    let cx = effects(EffectClass::Mutate);
+    // SAFETY: geteuid has no preconditions.
+    let uid = unsafe { libc::geteuid() };
+    let dir = DirFd::open_setup(&cx, home.path(), uid).unwrap();
+    std::fs::write(home.path().join("registry"), b"preserved bytes").unwrap();
+    dir.adopt_setup_entry(&cx, &FileName::new("registry").unwrap(), false, 64)
+        .unwrap();
+    assert_eq!(
+        std::fs::read(home.path().join("registry")).unwrap(),
+        b"preserved bytes"
+    );
+    std::os::unix::fs::symlink(home.path().join("registry"), home.path().join("link")).unwrap();
+    assert!(dir
+        .adopt_setup_entry(&cx, &FileName::new("link").unwrap(), false, 64)
+        .is_err());
+    std::fs::hard_link(home.path().join("registry"), home.path().join("hard")).unwrap();
+    assert!(dir
+        .adopt_setup_entry(&cx, &FileName::new("hard").unwrap(), false, 64)
+        .is_err());
+    std::fs::create_dir(home.path().join("child")).unwrap();
+    std::os::unix::fs::symlink(home.path().join("child"), home.path().join("linked-child"))
+        .unwrap();
+    assert!(dir
+        .setup_child(&FileName::new("linked-child").unwrap())
+        .is_err());
+    let guest = OperationContext::new(
+        Deadline::At(std::time::Instant::now() + Duration::from_secs(1)),
+        CancelToken::default(),
+        cx.operation().limits().clone(),
+        EffectClass::Mutate,
+        Placement::Guest,
+    )
+    .effects()
+    .unwrap();
+    assert!(dir
+        .adopt_setup_entry(&guest, &FileName::new("registry").unwrap(), false, 64)
+        .is_err());
+}

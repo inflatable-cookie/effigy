@@ -431,3 +431,13 @@ terms = ["~/.effigy/catalog/"]
 paths = []
 config_keys = []
 allow = ["CHANGELOG.md", "docs/guides/085-v0.15.0-consumer-migration.md"]
+
+[[retired]]
+id = "gateway-routine-resolver-cleanup-toggle"
+retired = "2026-10-19"
+replacement = "Standard gateway down always preserves platform setup; only setup adapters own resolver changes. The previous environment toggle is ignored with its preservation behavior retained."
+owner = "docs/knowledge/architecture/034-gateway-legacy-upgrade-recovery.md"
+terms = ["EFFIGY_GATEWAY_KEEP_RESOLVER"]
+paths = []
+config_keys = ["EFFIGY_GATEWAY_KEEP_RESOLVER"]
+allow = ["CHANGELOG.md", "docs/guides/063-container-system-guide.md", "docs/knowledge/architecture/034-gateway-legacy-upgrade-recovery.md"]

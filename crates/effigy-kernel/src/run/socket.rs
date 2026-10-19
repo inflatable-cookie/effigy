@@ -1,8 +1,10 @@
 //! Journalled supervisor socket custody. The Run owns every row mutation.
 use super::*;
-use crate::fs::FileName;
-use crate::root::Family;
+use crate::fs::{DirFd, FileName, Trust};
+use crate::id::{ResourceId, ResourceKind, RunId};
+use crate::root::{Family, StateRoot};
 use std::os::unix::net::UnixListener;
+use std::path::PathBuf;
 
 pub(super) const KIND: &str = "kernel:control-socket";
 #[derive(Debug, Serialize, Deserialize)]
@@ -21,9 +23,7 @@ impl Run<'_> {
         })?;
         let result = (|| {
             crate::fault_point!(SocketBind)?;
-            let dir = self
-                .root
-                .family(Family::Sock)
+            let dir = directory(self.root, &self.owner.resource)
                 .map_err(StoreError::from)?
                 .ok_or_else(|| RunError::Invalid("socket directory missing".into()))?;
             let name = FileName::new(&format!("{}.sock", self.id)).map_err(StoreError::from)?;
@@ -64,7 +64,8 @@ impl Run<'_> {
     ) -> Result<(), RunError> {
         let name = FileName::new(&format!("{}.sock", self.id)).map_err(StoreError::from)?;
         let disposition = (|| -> Result<_, RunError> {
-            let Some(dir) = self.root.family(Family::Sock).map_err(StoreError::from)? else {
+            let Some(dir) = directory(self.root, &self.owner.resource).map_err(StoreError::from)?
+            else {
                 return Ok(EffectState::Released);
             };
             let Some(stat) = dir.entry(&name).map_err(StoreError::from)? else {
@@ -113,4 +114,28 @@ fn device(stat: &libc::stat) -> u64 {
     {
         stat.st_dev as u64
     }
+}
+
+/// Pure socket coordinates; opening/creating the directory stays inside the
+/// owning run. Gateway sockets live in its operator-owned runtime directory.
+pub fn control_socket_path(root: &StateRoot, owner: &ResourceId, run: RunId) -> PathBuf {
+    let parent = if owner.kind() == ResourceKind::Gateway {
+        root.path()
+            .parent()
+            .expect("state root has parent")
+            .join("gateway/runtime")
+    } else {
+        root.path().join("sock")
+    };
+    parent.join(format!("{run}.sock"))
+}
+fn directory(root: &StateRoot, owner: &ResourceId) -> Result<Option<DirFd>, crate::fs::FsError> {
+    if owner.kind() != ResourceKind::Gateway {
+        return root.family(Family::Sock);
+    }
+    let effigy = DirFd::open(root.path().parent().expect("state root has parent"))?;
+    let Some(gateway) = effigy.child("gateway", Trust::Operator, root.writable())? else {
+        return Ok(None);
+    };
+    gateway.child("runtime", Trust::Private, root.writable())
 }

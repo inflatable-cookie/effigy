@@ -7,6 +7,9 @@ publish = false
 description = "DNS resolver and reverse proxy gateway for Effigy local development"
 
 [dependencies]
+effigy-kernel = { path = "../effigy-kernel" }
+getrandom = "0.4"
+tempfile = "3"
 # DNS resolution
 hickory-server = "0.26"
 hickory-proto = "0.26"
@@ -31,7 +34,7 @@ notify = "8"
 
 # System
 libc = "0.2"
-nix = { version = "0.31", default-features = false, features = ["fs", "user"] }
+nix = { version = "0.31", default-features = false, features = ["fs", "user", "socket", "uio"] }
 hex = "0.4"
 sha2 = "0.11"
 effigy-process = { path = "../effigy-process" }
