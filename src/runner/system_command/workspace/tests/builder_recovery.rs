@@ -615,8 +615,13 @@ fn concurrent_caller_and_expired_binding_have_no_effect() {
     // The library guard uses the private unit-test kernel home. Exercise
     // its helper in that same process; sequence Rhai now runs in a real child
     // with the fixture HOME and therefore a different state authority.
-    crate::runner::container_command::workspace_artifact_builder::build(&fixture.root, &[])
-        .expect_err("active builder operation cannot be entered twice");
+    let error =
+        crate::runner::container_command::workspace_artifact_builder::build(&fixture.root, &[])
+            .expect_err("active builder operation cannot be entered twice");
+    assert!(matches!(
+        error,
+        crate::runner::error::RunnerError::TaskLockConflict(_)
+    ));
     assert!(!fixture.root.join("state/build-effect").exists());
     drop(guard);
     let row = effigy_containers::exec::RunningComposeContainer {

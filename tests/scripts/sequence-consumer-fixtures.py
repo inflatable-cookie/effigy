@@ -195,16 +195,17 @@ class Graph:
             return [self.leaves[run]], [1]
         trace, failures = [], []
         for step in run:
+            nested_points = []
             if isinstance(step, str) and step.startswith("task:"):
-                part = self.trace(step[5:].strip(), ancestors + (name,))[0]
+                part, nested_points = self.trace(step[5:].strip(), ancestors + (name,))
             elif isinstance(step, str):
                 part = [self.leaves[step]]
             elif "task" in step:
-                part = self.trace(step["task"], ancestors + (name,))[0]
+                part, nested_points = self.trace(step["task"], ancestors + (name,))
             else:
                 part = [self.leaves[step[key]]] if (key := next((key for key in ("run", "rhai") if key in step), None)) else []
             if part:
-                failures.append(len(trace) + 1)
+                failures.extend(len(trace) + point for point in (nested_points or [1]))
             trace.extend(part)
         return trace, failures
 
