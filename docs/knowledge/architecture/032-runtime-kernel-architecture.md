@@ -1,9 +1,10 @@
 # 032 - Runtime Kernel Architecture
 
 Contract: [052](../contracts/052-runtime-kernel-contract.md)
-Status: foundation crate and QA ratchet implemented; runtime primitives and
-engine adoption remain specified. This note places the
-kernel in the codebase, names the processes it runs, and orders the kernel
+Status: foundation, gates and store, run journal and settle, local and remote
+custody, supervision, strict fakes and the QA ratchet are implemented. Executable
+probes and engine adoption remain specified. This note places the kernel in the
+codebase, names the processes it runs, and orders the kernel
 lane's implementation cuts. Contract 052 owns every rule and primitive; this
 note adds no semantics.
 
@@ -19,7 +20,7 @@ dependency direction, not separate binaries.
  adapters  compose backends · Colima · Docker · Apple Containers (planned)
            macOS platform (launchd, resolver, lo0) · mkcert · host-run client
  kernel    effigy-kernel: identity · context · gate · store · run · custody
-           signal · remote custody contract · observe · probe · outcome
+           signal · remote custody · observe · probe · outcome
 ```
 
 Dependency rules, enforced by `qa:architecture`:
