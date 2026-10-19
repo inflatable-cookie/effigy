@@ -466,3 +466,13 @@ terms = ["EFFIGY_GATEWAY_KEEP_RESOLVER"]
 paths = []
 config_keys = ["EFFIGY_GATEWAY_KEEP_RESOLVER"]
 allow = ["CHANGELOG.md", "docs/guides/063-container-system-guide.md", "docs/knowledge/architecture/034-gateway-legacy-upgrade-recovery.md"]
+
+[[retired]]
+id = "effigy-vault-policy-keys"
+retired = "2026-10-19"
+replacement = "Delete these lines; they only restated the passphrase default. Existing vault paths, values and runtime unlock behavior are unchanged."
+owner = "docs/knowledge/contracts/032-secret-and-local-config-management-contract.md"
+terms = ["ManifestSecretsVaultIdentity", "ManifestSecretsUnlockPolicy", "vault.identity", "vault.unlock"]
+paths = []
+config_keys = ["secrets.vault.identity", "secrets.vault.unlock", "secrets.vault.external"]
+allow = ["CHANGELOG.md", "docs/knowledge/contracts/032-secret-and-local-config-management-contract.md", "docs/guides/026-json-payload-examples.md", "crates/effigy-manifest/tests/secrets_config.rs"]

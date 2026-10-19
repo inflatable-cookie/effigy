@@ -39,23 +39,22 @@ and consumer repo setup.
 - `dev` task execution may use a repo-local runtime unlock key created during
   an earlier operator-authorized vault write or unlock.
 - SSH-agent access alone is not enough to make a vault agent-safe.
-- The default Effigy vault must require a human-gated unlock factor, such as a
-  passphrase, in addition to any key identity.
+- The default Effigy vault requires a human-gated passphrase.
 - Effigy may support external adapters later, but the Effigy manifest contract
   is the durable source of truth.
 - Secrets must be redacted in text output, JSON reports, errors, logs, and
   provider script reports.
 - Runtime injection must avoid shell command strings where possible.
 
-## Retirement prerequisite
+## Vault policy retirement
 
-Tom's ruling (2026-10-19): consumer cleanup must land before removing the
-inert `[secrets.vault].identity` and `[secrets.vault].unlock` keys. Remove
-those declarations from consumer manifests and shared bundle exports first;
-a one-release translation with warnings does not replace that prerequisite.
-CBS declares both keys in `infra/secrets.toml`; the Underlay bundle declares
-both in `export.toml`, inherited by Acowtancy. Preserve their existing vault
-paths, secret values and runtime unlock behavior during that cleanup.
+Tom required consumer cleanup before removal (2026-10-19); that cleanup
+removed the inert declarations from all nine consumer files. The
+`[secrets.vault].identity`, `[secrets.vault].unlock` and
+`[secrets.vault].external` keys are retired. Any declaration fails with the
+source file, line and instruction: "delete this line; it only restated the
+passphrase default". Vault paths, values and runtime unlock behavior are
+unchanged. The built-in vault always uses its passphrase policy.
 
 ## Public Manifest Shape
 
@@ -67,8 +66,6 @@ backend = "effigy-vault"
 
 [secrets.vault]
 path = ".effigy/secrets/local.vault"
-identity = "ssh-agent"
-unlock = "key-and-passphrase"
 generate = { rhai = "scripts/generate-dev-secrets.rhai", run_in = "host" }
 
 [secrets.keys.database_url]
@@ -136,7 +133,6 @@ novel crypto design:
 - encrypted records or an encrypted document for key/value entries
 - random data-encryption key per vault
 - authenticated encryption for vault payloads
-- key wrapping for configured identities
 - passphrase-derived unlock material using a memory-hard KDF
 - explicit metadata for algorithm and version
 - a separately encrypted local-dev payload, unlocked by ignored machine-local
@@ -150,14 +146,9 @@ team-hosted secret storage remains a separate concern.
 
 ## Unlock Policy
 
-Supported policy targets:
-
-- `passphrase`: unlock with a local passphrase only
-- `key-and-passphrase`: require an available key identity and passphrase
-- `external`: reserved for a future backend adapter contract
-
-Direct `effigy secrets get`, mutation, doctor, and export operations follow the
-configured passphrase policy until an operator runs `effigy secrets unlock`.
+The built-in vault uses a passphrase. Direct `effigy secrets get`, mutation,
+doctor, and export operations follow that policy until an operator runs
+`effigy secrets unlock`.
 That command verifies the passphrase and seals a local command credential with
 the adjacent local-dev key. Secret-backed tasks and direct commands can then
 run unattended until `effigy secrets lock` removes both local files. A resolved

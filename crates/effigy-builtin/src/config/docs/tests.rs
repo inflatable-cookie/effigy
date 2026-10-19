@@ -1,6 +1,6 @@
 use super::{
-    containers_lines, docs_policy_graph_lines, package_manager_lines, tasks_canonical_lines,
-    test_section_lines, ConfigDocProfile,
+    containers_lines, docs_policy_graph_lines, package_manager_lines, secrets_lines,
+    tasks_canonical_lines, test_section_lines, ConfigDocProfile,
 };
 
 #[test]
@@ -106,4 +106,19 @@ fn runner_filtered_test_section_contract_is_stable() {
     assert!(filtered.contains(&"\"cargo-nextest\" = \"cargo nextest run\""));
     assert!(!filtered.contains(&"vitest = \"bun x vitest run\""));
     assert!(!filtered.contains(&"\"cargo-test\" = \"cargo test\""));
+}
+
+#[test]
+fn secrets_profiles_emit_supported_vault_config() {
+    for profile in [ConfigDocProfile::Reference, ConfigDocProfile::Schema] {
+        let source = secrets_lines(profile).join("\n");
+        let manifest: effigy_manifest::TaskManifest =
+            toml::from_str(&source).expect("generated secrets example must load");
+        let vault = manifest
+            .secrets
+            .expect("secrets section")
+            .vault
+            .expect("vault config");
+        assert_eq!(vault.path.as_deref(), Some(".effigy/secrets/local.vault"));
+    }
 }

@@ -53,8 +53,6 @@ backend = "effigy-vault"
 
 [secrets.vault]
 path = ".effigy/secrets/local.vault"
-identity = "ssh-agent"
-unlock = "key-and-passphrase"
 generate = { rhai = "scripts/generate-dev-secrets.rhai", run_in = "host" }
 
 [secrets.keys.database_url]
@@ -68,6 +66,11 @@ targets = ["deploy"]
 description = "Render API key for deployment checks and apply"
 ```
 
+The vault uses a passphrase by default. Delete any `identity`, `unlock` or
+`external` line under `[secrets.vault]`; these retired keys only restated that
+default and now fail with the declaring file and line. Existing vaults and
+`effigy secrets unlock` keep their behavior.
+
 ### Declaration fields
 
 | Field | Required | Description |
@@ -75,7 +78,6 @@ description = "Render API key for deployment checks and apply"
 | `backend` | yes | secret backend name (`effigy-vault` is the built-in) |
 | `[secrets.vault]` | no | backend-specific config |
 | `path` | no | vault file location (default: `.effigy/secrets/local.vault`) |
-| `unlock` | no | unlock policy: `passphrase`, `key-and-passphrase`, or `external` |
 | `generate` | no | local task hook Effigy may run during `secrets = "required"` task startup when the vault is missing or incomplete |
 | `[secrets.keys.<name>]` | per-key | one block per secret |
 | `required` | no | whether the value must exist before operations that need it |
@@ -270,8 +272,6 @@ common local-dev shape is a direct Rhai script that fills repo-local defaults:
 ```toml
 [secrets.vault]
 path = ".effigy/secrets/local.vault"
-identity = "passphrase"
-unlock = "passphrase"
 generate = { rhai = "scripts/generate-dev-secrets.rhai", run_in = "host" }
 ```
 

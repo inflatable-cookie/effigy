@@ -3264,6 +3264,10 @@ state.
 
 ### 30) Secrets (`effigy.secrets.v1`)
 
+Schema change log (v0.15): `vault.identity` and `vault.unlock` were removed
+from list and doctor payloads. They only labelled inert manifest settings;
+`vault.path` and passphrase behavior are unchanged. The schema id stays at v1.
+
 This payload is the `result` for:
 
 ```sh
@@ -3286,9 +3290,7 @@ effigy --json secrets export --format env --output .effigy/runtime/secrets/local
   "declared": true,
   "backend": "effigy-vault",
   "vault": {
-    "path": ".effigy/secrets/local.vault",
-    "identity": "ssh-agent",
-    "unlock": "key-and-passphrase"
+    "path": ".effigy/secrets/local.vault"
   },
   "external": null,
   "keys": [
@@ -3343,9 +3345,7 @@ Mutation commands add safe operation metadata:
   "declared": true,
   "backend": "effigy-vault",
   "vault": {
-    "path": ".effigy/secrets/local.vault",
-    "identity": "ssh-agent",
-    "unlock": "key-and-passphrase"
+    "path": ".effigy/secrets/local.vault"
   },
   "external": null,
   "keys": [

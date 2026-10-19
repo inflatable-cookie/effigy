@@ -245,7 +245,9 @@ deadline-expired inspect is unavailable, never clean. Guide:
 `docs/guides/063-container-system-guide.md`.
 
 **Secrets** — `effigy secrets init`, `set`, `import`, `list`, `doctor` when
-`[secrets]` is declared. An operator can run `effigy secrets unlock` to enable
+`[secrets]` is declared. The vault uses a passphrase; delete retired
+`identity`, `unlock` and `external` keys under `[secrets.vault]`. An operator can
+run `effigy secrets unlock` to enable
 prompt-free local commands and secret-backed tasks; `secrets lock` revokes that
 access. Guide: `docs/guides/075-secrets-and-vault-guide.md`.
 

@@ -337,8 +337,6 @@ backend = "effigy-vault"
 
 [secrets.vault]
 path = ".effigy/secrets/local.vault"
-identity = "passphrase"
-unlock = "passphrase"
 
 [secrets.keys.signing_identity]
 required = true

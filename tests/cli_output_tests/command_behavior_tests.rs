@@ -8521,8 +8521,6 @@ backend = "effigy-vault"
 
 [secrets.vault]
 path = ".effigy/secrets/local.vault"
-identity = "passphrase"
-unlock = "passphrase"
 
 [secrets.keys.database_url]
 required = true

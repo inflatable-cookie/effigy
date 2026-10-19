@@ -312,8 +312,6 @@ backend = "effigy-vault"
 
 [secrets.vault]
 path = ".effigy/secrets/local.vault"
-identity = "passphrase"
-unlock = "passphrase"
 
 [secrets.keys.database_url]
 required = true
@@ -354,8 +352,6 @@ backend = "effigy-vault"
 
 [secrets.vault]
 path = ".effigy/secrets/local.vault"
-identity = "passphrase"
-unlock = "passphrase"
 
 [secrets.keys.database_url]
 required = true
@@ -395,8 +391,6 @@ backend = "effigy-vault"
 
 [secrets.vault]
 path = ".effigy/secrets/local.vault"
-identity = "passphrase"
-unlock = "passphrase"
 
 [secrets.keys.database_url]
 required = true
@@ -441,8 +435,6 @@ backend = "effigy-vault"
 
 [secrets.vault]
 path = ".effigy/secrets/local.vault"
-identity = "passphrase"
-unlock = "passphrase"
 generate = {{ task = "secrets:generate-dev" }}
 
 [secrets.keys.api_token]
@@ -490,8 +482,6 @@ backend = "effigy-vault"
 
 [secrets.vault]
 path = ".effigy/secrets/local.vault"
-identity = "passphrase"
-unlock = "passphrase"
 generate = {{ task = "secrets:generate-dev" }}
 
 [secrets.keys.api_token]
@@ -537,8 +527,6 @@ backend = "effigy-vault"
 
 [secrets.vault]
 path = ".effigy/secrets/local.vault"
-identity = "passphrase"
-unlock = "passphrase"
 
 [secrets.keys.database_url]
 required = true
@@ -573,8 +561,6 @@ backend = "effigy-vault"
 
 [secrets.vault]
 path = ".effigy/secrets/local.vault"
-identity = "passphrase"
-unlock = "passphrase"
 
 [secrets.keys.database_url]
 required = true

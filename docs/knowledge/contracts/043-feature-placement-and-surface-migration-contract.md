@@ -559,8 +559,9 @@ completion and the active payload/schema inventory.
 | `[manifest].root` | Remove it. Select the intended root explicitly with `--repo`; catalog membership stays explicit. Root and included fragments reject it with the source path. |
 | User-global catalog override (`~/.effigy/catalog/`) | Move custom fragments into `infra/dev/catalog/` in each consuming repository. The old directory is ignored and left untouched, with one warning per catalog-using process for one release. Project-local, installed-pack and compiled layers retain their order. |
 
-Secret policy keys are excluded from this cut. Their cleanup prerequisite is
-owned by [contract 032](032-secret-and-local-config-management-contract.md#retirement-prerequisite).
+Secret policy keys were excluded from this cut until consumer cleanup. Their
+separate retirement is owned by
+[contract 032](032-secret-and-local-config-management-contract.md#vault-policy-retirement).
 The retained lifecycle lock and socket observations are separated from legacy
 recovery code, without changing their authority. Gateway engine kernel adoption
 is separate; this retirement adds no kernel API or parallel state authority.
