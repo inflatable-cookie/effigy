@@ -8,6 +8,7 @@ description = "Canonical execution request model for Effigy"
 
 [dependencies]
 effigy-context = { path = "../effigy-context" }
+effigy-core = { path = "../effigy-core" }
 effigy-tasks = { path = "../effigy-tasks" }
 serde = { version = "1", features = ["derive"] }
 

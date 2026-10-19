@@ -251,6 +251,22 @@ impl RunnerError {
     }
 
     /// Process exit code owned by the host scheduler routing, when it applies.
+    /// The process exit code for this error: a scheduler's own code, a
+    /// task command's code (128 + n when a signal ended it), 75 when the
+    /// task's gate is held by a live run, otherwise 1.
+    pub fn process_exit_code(&self) -> i32 {
+        if let Some(code) = self.host_scheduler_exit_code() {
+            return code;
+        }
+        match self {
+            RunnerError::TaskCommandFailure {
+                code: Some(code), ..
+            } if (1..=255).contains(code) => *code,
+            RunnerError::TaskLockConflict(_) => 75,
+            _ => 1,
+        }
+    }
+
     pub fn host_scheduler_exit_code(&self) -> Option<i32> {
         match self {
             RunnerError::HostRunSettled { code }

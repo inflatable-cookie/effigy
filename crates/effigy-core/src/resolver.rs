@@ -69,6 +69,10 @@ pub fn resolve_target_root(
     let nearest =
         find_nearest_candidate(&cwd, &mut probe).ok_or(ResolveError::NoCandidateRoot { cwd })?;
 
+    if let Some(declaring) = declaring_root(&nearest, &mut probe) {
+        return Ok(declaring);
+    }
+
     if let Some(promoted) = maybe_promote_to_parent_workspace(&nearest, &mut probe) {
         return Ok(promoted);
     }
@@ -184,6 +188,83 @@ fn maybe_promote_to_parent_workspace(
     })
 }
 
+/// The topmost ancestor root whose catalog membership names `catalog`
+/// (contract 037): a member catalog run from inside itself, however deep,
+/// resolves to the root that declares it. The walk stops at a Git top level
+/// or a `[manifest].root = true` boundary, and never starts from a catalog
+/// that is itself a root boundary or its own repository.
+fn declaring_root(catalog: &Path, probe: &mut PathPresenceCache) -> Option<ResolvedTarget> {
+    if !probe.child_exists(catalog, TASK_MANIFEST_FILE)
+        || probe.child_exists(catalog, ".git")
+        || has_effigy_manifest_root_marker(catalog, probe)
+    {
+        return None;
+    }
+    let target = canonicalize_best_effort(catalog.to_path_buf());
+    let mut declaring = None;
+    let mut current = catalog.parent();
+    while let Some(dir) = current {
+        if probe.child_exists(dir, TASK_MANIFEST_FILE) {
+            if let Some(handle) = member_handle_for(dir, &target, probe) {
+                declaring = Some((dir.to_path_buf(), handle));
+            }
+            if has_effigy_manifest_root_marker(dir, probe) {
+                break;
+            }
+        }
+        if probe.child_exists(dir, ".git") {
+            break;
+        }
+        current = dir.parent();
+    }
+    let (root, handle) = declaring?;
+    Some(ResolvedTarget {
+        evidence: vec![format!(
+            "catalog {} is member `{handle}` of {}; resolved to its declaring root",
+            catalog.display(),
+            task_manifest_path(&root).display()
+        )],
+        resolved_root: root,
+        resolution_mode: ResolutionMode::AutoPromoted,
+        warnings: Vec::new(),
+    })
+}
+
+/// The `[catalog.members]` handle under `root` that names `target`, read from
+/// the root manifest, its committed includes and its local overlay.
+fn member_handle_for(root: &Path, target: &Path, probe: &mut PathPresenceCache) -> Option<String> {
+    let manifest = manifest_value(root, probe)?;
+    let mut sources = vec![manifest.clone()];
+    let includes = manifest
+        .get("manifest")
+        .and_then(|section| section.get("include"))
+        .and_then(toml::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    for include in includes.iter().filter_map(toml::Value::as_str) {
+        if let Ok(value) = toml::from_str::<toml::Value>(&read_to_string(&root.join(include))) {
+            sources.push(value);
+        }
+    }
+    if let Ok(value) = toml::from_str::<toml::Value>(&read_to_string(&root.join("effigy.local.toml")))
+    {
+        sources.push(value);
+    }
+    sources.iter().find_map(|source| {
+        source
+            .get("catalog")
+            .and_then(|catalog| catalog.get("members"))
+            .and_then(toml::Value::as_table)?
+            .iter()
+            .find(|(_, path)| {
+                path.as_str().is_some_and(|path| {
+                    canonicalize_best_effort(root.join(path)) == target
+                })
+            })
+            .map(|(handle, _)| handle.clone())
+    })
+}
+
 fn read_to_string(path: &Path) -> String {
     std::fs::read_to_string(path).unwrap_or_default()
 }
@@ -250,6 +331,59 @@ mod tests {
         fs::create_dir_all(&child).expect("mkdir child");
         fs::write(child.join("effigy.toml"), root_marker).expect("write child manifest");
         (temp, child)
+    }
+
+    #[test]
+    fn deep_member_catalog_resolves_to_its_declaring_root() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        fs::create_dir(root.join(".git")).expect("git toplevel");
+        fs::write(
+            root.join("effigy.toml"),
+            "[catalog.members]\nfarmyard = \"apps/farmyard\"\n",
+        )
+        .expect("root manifest");
+        let catalog = root.join("apps/farmyard");
+        fs::create_dir_all(catalog.join("src")).expect("catalog dirs");
+        fs::write(catalog.join("effigy.toml"), "[catalog]\nalias = \"farmyard\"\n")
+            .expect("catalog manifest");
+
+        let resolved = resolve_target_root(catalog.join("src"), None).expect("resolve");
+        assert_eq!(
+            fs::canonicalize(&resolved.resolved_root).expect("canonical"),
+            fs::canonicalize(root).expect("canonical root")
+        );
+        assert_eq!(resolved.resolution_mode, ResolutionMode::AutoPromoted);
+        assert!(resolved.evidence[0].contains("member `farmyard`"));
+    }
+
+    #[test]
+    fn undeclared_deep_catalog_and_root_boundaries_keep_the_nearest_root() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        fs::write(root.join("effigy.toml"), "[tasks.root]\nrun = \"true\"\n").expect("root");
+        let undeclared = root.join("apps/loose");
+        fs::create_dir_all(&undeclared).expect("dir");
+        fs::write(undeclared.join("effigy.toml"), "[catalog]\nalias = \"loose\"\n").expect("m");
+        let resolved = resolve_target_root(undeclared.clone(), None).expect("resolve");
+        assert_eq!(
+            fs::canonicalize(&resolved.resolved_root).expect("canonical"),
+            fs::canonicalize(&undeclared).expect("canonical undeclared")
+        );
+
+        let boundary = root.join("apps/own");
+        fs::create_dir_all(&boundary).expect("dir");
+        fs::write(boundary.join("effigy.toml"), "[manifest]\nroot = true\n").expect("m");
+        fs::write(
+            root.join("effigy.toml"),
+            "[catalog.members]\nown = \"apps/own\"\n",
+        )
+        .expect("root");
+        let resolved = resolve_target_root(boundary.clone(), None).expect("resolve");
+        assert_eq!(
+            fs::canonicalize(&resolved.resolved_root).expect("canonical"),
+            fs::canonicalize(&boundary).expect("canonical boundary")
+        );
     }
 
     #[test]

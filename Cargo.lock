@@ -1063,6 +1063,7 @@ name = "effigy-execution"
 version = "0.14.1"
 dependencies = [
  "effigy-context",
+ "effigy-core",
  "effigy-tasks",
  "serde",
 ]

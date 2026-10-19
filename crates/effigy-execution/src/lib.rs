@@ -230,15 +230,44 @@ pub struct ExecutionRuntimeArgsPlan {
     pub lock_wait_ms: Option<u64>,
     pub output_json: bool,
     pub plan: bool,
+    /// `--plan` or `--json` read from directly after the selector, for one
+    /// release.
+    pub compat_flags: Vec<String>,
+    /// Effigy flags placed after the selector, now passed to the task.
+    pub passed_through_flags: Vec<String>,
 }
 
 impl ExecutionRuntimeArgsPlan {
     pub fn from_args(args: &[String]) -> Result<Self, ExecutionRequestError> {
+        // Behind the CLI's boundary the task's own `--json` or `--plan` is
+        // the task's: only Effigy's half is searched for output flags.
+        if let Some(split) = effigy_core::task_args::split_task_args(args) {
+            let raw = effigy_tasks::parse_task_runtime_args(&split.effigy)
+                .map_err(ExecutionRequestError::InvalidRuntimeArgs)?;
+            let (mut exec_args, output_json, plan) = strip_task_output_flags(&raw.passthrough);
+            exec_args.extend(split.task.iter().cloned());
+            let mut raw_args = raw.passthrough;
+            raw_args.extend(split.task);
+            return Ok(Self {
+                raw_args,
+                exec_args,
+                repo_override: raw.repo_override,
+                verbose_root: raw.verbose_root,
+                env_schema_override: raw.env_schema_override,
+                lock_wait_ms: raw.lock_wait_ms,
+                output_json,
+                plan,
+                compat_flags: split.compat,
+                passed_through_flags: split.passed_through,
+            });
+        }
         let raw = effigy_tasks::parse_task_runtime_args(args)
             .map_err(ExecutionRequestError::InvalidRuntimeArgs)?;
         let (exec_args, output_json, plan) = strip_task_output_flags(&raw.passthrough);
 
         Ok(Self {
+            compat_flags: Vec::new(),
+            passed_through_flags: Vec::new(),
             raw_args: raw.passthrough,
             exec_args,
             repo_override: raw.repo_override,
