@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EffectClass {
     Static,
     Observe,
@@ -11,7 +11,7 @@ pub enum EffectClass {
     Prepare,
     Mutate,
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Placement {
     Host,
     Guest,
@@ -35,14 +35,32 @@ pub enum StopCause {
 }
 
 /// First cancellation wins; clones share cancellation without global state.
+#[derive(Debug, Default)]
+struct Cancellation {
+    cause: OnceLock<StopCause>,
+    source: Option<fn() -> Option<StopCause>>,
+}
 #[derive(Debug, Clone, Default)]
-pub struct CancelToken(Arc<OnceLock<StopCause>>);
+pub struct CancelToken(Arc<Cancellation>);
 impl CancelToken {
     pub fn cancel(&self, cause: StopCause) {
-        let _ = self.0.set(cause);
+        let _ = self.0.cause.set(cause);
     }
     pub fn cause(&self) -> Option<&StopCause> {
-        self.0.get()
+        if let Some(source) = self.0.source {
+            if let Some(cause) = source() {
+                let _ = self.0.cause.set(cause);
+            }
+        }
+        self.0.cause.get()
+    }
+    /// Only the main-installed router supplies this source. Libraries merely
+    /// poll the token; they need no handler or router poll loop to see a signal.
+    pub(crate) fn from_signal_source(source: fn() -> Option<StopCause>) -> Self {
+        Self(Arc::new(Cancellation {
+            cause: OnceLock::new(),
+            source: Some(source),
+        }))
     }
 }
 
@@ -229,6 +247,12 @@ pub enum Capability {
     HostAuthority,
 }
 impl EffectContext {
+    /// A finite phase budget, retaining this capability's class, placement and
+    /// cancellation. Open workload lifetime never implies an unbounded DB wait.
+    pub fn child(&self, budget: Duration) -> Self {
+        Self(self.0.child(budget))
+    }
+
     pub fn operation(&self) -> &OperationContext {
         &self.0
     }

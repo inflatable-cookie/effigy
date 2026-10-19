@@ -21,12 +21,24 @@
 "lint:graph" = "cargo clippy -p effigy-codegraph -p effigy-cli -p effigy-manifest -p effigy-routing -p effigy-builtin -p effigy --all-targets -- -D warnings"
 
 # Kernel foundation: bounded, disjoint proof families; no engine adoption.
+"test:kernel:custody" = [
+  { run = "cargo build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 },
+  { run = "EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --test custody --lib -E 'test(/^custody::tests::/) | test(/^signal::tests::/) | test(/^run::lifecycle::tests::/) | binary(custody)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
+]
+"test:kernel:custody:linux" = { admission = "heavy", run = [{ id = "linux-custody", run = "sh crates/effigy-kernel/tests/scripts/linux-custody.sh", timeout_ms = 1800000 }] }
+"test:kernel:custody:signals" = [
+  { run = "cargo build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 },
+  { run = "EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --test custody -E 'test(custody_signal_and_owner_kill_matrix_settles_without_survivors)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
+]
 "test:kernel:identity" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --test foundation -E 'test(identity_)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
 "test:kernel:context" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --test foundation -E 'test(context_)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
 "test:kernel:observed" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --test foundation -E 'test(observation_)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
 "test:kernel:outcome" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --test foundation -E 'test(outcome_)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
-"test:kernel:platform" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib --test platform -E 'not test(/^fault_tests::/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
+"test:kernel:platform" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib --test platform -E 'not test(/^fault_tests::/) & not test(/^custody::tests::/) & not test(/^signal::tests::/) & not test(/^run::lifecycle::tests::/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
 "test:kernel:gate" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib --test gate -E 'test(gate_)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
+# Match CI's concurrent libtest process; Effigy bounds the runner's lifetime.
+"test:kernel:gate:shared" = { run = "RUSTFLAGS='--cfg effigy_shared_process' cargo test -p effigy-kernel --test gate -- --test-threads=8", timeout_ms = 600000 }
+"test:kernel:gate:shared:linux" = { admission = "heavy", run = [{ id = "linux-shared-gate", run = "sh crates/effigy-kernel/tests/scripts/linux-custody.sh gate-shared", timeout_ms = 1800000 }] }
 "test:kernel:store" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib --test store -E 'test(store_)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
 "test:kernel:run" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib -E 'test(/^run::tests::run_/) | test(/^run::tests::faults::run_/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
 "test:kernel:attachments" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib -E 'test(/^run::tests::attachments_/) | test(/^run::tests::faults::attachments_/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }

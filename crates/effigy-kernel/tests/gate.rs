@@ -112,18 +112,24 @@ fn gate_sigstop_holder_is_never_stolen_and_completes_on_resume() {
         attempts += 1;
         std::thread::sleep(Duration::from_secs(5));
     }
+    // Prepare the filesystem/context before starting the wait budget. `waited`
+    // starts inside Gate::acquire, whereas Until is an absolute caller deadline.
+    // Comparing waited with the whole budget incorrectly counts preparation
+    // time (and even call overhead), which is visible under shared CI load.
+    let cx = effects(EffectClass::Mutate);
+    let root = root(home.path());
+    let ids = [task("build")];
     let start = Instant::now();
-    match acquire(
-        home.path(),
-        &[task("build")],
-        Wait::Until(Instant::now() + Duration::from_secs(2)),
-    ) {
+    let deadline = start + Duration::from_secs(2);
+    match Gate::acquire(&cx, &root, &ids, Wait::Until(deadline)) {
         Err(GateError::TimedOut {
             waited,
             holder: diag,
             ..
         }) => {
-            assert!(waited >= Duration::from_secs(2));
+            let returned = Instant::now();
+            assert!(returned >= deadline, "gate timed out before its deadline");
+            assert!(waited > Duration::ZERO && waited <= returned - start);
             assert_eq!(
                 holder_diag(&diag).state.verified(),
                 Some(&ProcessState::Stopped)

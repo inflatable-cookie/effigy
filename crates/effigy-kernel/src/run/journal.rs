@@ -74,6 +74,13 @@ pub(super) fn insert_effect(
         [id.to_string()],
         |r| r.get(0),
     )?;
+    // A process intent ends positive NotStarted evidence before any fork.
+    if spec.kind == crate::custody::KIND {
+        txn.conn().execute(
+            "UPDATE runs SET workload_outcome=NULL WHERE run_id=?1",
+            [id.to_string()],
+        )?;
+    }
     // target is the versioned typed effect envelope, including engine payload.
     txn.conn().execute("INSERT INTO events(run_id,seq,effect_id,kind,target,settlement,state,wall_time) VALUES (?1,?2,?3,?4,?5,?6,'intended',?7)",
         params![id.to_string(),sequence,sequence.to_string(),spec.kind,serde_json::to_string(spec)?,serde_json::to_string(&spec.settlement)?,txn.now()])?;
