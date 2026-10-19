@@ -17,13 +17,39 @@ fn test_lock() -> &'static Mutex<()> {
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
+#[test]
+fn environment_guard_serializes_a_forced_concurrent_mutator() {
+    const KEY: &str = "EFFIGY_TEST_ENV_GUARD_REGRESSION";
+    let original = std::env::var_os(KEY);
+    let first = EnvGuard::set(KEY, Some("first"));
+    let (attempted_tx, attempted_rx) = std::sync::mpsc::channel();
+    let second = std::thread::spawn(move || {
+        assert!(matches!(
+            test_lock().try_lock(),
+            Err(std::sync::TryLockError::WouldBlock)
+        ));
+        attempted_tx.send(()).unwrap();
+        let _second = EnvGuard::set(KEY, Some("second"));
+        assert_eq!(std::env::var(KEY).unwrap(), "second");
+    });
+    attempted_rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .unwrap();
+    assert_eq!(std::env::var(KEY).unwrap(), "first");
+    drop(first);
+    second.join().unwrap();
+    assert_eq!(std::env::var_os(KEY), original);
+}
+
 struct EnvGuard {
     key: String,
     original: Option<String>,
+    _lock: std::sync::MutexGuard<'static, ()>,
 }
 
 impl EnvGuard {
     fn set(key: &str, value: Option<&str>) -> Self {
+        let lock = test_lock().lock().unwrap_or_else(|p| p.into_inner());
         let original = std::env::var(key).ok();
         match value {
             Some(value) => std::env::set_var(key, value),
@@ -32,6 +58,7 @@ impl EnvGuard {
         Self {
             key: key.to_owned(),
             original,
+            _lock: lock,
         }
     }
 }
@@ -74,7 +101,6 @@ fn profile_step(profile_name: &str) -> ManifestManagedRunStep {
 
 #[test]
 fn apply_from_step_profile_resolution_prefers_manifest_then_process_then_dotenv() {
-    let _guard = test_lock().lock().expect("lock");
     let root = temp_repo("precedence");
     fs::write(root.join(".env"), "MY_VAR=from-dotenv\n").expect("write .env");
     let _env = EnvGuard::set("MY_VAR", Some("from-process"));
@@ -98,7 +124,6 @@ fn apply_from_step_profile_resolution_prefers_manifest_then_process_then_dotenv(
 
 #[test]
 fn apply_from_step_profile_resolution_uses_dotenv_when_manifest_and_process_missing() {
-    let _guard = test_lock().lock().expect("lock");
     let root = temp_repo("dotenv");
     fs::write(root.join(".env"), "MY_VAR=from-dotenv\n").expect("write .env");
     let _env = EnvGuard::set("MY_VAR", None);
@@ -116,7 +141,6 @@ fn apply_from_step_profile_resolution_uses_dotenv_when_manifest_and_process_miss
 
 #[test]
 fn apply_from_step_profile_resolution_errors_for_unknown_entry() {
-    let _guard = test_lock().lock().expect("lock");
     let root = temp_repo("unknown");
     let _env = EnvGuard::set("MY_VAR", None);
 
@@ -153,7 +177,6 @@ fn apply_from_step_profile_resolution_errors_for_empty_name() {
 
 #[test]
 fn apply_from_step_profile_resolution_uses_env_schema_defaults_before_dotenv() {
-    let _guard = test_lock().lock().expect("lock");
     let root = temp_repo("env-schema");
     fs::write(
         root.join("effigy.toml"),
@@ -196,7 +219,6 @@ fn apply_from_step_profile_resolution_uses_env_schema_defaults_before_dotenv() {
 
 #[test]
 fn apply_from_step_profile_resolution_inherits_ancestor_catalog_env_schema() {
-    let _guard = test_lock().lock().expect("lock");
     let root = temp_repo("env-schema-ancestor");
     let child = root.join("cp-api");
     fs::create_dir_all(&child).expect("mkdir child catalog");

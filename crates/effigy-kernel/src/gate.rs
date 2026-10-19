@@ -110,8 +110,18 @@ impl std::error::Error for GateError {}
 /// a scope removal never runs while a resource gate is still held.
 #[derive(Debug)]
 pub struct GateGuard {
-    gates: Vec<(ResourceId, File)>,
-    scopes: Vec<(String, File)>,
+    gates: Vec<(ResourceId, GateFile)>,
+    scopes: Vec<(String, GateFile)>,
+}
+
+/// A lock belongs to the open description, including copies in a concurrent
+/// fork. Explicit unlock makes release independent of the child's close/exec.
+#[derive(Debug)]
+struct GateFile(File);
+impl Drop for GateFile {
+    fn drop(&mut self) {
+        fs::unlock(&self.0);
+    }
 }
 impl GateGuard {
     pub fn ids(&self) -> impl Iterator<Item = &ResourceId> {
@@ -131,7 +141,7 @@ impl GateGuard {
     pub fn set_run(&self, run: &RunId) {
         let body = body(Some(run.to_string()));
         for (_, file) in &self.gates {
-            let _ = fs::rewrite(file, &body);
+            let _ = fs::rewrite(&file.0, &body);
         }
     }
 }
@@ -215,7 +225,7 @@ impl Gate {
                 .iter()
                 .find(|id| &scope_name(id.scope()) == name)
                 .expect("scope of an id");
-            lock(cx, &file, libc::LOCK_SH, deadline, started, wait, first)?;
+            let file = lock(cx, file, libc::LOCK_SH, deadline, started, wait, first)?;
             guard.scopes.push((name.clone(), file));
             // Recreated after a removal; removal cannot run while we hold SH.
             let dir = gates.child(name, Trust::Private, true)?.expect("created");
@@ -229,14 +239,14 @@ impl Gate {
                 .expect("opened scope");
             let file =
                 open_gate(dir, &format!("{}.gate", id.name()), true)?.expect("created gate file");
-            lock(cx, &file, libc::LOCK_EX, deadline, started, wait, id)?;
+            let file = lock(cx, file, libc::LOCK_EX, deadline, started, wait, id)?;
             guard.gates.push((id.clone(), file));
         }
         crate::fault_point!(GateAcquire)
             .map_err(|e| GateError::Io(IoError::new("gate acquire", root.path(), &e)))?;
         let body = body(None);
         for (_, file) in &guard.gates {
-            let _ = fs::rewrite(file, &body);
+            let _ = fs::rewrite(&file.0, &body);
         }
         Ok(guard)
     }
@@ -275,6 +285,8 @@ impl Gate {
         {
             return Ok(ScopeRemoval::Busy);
         }
+        // Also release on every early return or filesystem error below.
+        let file = GateFile(file);
         let Some(dir) = gates.child(&name, Trust::Private, false)? else {
             return Ok(ScopeRemoval::Absent);
         };
@@ -400,17 +412,17 @@ fn open_gate(dir: &fs::DirFd, name: &str, create: bool) -> Result<Option<File>, 
 
 fn lock(
     cx: &EffectContext,
-    file: &File,
+    file: File,
     op: i32,
     deadline: Instant,
     started: Instant,
     wait: Wait,
     id: &ResourceId,
-) -> Result<(), GateError> {
+) -> Result<GateFile, GateError> {
     let mut pause = POLL_MIN;
     loop {
-        match fs::try_flock(file, op) {
-            Ok(true) => return Ok(()),
+        match fs::try_flock(&file, op) {
+            Ok(true) => return Ok(GateFile(file)),
             Ok(false) => {}
             Err(error) => {
                 return Err(GateError::Io(IoError::new(
@@ -425,7 +437,7 @@ fn lock(
         }
         let now = Instant::now();
         if now >= deadline {
-            let holder = Box::new(holder(file));
+            let holder = Box::new(holder(&file));
             return Err(match wait {
                 Wait::FailFast => GateError::Busy {
                     id: id.clone(),

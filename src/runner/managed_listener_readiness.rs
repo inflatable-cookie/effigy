@@ -145,6 +145,7 @@ mod tests {
     use super::*;
     use std::convert::Infallible;
     use std::net::{Shutdown, TcpListener};
+    use std::sync::mpsc::{self, Receiver, TryRecvError};
     use std::thread;
 
     use bytes::Bytes;
@@ -173,12 +174,23 @@ mod tests {
     /// same engine Axum's default `serve` uses for HTTP/1 requests. It runs on
     /// its own thread and is leaked for the life of the test process.
     fn spawn_hyper_http1_server(status: u16) -> SocketAddr {
+        start_hyper_http1_server(status, || {})
+            .recv_timeout(Duration::from_secs(5))
+            .expect("hyper fixture ready")
+    }
+
+    fn start_hyper_http1_server(
+        status: u16,
+        before_runtime: impl FnOnce() + Send + 'static,
+    ) -> Receiver<SocketAddr> {
+        let (ready_tx, ready_rx) = mpsc::channel();
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind hyper fixture");
         listener
             .set_nonblocking(true)
             .expect("nonblocking hyper fixture");
         let address = listener.local_addr().expect("hyper fixture address");
         thread::spawn(move || {
+            before_runtime();
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
@@ -186,6 +198,9 @@ mod tests {
             runtime.block_on(async move {
                 let listener =
                     tokio::net::TcpListener::from_std(listener).expect("tokio fixture listener");
+                ready_tx
+                    .send(address)
+                    .expect("publish hyper fixture address");
                 loop {
                     let (stream, _) = listener.accept().await.expect("accept hyper fixture");
                     tokio::spawn(async move {
@@ -204,7 +219,7 @@ mod tests {
                 }
             });
         });
-        address
+        ready_rx
     }
 
     /// Raw TCP controls for responses that a conforming HTTP client must
@@ -235,6 +250,29 @@ mod tests {
 
     fn probe_outcome(address: SocketAddr, status: u16) -> HttpReadinessOutcome {
         probe_http_readiness(address, DOMAIN, &listener_config(status)).outcome
+    }
+
+    #[test]
+    fn managed_host_readiness_fixture_waits_for_runtime_before_publishing_address() {
+        let (starting_tx, starting_rx) = mpsc::channel();
+        let (resume_tx, resume_rx) = mpsc::channel();
+        let ready = start_hyper_http1_server(200, move || {
+            starting_tx.send(()).expect("fixture startup reached");
+            resume_rx
+                .recv_timeout(Duration::from_secs(5))
+                .expect("resume fixture startup");
+        });
+        starting_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("fixture paused before runtime startup");
+        // Force the old interleaving: the socket is bound, but its runtime
+        // cannot serve yet. A client must not receive the address here.
+        assert_eq!(ready.try_recv(), Err(TryRecvError::Empty));
+        resume_tx.send(()).expect("release fixture startup");
+        let address = ready
+            .recv_timeout(Duration::from_secs(5))
+            .expect("serving fixture address");
+        assert_eq!(probe_outcome(address, 200), HttpReadinessOutcome::Ready);
     }
 
     #[test]

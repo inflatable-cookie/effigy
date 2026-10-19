@@ -383,6 +383,11 @@
   "cargo clippy -p effigy -p effigy-managed -p effigy-containers -p effigy-tui -p effigy-process --all-targets -- -D warnings",
 ]
 "test:managed:matrix" = { run = "cargo nextest run --config-file tests/config/managed-matrix-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_matrix_) & !test(managed_matrix_failed_stop_)' --success-output immediate --no-fail-fast --retries 0 --no-tests fail -j 2", timeout_ms = 2500000 }
+# The matrix cases own their fake Docker proxy socket from bind through teardown.
+"test:fixtures:matrix-port" = [{ task = "test:managed:matrix" }, { task = "test:managed:failed-stop" }]
+"test:fixtures:merge-helpers" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-host-run --lib --filterset 'test(/^runner::bootstrap_command::tests::/) | test(/^protocol_tests::/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
+"check:fixtures:matrix-port" = { run = "cargo check -p effigy -p effigy-host-run --all-targets --profile test", timeout_ms = 600000 }
+"lint:fixtures:matrix-port" = { run = "cargo clippy -p effigy -p effigy-host-run --all-targets -- -D warnings", timeout_ms = 600000 }
 "test:managed:matrix:all-failed" = { run = "cargo nextest run --config-file tests/config/managed-matrix-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_matrix_all_failed_)' --success-output immediate --no-fail-fast --retries 0 --no-tests fail -j 2", timeout_ms = 2500000 }
 "test:managed:failed-stop" = { run = "cargo nextest run --config-file tests/config/managed-matrix-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_matrix_failed_stop_)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 }
 "test:managed:recovery" = [
@@ -1004,6 +1009,26 @@
 ]
 
 # Trusted host-run protocol client (contract 010 Client protocol v1)
+# Publication-race fixtures: cover both complete changed test modules, then
+# exercise their shared-process model with the same bounded task lifetime.
+"test:fixtures:publication" = { run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy -p effigy-host-run --lib --filterset 'test(/^runner::managed_listener_readiness::tests::/) | test(/^protocol_tests::/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
+"test:fixtures:publication:shared" = [
+  { run = "RUSTFLAGS='--cfg effigy_shared_process' cargo test -p effigy --lib managed_listener_readiness::tests:: -- --test-threads=8", timeout_ms = 600000 },
+  { run = "RUSTFLAGS='--cfg effigy_shared_process' cargo test -p effigy-host-run --lib protocol_tests:: -- --test-threads=8", timeout_ms = 600000 },
+]
+# Every process-env fixture uses its crate's lock; regressions force a second
+# mutator to contend before the owning guard restores the original values.
+"test:fixtures:environment" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-builtin -p effigy-cli -p effigy-containers -p effigy-core -p effigy-gateway -p effigy-managed -p effigy-release -p effigy-rhai --lib --filterset 'test(environment_guard_serializes_a_forced_concurrent_mutator) | package(effigy-rhai) | test(/^build_info::tests::/) | test(/^header::tests::/) | (package(effigy-builtin) & test(/^completion::/)) | (package(effigy-gateway) & test(/^tls::tests::/)) | (package(effigy-containers) & test(/mount_spec::tests::|workspace::.*host.*tests::/)) | test(env_resolution::tests::) | test(failing_and_passing_gates_persist_logs_and_redacted_environment) | test(/^runner::bootstrap_command::tests::/) | test(/^runner::container_command::secret_env::tests::/) | test(/^runner::state_command::tests::/) | test(browser_terminal_size_override_reads_valid_env_values) | test(inline_workspace_started_and_removed_facts_share_compose_plan_backend) | test(permission_reuse_headless_flag_grants_no_privilege_and_implies_no_tty) | test(generation_flag_is_cleared_after_the_hook_succeeds_or_fails)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 }
+"test:fixtures:environment:gateway" = { run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(environment_guard_serializes_a_forced_concurrent_mutator) | test(container_headless_managed_lifecycle_publishes_routes_in_scoped_data_from_clone)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
+"test:fixtures:environment:shared" = [
+  { run = "RUSTFLAGS='--cfg effigy_shared_process' cargo test -p effigy -p effigy-builtin -p effigy-cli -p effigy-containers -p effigy-core -p effigy-gateway -p effigy-managed -p effigy-release -p effigy-rhai --lib environment_guard_serializes_a_forced_concurrent_mutator -- --test-threads=8", timeout_ms = 600000 },
+  { run = "RUSTFLAGS='--cfg effigy_shared_process' cargo test -p effigy-rhai --lib -- --test-threads=8", timeout_ms = 600000 },
+]
+"check:fixtures:environment" = { run = "cargo check -p effigy -p effigy-builtin -p effigy-cli -p effigy-containers -p effigy-core -p effigy-gateway -p effigy-managed -p effigy-release -p effigy-rhai --all-targets --profile test", timeout_ms = 600000 }
+"lint:fixtures:environment" = { run = "cargo clippy -p effigy -p effigy-builtin -p effigy-cli -p effigy-containers -p effigy-core -p effigy-gateway -p effigy-managed -p effigy-release -p effigy-rhai --all-targets -- -D warnings", timeout_ms = 600000 }
+"fmt:fixtures:environment" = "rustfmt --edition 2021 {args}"
+"check:fixtures:publication" = { run = "cargo check -p effigy -p effigy-host-run --lib --tests --profile test", timeout_ms = 600000 }
+"lint:fixtures:publication" = { run = "cargo clippy -p effigy -p effigy-host-run --lib --tests -- -D warnings", timeout_ms = 600000 }
 "test:host-run:protocol" = "cargo test -p effigy-host-run --lib -- --nocapture"
 "test:host-run:request-recovery" = [
   { id = "request-lookup-protocol", run = "cargo nextest run -p effigy-host-run --lib --filterset 'test(exact_request_lookup)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },

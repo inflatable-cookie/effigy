@@ -7,7 +7,10 @@ use effigy_kernel::ident::ProcessState;
 use effigy_kernel::observe::*;
 use effigy_kernel::root::StateRoot;
 use effigy_kernel::store::Store;
+use std::io::Read;
+use std::os::fd::AsRawFd;
 use std::os::unix::fs::PermissionsExt;
+use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::time::{Duration, Instant};
 use support::*;
@@ -82,6 +85,174 @@ fn helper_gate_holder() {
 
 fn holder_diag(holder: &Observed<HolderDiag>) -> &HolderDiag {
     holder.verified().expect("holder diagnostics readable")
+}
+
+/// A concurrent fork kept before exec/descriptor closure until dropped.
+/// Only async-signal-safe syscalls run in the child; it never drops Rust guards.
+struct PausedFork {
+    pid: libc::pid_t,
+    barrier: UnixStream,
+}
+impl PausedFork {
+    fn spawn() -> Self {
+        let (parent, child) = UnixStream::pair().unwrap();
+        parent
+            .set_read_timeout(Some(Duration::from_secs(30)))
+            .unwrap();
+        let fd = child.as_raw_fd();
+        let parent_fd = parent.as_raw_fd();
+        // SAFETY: the child runs only the syscall-only branch below and _exit;
+        // it neither allocates nor accesses locks inherited from other threads.
+        let pid = unsafe { libc::fork() };
+        assert!(pid >= 0, "fork failed: {}", std::io::Error::last_os_error());
+        if pid == 0 {
+            // SAFETY: fd is a live inherited socket; the one-byte buffer and
+            // pollfd are initialized stack storage. No Rust destructor runs.
+            unsafe {
+                libc::close(parent_fd);
+                let ready = [1u8];
+                if libc::write(fd, ready.as_ptr().cast(), 1) != 1 {
+                    libc::_exit(125);
+                }
+                let mut poll = libc::pollfd {
+                    fd,
+                    events: libc::POLLIN,
+                    revents: 0,
+                };
+                // Bound the child even if its parent panics or disappears.
+                libc::poll(&mut poll, 1, 30_000);
+                libc::_exit(0);
+            }
+        }
+        let mut child_guard = Self {
+            pid,
+            barrier: parent,
+        };
+        let mut ready = [0u8];
+        child_guard.barrier.read_exact(&mut ready).unwrap();
+        assert_eq!(ready, [1]);
+        child_guard
+    }
+    fn assert_running(&self) {
+        assert_eq!(
+            effigy_kernel::ident::process_state(self.pid as u32).verified(),
+            Some(&ProcessState::Active),
+            "fork child exited before the release proof"
+        );
+    }
+}
+impl Drop for PausedFork {
+    fn drop(&mut self) {
+        // SAFETY: this is our unreaped direct child, so its pid cannot be reused.
+        // Kill only it, then reap; EINTR does not transfer wait ownership.
+        unsafe {
+            libc::kill(self.pid, libc::SIGKILL);
+            while libc::waitpid(self.pid, std::ptr::null_mut(), 0) < 0 {
+                if std::io::Error::last_os_error().kind() != std::io::ErrorKind::Interrupted {
+                    break;
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn gate_release_is_immediate_while_a_concurrent_fork_keeps_its_descriptors() {
+    let home = home();
+    let id = task("build");
+    let guard = acquire(home.path(), std::slice::from_ref(&id), Wait::FailFast).unwrap();
+    let child = std::thread::spawn(PausedFork::spawn).join().unwrap();
+    let held = probe(home.path(), &id);
+    assert!(
+        matches!(&held, Observed::Verified(GateState::Held(diag), _)
+        if holder_diag(diag).pid == std::process::id()),
+        "before drop: {held:?}"
+    );
+    drop(guard);
+    let released = probe(home.path(), &id);
+    child.assert_running();
+    assert!(
+        matches!(released, Observed::Verified(GateState::Free, _)),
+        "after drop with fork child {} still before exec: {released:?}",
+        child.pid
+    );
+    // A successor can acquire while the child still has the old description.
+    let successor = acquire(home.path(), &[id], Wait::FailFast).unwrap();
+    child.assert_running();
+    drop(child);
+    assert!(matches!(
+        probe(home.path(), &task("build")),
+        Observed::Verified(GateState::Held(_), _)
+    ));
+    drop(successor);
+}
+
+#[test]
+fn gate_rollback_releases_resource_and_scope_while_a_concurrent_fork_keeps_them() {
+    let home = home();
+    let blocked = ResourceId::store(Scope::Checkout(checkout()), "graph").unwrap();
+    let _held = acquire(home.path(), std::slice::from_ref(&blocked), Wait::FailFast).unwrap();
+    let first = ResourceId::store(Scope::Machine, "vault").unwrap();
+    assert!(first.canonical() < blocked.canonical());
+    let cancel = CancelToken::default();
+    let cx = OperationContext::new(
+        Deadline::At(Instant::now() + Duration::from_secs(120)),
+        cancel.clone(),
+        limits(),
+        EffectClass::Mutate,
+        Placement::Host,
+    )
+    .effects()
+    .unwrap();
+    let state = root(home.path());
+    let ids = [first.clone(), blocked];
+    let waiter = std::thread::spawn(move || {
+        Gate::acquire(
+            &cx,
+            &state,
+            &ids,
+            Wait::Until(Instant::now() + Duration::from_secs(60)),
+        )
+    });
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        if matches!(
+            probe(home.path(), &first),
+            Observed::Verified(GateState::Held(_), _)
+        ) {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "waiter never took its first gate"
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let child = std::thread::spawn(PausedFork::spawn).join().unwrap();
+    cancel.cancel(StopCause::Requested);
+    assert!(matches!(
+        waiter.join().unwrap(),
+        Err(GateError::Interrupted(_))
+    ));
+    let released = probe(home.path(), &first);
+    assert!(
+        matches!(released, Observed::Verified(GateState::Free, _)),
+        "rollback with fork child {}: {released:?}",
+        child.pid
+    );
+    // A leaked shared scope lock would still block scope removal even if the
+    // exclusive resource lock was correctly released.
+    let scope = std::fs::File::open(root(home.path()).path().join("gates/machine.scope")).unwrap();
+    // SAFETY: live, independently opened scope fd; a nonblocking lock attempt.
+    let locked = unsafe { libc::flock(scope.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+    // SAFETY: release only the lock on this test's independent description.
+    unsafe { libc::flock(scope.as_raw_fd(), libc::LOCK_UN) };
+    child.assert_running();
+    assert_eq!(
+        locked, 0,
+        "rollback retained the scope lock in child {}",
+        child.pid
+    );
 }
 
 #[test]
@@ -281,10 +452,11 @@ fn gate_probe_is_pure_and_reports_never_acquired_held_and_free() {
     }
     let after_body = snapshot(home.path());
     drop(guard);
-    assert!(matches!(
-        probe(home.path(), &task("build")),
-        Observed::Verified(GateState::Free, _)
-    ));
+    let released = probe(home.path(), &task("build"));
+    assert!(
+        matches!(released, Observed::Verified(GateState::Free, _)),
+        "after guard drop: {released:?}"
+    );
     // Probing changed nothing: only the holder's own body rewrite differs.
     assert_eq!(before.len(), after_body.len());
     assert_eq!(snapshot(home.path()), after_body);

@@ -100,3 +100,7 @@ pub fn try_run_builtin_task(
         invocation_cwd,
     })
 }
+
+#[cfg(test)]
+#[path = "../../../tests/support/scoped_env.rs"]
+mod env_test_support;

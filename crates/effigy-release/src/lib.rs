@@ -1687,3 +1687,7 @@ where
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "../../../tests/support/scoped_env.rs"]
+mod env_test_support;

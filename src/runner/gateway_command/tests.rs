@@ -1701,9 +1701,11 @@ fn permission_reuse_headless_flag_grants_no_privilege_and_implies_no_tty() {
         true, "short", &target
     ));
     // Setting the managed headless marker must not change the gate.
-    std::env::set_var("EFFIGY_MANAGED_HEADLESS", "1");
+    let _env = crate::contract_test_support::EnvGuard::set_many(&[(
+        "EFFIGY_MANAGED_HEADLESS",
+        Some("1".to_owned()),
+    )]);
     let gated = elevation::identity_reader_invocation_allowed_for_test(false, &digest, &target);
-    std::env::remove_var("EFFIGY_MANAGED_HEADLESS");
     assert!(!gated, "headless flag must not grant noninteractive reads");
 }
 

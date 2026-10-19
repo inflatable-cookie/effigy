@@ -1,3 +1,6 @@
+#[path = "support/scoped_env.rs"]
+mod env_test_support;
+
 #[path = "gateway_private/managed_matrix.rs"]
 mod managed_matrix;
 
@@ -4776,27 +4779,15 @@ fn container_headless_managed_lifecycle_publishes_routes_in_scoped_data_from_clo
     // the developer's Colima configuration.
     let colima_home = fixture.path().join("empty-colima-home");
     fs::create_dir(&colima_home).expect("empty colima home");
-    struct EnvRestore(&'static str, Option<std::ffi::OsString>);
-    impl Drop for EnvRestore {
-        fn drop(&mut self) {
-            match self.1.take() {
-                Some(value) => std::env::set_var(self.0, value),
-                None => std::env::remove_var(self.0),
-            }
-        }
-    }
-    let previous_colima_home = std::env::var_os("COLIMA_HOME");
-    std::env::set_var("COLIMA_HOME", &colima_home);
-    let _colima_env = EnvRestore("COLIMA_HOME", previous_colima_home);
-    // The in-process hammer resolves the same policy as the CLI children, so
-    // every home-derived render input (private home, host git/ssh mounts,
-    // Colima DNS config) must match on both sides.
-    let previous_containers_home = std::env::var_os("EFFIGY_TEST_CONTAINERS_HOME");
-    std::env::set_var("EFFIGY_TEST_CONTAINERS_HOME", cleanup.home.join(".effigy"));
-    let _containers_env = EnvRestore("EFFIGY_TEST_CONTAINERS_HOME", previous_containers_home);
-    let previous_home = std::env::var_os("HOME");
-    std::env::set_var("HOME", &cleanup.home);
-    let _home_env = EnvRestore("HOME", previous_home);
+    let containers_home = cleanup.home.join(".effigy");
+    let _env = env_test_support::EnvGuard::set_many(&[
+        ("COLIMA_HOME", Some(colima_home.as_os_str())),
+        (
+            "EFFIGY_TEST_CONTAINERS_HOME",
+            Some(containers_home.as_os_str()),
+        ),
+        ("HOME", Some(cleanup.home.as_os_str())),
+    ]);
 
     let managed_env = |command: &mut Command| {
         command

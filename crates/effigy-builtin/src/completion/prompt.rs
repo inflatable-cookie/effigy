@@ -179,7 +179,10 @@ mod tests {
 
     #[test]
     fn completion_prompt_accepts_defaults() {
-        std::env::set_var("SHELL", "/bin/zsh");
+        let _env = crate::env_test_support::EnvGuard::set_many(&[(
+            "SHELL",
+            Some(std::ffi::OsStr::new("/bin/zsh")),
+        )]);
         let mut input = Cursor::new("\n\n");
         let mut output = Vec::new();
         let resolved = resolve_completion_request_from_io(
