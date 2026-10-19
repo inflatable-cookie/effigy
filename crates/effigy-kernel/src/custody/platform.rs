@@ -106,13 +106,18 @@ pub(super) fn group_closed(pgid: u32, exclude: Option<u32>) -> Observed<Closure>
         Err(e) => Observed::Unknown(unknown(e)),
     }
 }
-pub(super) fn recover(receipt: &ProcessReceipt, cx: &CleanupContext) -> Observed<Closure> {
-    recover_with(&mut Host, receipt, cx)
+pub(super) fn recover(
+    receipt: &ProcessReceipt,
+    cx: &CleanupContext,
+    escalate: &mut impl FnMut() -> bool,
+) -> Observed<Closure> {
+    recover_with(&mut Host, receipt, cx, escalate)
 }
 pub(crate) fn recover_with(
     table: &mut impl ProcessTable,
     receipt: &ProcessReceipt,
     cx: &CleanupContext,
+    escalate: &mut impl FnMut() -> bool,
 ) -> Observed<Closure> {
     let grace = Instant::now()
         .checked_add(Duration::from_millis(receipt.grace_millis))
@@ -122,7 +127,7 @@ pub(crate) fn recover_with(
         if let Err(e) = cx.operation().check("custody recovery") {
             return Observed::Unknown(unknown(format!("{e:?}")));
         }
-        let signal = if Instant::now() >= grace {
+        let signal = if Instant::now() >= grace || crate::signal::escalated() || escalate() {
             killed = true;
             libc::SIGKILL
         } else {
@@ -133,9 +138,22 @@ pub(crate) fn recover_with(
         match table.leader(receipt) {
             Observed::Verified(current, _) if current == receipt.identity => {
                 group_authority = true;
+                let mut sent = false;
                 for sig in [signal, libc::SIGCONT] {
-                    if let Observed::Unknown(reason) = table.signal_leader(receipt, sig) {
-                        return Observed::Unknown(reason);
+                    match table.signal_leader(receipt, sig) {
+                        Observed::Verified(..) => sent = true,
+                        // TERM/KILL may have terminated the leader before CONT.
+                        // An uncertain CONT grants no signal authority: observe
+                        // membership again, using nonce evidence if needed.
+                        Observed::Unknown(_) if sent => {
+                            group_authority = false;
+                            break;
+                        }
+                        Observed::Absent(_) => {
+                            group_authority = false;
+                            break;
+                        }
+                        Observed::Unknown(reason) => return Observed::Unknown(reason),
                     }
                 }
             }
@@ -166,11 +184,16 @@ pub(crate) fn recover_with(
                         ));
                         continue;
                     }
+                    let mut sent = false;
                     for sig in [signal, libc::SIGCONT] {
-                        if let Observed::Unknown(reason) =
-                            table.signal_member(&member, receipt, sig)
-                        {
-                            return Observed::Unknown(reason);
+                        match table.signal_member(&member, receipt, sig) {
+                            Observed::Verified(..) => sent = true,
+                            Observed::Absent(_) => break,
+                            // The previous verified signal can close the process
+                            // between identity and environment observations. Do
+                            // not send CONT; reobserve the group on the next turn.
+                            Observed::Unknown(_) if sent => break,
+                            Observed::Unknown(reason) => return Observed::Unknown(reason),
                         }
                     }
                 }
@@ -226,10 +249,17 @@ impl ProcessTable for Host {
         {
             let fd = match pidfd(r.identity.pid) {
                 Ok(fd) => fd,
+                Err(e) if e.raw_os_error() == Some(libc::ESRCH) => {
+                    return Observed::Absent(AbsenceProof::NoSuchProcess {
+                        pid: r.identity.pid,
+                    })
+                }
                 Err(e) => return Observed::Unknown(unknown(e)),
             };
-            if ident::process_identity(r.identity.pid).verified() != Some(&r.identity) {
-                return Observed::Unknown(unknown("leader changed before signal"));
+            match generation(&r.identity) {
+                Observed::Verified(..) => {}
+                Observed::Absent(proof) => return Observed::Absent(proof),
+                Observed::Unknown(reason) => return Observed::Unknown(reason),
             }
             // SAFETY: live pidfd, supported signal, null siginfo; flag 4 selects
             // the original process group's kernel identity on Linux >=6.9.
@@ -265,8 +295,10 @@ impl ProcessTable for Host {
             // EINVAL is the capability probe for old kernels. Re-check once
             // more immediately before the documented numeric-signal window.
         }
-        if ident::process_identity(r.identity.pid).verified() != Some(&r.identity) {
-            return Observed::Unknown(unknown("leader changed before numeric signal"));
+        match generation(&r.identity) {
+            Observed::Verified(..) => {}
+            Observed::Absent(proof) => return Observed::Absent(proof),
+            Observed::Unknown(reason) => return Observed::Unknown(reason),
         }
         numeric(r.pgid, true, signal)
     }
@@ -279,14 +311,21 @@ impl ProcessTable for Host {
         #[cfg(target_os = "linux")]
         let fd = match pidfd(m.identity.pid) {
             Ok(fd) => fd,
+            Err(e) if e.raw_os_error() == Some(libc::ESRCH) => {
+                return Observed::Absent(AbsenceProof::NoSuchProcess {
+                    pid: m.identity.pid,
+                })
+            }
             Err(e) => return Observed::Unknown(unknown(e)),
         };
         // Open the descriptor before observing identity and environment. Neither
         // a stale process table entry nor a bare numeric pid grants authority.
-        if ident::process_identity(m.identity.pid).verified() != Some(&m.identity)
-            || read_nonce(m.identity.pid).verified() != Some(&r.nonce)
-            || !not_earlier(&m.identity, r)
-        {
+        match generation(&m.identity) {
+            Observed::Verified(..) => {}
+            Observed::Absent(proof) => return Observed::Absent(proof),
+            Observed::Unknown(reason) => return Observed::Unknown(reason),
+        }
+        if read_nonce(m.identity.pid).verified() != Some(&r.nonce) || !not_earlier(&m.identity, r) {
             return Observed::Unknown(unknown("member generation unverified"));
         }
         #[cfg(target_os = "linux")]
@@ -498,4 +537,20 @@ fn environment(pid: u32) -> io::Result<Vec<u8>> {
         .get(offset..)
         .ok_or_else(|| io::Error::other("truncated process environment"))?
         .to_vec())
+}
+
+// A process exiting between TERM and CONT is positive absence, not an unknown
+// generation. Only Verified permits a signal; changed generations are reobserved
+// through the nonce path on the next recovery turn.
+fn generation(expected: &ProcessIdentity) -> Observed<()> {
+    match ident::process_identity(expected.pid) {
+        Observed::Verified(current, _) if current == *expected => {
+            Observed::Verified((), evidence())
+        }
+        Observed::Verified(_, _) => {
+            Observed::Absent(AbsenceProof::StartIdentityDiffers { pid: expected.pid })
+        }
+        Observed::Absent(proof) => Observed::Absent(proof),
+        Observed::Unknown(reason) => Observed::Unknown(reason),
+    }
 }

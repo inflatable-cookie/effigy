@@ -211,8 +211,8 @@ No engine depends on the kernel yet.
 compiles all kernel targets and runs strict clippy. The `fault-injection`
 feature's observation hook exists only under `cfg(test)`.
 
-The ratchet's `syn`/`proc-macro2` parser and `tempfile` fixture dependencies are QA-only dev
-dependencies, never runtime dependencies. It parses source without host cfg
+The ratchet's `syn`/`proc-macro2` parser, `tempfile` fixtures and Rhai
+cancellation conformance are QA-only dev dependencies, never runtime dependencies. It parses source without host cfg
 expansion so platform-specific constructs are included on either host. It
 resolves imports and local receivers, inspects macro arguments, propagates
 state-path ownership through ordinary external module ancestors, and keeps
@@ -364,10 +364,10 @@ workload/exit outcome. No engine topology or command grammar lives in the kernel
 | I-P3; group and streams | retained direct child and group inventory | exited leader with live descendant; PTY and foreground terminal restoration |
 | I-P4/I-P8, O12 | process-table trait; leader/pidfd or member nonce plus start | reused/foreign/mixed/cleared-environment strict fakes; race refusal; native nonce recovery |
 | I-P5/I-P6, K10/K12 | streaming redactor, rotating log, bounded queues; explicit env | split secret and ps argv; log ENOSPC preserves ring and success |
-| I-P7, K9; cascade/escalation | one main router; signal-sourced cancel token; durable escalation request | HUP/INT/TERM cascade; duplicate router refused; token observes repeated INT without polling |
+| I-P7, K9; cascade/escalation | one main router; signal-sourced cancel token; durable escalation request | HUP/INT/TERM cascade; duplicate router refused; Rhai try/catch cannot swallow token cancellation; repeated INT without polling |
 | I-SV1/I-SV4; startup | same-binary re-exec, checked invocation decoder, Run-owned registration/socket | replacement refusal; socket fault produces NotStarted; registration atomicity under Kill/ENOSPC |
-| I-SV2; owner and sentinel lifetime | sole owner death pipe, same settle, pure sentinel metadata | owner/supervisor SIGKILL; SIGSTOP does not settle; dead sentinel gap; descriptor closes exactly once in order |
-| I-SV3; clients and matrix | common events; owning versus detached/secondary liveness | owning-client kill matrix; detach then stop; secondary death; 288-cell front-end/prior/stop/attachment model |
+| I-SV2; owner and sentinel lifetime | sole owner death pipe, same settle, pure sentinel metadata | owner/supervisor SIGKILL; both-dead successor recovery; SIGSTOP does not settle; dead sentinel gap; descriptor closes exactly once in order |
+| I-SV3; clients and matrix | common events; owning versus detached/secondary liveness | owning-client kill and terminal-close matrix; detach then stop; secondary death; 288-cell front-end/prior/stop/attachment model |
 | K4; one writer | lifecycle, socket and process results enter through Run | source ratchet rejects journal writes in supervision/custody; idempotent settle and attachment release |
 
 `test:kernel:custody` builds the disposable, feature-gated same-binary fixture and

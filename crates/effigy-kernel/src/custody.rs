@@ -127,7 +127,7 @@ pub struct PartialSpawn {
 }
 #[derive(Debug)]
 pub struct Custody;
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct OwnedProcess {
     pub(crate) core: Arc<Mutex<ProcessCore>>,
     ticket: EffectTicket,
@@ -483,6 +483,13 @@ impl ProcessCore {
         platform::owner_signal(&self.receipt, signal)
     }
     pub(crate) fn stop(&mut self, cx: &CleanupContext) -> StopReport {
+        self.stop_escalating(cx, &mut || false)
+    }
+    fn stop_escalating(
+        &mut self,
+        cx: &CleanupContext,
+        escalate: &mut impl FnMut() -> bool,
+    ) -> StopReport {
         let mut signals = Vec::new();
         let mut residue = Vec::new();
         if !self.reaped {
@@ -510,7 +517,10 @@ impl ProcessCore {
             if let Err(e) = cx.operation().check("group closure") {
                 break Observed::Unknown(unknown(format!("{e:?}")));
             }
-            if (Instant::now() >= grace || crate::signal::escalated()) && !killed && !self.reaped {
+            if (Instant::now() >= grace || crate::signal::escalated() || escalate())
+                && !killed
+                && !self.reaped
+            {
                 match self.signal(libc::SIGKILL) {
                     Observed::Verified(sent, _) => signals.push(sent),
                     Observed::Unknown(r) => residue.push(r),
@@ -574,6 +584,7 @@ pub(crate) fn settle_effect(
     effect: &Effect,
     live: Option<Arc<Mutex<ProcessCore>>>,
     cx: &CleanupContext,
+    mut escalate: impl FnMut() -> bool,
 ) -> (EffectState, Option<String>) {
     let receipt = match effect
         .receipt
@@ -588,13 +599,13 @@ pub(crate) fn settle_effect(
         return (EffectState::Residue, Some("invalid group identity".into()));
     }
     let observed = if let Some(core) = live {
-        let report = lock(&core).stop(cx);
+        let report = lock(&core).stop_escalating(cx, &mut escalate);
         if !report.residue.is_empty() {
             return (EffectState::Residue, Some(format!("{:?}", report.residue)));
         }
         report.group
     } else {
-        platform::recover(&receipt, cx)
+        platform::recover(&receipt, cx, &mut escalate)
     };
     match observed {
         Observed::Verified(..) | Observed::Absent(_) => (EffectState::Released, None),

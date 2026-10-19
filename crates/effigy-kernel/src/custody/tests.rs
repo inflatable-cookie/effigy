@@ -129,6 +129,7 @@ fn recovery_foreign_reused_group_unknown_and_nonce_evidence_oracle() {
         members: Vec<Member>,
         signals: Vec<SignalDelivered>,
         race: bool,
+        vanished_on_cont: bool,
     }
     impl ProcessTable for Fake {
         fn leader(&mut self, _: &ProcessReceipt) -> Observed<ProcessIdentity> {
@@ -138,6 +139,11 @@ fn recovery_foreign_reused_group_unknown_and_nonce_evidence_oracle() {
             Observed::Verified(self.members.clone(), evidence())
         }
         fn signal_leader(&mut self, r: &ProcessReceipt, s: i32) -> Observed<SignalDelivered> {
+            if self.vanished_on_cont && s == libc::SIGCONT {
+                return Observed::Absent(AbsenceProof::NoSuchProcess {
+                    pid: r.identity.pid,
+                });
+            }
             if self.race {
                 return Observed::Unknown(unknown("identity changed before signal"));
             }
@@ -177,7 +183,7 @@ fn recovery_foreign_reused_group_unknown_and_nonce_evidence_oracle() {
         grace_millis: 0,
     };
     let cleanup = cx().operation().cleanup(Duration::from_secs(1)).unwrap();
-    for case in 0..5 {
+    for case in 0..6 {
         let mut own = identity.clone();
         own.pid += 1;
         let mut foreign = identity.clone();
@@ -204,7 +210,7 @@ fn recovery_foreign_reused_group_unknown_and_nonce_evidence_oracle() {
             _ => vec![],
         };
         let mut fake = Fake {
-            leader: if case == 4 {
+            leader: if case >= 4 {
                 Observed::Verified(identity.clone(), evidence())
             } else {
                 Observed::Absent(AbsenceProof::NoSuchProcess { pid: r.pgid })
@@ -212,9 +218,14 @@ fn recovery_foreign_reused_group_unknown_and_nonce_evidence_oracle() {
             members,
             signals: vec![],
             race: case == 4,
+            vanished_on_cont: case == 5,
         };
-        let result = platform::recover_with(&mut fake, &r, &cleanup);
-        if case == 1 {
+        let result = platform::recover_with(&mut fake, &r, &cleanup, &mut || false);
+        if case == 5 {
+            assert!(matches!(result, Observed::Verified(..)));
+            assert_eq!(fake.signals.len(), 1);
+            assert_eq!(fake.signals[0].signal, libc::SIGKILL);
+        } else if case == 1 {
             assert!(matches!(result, Observed::Verified(..)));
             assert!(fake
                 .signals
@@ -356,7 +367,7 @@ fn fault_matrix_registration_spawn_and_socket_kill_enospc() {
                         assert_eq!(
                             out.cleanup(),
                             crate::outcome::CleanupOutcome::Complete,
-                            "{point}/{fault}"
+                            "{point}/{fault}: {out:?}"
                         );
                         true
                     }

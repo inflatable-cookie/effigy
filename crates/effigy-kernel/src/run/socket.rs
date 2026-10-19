@@ -104,7 +104,13 @@ impl Run<'_> {
 }
 
 fn device(stat: &libc::stat) -> u64 {
-    #[cfg(target_os="linux")] { stat.st_dev }
+    #[cfg(target_os = "linux")]
+    {
+        stat.st_dev
+    }
     // macOS dev_t is signed; the durable wire field preserves its numeric bits.
-    #[cfg(target_os="macos")] { stat.st_dev as u64 }
+    #[cfg(target_os = "macos")]
+    {
+        stat.st_dev as u64
+    }
 }

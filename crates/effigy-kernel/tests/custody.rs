@@ -676,3 +676,168 @@ fn custody_foreground_reads_terminal_and_restores_foreground_group() {
     drop(master);
     eventually(|| owner.0.try_wait().unwrap().is_some());
 }
+
+#[test]
+fn custody_detached_escalation_interrupts_an_in_progress_settle_grace() {
+    let home = home();
+    let cx = context();
+    let mut process = spec(
+        home.path(),
+        "trap '' TERM; printf ready > workload-ready; /bin/sleep 30 & wait",
+    );
+    process.grace = Duration::from_secs(10);
+    let mut client = start_detached(
+        &cx,
+        home.path(),
+        &invocation(),
+        id(1),
+        &next(),
+        vec![process],
+        &Executable::capture(&fixture()).unwrap(),
+        ClientMode::Owning,
+    )
+    .unwrap();
+    while !matches!(client.event(cx.operation()).unwrap(), Event::Active) {}
+    eventually(|| home.path().join("workload-ready").exists());
+    client.stop(&cx, id(2)).unwrap();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let observe = cx.operation().observe().unwrap();
+    let reader = effigy_kernel::store::Store::read(&observe, &root);
+    eventually(|| {
+        matches!(
+            status(&observe, &root, reader.verified().unwrap(), id(1), next()),
+            Observed::Verified(RunStatus::Live(Phase::Stopping), _)
+        )
+    });
+    let at = Instant::now();
+    client.escalate(&cx, id(3)).unwrap();
+    eventually(|| {
+        matches!(
+            status(&observe, &root, reader.verified().unwrap(), id(1), next()),
+            Observed::Verified(RunStatus::Closed { complete: true, .. }, _)
+        )
+    });
+    assert!(
+        at.elapsed() < Duration::from_secs(2),
+        "escalation waited for the ten-second grace"
+    );
+}
+
+#[test]
+fn custody_terminal_close_stops_detached_owning_client() {
+    use std::os::fd::{AsRawFd, FromRawFd};
+    use std::os::unix::process::CommandExt;
+    let home = home();
+    let mut master = -1;
+    let mut slave = -1;
+    // SAFETY: initialized writable slots; OS-default terminal configuration.
+    assert_eq!(
+        unsafe {
+            libc::openpty(
+                &mut master,
+                &mut slave,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        },
+        0
+    );
+    // SAFETY: two distinct fresh descriptors from successful openpty.
+    let master = unsafe { std::fs::File::from_raw_fd(master) };
+    let slave = unsafe { std::fs::File::from_raw_fd(slave) };
+    // SAFETY: live master; forbid inheritance across the fixture exec.
+    assert_eq!(
+        unsafe { libc::fcntl(master.as_raw_fd(), libc::F_SETFD, libc::FD_CLOEXEC) },
+        0
+    );
+    let mut command = Command::new(fixture());
+    command
+        .arg("detached")
+        .arg(home.path())
+        .stdin(slave)
+        .stdout(Stdio::null());
+    // SAFETY: only async-signal-safe session and terminal operations after fork.
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setsid() < 0 || libc::ioctl(0, libc::TIOCSCTTY as _, 0) < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let mut client = ChildGuard(command.spawn().unwrap());
+    eventually(|| home.path().join("ready").exists());
+    drop(master); // A real terminal hangup, rather than an injected HUP alone.
+    eventually(|| client.0.try_wait().unwrap().is_some());
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let observe = cx.operation().observe().unwrap();
+    let reader = effigy_kernel::store::Store::read(&observe, &root);
+    eventually(|| {
+        matches!(
+            status(
+                &observe,
+                &root,
+                reader.verified().unwrap(),
+                RunId::new(1, [9; 10]).unwrap(),
+                next()
+            ),
+            Observed::Verified(RunStatus::Closed { complete: true, .. }, _)
+        )
+    });
+}
+
+#[test]
+fn custody_both_owner_and_sentinel_die_successor_is_the_only_settle_writer() {
+    let home = home();
+    let mut owner = ChildGuard(
+        Command::new(fixture())
+            .arg("inline")
+            .arg(home.path())
+            .stdout(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    eventually(|| home.path().join("ready").exists());
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let observe = cx.operation().observe().unwrap();
+    let runid = RunId::new(1, [9; 10]).unwrap();
+    let info = metadata(&observe, &root, runid);
+    let sentinel = info.verified().unwrap().sentinel.as_ref().unwrap();
+    assert_eq!(
+        effigy_kernel::ident::process_identity(sentinel.pid).verified(),
+        Some(sentinel)
+    );
+    // SAFETY: the identity-checked sentinel and exact owner spawned by this proof.
+    assert_eq!(unsafe { libc::kill(sentinel.pid as i32, libc::SIGKILL) }, 0);
+    eventually(|| {
+        matches!(
+            metadata(&observe, &root, runid)
+                .verified()
+                .unwrap()
+                .sentinel_status,
+            SentinelStatus::Gap(_)
+        )
+    });
+    assert_eq!(unsafe { libc::kill(owner.0.id() as i32, libc::SIGKILL) }, 0);
+    eventually(|| owner.0.try_wait().unwrap().is_some());
+    let reader = effigy_kernel::store::Store::read(&observe, &root);
+    assert!(matches!(
+        status(&observe, &root, reader.verified().unwrap(), runid, next()),
+        Observed::Verified(RunStatus::Interrupted { .. }, _)
+    ));
+    let outcome = settle_interrupted(
+        &cx,
+        &root,
+        &invocation().spec().owner,
+        runid,
+        next(),
+        &cx.operation().cleanup(Duration::from_secs(5)).unwrap(),
+        &mut Strict,
+    )
+    .unwrap();
+    assert_eq!(outcome.cleanup(), CleanupOutcome::Complete);
+    assert_eq!(outcome.workload(), &WorkloadOutcome::Interrupted);
+}

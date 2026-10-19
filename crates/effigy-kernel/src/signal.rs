@@ -214,4 +214,24 @@ mod tests {
         handler(libc::SIGTERM);
         assert_eq!(router.poll()[0].forward, libc::SIGTERM);
     }
+    #[test]
+    fn rhai_try_catch_cannot_swallow_signal_sourced_stop() {
+        let router = SignalRouter::install(RouterPolicy::Inline).unwrap();
+        let cancel = router.root_cancel();
+        let observed = cancel.clone();
+        let sent = std::sync::atomic::AtomicBool::new(false);
+        let mut engine = rhai::Engine::new();
+        engine.on_progress(move |operations| {
+            if operations >= 10 && !sent.swap(true, Ordering::SeqCst) {
+                // SAFETY: own process, with its one router installed above.
+                assert_eq!(unsafe { libc::raise(libc::SIGINT) }, 0);
+            }
+            observed.cause().map(|_| rhai::Dynamic::UNIT)
+        });
+        let error = engine
+            .eval::<rhai::Dynamic>("loop { try { loop {} } catch (error) {} }")
+            .unwrap_err();
+        assert!(matches!(*error, rhai::EvalAltResult::ErrorTerminated(..)));
+        assert_eq!(cancel.cause(), Some(&StopCause::Signal(libc::SIGINT)));
+    }
 }

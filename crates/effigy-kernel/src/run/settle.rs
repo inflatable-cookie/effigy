@@ -63,11 +63,17 @@ impl Run<'_> {
             if effect.spec.kind == socket::KIND {
                 self.settle_socket(effect, &cx)?;
             } else if effect.spec.kind == crate::custody::KIND {
-                let (state, reason) = crate::custody::settle_effect(
-                    effect,
-                    self.processes.remove(&effect.sequence),
-                    cleanup,
-                );
+                let live = self.processes.remove(&effect.sequence);
+                // Stop can be inside its grace wait when a front end sends its
+                // second interrupt. Read the fenced durable mailbox here too;
+                // no transaction or new writer spans process I/O (K4/K14).
+                let (state, reason) = crate::custody::settle_effect(effect, live, cleanup, || {
+                    self.requests().is_ok_and(|requests| {
+                        requests
+                            .iter()
+                            .any(|r| matches!(r.action, RequestAction::Escalate))
+                    })
+                });
                 self.store.transaction(&cx, |txn| {
                     journal::write_effect(
                         txn,

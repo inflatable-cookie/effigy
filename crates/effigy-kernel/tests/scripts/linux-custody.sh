@@ -3,14 +3,7 @@
 # write, VM, image and fixture belongs to this fresh directory. No existing
 # Colima profile, Docker context or checkout is mounted or changed.
 set -eu
-if [ -n "${1:-}" ]; then
-    proof_dir=$1
-    test -f "$proof_dir/owner"
-    test "$(cat "$proof_dir/owner")" = "$PWD"
-else
-    proof_dir=$(mktemp -d /tmp/k208.XXXXXX)
-    printf '%s' "$PWD" > "$proof_dir/owner"
-fi
+proof_dir=$(mktemp -d /tmp/k208.XXXXXX)
 printf 'Linux qualification artifacts: %s\n' "$proof_dir"
 export COLIMA_HOME="$proof_dir/c"
 export COLIMA_CACHE_HOME="$proof_dir/cache"
