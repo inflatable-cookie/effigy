@@ -67,7 +67,17 @@ fn operator_daemon_binds_before_publish_and_settles_without_elevation() {
     }
     let _reset = Reset(old_path);
     let executable = std::path::Path::new(env!("CARGO_BIN_EXE_effigy"));
-    let ready = operator::up_with_executable(&config, executable).unwrap();
+    let ready = match operator::up_with_executable(&config, executable) {
+        Ok(ready) => ready,
+        Err(error) => {
+            let status = operator::status(&config);
+            let retained = home.keep();
+            panic!(
+                "{error}; status={status:?}; retained fixture {}",
+                retained.display()
+            );
+        }
+    };
     struct Stop<'a>(&'a GatewayConfig);
     impl Drop for Stop<'_> {
         fn drop(&mut self) {

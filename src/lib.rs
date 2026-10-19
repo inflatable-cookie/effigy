@@ -99,23 +99,41 @@ pub fn run_main(raw_args: Vec<String>) -> std::io::Result<()> {
 // Each engine retains authority over its own effects. Kernel-owned effects
 // settle in the kernel before this dispatcher is consulted.
 struct MainSettlement;
+impl MainSettlement {
+    fn gateway_owns(effect: &effigy_kernel::run::Effect) -> bool {
+        effect.spec.target.resource.kind() == effigy_kernel::id::ResourceKind::Gateway
+            || effect.spec.target.resource == effigy_gateway::setup::setup_owner()
+    }
+}
 impl effigy_kernel::run::SettlementAdapter for MainSettlement {
-    fn observe(&mut self, effect: &effigy_kernel::run::Effect, cx: &effigy_kernel::ctx::CleanupContext) -> effigy_kernel::observe::Observed<effigy_kernel::run::Fence> {
-        if effect.spec.target.resource.kind() == effigy_kernel::id::ResourceKind::Gateway {
+    fn observe(
+        &mut self,
+        effect: &effigy_kernel::run::Effect,
+        cx: &effigy_kernel::ctx::CleanupContext,
+    ) -> effigy_kernel::observe::Observed<effigy_kernel::run::Fence> {
+        if Self::gateway_owns(effect) {
             effigy_gateway::operator::Adapter.observe(effect, cx)
         } else {
             effigy_manifest::SourceSettlement.observe(effect, cx)
         }
     }
-    fn release(&mut self, effect: &effigy_kernel::run::Effect, cx: &effigy_kernel::ctx::CleanupContext) -> effigy_kernel::observe::Observed<()> {
-        if effect.spec.target.resource.kind() == effigy_kernel::id::ResourceKind::Gateway {
+    fn release(
+        &mut self,
+        effect: &effigy_kernel::run::Effect,
+        cx: &effigy_kernel::ctx::CleanupContext,
+    ) -> effigy_kernel::observe::Observed<()> {
+        if Self::gateway_owns(effect) {
             effigy_gateway::operator::Adapter.release(effect, cx)
         } else {
             effigy_manifest::SourceSettlement.release(effect, cx)
         }
     }
-    fn reconcile(&mut self, effect: &effigy_kernel::run::Effect, cx: &effigy_kernel::ctx::CleanupContext) -> effigy_kernel::observe::Observed<effigy_kernel::run::Reconciled> {
-        if effect.spec.target.resource.kind() == effigy_kernel::id::ResourceKind::Gateway {
+    fn reconcile(
+        &mut self,
+        effect: &effigy_kernel::run::Effect,
+        cx: &effigy_kernel::ctx::CleanupContext,
+    ) -> effigy_kernel::observe::Observed<effigy_kernel::run::Reconciled> {
+        if Self::gateway_owns(effect) {
             effigy_gateway::operator::Adapter.reconcile(effect, cx)
         } else {
             effigy_manifest::SourceSettlement.reconcile(effect, cx)

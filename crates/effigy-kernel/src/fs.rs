@@ -230,24 +230,24 @@ impl DirFd {
         dir.check(&dir.stat()?, trust, Kind::Dir, &dir.path)?;
         Ok(dir)
     }
-    /// Setup adapters create one verified operator-owned directory component.
-    /// Existing modes are checked, never relaxed; no mutation is available to Observe.
-    pub fn prepare_child(
+    /// Setup-only directory preparation with a checked creation mode.
+    /// Existing modes are verified, never relaxed.
+    pub fn prepare_setup_child(
         &self,
         cx: &crate::ctx::EffectContext,
         name: &FileName,
         mode: u32,
     ) -> Result<Self, FsError> {
-        cx.require(crate::ctx::Capability::HostAuthority)
-            .map_err(|_| FsError::HostAuthorityRequired)?;
-        if mode & !0o777 != 0 || mode & 0o022 != 0 {
-            return Err(FsError::untrusted(self.path(), "unsafe directory mode"));
+        if cx.operation().class() != crate::ctx::EffectClass::Mutate
+            || mode & !0o777 != 0
+            || mode & 0o022 != 0
+        {
+            return Err(FsError::untrusted(
+                self.path(),
+                "setup directory requires Mutate and a safe mode",
+            ));
         }
-        cx.operation()
-            .check("prepare directory")
-            .map_err(|e| FsError::untrusted(self.path(), format!("{e:?}")))?;
-        self.require_local()?;
-        self.descend(name.as_str().as_bytes(), Trust::Operator, Some(mode))
+        self.prepare_child_mode(cx, name, mode)
     }
     /// Setup-only owner transfer. Runtime state roots and Store continue to
     /// accept only the effective operator; this handle cannot open a Store.
@@ -370,6 +370,14 @@ impl DirFd {
         cx: &crate::ctx::EffectContext,
         name: &FileName,
     ) -> Result<Self, FsError> {
+        self.prepare_child_mode(cx, name, 0o755)
+    }
+    fn prepare_child_mode(
+        &self,
+        cx: &crate::ctx::EffectContext,
+        name: &FileName,
+        mode: u32,
+    ) -> Result<Self, FsError> {
         cx.require(crate::ctx::Capability::SourceStore)
             .map_err(|_| {
                 FsError::untrusted(&self.path, "source directory requires Prepare or Mutate")
@@ -382,7 +390,7 @@ impl DirFd {
         self.require_local()?;
         crate::fault_point!(SourceDirOpen)
             .map_err(|error| FsError::io("source directory", &self.path, &error))?;
-        let directory = self.descend(name.as_str().as_bytes(), Trust::Operator, Some(0o755))?;
+        let directory = self.descend(name.as_str().as_bytes(), Trust::Operator, Some(mode))?;
         crate::fault_point!(SourceDirSync)
             .map_err(|error| FsError::io("source directory sync", &self.path, &error))?;
         self.sync()?;
@@ -859,6 +867,26 @@ fn source_directory_refuses_wrong_class_guest_symlink_and_faults() {
         fault::arm(None);
         assert!(dir.prepare_child(&cx, &name).is_ok());
     }
+    let setup = FileName::new("setup").unwrap();
+    assert!(dir.prepare_setup_child(&cx, &setup, 0o700).is_err());
+    let mutate = context(EffectClass::Mutate, Placement::Host);
+    assert!(dir.prepare_setup_child(&mutate, &setup, 0o777).is_err());
+    assert!(!tmp.path().join("setup").exists());
+    for point in [Point::SourceDirOpen, Point::SourceDirSync] {
+        fault::arm_point(point, Fault::Enospc);
+        assert!(dir.prepare_setup_child(&mutate, &setup, 0o700).is_err());
+        fault::arm(None);
+        assert!(dir.prepare_setup_child(&mutate, &setup, 0o700).is_ok());
+    }
+    use std::os::unix::fs::PermissionsExt;
+    assert_eq!(
+        std::fs::metadata(tmp.path().join("setup"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o700
+    );
     let foreign = tmp.path().join("foreign");
     std::fs::create_dir(&foreign).unwrap();
     std::os::unix::fs::symlink(&foreign, tmp.path().join("link")).unwrap();

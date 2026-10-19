@@ -194,10 +194,19 @@ pub fn gateway_target_digest(pid_path: &Path) -> Option<String> {
 /// legacy value that cannot be proven to describe the current boot is
 /// [`GatewayIdentityProbe::Unknown`], never a readable different generation, so
 /// the record is preserved rather than cleaned up as replaced. The comparison
-/// lives in [`effigy_process::compare_boot_identity`].
+/// uses native kernel UUID evidence; legacy timeval comparison remains in
+/// [`effigy_process::compare_boot_identity`].
 pub fn probe_live_identity(record: &GatewayIdentityRecord) -> GatewayIdentityProbe {
     match read_live_process_identity(record.pid) {
         Ok(live) if live.start_identity == record.start_identity => {
+            // Kernel UUIDs are canonicalized to lowercase; v0.14.1 macOS
+            // records can contain uppercase sysctl text for the same boot.
+            if live
+                .boot_identity
+                .eq_ignore_ascii_case(&record.boot_identity)
+            {
+                return GatewayIdentityProbe::Matched;
+            }
             match effigy_process::compare_boot_identity(&record.boot_identity) {
                 effigy_process::BootIdentityComparison::Match => GatewayIdentityProbe::Matched,
                 effigy_process::BootIdentityComparison::DifferentSession => {
@@ -871,9 +880,14 @@ pub fn read_live_process_identity(pid: u32) -> Result<LiveProcessIdentity, std::
             "gateway PID is outside the supported domain",
         ));
     }
-    let boot = effigy_process::boot_identity()
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| std::io::Error::other("boot identity is unavailable"))?;
+    let boot = match effigy_kernel::ident::boot_identity() {
+        effigy_kernel::observe::Observed::Verified(identity, _) => identity.as_str().to_owned(),
+        other => {
+            return Err(std::io::Error::other(format!(
+                "boot identity is unavailable: {other:?}"
+            )))
+        }
+    };
     #[cfg(target_os = "linux")]
     {
         let stat = fs::read_to_string(format!("/proc/{pid}/stat"))?;
@@ -1194,6 +1208,14 @@ mod tests {
         let dir = tempfile::tempdir().expect("fixture directory");
         let (_, snapshot) = publish_current_fixture(dir.path());
         let record = snapshot.record().expect("published identity");
+        // v0.14.1 sysctl text can differ in UUID casing from the kernel's
+        // canonical spelling without changing the boot or process generation.
+        let mut uppercase = record.clone();
+        uppercase.boot_identity = record.boot_identity.to_ascii_uppercase();
+        assert_eq!(
+            probe_live_identity(&uppercase),
+            GatewayIdentityProbe::Matched
+        );
         // A different canonical session identity proves another boot.
         let mut wrong_boot = record.clone();
         wrong_boot.boot_identity = "00000000-0000-0000-0000-000000000000".to_owned();

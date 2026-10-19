@@ -297,7 +297,7 @@ pub fn self_test(config: &GatewayConfig, budget: Duration) -> io::Result<()> {
     http_probe(config, &op.observe().map_err(error)?)?;
     let cx = op.observe().map_err(error)?;
     match cx.connect(ObservationTarget::Dns {
-        name: format!("_effigy.{}", config.dns.tld),
+        name: format!("effigy-health.{}", config.dns.tld),
         server: config.dns.bind_addr,
     }) {
         Observed::Verified(ProbeIo::Dns { response }, _)

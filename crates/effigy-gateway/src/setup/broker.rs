@@ -134,7 +134,7 @@ pub(super) fn install(
     let name = format!("{}.plist", crate::bind_broker::label(uid));
     let existing = owned_job(cx, jobs, &name)?;
     let dir = helpers
-        .prepare_child(
+        .prepare_setup_child(
             cx,
             &FileName::new(&crate::bind_broker::label(uid)).map_err(error)?,
             0o700,

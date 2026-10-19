@@ -120,7 +120,7 @@ pub fn authenticated_operator() -> io::Result<(u32, PathBuf)> {
     }
     Ok((uid, user.dir))
 }
-fn setup_owner() -> ResourceId {
+pub fn setup_owner() -> ResourceId {
     ResourceId::store(Scope::Machine, "gateway-setup").expect("fixed setup identity")
 }
 fn root_home() -> io::Result<PathBuf> {
@@ -334,7 +334,7 @@ pub fn apply_platform(
     {
         let etc = DirFd::open(Path::new("/private/etc")).map_err(error)?;
         let resolvers = etc
-            .prepare_child(cx, &FileName::new("resolver").map_err(error)?, 0o755)
+            .prepare_setup_child(cx, &FileName::new("resolver").map_err(error)?, 0o755)
             .map_err(error)?;
         for suffix in suffixes {
             let contents = format!("# {MARKER}\nnameserver 127.0.0.1\nport 15353\n");
@@ -355,7 +355,7 @@ pub fn apply_platform(
             .ok_or_else(|| error("operator account missing"))?;
         let library = DirFd::open(Path::new("/Library")).map_err(error)?;
         let helpers = library
-            .prepare_child(
+            .prepare_setup_child(
                 cx,
                 &FileName::new("PrivilegedHelperTools").map_err(error)?,
                 0o755,
@@ -455,7 +455,7 @@ pub fn save_receipt(
 ) -> io::Result<()> {
     let effigy = DirFd::open(&home.join(".effigy")).map_err(error)?;
     let dir = effigy
-        .prepare_child(cx, &FileName::new("gateway").map_err(error)?, 0o700)
+        .prepare_setup_child(cx, &FileName::new("gateway").map_err(error)?, 0o700)
         .map_err(error)?;
     let receipt = Receipt {
         version: 1,
