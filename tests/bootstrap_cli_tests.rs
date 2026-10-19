@@ -561,61 +561,6 @@ fn bootstrap_reports_missing_bootstrap_contract_via_binary() {
 }
 
 #[test]
-#[ignore = "requires inherited private parent; run test:qa:fixture-parent-isolation:cli"]
-fn bootstrap_old_placement_refuses_all_three_binary_execution_paths() {
-    assert!(
-        std::env::var_os("HOST_RUN_TOKEN").is_some(),
-        "private parent required"
-    );
-    let child = create_child_remote("old-child");
-    let cases = [
-        ("root-child-start", create_root_remote_with_bootstrap(&child),
-            "bootstrap child `child-app` run failed: invalid_parent_token: cwd is outside token root"),
-        ("array-start", create_root_remote_with_array_start(),
-            "bootstrap start task `bootstrap:start-a` failed: invalid_parent_token: cwd is outside token root"),
-        ("table-start", create_root_remote_with_table_start(),
-            "bootstrap start task `bootstrap:start-a` failed: invalid_parent_token: cwd is outside token root"),
-    ];
-    for (name, remote, expected) in cases {
-        // The original helper placed invocation cwd and its nested clones in
-        // OS temp. Reproduce that placement without changing parent authority.
-        let outside = tempfile::tempdir().expect("old OS-temp invocation cwd");
-        let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
-            .args(["--json", "bootstrap"])
-            .arg(&remote)
-            .arg("--start")
-            .env("NO_COLOR", "1")
-            .current_dir(outside.path())
-            .output()
-            .expect("old placement binary bootstrap");
-        assert!(!output.status.success());
-        let report = parse_stdout_json(&output);
-        assert_eq!(report["ok"], false);
-        assert_eq!(report["error"]["message"], expected);
-        let destination = outside.path().join("remote");
-        assert!(
-            destination.join(".git").exists(),
-            "owned clone preparation did occur"
-        );
-        for marker in [
-            "root-setup.txt",
-            "child-app/child-setup.txt",
-            "start.txt",
-            "start-a.txt",
-            "start-b.txt",
-        ] {
-            assert!(
-                !destination.join(marker).exists(),
-                "task effect before refusal: {marker}"
-            );
-        }
-        eprintln!(
-            "old-placement {name}: report={report}; task markers absent; owned clone present"
-        );
-    }
-}
-
-#[test]
 fn bootstrap_custom_destination_and_no_start_keep_setup_semantics() {
     let child = create_child_remote("custom-child");
     let remote = create_root_remote_with_bootstrap(&child);
@@ -641,8 +586,6 @@ fn bootstrap_custom_destination_and_no_start_keep_setup_semantics() {
 
 #[test]
 fn binary_fixture_owner_cleans_nested_git_roots_on_unwind() {
-    let parent_before = std::env::var_os("HOST_RUN_TOKEN");
-    let run_before = std::env::var_os("HOST_RUN_ID");
     let foreign = tempfile::tempdir().expect("foreign sentinel owner");
     fs::write(foreign.path().join("sentinel"), "untouched").expect("foreign sentinel");
     let (send, recv) = std::sync::mpsc::channel();
@@ -660,14 +603,6 @@ fn binary_fixture_owner_cleans_nested_git_roots_on_unwind() {
     });
     let owner = recv.recv().expect("owned path");
     assert!(thread.join().is_err(), "expected unwind");
-    assert!(
-        std::env::var_os("HOST_RUN_TOKEN") == parent_before,
-        "parent authority unchanged after unwind"
-    );
-    assert!(
-        std::env::var_os("HOST_RUN_ID") == run_before,
-        "run identity unchanged after unwind"
-    );
     assert!(
         !owner.exists(),
         "exact owned root, including Git remotes, must be removed"

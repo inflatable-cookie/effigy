@@ -23,7 +23,7 @@ pub(crate) fn render_general_help<R: HelpRenderer + ?Sized>(
     )?;
     renderer.notice(
         NoticeLevel::Info,
-        "Effigy's flags go before the task: `effigy [--json] [--plan] [--repo <PATH>] [--lock-wait-ms <MS>] [--env-schema <PATH>] [--verbose-root] <task> [task args]`. Everything after the task name belongs to the task; `<task> --plan` and `<task> --json` are still read as Effigy's for one release. `--host-run-request-id <UUID>` is for a caller-persisted identity on one top-level heavy selector; recover it with `effigy tasks request status|follow`. `--json` is an output format, never a planning or safety flag.",
+        "Effigy's flags go before the task: `effigy [--json] [--plan] [--repo <PATH>] [--lock-wait-ms <MS>] [--env-schema <PATH>] [--verbose-root] [--run-id <key>] <task> [task args]`. Everything after the task name belongs to the task; `<task> --plan` and `<task> --json` are still read as Effigy's for one release. `--run-id <key>` names the run: a repeat with the same key attaches to it and never starts a second; see `effigy help runs`. `--json` is an output format, never a planning or safety flag.",
     )?;
     renderer.notice(
         NoticeLevel::Info,
@@ -34,8 +34,8 @@ pub(crate) fn render_general_help<R: HelpRenderer + ?Sized>(
         KeyValue::new("--version", "Print the current Effigy version"),
         KeyValue::new("--json", "Render command-envelope JSON for CI/tooling"),
         KeyValue::new(
-            "--host-run-request-id <UUID>",
-            "Use a caller-persisted identity for one top-level heavy selector",
+            "--run-id <key> <task>",
+            "Name the run with your own key; a repeat attaches instead of starting another",
         ),
         KeyValue::new(
             "--plan <task>",

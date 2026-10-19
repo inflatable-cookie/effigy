@@ -289,33 +289,6 @@ run = "printf %s \"$API_TOKEN\""
 }
 
 #[test]
-#[ignore = "requires inherited private parent; run test:qa:fixture-parent-isolation:cli"]
-fn secrets_old_placement_refuses_before_task_or_secret_output() {
-    assert!(
-        std::env::var_os("HOST_RUN_TOKEN").is_some(),
-        "private parent required"
-    );
-    let outside = tempfile::tempdir().expect("old OS-temp secret fixture");
-    write_fixture(outside.path(), true);
-    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .args(["--json", "dev"])
-        .current_dir(outside.path())
-        .stdin(Stdio::null())
-        .output()
-        .expect("old placement dev");
-    assert_eq!(output.status.code(), Some(77));
-    let report: serde_json::Value = serde_json::from_slice(&output.stdout).expect("refusal JSON");
-    assert_eq!(
-        report["error"]["message"],
-        "invalid_parent_token: cwd is outside token root"
-    );
-    for bytes in [&output.stdout, &output.stderr] {
-        assert!(!String::from_utf8_lossy(bytes).contains("tok_local_dev"));
-    }
-    eprintln!("old-placement secrets dev: report={report}; secret output absent");
-}
-
-#[test]
 fn cli_and_rhai_concurrent_vault_writers_preserve_both_updates() {
     let fixture = tempfile::tempdir().expect("fresh fixture");
     let root = fixture.path().join("repo");

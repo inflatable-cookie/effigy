@@ -189,19 +189,13 @@
 "test:audit:contracts" = [
   "cargo test -p effigy-contracts --lib -- --nocapture",
   "cargo test --test cli_output_tests cli_contracts_ -- --nocapture",
-  { task = "test:audit:contracts:parent" },
 ]
-"test:audit:contracts:parent" = [
-  { id = "contract-private-parent", run = "bash tests/scripts/fixture-parent-isolation.sh contracts", timeout_ms = 600000 },
-]
-"test:audit:contracts:runner".admission = "heavy"
-"test:audit:contracts:runner".run = "python3 tests/scripts/contract-fixture-checks.py ./target/debug/effigy {args}"
 "check:audit:contracts" = [
   { task = "fmt:check" },
   "cargo check -p effigy-contracts -p effigy --all-targets --profile test",
 ]
 "lint:audit:contracts" = "cargo clippy -p effigy-contracts -p effigy --all-targets -- -D warnings"
-"fmt:audit:contracts" = "rustfmt --edition 2021 crates/effigy-contracts/src/lib.rs crates/effigy-contracts/src/tests.rs tests/host_scheduler_integration.rs"
+"fmt:audit:contracts" = "rustfmt --edition 2021 crates/effigy-contracts/src/lib.rs crates/effigy-contracts/src/tests.rs"
 
 # All consumers of the maintained YAML compatibility backend; no live systems.
 "check:audit:yaml" = [
@@ -257,14 +251,6 @@
 # its subcommand fixed and admit the complete tagged-source install proof.
 "release:verify-install".admission = "heavy"
 "release:verify-install".run = "./target/debug/effigy release verify-install {args}"
-# Private fixture proof of heavy admission and argv safety. No build, no live
-# scheduler: a recording `cargo` stub in a disposable git fixture.
-"test:release:preparation-admission" = "bash tests/scripts/release-preparation-admission.sh"
-# No compiled target is touched by the selector; validate the entry points.
-"check:release:preparation-admission" = [
-  "bash -n scripts/release-prepare.sh",
-  "bash -n tests/scripts/release-preparation-admission.sh",
-]
 
 # Container/runtime profiling
 "perf:container-shell-matrix" = { rhai = "scripts/profile-container-shell-matrix.rhai" }
@@ -489,9 +475,9 @@
 "test:managed:matrix" = { run = "cargo nextest run --config-file tests/config/managed-matrix-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_matrix_) & !test(managed_matrix_failed_stop_)' --success-output immediate --no-fail-fast --retries 0 --no-tests fail -j 2", timeout_ms = 2500000 }
 # The matrix cases own their fake Docker proxy socket from bind through teardown.
 "test:fixtures:matrix-port" = [{ task = "test:managed:matrix" }, { task = "test:managed:failed-stop" }]
-"test:fixtures:merge-helpers" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-host-run --lib --filterset 'test(/^runner::bootstrap_command::tests::/) | test(/^protocol_tests::/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
-"check:fixtures:matrix-port" = { run = "cargo check -p effigy -p effigy-host-run --all-targets --profile test", timeout_ms = 600000 }
-"lint:fixtures:matrix-port" = { run = "cargo clippy -p effigy -p effigy-host-run --all-targets -- -D warnings", timeout_ms = 600000 }
+"test:fixtures:merge-helpers" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(/^runner::bootstrap_command::tests::/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
+"check:fixtures:matrix-port" = { run = "cargo check -p effigy --all-targets --profile test", timeout_ms = 600000 }
+"lint:fixtures:matrix-port" = { run = "cargo clippy -p effigy --all-targets -- -D warnings", timeout_ms = 600000 }
 "test:managed:matrix:all-failed" = { run = "cargo nextest run --config-file tests/config/managed-matrix-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_matrix_all_failed_)' --success-output immediate --no-fail-fast --retries 0 --no-tests fail -j 2", timeout_ms = 2500000 }
 "test:managed:failed-stop" = { run = "cargo nextest run --config-file tests/config/managed-matrix-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_matrix_failed_stop_)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 }
 "test:managed:recovery" = [
@@ -766,12 +752,12 @@
 # cover the new public Debug surfaces, redaction of private descriptor state,
 # and the no-lock/no-traverse route-table boundary.
 "check:rust:release-invariants" = [
-  "cargo check -p effigy-containers -p effigy-host-run -p effigy-gateway -p effigy-rhai -p effigy --all-targets --profile test",
+  "cargo check -p effigy-containers -p effigy-gateway -p effigy-rhai -p effigy --all-targets --profile test",
   # Root all-target clippy mirrors hosted CI, and the touched libraries are
   # linted all-target as well. Containers test-target lints named by task 100
   # are repaired; keep `--all-targets` so those sites cannot silently drop.
   "cargo clippy -p effigy --all-targets -- -D warnings",
-  "cargo clippy -p effigy-host-run -p effigy-gateway -p effigy-rhai --all-targets -- -D warnings",
+  "cargo clippy -p effigy-gateway -p effigy-rhai --all-targets -- -D warnings",
   "cargo clippy -p effigy-containers --all-targets -- -D warnings",
 ]
 # Release preparation atomically synchronizes the opt-in catalog support policy
@@ -800,7 +786,6 @@
   "cargo clippy -p effigy-containers --all-targets -- -D warnings",
 ]
 "test:rust:release-invariants" = [
-  { id = "host-run-root-debug", run = "cargo test -p effigy-host-run --lib host_run_root_debug_is_available_and_redacts_the_directory_descriptor -- --nocapture", timeout_ms = 600000 },
   { id = "route-table-lock-debug", run = "cargo test -p effigy-gateway --lib route_table_lock_debug_is_available_and_redacts_the_lock_descriptor -- --nocapture", timeout_ms = 600000 },
   { id = "live-route-table-debug", run = "cargo test -p effigy-gateway --lib live_route_table_debug_does_not_lock_or_print_route_contents -- --nocapture", timeout_ms = 600000 },
   { id = "script-context-debug", run = "cargo test -p effigy-rhai --lib script_context_debug_is_available_for_diagnostics -- --nocapture", timeout_ms = 600000 },
@@ -943,10 +928,6 @@
 "test:workspace:artifact-provisioning" = [
   { id = "workspace-artifact-provisioning", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(runner::system_command::workspace::tests::) - test(builder_recovery::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
 ]
-"test:workspace:artifact-parent" = [
-  { task = "test:workspace:catalog-handoff:build" },
-  { id = "artifact-private-parent-and-controls", run = "bash tests/scripts/fixture-parent-isolation.sh workspace", timeout_ms = 600000 },
-]
 "test:workspace:artifact-admission" = [
   { id = "direct-compose-ownership-admission", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib --filterset 'test(tests::compose::) | test(tests::policies::) | test(tests::volumes_reports::) | test(tests::catalog_pack_fallback::) | test(policy_support::generated_compose::tests::) | test(policy::admission::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
 ]
@@ -961,10 +942,6 @@
   { task = "test:workspace:artifact-managed-callers" },
   { task = "test:workspace:artifact-gateway-callers" },
   { task = "test:workspace:artifact-cli-callers" },
-]
-"test:workspace:artifact-parent:runner".admission = "heavy"
-"test:workspace:artifact-parent:runner".run = [
-  { id = "complete-workspace-family", run = "python3 tests/scripts/fixture-parent-workspace.py {args}", timeout_ms = 600000 },
 ]
 "test:workspace:artifact-cli-callers" = [
   { id = "partial-startup-cli-callers", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests --filterset 'test(partial_startup_tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
@@ -986,7 +963,6 @@
 ]
 "test:workspace:artifact-builder-recovery" = [
   { task = "test:workspace:catalog-handoff:build" },
-  { id = "builder-recovery-parent-membership", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test host_scheduler_integration --filterset 'test(workspace_parent_membership_covers_the_maintained_family)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
   { id = "builder-recovery", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-rhai --lib --filterset 'test(builder_recovery::) | test(workspace_artifact_build_helper)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
 ]
 "check:workspace:artifact-builder-recovery" = [
@@ -1097,17 +1073,12 @@
   "cargo clippy -p effigy-rhai --all-targets -- -D warnings",
 ]
 
-# Trusted host-run protocol client (contract 010 Client protocol v1)
 # Publication-race fixtures: cover both complete changed test modules, then
 # exercise their shared-process model with the same bounded task lifetime.
-"test:fixtures:publication" = { run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy -p effigy-host-run --lib --filterset 'test(/^runner::managed_listener_readiness::tests::/) | test(/^protocol_tests::/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
-"test:fixtures:publication:shared" = [
-  { run = "RUSTFLAGS='--cfg effigy_shared_process' cargo test -p effigy --lib managed_listener_readiness::tests:: -- --test-threads=8", timeout_ms = 600000 },
-  { run = "RUSTFLAGS='--cfg effigy_shared_process' cargo test -p effigy-host-run --lib protocol_tests:: -- --test-threads=8", timeout_ms = 600000 },
-]
+"test:fixtures:publication" = { run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(/^runner::managed_listener_readiness::tests::/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
 # Every process-env fixture uses its crate's lock; regressions force a second
 # mutator to contend before the owning guard restores the original values.
-"test:fixtures:environment" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-builtin -p effigy-cli -p effigy-containers -p effigy-core -p effigy-gateway -p effigy-managed -p effigy-release -p effigy-rhai --lib --filterset 'test(environment_guard_serializes_a_forced_concurrent_mutator) | package(effigy-rhai) | test(/^build_info::tests::/) | test(/^header::tests::/) | (package(effigy-builtin) & test(/^completion::/)) | (package(effigy-gateway) & test(/^tls::tests::/)) | (package(effigy-containers) & test(/mount_spec::tests::|workspace::.*host.*tests::/)) | test(env_resolution::tests::) | test(failing_and_passing_gates_persist_logs_and_redacted_environment) | test(/^runner::bootstrap_command::tests::/) | test(/^runner::container_command::secret_env::tests::/) | test(/^runner::state_command::tests::/) | test(browser_terminal_size_override_reads_valid_env_values) | test(inline_workspace_started_and_removed_facts_share_compose_plan_backend) | test(permission_reuse_headless_flag_grants_no_privilege_and_implies_no_tty) | test(generation_flag_is_cleared_after_the_hook_succeeds_or_fails)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 }
+"test:fixtures:environment" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-builtin -p effigy-cli -p effigy-containers -p effigy-core -p effigy-gateway -p effigy-managed -p effigy-release -p effigy-rhai --lib --filterset 'test(environment_guard_serializes_a_forced_concurrent_mutator) | package(effigy-rhai) | test(/^build_info::tests::/) | test(/^header::tests::/) | (package(effigy-builtin) & test(/^completion::/)) | (package(effigy-gateway) & test(/^tls::tests::/)) | (package(effigy-containers) & test(/mount_spec::tests::|workspace::.*host.*tests::/)) | test(env_resolution::tests::) | test(failing_and_passing_gates_persist_logs_and_redacted_environment) | test(/^runner::bootstrap_command::tests::/) | test(/^runner::container_command::secret_env::tests::/) | test(/^runner::state_command::tests::/) | test(browser_terminal_size_override_reads_valid_env_values) | test(permission_reuse_headless_flag_grants_no_privilege_and_implies_no_tty) | test(generation_flag_is_cleared_after_the_hook_succeeds_or_fails)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 }
 "test:fixtures:environment:gateway" = { run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(environment_guard_serializes_a_forced_concurrent_mutator) | test(container_headless_managed_lifecycle_publishes_routes_in_scoped_data_from_clone)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
 "test:fixtures:environment:shared" = [
   { run = "RUSTFLAGS='--cfg effigy_shared_process' cargo test -p effigy -p effigy-builtin -p effigy-cli -p effigy-containers -p effigy-core -p effigy-gateway -p effigy-managed -p effigy-release -p effigy-rhai --lib environment_guard_serializes_a_forced_concurrent_mutator -- --test-threads=8", timeout_ms = 600000 },
@@ -1116,45 +1087,8 @@
 "check:fixtures:environment" = { run = "cargo check -p effigy -p effigy-builtin -p effigy-cli -p effigy-containers -p effigy-core -p effigy-gateway -p effigy-managed -p effigy-release -p effigy-rhai --all-targets --profile test", timeout_ms = 600000 }
 "lint:fixtures:environment" = { run = "cargo clippy -p effigy -p effigy-builtin -p effigy-cli -p effigy-containers -p effigy-core -p effigy-gateway -p effigy-managed -p effigy-release -p effigy-rhai --all-targets -- -D warnings", timeout_ms = 600000 }
 "fmt:fixtures:environment" = "rustfmt --edition 2021 {args}"
-"check:fixtures:publication" = { run = "cargo check -p effigy -p effigy-host-run --lib --tests --profile test", timeout_ms = 600000 }
-"lint:fixtures:publication" = { run = "cargo clippy -p effigy -p effigy-host-run --lib --tests -- -D warnings", timeout_ms = 600000 }
-"test:host-run:protocol" = "cargo test -p effigy-host-run --lib -- --nocapture"
-"test:host-run:request-recovery" = [
-  { id = "request-lookup-protocol", run = "cargo nextest run -p effigy-host-run --lib --filterset 'test(exact_request_lookup)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
-  { id = "lost-submit-reply-protocol", run = "cargo nextest run -p effigy-host-run --lib --filterset 'test(lost_submit_reply_recovers_the_existing_run_without_resubmitting)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
-  { id = "unknown-run-resubmission-control", run = "cargo nextest run -p effigy-host-run --lib --filterset 'test(ambiguous_submit_resolves_status_then_reuses_the_same_request_id) | test(ambiguous_submit_holds_when_exact_lookup_returns_another_error)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
-  { id = "selector-request-parser", run = "cargo nextest run -p effigy --lib --filterset 'test(parse_command_carries_the_caller_request_id_only_to_a_selector)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
-  { id = "selector-request-command-parser", run = "cargo nextest run -p effigy --lib --filterset 'test(parse_command_parses_exact_host_run_request_status)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
-  { id = "selector-request-argv", run = "cargo nextest run -p effigy --lib --filterset 'test(global_request_identity_is_not_forwarded_to_the_launched_selector)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
-  { id = "private-cli-recovery", run = "EFFIGY_REQUIRE_HOST_RUN_PRIVATE_SERVER=1 cargo nextest run -p effigy --test host_scheduler_integration --run-ignored only --test-threads 1 --filterset 'test(selector_request_identity_recovers_after_client_restart_and_rejects_body_conflict)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 240000 },
-]
-"test:host-run:idle-follow" = "cargo test -p effigy-host-run --lib attach_idle_follow -- --nocapture"
-# Private queued-follow causes plus bounded outage and fail-closed controls.
-"test:host-run:queued-follow" = [
-  "cargo test -p effigy-host-run --lib attach_queued_follow -- --nocapture",
-  "cargo test -p effigy-host-run --lib attach_idle_follow -- --nocapture",
-  "cargo test -p effigy-host-run --lib protocol_tests::attach_recovery_fails_closed_on_token_key_mode_change_without_retry -- --exact --nocapture",
-  "cargo test -p effigy-host-run --lib protocol_tests::attach_recovery_does_not_retry_malformed_protocol -- --exact --nocapture",
-]
-"check:host-run:compile" = "cargo check -p effigy-host-run -p effigy --lib --bin effigy --test host_scheduler_integration --test cli_output_tests"
-"check:host-run:request-recovery:clippy" = [
-  "cargo clippy -p effigy-host-run -p effigy-cli --all-targets -- -D warnings",
-  "cargo clippy -p effigy --all-targets -- -D warnings",
-]
-# Peer identity refusal on a live private fixture (papercut 8947d524): held
-# accepted stream through trust, closed-peer fail-closed distinction, and
-# directory/socket mode refusals. Private tempfile only; no live endpoint.
-"test:host-run:peer-trust" = [
-  "cargo test -p effigy-host-run --lib protocol_tests::authority_and_socket_are_owned_private_and_peer_identity_must_match -- --exact --nocapture",
-  "cargo test -p effigy-host-run --lib protocol_tests::valid_peer_identity_is_accepted_on_private_fixture -- --exact --nocapture",
-  "cargo test -p effigy-host-run --lib protocol_tests::closed_peer_fails_closed_and_is_not_a_trust_match -- --exact --nocapture",
-  "cargo test -p effigy-host-run --lib protocol_tests::unknown_identity_and_legacy_fractional_identity_never_match -- --exact --nocapture",
-  "cargo test -p effigy-host-run --lib identity::tests -- --nocapture",
-]
-"check:host-run:peer-trust" = [
-  "cargo check -p effigy-host-run --lib --tests --profile test",
-  "cargo clippy -p effigy-host-run --lib --tests -- -D warnings",
-]
+"check:fixtures:publication" = { run = "cargo check -p effigy --lib --tests --profile test", timeout_ms = 600000 }
+"lint:fixtures:publication" = { run = "cargo clippy -p effigy --lib --tests -- -D warnings", timeout_ms = 600000 }
 # Implicit runtime ignore registration (papercut 082): Git-local
 # info/exclude, never working-tree .gitignore. Private fixtures only.
 "test:runtime:local-ignores" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-core -p effigy-manifest -p effigy --lib -E 'test(runtime_dir::) | test(git_worktree::) | test(auto_discovered_local_overlay_does_not_write_git_exclude) | test(run_manifest_task_builtin_init)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
@@ -1190,12 +1124,12 @@
 # nextest forces termination/leak failure; the libtest step additionally proves
 # the competing PATH fixtures together in one process under a task timeout.
 "test:shared-process:env-races" = [
-  { id = "environment-race-fixtures", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-host-run --lib --filterset 'package(effigy-host-run) | test(bootstrap_command::tests::) | test(container_runtime_prep::tests::) | test(output_mode_behavior_tests::) | test(release_preparation_fixture_env_isolation_) | test(release_preparation_fixture_signal_proof_lock_order_serializes_in_process)' --no-capture --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { id = "environment-race-fixtures", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(bootstrap_command::tests::) | test(container_runtime_prep::tests::) | test(output_mode_behavior_tests::) | test(release_preparation_fixture_env_isolation_) | test(release_preparation_fixture_signal_proof_lock_order_serializes_in_process)' --no-capture --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
   { id = "shared-path-mutators", run = "cargo test -p effigy --lib shared_process_ -- --nocapture --test-threads=8", timeout_ms = 240000 },
 ]
 "check:shared-process:env-races" = [
-  { run = "cargo check -p effigy -p effigy-host-run --lib --tests --profile test", timeout_ms = 600000 },
-  { run = "cargo clippy -p effigy -p effigy-host-run --lib --tests -- -D warnings", timeout_ms = 600000 },
+  { run = "cargo check -p effigy --lib --tests --profile test", timeout_ms = 600000 },
+  { run = "cargo clippy -p effigy --lib --tests -- -D warnings", timeout_ms = 600000 },
 ]
 
 "test:env-isolation:build-info" = "cargo test -p effigy-core --lib build_info::tests::env_isolation -- --nocapture"
@@ -1221,38 +1155,12 @@
   "cargo clippy -p effigy --lib --tests -- -D warnings",
 ]
 
-# Scheduler routing: unit decisions plus the private Queue-server proofs. The
-# private-server cases require EFFIGY_HOST_RUN_PRIVATE_SERVER to name an
-# isolated Queue checkout at e9e4d12 or a verified descendant; they never touch
-# a live endpoint. Restart/roll cases pin Queue152 merge f53a9d0. Cases using a
-# private fixture are ignored by ordinary test runners; this selector includes
-# them and sets the required-fixture gate so a missing server fails instead of
-# silently skipping proofs. The separate protocol selector covers the client
-# crate.
-"test:host-run:env-projection" = [
-  { id = "host-run-env-projection", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(submitted_environment_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
-]
-"test:host-run:integration" = [
-  "cargo test -p effigy --lib host_scheduler:: -- --nocapture",
-  "cargo test -p effigy --lib container_command::shell_prep::tests::scheduler_tokens_are_not_forwarded_to_container_exec -- --nocapture",
-  "cargo test -p effigy --lib host_scheduler::tests::release_preparation_fixture_owned_children_scope_forwards_termination_only_to_registered_groups -- --nocapture",
-  "cargo test -p effigy --lib container_removal_state -- --nocapture",
-  "EFFIGY_REQUIRE_HOST_RUN_PRIVATE_SERVER=1 cargo test --test host_scheduler_integration -- --include-ignored --nocapture --test-threads=1",
-]
-# Host-admitted container selectors stay in the owning host run and execute
-# the resolved payload without handing scheduler authority to Linux Effigy.
-# The private Queue fixture path is supplied by the caller; test-runner
-# timeouts bound a stuck child or leaked handle.
-"test:exec:container-admission" = [
-  { id = "container-selector-host-admission", run = "EFFIGY_REQUIRE_HOST_RUN_PRIVATE_SERVER=1 cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test host_scheduler_integration --run-ignored only --filterset 'test(admitted_container_selector_stays_on_host_and_executes_its_resolved_payload)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
-]
-# Runtime-relative catalog aliases are exercised through the public binary and
-# one authenticated private parent. No real container or Linux artifact is used.
+# Runtime-relative catalog aliases: containment, rendering and env transport.
+# No real container or Linux artifact is used.
 "test:exec:runtime-paths" = [
   { task = "test:exec:runtime-paths:cwd" },
   { task = "test:exec:runtime-paths:renderer" },
   { task = "test:exec:runtime-paths:transport" },
-  { task = "test:exec:runtime-paths:public" },
 ]
 "test:exec:runtime-paths:cwd" = [
   { id = "runtime-cwd-containment", run = "cargo test -p effigy-exec --lib cwd::tests -- --nocapture", timeout_ms = 600000 },
@@ -1263,23 +1171,10 @@
 "test:exec:runtime-paths:transport" = [
   { id = "runtime-env-transport", run = "cargo test -p effigy --lib exec_command::tests -- --nocapture", timeout_ms = 600000 },
 ]
-"test:exec:runtime-paths:public" = [
-  { id = "runtime-path-public-private-parent", run = "EFFIGY_REQUIRE_HOST_RUN_PRIVATE_SERVER=1 cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test host_scheduler_integration --run-ignored only --filterset 'test(admitted_container_command_paths_follow_runtime_without_rewriting_arguments)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
-]
-"format:exec:runtime-paths" = "rustfmt --edition 2021 --config skip_children=true src/runner/execute/pipeline/command.rs src/runner/exec_command/transport.rs src/runner/exec_command/tests.rs tests/host_scheduler_integration.rs"
+"format:exec:runtime-paths" = "rustfmt --edition 2021 --config skip_children=true src/runner/execute/pipeline/command.rs src/runner/exec_command/transport.rs src/runner/exec_command/tests.rs"
 "check:exec:runtime-paths" = [
   { id = "runtime-path-compile", run = "cargo check -p effigy --all-targets --profile test", timeout_ms = 600000 },
   { id = "runtime-path-clippy", run = "cargo clippy -p effigy --all-targets -- -D warnings", timeout_ms = 600000 },
-]
-"test:qa:fixture-parent-isolation" = [
-  { id = "fixture-parent-scheduled-regression-and-controls", run = "bash tests/scripts/fixture-parent-isolation.sh", timeout_ms = 600000 },
-]
-"test:qa:fixture-parent-isolation:cli" = [
-  { id = "binary-cli-private-parent", run = "bash tests/scripts/fixture-parent-isolation.sh cli", timeout_ms = 600000 },
-]
-"test:qa:fixture-parent-isolation:cli-runner".admission = "heavy"
-"test:qa:fixture-parent-isolation:cli-runner".run = [
-  { id = "binary-cli-fixture-tests", run = "bash tests/scripts/fixture-parent-cli-tests.sh {args}", timeout_ms = 600000 },
 ]
 # Required private clean/dirty identity counterexample, then the complete help
 # caller family without repeating the new case in the same selector.
@@ -1287,73 +1182,29 @@
   { id = "owned-help-identity-counterexample", run = "cargo nextest run -p effigy --test cli_output_tests --filter-expr 'test(cli_help_parity_is_stable_across_owned_checkout_identity_changes)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 120000 },
   { id = "help-and-version-caller-family", run = "cargo nextest run -p effigy --test cli_output_tests --filter-expr 'test(help_and_flags_tests::) & !test(cli_help_parity_is_stable_across_owned_checkout_identity_changes)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 120000 },
 ]
-# One coherent audit matrix. Each constituent owns a distinct family; the
-# private-parent selector owns both identity counterexamples, so help excludes
-# those two cases here. No full QA or live runtime is part of this matrix.
+# One coherent audit matrix. Each constituent owns a distinct family; help
+# excludes the two identity counterexamples its own selector owns. No full QA
+# or live runtime is part of this matrix.
 "test:audit:assurance-boundary" = [
   { task = "check:audit:assurance-membership" },
   { task = "test:container:bounded-exec" },
   { task = "test:audit:assurance-boundary:compatibility" },
 ]
 # Caller-family half of the matrix, also usable after capture checks settle.
-# Requires EFFIGY_HOST_RUN_PRIVATE_SERVER pointing to the reviewed private
-# Queue fixture checkout; fixture-parent-isolation refuses a missing path.
 "test:audit:assurance-boundary:compatibility" = [
-  { task = "test:qa:fixture-parent-isolation" },
   { task = "test:doctor:git-timeout-proof" },
   { id = "help-and-version-remaining-cases", run = "cargo nextest run -p effigy --test cli_output_tests --filter-expr 'test(help_and_flags_tests::) & !test(cli_help_parity_is_stable_across_owned_checkout_identity_changes) & !test(cli_version_json_uses_one_identity_snapshot_during_checkout_change)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 120000 },
-  { id = "metadata-and-process-caller-tests", run = "cargo nextest run -p effigy-core -p effigy-process -p effigy-host-run -p effigy --lib --filterset 'package(effigy-core) | package(effigy-process) | package(effigy-host-run) | test(cli::output::) | test(cli::version_dispatch::) | test(capture_deadline_tests::)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { id = "metadata-and-process-caller-tests", run = "cargo nextest run -p effigy-core -p effigy-process -p effigy --lib --filterset 'package(effigy-core) | package(effigy-process) | test(cli::output::) | test(cli::version_dispatch::) | test(capture_deadline_tests::)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
 ]
 "check:audit:assurance-membership" = [
   { id = "capture-and-public-required-cases", run = "bash tests/scripts/assurance-boundary-tests.sh", timeout_ms = 600000 },
 ]
 "check:audit:assurance-boundary" = [
   { task = "fmt:check" },
-  { id = "assurance-compile", run = "cargo check -p effigy -p effigy-core -p effigy-process -p effigy-host-run -p effigy-scan -p effigy-codegraph -p effigy-bootstrap -p effigy-cli --all-targets --profile test", timeout_ms = 600000 },
+  { id = "assurance-compile", run = "cargo check -p effigy -p effigy-core -p effigy-process -p effigy-scan -p effigy-codegraph -p effigy-bootstrap -p effigy-cli --all-targets --profile test", timeout_ms = 600000 },
 ]
 "lint:audit:assurance-boundary" = [
-  { id = "assurance-strict-clippy", run = "cargo clippy -p effigy -p effigy-core -p effigy-process -p effigy-host-run -p effigy-scan -p effigy-codegraph -p effigy-bootstrap -p effigy-cli --all-targets -- -D warnings", timeout_ms = 600000 },
-]
-"check:qa:fixture-parent-isolation:cli" = "cargo check -p effigy --test bootstrap_cli_tests --test env_schema_tests --test secrets_local_dev_cli_tests --test cli_output_tests --test host_scheduler_integration"
-"test:audit:fixture-family" = [
-  { task = "test:audit:fixture-startup" },
-  { id = "complete-private-parent-fixture-families", run = "bash tests/scripts/fixture-parent-isolation.sh", timeout_ms = 900000 },
-  { id = "health-and-capture-unit-family", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-doctor -p effigy --lib --filterset 'package(effigy-doctor) | test(capture_deadline_tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
-]
-"test:audit:fixture-startup" = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test host_scheduler_integration --filterset 'test(private_server_startup_guard_reaps_on_unwind_and_preserves_foreign_child)' --no-capture --retries 0 --no-tests fail"
-"test:audit:fixture-family:runner".admission = "heavy"
-"test:audit:fixture-family:runner".run = [
-  { id = "all-cli-fixture-cases", run = "bash tests/scripts/fixture-parent-cli-tests.sh --all {args}", timeout_ms = 900000 },
-]
-"check:qa:fixture-parent-isolation" = "cargo clippy -p effigy -p effigy-bootstrap --all-targets -- -D warnings"
-# This heavy child is launched only by the controlled private-parent test.
-# It uses the already-built unit test executable, avoiding a nested Cargo
-# invocation while the integration test runner owns the build lock.
-"test:qa:fixture-parent-isolation:runner".admission = "heavy"
-"test:qa:fixture-parent-isolation:runner".run = [
-  { id = "fixture-parent-runner-tests", run = "bash tests/scripts/fixture-parent-runner-tests.sh {args}", timeout_ms = 600000 },
-]
-# One private-server proof for the fixed release install selector and nested
-# host-run inheritance; it never runs an install or contacts a release host.
-"test:release:verification-admission" = [
-  { id = "release-verification-admission", run = "EFFIGY_REQUIRE_HOST_RUN_PRIVATE_SERVER=1 cargo test --test host_scheduler_integration release_verify_install_selector_preserves_fixed_command_and_host_run -- --include-ignored --exact --nocapture --test-threads=1", timeout_ms = 240000 },
-]
-"check:release:verification-admission" = "cargo check -p effigy --test host_scheduler_integration --profile test"
-# Exact Queue152 follower restart and cancellation acceptance. The caller must
-# provide EFFIGY_HOST_RUN_PRIVATE_SERVER pointing at the clean reviewed f53a9d0
-# checkout; required-fixture mode prevents either ignored case from skipping.
-"test:host-run:idle-follow:restart" = [
-  "EFFIGY_REQUIRE_HOST_RUN_PRIVATE_SERVER=1 cargo test --test host_scheduler_integration real_effigy_follower_recovers_across_five_queue152_supervisor_rolls -- --include-ignored --nocapture --test-threads=1",
-  "EFFIGY_REQUIRE_HOST_RUN_PRIVATE_SERVER=1 cargo test --test host_scheduler_integration real_effigy_sigterm_cancels_during_queue152_supervisor_roll -- --include-ignored --nocapture --test-threads=1",
-]
-
-# Owned-child termination proof (papercut 075): the real scope must terminate a
-# registered child before any cleanup, and a controlled negative seam must show
-# the oracle fails when forwarding is disabled while unconditional exact-owned
-# cleanup still reaps both test-created children.
-"test:host-run:termination-proof" = [
-  "cargo test -p effigy --lib host_scheduler::tests::release_preparation_fixture_owned_children_scope_forwards_termination_only_to_registered_groups -- --nocapture",
-  "cargo test -p effigy --lib host_scheduler::tests::release_preparation_fixture_owned_children_termination_oracle_fails_when_forwarding_is_disabled -- --nocapture",
+  { id = "assurance-strict-clippy", run = "cargo clippy -p effigy -p effigy-core -p effigy-process -p effigy-scan -p effigy-codegraph -p effigy-bootstrap -p effigy-cli --all-targets -- -D warnings", timeout_ms = 600000 },
 ]
 
 # Documentation QA

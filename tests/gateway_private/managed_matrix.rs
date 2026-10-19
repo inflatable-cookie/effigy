@@ -226,7 +226,6 @@ impl<'a> Case<'a> {
             .current_dir(&self.root)
             .env("HOME", &self.home)
             .env("EFFIGY_TEST_CONTAINERS_HOME", self.home.join(".effigy"))
-            .env("EFFIGY_HOST_RUN_ROOT", scheduler_root())
             .env("PATH", &self.effects.env_path)
             .env("EFFIGY_EXECUTABLE", self.root.join("effigy-wrapper"))
             .env("COLIMA_HOME", self.home.join("colima"))
@@ -602,13 +601,6 @@ fn managed_matrix_down_ends_recorded_non_group_leader_workload() {
     );
 }
 
-fn scheduler_root() -> OsString {
-    std::env::var_os("EFFIGY_HOST_RUN_ROOT").unwrap_or_else(|| {
-        PathBuf::from(std::env::var_os("HOME").expect("scheduler home"))
-            .join(".local/state/host-run")
-            .into_os_string()
-    })
-}
 struct Owner {
     child: ManagedSupervisor,
     reader: Option<JoinHandle<()>>,

@@ -4,8 +4,8 @@
 # preparation, reached through the `effigy release:prepare` selector.
 #
 # The selector is the admission surface: `config/tasks.toml` declares the task
-# `admission = "heavy"`, so the host-run scheduler admits the whole operation
-# before any compilation or file mutation. This script only forwards a
+# `admission = "heavy"`, so an `EFFIGY_ADMISSION_HOOK`, when one is set, admits
+# the whole operation before any compilation or file mutation. This script only forwards a
 # validated subset of `effigy release prepare` options to the Effigy built from
 # the invocation checkout. It never selects `release execute`, `release
 # resume`, tag, or publish; it never accepts a `--repo` override; and it never

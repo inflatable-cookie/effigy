@@ -284,8 +284,6 @@ pub(super) fn uninstall_resolver_if_needed(config: &GatewayConfig) -> Vec<String
             let path_str = path.display().to_string();
             let output = ProcessCommand::new("sudo")
                 // The scheduler run token never crosses a sudo boundary.
-                .env_remove("HOST_RUN_TOKEN")
-                .env_remove("HOST_RUN_ID")
                 .args(["rm", path.to_str().unwrap_or("")])
                 .output();
             match output {
@@ -854,9 +852,7 @@ fn build_gateway_elevated_command_with_keep_resolver(
     let effigy_bin = std::env::current_exe().map_err(RunnerError::Cwd)?;
     let mut command = ProcessCommand::new("sudo");
     // The scheduler run token never crosses a sudo boundary.
-    command
-        .env_remove("HOST_RUN_TOKEN")
-        .env_remove("HOST_RUN_ID");
+    command;
     command.arg("env");
     for (key, value) in gateway_elevated_env_vars() {
         let mut entry = OsString::from(key);
