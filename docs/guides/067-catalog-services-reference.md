@@ -60,6 +60,11 @@ machine with no pack store, no `oras`, and no network resolves exactly the
 fragments documented here. `effigy service list` names the layer each fragment
 came from.
 
+The embedded pack's README is a frozen upstream publication document. Its
+user-global override statement is historical; the layer order above describes
+current Effigy behavior. See the [catalog integration note](../../crates/effigy-catalog/README.md)
+for the snapshot's provenance boundary.
+
 ## Catalog Packs
 
 A catalog pack is an independently versioned set of the same fragment
