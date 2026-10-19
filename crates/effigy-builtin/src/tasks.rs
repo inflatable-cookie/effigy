@@ -81,7 +81,6 @@ fn nested_tasks_builtin(
 ) -> Option<NestedTasksBuiltin> {
     let (subcommand, tail) = runtime_args.passthrough.split_first()?;
     match subcommand.as_str() {
-        "migrate" => None,
         "unlock" => Some(NestedTasksBuiltin::Unlock {
             task: nested_task(task, "unlock"),
             args: tail.to_vec(),

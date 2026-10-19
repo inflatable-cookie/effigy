@@ -2,7 +2,7 @@ use super::{run_manifest_task_with_cwd, PathBuf, RunnerError, TaskInvocation};
 
 fn builtin_invocation(name: &str, args: &[&str]) -> TaskInvocation {
     match name {
-        "migrate" | "unlock" | "cache" => TaskInvocation {
+        "unlock" | "cache" => TaskInvocation {
             name: "tasks".to_owned(),
             args: std::iter::once(name.to_owned())
                 .chain(args.iter().map(|arg| (*arg).to_owned()))

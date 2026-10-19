@@ -288,14 +288,16 @@ pub(super) fn apply_global_json_flag(mut cmd: Command, json_mode: bool) -> Comma
         Command::Service(args) => args.output_json = true,
         Command::Task(task) => {
             if !runtime_flag_present_before_passthrough(&task.args, "--json") {
-                let insert_at =
-                    if task.args.first().map(String::as_str).is_some_and(|arg| {
-                        matches!(arg, "migrate" | "unlock" | "cache" | "completion")
-                    }) {
-                        1
-                    } else {
-                        0
-                    };
+                let insert_at = if task
+                    .args
+                    .first()
+                    .map(String::as_str)
+                    .is_some_and(|arg| matches!(arg, "unlock" | "cache" | "completion"))
+                {
+                    1
+                } else {
+                    0
+                };
                 task.args.insert(insert_at, "--json".to_owned());
             }
         }
