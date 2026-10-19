@@ -145,7 +145,19 @@ fn managed_listener_routes_require_exact_generation_and_hand_over_container_rout
         .lookup("app.example.test")
         .cloned()
         .unwrap();
-    let conflict = check_container_claim_with(&live, &project, None, |_| true).unwrap_err();
+    assert!(check_container_claim_with(&live, &project, None, |_| {
+        effigy_kernel::observe::Observed::Unknown(
+            effigy_kernel::observe::UnknownReason::PermissionDenied,
+        )
+    })
+    .is_err());
+    let conflict = check_container_claim_with(&live, &project, None, |_| {
+        effigy_kernel::observe::Observed::Verified(
+            true,
+            effigy_kernel::observe::Evidence::new("fixture live".into(), None).unwrap(),
+        )
+    })
+    .unwrap_err();
     assert!(matches!(
         &conflict,
         GatewayError::ManagedListenerRouteConflict { pid: 10, .. }
@@ -159,7 +171,12 @@ fn managed_listener_routes_require_exact_generation_and_hand_over_container_rout
     );
 
     // A generation that is no longer live is a handover, not a conflict.
-    assert!(check_container_claim_with(&live, &project, None, |_| false).is_ok());
+    assert!(check_container_claim_with(&live, &project, None, |_| {
+        effigy_kernel::observe::Observed::Absent(
+            effigy_kernel::observe::AbsenceProof::NoSuchProcess { pid: 11 },
+        )
+    })
+    .is_ok());
 
     // Replacement of the same managed owner still requires the exact expected
     // predecessor generation, and a stale stop callback cannot remove it.
@@ -757,7 +774,7 @@ fn deregister_owned_routes_matching_leaves_unlisted_owned_routes() {
 fn cleanup_owned_routes_and_certs_skips_foreign_owner() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("routes.json");
-    let (ours, _private) = linked_checkout(root.path(), "worker");
+    let (ours, private) = linked_checkout(root.path(), "worker");
     let (theirs, _theirs_private) = linked_checkout(root.path(), "sibling");
     let ours_path = ours.display().to_string();
     register_route(
@@ -772,7 +789,7 @@ fn cleanup_owned_routes_and_certs_skips_foreign_owner() {
         .scope
         .clone()
         .expect("scope");
-    deregister_owned_routes(&path, &ours_path, Some(&our_token)).unwrap();
+    std::fs::remove_dir_all(private).unwrap();
     register_route(
         &path,
         &build_registration(

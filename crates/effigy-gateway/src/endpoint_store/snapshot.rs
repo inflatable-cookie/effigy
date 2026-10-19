@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 use super::{error, OPERATION_BUDGET, REUSE_QUARANTINE};
 use crate::loopback::LoopbackRegistry;
 use crate::ports::PortRegistry;
-use crate::routes::RouteTable;
+use crate::routes::{Route, RouteTable};
 use crate::GatewayError;
 
 pub(super) type ClaimSet = BTreeMap<String, (ResourceId, Value)>;
@@ -46,8 +46,32 @@ pub struct EndpointSnapshot {
     schema: u32,
     pub revision: u64,
     documents: BTreeMap<String, Value>,
+    #[serde(default)]
+    domains: BTreeMap<String, DomainOwner>,
     pub imported_sha256: BTreeMap<String, String>,
     pub quarantined: BTreeMap<String, Quarantine>,
+}
+/// Persistent domain ownership survives withdrawal of its active listener.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct DomainOwner {
+    project: String,
+    scope: Option<String>,
+    listener: Option<String>,
+    #[serde(default)]
+    route: Option<Route>,
+}
+impl DomainOwner {
+    fn from_route(route: &Route) -> Self {
+        Self {
+            project: route.project.clone(),
+            scope: route.scope.clone(),
+            route: Some(route.clone()),
+            listener: route
+                .managed_listener
+                .as_ref()
+                .map(|owner| owner.owner.clone()),
+        }
+    }
 }
 impl EndpointSnapshot {
     pub(super) fn imported(
@@ -67,6 +91,7 @@ impl EndpointSnapshot {
             schema: 1,
             revision: 0,
             documents,
+            domains: BTreeMap::new(),
             imported_sha256: hashes,
             quarantined: BTreeMap::new(),
         };
@@ -97,7 +122,69 @@ impl EndpointSnapshot {
     pub fn ports(&self) -> Result<PortRegistry, GatewayError> {
         serde_json::from_value(self.document("ports")?.clone()).map_err(error)
     }
+    pub fn reserve_domain(
+        &mut self,
+        domain: &str,
+        project: &str,
+        scope: Option<&str>,
+        listener: Option<&str>,
+    ) -> Result<(), GatewayError> {
+        let domain = domain.to_ascii_lowercase();
+        if let Some(current) = self.domains.get(&domain) {
+            if current.project != project || current.scope.as_deref() != scope {
+                let routes = self.routes()?;
+                match routes.lookup(&domain) {
+                    Some(route) if current.project == route.project && current.scope == route.scope => crate::registration::check_claim(route, project, scope)?,
+                    Some(_) => return Err(error(format!("domain {domain} has a reserved successor owner"))),
+                    None => return Err(error(format!("domain {domain} belongs to another persistent owner; retire that owner explicitly"))),
+                }
+            } else if listener.is_some()
+                && current.listener.is_some()
+                && current.listener.as_deref() != listener
+            {
+                return Err(error(format!(
+                    "domain {domain} belongs to another stable listener owner"
+                )));
+            }
+        }
+        let reserved_route = self
+            .domains
+            .get(&domain)
+            .filter(|owner| owner.project == project && owner.scope.as_deref() == scope)
+            .and_then(|owner| owner.route.clone());
+        self.domains.insert(
+            domain,
+            DomainOwner {
+                project: project.into(),
+                scope: scope.map(str::to_owned),
+                listener: listener.map(str::to_owned),
+                route: reserved_route,
+            },
+        );
+        Ok(())
+    }
+    /// Withdrawn routes retain their domain. Explicit retirement releases it.
     pub fn set_routes(&mut self, table: &RouteTable) -> Result<(), GatewayError> {
+        for route in self.routes()?.all_routes() {
+            self.domains
+                .entry(route.domain.to_ascii_lowercase())
+                .or_insert_with(|| DomainOwner::from_route(route));
+        }
+        for route in table.all_routes() {
+            self.reserve_domain(
+                &route.domain,
+                &route.project,
+                route.scope.as_deref(),
+                route
+                    .managed_listener
+                    .as_ref()
+                    .map(|owner| owner.owner.as_str()),
+            )?;
+            self.domains
+                .get_mut(&route.domain.to_ascii_lowercase())
+                .expect("reserved domain")
+                .route = Some(route.clone());
+        }
         self.replace(
             "routes",
             "routes",
@@ -116,6 +203,62 @@ impl EndpointSnapshot {
                 "registered",
             ],
         )
+    }
+    /// Include withdrawn claims in retirement inventory. Absence from active
+    /// routing never means that its persistent owner has released the domain.
+    pub fn owned_domains(
+        &self,
+        project: &str,
+        scope: Option<&str>,
+    ) -> Result<Vec<String>, GatewayError> {
+        let mut domains = self
+            .domains
+            .iter()
+            .filter(|(_, owner)| owner.project == project && owner.scope.as_deref() == scope)
+            .map(|(domain, _)| domain.clone())
+            .collect::<std::collections::BTreeSet<_>>();
+        domains.extend(
+            self.routes()?
+                .all_routes()
+                .into_iter()
+                .filter(|route| crate::registration::owned_by(route, project, scope))
+                .map(|route| route.domain.clone()),
+        );
+        Ok(domains.into_iter().collect())
+    }
+    /// Explicit repair ends one exact route's persistent ownership. Routine
+    /// down/up uses set_routes and retains the conflict set instead.
+    pub fn release_route(&mut self, route: &Route) -> Result<(), GatewayError> {
+        let mut table = self.routes()?;
+        if table.lookup(&route.domain) != Some(route) {
+            return Err(error(
+                "route changed before explicit release; read and retry",
+            ));
+        }
+        table.deregister(&route.domain)?;
+        self.set_routes(&table)?;
+        self.domains.remove(&route.domain.to_ascii_lowercase());
+        Ok(())
+    }
+    pub fn release_domains(
+        &mut self,
+        project: &str,
+        scope: Option<&str>,
+    ) -> Result<(), GatewayError> {
+        let mut table = self.routes()?;
+        self.set_routes(&table)?;
+        table
+            .routes
+            .retain(|_, route| !crate::registration::owned_by(route, project, scope));
+        self.replace(
+            "routes",
+            "routes",
+            serde_json::to_value(table).map_err(error)?,
+            &[],
+        )?;
+        self.domains
+            .retain(|_, owner| owner.project != project || owner.scope.as_deref() != scope);
+        Ok(())
     }
     pub fn set_loopback(&mut self, registry: &LoopbackRegistry) -> Result<(), GatewayError> {
         self.replace(
@@ -282,8 +425,27 @@ impl EndpointSnapshot {
                 )?;
             }
         }
+        let active = self.routes()?;
+        let mut routes = active.clone();
+        for (domain, holder) in &self.domains {
+            if active.lookup(domain).is_none() {
+                if let Some(route) = &holder.route {
+                    routes.upsert(route.clone());
+                    continue;
+                }
+                let name = add(
+                    &mut claims,
+                    EndpointKind::Domain,
+                    domain,
+                    &holder.project,
+                    domain,
+                )?;
+                claims.get_mut(&name).expect("inserted domain").1["lifetime"] =
+                    serde_json::to_value(holder).map_err(error)?;
+            }
+        }
         let mut listeners = BTreeMap::new();
-        for (key, route) in self.routes()?.routes {
+        for (key, route) in routes.routes {
             if !key.eq_ignore_ascii_case(&route.domain) {
                 return Err(error("route key does not match its domain"));
             }
@@ -294,8 +456,9 @@ impl EndpointSnapshot {
                 &route.project,
                 &route.domain,
             )?;
-            claims.get_mut(&name).expect("domain was inserted").1["route"] =
-                serde_json::to_value(&route).map_err(error)?;
+            let details = &mut claims.get_mut(&name).expect("domain was inserted").1;
+            details["route"] = serde_json::to_value(&route).map_err(error)?;
+            details["active"] = json!(active.lookup(&route.domain).is_some());
             if let Some(port) = route.tcp_port {
                 let target = route
                     .tcp_target

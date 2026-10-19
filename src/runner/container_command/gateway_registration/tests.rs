@@ -1,4 +1,6 @@
 use super::*;
+#[cfg(test)]
+use crate::gateway_legacy_fixture::LegacyRegistryFixture;
 use effigy_containers::exec::{
     ContainerExecError, RunningComposeContainerInventory, RunningComposeContainerProfiled,
     RuntimeInventoryFailure,
@@ -1741,10 +1743,8 @@ fn load_or_allocate_project_loopback_ip_avoids_live_route_table_ips_missing_from
 }
 
 #[test]
-fn load_or_allocate_project_loopback_ip_reassigns_conflicting_saved_ip() {
+fn load_or_allocate_project_loopback_ip_refuses_conflicting_saved_ip() {
     with_test_home("loopback-reassign-conflicting-saved-ip", || {
-        let policy = test_policy();
-        let repo_root = PathBuf::from("/tmp/repo");
         let route_table_path = gateway_route_table_path().expect("route table path");
         std::fs::create_dir_all(route_table_path.parent().expect("route table parent"))
             .expect("mkdir route table parent");
@@ -1770,20 +1770,10 @@ fn load_or_allocate_project_loopback_ip_reassigns_conflicting_saved_ip() {
         registry
             .allocate("project:demo-web-dev:/tmp/repo", "/tmp/repo")
             .expect("seed conflicting assignment");
-        registry.save(&loopback_path).expect("save registry");
-
-        let ip = load_or_allocate_project_loopback_ip(&repo_root, &policy, true)
-            .expect("allocate")
-            .expect("loopback ip");
-        let reloaded = LoopbackRegistry::load(&loopback_path).expect("reload registry");
-
-        assert_eq!(ip, std::net::Ipv4Addr::new(127, 1, 0, 2));
-        assert_eq!(
-            reloaded
-                .get("project:demo-web-dev:/tmp/repo")
-                .map(|entry| entry.ip),
-            Some(std::net::Ipv4Addr::new(127, 1, 0, 2))
-        );
+        let error = registry
+            .save(&loopback_path)
+            .expect_err("the Store refuses a second recorded owner for the same address");
+        assert!(error.to_string().contains("conflicting endpoint owners"));
     });
 }
 

@@ -1,4 +1,6 @@
 use super::*;
+#[cfg(test)]
+use crate::gateway_legacy_fixture::LegacyRegistryFixture;
 use std::net::Ipv4Addr;
 
 fn test_route(domain: &str, target: &str) -> Route {

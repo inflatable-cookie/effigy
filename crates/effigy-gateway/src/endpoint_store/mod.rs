@@ -1,5 +1,5 @@
 //! Gateway-owned endpoint authority. JSON registries are import inputs only.
-mod import;
+pub(crate) mod import;
 mod reservations;
 mod snapshot;
 
@@ -55,6 +55,50 @@ impl EndpointStore {
             home,
         }
     }
+    /// Resolve the existing Effigy-home convention, including isolated
+    /// private fixtures whose root intentionally is not named `.effigy`.
+    pub fn for_effigy_home(root: &Path) -> Self {
+        if root.file_name().is_some_and(|name| name == ".effigy") {
+            return Self::new(root.parent().expect("Effigy home has a parent"));
+        }
+        Self {
+            home: root.to_owned(),
+            sources: import::Sources {
+                routes: root.join("gateway/routes.json"),
+                loopback: root.join("gateway/loopback-ips.json"),
+                ports: root.join("ports.json"),
+            },
+        }
+    }
+    /// The path identifies an import source, never an independent writer.
+    pub fn for_routes(path: &Path) -> Self {
+        let directory = path.parent().expect("route source has a parent");
+        if directory.file_name().is_some_and(|name| name == "gateway") {
+            return Self::for_effigy_home(directory.parent().expect("gateway has a parent"));
+        }
+        Self {
+            home: directory.to_owned(),
+            sources: import::Sources {
+                routes: path.to_owned(),
+                loopback: directory.join("loopback-ips.json"),
+                ports: directory.join("ports.json"),
+            },
+        }
+    }
+    pub fn for_ports(path: &Path) -> Self {
+        Self::for_effigy_home(path.parent().expect("port source has a parent"))
+    }
+    pub fn routes<T, E: From<GatewayError>>(
+        &self,
+        edit: impl FnOnce(&mut crate::routes::RouteTable) -> Result<T, E>,
+    ) -> Result<T, E> {
+        self.transaction(None, |snapshot| {
+            let mut table = snapshot.routes()?;
+            let result = edit(&mut table)?;
+            snapshot.set_routes(&table)?;
+            Ok(result)
+        })
+    }
     pub fn home(&self) -> &Path {
         &self.home
     }
@@ -66,6 +110,10 @@ impl EndpointStore {
     pub fn read(&self) -> Observed<EndpointSnapshot> {
         let op = operator::context(Duration::from_secs(3), EffectClass::Observe);
         let cx = op.observe().expect("Observe context");
+        if matches!(std::fs::symlink_metadata(&self.home), Err(error) if error.kind() == std::io::ErrorKind::NotFound)
+        {
+            return Observed::Absent(effigy_kernel::observe::AbsenceProof::NoStateRoot);
+        }
         let root = match StateRoot::observe(&cx, &self.home) {
             Observed::Verified(root, _) => root,
             Observed::Absent(proof) => return Observed::Absent(proof),
@@ -112,6 +160,31 @@ impl EndpointStore {
         expected_revision: Option<u64>,
         edit: impl FnOnce(&mut EndpointSnapshot) -> Result<T, GatewayError>,
     ) -> Result<T, GatewayError> {
+        self.transaction(expected_revision, edit)
+    }
+
+    pub fn transaction<T, E: From<GatewayError>>(
+        &self,
+        expected_revision: Option<u64>,
+        edit: impl FnOnce(&mut EndpointSnapshot) -> Result<T, E>,
+    ) -> Result<T, E> {
+        self.transaction_with_backup(expected_revision, |snapshot| {
+            edit(snapshot).map(|value| (value, None))
+        })
+    }
+    pub(crate) fn transaction_with_backup<T, E: From<GatewayError>>(
+        &self,
+        expected_revision: Option<u64>,
+        edit: impl FnOnce(&mut EndpointSnapshot) -> Result<(T, Option<(PathBuf, Vec<u8>)>), E>,
+    ) -> Result<T, E> {
+        self.import()?;
+        self.transact(expected_revision, edit)
+    }
+    fn transact<T, E: From<GatewayError>>(
+        &self,
+        expected_revision: Option<u64>,
+        edit: impl FnOnce(&mut EndpointSnapshot) -> Result<(T, Option<(PathBuf, Vec<u8>)>), E>,
+    ) -> Result<T, E> {
         let op = operator::context(OPERATION_BUDGET, EffectClass::Mutate);
         let cx = op.effects().map_err(|e| error(format!("{e:?}")))?;
         let recovery = op
@@ -135,7 +208,7 @@ impl EndpointStore {
         )
         .map_err(error)?;
         // All returns after admission pass through the kernel's one settle.
-        let result = (|| {
+        let result: Result<T, E> = (|| {
             let state = run.resource_state().map_err(error)?;
             let importing = state.is_none();
             let _legacy_locks = if importing {
@@ -151,7 +224,8 @@ impl EndpointStore {
                 return Err(error(format!(
                     "endpoint revision changed (current {}); read and retry",
                     snapshot.revision
-                )));
+                ))
+                .into());
             }
             let before = snapshot.clone();
             let before_claims = if importing {
@@ -159,8 +233,8 @@ impl EndpointStore {
             } else {
                 before.claims()?
             };
-            let value = edit(&mut snapshot)?;
-            if !importing && snapshot == before {
+            let (value, backup) = edit(&mut snapshot)?;
+            if !importing && snapshot == before && backup.is_none() {
                 return Ok(value);
             }
             let desired = snapshot.claims()?;
@@ -178,6 +252,22 @@ impl EndpointStore {
                 // once; published releases use REUSE_QUARANTINE below.
                 Some(Claims::reserve(&mut run, &wanted, Duration::ZERO).map_err(error)?)
             };
+            // Reserve before any journaled external publication, so settle
+            // resolves file effects before transferring the claim reservation.
+            if let Some((path, bytes)) = backup {
+                let dir = effigy_kernel::fs::DirFd::open(
+                    path.parent().ok_or_else(|| error("backup has no parent"))?,
+                )
+                .map_err(error)?;
+                let name = effigy_kernel::fs::FileName::new(
+                    path.file_name()
+                        .and_then(|name| name.to_str())
+                        .ok_or_else(|| error("invalid backup name"))?,
+                )
+                .map_err(error)?;
+                run.replace_file(&dir, &name, &bytes, Default::default())
+                    .map_err(error)?;
+            }
             snapshot.revision = run.fence().generation.get();
             Claims::publish_retained(
                 &mut run,
@@ -204,7 +294,9 @@ impl EndpointStore {
     }
 
     pub fn import(&self) -> Result<EndpointSnapshot, GatewayError> {
-        self.edit(None, |_| Ok(()))?;
+        // Settle imported claims before a caller can release or republish
+        // them. Even a first-command retirement must quarantine old endpoints.
+        self.transact(None, |_| Ok::<_, GatewayError>(((), None)))?;
         self.read_compatible()
     }
 }

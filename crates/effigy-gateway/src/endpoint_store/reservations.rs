@@ -74,22 +74,34 @@ impl EndpointStore {
         })
     }
     pub fn reserve_loopback(&self, identity: &str, scope: &str) -> Result<Ipv4Addr, GatewayError> {
+        self.reserve_loopback_importing(identity, None, scope)
+    }
+    /// Translate the previous shared-service key without changing its IP or
+    /// lifetime owner. Runtime inventory never authorises reclamation.
+    pub fn reserve_loopback_importing(
+        &self,
+        identity: &str,
+        legacy: Option<&str>,
+        scope: &str,
+    ) -> Result<Ipv4Addr, GatewayError> {
         self.edit(None, |snapshot| {
             let mut registry = snapshot.loopback()?;
-            if registry.get(identity).is_some_and(|a| a.scope != scope) {
-                return Err(error(
-                    "loopback lifetime owner differs; release the old owner explicitly",
-                ));
+            if registry.get(identity).is_none() {
+                if let Some((legacy, assignment)) = legacy.and_then(|key| registry.get(key).cloned().map(|a| (key, a)))
+                    .filter(|(_, assignment)| assignment.scope == scope) {
+                    registry.deallocate(legacy);
+                    registry.assignments.insert(identity.into(), assignment);
+                }
             }
-            let mut unavailable: HashSet<_> =
-                snapshot.unavailable_addresses().into_iter().collect();
-            unavailable.extend(reserved_loopback_ips_for_other_projects(
-                &snapshot.routes()?,
-                scope,
-            ));
-            let ip = registry
-                .allocate_avoiding(identity, scope, &unavailable)?
-                .ip;
+            if registry.get(identity).is_some_and(|a| a.scope != scope) {
+                return Err(error("loopback lifetime owner differs; release the old owner explicitly"));
+            }
+            let mut unavailable: HashSet<_> = snapshot.unavailable_addresses().into_iter().collect();
+            unavailable.extend(reserved_loopback_ips_for_other_projects(&snapshot.routes()?, scope));
+            if registry.get(identity).is_some_and(|a| unavailable.contains(&a.ip)) {
+                return Err(error("retained loopback address conflicts with another owner; explicit repair is required"));
+            }
+            let ip = registry.allocate_avoiding(identity, scope, &unavailable)?.ip;
             snapshot.set_loopback(&registry)?;
             Ok(ip)
         })

@@ -19,6 +19,61 @@ struct ManagedListenerAvailability {
 
 const AVAILABILITY_SCHEMA: &str = "effigy.managed.host-listener-state.v1";
 
+/// A failed observation never grants another owner permission to replace the
+/// listener. Only a positively absent process/generation or socket does.
+pub fn observe_managed_listener_owner(
+    owner: &ManagedListenerRouteOwner,
+) -> effigy_kernel::observe::Observed<bool> {
+    use effigy_kernel::observe::{AbsenceProof, Evidence, Observed, UnknownReason};
+    for (pid, boot, start) in [
+        (
+            owner.supervisor_pid,
+            &owner.supervisor_boot_identity,
+            &owner.supervisor_start_identity,
+        ),
+        (
+            owner.root_pid,
+            &owner.root_boot_identity,
+            &owner.root_start_identity,
+        ),
+        (
+            owner.listener_pid,
+            &owner.listener_boot_identity,
+            &owner.listener_start_identity,
+        ),
+    ] {
+        match read_live_process_identity(pid) {
+            Ok(current) if current.boot_identity != *boot || current.start_identity != *start => {
+                return Observed::Absent(AbsenceProof::StartIdentityDiffers { pid })
+            }
+            Ok(_) => {}
+            Err(error)
+                if error.kind() == io::ErrorKind::NotFound
+                    || error.raw_os_error() == Some(libc::ESRCH) =>
+            {
+                return Observed::Absent(AbsenceProof::NoSuchProcess { pid })
+            }
+            Err(error) => return Observed::Unknown(UnknownReason::Inconsistent(error.to_string())),
+        }
+    }
+    match verify_managed_listener_owner(owner) {
+        Ok(()) => Observed::Verified(
+            true,
+            Evidence::new(
+                "managed listener identity and exclusive socket".into(),
+                None,
+            )
+            .expect("fixed source"),
+        ),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Observed::Verified(
+            false,
+            Evidence::new("managed listener or readiness record absent".into(), None)
+                .expect("fixed source"),
+        ),
+        Err(error) => Observed::Unknown(UnknownReason::Inconsistent(error.to_string())),
+    }
+}
+
 /// Prove that a route's current TCP listener still belongs to its recorded
 /// process generation and remains beneath the recorded managed child.
 /// Callers use this after connecting and before forwarding request bytes.

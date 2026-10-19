@@ -305,3 +305,129 @@ fn redacted_operator_files_preserve_every_mapping() {
             .sum::<usize>()
     );
 }
+
+#[test]
+fn withdrawal_retains_domain_across_restart_and_retirement_quarantines_release() {
+    let (_dir, store) = fixture();
+    inputs(&store, documents());
+    store.import().unwrap();
+    store
+        .routes(|table| -> Result<(), GatewayError> {
+            table.deregister("import.test")?;
+            Ok(())
+        })
+        .unwrap();
+    let withdrawn = store.read_compatible().unwrap();
+    assert!(withdrawn.routes().unwrap().is_empty());
+    assert!(withdrawn
+        .claims()
+        .unwrap()
+        .values()
+        .any(|(_, details)| details["kind"] == "domain"));
+    store
+        .edit(None, |snapshot| {
+            snapshot.reserve_domain("import.test", "/foreign", None, None)
+        })
+        .expect_err("withdrawal does not end persistent ownership");
+    let route: crate::routes::Route =
+        serde_json::from_value(documents()[0]["routes"]["import.test"].clone()).unwrap();
+    store
+        .routes(|table| -> Result<(), GatewayError> {
+            table.upsert(route);
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(store.read_compatible().unwrap().routes().unwrap().len(), 1);
+    store
+        .edit(None, |snapshot| {
+            snapshot.release_domains("/redacted/project", None)
+        })
+        .unwrap();
+    assert!(store
+        .read_compatible()
+        .unwrap()
+        .routes()
+        .unwrap()
+        .is_empty());
+    store
+        .edit(None, |snapshot| {
+            snapshot.reserve_domain("import.test", "/foreign", None, None)
+        })
+        .expect_err("explicit release commits quarantine with removal");
+}
+
+#[test]
+fn live_reload_uses_committed_store_and_ignores_backup_edits() {
+    let (_dir, store) = fixture();
+    inputs(&store, documents());
+    store.import().unwrap();
+    let live = crate::routes::LiveRouteTable::new(store.sources.routes.clone()).unwrap();
+    store
+        .routes(|table| -> Result<(), GatewayError> {
+            table.routes.get_mut("import.test").unwrap().target = Some("127.0.0.1:9999".into());
+            Ok(())
+        })
+        .unwrap();
+    fs::write(
+        &store.sources.routes,
+        b"invalid backup no longer steers the daemon",
+    )
+    .unwrap();
+    live.reload().unwrap();
+    assert_eq!(
+        live.read().lookup("import.test").unwrap().target.as_deref(),
+        Some("127.0.0.1:9999")
+    );
+    fs::write(store.database_path(), b"corrupt").unwrap();
+    assert!(live.reload().is_err());
+    assert_eq!(
+        live.read().lookup("import.test").unwrap().target.as_deref(),
+        Some("127.0.0.1:9999")
+    );
+}
+
+#[test]
+fn withdrawn_tcp_alias_keeps_address_and_port_claims_until_retirement() {
+    let (_dir, store) = fixture();
+    let mut docs = documents();
+    docs[0]["routes"]["import.test"]["dns_ip"] = json!("127.0.0.1");
+    docs[0]["routes"]["import.test"]["tcp_port"] = json!(5432);
+    docs[0]["routes"]["import.test"]["tcp_target"] = json!("127.0.0.1:15432");
+    inputs(&store, docs);
+    let before = store.import().unwrap();
+    let route = before
+        .routes()
+        .unwrap()
+        .lookup("import.test")
+        .unwrap()
+        .clone();
+    store
+        .routes(|table| -> Result<(), GatewayError> {
+            table.deregister("import.test")?;
+            Ok(())
+        })
+        .unwrap();
+    let withdrawn = store.read_compatible().unwrap();
+    assert!(withdrawn.routes().unwrap().is_empty());
+    assert_eq!(
+        withdrawn.claims().unwrap().keys().collect::<Vec<_>>(),
+        before.claims().unwrap().keys().collect::<Vec<_>>()
+    );
+    assert!(withdrawn.quarantined.is_empty());
+    store
+        .routes(|table| -> Result<(), GatewayError> {
+            table.upsert(route.clone());
+            Ok(())
+        })
+        .unwrap();
+    store
+        .edit(None, |snapshot| snapshot.release_route(&route))
+        .unwrap();
+    assert!(store
+        .read_compatible()
+        .unwrap()
+        .owned_domains("/redacted/project", None)
+        .unwrap()
+        .is_empty());
+    assert!(store.read_compatible().unwrap().port_unavailable(5432));
+}

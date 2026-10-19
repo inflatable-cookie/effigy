@@ -1,13 +1,13 @@
+#[cfg(test)]
+use crate::gateway_legacy_fixture::LegacyRegistryFixture;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 use effigy_catalog::{assembly::ServiceDeclaration, volumes::ManagedVolume, ComposeAssembler};
-use effigy_gateway::loopback::{
-    project_loopback_identity, reserved_loopback_ips_for_other_projects, LoopbackRegistry,
-};
+use effigy_gateway::loopback::{project_loopback_identity, reserved_loopback_ips_for_other_projects};
+#[cfg(test)]
+use effigy_gateway::loopback::LoopbackRegistry;
 use effigy_gateway::ports::PortRegistry;
-use effigy_gateway::routes::RouteTable;
-use effigy_gateway::routes::RouteTableLock;
 use effigy_manifest::{ManifestContainerConfig, ManifestContainerServiceConfig};
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value as YamlValue;
@@ -15,9 +15,8 @@ use serde_yaml::Value as YamlValue;
 use crate::exec::{discover_running_compose_containers, RunningComposeContainerInventory};
 use crate::runtime::scope::{CHECKOUT_LABEL, MANAGED_LABEL, PROJECT_LABEL, SCOPE_LABEL};
 use crate::{
-    layered_catalog_resolver, mount_spec::resolve_host_mounts, prune_loopback_assignments,
-    resolve_catalog_network_contract, warn_skipped_reclamation, ContainerPolicyError,
-    LoopbackPruneOutcome, SharedServiceBinding, GENERATED_RUNTIME_COMPOSE_DIR, SHARED_SERVICE_HOST,
+    layered_catalog_resolver, mount_spec::resolve_host_mounts, resolve_catalog_network_contract,
+    ContainerPolicyError, SharedServiceBinding, GENERATED_RUNTIME_COMPOSE_DIR, SHARED_SERVICE_HOST,
 };
 
 /// Host address used for generated compose port bindings when the manifest
@@ -228,15 +227,8 @@ thread_local! {
 
 #[cfg(any(test, feature = "test-support"))]
 thread_local! {
-    static DEFAULT_TEST_EFFIGY_HOME: PathBuf = std::env::temp_dir().join(format!(
-        "effigy-containers-test-home-{}-{}",
-        std::process::id(),
-        NEXT_TEST_HOME_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
-    ));
+    static DEFAULT_TEST_EFFIGY_HOME: tempfile::TempDir = tempfile::tempdir().expect("private container fixture home");
 }
-
-#[cfg(any(test, feature = "test-support"))]
-static NEXT_TEST_HOME_ID: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct GeneratedComposeDocument {
@@ -1246,11 +1238,12 @@ fn read_loopback_ip(
     let Some(home) = effigy_home_dir() else {
         return Ok(None);
     };
-    let registry = LoopbackRegistry::load(&home.join("gateway/loopback-ips.json"))
-        .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))?;
-    let routes = RouteTable::load(&home.join("gateway/routes.json"))
-        .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))?;
-    let reserved = reserved_loopback_ips_for_other_projects(&routes, source);
+    let snapshot = effigy_gateway::endpoint_store::EndpointStore::for_effigy_home(&home)
+        .read_compatible()?;
+    let registry = snapshot.loopback()?;
+    let routes = snapshot.routes()?;
+    let mut reserved = reserved_loopback_ips_for_other_projects(&routes, source);
+    reserved.extend(snapshot.unavailable_addresses());
     let assignment = registry.get(identity).or_else(|| {
         legacy_identity.and_then(|legacy| {
             registry.get(legacy).filter(|assignment| {
@@ -1267,8 +1260,8 @@ fn read_loopback_ip(
 }
 
 /// Allocate only at the host Prepare seam, including environments whose ports
-/// are already assigned or entirely explicit. Reuse the existing allocator and
-/// its pre-lock inventory rather than introducing a second allocation path.
+/// are already assigned or entirely explicit. Persistent reservations belong
+/// to the gateway Store; runtime inventory cannot release them.
 pub(crate) fn prepare_container_policy_loopbacks(
     policy: &crate::EffectiveContainerPolicy,
 ) -> Result<bool, ContainerPolicyError> {
@@ -1362,122 +1355,15 @@ fn load_or_allocate_loopback_ip_with_inventory(
     identity: &str,
     legacy_identity: Option<&str>,
     source: &str,
-    discover_inventory: impl FnOnce() -> RunningComposeContainerInventory,
+    _discover_inventory: impl FnOnce() -> RunningComposeContainerInventory,
 ) -> Result<Option<std::net::Ipv4Addr>, ContainerPolicyError> {
     let Some(home) = effigy_home_dir() else {
         return Ok(None);
     };
-    let path = home.join("gateway").join("loopback-ips.json");
-    // Snapshot before probing: K14 forbids runtime inventory under the global
-    // registry lock. Only unchanged snapshot entries may be reclaimed later.
-    let snapshot = LoopbackRegistry::load(&path)
-        .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))?;
-    let inventory = if !snapshot.is_empty() && snapshot.get(identity).is_none() {
-        Some(discover_inventory())
-    } else {
-        None
-    };
-    let _lock = RouteTableLock::acquire(&path)
-        .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))?;
-    let mut registry = LoopbackRegistry::load(&path)
-        .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))?;
-    // Reserve every other project's container-route `dns_ip` with the one
-    // shared routine gateway registration also calls. Pruning drops registry
-    // assignments for stacks that are not running, but their routes stay in
-    // `routes.json` with a gateway TCP listener still bound, so handing out
-    // such an IP here would publish this stack on an address a stale listener
-    // holds while registration reallocates elsewhere.
-    let (route_table, route_table_error) =
-        match RouteTable::load(&home.join("gateway").join("routes.json")) {
-            Ok(route_table) => (Some(route_table), None),
-            Err(error) => (None, Some(error.to_string())),
-        };
-    let reserved = route_table
-        .as_ref()
-        .map_or_else(std::collections::HashSet::new, |route_table| {
-            reserved_loopback_ips_for_other_projects(route_table, source)
-        });
-    if let Some(existing) = registry.get(identity) {
-        if !reserved.contains(&existing.ip) {
-            return Ok(Some(existing.ip));
-        }
-        // The stored IP now belongs to another project's route listener.
-        // Drop it so the fresh allocation below agrees with registration.
-        registry.deallocate(identity);
-    }
-    let migrated_legacy_identity = legacy_identity
-        .and_then(|legacy| {
-            registry
-                .get(legacy)
-                .cloned()
-                .map(|assignment| (legacy, assignment))
-        })
-        .filter(|(_, assignment)| assignment.scope == source)
-        .filter(|(_, assignment)| !reserved.contains(&assignment.ip))
-        .filter(|(legacy, assignment)| {
-            !registry.assignments.iter().any(|(other_identity, other)| {
-                other_identity.as_str() != *legacy && other.ip == assignment.ip
-            })
-        });
-    if let Some((legacy_identity, assignment)) = migrated_legacy_identity {
-        registry.deallocate(legacy_identity);
-        registry
-            .assignments
-            .insert(identity.to_owned(), assignment.clone());
-        registry
-            .save(&path)
-            .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))?;
-        return Ok(Some(assignment.ip));
-    }
-    let prune = if registry.is_empty() {
-        LoopbackPruneOutcome::default()
-    } else {
-        match (route_table.as_ref(), inventory.as_ref()) {
-            (Some(route_table), Some(inventory)) => {
-                let mut candidates = registry.clone();
-                candidates.assignments.retain(|identity, assignment| {
-                    snapshot.get(identity) == Some(assignment)
-                });
-                let outcome = prune_loopback_assignments(&mut candidates, route_table, inventory);
-                if outcome.changed {
-                    registry.assignments.retain(|identity, assignment| {
-                        snapshot.get(identity) != Some(assignment)
-                            || candidates.get(identity).is_some()
-                    });
-                }
-                outcome
-            }
-            _ => LoopbackPruneOutcome {
-                changed: false,
-                skipped_reason: Some(format!(
-                    "skipped stale loopback reclamation because no complete pre-lock inventory is available; all uncertain assignments were preserved ({})",
-                    route_table_error.as_deref().unwrap_or("registry changed after the read")
-                )),
-            },
-        }
-    };
-    if prune.changed {
-        registry
-            .save(&path)
-            .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))?;
-    }
-    if let Some(reason) = &prune.skipped_reason {
-        warn_skipped_reclamation(reason);
-    }
-    let assignment = registry
-        .allocate_avoiding(identity, source, &reserved)
-        .map_err(|error| {
-            let detail = match &prune.skipped_reason {
-                Some(reason) => format!("{error}; {reason}"),
-                None => error.to_string(),
-            };
-            ContainerPolicyError::TaskInvocation(detail)
-        })?
-        .ip;
-    registry
-        .save(&path)
-        .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))?;
-    Ok(Some(assignment))
+    effigy_gateway::endpoint_store::EndpointStore::for_effigy_home(&home)
+        .reserve_loopback_importing(identity, legacy_identity, source)
+        .map(Some)
+        .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))
 }
 
 fn parse_port_binding(raw: &str) -> Result<PortBinding, ContainerPolicyError> {
@@ -1566,7 +1452,7 @@ fn test_effigy_home_override() -> Option<PathBuf> {
         return Some(PathBuf::from(home));
     }
 
-    Some(DEFAULT_TEST_EFFIGY_HOME.with(Clone::clone))
+    Some(DEFAULT_TEST_EFFIGY_HOME.with(|home| home.path().to_owned()))
 }
 
 fn configured_host_ports(config: &ManifestContainerConfig) -> Vec<String> {
@@ -1959,91 +1845,27 @@ mod tests {
     }
 
     #[test]
-    fn loopback_allocator_reclaims_complete_stale_pool_before_exhaustion() {
+    fn loopback_allocator_preserves_stopped_owners_and_never_probes_inventory() {
         let _lock = crate::test_env_lock();
-        let tempdir = tempfile::tempdir().expect("test home");
-        with_test_effigy_home(tempdir.path(), || {
-            let path = tempdir.path().join("gateway/loopback-ips.json");
-            let registry = full_project_registry();
-            registry.save(&path).expect("save full registry");
-
-            let identity = project_loopback_identity("new-project", Path::new("/tmp/new-project"));
-            let ip = load_or_allocate_loopback_ip_with_inventory(
-                &identity,
-                Some("new-project"),
-                "/tmp/new-project",
-                RunningComposeContainerInventory::default,
-            )
-            .expect("recover stale capacity before allocation")
-            .expect("allocated loopback IP");
-
-            let reloaded = LoopbackRegistry::load(&path).expect("reload registry");
-            assert_eq!(reloaded.len(), 1);
-            assert_eq!(
-                reloaded.get(&identity).map(|assignment| assignment.ip),
-                Some(ip)
-            );
-        });
-    }
-
-    #[test]
-    fn loopback_inventory_runs_without_registry_lock_and_preserves_concurrent_assignments() {
         let home = tempfile::tempdir().expect("private state");
         with_test_effigy_home(home.path(), || {
             let path = home.path().join("gateway/loopback-ips.json");
-            full_project_registry().save(&path).expect("full registry");
-            let changed = project_loopback_identity("stale-2", Path::new("/tmp/stale-2"));
-            let ip = load_or_allocate_loopback_ip_with_inventory(
+            let before = full_project_registry();
+            before.save(&path).expect("full registry");
+            let result = load_or_allocate_loopback_ip_with_inventory(
                 "project:new:/tmp/new",
                 None,
                 "/tmp/new",
-                || {
-                    // A second opener must acquire the lock while runtime
-                    // inventory executes. try_lock makes a regression bounded.
-                    let file = std::fs::OpenOptions::new()
-                        .create(true)
-                        .truncate(false)
-                        .read(true)
-                        .write(true)
-                        .open(path.with_extension("lock"))
-                        .expect("private lock");
-                    file.try_lock()
-                        .expect("inventory must not hold global lock");
-                    let mut current = LoopbackRegistry::load(&path).expect("current registry");
-                    let old = project_loopback_identity("stale-1", Path::new("/tmp/stale-1"));
-                    let assignment = current.deallocate(&old).expect("replace old assignment");
-                    current
-                        .assignments
-                        .insert("project:late:/tmp/late".into(), assignment);
-                    current
-                        .assignments
-                        .get_mut(&changed)
-                        .expect("change existing assignment")
-                        .scope = "/tmp/new-owner".into();
-                    current.save(&path).expect("concurrent allocation");
-                    RunningComposeContainerInventory::default()
-                },
-            )
-            .expect("allocate after inventory")
-            .expect("assigned IP");
-            let registry = LoopbackRegistry::load(&path).expect("published registry");
-            assert_eq!(registry.len(), 3);
-            assert_eq!(
-                registry
-                    .get("project:late:/tmp/late")
-                    .expect("late assignment retained")
-                    .ip
-                    .to_string(),
-                "127.1.0.1"
+                || panic!("inventory cannot release persistent claims"),
             );
+            assert!(result
+                .unwrap_err()
+                .to_string()
+                .contains("loopback pool exhausted"));
             assert_eq!(
-                registry
-                    .get(&changed)
-                    .expect("changed assignment retained")
-                    .scope,
-                "/tmp/new-owner"
+                LoopbackRegistry::load(&path).unwrap().assignments,
+                before.assignments
             );
-            assert_eq!(ip.to_string(), "127.1.0.3");
         });
     }
 
@@ -2074,10 +1896,6 @@ mod tests {
             .expect_err("incomplete discovery cannot reclaim protected owners");
 
             assert!(error.to_string().contains("loopback pool exhausted"));
-            assert!(error
-                .to_string()
-                .contains("skipped stale loopback reclamation"));
-            assert!(error.to_string().contains("colima profile `broken`"));
             assert_eq!(
                 LoopbackRegistry::load(&path).expect("reload").assignments,
                 before
@@ -2174,30 +1992,14 @@ mod tests {
 
             // Incomplete runtime inventory forces prune to stand down, so only
             // the shared reservation can move the stored assignment.
-            let ip = load_or_allocate_loopback_ip_with_inventory(
+            let error = load_or_allocate_loopback_ip_with_inventory(
                 &identity,
                 Some("jal-accounts"),
                 "/tmp/jal-accounts",
-                || RunningComposeContainerInventory {
-                    rows: Vec::new(),
-                    failures: vec![crate::exec::RuntimeInventoryFailure {
-                        backend: "colima".to_owned(),
-                        profile: "default".to_owned(),
-                        error: "runtime ps failed".to_owned(),
-                    }],
-                },
+                || panic!("conflicting import must not consult runtime inventory"),
             )
-            .expect("allocate loopback IP")
-            .expect("allocated IP");
-
-            assert_eq!(ip, Ipv4Addr::new(127, 1, 0, 3));
-            let reloaded =
-                LoopbackRegistry::load(&tempdir.path().join("gateway/loopback-ips.json"))
-                    .expect("reload registry");
-            assert_eq!(
-                reloaded.get(&identity).map(|assignment| assignment.ip),
-                Some(Ipv4Addr::new(127, 1, 0, 3))
-            );
+            .expect_err("two recorded owners cannot silently move an imported mapping");
+            assert!(error.to_string().contains("conflicting endpoint owners"));
         });
     }
 

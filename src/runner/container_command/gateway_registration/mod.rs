@@ -12,21 +12,20 @@ use effigy_containers::exec::{
 };
 #[cfg(test)]
 use effigy_containers::prune_loopback_assignments_with_rows;
-use effigy_containers::{
-    prune_loopback_assignments, warn_skipped_reclamation, EffectiveContainerPolicy,
-    EffectiveDnsRoute, LoopbackPruneOutcome, SharedServiceBinding,
-};
-use effigy_gateway::loopback::{
-    project_loopback_identity, reserved_loopback_ips_for_other_projects, shared_loopback_identity,
-    LoopbackRegistry,
-};
-use effigy_gateway::managed_listener::verify_managed_listener_owner;
+#[cfg(test)]
+use effigy_containers::{prune_loopback_assignments, LoopbackPruneOutcome};
+use effigy_containers::{EffectiveContainerPolicy, EffectiveDnsRoute, SharedServiceBinding};
+use effigy_gateway::endpoint_store::EndpointStore;
+#[cfg(test)]
+use effigy_gateway::loopback::LoopbackRegistry;
+use effigy_gateway::loopback::{project_loopback_identity, shared_loopback_identity};
+use effigy_gateway::managed_listener::observe_managed_listener_owner;
 use effigy_gateway::registration::{
     check_claim, check_container_claim, container_teardown_covers, owned_by, project_scope,
 };
 #[cfg(test)]
 use effigy_gateway::registration::{deregister_route, register_route, RouteRegistration};
-use effigy_gateway::routes::{Route, RouteSource, RouteTable, RouteTableLock};
+use effigy_gateway::routes::{Route, RouteSource, RouteTable};
 use serde_yaml::Value as YamlValue;
 
 use crate::runner::error::RunnerError;
@@ -179,9 +178,9 @@ pub(in crate::runner) fn preflight_route_claims(
     let scope = gateway_project_scope(&project_path)?;
     let mut conflicts = Vec::new();
     if !claims.is_empty() {
-        let _lock = RouteTableLock::acquire(&route_table_path)
-            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-        let table = load_gateway_route_table(&route_table_path)?;
+        let store = EndpointStore::for_routes(&route_table_path);
+        let snapshot = store.read_compatible()?;
+        let table = snapshot.routes()?;
         for claim in &claims {
             let Some(existing) = table.lookup(&claim.domain) else {
                 continue;
@@ -197,7 +196,15 @@ pub(in crate::runner) fn preflight_route_claims(
                 continue;
             }
             if let Some(owner) = existing.managed_listener.as_ref() {
-                if verify_managed_listener_owner(owner).is_ok() {
+                if match observe_managed_listener_owner(owner) {
+                    effigy_kernel::observe::Observed::Verified(live, _) => live,
+                    effigy_kernel::observe::Observed::Absent(_) => false,
+                    effigy_kernel::observe::Observed::Unknown(reason) => {
+                        return Err(RunnerError::task_invocation(format!(
+                            "listener claim observation unknown: {reason:?}"
+                        )))
+                    }
+                } {
                     conflicts.push(LiveListenerConflict {
                         environment: managed_listener_owner_environment(&owner.owner)
                             .unwrap_or_else(|| owner.owner.clone()),
@@ -207,6 +214,19 @@ pub(in crate::runner) fn preflight_route_claims(
             }
         }
     }
+    EndpointStore::for_routes(&route_table_path).transaction(
+        None,
+        |snapshot| -> Result<_, RunnerError> {
+            let table = snapshot.routes()?;
+            for claim in &claims {
+                if let Some(existing) = table.lookup(&claim.domain) {
+                    check_claim(existing, &project_path, scope.as_deref())?;
+                }
+                snapshot.reserve_domain(&claim.domain, &project_path, scope.as_deref(), None)?;
+            }
+            Ok(())
+        },
+    )?;
     // Allocate alias and shared-service loopback addresses now: an exhausted
     // pool must refuse before a handover stops anything.
     let alias_routes = resolve_gateway_service_alias_routes(repo_root, policy, true, None)?;
@@ -502,38 +522,32 @@ pub(in crate::runner) fn deregister_gateway_routes_for_container(
         return Ok(Vec::new());
     }
     let route_table_path = gateway_route_table_path()?;
-    let _lock = lock_gateway_route_table(&route_table_path)?;
-    let mut table = load_gateway_route_table(&route_table_path)?;
-    let project_path = policy.repo_root.display().to_string();
-    let Ok(scope) = gateway_project_scope(&project_path) else {
-        return Ok(Vec::new());
-    };
-    let removed = domains
-        .into_iter()
-        .filter_map(|domain| {
-            table
-                .lookup(&domain)
-                .filter(|route| container_teardown_covers(route, &project_path, scope.as_deref()))
-                .cloned()
-        })
-        .collect::<Vec<_>>();
-    for route in &removed {
-        let _ = table.deregister(&route.domain);
-    }
-    if !removed.is_empty() {
-        save_gateway_route_table(&table, &route_table_path)?;
-    }
-    for route in &removed {
-        if route.tls {
-            remove_gateway_tls_cert(&route.domain)?;
+    EndpointStore::for_routes(&route_table_path).routes(|table| {
+        let project_path = policy.repo_root.display().to_string();
+        let Ok(scope) = gateway_project_scope(&project_path) else {
+            return Ok(Vec::new());
+        };
+        let removed = domains
+            .into_iter()
+            .filter_map(|domain| {
+                table
+                    .lookup(&domain)
+                    .filter(|route| {
+                        container_teardown_covers(route, &project_path, scope.as_deref())
+                    })
+                    .cloned()
+            })
+            .collect::<Vec<_>>();
+        for route in &removed {
+            let _ = table.deregister(&route.domain);
         }
-    }
-    Ok(removed.into_iter().map(|route| route.domain).collect())
-}
-
-fn lock_gateway_route_table(path: &Path) -> Result<RouteTableLock, RunnerError> {
-    RouteTableLock::acquire(path)
-        .map_err(|error| RunnerError::gateway_route_table("lock", path, error.to_string()))
+        for route in &removed {
+            if route.tls {
+                remove_gateway_tls_cert(&route.domain)?;
+            }
+        }
+        Ok(removed.into_iter().map(|route| route.domain).collect())
+    })
 }
 
 fn gateway_project_scope(project_path: &str) -> Result<Option<String>, RunnerError> {
@@ -558,103 +572,95 @@ fn reconcile_gateway_routes_guarded(
         &EffectiveContainerPolicy,
     )>,
 ) -> Result<(), RunnerError> {
-    let _lock = lock_gateway_route_table(path)?;
-    if let Some((context, policy)) = admitted {
-        context.verify(repo_root, policy, true)?;
-    }
-    let mut table = load_gateway_route_table(path)?;
-    let project_path = repo_root.display().to_string();
-    let scope = gateway_project_scope(&project_path)?;
-    for route in desired {
-        if let Some(existing) = table.lookup(&route.domain) {
-            check_container_claim(existing, &project_path, scope.as_deref()).map_err(|error| {
-                RunnerError::gateway_route_registration(
-                    "register",
-                    &route.domain,
-                    error.to_string(),
-                )
-            })?;
-        }
-    }
-    validate_gateway_tcp_alias_bindings_in_table(&table, repo_root, desired)?;
-    #[cfg(test)]
-    publication_test_control(PublicationStage::BeforePreparation);
-    if let Some((context, policy)) = admitted {
-        context.verify(repo_root, policy, true)?;
-    }
-    for route in desired.iter().filter(|route| route.tls) {
-        ensure_gateway_tls_cert(&route.domain)?;
-    }
-    #[cfg(test)]
-    publication_test_control(PublicationStage::DuringPreparation);
-    let desired_domains = desired
-        .iter()
-        .map(|route| route.domain.as_str())
-        .collect::<std::collections::BTreeSet<_>>();
-    let replaced_tls = desired
-        .iter()
-        .filter(|route| !route.tls)
-        .filter_map(|route| table.lookup(&route.domain))
-        .filter(|route| route.tls)
-        .map(|route| route.domain.clone())
-        .collect::<Vec<_>>();
-    let stale = table
-        .all_routes()
-        .into_iter()
-        .filter(|route| route.source == RouteSource::Container)
-        .filter(|route| owned_by(route, &project_path, scope.as_deref()))
-        .filter(|route| !desired_domains.contains(route.domain.as_str()))
-        .cloned()
-        .collect::<Vec<_>>();
-    for route in &stale {
-        let _ = table.deregister(&route.domain);
-    }
-    for route in desired {
-        table.upsert(Route {
-            domain: route.domain.clone(),
-            target: route.target.clone(),
-            dns_ip: route.dns_ip,
-            tcp_port: route.tcp_port,
-            tcp_target: route.tcp_target.clone(),
-            source: RouteSource::Container,
-            project: project_path.clone(),
-            scope: scope.clone(),
-            tls: route.tls,
-            managed_listener: None,
-            registered: chrono::Utc::now(),
-        });
-    }
-    if !stale.is_empty() || !desired.is_empty() {
-        #[cfg(test)]
-        publication_test_control(PublicationStage::BeforeSave);
+    EndpointStore::for_routes(path).routes(|table| {
         if let Some((context, policy)) = admitted {
             context.verify(repo_root, policy, true)?;
         }
-        save_gateway_route_table(&table, path)?;
-    }
-    for route in &stale {
-        if route.tls {
-            remove_gateway_tls_cert(&route.domain)?;
+        let project_path = repo_root.display().to_string();
+        let scope = gateway_project_scope(&project_path)?;
+        for route in desired {
+            if let Some(existing) = table.lookup(&route.domain) {
+                check_container_claim(existing, &project_path, scope.as_deref()).map_err(
+                    |error| {
+                        RunnerError::gateway_route_registration(
+                            "register",
+                            &route.domain,
+                            error.to_string(),
+                        )
+                    },
+                )?;
+            }
         }
-    }
-    for domain in &replaced_tls {
-        remove_gateway_tls_cert(domain)?;
-    }
-    Ok(())
+        validate_gateway_tcp_alias_bindings_in_table(table, repo_root, desired)?;
+        #[cfg(test)]
+        publication_test_control(PublicationStage::BeforePreparation);
+        if let Some((context, policy)) = admitted {
+            context.verify(repo_root, policy, true)?;
+        }
+        for route in desired.iter().filter(|route| route.tls) {
+            ensure_gateway_tls_cert(&route.domain)?;
+        }
+        #[cfg(test)]
+        publication_test_control(PublicationStage::DuringPreparation);
+        let desired_domains = desired
+            .iter()
+            .map(|route| route.domain.as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        let replaced_tls = desired
+            .iter()
+            .filter(|route| !route.tls)
+            .filter_map(|route| table.lookup(&route.domain))
+            .filter(|route| route.tls)
+            .map(|route| route.domain.clone())
+            .collect::<Vec<_>>();
+        let stale = table
+            .all_routes()
+            .into_iter()
+            .filter(|route| route.source == RouteSource::Container)
+            .filter(|route| owned_by(route, &project_path, scope.as_deref()))
+            .filter(|route| !desired_domains.contains(route.domain.as_str()))
+            .cloned()
+            .collect::<Vec<_>>();
+        for route in &stale {
+            let _ = table.deregister(&route.domain);
+        }
+        for route in desired {
+            table.upsert(Route {
+                domain: route.domain.clone(),
+                target: route.target.clone(),
+                dns_ip: route.dns_ip,
+                tcp_port: route.tcp_port,
+                tcp_target: route.tcp_target.clone(),
+                source: RouteSource::Container,
+                project: project_path.clone(),
+                scope: scope.clone(),
+                tls: route.tls,
+                managed_listener: None,
+                registered: chrono::Utc::now(),
+            });
+        }
+        if !stale.is_empty() || !desired.is_empty() {
+            #[cfg(test)]
+            publication_test_control(PublicationStage::BeforeSave);
+            if let Some((context, policy)) = admitted {
+                context.verify(repo_root, policy, true)?;
+            }
+        }
+        for route in &stale {
+            if route.tls {
+                remove_gateway_tls_cert(&route.domain)?;
+            }
+        }
+        for domain in &replaced_tls {
+            remove_gateway_tls_cert(domain)?;
+        }
+        Ok(())
+    })
 }
 
 fn load_gateway_route_table(route_table_path: &Path) -> Result<RouteTable, RunnerError> {
     RouteTable::load(route_table_path).map_err(|error| {
         RunnerError::gateway_route_table("load", route_table_path, error.to_string())
-    })
-}
-
-fn save_gateway_route_table(
-    route_table: &RouteTable,
-    route_table_path: &Path,
-) -> Result<(), RunnerError> {
-    route_table.save(route_table_path).map_err(|error| {
-        RunnerError::gateway_route_table("save", route_table_path, error.to_string())
     })
 }
 
@@ -699,35 +705,38 @@ fn prune_stale_container_routes_for_project(
     repo_root: &Path,
     desired_routes: &[RegisteredGatewayRoute],
 ) -> Result<(), RunnerError> {
-    let _lock = lock_gateway_route_table(route_table_path)?;
-    let mut table = load_gateway_route_table(route_table_path)?;
-    let project_path = repo_root.display().to_string();
-    let scope = gateway_project_scope(&project_path)?;
-    let desired_domains = desired_routes
-        .iter()
-        .map(|route| route.domain.as_str())
-        .collect::<std::collections::BTreeSet<_>>();
-    let stale = table
-        .all_routes()
-        .into_iter()
-        .filter(|route| owned_by(route, &project_path, scope.as_deref()))
-        .filter(|route| route.source == RouteSource::Container)
-        .filter(|route| !desired_domains.contains(route.domain.as_str()))
-        .cloned()
-        .collect::<Vec<_>>();
-    if stale.is_empty() {
-        return Ok(());
-    }
-    for route in &stale {
-        let _ = table.deregister(&route.domain);
-    }
-    save_gateway_route_table(&table, route_table_path)?;
-    for route in &stale {
-        if route.tls {
-            remove_gateway_tls_cert(&route.domain)?;
-        }
-    }
-    Ok(())
+    EndpointStore::for_routes(route_table_path)
+        .routes(|table| {
+            let project_path = repo_root.display().to_string();
+            let scope = gateway_project_scope(&project_path)?;
+            let desired_domains = desired_routes
+                .iter()
+                .map(|route| route.domain.as_str())
+                .collect::<std::collections::BTreeSet<_>>();
+            let stale = table
+                .all_routes()
+                .into_iter()
+                .filter(|route| owned_by(route, &project_path, scope.as_deref()))
+                .filter(|route| route.source == RouteSource::Container)
+                .filter(|route| !desired_domains.contains(route.domain.as_str()))
+                .cloned()
+                .collect::<Vec<_>>();
+            if stale.is_empty() {
+                return Ok(());
+            }
+            for route in &stale {
+                let _ = table.deregister(&route.domain);
+            }
+            for route in &stale {
+                if route.tls {
+                    remove_gateway_tls_cert(&route.domain)?;
+                }
+            }
+            Ok(())
+        })
+        .map_err(|error: RunnerError| {
+            RunnerError::gateway_route_table("load", route_table_path, error.to_string())
+        })
 }
 
 fn registered_gateway_routes_match_project(
@@ -1309,112 +1318,24 @@ fn load_or_allocate_loopback_ip_with_inventory(
     legacy_identity: Option<&str>,
     project_path: &str,
     allocate_if_missing: bool,
-    discover_inventory: impl FnOnce() -> RunningComposeContainerInventory,
+    _discover_inventory: impl FnOnce() -> RunningComposeContainerInventory,
 ) -> Result<Option<std::net::Ipv4Addr>, RunnerError> {
-    let path = gateway_dir()?.join("loopback-ips.json");
-    let _lock = RouteTableLock::acquire(&path)
-        .map_err(|error| gateway_loopback_error("registry lock", error.to_string()))?;
-    let mut registry = LoopbackRegistry::load(&path)
-        .map_err(|error| gateway_loopback_error("registry load", error.to_string()))?;
-    let route_table = load_gateway_route_table(&gateway_route_table_path()?)?;
-    let prune = if registry.is_empty() {
-        LoopbackPruneOutcome::default()
-    } else {
-        prune_stale_loopback_assignments_with_inventory(
-            &mut registry,
-            &route_table,
-            &discover_inventory(),
-        )
-    };
-    if prune.changed {
-        registry
-            .save(&path)
-            .map_err(|error| gateway_loopback_error("registry save", error.to_string()))?;
+    let store = EndpointStore::for_routes(&gateway_route_table_path()?);
+    if allocate_if_missing {
+        return store
+            .reserve_loopback_importing(identity, legacy_identity, project_path)
+            .map(Some)
+            .map_err(|error| gateway_loopback_error("registry load", error.to_string()));
     }
-    if let Some(reason) = &prune.skipped_reason {
-        warn_skipped_reclamation(reason);
-    }
-    let reserved_ips = active_loopback_ips_for_other_projects(&route_table, project_path);
-    let migrated_legacy_identity = migrate_legacy_loopback_identity(
-        &mut registry,
-        identity,
-        legacy_identity,
-        project_path,
-        &reserved_ips,
-    );
-    if let Some(existing) = registry.get(identity) {
-        if existing.scope != project_path || reserved_ips.contains(&existing.ip) {
-            registry.deallocate(identity);
-        } else {
-            if migrated_legacy_identity {
-                registry
-                    .save(&path)
-                    .map_err(|error| gateway_loopback_error("registry save", error.to_string()))?;
-            }
-            return Ok(Some(existing.ip));
-        }
-    }
-    if !allocate_if_missing {
-        if registry.get(identity).is_none() {
-            registry
-                .save(&path)
-                .map_err(|error| gateway_loopback_error("registry save", error.to_string()))?;
-        }
-        return Ok(None);
-    }
-    let assignment = registry
-        .allocate_avoiding(identity, project_path, &reserved_ips)
-        .map_err(|error| {
-            let detail = match &prune.skipped_reason {
-                Some(reason) => format!("{error}; {reason}"),
-                None => error.to_string(),
-            };
-            gateway_loopback_error("allocation", detail)
-        })?
-        .ip;
-    registry
-        .save(&path)
-        .map_err(|error| gateway_loopback_error("registry save", error.to_string()))?;
-    Ok(Some(assignment))
+    let registry = store.read_compatible()?.loopback()?;
+    Ok(registry
+        .get(identity)
+        .or_else(|| legacy_identity.and_then(|key| registry.get(key)))
+        .filter(|assignment| assignment.scope == project_path)
+        .map(|assignment| assignment.ip))
 }
 
-fn migrate_legacy_loopback_identity(
-    registry: &mut LoopbackRegistry,
-    identity: &str,
-    legacy_identity: Option<&str>,
-    project_path: &str,
-    reserved_ips: &std::collections::HashSet<std::net::Ipv4Addr>,
-) -> bool {
-    if registry.get(identity).is_some() {
-        return false;
-    }
-    let Some(legacy_identity) = legacy_identity else {
-        return false;
-    };
-    let Some(existing) = registry.get(legacy_identity).cloned() else {
-        return false;
-    };
-    if existing.scope != project_path || reserved_ips.contains(&existing.ip) {
-        return false;
-    }
-    let Some(existing) = registry.deallocate(legacy_identity) else {
-        return false;
-    };
-    registry.assignments.insert(identity.to_owned(), existing);
-    true
-}
-
-fn active_loopback_ips_for_other_projects(
-    route_table: &RouteTable,
-    project_path: &str,
-) -> std::collections::HashSet<std::net::Ipv4Addr> {
-    // One shared reservation with compose generation
-    // (`effigy-containers`): both allocation paths must avoid other
-    // projects' container-route `dns_ip`s so the compose-published IP and
-    // the registered route IP stay identical for one identity.
-    reserved_loopback_ips_for_other_projects(route_table, project_path)
-}
-
+#[cfg(test)]
 fn prune_stale_loopback_assignments_with_inventory(
     registry: &mut LoopbackRegistry,
     route_table: &RouteTable,

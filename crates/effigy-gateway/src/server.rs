@@ -1180,6 +1180,7 @@ async fn run_gateway_with_cancel(
     // Private listeners are bound before publishing process identity. A
     // collision therefore leaves no live-generation record and reports only
     // endpoints held by this private fixture.
+    crate::endpoint_store::EndpointStore::for_routes(&config.route_table_path).import()?;
     let live_table = LiveRouteTable::new(config.route_table_path.clone())?;
     let shared_table = live_table.shared_table();
     if config.is_private() {
@@ -1708,7 +1709,8 @@ fn setup_file_watcher(
         .map_err(|e| GatewayError::WatcherError(e.to_string()))?;
 
     // Watch the parent directory (the file might not exist yet).
-    let watch_dir = path.parent().unwrap_or(path.as_ref());
+    let database = crate::endpoint_store::EndpointStore::for_routes(path).database_path();
+    let watch_dir = database.parent().expect("kernel database parent");
     if watch_dir.exists() {
         watcher
             .watch(watch_dir, RecursiveMode::NonRecursive)

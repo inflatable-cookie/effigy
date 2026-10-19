@@ -17,10 +17,12 @@ use std::path::Path;
 
 use chrono::Utc;
 
+use crate::endpoint_store::EndpointStore;
 use crate::error::GatewayError;
 use crate::ports::PortRegistry;
-use crate::routes::RouteTableLock;
-use crate::routes::{ManagedListenerRouteOwner, Route, RouteSource, RouteTable};
+#[cfg(test)]
+use crate::routes::RouteTable;
+use crate::routes::{ManagedListenerRouteOwner, Route, RouteSource};
 use effigy_core::worktree_scope;
 
 /// Resolve the generation that owns container gateway routes.
@@ -47,9 +49,17 @@ pub fn check_claim(
     if owned_by(route, project_path, scope) {
         return Ok(());
     }
-    let live = match route.scope.as_deref() {
-        Some(token) => worktree_scope::is_live(Path::new(&route.project), token),
-        None => Path::new(&route.project).exists(),
+    let live = match std::fs::metadata(&route.project) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(_) => true,
+        Ok(_) => match route.scope.as_deref() {
+            Some(token) => match worktree_scope::load_scoped(Path::new(&route.project)) {
+                Ok(Some((_, current))) => current == token,
+                Ok(None) => false,
+                Err(_) => !recorded_git_directory_absent(Path::new(&route.project)),
+            },
+            None => true,
+        },
     };
     if live || route.source != RouteSource::Container {
         return Err(GatewayError::ForeignRoute {
@@ -58,6 +68,33 @@ pub fn check_claim(
         });
     }
     Ok(())
+}
+
+fn recorded_git_directory_absent(project: &Path) -> bool {
+    let Ok(Some(bytes)) = crate::endpoint_store::import::read_input(&project.join(".git")) else {
+        return false;
+    };
+    if bytes.len() > 4096 {
+        return false;
+    }
+    let Ok(pointer) = std::str::from_utf8(&bytes) else {
+        return false;
+    };
+    let Some(pointer) = pointer
+        .trim()
+        .strip_prefix("gitdir:")
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+    else {
+        return false;
+    };
+    let pointer = Path::new(pointer);
+    let path = if pointer.is_absolute() {
+        pointer.to_owned()
+    } else {
+        project.join(pointer)
+    };
+    matches!(std::fs::symlink_metadata(path), Err(error) if error.kind() == std::io::ErrorKind::NotFound)
 }
 
 /// Whether container teardown still covers a route for this checkout
@@ -78,9 +115,12 @@ pub fn check_container_claim(
     project_path: &str,
     scope: Option<&str>,
 ) -> Result<(), GatewayError> {
-    check_container_claim_with(route, project_path, scope, |owner| {
-        crate::managed_listener::verify_managed_listener_owner(owner).is_ok()
-    })
+    check_container_claim_with(
+        route,
+        project_path,
+        scope,
+        crate::managed_listener::observe_managed_listener_owner,
+    )
 }
 
 /// [`check_container_claim`] with an injected liveness observation, so tests
@@ -92,14 +132,18 @@ pub fn check_container_claim_with<F>(
     listener_is_live: F,
 ) -> Result<(), GatewayError>
 where
-    F: FnOnce(&ManagedListenerRouteOwner) -> bool,
+    F: FnOnce(&ManagedListenerRouteOwner) -> effigy_kernel::observe::Observed<bool>,
 {
     check_claim(route, project_path, scope)?;
     if !owned_by(route, project_path, scope) {
         return Ok(());
     }
     if let Some(owner) = route.managed_listener.as_ref() {
-        if listener_is_live(owner) {
+        if !matches!(
+            listener_is_live(owner),
+            effigy_kernel::observe::Observed::Verified(false, _)
+                | effigy_kernel::observe::Observed::Absent(_)
+        ) {
             return Err(GatewayError::ManagedListenerRouteConflict {
                 domain: route.domain.clone(),
                 owner: owner.owner.clone(),
@@ -158,29 +202,28 @@ pub fn register_route(
     route_table_path: &Path,
     registration: &RouteRegistration,
 ) -> Result<(), GatewayError> {
-    let _lock = RouteTableLock::acquire(route_table_path)?;
-    let mut table = RouteTable::load(route_table_path)?;
-    let scope = project_scope(&registration.project_path)?;
-    if let Some(existing) = table.lookup(&registration.domain) {
-        check_container_claim(existing, &registration.project_path, scope.as_deref())?;
-    }
+    EndpointStore::for_routes(route_table_path).routes(|table| {
+        let scope = project_scope(&registration.project_path)?;
+        if let Some(existing) = table.lookup(&registration.domain) {
+            check_container_claim(existing, &registration.project_path, scope.as_deref())?;
+        }
 
-    table.upsert(Route {
-        domain: registration.domain.clone(),
-        target: registration.target.clone(),
-        dns_ip: registration.dns_ip,
-        tcp_port: registration.tcp_port,
-        tcp_target: registration.tcp_target.clone(),
-        source: registration.source,
-        project: registration.project_path.clone(),
-        tls: registration.tls,
-        scope,
-        managed_listener: None,
-        registered: Utc::now(),
-    });
+        table.upsert(Route {
+            domain: registration.domain.clone(),
+            target: registration.target.clone(),
+            dns_ip: registration.dns_ip,
+            tcp_port: registration.tcp_port,
+            tcp_target: registration.tcp_target.clone(),
+            source: registration.source,
+            project: registration.project_path.clone(),
+            tls: registration.tls,
+            scope,
+            managed_listener: None,
+            registered: Utc::now(),
+        });
 
-    table.save(route_table_path)?;
-    Ok(())
+        Ok(())
+    })
 }
 
 /// Atomically publish a host-listener route for one managed process
@@ -217,62 +260,62 @@ pub fn register_managed_listener_route(
                 .to_owned(),
         });
     }
-    let _lock = RouteTableLock::acquire(route_table_path)?;
-    let mut table = RouteTable::load(route_table_path)?;
-    let scope = project_scope(project_path)?;
-    let publication = if let Some(existing) = table.lookup(domain) {
-        if owned_by(existing, project_path, scope.as_deref()) {
-            if let Some(current) = existing.managed_listener.as_ref() {
-                if current.owner == owner.owner
-                    && expected_generation == Some(current.generation.as_str())
+    EndpointStore::for_routes(route_table_path).routes(|table| {
+        let scope = project_scope(project_path)?;
+        let publication = if let Some(existing) = table.lookup(domain) {
+            if owned_by(existing, project_path, scope.as_deref()) {
+                if let Some(current) = existing.managed_listener.as_ref() {
+                    if current.owner == owner.owner
+                        && expected_generation == Some(current.generation.as_str())
+                    {
+                        ManagedListenerRoutePublication::ReplacedGeneration
+                    } else {
+                        return Err(GatewayError::ForeignRoute {
+                            domain: domain.to_owned(),
+                            project: existing.project.clone(),
+                        });
+                    }
+                } else if existing.source == RouteSource::Container && expected_generation.is_none()
                 {
-                    ManagedListenerRoutePublication::ReplacedGeneration
+                    ManagedListenerRoutePublication::HandedOverFromContainer
                 } else {
                     return Err(GatewayError::ForeignRoute {
                         domain: domain.to_owned(),
                         project: existing.project.clone(),
                     });
                 }
-            } else if existing.source == RouteSource::Container && expected_generation.is_none() {
-                ManagedListenerRoutePublication::HandedOverFromContainer
             } else {
                 return Err(GatewayError::ForeignRoute {
                     domain: domain.to_owned(),
                     project: existing.project.clone(),
                 });
             }
-        } else {
-            return Err(GatewayError::ForeignRoute {
-                domain: domain.to_owned(),
-                project: existing.project.clone(),
+        } else if expected_generation.is_some() {
+            return Err(GatewayError::RouteTableReadError {
+                path: route_table_path.to_path_buf(),
+                reason: format!(
+                    "managed listener route `{domain}` disappeared before generation replacement"
+                ),
             });
-        }
-    } else if expected_generation.is_some() {
-        return Err(GatewayError::RouteTableReadError {
-            path: route_table_path.to_path_buf(),
-            reason: format!(
-                "managed listener route `{domain}` disappeared before generation replacement"
-            ),
-        });
-    } else {
-        ManagedListenerRoutePublication::Registered
-    };
+        } else {
+            ManagedListenerRoutePublication::Registered
+        };
 
-    table.upsert(Route {
-        domain: domain.to_owned(),
-        target: Some(target.to_owned()),
-        dns_ip: None,
-        tcp_port: None,
-        tcp_target: None,
-        source: RouteSource::Task,
-        project: project_path.to_owned(),
-        scope,
-        tls,
-        managed_listener: Some(owner),
-        registered: Utc::now(),
-    });
-    table.save(route_table_path)?;
-    Ok(publication)
+        table.upsert(Route {
+            domain: domain.to_owned(),
+            target: Some(target.to_owned()),
+            dns_ip: None,
+            tcp_port: None,
+            tcp_target: None,
+            source: RouteSource::Task,
+            project: project_path.to_owned(),
+            scope,
+            tls,
+            managed_listener: Some(owner),
+            registered: Utc::now(),
+        });
+        Ok(publication)
+    })
 }
 
 /// Check a requested listener domain before child startup. Existing claims are
@@ -285,26 +328,27 @@ pub fn check_managed_listener_route_claim(
     domain: &str,
     owner: &str,
 ) -> Result<(), GatewayError> {
-    let _lock = RouteTableLock::acquire(route_table_path)?;
-    let table = RouteTable::load(route_table_path)?;
-    let scope = project_scope(project_path)?;
-    if let Some(existing) = table.lookup(domain) {
-        let same_owner = existing
-            .managed_listener
-            .as_ref()
-            .is_some_and(|current| current.owner == owner);
-        let container_handover =
-            existing.managed_listener.is_none() && existing.source == RouteSource::Container;
-        if !owned_by(existing, project_path, scope.as_deref())
-            || !(same_owner || container_handover)
-        {
-            return Err(GatewayError::ForeignRoute {
-                domain: domain.to_owned(),
-                project: existing.project.clone(),
-            });
+    EndpointStore::for_routes(route_table_path).edit(None, |snapshot| {
+        let table = snapshot.routes()?;
+        let scope = project_scope(project_path)?;
+        if let Some(existing) = table.lookup(domain) {
+            let same_owner = existing
+                .managed_listener
+                .as_ref()
+                .is_some_and(|current| current.owner == owner);
+            let container_handover =
+                existing.managed_listener.is_none() && existing.source == RouteSource::Container;
+            if !owned_by(existing, project_path, scope.as_deref())
+                || !(same_owner || container_handover)
+            {
+                return Err(GatewayError::ForeignRoute {
+                    domain: domain.to_owned(),
+                    project: existing.project.clone(),
+                });
+            }
         }
-    }
-    Ok(())
+        snapshot.reserve_domain(domain, project_path, scope.as_deref(), Some(owner))
+    })
 }
 
 /// Remove a managed listener route only when its stable owner and exact child
@@ -317,22 +361,20 @@ pub fn deregister_managed_listener_route(
     owner: &str,
     generation: &str,
 ) -> Result<bool, GatewayError> {
-    let _lock = RouteTableLock::acquire(route_table_path)?;
-    let mut table = RouteTable::load(route_table_path)?;
-    let scope = project_scope(project_path)?;
-    let matches = table.lookup(domain).is_some_and(|route| {
-        owned_by(route, project_path, scope.as_deref())
-            && route
-                .managed_listener
-                .as_ref()
-                .is_some_and(|current| current.owner == owner && current.generation == generation)
-    });
-    if !matches {
-        return Ok(false);
-    }
-    let _ = table.deregister(domain);
-    table.save(route_table_path)?;
-    Ok(true)
+    EndpointStore::for_routes(route_table_path).routes(|table| {
+        let scope = project_scope(project_path)?;
+        let matches = table.lookup(domain).is_some_and(|route| {
+            owned_by(route, project_path, scope.as_deref())
+                && route.managed_listener.as_ref().is_some_and(|current| {
+                    current.owner == owner && current.generation == generation
+                })
+        });
+        if !matches {
+            return Ok(false);
+        }
+        let _ = table.deregister(domain);
+        Ok(true)
+    })
 }
 
 /// Deregister a route from the route table file.
@@ -344,20 +386,19 @@ pub fn deregister_route(
     domain: &str,
     project_path: &str,
 ) -> Result<bool, GatewayError> {
-    let _lock = RouteTableLock::acquire(route_table_path)?;
-    let mut table = RouteTable::load(route_table_path)?;
-    let Ok(scope) = project_scope(project_path) else {
-        return Ok(false);
-    };
-    let owned = table
-        .lookup(domain)
-        .is_some_and(|route| container_teardown_covers(route, project_path, scope.as_deref()));
-    if !owned {
-        return Ok(false);
-    }
-    let _ = table.deregister(domain);
-    table.save(route_table_path)?;
-    Ok(true)
+    EndpointStore::for_routes(route_table_path).routes(|table| {
+        let Ok(scope) = project_scope(project_path) else {
+            return Ok(false);
+        };
+        let owned = table
+            .lookup(domain)
+            .is_some_and(|route| container_teardown_covers(route, project_path, scope.as_deref()));
+        if !owned {
+            return Ok(false);
+        }
+        let _ = table.deregister(domain);
+        Ok(true)
+    })
 }
 
 /// Deregister all routes for a project path.
@@ -368,29 +409,25 @@ pub fn deregister_project_routes(
     route_table_path: &Path,
     project_path: &str,
 ) -> Result<usize, GatewayError> {
-    let _lock = RouteTableLock::acquire(route_table_path)?;
-    let mut table = RouteTable::load(route_table_path)?;
-    let Ok(scope) = project_scope(project_path) else {
-        return Ok(0);
-    };
+    EndpointStore::for_routes(route_table_path).routes(|table| {
+        let Ok(scope) = project_scope(project_path) else {
+            return Ok(0);
+        };
 
-    let domains_to_remove: Vec<String> = table
-        .all_routes()
-        .iter()
-        .filter(|r| owned_by(r, project_path, scope.as_deref()))
-        .map(|r| r.domain.clone())
-        .collect();
+        let domains_to_remove: Vec<String> = table
+            .all_routes()
+            .iter()
+            .filter(|r| owned_by(r, project_path, scope.as_deref()))
+            .map(|r| r.domain.clone())
+            .collect();
 
-    let count = domains_to_remove.len();
-    for domain in &domains_to_remove {
-        let _ = table.deregister(domain);
-    }
+        let count = domains_to_remove.len();
+        for domain in &domains_to_remove {
+            let _ = table.deregister(domain);
+        }
 
-    if count > 0 {
-        table.save(route_table_path)?;
-    }
-
-    Ok(count)
+        Ok(count)
+    })
 }
 
 /// Remove routes owned by a recorded checkout generation.
@@ -436,28 +473,27 @@ pub fn deregister_owned_routes_matching<F>(
 where
     F: FnMut(&Route) -> Result<(), GatewayError>,
 {
-    let _lock = RouteTableLock::acquire(route_table_path)?;
-    let mut table = RouteTable::load(route_table_path)?;
-    let owned = table
-        .all_routes()
-        .into_iter()
-        .filter(|route| owned_by(route, project_path, scope))
-        .filter(|route| {
-            domains
-                .map(|allowed| allowed.iter().any(|domain| domain == &route.domain))
-                .unwrap_or(true)
-        })
-        .cloned()
-        .collect::<Vec<_>>();
-    if owned.is_empty() {
-        return Ok(owned);
-    }
-    for route in &owned {
-        on_removed(route)?;
-        let _ = table.deregister(&route.domain);
-    }
-    table.save(route_table_path)?;
-    Ok(owned)
+    EndpointStore::for_routes(route_table_path).routes(|table| {
+        let owned = table
+            .all_routes()
+            .into_iter()
+            .filter(|route| owned_by(route, project_path, scope))
+            .filter(|route| {
+                domains
+                    .map(|allowed| allowed.iter().any(|domain| domain == &route.domain))
+                    .unwrap_or(true)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        if owned.is_empty() {
+            return Ok(owned);
+        }
+        for route in &owned {
+            on_removed(route)?;
+            let _ = table.deregister(&route.domain);
+        }
+        Ok(owned)
+    })
 }
 
 /// Remove owned routes and leftover TLS certificates under the route lock.
@@ -477,54 +513,51 @@ pub fn cleanup_owned_routes_and_certs<F>(
 where
     F: FnMut(&str) -> Result<(), GatewayError>,
 {
-    let _lock = RouteTableLock::acquire(route_table_path)?;
-    let mut table = RouteTable::load(route_table_path)?;
-    let mut removed = Vec::new();
-    let mut domains = cert_domains.to_vec();
-    match route_domains {
-        Some(allowed) => {
-            for domain in allowed {
-                if !domains.iter().any(|existing| existing == domain) {
-                    domains.push(domain.clone());
+    EndpointStore::for_routes(route_table_path).routes(|table| {
+        let mut removed = Vec::new();
+        let mut domains = cert_domains.to_vec();
+        match route_domains {
+            Some(allowed) => {
+                for domain in allowed {
+                    if !domains.iter().any(|existing| existing == domain) {
+                        domains.push(domain.clone());
+                    }
                 }
             }
-        }
-        None => {
-            for route in table.all_routes() {
-                if owned_by(route, project_path, scope)
-                    && !domains.iter().any(|existing| existing == &route.domain)
-                {
-                    domains.push(route.domain.clone());
-                }
-            }
-        }
-    }
-    for domain in &domains {
-        match table.lookup(domain).cloned() {
-            Some(route) if owned_by(&route, project_path, scope) => {
-                let remove_route = route_domains
-                    .map(|allowed| allowed.iter().any(|allowed| allowed == domain))
-                    .unwrap_or(true);
-                if route.tls || cert_domains.iter().any(|pending| pending == domain) {
-                    remove_cert(domain)?;
-                }
-                if remove_route {
-                    let _ = table.deregister(domain);
-                    removed.push(route);
-                }
-            }
-            Some(_) => {}
             None => {
-                if cert_domains.iter().any(|pending| pending == domain) {
-                    remove_cert(domain)?;
+                for route in table.all_routes() {
+                    if owned_by(route, project_path, scope)
+                        && !domains.iter().any(|existing| existing == &route.domain)
+                    {
+                        domains.push(route.domain.clone());
+                    }
                 }
             }
         }
-    }
-    if !removed.is_empty() {
-        table.save(route_table_path)?;
-    }
-    Ok(removed)
+        for domain in &domains {
+            match table.lookup(domain).cloned() {
+                Some(route) if owned_by(&route, project_path, scope) => {
+                    let remove_route = route_domains
+                        .map(|allowed| allowed.iter().any(|allowed| allowed == domain))
+                        .unwrap_or(true);
+                    if route.tls || cert_domains.iter().any(|pending| pending == domain) {
+                        remove_cert(domain)?;
+                    }
+                    if remove_route {
+                        let _ = table.deregister(domain);
+                        removed.push(route);
+                    }
+                }
+                Some(_) => {}
+                None => {
+                    if cert_domains.iter().any(|pending| pending == domain) {
+                        remove_cert(domain)?;
+                    }
+                }
+            }
+        }
+        Ok(removed)
+    })
 }
 
 /// Build a route registration from container and port configuration.

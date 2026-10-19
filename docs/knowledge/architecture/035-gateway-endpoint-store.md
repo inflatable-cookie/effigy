@@ -19,7 +19,13 @@ publishes the complete payload and claim revisions together through
 after admission enters kernel settle. There are no external probes or runtime
 inventory queries in the SQLite transaction.
 
-Domain claims include the complete route, including managed-listener identity.
+Active domain claims include the complete route, including managed-listener identity.
+A withdrawn route retains its checkout and stable listener domain owner without
+an active routing target. Routine down/up can reactivate that domain immediately;
+explicit checkout retirement releases the persistent domain claim. Withdrawal
+also retains its address and TCP-port conflict set, including imported aliases
+without a separate loopback assignment, so an immediate restart can reactivate
+the same endpoints.
 Address claims cover project loopback identities; numeric port claims cover
 generated host ranges. Multiple DNS aliases can share one address owned by the
 same scope. Conflicting scopes, overlapping ranges and incompatible targets
@@ -49,10 +55,12 @@ The first mutation imports `~/.effigy/gateway/routes.json`,
 legacy writer locks in fixed order, with one bounded deadline. Reads use the
 kernel's no-follow, owner-checked, size-bounded record reader. Original files
 remain untouched as backups; the payload records their exact SHA-256 hashes.
-Once a payload exists, import never runs again.
+Once a payload exists, legacy input never imports again. Imported claims settle
+before the caller edits them, so even a first-command release quarantines every
+endpoint that the old gateway could see. A failed edit does not undo import.
 
 The payload preserves raw JSON documents. Typed edits replace known fields
-while retaining unknown root and entry fields, including pins. Deleting an
+while retaining unknown root and entry fields, including pins. Explicitly releasing an
 entry removes that entry and quarantines its claims; it does not reconstruct
 ownership from a runtime scan.
 
@@ -60,6 +68,29 @@ ownership from a runtime scan.
 legacy input only when the store or endpoint payload is absent. An unreadable,
 corrupt or unsupported store is Unknown and refuses fallback. Reading old
 files does not import or allocate anything.
+
+## Callers and reload
+
+Container Prepare reserves or retains generated host-port ranges through this
+API, including an already assigned legacy range. Generated Compose and route
+registration use the same persistent loopback allocator; a missing container
+from an inventory never frees its address. The previous shared-service key is
+translated only for its exact recorded owner, retaining the address.
+
+Container and managed-listener route edits run under the Store owner gate.
+Managed preflight reserves the persistent domain before child startup. Exact
+child-generation teardown withdraws active routing without releasing that
+stable owner; stale callbacks cannot withdraw a successor. Retirement releases
+only the recorded checkout's assignments. Explicit port reclaim snapshots its
+pre-edit document through a journaled kernel file publication, then commits
+removals and quarantine together; the original imported JSON stays untouched.
+
+The daemon imports before starting, reads Store snapshots and watches the
+kernel database directory for reload. Legacy route-file provenance checks apply
+only before import. After import the kernel's owner and path checks protect the
+Store; modifying a backup has no effect. Unknown observations retain the last
+applied daemon table and report an error instead of falling back to backups.
+Status uses the same pure snapshot reader.
 
 ## Proof surfaces
 

@@ -1,13 +1,6 @@
-//! Route table management for the gateway.
-//!
-//! The route table is a JSON file at `~/.effigy/gateway/routes.json` that
-//! maps domains to upstream targets. It's the coordination layer between
-//! container lifecycle events (which register/deregister routes) and the
-//! gateway (which reads routes for DNS and proxy decisions).
-//!
-//! Concurrent access is handled via atomic file replacement (write to
-//! temp file, then rename). The gateway watches for changes via filesystem
-//! notifications.
+//! Typed route snapshots; the gateway endpoint Store owns persistence.
+//! Legacy JSON is read only by the one-time importer. `RouteTableLock`
+//! quiesces that importer and remains available for unrelated legacy records.
 
 use std::collections::HashMap;
 use std::fs::OpenOptions;
@@ -21,7 +14,6 @@ use fs2::FileExt;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::atomic_write;
 use crate::error::GatewayError;
 
 /// Provenance marker Effigy stamps into the route table envelope on save.
@@ -30,36 +22,6 @@ use crate::error::GatewayError;
 /// marker before an elevated daemon will trust the file. See
 /// `docs/knowledge/contracts/033-gateway-route-table-trust-contract.md`.
 pub const ROUTE_TABLE_MANAGED_MARKER: &str = "effigy-gateway-route-table-v1";
-
-/// On-disk envelope: routes plus the Effigy-managed provenance marker.
-///
-/// Serialized on save so the trust check can confirm Effigy wrote the file.
-/// `RouteTable` itself only models `routes`; the marker is read separately by
-/// the trust inspector, and `RouteTable::load` ignores it as an unknown field.
-#[derive(Serialize)]
-struct ManagedRouteTableRef<'a> {
-    #[serde(rename = "_managed_by")]
-    managed_by: &'static str,
-    routes: &'a HashMap<String, Route>,
-}
-
-/// Restrict the route table to owner-only access so a non-owner local user
-/// cannot tamper with the table the (possibly elevated) gateway daemon trusts.
-#[cfg(unix)]
-fn set_owner_only_permissions(path: &Path) -> Result<(), GatewayError> {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).map_err(|e| {
-        GatewayError::RouteTableWriteError {
-            path: path.to_path_buf(),
-            reason: format!("failed to set owner-only permissions: {e}"),
-        }
-    })
-}
-
-#[cfg(not(unix))]
-fn set_owner_only_permissions(_path: &Path) -> Result<(), GatewayError> {
-    Ok(())
-}
 
 /// A single route entry mapping a domain to an upstream target.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -238,7 +200,7 @@ pub enum RouteSource {
     Manual,
 }
 
-/// The route table — serialized to/from JSON on disk.
+/// The route portion of one committed endpoint snapshot.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RouteTable {
     /// All registered routes, keyed by domain.
@@ -253,67 +215,11 @@ impl RouteTable {
         }
     }
 
-    /// Load a route table from a JSON file.
-    ///
-    /// If the file doesn't exist, returns an empty table.
+    /// Observe the Store, or the legacy inputs before the first import.
     pub fn load(path: &Path) -> Result<Self, GatewayError> {
-        if !path.exists() {
-            return Ok(Self::new());
-        }
-
-        let content =
-            std::fs::read_to_string(path).map_err(|e| GatewayError::RouteTableReadError {
-                path: path.to_path_buf(),
-                reason: e.to_string(),
-            })?;
-
-        serde_json::from_str(&content).map_err(|e| GatewayError::RouteTableParseError {
-            path: path.to_path_buf(),
-            reason: e.to_string(),
-        })
-    }
-
-    /// Save the route table to a JSON file atomically.
-    ///
-    /// Writes to a temporary file first, then renames. This prevents
-    /// partial reads by the gateway file watcher.
-    pub fn save(&self, path: &Path) -> Result<(), GatewayError> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| GatewayError::RouteTableWriteError {
-                path: path.to_path_buf(),
-                reason: format!("failed to create directory: {e}"),
-            })?;
-        }
-
-        let envelope = ManagedRouteTableRef {
-            managed_by: ROUTE_TABLE_MANAGED_MARKER,
-            routes: &self.routes,
-        };
-        let content = serde_json::to_string_pretty(&envelope).map_err(|e| {
-            GatewayError::RouteTableWriteError {
-                path: path.to_path_buf(),
-                reason: format!("failed to serialize: {e}"),
-            }
-        })?;
-
-        // Write to a temp file in the same directory, then rename.
-        // This ensures atomic replacement.
-        let temp_path = atomic_write::temp_path(path, "routes");
-        std::fs::write(&temp_path, &content).map_err(|e| GatewayError::RouteTableWriteError {
-            path: temp_path.clone(),
-            reason: e.to_string(),
-        })?;
-
-        // Set owner-only permissions on the temp file before the rename so the
-        // published file is never briefly group/other-writable.
-        set_owner_only_permissions(&temp_path)?;
-
-        std::fs::rename(&temp_path, path).map_err(|e| GatewayError::RouteTableWriteError {
-            path: path.to_path_buf(),
-            reason: format!("atomic rename failed: {e}"),
-        })?;
-
-        Ok(())
+        crate::endpoint_store::EndpointStore::for_routes(path)
+            .read_compatible()?
+            .routes()
     }
 
     /// Register a new route.
@@ -347,7 +253,12 @@ impl RouteTable {
 
     /// Look up a route by domain.
     pub fn lookup(&self, domain: &str) -> Option<&Route> {
-        self.routes.get(domain)
+        self.routes.get(domain).or_else(|| {
+            self.routes
+                .iter()
+                .find(|(key, _)| key.eq_ignore_ascii_case(domain))
+                .map(|(_, route)| route)
+        })
     }
 
     /// All registered routes, sorted by domain.
@@ -374,10 +285,9 @@ impl Default for RouteTable {
     }
 }
 
-/// Thread-safe, live-reloading route table backed by a JSON file.
+/// Thread-safe route view backed by the gateway endpoint Store.
 ///
-/// Used by the running gateway to serve DNS and proxy requests. The table
-/// is reloaded from disk when a filesystem change notification fires.
+/// Used by DNS and proxy requests; a committed Store change triggers reload.
 pub struct LiveRouteTable {
     /// Path to the route table JSON file.
     path: PathBuf,

@@ -1,6 +1,4 @@
 use effigy_gateway::identity::{self, GatewayIdentityProbe};
-use effigy_gateway::loopback::LoopbackRegistry;
-use effigy_gateway::routes::RouteTable;
 use effigy_gateway::server::GatewayConfig;
 use std::io::{IsTerminal, Read};
 use std::process::{Command as ProcessCommand, Stdio};
@@ -46,16 +44,7 @@ pub(super) fn prepare_gateway_state_for_elevated_run(
         identity::ensure_trusted_gateway_parent(&config.pid_file_path)
             .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     }
-    if !config.route_table_path.exists() {
-        RouteTable::new()
-            .save(&config.route_table_path)
-            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    }
-    if !config.loopback_registry_path.exists() {
-        LoopbackRegistry::new()
-            .save(&config.loopback_registry_path)
-            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    }
+    effigy_gateway::endpoint_store::EndpointStore::for_routes(&config.route_table_path).import()?;
     if let Some(tls_config) = &config.tls {
         std::fs::create_dir_all(&tls_config.certs_dir).map_err(RunnerError::Cwd)?;
     }

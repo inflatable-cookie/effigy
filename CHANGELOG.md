@@ -375,6 +375,11 @@ During v0.x, MINOR bumps may include breaking changes.
   endpoints, or trust behavior change.
 
 ### Changed
+
+- Gateway routes, loopback addresses and generated host-port ranges now share
+  one transactional endpoint store. Existing JSON registries import automatically
+  and remain as backups, preserving URLs, IPs and pinned ports. Stopped stacks
+  retain their assignments; explicit retirement releases them through quarantine.
 - Container inspection and validation no longer create declared media directories or the shared Composer cache; activation prepares those bind sources.
 - Graph now has six commands: `index`, `status`, `search`, `node`, `affected`
   and `explore`. Node accepts file paths and incoming/outgoing relationships;

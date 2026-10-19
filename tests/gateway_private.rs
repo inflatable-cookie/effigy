@@ -1,3 +1,6 @@
+#[path = "support/gateway_legacy.rs"]
+mod gateway_legacy_fixture;
+use gateway_legacy_fixture::LegacyRegistryFixture;
 #[path = "support/scoped_env.rs"]
 mod env_test_support;
 #[path = "support/sealed_fixture.rs"]

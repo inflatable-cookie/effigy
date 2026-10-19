@@ -62,7 +62,7 @@ impl Record for Bytes {
         Ok(Self(bytes.to_vec()))
     }
 }
-fn read_input(path: &Path) -> Result<Option<Vec<u8>>, GatewayError> {
+pub(crate) fn read_input(path: &Path) -> Result<Option<Vec<u8>>, GatewayError> {
     match std::fs::symlink_metadata(path) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(error(e)),

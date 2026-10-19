@@ -387,16 +387,21 @@ fn report_at(
     probe_path: impl Fn(&Path) -> PathState,
     host_hold: impl Fn(u16) -> Option<String>,
 ) -> Result<PortRecoveryReport, ContainerPolicyError> {
-    let present = path.exists();
-    let registry_bytes = std::fs::read(path).ok();
-    let registry = PortRegistry::load(path).map_err(registry_error)?;
+    let store = effigy_gateway::endpoint_store::EndpointStore::for_ports(path);
+    let present = path.exists() || store.read().verified().is_some();
+    let snapshot = store.read_compatible().map_err(registry_error)?;
+    let registry_bytes =
+        serde_json::to_string_pretty(snapshot.document("ports").map_err(registry_error)?)
+            .map(|content| format!("{content}\n").into_bytes())
+            .map_err(registry_error)?;
+    let registry = snapshot.ports().map_err(registry_error)?;
     let facts = gather();
     let plan = plan_recovery(&registry, &facts, probe_path, host_hold);
     Ok(PortRecoveryReport {
         mode,
         registry_path: path.to_path_buf(),
         registry_present: present,
-        registry_sha256_before: registry_bytes.map(|bytes| sha256_hex(&bytes)),
+        registry_sha256_before: present.then(|| sha256_hex(&registry_bytes)),
         capacity_now: plan.capacity_before,
         plan,
         removed: Vec::new(),
@@ -414,8 +419,8 @@ fn apply_at(
     probe_path: impl Fn(&Path) -> PathState,
     host_hold: impl Fn(u16) -> Option<String>,
 ) -> Result<PortRecoveryReport, ContainerPolicyError> {
+    let facts = gather();
     let outcome = edit_locked(path, |registry| {
-        let facts = gather();
         let plan = plan_recovery(registry, &facts, &probe_path, &host_hold);
         if plan.digest != expect_digest {
             return Err(ContainerPolicyError::TaskInvocation(format!(

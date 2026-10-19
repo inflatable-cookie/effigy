@@ -6,12 +6,10 @@ use effigy_gateway::routes::{Route, RouteSource};
 #[test]
 fn gateway_dir_uses_an_isolated_default_during_unit_tests() {
     let path = gateway_dir().expect("gateway dir");
-    assert!(
-        path.to_string_lossy()
-            .contains("effigy-runner-test-gateway-home-"),
-        "unit-test gateway state must not use the real home: {}",
-        path.display()
-    );
+    assert_eq!(path.file_name().unwrap(), "gateway");
+    assert!(path.parent().unwrap().parent().unwrap().is_dir());
+    let real = PathBuf::from(std::env::var_os("HOME").unwrap()).join(".effigy/gateway");
+    assert_ne!(path, real);
 }
 
 fn tls_summary() -> GatewayTlsSummary {
@@ -136,7 +134,7 @@ fn render_gateway_up_text_includes_warning_lines() {
 }
 
 #[test]
-fn prepare_gateway_state_creates_loopback_registry_file() {
+fn prepare_gateway_state_imports_into_endpoint_store() {
     let root = std::env::temp_dir().join(format!(
         "effigy-gateway-state-{}-{}",
         std::process::id(),
@@ -152,7 +150,12 @@ fn prepare_gateway_state_creates_loopback_registry_file() {
 
     let registry = LoopbackRegistry::load(&config.loopback_registry_path).expect("registry");
     assert!(registry.is_empty());
-    assert!(config.loopback_registry_path.exists());
+    assert!(
+        effigy_gateway::endpoint_store::EndpointStore::for_routes(&config.route_table_path)
+            .database_path()
+            .exists()
+    );
+    assert!(!config.loopback_registry_path.exists());
 
     let _ = std::fs::remove_dir_all(&root);
 }

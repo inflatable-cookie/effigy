@@ -1,4 +1,6 @@
 use super::*;
+#[cfg(test)]
+use crate::gateway_legacy_fixture::LegacyRegistryFixture;
 use std::process::Command;
 
 fn run_git(repo: &Path, args: &[&str]) {
@@ -301,8 +303,8 @@ catalog = "workspace-rust-bun"
                 || load_prepared_policy(checkout, None).unwrap(),
             );
             assert_eq!(
-                inventory_calls, 1,
-                "loopback reclamation must use the fixture inventory exactly once"
+                inventory_calls, 0,
+                "persistent loopback claims never consult runtime inventory for reclamation"
             );
             assert_eq!(policy.dns_routes[0].declared(), "app.test");
             assert_ne!(policy.dns_routes[0].domain, "app.test");
@@ -1875,7 +1877,14 @@ variant = "default"
             shared_compose.contains(&format!("127.0.0.1:{}:3306", shared.host_port)),
             "shared compose should bind the runtime host port to loopback: {shared_compose}"
         );
-        assert!(home.join("gateway").join("loopback-ips.json").exists());
+        assert!(
+            !effigy_gateway::endpoint_store::EndpointStore::for_effigy_home(&home)
+                .read_compatible()
+                .unwrap()
+                .loopback()
+                .unwrap()
+                .is_empty()
+        );
     });
 }
 
@@ -2266,19 +2275,42 @@ catalog = "node"
         let again = load_container_policy(&root, None).unwrap();
         assert_eq!(read.declared_ports, again.declared_ports);
         assert!(!home.join("ports.json").exists());
-        assert!(!home.join("ports.lock").exists());
+        let store = effigy_gateway::endpoint_store::EndpointStore::for_effigy_home(&home);
+        assert!(
+            store.read_ports().unwrap().allocations.is_empty(),
+            "resolution must not allocate host ports"
+        );
         let prepared = load_prepared_policy(&root, None).unwrap();
         assert!(prepared
             .declared_ports
             .iter()
             .all(|port| !port.contains("unassigned")));
-        let bytes = fs::read(home.join("ports.json")).unwrap();
+        let bytes = store
+            .read_compatible()
+            .unwrap()
+            .document("ports")
+            .unwrap()
+            .clone();
         let after = load_container_policy(&root, None).unwrap();
         assert_eq!(after.declared_ports, prepared.declared_ports);
-        assert_eq!(fs::read(home.join("ports.json")).unwrap(), bytes);
+        assert_eq!(
+            store.read_compatible().unwrap().document("ports").unwrap(),
+            &bytes
+        );
+        assert!(
+            !home.join("ports.json").exists(),
+            "new state has no JSON writer"
+        );
         let repeated = load_prepared_policy(&root, None).unwrap();
         assert_eq!(repeated.declared_ports, prepared.declared_ports);
-        assert_eq!(fs::read(home.join("ports.json")).unwrap(), bytes);
+        assert_eq!(
+            store.read_compatible().unwrap().document("ports").unwrap(),
+            &bytes
+        );
+        assert!(
+            !home.join("ports.json").exists(),
+            "new state has no JSON writer"
+        );
     });
 }
 
