@@ -6,7 +6,7 @@
 set -eu
 proof_mode=${1:-custody}
 case "$proof_mode" in
-    custody|gate-shared) ;;
+    custody|gate-shared|probe) ;;
     *) printf 'Unknown Linux proof mode: %s\n' "$proof_mode" >&2; exit 2 ;;
 esac
 proof_dir=$(mktemp -d /tmp/k208.XXXXXX)
@@ -39,7 +39,7 @@ if [ "$proof_mode" = gate-shared ]; then
         --mount "type=bind,source=$proof_dir/cargo,target=/proof-cargo"
 fi
 docker run --rm --init --cpus 2 --memory 2g "$@" \
-    --env "KERNEL_PROOF_MODE=$proof_mode" \
+    --env "PROOF_UID=$(id -u)" --env "PROOF_GID=$(id -g)" --env "KERNEL_PROOF_MODE=$proof_mode" \
     --mount "type=bind,source=$source_dir,target=/proof" --workdir /proof \
     --mount "type=bind,source=$proof_dir/cargo,target=/usr/local/cargo/registry" \
     --mount "type=bind,source=$proof_dir/target,target=/proof/target" \
@@ -51,10 +51,15 @@ docker run --rm --init --cpus 2 --memory 2g "$@" \
             exit
         fi
         apt-get update -qq
-        apt-get install -y -qq curl procps > /dev/null
+        apt-get install -y -qq curl procps git > /dev/null
         curl --fail --location --proto "=https" --tlsv1.2 https://get.nexte.st/latest/linux-arm | tar xz -C /usr/local/cargo/bin
         rustup component add clippy
         cargo build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture
         cargo clippy -p effigy-kernel --all-targets --features fault-injection -- -D warnings
+        if [ "$KERNEL_PROOF_MODE" = probe ]; then
+            chown -R "$PROOF_UID:$PROOF_GID" /proof /usr/local/cargo/registry
+            setpriv --reuid="$PROOF_UID" --regid="$PROOF_GID" --clear-groups env EFFIGY_KERNEL_CUSTODY_FIXTURE=/proof/target/debug/kernel-custody-fixture cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --test probe --lib -E "test(/^probe::/) | binary(probe)" --no-fail-fast --retries 0 --no-tests fail
+            exit
+        fi
         EFFIGY_KERNEL_CUSTODY_FIXTURE=/proof/target/debug/kernel-custody-fixture cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --test custody --test foundation --lib -E "test(/^custody::tests::/) | test(/^signal::tests::/) | test(/^run::lifecycle::tests::/) | test(/^run::tests::/) | binary(custody) | test(identity_) | test(context_)" --no-fail-fast --retries 0 --no-tests fail
     '

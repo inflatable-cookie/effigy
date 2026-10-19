@@ -88,6 +88,14 @@ fn main() {
         _ => RouterPolicy::Inline,
     };
     let mut router = SignalRouter::install(policy).unwrap();
+    if let Some(result) = effigy_kernel::probe::internal_entry(entry, router.root_cancel()) {
+        result.unwrap();
+        return;
+    }
+    if entry.starts_with("probe-") {
+        probe_fixture::run(entry, &args, router.root_cancel());
+        return;
+    }
     if let Some(result) = internal_entry(entry, &mut router, &mut Strict, |a| {
         a == [OsString::from("recover")]
     }) {
@@ -254,3 +262,6 @@ fn main() {
         std::fs::write(home.join("terminal-restored"), b"yes").unwrap();
     }
 }
+
+#[path = "probe-fixture.rs"]
+mod probe_fixture;
