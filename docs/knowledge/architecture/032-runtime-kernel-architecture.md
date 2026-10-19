@@ -337,7 +337,10 @@ poll. Cleanup tokens remain independent. Supervisor and sentinel are hidden
 same-binary re-exec entry points; product dispatch remains engine-lane work.
 The executable's file identity and digest are checked on both sides of startup.
 Invocation and explicit spawn environments travel over bounded pipes, never argv.
-Capture redacts before the rotating log, bounded tail or event queue; log ENOSPC
+Capture merges stdout and stderr before redacting into the rotating log, bounded
+tail or event queue. A second streaming pass prevents replacement text or
+merged boundaries from reconstructing secrets; its fallback separator is NUL,
+which spawn secrets cannot contain. Log ENOSPC
 changes capture metadata without changing the workload outcome.
 
 `Run::begin` starts the sentinel after admission and waits for its validated-main

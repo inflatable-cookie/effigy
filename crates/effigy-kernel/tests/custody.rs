@@ -841,3 +841,34 @@ fn custody_both_owner_and_sentinel_die_successor_is_the_only_settle_writer() {
     assert_eq!(outcome.cleanup(), CleanupOutcome::Complete);
     assert_eq!(outcome.workload(), &WorkloadOutcome::Interrupted);
 }
+
+#[test]
+fn custody_merged_streams_cannot_reconstruct_a_secret_before_any_sink() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut run = begin(&cx, &root);
+    let mut process = spec(home.path(), "printf private; printf 999 >&2");
+    process.env.insert(
+        "TOKEN".into(),
+        EnvValue::Secret(SecretValue::new(b"private999".to_vec()).unwrap()),
+    );
+    let mut child = Custody::spawn(&mut run, process, &cx).unwrap();
+    let exit = *child.wait(cx.operation()).verified().unwrap();
+    child.complete(&mut run, exit).unwrap();
+    run.finish(WorkloadOutcome::Succeeded).unwrap();
+    let result = run
+        .settle(
+            &cx.operation().cleanup(Duration::from_secs(5)).unwrap(),
+            &mut Strict,
+        )
+        .unwrap();
+    assert_eq!(result.cleanup(), CleanupOutcome::Complete);
+    assert_eq!(child.tail(), b"[REDACTED]");
+    assert_eq!(child.take_output(), b"[REDACTED]");
+    let logs = std::fs::read_dir(root.path().join("runs").join(id(1).to_string()))
+        .unwrap()
+        .flat_map(|e| std::fs::read(e.unwrap().path()).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(logs, b"[REDACTED]");
+}

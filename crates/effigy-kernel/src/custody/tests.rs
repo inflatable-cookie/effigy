@@ -539,3 +539,22 @@ fn log_enospc_keeps_redacted_ring_and_success_outcome() {
     );
     assert_eq!(outcome.cleanup(), crate::outcome::CleanupOutcome::Complete);
 }
+
+#[test]
+fn replacement_cannot_reconstruct_or_itself_contain_a_secret() {
+    for (secrets, input) in [
+        (vec![b"R".to_vec()], b"R".to_vec()),
+        (vec![b"[REDACTED]".to_vec()], b"[REDACTED]".to_vec()),
+        (vec![b"ab[".to_vec(), b"X".to_vec()], b"abX".to_vec()),
+    ] {
+        let mut redactor = Redactor::new(secrets.clone());
+        let mut output = Vec::new();
+        for byte in input {
+            output.extend(redactor.push(&[byte], false));
+        }
+        output.extend(redactor.push(&[], true));
+        for secret in secrets {
+            assert!(!output.windows(secret.len()).any(|w| w == secret));
+        }
+    }
+}

@@ -140,7 +140,7 @@ pub(crate) struct ProcessCore {
     queue_max: usize,
     stdout: Option<OwnedFd>,
     stderr: Option<OwnedFd>,
-    redactors: [Redactor; 2],
+    redactor: Redactor,
     tail: VecDeque<u8>,
     tail_max: usize,
     capture: CaptureState,
@@ -151,8 +151,8 @@ pub(crate) struct ProcessCore {
     pty: bool,
 }
 struct Redactor {
-    secrets: Vec<Vec<u8>>,
-    pending: Vec<u8>,
+    display: RedactionPass,
+    final_check: RedactionPass,
 }
 impl std::fmt::Debug for Redactor {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -160,11 +160,33 @@ impl std::fmt::Debug for Redactor {
     }
 }
 impl Redactor {
-    fn new(mut secrets: Vec<Vec<u8>>) -> Self {
+    fn new(secrets: Vec<Vec<u8>>) -> Self {
+        Self {
+            display: RedactionPass::new(secrets.clone(), b"[REDACTED]"),
+            // A secret can itself contain the display marker, or a replacement
+            // can join adjacent bytes into another secret. A second streaming
+            // pass uses NUL, which SecretValue forbids, so its replacement can
+            // neither contain a secret nor create one across its boundaries.
+            final_check: RedactionPass::new(secrets, b"\0"),
+        }
+    }
+    fn push(&mut self, bytes: &[u8], eof: bool) -> Vec<u8> {
+        let display = self.display.push(bytes, eof);
+        self.final_check.push(&display, eof)
+    }
+}
+struct RedactionPass {
+    secrets: Vec<Vec<u8>>,
+    pending: Vec<u8>,
+    replacement: &'static [u8],
+}
+impl RedactionPass {
+    fn new(mut secrets: Vec<Vec<u8>>, replacement: &'static [u8]) -> Self {
         secrets.sort_by_key(|v| std::cmp::Reverse(v.len()));
         Self {
             secrets,
             pending: Vec::new(),
+            replacement,
         }
     }
     fn push(&mut self, bytes: &[u8], eof: bool) -> Vec<u8> {
@@ -178,7 +200,7 @@ impl Redactor {
                 .iter()
                 .find(|s| self.pending[pos..].starts_with(s))
             {
-                out.extend_from_slice(b"[REDACTED]");
+                out.extend_from_slice(self.replacement);
                 pos += secret.len();
             } else {
                 out.push(self.pending[pos]);
@@ -290,7 +312,7 @@ impl Custody {
                 queue_max: cx.operation().limits().queue_bytes,
                 stdout: Some(stdout),
                 stderr: Some(stderr),
-                redactors: [Redactor::new(secrets.clone()), Redactor::new(secrets)],
+                redactor: Redactor::new(secrets),
                 tail: VecDeque::new(),
                 tail_max: cx.operation().limits().capture_tail,
                 capture,
@@ -391,21 +413,43 @@ impl OwnedProcess {
     }
 }
 impl ProcessCore {
+    fn sink(&mut self, bytes: &[u8], eof: bool) {
+        // Merge before redaction. Per-stream redaction could reconstruct a
+        // secret when stdout and stderr are joined by the log or tail sink.
+        let clean = self.redactor.push(bytes, eof);
+        if clean.is_empty() {
+            return;
+        }
+        if let Some(log) = self.log.as_mut() {
+            if log.append(&clean).is_err() {
+                self.capture = CaptureState::Truncated("log write failed".into());
+                self.log = None;
+            }
+        }
+        self.output.extend(clean.iter().copied());
+        while self.output.len() > self.queue_max {
+            self.output.pop_front();
+        }
+        self.tail.extend(clean);
+        while self.tail.len() > self.tail_max {
+            self.tail.pop_front();
+        }
+    }
     fn drain(&mut self) {
         for index in 0..2 {
             let fd = if index == 0 {
-                &mut self.stdout
+                self.stdout.take()
             } else {
-                &mut self.stderr
+                self.stderr.take()
             };
-            let Some(handle) = fd.as_ref() else {
+            let Some(handle) = fd else {
                 continue;
             };
             let mut buf = [0u8; 8192];
             let mut eof = false;
             // Bound each turn even if a child writes continuously.
             for _ in 0..16 {
-                // SAFETY: live nonblocking read fd and writable stack buffer.
+                // SAFETY: live nonblocking fd and writable initialized stack buffer.
                 let count =
                     unsafe { libc::read(handle.as_raw_fd(), buf.as_mut_ptr().cast(), buf.len()) };
                 if count == 0 {
@@ -413,51 +457,32 @@ impl ProcessCore {
                     break;
                 }
                 if count < 0 {
-                    let e = io::Error::last_os_error();
-                    if self.pty && e.raw_os_error() == Some(libc::EIO) {
+                    let error = io::Error::last_os_error();
+                    if self.pty && error.raw_os_error() == Some(libc::EIO) {
                         eof = true;
-                    } else if e.kind() != io::ErrorKind::WouldBlock
-                        && e.kind() != io::ErrorKind::Interrupted
-                    {
+                    } else if !matches!(
+                        error.kind(),
+                        io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+                    ) {
                         self.capture = CaptureState::Truncated("capture read failed".into());
                         eof = true;
                     }
                     break;
                 }
-                let clean = self.redactors[index].push(&buf[..count as usize], false);
-                if let Some(log) = self.log.as_mut() {
-                    if log.append(&clean).is_err() {
-                        self.capture = CaptureState::Truncated("log write failed".into());
-                        self.log = None;
-                    }
-                }
-                self.output.extend(clean.iter().copied());
-                while self.output.len() > self.queue_max {
-                    self.output.pop_front();
-                }
-                self.tail.extend(clean);
-                while self.tail.len() > self.tail_max {
-                    self.tail.pop_front();
+                self.sink(&buf[..count as usize], false);
+            }
+            if !eof {
+                if index == 0 {
+                    self.stdout = Some(handle);
+                } else {
+                    self.stderr = Some(handle);
                 }
             }
-            if eof {
-                let clean = self.redactors[index].push(&[], true);
-                if let Some(log) = self.log.as_mut() {
-                    if log.append(&clean).is_err() {
-                        self.capture = CaptureState::Truncated("log write failed".into());
-                        self.log = None;
-                    }
-                }
-                self.output.extend(clean.iter().copied());
-                while self.output.len() > self.queue_max {
-                    self.output.pop_front();
-                }
-                self.tail.extend(clean);
-                while self.tail.len() > self.tail_max {
-                    self.tail.pop_front();
-                }
-                *fd = None;
-            }
+        }
+        // One stream closing cannot flush a prefix that the other stream may
+        // finish. Only the merged stream's EOF flushes the bounded redactor.
+        if self.stdout.is_none() && self.stderr.is_none() {
+            self.sink(&[], true);
         }
     }
     fn poll(&mut self) -> Observed<Exit> {
