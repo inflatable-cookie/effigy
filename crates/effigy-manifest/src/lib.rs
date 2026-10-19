@@ -25,8 +25,10 @@ pub use effigy_core::repo_markers::TASK_MANIFEST_FILE;
 pub use portfolio::{load_portfolio, Portfolio, PORTFOLIO_FILE};
 
 pub use bundles::{
-    inspect_bundle_source, sync_bundle_source, BundleInputSpec, BundleInputType,
-    BundleSourceInspectReport, BundleSourceType, BundleSpec, BundleSyncReport,
+    bundle_sources_need_preparation, inspect_bundle_source, prepare_bundle_sources,
+    resolve_catalog_source, sync_bundle_source, BundleInputSpec, BundleInputType,
+    BundleSourceInspectReport, BundleSourceType, BundleSpec, BundleSyncReport, SourcePreparation,
+    SourceSettlement,
 };
 pub use composition::{
     load_docs_policy_graph_config, load_task_manifest_with_inspection, LoadedTaskManifest,
@@ -242,6 +244,8 @@ pub struct ManifestCatalog {
     pub alias: Option<String>,
     #[serde(default)]
     pub members: BTreeMap<String, String>,
+    #[serde(default)]
+    pub sources: BTreeMap<String, ManifestBundleBase>,
     #[serde(default, rename = "graph", deserialize_with = "reject_catalog_graph")]
     _retired_graph: Option<toml::Value>,
 }

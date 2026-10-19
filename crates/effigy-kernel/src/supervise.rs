@@ -18,6 +18,7 @@ use crate::run::{
 };
 use crate::signal::RouterHandle;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest as _, Sha256};
 use std::ffi::OsString;
 use std::io::{self, Read, Write};
 use std::os::fd::{AsRawFd, RawFd};
@@ -77,14 +78,26 @@ impl Executable {
             .map_err(io::Error::other)?
             .ok_or_else(|| io::Error::other("binary missing"))?;
         let metadata = file.metadata()?;
-        if metadata.len() > 128 << 20 {
+        // Production debug executables can exceed 128 MiB. Fingerprint in
+        // bounded chunks rather than allocating the executable's full size.
+        if metadata.len() > 1 << 30 {
             return Err(io::Error::other("binary too large"));
         }
-        let mut bytes = Vec::new();
-        std::io::Read::by_ref(&mut file)
-            .take((128 << 20) + 1)
-            .read_to_end(&mut bytes)?;
-        if bytes.len() as u64 != metadata.len() {
+        let mut hash = Sha256::new();
+        let mut bytes = 0u64;
+        let mut buffer = [0u8; 64 * 1024];
+        loop {
+            let read = file.read(&mut buffer)?;
+            if read == 0 {
+                break;
+            }
+            bytes += read as u64;
+            if bytes > metadata.len() {
+                return Err(io::Error::other("binary changed during read"));
+            }
+            hash.update(&buffer[..read]);
+        }
+        if bytes != metadata.len() {
             return Err(io::Error::other("binary changed during read"));
         }
         Ok(Self {
@@ -92,7 +105,7 @@ impl Executable {
             device: metadata.dev(),
             inode: metadata.ino(),
             size: metadata.len(),
-            digest: Digest::of(&bytes),
+            digest: Digest(hash.finalize().into()),
         })
     }
     pub fn verify(&self) -> io::Result<()> {

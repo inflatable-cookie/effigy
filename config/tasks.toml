@@ -8,6 +8,18 @@
   { rhai = "scripts/install-local-bin-links.rhai" },
 ]
 
+# Pure discovery and pinned executable-source acquisition (contract 052 R2).
+"test:bundles:pins" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-manifest --lib -E 'test(bundles::) | test(composition::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
+"test:bundles:cli" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test bundle_pins --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
+"test:bundles:consumers" = [
+  { run = "cargo build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 },
+  { run = "EFFIGY_BUNDLE_CONSUMERS=$HOME/Dev/legacy/sites/cbs:$HOME/Dev/legacy/libraries/decodelabs/archetype:$HOME/Dev/projects/acowtancy EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test bundle_pins --run-ignored only -E 'test(consumer_effective_)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
+]
+"test:bundles:surface" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(bundle_command::tests::) | test(config_builtin_tests::) | test(bootstrap_command::tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
+"test:kernel:source-store" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib -E 'test(source_directory_) | test(run_store_record_)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
+"check:bundles:compile" = { run = "cargo check -p effigy -p effigy-manifest -p effigy-kernel -p effigy-cli -p effigy-builtin -p effigy-core --all-targets --profile test", timeout_ms = 600000 }
+"check:bundles:clippy" = { run = "cargo clippy -p effigy -p effigy-manifest -p effigy-kernel -p effigy-cli -p effigy-builtin -p effigy-core --all-targets -- -D warnings", timeout_ms = 600000 }
+
 # Graph storage and CLI refresh contract; nextest bounds each case and leaks.
 "test:graph:storage" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-codegraph --lib --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail", timeout_ms = 600000 }
 "test:graph:runner" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(graph_) | test(docs_context_time_budget_tests::)' --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail", timeout_ms = 600000 }

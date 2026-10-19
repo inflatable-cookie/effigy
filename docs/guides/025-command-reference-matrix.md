@@ -483,8 +483,8 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
   producer-declared isolation paths into workspace containers
 - `bundle inspect` reports the active repo bundle source only; there is no named
   bundle inspection anymore
-- `bundle sync` is the explicit refresh path for git and OCI bundle sources in
-  the current repo; local path bundle sources report not-applicable
+- `bundle sync` is the only updater for checkout bundle and catalog source pins,
+  including local path snapshots; inspection never fetches or writes
 - `deploy model` is intentionally JSON-only and reads the active rendered
   `[deploy.model]` section from the effective manifest
 - `deploy export <PROVIDER>` requires a matching

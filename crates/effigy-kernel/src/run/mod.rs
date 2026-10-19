@@ -372,6 +372,26 @@ impl<'a> Run<'a> {
         journal::effects(self.store.conn(), self.id)
     }
 
+    /// Publish a file using this run's held store gate. The engine records
+    /// its intent before calling this; the gate itself never escapes the run.
+    pub fn replace_record(
+        &self,
+        dir: &crate::fs::DirFd,
+        name: &crate::fs::FileName,
+        bytes: &[u8],
+        opts: crate::record::ReplaceOpts,
+    ) -> Result<crate::record::Replaced, RunError> {
+        self.can_effect()?;
+        Ok(crate::record::atomic_replace(
+            &self.cx,
+            &self.guard,
+            dir,
+            name,
+            bytes,
+            opts,
+        )?)
+    }
+
     pub fn intend(&mut self, spec: EffectSpec) -> Result<EffectTicket, RunError> {
         // Environment mutation must go through TransitionPermit::intend.
         if spec.target.resource.kind() == crate::id::ResourceKind::Env {

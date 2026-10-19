@@ -1,4 +1,14 @@
 [[retired]]
+id = "effigy-bundle-read-refresh-ttl"
+retired = "2026-10-19"
+replacement = "Checkout source pins move only through explicit effigy bundle sync; Prepare warns for one release when the old variable is present."
+owner = "docs/knowledge/contracts/020-remote-bundle-sources-git-and-oci-delivery-contract.md"
+terms = ["EFFIGY_GIT_BUNDLE_REMOTE_CHECK_TTL_SECS"]
+paths = []
+config_keys = []
+allow = ["CHANGELOG.md", "crates/effigy-manifest/src/bundles/source/prepare.rs"]
+
+[[retired]]
 id = "effigy-graph-watch"
 retired = "2026-10-18"
 replacement = "Queries refresh automatically; use graph index to pre-warm. Removed spellings return replacement errors for one release."

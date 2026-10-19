@@ -101,7 +101,12 @@ pub fn load_docs_policy_graph_config(
     }
     let mut session = CompositionSession::default();
     let mut composed = load_composed_value(manifest_path, &mut session)?;
-    apply_bundle_defaults(manifest_path, &mut composed.value, &composed.extend_paths)?;
+    apply_bundle_defaults(
+        manifest_path,
+        &mut composed.value,
+        &composed.extend_paths,
+        None,
+    )?;
     let Some(graph_value) = composed
         .value
         .get("docs_policy")
@@ -126,8 +131,12 @@ pub fn load_task_manifest_with_inspection(
 ) -> Result<LoadedTaskManifest, ManifestError> {
     let mut session = CompositionSession::default();
     let mut composed = load_composed_value(manifest_path, &mut session)?;
-    let bundle_defaults =
-        apply_bundle_defaults(manifest_path, &mut composed.value, &composed.extend_paths)?;
+    let bundle_defaults = apply_bundle_defaults(
+        manifest_path,
+        &mut composed.value,
+        &composed.extend_paths,
+        None,
+    )?;
     if let Some(bundle_defaults) = bundle_defaults.as_ref() {
         record_missing_bundle_sources(
             "",
@@ -170,23 +179,60 @@ pub fn load_task_manifest_with_inspection(
     })
 }
 
-pub(crate) fn load_manifest_bundle_config(
+pub(crate) fn validate_source_snapshot(
     manifest_path: &Path,
-) -> Result<Option<ManifestBundleConfig>, ManifestError> {
+    source: &Path,
+) -> Result<(), ManifestError> {
+    let mut composed = load_composed_value(manifest_path, &mut CompositionSession::default())?;
+    apply_bundle_defaults(
+        manifest_path,
+        &mut composed.value,
+        &composed.extend_paths,
+        Some(source),
+    )?;
+    let manifest: TaskManifest =
+        composed
+            .value
+            .try_into()
+            .map_err(|error| ManifestError::Parse {
+                path: manifest_path.into(),
+                error,
+            })?;
+    manifest.validate(manifest_path)
+}
+
+pub(crate) fn load_manifest_source_declarations(
+    manifest_path: &Path,
+) -> Result<
+    (
+        Option<ManifestBundleConfig>,
+        BTreeMap<String, crate::ManifestBundleBase>,
+    ),
+    ManifestError,
+> {
     let mut session = CompositionSession::default();
     let composed = load_composed_value(manifest_path, &mut session)?;
-    composed
-        .value
-        .as_table()
-        .and_then(|table| table.get("bundle"))
-        .cloned()
-        .map(|value| {
-            value.try_into().map_err(|error| ManifestError::Compose {
-                path: manifest_path.to_path_buf(),
-                detail: format!("invalid `[bundle]` section: {error}"),
-            })
-        })
+    let decode = |key: &str| composed.value.get(key).cloned();
+    let bundle = decode("bundle")
+        .map(|value| value.try_into())
         .transpose()
+        .map_err(|error| ManifestError::Compose {
+            path: manifest_path.into(),
+            detail: format!("invalid bundle source: {error}"),
+        })?;
+    let sources = composed
+        .value
+        .get("catalog")
+        .and_then(|catalog| catalog.get("sources"))
+        .cloned()
+        .map(|value| value.try_into())
+        .transpose()
+        .map_err(|error| ManifestError::Compose {
+            path: manifest_path.into(),
+            detail: format!("invalid catalog sources: {error}"),
+        })?
+        .unwrap_or_default();
+    Ok((bundle, sources))
 }
 
 fn load_composed_value(
@@ -309,30 +355,11 @@ fn append_local_overlay_include(manifest_path: &Path, includes: &mut Vec<Manifes
     if already_declared {
         return;
     }
-    // Best-effort: register the overlay in Git's local exclude file so
-    // it is never committed accidentally. Failures here are non-fatal —
-    // manifest loading should not depend on filesystem write access.
-    if let Some(repo_root) = locate_git_root(parent) {
-        let _ = effigy_core::runtime_dir::ensure_local_overlay_ignored_in_git_root(&repo_root);
-    }
     includes.push(ManifestIncludeSpec {
         resolved_path: local_path,
         override_paths: Vec::new(),
         optional: true,
     });
-}
-
-/// Walk upward from `start` looking for a `.git` directory or gitfile.
-/// Returns the directory containing it, if any.
-fn locate_git_root(start: &Path) -> Option<PathBuf> {
-    let mut current = Some(start);
-    while let Some(dir) = current {
-        if dir.join(".git").exists() {
-            return Some(dir.to_path_buf());
-        }
-        current = dir.parent();
-    }
-    None
 }
 
 fn take_include_specs(
@@ -1253,7 +1280,7 @@ paths = ["b"]
     }
 
     #[test]
-    fn auto_discovered_local_overlay_registers_git_exclude_not_gitignore() {
+    fn auto_discovered_local_overlay_does_not_write_git_exclude() {
         let _guard = LOCAL_OVERLAY_ENV_LOCK.lock().expect("env lock");
         std::env::remove_var("EFFIGY_NO_LOCAL_OVERLAY");
         let tmp = tempdir().expect("tempdir");
@@ -1279,10 +1306,7 @@ paths = ["b"]
         let loaded = load_task_manifest_with_inspection(&root).expect("load");
         assert_eq!(loaded.include_graph.len(), 1);
         assert!(!dir.join(".gitignore").exists());
-        assert_eq!(
-            std::fs::read_to_string(dir.join(".git/info/exclude")).expect("exclude"),
-            "effigy.local.toml\n"
-        );
+        assert!(!dir.join(".git/info/exclude").exists());
     }
 
     #[test]

@@ -7,6 +7,14 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- Checkout bundle and declared catalog source pins in `.effigy/sources.lock.json`.
+  Help, version, completion, inventory, plans, status, config views, doctor and
+  graph read paths no longer acquire or refresh bundle sources or append Git
+  excludes. Only `effigy bundle sync` updates selected path, Git and OCI bytes;
+  bootstrap and first dev prepare missing pins. Existing v0.14.1 cache bytes
+  import automatically, and failed acquisition keeps the previous selection.
+  A locally known newer version produces a bounded sync notice without a remote
+  probe. `EFFIGY_GIT_BUNDLE_REMOTE_CHECK_TTL_SECS` is retired with a Prepare warning.
 - A whole-environment handover ends the losing environment's headless
   managed owners before stopping anything. When `container up` hands over
   a live conflicting environment, it first ends every live headless

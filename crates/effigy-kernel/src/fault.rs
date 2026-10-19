@@ -84,6 +84,8 @@ points! {
     ReplaceLinkPrev,
     ReplaceRename,
     ReplaceDirFsync,
+    SourceDirOpen,
+    SourceDirSync,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) enum Fault {

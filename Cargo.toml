@@ -94,6 +94,7 @@ effigy-execution = { path = "crates/effigy-execution" }
 effigy-gateway = { path = "crates/effigy-gateway" }
 effigy-managed = { path = "crates/effigy-managed" }
 effigy-manifest = { path = "crates/effigy-manifest" }
+effigy-kernel = { path = "crates/effigy-kernel" }
 effigy-host-run = { path = "crates/effigy-host-run" }
 effigy-process = { path = "crates/effigy-process" }
 effigy-release = { path = "crates/effigy-release" }

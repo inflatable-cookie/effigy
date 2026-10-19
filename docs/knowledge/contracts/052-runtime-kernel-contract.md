@@ -20,7 +20,8 @@ matrix are implemented (`test:kernel:faults`, `test:kernel:matrix`);
 engine-specific §12.1 scenarios are placeholders owned by their engine lanes.
 Fault points inside helper processes (sentinel settle, guard acknowledgement,
 detached supervisor) are not yet armed; architecture 032 records the limit.
-Engines have not adopted the kernel; the
+Bundle-source preparation uses Prepare runs, source custody, store gating and
+atomic lock publication. Other engines have not adopted the kernel; their
 mechanisms in the adoption map (§10) remain current behavior. QA-group `stop` and `hard_timeout_ms` stay unavailable: contract
 [051](051-bounded-qa-groups-contract.md) keeps refusing them until this
 kernel's run journal, custody and deadlines exist.
@@ -727,6 +728,10 @@ pub struct ProcessSpec {
     label: String,
 }
 
+// Store runs publish engine-journalled file effects through
+// Run::replace_record(dir, name, bytes, ReplaceOpts), retaining their owner gate.
+// DirFd::prepare_child(cx, name) creates source directories no-follow and syncs
+// their parent; SourceDirOpen/SourceDirSync are its fault boundaries.
 impl Custody {
     pub fn spawn(run: &mut Run, spec: ProcessSpec, cx: &EffectContext)
         -> Result<OwnedProcess, SpawnError>;
@@ -1828,8 +1833,8 @@ Current mechanisms and their kernel replacements. Evidence is at main
 | Env-schema commands before the lock; unbounded pipe drain | `crates/effigy-env/src/exec.rs:25-77` | after `Admitted`; bounded capture (K3, K8) |
 | `unsafe set_var` with threads alive | `src/runner/secret_session.rs:33`, `:52`, `:70`; `src/runner/execute/pipeline/managed.rs:229`; `src/runner/execute/sequence_run.rs:1034`, `:1044`; `crates/effigy-context/src/lib.rs:29`, `:45` | explicit context; spawn-spec env (K12) |
 | Task cache rewritten in place | `src/runner/cache/store.rs:58` | `atomic_replace`, or the cut-list removal |
-| Git exclude appended on reads | `crates/effigy-manifest/src/composition.rs:316` | Prepare and Mutate only (R2) |
-| Bundle refresh during reads; blocking cache lock | `crates/effigy-manifest/src/bundles/source.rs:483`, `:520-540` | Prepare class; `Gate(Store bundles)` with deadline |
+| Git exclude registration | Manifest composition reads only; source Prepare records registration before acting | Prepare and Mutate only (R2) |
+| Bundle and catalog source preparation | Checkout pins and immutable source generations; no read-time refresh or cache lock | Prepare run; `Gate(Store bundles)` with deadline; atomic checkout lock publication |
 | Scheduler client signal handler | `src/runner/host_scheduler/submit.rs:205-212` | subscribes to `SignalRouter` cancel; admission shape is Q-006 |
 | QA group records: 20 s staleness, truncating writes | `crates/effigy-runtime/src/qa_group_status.rs:19`, `:275-291` | `Run` rows; `stop` and `hard_timeout_ms` become possible |
 

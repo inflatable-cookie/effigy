@@ -224,6 +224,31 @@ impl DirFd {
     pub fn path(&self) -> &Path {
         &self.path
     }
+    /// Create/open a source directory below an already verified descriptor.
+    /// Prepare and Mutate only; derived paths never follow a symlink.
+    pub fn prepare_child(
+        &self,
+        cx: &crate::ctx::EffectContext,
+        name: &FileName,
+    ) -> Result<Self, FsError> {
+        cx.require(crate::ctx::Capability::SourceStore)
+            .map_err(|_| {
+                FsError::untrusted(&self.path, "source directory requires Prepare or Mutate")
+            })?;
+        cx.require(crate::ctx::Capability::HostAuthority)
+            .map_err(|_| FsError::HostAuthorityRequired)?;
+        cx.operation()
+            .check("source directory")
+            .map_err(|error| FsError::untrusted(&self.path, format!("{error:?}")))?;
+        self.require_local()?;
+        crate::fault_point!(SourceDirOpen)
+            .map_err(|error| FsError::io("source directory", &self.path, &error))?;
+        let directory = self.descend(name.as_str().as_bytes(), Trust::Operator, Some(0o755))?;
+        crate::fault_point!(SourceDirSync)
+            .map_err(|error| FsError::io("source directory sync", &self.path, &error))?;
+        self.sync()?;
+        Ok(directory)
+    }
     pub(crate) fn raw(&self) -> RawFd {
         self.fd.as_raw_fd()
     }
@@ -634,4 +659,56 @@ pub(crate) fn network_magic(magic: u64) -> bool {
             | 0x0102_1997 // 9P
             | 0x00c3_6400 // Ceph
     )
+}
+
+#[cfg(all(test, feature = "fault-injection"))]
+#[test]
+fn source_directory_refuses_wrong_class_guest_symlink_and_faults() {
+    use crate::ctx::*;
+    use crate::fault::{self, Fault, Point};
+    use std::time::{Duration, Instant};
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = DirFd::open(tmp.path()).unwrap();
+    let name = FileName::new("sources").unwrap();
+    let context = |class, placement| {
+        OperationContext::new(
+            Deadline::At(Instant::now() + Duration::from_secs(5)),
+            CancelToken::default(),
+            Limits {
+                capture_tail: 1024,
+                log_rotate: 4096,
+                log_keep: 1,
+                line_max: 1024,
+                queue_bytes: 4096,
+                probe_concurrency: 1,
+            },
+            class,
+            placement,
+        )
+        .effects()
+        .unwrap()
+    };
+    for (class, placement) in [
+        (EffectClass::RefreshDerived, Placement::Host),
+        (EffectClass::Prepare, Placement::Guest),
+    ] {
+        assert!(dir
+            .prepare_child(&context(class, placement), &name)
+            .is_err());
+        assert!(!tmp.path().join("sources").exists());
+    }
+    let cx = context(EffectClass::Prepare, Placement::Host);
+    for point in [Point::SourceDirOpen, Point::SourceDirSync] {
+        fault::arm_point(point, Fault::Enospc);
+        assert!(dir.prepare_child(&cx, &name).is_err());
+        fault::arm(None);
+        assert!(dir.prepare_child(&cx, &name).is_ok());
+    }
+    let foreign = tmp.path().join("foreign");
+    std::fs::create_dir(&foreign).unwrap();
+    std::os::unix::fs::symlink(&foreign, tmp.path().join("link")).unwrap();
+    assert!(dir
+        .prepare_child(&cx, &FileName::new("link").unwrap())
+        .is_err());
+    assert_eq!(std::fs::read_dir(foreign).unwrap().count(), 0);
 }

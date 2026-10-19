@@ -37,7 +37,21 @@ effigy doctor --verbose
 ```
 
 `bundle inspect` reports the active source and materialized bundle root.
-`bundle sync` refreshes git and OCI bundle caches for the current repo.
+`bundle sync` is the only updater for Git, OCI and path source pins. It acquires
+and validates a new generation before atomically selecting it in
+`.effigy/sources.lock.json`. A failed acquisition keeps the previous bytes.
+
+Help, version, completion, tasks, plans, status, config views, doctor and graph
+read paths never fetch or write source state. Before a remote source is prepared,
+run `effigy bundle sync`, bootstrap, or the first `effigy dev`. Later dev runs
+keep the same pin. A changed declaration or a version learned by another explicit
+sync can produce `bundle behind: run `effigy bundle sync``; reads never probe
+the remote to check.
+
+Existing v0.14.1 cache bytes are imported automatically at the first Prepare.
+For local bundle development, run `effigy bundle sync` after editing the source.
+Declared `[catalog.sources.<name>]` use the same typed grammar and checkout lock;
+see [the source contract](../knowledge/contracts/020-remote-bundle-sources-git-and-oci-delivery-contract.md).
 
 ## Starter Boundary
 
@@ -54,7 +68,7 @@ exported manifest fragments, Rhai helpers, and onboarding docs.
 ## Adoption Checklist
 
 1. Add a typed `[bundle].base` source.
-2. Run `effigy bundle inspect`.
+2. Run `effigy bundle sync`, then `effigy bundle inspect`.
 3. Run `effigy config --inspect` and check the composed manifest.
 4. Run `effigy tasks` and `effigy doctor --verbose`.
 5. Keep product-specific starter or migration checklists in the external

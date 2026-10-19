@@ -1037,3 +1037,52 @@ fn run_supervision_matrix_recovery_stop_and_attachment_release_are_idempotent() 
         }
     }
 }
+
+#[test]
+fn run_store_record_uses_owner_gate_and_atomic_replace_faults() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let owner = ResourceId::store(Scope::Machine, "bundles").unwrap();
+    let mut fake = Fake::new(home.path());
+    let mut run = begin(&cx, &root, owner, 1, &mut fake);
+    let dir = crate::fs::DirFd::open(home.path()).unwrap();
+    let name = crate::fs::FileName::new("sources.lock.json").unwrap();
+    let ticket = run
+        .intend(EffectSpec {
+            target: run.fence().clone(),
+            kind: "source-lock".into(),
+            payload: Value::Null,
+            settlement: Settlement::Retain,
+            required: false,
+        })
+        .unwrap();
+    run.replace_record(
+        &dir,
+        &name,
+        b"previous",
+        crate::record::ReplaceOpts::default(),
+    )
+    .unwrap();
+    run.applied(&ticket, Value::Null).unwrap();
+    #[cfg(feature = "fault-injection")]
+    {
+        crate::fault::arm_point(
+            crate::fault::Point::ReplaceRename,
+            crate::fault::Fault::Enospc,
+        );
+        assert!(run
+            .replace_record(&dir, &name, b"next", crate::record::ReplaceOpts::default())
+            .is_err());
+        crate::fault::arm(None);
+        assert_eq!(
+            std::fs::read(home.path().join("sources.lock.json")).unwrap(),
+            b"previous"
+        );
+    }
+    run.finish(WorkloadOutcome::Succeeded).unwrap();
+    assert_eq!(
+        run.settle(&cleanup(&cx), &mut fake).unwrap().cleanup(),
+        CleanupOutcome::Complete
+    );
+}

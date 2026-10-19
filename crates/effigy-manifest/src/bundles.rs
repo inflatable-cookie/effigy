@@ -10,12 +10,11 @@ use crate::TASK_MANIFEST_FILE;
 mod source;
 
 pub use source::{
-    inspect_bundle_source, sync_bundle_source, BundleSourceInspectReport, BundleSyncReport,
+    bundle_sources_need_preparation, inspect_bundle_source, prepare_bundle_sources,
+    resolve_catalog_source, sync_bundle_source, BundleSourceInspectReport, BundleSyncReport,
+    SourcePreparation, SourceSettlement,
 };
-use source::{
-    resolve_bundle_selection, resolve_materialized_bundle_source, BundleSelection,
-    ResolvedBundleSource,
-};
+use source::{resolve_bundle_selection, resolve_materialized_bundle_source, ResolvedBundleSource};
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct BundleSpec {
@@ -57,6 +56,7 @@ pub(crate) fn apply_bundle_defaults(
     manifest_path: &Path,
     current: &mut Value,
     extend_paths: &[String],
+    materialized: Option<&Path>,
 ) -> Result<Option<AppliedBundleDefaults>, ManifestError> {
     let Some(bundle): Option<crate::config_sections::ManifestBundleConfig> = current
         .as_table()
@@ -75,12 +75,19 @@ pub(crate) fn apply_bundle_defaults(
 
     let selection = resolve_bundle_selection(manifest_path, &bundle)?;
     let normalized_inputs = bundle.inputs.clone();
-    let resolved_source = resolve_materialized_bundle_source(manifest_path, &selection)?;
-    let (mut defaults, source_path) = resolve_bundle_defaults_from_source(
+    let resolved_source = match materialized {
+        Some(root) => ResolvedBundleSource {
+            source_type: selection.kind(),
+            local_path: root.into(),
+            source_path: selection.label(),
+            version_hint: None,
+            stale: false,
+        },
+        None => resolve_materialized_bundle_source(manifest_path, &selection)?,
+    };
+    let (mut defaults, source_path) = resolve_local_bundle_defaults(
         manifest_path,
-        current,
-        &selection,
-        &resolved_source,
+        &resolved_source.local_path,
         &normalized_inputs,
     )?;
     let bundle_extend_paths = take_bundle_extend_paths(manifest_path, &mut defaults)?;
@@ -101,27 +108,6 @@ pub(crate) fn apply_bundle_defaults(
         source_path,
         bundle_root: resolved_source.local_path,
     }))
-}
-
-fn resolve_bundle_defaults_from_source(
-    manifest_path: &Path,
-    _current: &Value,
-    selection: &BundleSelection,
-    source: &ResolvedBundleSource,
-    normalized_inputs: &BTreeMap<String, Value>,
-) -> Result<(Value, PathBuf), ManifestError> {
-    match (selection, source.source_type) {
-        (BundleSelection::Path { .. }, BundleSourceType::Path)
-        | (BundleSelection::Git { .. }, BundleSourceType::Git)
-        | (BundleSelection::Oci { .. }, BundleSourceType::Oci) => {
-            resolve_local_bundle_defaults(manifest_path, &source.local_path, normalized_inputs)
-        }
-        _ => Err(ManifestError::Compose {
-            path: manifest_path.to_path_buf(),
-            detail: "bundle source resolution mismatch between selection and materialization"
-                .to_owned(),
-        }),
-    }
 }
 
 #[derive(Debug, Clone)]
