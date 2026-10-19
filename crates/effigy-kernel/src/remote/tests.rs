@@ -369,7 +369,7 @@ fn expected(run: &Run<'_>) -> RemoteRegistration {
         ..reg()
     }
 }
-fn model_launch(home: &Path, ack: bool) -> RemoteReply {
+fn model_launch(home: &Path, ack: bool, keep_client: bool) -> RemoteReply {
     let cwd = home.to_owned();
     RemoteReply::Launch(Box::new(move |command| {
         assert_eq!(command.argv, vec![OsString::from("workload")]);
@@ -381,7 +381,9 @@ fn model_launch(home: &Path, ack: bool) -> RemoteReply {
         let mut env = command.env;
         let remote_nonce = env.remove(&OsString::from("EFFIGY_CUSTODY_NONCE")).unwrap();
         env.insert("TEST_REMOTE_NONCE".into(), remote_nonce);
-        let script = if ack {
+        let script = if ack && keep_client {
+            "printf '\\036EFFIGY-CUSTODY v1 %s 42 42 100 boot-a 401\\n' \"$TEST_REMOTE_NONCE\" >&2; exec /bin/sleep 60"
+        } else if ack {
             "printf '\\036EFFIGY-CUSTODY v1 %s 42 42 100 boot-a 401\\n' \"$TEST_REMOTE_NONCE\" >&2; printf 'user-output\\n' >&2; exit 0"
         } else {
             "exec /bin/sleep 60"
@@ -416,7 +418,10 @@ fn launch_steps(home: &Path, ack: bool) -> Vec<Step<RemoteCall, RemoteReply>> {
             RemoteCall::Identity(ContainerTarget("selected".into())),
             RemoteReply::Identity(Observed::Verified(container(), evidence())),
         ),
-        step(RemoteCall::Launch(container()), model_launch(home, ack)),
+        step(
+            RemoteCall::Launch(container()),
+            model_launch(home, ack, false),
+        ),
     ]
 }
 #[test]
@@ -1089,4 +1094,42 @@ fn linux_wrapper_emits_real_namespace_and_start_identity_before_exec() {
     assert!(receipt.session_isolated);
     assert!(receipt.pid_ns > 0);
     assert!(receipt.leader_start_ticks > 0);
+}
+#[test]
+fn killed_exec_client_leaves_remote_alive_until_independent_settlement() {
+    let home = tempfile::tempdir().unwrap();
+    let cx = cx();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut steps = launch_steps(home.path(), true);
+    steps[1].reply = model_launch(home.path(), true, true);
+    steps[1].effects = vec![("owned-remote".into(), json!("alive"))];
+    let mut adapter = Adapter(remote(steps));
+    let mut run = begin(&cx, &root, &mut adapter);
+    let r = expected(&run);
+    let mut remote = RemoteCustody::launch(&mut run, launch_spec(), &cx, &mut adapter.0).unwrap();
+    assert!(matches!(
+        remote.client().forward(libc::SIGKILL),
+        Observed::Verified(_, _)
+    ));
+    let killed = remote
+        .client()
+        .wait(&cx.operation().child(Duration::from_secs(1)));
+    assert_ne!(killed.verified().unwrap().code, 0);
+    assert_eq!(adapter.0.tape.resources()["owned-remote"], json!("alive"));
+    assert!(run.finish(WorkloadOutcome::Succeeded).is_err());
+    let mut cleanup_steps = closed_steps(&r);
+    cleanup_steps[4].effects = vec![("owned-remote".into(), json!("closed"))];
+    for step in cleanup_steps {
+        adapter.0.tape.expect(step)
+    }
+    let outcome = run
+        .settle(
+            &cx.operation().cleanup(Duration::from_secs(3)).unwrap(),
+            &mut adapter,
+        )
+        .unwrap();
+    assert_eq!(outcome.cleanup(), CleanupOutcome::Complete);
+    assert_eq!(adapter.0.tape.resources()["owned-remote"], json!("closed"));
+    assert_eq!(adapter.0.tape.resources()["foreign"], json!("alive"));
+    adapter.0.tape.assert_finished();
 }
