@@ -43,9 +43,23 @@ impl Fixture {
             .env("NO_COLOR", "1")
             .env_remove("EFFIGY_WORKSPACE_CONTAINER")
             .env_remove("EFFIGY_CONTAINER_HANDOFF")
+            .env_remove("EFFIGY_ACTIVE_VERSION")
             .stdout(Stdio::from(fs::File::create(&stdout).unwrap()))
-            .stderr(Stdio::from(fs::File::create(&stderr).unwrap()))
-            .process_group(0);
+            .stderr(Stdio::from(fs::File::create(&stderr).unwrap()));
+        // A queued CLI has no controlling terminal. Give each child its own
+        // session as well as its own process group so the proof is independent
+        // of the test runner's terminal and deadline cleanup stays local.
+        // SAFETY: after fork this callback only makes the async-signal-safe
+        // setsid syscall and reads errno on failure; it takes no locks and
+        // performs no allocation. This child is not yet a process-group leader.
+        unsafe {
+            command.pre_exec(|| {
+                if libc::setsid() == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
         for (name, value) in extra {
             command.env(name, value);
         }
@@ -210,6 +224,33 @@ fn discovery_is_write_free_and_cannot_reach_a_hung_source_remote() {
         }
     }
 }
+#[test]
+fn discovery_never_waits_for_presentation_helpers() {
+    let fixture = Fixture::new();
+    fixture.write_path_bundle();
+    let tools = fixture.owner.path().join("tools");
+    fs::create_dir(&tools).unwrap();
+    for name in ["tput", "git"] {
+        let executable = tools.join(name);
+        fs::write(
+            &executable,
+            "#!/bin/sh\nprintf called > \"$HOME/discovery-helper-called\"\nsleep 60\n",
+        )
+        .unwrap();
+        fs::set_permissions(executable, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let path =
+        std::env::join_paths([tools, PathBuf::from("/usr/bin"), PathBuf::from("/bin")]).unwrap();
+    for args in [&["--help"][..], &["dev", "--plan"][..], &["--version"][..]] {
+        let (ok, output) = fixture.run(args, &[("PATH", Path::new(&path))], Duration::from_secs(8));
+        assert!(ok, "{output}");
+        assert!(
+            !fixture.home.join("discovery-helper-called").exists(),
+            "{output}"
+        );
+    }
+}
+
 #[test]
 fn sync_commits_validated_bytes_and_dev_plan_never_moves_the_pin() {
     let fixture = Fixture::new();

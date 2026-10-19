@@ -7,6 +7,7 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- Keep CLI presentation local and bounded: banner sizing never launches `tput`, and version metadata reads environment or installed stamps without running Git. Unstamped development binaries report the package version.
 - Graph reads, documentation context and doctor never refresh or create graph
   files. Explicit `graph index` uses a kernel store gate and migrates existing
   WAL databases to rollback journaling. Until migration, reads report stale

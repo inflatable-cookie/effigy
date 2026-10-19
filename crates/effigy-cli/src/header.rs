@@ -94,9 +94,11 @@ fn cli_header_terminal_cols() -> Option<usize> {
     {
         return Some(cols);
     }
-    crossterm::terminal::size()
+    // `size()` falls back to spawning `tput` without a deadline. Discovery
+    // must stay local and bounded even without a controlling terminal.
+    crossterm::terminal::window_size()
         .ok()
-        .map(|(cols, _)| cols as usize)
+        .map(|size| size.columns as usize)
         .filter(|cols| *cols > 0)
 }
 

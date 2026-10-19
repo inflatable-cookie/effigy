@@ -84,6 +84,8 @@ pub fn package_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
+/// Return the environment or installed build stamp, falling back to semver.
+/// This presentation read never infers identity by invoking Git.
 pub fn active_version() -> String {
     active_version_with_env(std::env::var(ACTIVE_VERSION_ENV).ok())
 }
@@ -97,9 +99,10 @@ fn active_version_with_env(env_override: Option<String>) -> String {
     }
     std::env::current_exe()
         .ok()
-        .and_then(|path| {
-            read_active_version_file_for(&path).or_else(|| infer_repo_local_version(&path))
-        })
+        // Discovery reads recorded identity only. Inferring a debug build's
+        // identity via `git status` can wait on hooks or locks and refresh the
+        // index, even for help, version and plans.
+        .and_then(|path| read_active_version_file_for(&path))
         .unwrap_or_else(|| package_version().to_owned())
 }
 
