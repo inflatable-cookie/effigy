@@ -67,6 +67,37 @@ pub fn resolve_catalog_env_schema(
     config: SchemaSupportConfig<'_>,
     runtime_override: Option<&Path>,
 ) -> Result<Option<ResolvedEnv>, SchemaSupportError> {
+    resolve_catalog_env_schema_with(catalog_root, config, runtime_override, None)
+}
+
+/// Whether [`resolve_catalog_env_schema`] would load a schema: a pure check
+/// so a caller can plan the run that executes its `exec()` values.
+pub fn catalog_env_schema_planned(
+    catalog_root: &Path,
+    config: SchemaSupportConfig<'_>,
+    runtime_override: Option<&Path>,
+) -> bool {
+    if runtime_override.is_none() && config.config_enabled == Some(false) {
+        return false;
+    }
+    runtime_override
+        .map(|path| resolve_schema_path(catalog_root, path))
+        .or_else(|| {
+            config
+                .config_schema
+                .map(|path| resolve_schema_path(catalog_root, Path::new(path)))
+        })
+        .unwrap_or_else(|| catalog_root.join(".env.schema"))
+        .is_file()
+}
+
+/// [`resolve_catalog_env_schema`] with the owning run's `exec()` runner.
+pub fn resolve_catalog_env_schema_with(
+    catalog_root: &Path,
+    config: SchemaSupportConfig<'_>,
+    runtime_override: Option<&Path>,
+    exec: Option<&dyn crate::ExecRunner>,
+) -> Result<Option<ResolvedEnv>, SchemaSupportError> {
     validate_schema_config(&config)?;
 
     if runtime_override.is_none() && config.config_enabled == Some(false) {
@@ -105,11 +136,12 @@ pub fn resolve_catalog_env_schema(
 
     let exec_timeout = config.config_exec_timeout_secs.unwrap_or(30);
 
-    Ok(crate::load_and_resolve(
+    Ok(crate::load_and_resolve_with(
         &schema_path,
         &dotenv_overrides,
         Duration::from_secs(exec_timeout),
         catalog_root,
+        exec,
     )
     .map(Some)?)
 }

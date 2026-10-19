@@ -231,6 +231,7 @@ pub(in crate::runner) fn run_managed_task(
         &selection.catalog.catalog_root,
         preflight.runtime_args_raw.env_schema_override.as_deref(),
         selection.catalog.manifest.env_schema.as_ref(),
+        None,
     )?;
     let container_repo_root =
         binding_resolution.exec_working_dir(&selection.catalog.catalog_root)?;
@@ -1244,6 +1245,7 @@ fn managed_role_schema_env(
         declaring.map_or(catalog_root, |catalog| catalog.catalog_root.as_path()),
         runtime_env_schema_override,
         declaring.and_then(|catalog| catalog.manifest.env_schema.as_ref()),
+        None,
     )?;
     Ok(resolved
         .map(|resolved| resolved.plain_env())

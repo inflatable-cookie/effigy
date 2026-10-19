@@ -24,7 +24,7 @@ use crate::runner::container_runtime_prep::{
 use crate::runner::error::RunnerError;
 use crate::runner::execute::nested;
 use crate::runner::task_engine::{
-    refuse_live_legacy_holder, resolve_lock_wait_ms, TaskRun, TaskRunRequest, TaskTarget,
+    refuse_live_legacy_holder, resolve_lock_wait_ms, RunExec, TaskRun, TaskRunRequest, TaskTarget,
 };
 use crate::runner::execute::render;
 use crate::runner::execute::workspace_seeded::{
@@ -40,7 +40,7 @@ use effigy_cli::{SecretsArgs, SecretsSubcommand};
 use effigy_containers::{load_container_policy, ContainerAction, ContainerComposeInvocationPlan};
 use effigy_env::resolver::ResolvedEnv;
 use effigy_env::schema_support::{
-    resolve_catalog_env_schema as shared_resolve_env_schema, SchemaSupportConfig,
+    resolve_catalog_env_schema_with as shared_resolve_env_schema, SchemaSupportConfig,
     SchemaSupportError,
 };
 use effigy_env::secret::SecretString;
@@ -71,28 +71,39 @@ pub(in crate::runner) fn run_standard_task(
     let inherited_managed_run = std::env::var(effigy_managed::RUN_TOKEN_ENV)
         .ok()
         .filter(|token| !token.is_empty());
+    let env_schema_catalog = effigy_manifest::env_schema_declaring_catalog(
+        &preflight.catalogs,
+        &selection.catalog.catalog_root,
+    );
+    let env_schema_root = env_schema_catalog.map_or(
+        selection.catalog.catalog_root.as_path(),
+        |catalog| catalog.catalog_root.as_path(),
+    );
+    let env_schema_config =
+        env_schema_catalog.and_then(|catalog| catalog.manifest.env_schema.as_ref());
+    let env_schema_override = preflight.runtime_args_raw.env_schema_override.as_deref();
     let mut run = TaskRun::begin(TaskRunRequest {
         target: &target,
         lock_wait_ms: resolve_lock_wait_ms(preflight.runtime_args_raw.lock_wait_ms)?,
-        custody: runs_plain_host_command(preflight, selection),
+        custody: runs_plain_host_command(preflight, selection)
+            || env_schema_planned(env_schema_root, env_schema_override, env_schema_config),
         managed_run_token: inherited_managed_run.as_deref(),
         args: &preflight.runtime_args_exec.passthrough,
     })?;
     let mut workload = None;
-    // Admitted commits before env-schema commands run (K3): they are the
-    // run's first effects, and a second spelling waits on the gate instead.
+    // Admitted commits before env-schema commands run (K3): each `exec()`
+    // value is an effect of this run, and a second spelling waits on the
+    // gate instead of running them too.
     let result = (|| {
-        let env_schema_catalog = effigy_manifest::env_schema_declaring_catalog(
-            &preflight.catalogs,
-            &selection.catalog.catalog_root,
-        );
-        let env_schema_resolved = resolve_env_schema_if_present(
-            env_schema_catalog.map_or(selection.catalog.catalog_root.as_path(), |catalog| {
-                catalog.catalog_root.as_path()
-            }),
-            preflight.runtime_args_raw.env_schema_override.as_deref(),
-            env_schema_catalog.and_then(|catalog| catalog.manifest.env_schema.as_ref()),
-        )?;
+        let env_schema_resolved = {
+            let exec = RunExec::new(&mut run);
+            resolve_env_schema_if_present(
+                env_schema_root,
+                env_schema_override,
+                env_schema_config,
+                Some(&exec),
+            )?
+        };
         let context = ExecutionTaskContext::new(
             preflight,
             selection,
@@ -993,14 +1004,30 @@ pub(in crate::runner) fn resolve_env_schema_if_present(
     catalog_root: &Path,
     runtime_override: Option<&Path>,
     config: Option<&ManifestEnvSchemaConfig>,
+    exec: Option<&dyn effigy_env::ExecRunner>,
 ) -> Result<Option<ResolvedEnv>, RunnerError> {
-    let shared_config = SchemaSupportConfig {
+    shared_resolve_env_schema(catalog_root, schema_config(config), runtime_override, exec)
+        .map_err(map_schema_support_error)
+}
+
+fn env_schema_planned(
+    catalog_root: &Path,
+    runtime_override: Option<&Path>,
+    config: Option<&ManifestEnvSchemaConfig>,
+) -> bool {
+    effigy_env::schema_support::catalog_env_schema_planned(
+        catalog_root,
+        schema_config(config),
+        runtime_override,
+    )
+}
+
+fn schema_config(config: Option<&ManifestEnvSchemaConfig>) -> SchemaSupportConfig<'_> {
+    SchemaSupportConfig {
         config_schema: config.and_then(|c| c.schema.as_deref()),
         config_enabled: config.and_then(|c| c.enabled),
         config_exec_timeout_secs: config.and_then(|c| c.exec_timeout),
-    };
-    shared_resolve_env_schema(catalog_root, shared_config, runtime_override)
-        .map_err(map_schema_support_error)
+    }
 }
 
 fn map_schema_support_error(error: SchemaSupportError) -> RunnerError {

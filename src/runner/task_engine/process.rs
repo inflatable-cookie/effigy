@@ -128,6 +128,99 @@ pub(in crate::runner) fn run_plain(
     })
 }
 
+/// Runs env-schema `exec()` values as effects of the task's own run: each
+/// command is journalled before it starts (K3), bounded by its timeout and
+/// its capture limits (K8), and its group is stopped by the run's settle.
+pub(in crate::runner) struct RunExec<'r> {
+    run: std::cell::RefCell<&'r mut TaskRun>,
+}
+
+impl<'r> RunExec<'r> {
+    pub(in crate::runner) fn new(run: &'r mut TaskRun) -> Self {
+        Self {
+            run: std::cell::RefCell::new(run),
+        }
+    }
+}
+
+impl effigy_env::ExecRunner for RunExec<'_> {
+    fn run(
+        &self,
+        command: &str,
+        timeout: Duration,
+        cwd: &Path,
+    ) -> Result<String, effigy_env::EnvSchemaError> {
+        let spawn_error = |error: String| effigy_env::EnvSchemaError::ExecSpawn {
+            command: command.to_owned(),
+            error: std::io::Error::other(error),
+        };
+        let mut run = self.run.borrow_mut();
+        let spec = ProcessSpec {
+            argv: vec![
+                OsString::from("/bin/sh"),
+                OsString::from("-c"),
+                OsString::from(command),
+            ],
+            cwd: cwd.to_path_buf(),
+            env: environment(cwd, Vec::new()).map_err(|error| spawn_error(error.to_string()))?,
+            grace: Duration::from_secs(1),
+            lifetime: Lifetime::Finite(timeout),
+            terminal: Terminal::None,
+            label: "env-schema exec".to_owned(),
+        };
+        let _waiting = CustodyWait::enter();
+        let cx = kernel::effects();
+        let mut process = Custody::spawn(run.run_mut(), spec, &cx)
+            .map_err(|error| spawn_error(format!("{error:?}")))?;
+        let mut stdout = Vec::new();
+        let mut stderr = Tail::default();
+        let exit = loop {
+            if !kernel::poll_router().is_empty() || process.expired() {
+                break None;
+            }
+            let (out, err) = process.take_stream_output();
+            stdout.extend_from_slice(&out);
+            stderr.push(&err);
+            if stdout.len() > effigy_env::STDOUT_MAX_BYTES {
+                break None;
+            }
+            if let Observed::Verified(exit, _) = process.poll() {
+                break Some(exit);
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        let (out, err) = process.take_stream_output();
+        stdout.extend_from_slice(&out);
+        stderr.push(&err);
+        let Some(exit) = exit else {
+            if let Ok(cleanup) = kernel::cleanup() {
+                process.stop(&cleanup);
+            }
+            if stdout.len() > effigy_env::STDOUT_MAX_BYTES {
+                return Err(effigy_env::EnvSchemaError::ExecFailed {
+                    command: command.to_owned(),
+                    code: None,
+                    stderr: format!("stdout exceeded {} bytes", effigy_env::STDOUT_MAX_BYTES),
+                });
+            }
+            return Err(effigy_env::EnvSchemaError::ExecTimeout {
+                command: command.to_owned(),
+                timeout,
+            });
+        };
+        let _ = process.complete(run.run_mut(), exit);
+        if exit.code != 0 {
+            let tail = &stderr.bytes[stderr.bytes.len().saturating_sub(effigy_env::STDERR_TAIL_BYTES)..];
+            return Err(effigy_env::EnvSchemaError::ExecFailed {
+                command: command.to_owned(),
+                code: Some(exit.code),
+                stderr: String::from_utf8_lossy(tail).trim().to_owned(),
+            });
+        }
+        Ok(String::from_utf8_lossy(&stdout).trim().to_owned())
+    }
+}
+
 /// Exit 0 succeeds. A forwarded signal, or a group ended by INT, TERM or
 /// HUP, is a cancellation with that signal; anything else is a failure.
 pub(in crate::runner) fn workload(code: Option<i32>, forwarded: Option<i32>) -> WorkloadOutcome {

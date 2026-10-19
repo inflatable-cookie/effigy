@@ -261,3 +261,39 @@ run = "printf ok"
     assert!(rendered.contains("was removed in v0.15"), "{rendered}");
     assert!(rendered.contains("effigy tasks status"), "{rendered}");
 }
+
+/// Env-schema `exec()` values run only after admission (K3): a run refused
+/// by a live holder executes none of them.
+#[test]
+fn env_schema_exec_runs_only_after_the_gate_admits_the_run() {
+    let _guard = lock_test();
+    let root = temp_workspace("lock-env-schema-after-admission");
+    write_root_manifest(
+        &root,
+        r#"[tasks.dev]
+run = "printf ok"
+"#,
+    );
+    std::fs::write(
+        root.join(".env.schema"),
+        "# @type=string\nSTAMP=exec('echo ran >> exec.log; echo value')\n",
+    )
+    .expect("schema");
+    let holder = crate::runner::task_engine::TaskRun::hold_for_tests(&root, "dev", None);
+    run_dev(&root, &[]).expect_err("the live holder refuses the run");
+    assert!(
+        !root.join("exec.log").exists(),
+        "a refused run must not execute env-schema commands"
+    );
+    holder.close(effigy_kernel::outcome::WorkloadOutcome::Succeeded);
+
+    run_dev(&root, &[]).expect("admitted run resolves its schema");
+    assert_eq!(
+        std::fs::read_to_string(root.join("exec.log")).expect("exec log"),
+        "ran\n"
+    );
+    assert_eq!(
+        crate::runner::task_engine::root_task_state_for_tests(&root, "dev"),
+        "succeeded"
+    );
+}

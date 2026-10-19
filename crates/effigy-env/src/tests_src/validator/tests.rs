@@ -6,12 +6,13 @@ use super::validate_resolved_env;
 use crate::ast::{EntryAnnotations, EnvSchema, EnvSchemaEntry, EnvType, EnvValueExpr};
 use crate::resolver::{resolve_schema, ResolutionContext};
 
-fn make_context() -> ResolutionContext {
+fn make_context() -> ResolutionContext<'static> {
     ResolutionContext {
         process_env: BTreeMap::new(),
         dotenv_overrides: BTreeMap::new(),
         exec_timeout: Duration::from_secs(5),
         project_root: PathBuf::from("/tmp"),
+        exec: None,
     }
 }
 

@@ -5,23 +5,24 @@ use std::time::Duration;
 use super::{resolve_schema, ResolutionContext, ResolvedSource};
 use crate::ast::{EntryAnnotations, EnvSchema, EnvSchemaEntry, EnvValueExpr, TemplatePart};
 
-fn make_context() -> ResolutionContext {
+fn make_context() -> ResolutionContext<'static> {
     ResolutionContext {
         process_env: BTreeMap::new(),
         dotenv_overrides: BTreeMap::new(),
         exec_timeout: Duration::from_secs(5),
         project_root: PathBuf::from("/tmp"),
+        exec: None,
     }
 }
 
-fn make_context_with_timeout(timeout: Duration) -> ResolutionContext {
+fn make_context_with_timeout(timeout: Duration) -> ResolutionContext<'static> {
     ResolutionContext {
         exec_timeout: timeout,
         ..make_context()
     }
 }
 
-fn make_context_with_env(vars: &[(&str, &str)]) -> ResolutionContext {
+fn make_context_with_env(vars: &[(&str, &str)]) -> ResolutionContext<'static> {
     let mut ctx = make_context();
     for (k, v) in vars {
         ctx.process_env.insert((*k).to_owned(), (*v).to_owned());
@@ -29,7 +30,7 @@ fn make_context_with_env(vars: &[(&str, &str)]) -> ResolutionContext {
     ctx
 }
 
-fn make_context_with_dotenv(vars: &[(&str, &str)]) -> ResolutionContext {
+fn make_context_with_dotenv(vars: &[(&str, &str)]) -> ResolutionContext<'static> {
     let mut ctx = make_context();
     for (k, v) in vars {
         ctx.dotenv_overrides
