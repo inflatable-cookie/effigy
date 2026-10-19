@@ -16,7 +16,7 @@ owner = "docs/knowledge/contracts/020-remote-bundle-sources-git-and-oci-delivery
 terms = ["EFFIGY_GIT_BUNDLE_REMOTE_CHECK_TTL_SECS"]
 paths = []
 config_keys = []
-allow = ["CHANGELOG.md", "crates/effigy-manifest/src/bundles/source/prepare.rs"]
+allow = ["CHANGELOG.md", "crates/effigy-manifest/src/bundles/source/prepare.rs", "tests/scripts/resolver-shadow-diff.py"]
 
 [[retired]]
 id = "effigy-resolution-owned-port-and-mount-preparation"

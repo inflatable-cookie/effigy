@@ -56,6 +56,8 @@ def run(binary: str, cwd: Path, home: Path, args: list) -> dict:
     env = {
         "HOME": str(home),
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        # The v0.14 binary under comparison still refreshes bundles on reads
+        # unless this retired setting holds it off; v0.15 ignores it.
         "EFFIGY_GIT_BUNDLE_REMOTE_CHECK_TTL_SECS": "999999999",
         "EFFIGY_OUTPUT": "plain",
         "NO_COLOR": "1",
