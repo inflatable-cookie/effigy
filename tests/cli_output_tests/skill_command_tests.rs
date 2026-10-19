@@ -283,8 +283,7 @@ fn skill_env_files_and_task_paths_are_target_relative() {
         "SKILL_ENV_VALUE=from-consumer\n",
     )
     .expect("write target env file");
-    std::fs::write(consumer.join("input.txt"), "consumer-input\n")
-        .expect("write target input");
+    std::fs::write(consumer.join("input.txt"), "consumer-input\n").expect("write target input");
 
     let env = run_skill(
         &consumer,

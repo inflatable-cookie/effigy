@@ -38,7 +38,7 @@ fn run_manifest_task_builtin_watch_rejects_concurrent_watch_owner_for_same_targe
         holder_scope: "watch:build",
         lock_label: "watch lock for owner=effigy target=build",
         expected_scope: "task:watch:build",
-        expected_remediation: "--lock-wait-ms",
+        expected_remediation: "effigy tasks status --all",
         setup: setup_watch_lock_conflict_target,
     }];
 

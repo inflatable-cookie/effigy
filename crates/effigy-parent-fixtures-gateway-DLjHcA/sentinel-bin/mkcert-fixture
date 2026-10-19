@@ -1,0 +1,68 @@
+#!/bin/sh
+set -eu
+if [ "${1-}" = "-help" ]; then
+    exit 0
+fi
+if [ "${1-}" = "-install" ]; then
+    printf '%s %s\n' "$0" "$*" >> "$EFFECT_LOG"
+    exit 97
+fi
+if [ -z "${CAROOT-}" ] || [ "$CAROOT" = "${FOREIGN_CAROOT-}" ]; then
+    printf '%s %s\n' "$0" "unexpected CAROOT=${CAROOT-}" >> "$EFFECT_LOG"
+    exit 97
+fi
+cert=
+key=
+domain=
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        -cert-file) cert=$2; shift 2 ;;
+        -key-file) key=$2; shift 2 ;;
+        *) domain=$1; shift ;;
+    esac
+done
+if [ -z "$cert" ] || [ -z "$key" ] || [ -z "$domain" ]; then
+    printf '%s\n' "unsupported mkcert fixture arguments" >> "$EFFECT_LOG"
+    exit 97
+fi
+mkdir -p "$CAROOT"
+if [ ! -f "$CAROOT/rootCA.pem" ] || [ ! -f "$CAROOT/rootCA-key.pem" ]; then
+    ca_config="$CAROOT/rootCA.cnf"
+    cat > "$ca_config" <<'EOF'
+[req]
+distinguished_name=dn
+x509_extensions=v3_ca
+prompt=no
+[dn]
+CN=Effigy disposable fixture CA
+[v3_ca]
+basicConstraints=critical,CA:TRUE
+keyUsage=critical,keyCertSign,cRLSign
+EOF
+    openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 3650 \
+        -keyout "$CAROOT/rootCA-key.pem" -out "$CAROOT/rootCA.pem" \
+        -config "$ca_config"
+    rm -f "$ca_config"
+fi
+csr="$cert.csr"
+ext="$cert.ext"
+cat > "$ext" <<EOF
+[req]
+distinguished_name=dn
+req_extensions=v3_req
+prompt=no
+[dn]
+CN=$domain
+[v3_req]
+subjectAltName=DNS:$domain
+basicConstraints=critical,CA:FALSE
+keyUsage=critical,digitalSignature,keyEncipherment
+extendedKeyUsage=serverAuth
+EOF
+openssl req -newkey rsa:2048 -nodes -sha256 \
+    -keyout "$key" -out "$csr" -config "$ext"
+openssl x509 -req -in "$csr" -CA "$CAROOT/rootCA.pem" \
+    -CAkey "$CAROOT/rootCA-key.pem" -CAcreateserial -sha256 -days 365 \
+    -extfile "$ext" -extensions v3_req -out "$cert"
+rm -f "$csr" "$ext"
+printf '%s|%s\n' "$CAROOT" "$domain" >> "$MKCERT_CALLS"

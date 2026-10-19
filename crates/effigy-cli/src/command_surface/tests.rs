@@ -89,8 +89,6 @@ const CONTRACT_GROUP_INVENTORIES: &[(HelpGroup, &[&str])] = &[
             "effigy <managed-task> --headless",
             "effigy tasks",
             "effigy tasks migrate",
-            "effigy tasks unlock",
-            "effigy tasks cache",
             "effigy drafts",
             "effigy draft",
             "effigy test",

@@ -43,7 +43,7 @@ contexts.
 | --- | --- | --- |
 | `id` | 5.1 | typed-selector lock names (`src/runner/manifest.rs`), FNV status keys (`crates/effigy-execution/src/task_status.rs`), `safe_component` slugs, runtime-scope tokens (`crates/effigy-core/src/worktree_scope.rs`) |
 | `ctx` | 5.2, 5.3 | ad hoc budgets (`src/runner/graph_time_budget.rs`, `crates/effigy-env/src/exec.rs`) |
-| `gate` | 5.4 | the task lease (`src/runner/locking/io.rs`), `RouteTableLock`, `fs2` sites; keeps the flock rationale in `crates/effigy-codegraph/src/refresh.rs` |
+| `gate` | 5.4 | the task lease (replaced by task gates in effigy#217), `RouteTableLock`, `fs2` sites; keeps the flock rationale in `crates/effigy-codegraph/src/refresh.rs` |
 | `store` | 5.5 | seven atomic-write helpers; the fsynced journal in `crates/effigy-host-run/src/secure_fs.rs` is the model |
 | `run` | 5.6, 5.9 | `session.json`, task status records, environment markers, `stop.requested`, transition receipts |
 | `custody` | 5.7 | `crates/effigy-process`, `src/runner/owned_children.rs`, the retained host child identity in `src/runner/host_process.rs` |

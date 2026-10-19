@@ -71,8 +71,9 @@ fn slash_selectors_never_enter_help_group_or_builtin_parsing() {
     assert_eq!(
         parse(&["admin/test"]),
         Command::Task(TaskInvocation {
+            // A prefixed built-in keeps its own flag positions: no boundary.
             name: "admin/test".to_owned(),
-            args: vec![effigy_core::task_args::TASK_ARGS_BOUNDARY.to_owned()],
+            args: Vec::new(),
         })
     );
     assert_eq!(

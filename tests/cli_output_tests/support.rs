@@ -272,10 +272,7 @@ pub(super) fn run_json_cli_command(root: &Path, args: &[&str]) -> Output {
     for arg in args {
         command.arg(arg);
     }
-    command
-        .env("NO_COLOR", "1")
-        .output()
-        .expect("run effigy")
+    command.env("NO_COLOR", "1").output().expect("run effigy")
 }
 
 pub(super) fn run_cli_command(root: &Path, args: &[&str]) -> Output {
@@ -284,10 +281,7 @@ pub(super) fn run_cli_command(root: &Path, args: &[&str]) -> Output {
     for arg in args {
         command.arg(arg);
     }
-    command
-        .env("NO_COLOR", "1")
-        .output()
-        .expect("run effigy")
+    command.env("NO_COLOR", "1").output().expect("run effigy")
 }
 
 pub(super) fn parse_stdout_json(output: &Output) -> Value {

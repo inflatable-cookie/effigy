@@ -23,10 +23,7 @@ fn run_effigy(root: &Path, args: &[&str]) -> std::process::Output {
     for arg in args {
         command.arg(arg);
     }
-    command
-        .env("NO_COLOR", "1")
-        .output()
-        .expect("run effigy")
+    command.env("NO_COLOR", "1").output().expect("run effigy")
 }
 
 fn run_effigy_json(root: &Path, args: &[&str]) -> Value {

@@ -10464,8 +10464,7 @@ detach_timeout_secs = 1
             )
             .output()
             .ok()?;
-        serde_json::from_slice::<serde_json::Value>(&output.stdout)
-            .ok()?["result"]["state"]
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).ok()?["result"]["state"]
             .as_str()
             .map(str::to_owned)
     };

@@ -96,7 +96,8 @@ lock = "dev-stack"
     crate::runner::tests::prelude::assert_lock_conflict(
         err,
         "shared:dev-stack",
-        "effigy tasks status build",
+        // The holder is `dev`, not `build`: the inventory names it.
+        "effigy tasks status --all",
     );
 
     owner.join().expect("first run should complete");

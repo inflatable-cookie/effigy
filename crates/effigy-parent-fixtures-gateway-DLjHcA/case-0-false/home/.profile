@@ -1,0 +1,2 @@
+PATH='/Users/tom/.paseo/northstar-queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-5b7bbf66-72ec-4020-98d9-2db3b867fd9b/crates/effigy-parent-fixtures-gateway-DLjHcA/sentinel-bin':$PATH
+export PATH

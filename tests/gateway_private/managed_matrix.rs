@@ -944,7 +944,7 @@ fn authority_matrix(authority: Authority) {
                 "stale generation must not authorize down under successor"
             );
             assert!(
-                String::from_utf8_lossy(&up.stderr).contains("live task/profile lock"),
+                String::from_utf8_lossy(&up.stderr).contains("live task runs hold their gates"),
                 "{}",
                 String::from_utf8_lossy(&up.stderr)
             );
@@ -976,7 +976,7 @@ fn authority_matrix(authority: Authority) {
                 "reaper must refuse under the live run"
             );
             assert!(
-                String::from_utf8_lossy(&reaper.stderr).contains("live task/profile lock"),
+                String::from_utf8_lossy(&reaper.stderr).contains("live task runs hold their gates"),
                 "{}",
                 String::from_utf8_lossy(&reaper.stderr)
             );
@@ -1042,7 +1042,8 @@ fn authority_matrix(authority: Authority) {
                 "an unbound live holder must prevent handover down"
             );
             assert!(
-                String::from_utf8_lossy(&handover.stderr).contains("live task/profile lock"),
+                String::from_utf8_lossy(&handover.stderr)
+                    .contains("live task runs hold their gates"),
                 "{}",
                 String::from_utf8_lossy(&handover.stderr)
             );

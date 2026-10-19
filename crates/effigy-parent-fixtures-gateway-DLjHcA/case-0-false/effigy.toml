@@ -1,0 +1,53 @@
+[tasks.serve]
+mode = "tui"
+workspace = "app"
+container_lifecycle = true
+concurrent = [
+  { role = "lifecycle", start = 1 },
+  { name = "api", run = "env EFFIGY_INTERNAL_CONTAINER_HANDOFF=1 '/Users/tom/.paseo/northstar-queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-5b7bbf66-72ec-4020-98d9-2db3b867fd9b/crates/effigy-parent-fixtures-gateway-DLjHcA/case-0-false/effigy-wrapper' hold-api", start = 2 },
+  { name = "jobs", run = "env EFFIGY_INTERNAL_CONTAINER_HANDOFF=1 '/Users/tom/.paseo/northstar-queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-5b7bbf66-72ec-4020-98d9-2db3b867fd9b/crates/effigy-parent-fixtures-gateway-DLjHcA/case-0-false/effigy-wrapper' hold-jobs", start = 2 },
+]
+[tasks.hold-api]
+run_in = "host"
+run = "printf '%s\\n' \"$$\" > '/Users/tom/.paseo/northstar-queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-5b7bbf66-72ec-4020-98d9-2db3b867fd9b/crates/effigy-parent-fixtures-gateway-DLjHcA/case-0-false/work-api.pid'; if [ -f '/Users/tom/.paseo/northstar-queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-5b7bbf66-72ec-4020-98d9-2db3b867fd9b/crates/effigy-parent-fixtures-gateway-DLjHcA/case-0-false/fail-api' ]; then exit 7; fi; exec sleep 3600"
+[tasks.hold-jobs]
+run_in = "host"
+run = "printf '%s\\n' \"$$\" > '/Users/tom/.paseo/northstar-queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-5b7bbf66-72ec-4020-98d9-2db3b867fd9b/crates/effigy-parent-fixtures-gateway-DLjHcA/case-0-false/work-jobs.pid'; if [ -f '/Users/tom/.paseo/northstar-queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-5b7bbf66-72ec-4020-98d9-2db3b867fd9b/crates/effigy-parent-fixtures-gateway-DLjHcA/case-0-false/fail-jobs' ]; then exit 7; fi; exec sleep 3600"
+[systems]
+default = "dev"
+[systems.dev]
+default_workspace = "app"
+[systems.dev.workspaces.app]
+container = "stack"
+[containers]
+default = "stack"
+[containers.stack]
+driver = "colima"
+startup = "detached"
+profile = "matrix"
+compose_file = "compose.yml"
+project_name = "matrix-stack"
+primary_service = "app"
+working_dir = "/Users/tom/.paseo/northstar-queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-5b7bbf66-72ec-4020-98d9-2db3b867fd9b/crates/effigy-parent-fixtures-gateway-DLjHcA/case-0-false"
+[containers.stack.host]
+ports = ["52968:8080"]
+[containers.stack.dns]
+routes = [{ domain = "matrix.test", tls = false, service = "app", port = 52968 }]
+[containers.stack.lifecycle]
+on_task_exit = "stop"
+detach_timeout_secs = 1
+[containers.other]
+driver = "colima"
+startup = "detached"
+profile = "matrix"
+compose_file = "compose.yml"
+project_name = "matrix-other"
+primary_service = "app"
+working_dir = "/Users/tom/.paseo/northstar-queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-5b7bbf66-72ec-4020-98d9-2db3b867fd9b/crates/effigy-parent-fixtures-gateway-DLjHcA/case-0-false"
+[containers.other.host]
+ports = ["52968:8080"]
+[containers.other.dns]
+routes = [{ domain = "matrix.test", tls = false, service = "app", port = 52968 }]
+[containers.other.lifecycle]
+on_task_exit = "stop"
+detach_timeout_secs = 1

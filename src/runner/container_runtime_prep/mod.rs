@@ -608,7 +608,7 @@ fn live_managed_exec_note(repo_root: &Path, policy: &EffectiveContainerPolicy) -
         .collect::<Vec<_>>()
         .join(", ");
     Some(format!(
-        "live task/profile lock holders protect environment `{}`: {named}",
+        "live task runs hold their gates and protect environment `{}`: {named}",
         policy.name
     ))
 }

@@ -734,7 +734,10 @@ fn cli_json_mode_watch_lock_conflict_points_at_the_live_holders() {
         &["watch", "--owner", "effigy", "--once", "build"],
         &["watch", "--owner", "effigy", "--once", "build"],
         "watch",
-        &["lock `task:watch:build` is held", "effigy tasks status --all"],
+        &[
+            "lock `task:watch:build` is held",
+            "effigy tasks status --all",
+        ],
     );
 }
 

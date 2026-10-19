@@ -1,0 +1,22 @@
+
+╭─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ EFFIGY  /Users/tom/.paseo/northstar-queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-5b7bbf66-72ec-4020-98d9-2db3b867fd9b/crates/effigy-parent-fixtures-gateway-DLjHcA/case-0-false │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── v0.14.1+local.126277f.dirty ╯
+
+[headless] managed task `serve` (profile `default`) running under supervisor PID 98157; stop with `effigy serve stop`
+[info] waiting for container shutdown: `env EFFIGY_INTERNAL_MANAGED_STOP_TOKEN='managedrun-98157-1792404856316-0' env EFFIGY_INTERNAL_SUPPRESS_HEADER=1 '/Users/tom/.paseo/northstar-queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-5b7bbf66-72ec-4020-98d9-2db3b867fd9b/crates/effigy-parent-fixtures-gateway-DLjHcA/case-0-false/effigy-wrapper' container stack down --repo /Users/tom/.paseo/northstar-queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-5b7bbf66-72ec-4020-98d9-2db3b867fd9b/crates/effigy-parent-fixtures-gateway-DLjHcA/case-0-false`
+[ok] stopped container environment `stack`
+[gateway] removed matrix.test
+
+Managed Headless Status
+task: serve
+profile: default
+session: stopped
+supervisor-pid: 98157
+runtime-dir: /Users/tom/.paseo/northstar-queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-5b7bbf66-72ec-4020-98d9-2db3b867fd9b/crates/effigy-parent-fixtures-gateway-DLjHcA/case-0-false/.effigy/runtime/managed/serve-default
+
+process	pid	status	log
+lifecycle	98266	exit=0	/Users/tom/.paseo/northstar-queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-5b7bbf66-72ec-4020-98d9-2db3b867fd9b/crates/effigy-parent-fixtures-gateway-DLjHcA/case-0-false/.effigy/runtime/managed/serve-default/01-lifecycle.log
+api	98269	exit=1	/Users/tom/.paseo/northstar-queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-5b7bbf66-72ec-4020-98d9-2db3b867fd9b/crates/effigy-parent-fixtures-gateway-DLjHcA/case-0-false/.effigy/runtime/managed/serve-default/02-api.log
+jobs	98270	exit=1	/Users/tom/.paseo/northstar-queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-5b7bbf66-72ec-4020-98d9-2db3b867fd9b/crates/effigy-parent-fixtures-gateway-DLjHcA/case-0-false/.effigy/runtime/managed/serve-default/03-jobs.log
+
