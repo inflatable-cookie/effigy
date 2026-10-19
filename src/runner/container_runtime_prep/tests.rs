@@ -1658,7 +1658,15 @@ fn shared_process_container_prep_waits_for_path_mutator() {
 
 #[test]
 fn activation_returns_the_published_snapshot_for_its_exec_caller() {
+    let _env = crate::contract_test_support::lock_test();
     let owner = tempfile::tempdir().unwrap();
+    struct Cleanup<'a>(&'a Path);
+    impl Drop for Cleanup<'_> {
+        fn drop(&mut self) {
+            unlock(self.0);
+        }
+    }
+    let _cleanup = Cleanup(owner.path());
     let repo = owner.path().join("repo");
     let home = owner.path().join("home/.effigy");
     fs::create_dir_all(&repo).unwrap();
@@ -1721,13 +1729,13 @@ fn activation_returns_the_published_snapshot_for_its_exec_caller() {
     // Only this fixture owns these sealed object directories.
     fn unlock(path: &Path) {
         use std::os::unix::fs::PermissionsExt;
-        let metadata = fs::symlink_metadata(path).unwrap();
-        if metadata.is_dir() {
-            fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
-            for child in fs::read_dir(path).unwrap() {
-                unlock(&child.unwrap().path());
+        if fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_dir()) {
+            let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o700));
+            if let Ok(children) = fs::read_dir(path) {
+                for child in children.flatten() {
+                    unlock(&child.path());
+                }
             }
         }
     }
-    unlock(owner.path());
 }

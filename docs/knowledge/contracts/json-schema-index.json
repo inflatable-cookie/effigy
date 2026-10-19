@@ -300,7 +300,7 @@
     {
       "schema": "effigy.container.render.v1",
       "schema_version": 1,
-      "command": "effigy container render <NAME> --json",
+      "command": "effigy container render web --json --repo <fixture_container_render>",
       "surface": "immutable container render",
       "status": "active"
     }

@@ -270,3 +270,41 @@ fn resolve_schema_payload_prefers_nested_result_schema() {
     assert_eq!(resolved.schema_version, "1");
     assert_eq!(resolved.payload["ok"], true);
 }
+
+#[test]
+fn container_render_contract_has_owned_inputs_and_requires_its_public_fields() {
+    let repo = tempfile::tempdir().unwrap();
+    let mut fixtures = super::ContractFixtures::new(repo.path());
+    let args = super::expand_contract_fixture_tokens(
+        "effigy container render web --json --repo <fixture_container_render>",
+        &mut fixtures,
+    )
+    .unwrap();
+    let root = std::path::PathBuf::from(args.last().unwrap());
+    assert!(!root.starts_with(repo.path()));
+    assert!(std::fs::read_to_string(root.join("effigy.toml"))
+        .unwrap()
+        .contains("catalog='redis'"));
+    let payload = json!({"schema":"effigy.container.render.v1", "schema_version":1,
+        "environment":"web", "path":"/objects/digest", "digest":"digest",
+        "compose_files":[], "environment_variables":{}, "files":[]});
+    super::assert_required_json_contract_keys("effigy.container.render.v1", &payload).unwrap();
+    for key in [
+        "environment",
+        "path",
+        "digest",
+        "compose_files",
+        "environment_variables",
+        "files",
+    ] {
+        let mut incomplete = payload.clone();
+        incomplete.as_object_mut().unwrap().remove(key);
+        assert!(
+            super::assert_required_json_contract_keys("effigy.container.render.v1", &incomplete)
+                .is_err(),
+            "{key}"
+        );
+    }
+    drop(fixtures);
+    assert!(!root.exists());
+}
