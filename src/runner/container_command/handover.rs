@@ -515,7 +515,9 @@ fn execute_handover(
     // owner's whole stop cascade - including its own `container <env>
     // down` - finishes before the handover continues.
     let owner_notes = end_headless_managed_owners(repo_root, target)?;
-    let incoming_token = std::env::var(effigy_managed::RUN_TOKEN_ENV).ok();
+    let incoming_token = std::env::var(effigy_managed::RUN_TOKEN_ENV)
+        .ok()
+        .filter(|token| !token.is_empty());
     crate::runner::managed_settle::refuse_environment_mutation(
         repo_root,
         &target.environment,

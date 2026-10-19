@@ -66,16 +66,3 @@ pub(in crate::runner::tests) struct ManagedNonZeroExitCase {
     pub(in crate::runner::tests) expected_processes: &'static [(&'static str, &'static str)],
 }
 
-pub(in crate::runner::tests) struct ManagedUnlockInvocationErrorCase {
-    pub(in crate::runner::tests) workspace: &'static str,
-    pub(in crate::runner::tests) args: &'static [&'static str],
-    pub(in crate::runner::tests) expected: &'static [&'static str],
-}
-
-pub(in crate::runner::tests) struct ManagedUnlockSuccessCase {
-    pub(in crate::runner::tests) workspace: &'static str,
-    pub(in crate::runner::tests) args: &'static [&'static str],
-    pub(in crate::runner::tests) lock_files: &'static [(&'static str, &'static str)],
-    pub(in crate::runner::tests) removed_lock_files: &'static [&'static str],
-    pub(in crate::runner::tests) expected: &'static [&'static str],
-}

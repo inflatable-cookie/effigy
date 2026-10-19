@@ -4,6 +4,7 @@
 //! writer of its journal; dropping it releases liveness, never claims cleanup.
 mod attachments;
 mod claims;
+mod history;
 mod journal;
 mod lifecycle;
 pub use lifecycle::{metadata, RunMetadata, SentinelStatus};
@@ -14,6 +15,7 @@ pub use attachments::{
     AttachMode, AttachmentTicket, Attachments, Holder, Liveness, TransitionPermit,
 };
 pub use claims::{Claims, ReservationToken};
+pub use history::{history, unclosed, RunSummary};
 pub(crate) use settle::settle_interrupted_wait;
 pub use settle::{settle_interrupted, Reconciled, Settled, SettlementAdapter};
 

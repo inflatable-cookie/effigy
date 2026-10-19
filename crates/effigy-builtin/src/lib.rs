@@ -2,7 +2,7 @@
 //!
 //! Extracted from `src/runner/builtin/**` under card 250. Owns the
 //! registry, dispatcher, every built-in arm (doctor, tasks, test,
-//! scan, config, watch, unlock, cache, completion, init, migrate,
+//! scan, config, watch, completion, init, migrate,
 //! help, …) plus the test-support fixtures.
 //!
 //! The narrow [`BuiltinError`] boundary lifts to `RunnerError` at the
@@ -19,7 +19,6 @@ use effigy_routing::resolve_catalog_by_prefix;
 use effigy_tasks::{TaskRuntimeArgs, TaskSelector};
 
 mod arg_parser;
-mod cache;
 mod command_spec;
 mod completion;
 mod config;
@@ -41,14 +40,13 @@ mod tasks;
 mod test;
 pub mod test_support;
 mod text_doc;
-mod unlock;
 mod watch;
 
 pub use constants::{BUILTIN_TASKS, DEFAULT_BUILTIN_TEST_MAX_PARALLEL};
 pub use error::BuiltinError;
 pub use ports::{
     BuiltinContainerSuiteTarget, BuiltinLockGuards, BuiltinRuntimePorts, BuiltinTestChildEvidence,
-    LockScope, TaskCacheEntry, UnlockResult,
+    LockScope,
 };
 pub use prompt_policy::{PromptDecision, PromptPolicy};
 

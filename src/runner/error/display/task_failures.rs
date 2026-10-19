@@ -27,55 +27,9 @@ pub(super) fn write_lock_conflict(
     f: &mut std::fmt::Formatter<'_>,
     details: &effigy_core::task_lock::TaskLockConflict,
 ) -> std::fmt::Result {
-    let effigy_core::task_lock::TaskLockConflict {
-        scope,
-        lock_path,
-        holder_pid,
-        holder_started_at_epoch_ms,
-        holder_heartbeat_at_epoch_ms,
-        holder_hostname,
-        holder_workspace_root,
-        wait_timeout_ms,
-        waited_ms,
-        status_command,
-        remediation,
-        ..
-    } = details;
-    if wait_timeout_ms.is_some() {
-        write!(
-            f,
-            "lock conflict for `{scope}` (holder_pid={}, started_at_epoch_ms={}, heartbeat_at_epoch_ms={}, holder_hostname={}, holder_workspace_root={}, wait_timeout_ms={}, waited_ms={}, status_command={}, lock={}); {remediation}",
-            render_optional(holder_pid),
-            render_optional(holder_started_at_epoch_ms),
-            render_optional(holder_heartbeat_at_epoch_ms),
-            render_optional(holder_hostname),
-            render_optional(holder_workspace_root),
-            render_optional(wait_timeout_ms),
-            render_optional(waited_ms),
-            render_optional(status_command),
-            lock_path.display()
-        )
-    } else {
-        write!(
-            f,
-            "lock conflict for `{scope}` (holder_pid={}, started_at_epoch_ms={}, heartbeat_at_epoch_ms={}, holder_hostname={}, holder_workspace_root={}, lock={}); {remediation}",
-            render_optional(holder_pid),
-            render_optional(holder_started_at_epoch_ms),
-            render_optional(holder_heartbeat_at_epoch_ms),
-            render_optional(holder_hostname),
-            render_optional(holder_workspace_root),
-            lock_path.display()
-        )
-    }
+    f.write_str(&details.remediation)
 }
 
-pub(super) fn write_task_lock_io(
-    f: &mut std::fmt::Formatter<'_>,
-    path: &std::path::Path,
-    error: &std::io::Error,
-) -> std::fmt::Result {
-    write!(f, "lock I/O failed at {}: {error}", path.display())
-}
 
 pub(super) fn write_defer_loop_detected(
     f: &mut std::fmt::Formatter<'_>,

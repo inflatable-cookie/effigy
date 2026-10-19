@@ -10,12 +10,10 @@ use super::super::runtime::{
 };
 use super::assertions::{
     assert_lock_conflict, assert_managed_non_zero_exit, assert_managed_profile_not_found,
-    assert_unlock_invocation_error_contains,
 };
 use super::cases::{
     ManagedInvocation, ManagedNonZeroExitCase, ManagedOutputCase, ManagedOutputDerivedCase,
-    ManagedProfileNotFoundCase, ManagedStreamBuiltinTestCase, ManagedUnlockInvocationErrorCase,
-    ManagedUnlockSuccessCase,
+    ManagedProfileNotFoundCase, ManagedStreamBuiltinTestCase,
 };
 use super::fixtures::{
     install_fake_container_runtime, write_managed_stream_builtin_test_manifest,
@@ -63,15 +61,6 @@ pub(in crate::runner::tests) fn run_dev_with_repo(
     args: &[&str],
 ) -> Result<String, RunnerError> {
     run_named_task_with_repo(root, "dev", args)
-}
-
-pub(in crate::runner::tests) fn run_unlock_with_repo(
-    root: &Path,
-    scopes: &[&str],
-) -> Result<String, RunnerError> {
-    let mut args = vec!["unlock"];
-    args.extend_from_slice(scopes);
-    run_named_task_with_repo(root, "tasks", &args)
 }
 
 pub(in crate::runner::tests) fn run_task_with_repo(
@@ -126,13 +115,17 @@ impl<T> Drop for OwnedThread<T> {
     }
 }
 
-pub(in crate::runner::tests) fn wait_for_live_task_owner(root: &Path, lock_file: &str) {
-    wait_for_path_exists(
-        &root.join(".effigy/locks").join(lock_file),
-        Duration::from_secs(5),
-        lock_file,
-    );
-    wait_for_parseable_active_task_status(root, Duration::from_secs(5));
+/// Waits until root task `task` holds its gate: its newest run is live.
+pub(in crate::runner::tests) fn wait_for_live_task_owner(root: &Path, task: &str) {
+    let started = Instant::now();
+    while crate::runner::task_engine::root_task_state_for_tests(root, task) != "running" {
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "task `{task}` did not become a live run in time under {}",
+            root.display()
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
 }
 
 const HOLD_READY_NAME: &str = ".effigy-test-hold-ready";
@@ -192,35 +185,9 @@ run = "sh hold-owner.sh .effigy-test-hold-ready .effigy-test-hold-release"
         release_path,
         owner: Some(owner),
     };
-    wait_for_live_task_owner(root, "task-dev.lock");
+    wait_for_live_task_owner(root, "dev");
     wait_for_path_exists(&ready_path, Duration::from_secs(5), HOLD_READY_NAME);
     held
-}
-
-fn wait_for_parseable_active_task_status(root: &Path, timeout: Duration) {
-    let active_dir = root.join(".effigy/runtime/tasks/active");
-    let started = Instant::now();
-    loop {
-        if let Ok(entries) = fs::read_dir(&active_dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().and_then(|value| value.to_str()) != Some("json") {
-                    continue;
-                }
-                if let Ok(body) = fs::read_to_string(&path) {
-                    if serde_json::from_str::<serde_json::Value>(&body).is_ok() {
-                        return;
-                    }
-                }
-            }
-        }
-        assert!(
-            started.elapsed() < timeout,
-            "parseable active task-status record was not published in time under {}",
-            active_dir.display()
-        );
-        thread::sleep(Duration::from_millis(10));
-    }
 }
 
 pub(in crate::runner::tests) fn assert_live_dev_lock_conflict(
@@ -230,7 +197,7 @@ pub(in crate::runner::tests) fn assert_live_dev_lock_conflict(
 ) {
     let root_for_thread = root.to_path_buf();
     let owner = OwnedThread::spawn(move || run_dev(&root_for_thread, &[]));
-    wait_for_live_task_owner(root, "task-dev.lock");
+    wait_for_live_task_owner(root, "dev");
 
     let err = run_dev(root, &[]).expect_err("second run should conflict on lock");
     assert_lock_conflict(err, expected_scope, expected_remediation);
@@ -263,15 +230,6 @@ fn for_each_workspace_case<T>(
     });
 }
 
-fn prepare_unlock_workspace(root: &Path, lock_files: Option<&[(&str, &str)]>) {
-    match lock_files {
-        Some(lock_files) => write_lock_files(root, lock_files),
-        None => {
-            ensure_locks_dir(root);
-        }
-    }
-}
-
 pub(in crate::runner::tests) fn ensure_locks_dir(root: &Path) -> PathBuf {
     let locks_dir = root.join(".effigy/locks");
     fs::create_dir_all(&locks_dir).expect("mkdir locks");
@@ -283,42 +241,6 @@ pub(in crate::runner::tests) fn write_lock_files(root: &Path, files: &[(&str, &s
     for (name, body) in files {
         fs::write(locks_dir.join(name), body).expect("write lock file");
     }
-}
-
-pub(in crate::runner::tests) fn assert_lock_files_missing(root: &Path, files: &[&str]) {
-    let locks_dir = root.join(".effigy/locks");
-    for name in files {
-        assert_path_missing(&locks_dir.join(name), "lock file");
-    }
-}
-
-pub(in crate::runner::tests) fn assert_unlock_invocation_error_case_table(
-    cases: &[ManagedUnlockInvocationErrorCase],
-) {
-    for_each_workspace_case(
-        cases,
-        |case| case.workspace,
-        |root, case| {
-            prepare_unlock_workspace(&root, None);
-            let err = run_unlock_with_repo(&root, case.args).expect_err("unlock should fail");
-            assert_unlock_invocation_error_contains(err, case.expected);
-        },
-    );
-}
-
-pub(in crate::runner::tests) fn assert_unlock_success_case_table(
-    cases: &[ManagedUnlockSuccessCase],
-) {
-    for_each_workspace_case(
-        cases,
-        |case| case.workspace,
-        |root, case| {
-            prepare_unlock_workspace(&root, Some(case.lock_files));
-            let out = run_unlock_with_repo(&root, case.args).expect("unlock should run");
-            assert_output_contains_all(&out, case.expected);
-            assert_lock_files_missing(&root, case.removed_lock_files);
-        },
-    );
 }
 
 fn setup_workspace_with(workspace: &str, setup: fn(&Path)) -> PathBuf {

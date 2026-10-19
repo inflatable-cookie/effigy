@@ -6,9 +6,7 @@ use std::path::{Path, PathBuf};
 use effigy_cli::{Command, DoctorArgs, TaskInvocation, TasksArgs};
 use effigy_manifest::LoadedCatalog;
 
-use crate::{
-    BuiltinError, BuiltinLockGuards, BuiltinRuntimePorts, LockScope, TaskCacheEntry, UnlockResult,
-};
+use crate::{BuiltinError, BuiltinLockGuards, BuiltinRuntimePorts, LockScope};
 
 #[derive(Debug, Default)]
 pub(crate) struct WizardTestPorts;
@@ -20,24 +18,6 @@ impl BuiltinRuntimePorts for WizardTestPorts {
         _scopes: &[LockScope],
     ) -> Result<BuiltinLockGuards, BuiltinError> {
         Ok(BuiltinLockGuards::new(()))
-    }
-
-    fn unlock_scopes(
-        &self,
-        _workspace_root: &Path,
-        _scopes: &[LockScope],
-    ) -> Result<UnlockResult, BuiltinError> {
-        Ok(UnlockResult {
-            removed: Vec::new(),
-            missing: Vec::new(),
-        })
-    }
-
-    fn unlock_all(&self, _workspace_root: &Path) -> Result<UnlockResult, BuiltinError> {
-        Ok(UnlockResult {
-            removed: Vec::new(),
-            missing: Vec::new(),
-        })
     }
 
     fn current_working_dir(&self) -> Result<PathBuf, BuiltinError> {
@@ -63,35 +43,6 @@ impl BuiltinRuntimePorts for WizardTestPorts {
 
     fn run_command(&self, command: Command) -> Result<String, BuiltinError> {
         Ok(format!("ran command {command:?}"))
-    }
-
-    fn cache_entries(&self, _workspace_root: &Path) -> Result<Vec<TaskCacheEntry>, BuiltinError> {
-        Ok(Vec::new())
-    }
-
-    fn cache_entry(
-        &self,
-        _workspace_root: &Path,
-        _manifest_path: &Path,
-        _task_name: &str,
-    ) -> Result<Option<TaskCacheEntry>, BuiltinError> {
-        Ok(None)
-    }
-
-    fn cache_entry_key(&self, manifest_path: &Path, task_name: &str) -> String {
-        format!("{}::{task_name}", manifest_path.display())
-    }
-
-    fn invalidate_cache_keys(
-        &self,
-        _workspace_root: &Path,
-        _keys: &[String],
-    ) -> Result<Vec<String>, BuiltinError> {
-        Ok(Vec::new())
-    }
-
-    fn invalidate_all_cache_entries(&self, _workspace_root: &Path) -> Result<usize, BuiltinError> {
-        Ok(0)
     }
 
     fn deferred_builtins_from_catalogs(

@@ -133,6 +133,22 @@ impl TaskId {
             profile: profile.map(text).transpose()?,
         })
     }
+    pub fn checkout(&self) -> CheckoutId {
+        self.checkout
+    }
+    /// Root-relative, '/'-separated; "" for the root catalog.
+    pub fn catalog(&self) -> &str {
+        &self.catalog
+    }
+    pub fn surface(&self) -> Surface {
+        self.surface
+    }
+    pub fn task(&self) -> &str {
+        &self.task
+    }
+    pub fn profile(&self) -> Option<&str> {
+        self.profile.as_deref()
+    }
     pub fn resource(&self) -> ResourceId {
         ResourceId::new(
             ResourceKind::Task,
@@ -261,6 +277,11 @@ impl ResourceId {
     }
     pub fn scope(&self) -> Scope {
         self.scope
+    }
+    /// The key fields in encoding order, for engines that render or match
+    /// their own resources. Identity is still the canonical encoding.
+    pub fn key(&self) -> &[Option<String>] {
+        &self.key
     }
     pub fn canonical(&self) -> Vec<u8> {
         let mut out = b"effigy.rid\0\x01".to_vec();

@@ -2,26 +2,26 @@
 //!
 //! A stop, a signal settle and a handover-driven stop all report settled
 //! only after the supervisor's whole stop cascade finished - including the
-//! lifecycle cleanup's `container down` - and every task lock the run and
-//! its children took is gone. The wait uses the derived managed settle
-//! budget, never a fixed guess, so a real `container down` is not mistaken
-//! for a hang. A refusal names what is still running and never advises a
-//! stop that the caller itself already requested.
+//! lifecycle cleanup's `container down` - and every task gate the run and
+//! its children held is free. Holders come from the run journal plus a
+//! fresh gate probe on this host (R1): a free gate is no holder, and an
+//! unreadable probe is a holder (R3). The wait uses the derived managed
+//! settle budget, never a fixed guess, so a real `container down` is not
+//! mistaken for a hang. A refusal names what is still running and never
+//! advises a stop that the caller itself already requested.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use effigy_builtin::LockScope;
+use effigy_kernel::id::Digest;
 use effigy_managed::runtime::{
     managed_headless_stop, managed_owner_is_running, session_runtime_dir,
     ManagedHeadlessStopOutcome, MANAGED_SETTLE_BUDGET,
 };
 
 use crate::runner::error::RunnerError;
-use crate::runner::locking::io::{
-    release_locks_attributed_to_run, task_lock_holders, TaskLockHolder,
-};
+use crate::runner::task_engine::{live_holders, HolderKind, LiveHolder};
 
 /// Extra settle budget per exec group marker the missing-record stop can
 /// still see in the session's runtime directory, matching the record path's
@@ -44,12 +44,18 @@ pub(in crate::runner) fn stop_and_settle_headless_run(
     task_name: &str,
     profile: &str,
 ) -> Result<String, RunnerError> {
-    let outcome = if effigy_managed::runtime::managed_headless_state_readable(
+    let (outcome, run_digest) = if effigy_managed::runtime::managed_headless_state_readable(
         repo_root, task_name, profile,
     ) {
-        managed_headless_stop(repo_root, task_name, profile).map_err(RunnerError::from)?
+        let outcome =
+            managed_headless_stop(repo_root, task_name, profile).map_err(RunnerError::from)?;
+        let digest = outcome
+            .run_token
+            .as_deref()
+            .map(|token| Digest::of(token.as_bytes()));
+        (outcome, digest)
     } else {
-        stop_request_through_locks(repo_root, task_name, profile)?
+        stop_request_through_gates(repo_root, task_name, profile)?
     };
     // A stop reports settled only after the supervisor's whole stop cascade
     // finished: the host children are gone (in the request above), and the
@@ -57,14 +63,13 @@ pub(in crate::runner) fn stop_and_settle_headless_run(
     // environment down. The wait uses the derived settle budget, so a real
     // `container down` is never mistaken for a hang, and an
     // exited-but-unreaped supervisor (a zombie its parent has not collected
-    // yet) settles as soon as its lock records are gone instead of stalling
-    // the budget.
+    // yet) settles as soon as its gates are free instead of stalling the
+    // budget.
     let deadline = std::time::Instant::now() + outcome.settle_budget;
     loop {
-        let supervisor_still_holds = task_lock_holders(repo_root).into_iter().any(|holder| {
-            holder.pid == outcome.supervisor_pid
-                && pid_record_is_comparable_here(holder.hostname.as_deref())
-        });
+        let supervisor_still_holds = live_holders(repo_root)
+            .into_iter()
+            .any(|holder| holder.pid == Some(outcome.supervisor_pid));
         let children_ended = outcome
             .surviving_processes
             .iter()
@@ -80,15 +85,14 @@ pub(in crate::runner) fn stop_and_settle_headless_run(
         }
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
-    let holders = task_lock_holders(repo_root);
+    let holders = live_holders(repo_root);
     let mut residue = Vec::new();
-    let supervisor_still_holds = holders.iter().any(|holder| {
-        holder.pid == outcome.supervisor_pid
-            && pid_record_is_comparable_here(holder.hostname.as_deref())
-    });
+    let supervisor_still_holds = holders
+        .iter()
+        .any(|holder| holder.pid == Some(outcome.supervisor_pid));
     if supervisor_still_holds {
         residue.push(format!(
-            "supervisor process {} is still running and holds its task lock",
+            "supervisor process {} is still running and holds its task gate",
             outcome.supervisor_pid
         ));
     }
@@ -114,28 +118,17 @@ pub(in crate::runner) fn stop_and_settle_headless_run(
         )));
     }
 
-    // The cascade has ended: the run no longer holds anything itself.
-    // Release the records its SIGKILLed holders could not drop, then
-    // refuse if any attributed record still survives the sweep.
-    let released = release_run_lock_residue(repo_root, outcome.run_token.as_deref());
-    let leftover = task_lock_holders(repo_root)
+    // The cascade has ended: the run no longer holds anything itself. A
+    // dead holder's gate is already free; refuse if a live process of the
+    // run still holds one.
+    let leftover = live_holders(repo_root)
         .into_iter()
-        .filter(|holder| {
-            outcome
-                .run_token
-                .as_deref()
-                .is_some_and(|token| holder.managed_run_token.as_deref() == Some(token))
-        })
+        .filter(|holder| run_digest.is_some() && holder.managed_run == run_digest)
         .map(|holder| {
             format!(
-                "task lock `{}` is still held (pid {}{})",
-                holder.scope,
-                holder.pid,
-                holder
-                    .hostname
-                    .as_deref()
-                    .map(|host| format!(", host {host}"))
-                    .unwrap_or_default()
+                "task gate `{}` is still held ({})",
+                holder.scope_label(),
+                holder_pid_text(&holder)
             )
         })
         .collect::<Vec<_>>();
@@ -143,14 +136,10 @@ pub(in crate::runner) fn stop_and_settle_headless_run(
         return Err(did_not_settle(task_name, profile, &leftover));
     }
 
-    let mut summary = format!(
+    Ok(format!(
         "settled managed headless task `{task_name}` (profile `{profile}`): {}",
         outcome.summary
-    );
-    if !released.is_empty() {
-        summary.push_str(&format!("; released lock(s) {}", released.join(", ")));
-    }
-    Ok(summary)
+    ))
 }
 
 fn did_not_settle(task_name: &str, profile: &str, residue: &[String]) -> RunnerError {
@@ -160,56 +149,48 @@ fn did_not_settle(task_name: &str, profile: &str, residue: &[String]) -> RunnerE
     ))
 }
 
-/// The live headless owner of this task/profile, judged from its own lock
-/// records alone: the profile lock first (only a managed profile run holds
-/// it), then the task lock. Holders written by another host never name a
-/// local process.
-fn live_owner_from_locks(
-    repo_root: &Path,
-    task_name: &str,
-    profile: &str,
-) -> Option<TaskLockHolder> {
-    let mut scopes = vec![
-        LockScope::Profile {
-            task: task_name.to_owned(),
-            profile: profile.to_owned(),
-        },
-        LockScope::Task(task_name.to_owned()),
-    ];
-    scopes.dedup();
-    let holders = task_lock_holders(repo_root);
-    scopes
+/// The live headless owner of this task/profile, judged from its run's
+/// own gate: a run recorded with this profile first, then the task's run.
+fn live_owner_from_gates(repo_root: &Path, task_name: &str, profile: &str) -> Option<LiveHolder> {
+    let holders = live_holders(repo_root)
+        .into_iter()
+        .filter(|holder| holder.kind == HolderKind::Task && holder.task == task_name)
+        .filter(|holder| holder.pid.is_some_and(managed_owner_is_running))
+        .collect::<Vec<_>>();
+    holders
         .iter()
-        .filter_map(|scope| {
-            let label = scope.label();
-            holders
-                .iter()
-                .find(|holder| {
-                    holder.scope == label
-                        && pid_record_is_comparable_here(holder.hostname.as_deref())
-                })
-                .cloned()
-        })
-        .find(|holder| managed_owner_is_running(holder.pid))
+        .find(|holder| holder.profile.as_deref() == Some(profile))
+        .or_else(|| holders.iter().find(|holder| holder.profile.is_none()))
+        .cloned()
+}
+
+fn holder_pid_text(holder: &LiveHolder) -> String {
+    holder
+        .pid
+        .map(|pid| format!("pid {pid}"))
+        .unwrap_or_else(|| "pid unreadable".to_owned())
 }
 
 fn no_live_run_error(task_name: &str, profile: &str) -> RunnerError {
     RunnerError::task_invocation(format!(
-        "no live managed run of task `{task_name}` (profile `{profile}`): its session record is missing and no live task/profile lock names an owner; start it with `effigy {task_name} --headless`"
+        "no live managed run of task `{task_name}` (profile `{profile}`): its session record is missing and no live run holds its task gate; start it with `effigy {task_name} --headless`"
     ))
 }
 
 /// Deliver the stop request for a live run whose session record is missing
 /// or unreadable: the owner watches `stop.requested` in its derived runtime
 /// directory independently of the record, and its own cascade settles the
-/// run, releases the run-token locks and rewrites the record. The request
-/// refuses only when no live owner holds the task/profile locks.
-fn stop_request_through_locks(
+/// run and rewrites the record. The request refuses only when no live run
+/// holds the task's gate.
+fn stop_request_through_gates(
     repo_root: &Path,
     task_name: &str,
     profile: &str,
-) -> Result<ManagedHeadlessStopOutcome, RunnerError> {
-    let owner = live_owner_from_locks(repo_root, task_name, profile)
+) -> Result<(ManagedHeadlessStopOutcome, Option<Digest>), RunnerError> {
+    let owner = live_owner_from_gates(repo_root, task_name, profile)
+        .ok_or_else(|| no_live_run_error(task_name, profile))?;
+    let owner_pid = owner
+        .pid
         .ok_or_else(|| no_live_run_error(task_name, profile))?;
     let runtime_dir = session_runtime_dir(repo_root, task_name, profile);
     std::fs::create_dir_all(&runtime_dir)
@@ -218,17 +199,20 @@ fn stop_request_through_locks(
     std::fs::write(&stop_path, b"stop\n")
         .map_err(|error| RunnerError::task_invocation_failed_write(&stop_path, error))?;
     let exec_group_markers = exec_group_marker_count(&runtime_dir);
-    Ok(ManagedHeadlessStopOutcome {
-        summary: format!(
-            "ended through its task/profile locks and run token (the session record was missing); {} recorded exec group(s) to end",
-            exec_group_markers
-        ),
-        supervisor_pid: owner.pid,
-        run_token: owner.managed_run_token.clone(),
-        settle_budget: MANAGED_SETTLE_BUDGET
-            + MISSING_RECORD_EXEC_GROUP_BUDGET * exec_group_markers as u32,
-        surviving_processes: Vec::new(),
-    })
+    Ok((
+        ManagedHeadlessStopOutcome {
+            summary: format!(
+                "ended through its task gate (the session record was missing); {} recorded exec group(s) to end",
+                exec_group_markers
+            ),
+            supervisor_pid: owner_pid,
+            run_token: None,
+            settle_budget: MANAGED_SETTLE_BUDGET
+                + MISSING_RECORD_EXEC_GROUP_BUDGET * exec_group_markers as u32,
+            surviving_processes: Vec::new(),
+        },
+        owner.managed_run,
+    ))
 }
 
 fn exec_group_marker_count(runtime_dir: &Path) -> usize {
@@ -242,38 +226,37 @@ fn exec_group_marker_count(runtime_dir: &Path) -> usize {
         .unwrap_or(0)
 }
 
-/// Live managed-run lock holders of this checkout: task/profile lock records
-/// carrying a managed run token whose holder is live on this host. This is
-/// the discovery that does not need the session record, so a live owner whose
-/// record is missing is still visible — the same discovery the missing-record
-/// stop settles through.
-pub(in crate::runner) fn live_managed_lock_holders(repo_root: &Path) -> Vec<TaskLockHolder> {
-    task_lock_holders(repo_root)
+/// Live managed-run task holders of this checkout: runs recorded with a
+/// managed run's token whose gate is held on this host. This discovery does
+/// not need the session record, so a live owner whose record is missing is
+/// still visible.
+pub(in crate::runner) fn live_managed_lock_holders(repo_root: &Path) -> Vec<LiveHolder> {
+    live_holders(repo_root)
         .into_iter()
-        .filter(|holder| holder.scope.starts_with("task:") || holder.scope.starts_with("profile:"))
-        .filter(|holder| holder.managed_run_token.is_some())
-        .filter(|holder| pid_record_is_comparable_here(holder.hostname.as_deref()))
-        .filter(|holder| effigy_managed::runtime::managed_owner_is_running(holder.pid))
+        .filter(|holder| holder.kind == HolderKind::Task && holder.managed_run.is_some())
         .collect()
 }
 
-/// Locks establish liveness; a matching session only narrows the environment.
-/// Missing records cannot grant destructive authority, so unbound holders
-/// protect every environment in this checkout until they settle.
+/// Gates establish liveness; a matching session only narrows the
+/// environment. Missing records cannot grant destructive authority, so
+/// unbound holders protect every environment in this checkout until they
+/// settle.
 pub(in crate::runner) fn environment_lock_holders(
     repo_root: &Path,
     environment: &str,
-) -> Vec<TaskLockHolder> {
+) -> Vec<LiveHolder> {
     let sessions = effigy_managed::runtime::live_headless_sessions(repo_root);
-    crate::runner::locking::io::live_task_lock_holders(repo_root)
+    live_holders(repo_root)
         .into_iter()
         .filter(|holder| {
             sessions
                 .iter()
                 .find(|session| {
-                    pid_record_is_comparable_here(holder.hostname.as_deref())
-                        && session.supervisor_pid == holder.pid
-                        && session.run_token == holder.managed_run_token
+                    holder.pid == Some(session.supervisor_pid)
+                        && session
+                            .run_token
+                            .as_deref()
+                            .is_some_and(|token| holder.carries_managed_run(token))
                 })
                 .and_then(|session| session.container_environment.as_deref())
                 .is_none_or(|bound| bound == environment)
@@ -281,7 +264,7 @@ pub(in crate::runner) fn environment_lock_holders(
         .collect()
 }
 
-/// Only the run's own stop may mutate its environment under its live locks.
+/// Only the run's own stop may mutate its environment under its live gates.
 /// Pre-spawn recovery may exempt its newly acquired local owner lock; a
 /// handover may exempt the incoming run, whose environment is not the target.
 pub(in crate::runner) fn refuse_environment_mutation(
@@ -294,28 +277,27 @@ pub(in crate::runner) fn refuse_environment_mutation(
         .into_iter()
         .filter(|holder| {
             !exempt_pid.is_some_and(|caller| {
-                pid_record_is_comparable_here(holder.hostname.as_deref())
-                    && (caller == holder.pid
-                        || (holder.managed_run_token.is_none()
-                            && effigy_process::process_is_descendant_of(caller, holder.pid)))
+                holder.pid.is_some_and(|pid| {
+                    caller == pid
+                        || (holder.managed_run.is_none()
+                            && effigy_process::process_is_descendant_of(caller, pid))
+                })
             })
         })
-        .filter(|holder| {
-            exempt_token.is_none_or(|token| holder.managed_run_token.as_deref() != Some(token))
-        })
-        .map(|holder| format!("`{}` (pid {})", holder.scope, holder.pid))
+        .filter(|holder| exempt_token.is_none_or(|token| !holder.carries_managed_run(token)))
+        .map(|holder| format!("`{}` ({})", holder.scope_label(), holder_pid_text(&holder)))
         .collect::<Vec<_>>();
     if holders.is_empty() {
         return Ok(());
     }
     Err(RunnerError::task_invocation(format!(
-        "refused to stop, restart or recreate environment `{environment}` while live task/profile lock holders exist: {}. End the bound run through its own stop first",
+        "refused to stop, restart or recreate environment `{environment}` while live task runs hold their gates: {}. End the bound run through its own stop first",
         holders.join(", ")
     )))
 }
 
 /// Refuse a judged-failed generation's recovery teardown while a live
-/// process still holds one of its run-token locks: the owner may have been
+/// process of that run still holds a task gate: the owner may have been
 /// misjudged dead through a stale or missing record, and tearing the
 /// environment down would SIGKILL everything it is exec'ing into.
 pub(in crate::runner) fn refuse_recovery_while_token_live(
@@ -324,18 +306,18 @@ pub(in crate::runner) fn refuse_recovery_while_token_live(
 ) -> Result<(), RunnerError> {
     let holders = live_managed_lock_holders(repo_root)
         .into_iter()
-        .filter(|holder| holder.managed_run_token.as_deref() == Some(token))
+        .filter(|holder| holder.carries_managed_run(token))
         .collect::<Vec<_>>();
     if holders.is_empty() {
         return Ok(());
     }
     let named = holders
         .iter()
-        .map(|holder| format!("`{}` (pid {})", holder.scope, holder.pid))
+        .map(|holder| format!("`{}` ({})", holder.scope_label(), holder_pid_text(holder)))
         .collect::<Vec<_>>()
         .join(", ");
     Err(RunnerError::task_invocation(format!(
-        "managed run token `{token}` is judged failed, but its task locks are still held by live process(es) {named}; the recovery teardown was refused because the run may still be live. Stop it with `effigy <task> stop` first"
+        "managed run token `{token}` is judged failed, but its task gates are still held by live process(es) {named}; the recovery teardown was refused because the run may still be live. Stop it with `effigy <task> stop` first"
     )))
 }
 
@@ -386,7 +368,7 @@ pub(in crate::runner) fn headless_status_from_locks(
     task_name: &str,
     profile: &str,
 ) -> Result<String, RunnerError> {
-    let owner = live_owner_from_locks(repo_root, task_name, profile);
+    let owner = live_owner_from_gates(repo_root, task_name, profile);
     let runtime_dir = session_runtime_dir(repo_root, task_name, profile);
     let rows = lock_view_processes(&runtime_dir);
     let Some(owner) = owner else {
@@ -408,8 +390,8 @@ pub(in crate::runner) fn headless_status_from_locks(
         return Ok(out);
     };
     let mut out = format!(
-        "Managed Headless Status\ntask: {task_name}\nprofile: {profile}\nsession: running (session record missing; reported from task/profile locks)\nsupervisor-pid: {}\nruntime-dir: {}\n\nprocess\tpid\tstatus\tlog\n",
-        owner.pid,
+        "Managed Headless Status\ntask: {task_name}\nprofile: {profile}\nsession: running (session record missing; reported from its task gate)\nsupervisor-pid: {}\nruntime-dir: {}\n\nprocess\tpid\tstatus\tlog\n",
+        holder_pid_text(&owner),
         runtime_dir.display()
     );
     for row in &rows {
@@ -449,7 +431,7 @@ pub(in crate::runner) fn headless_logs_from_locks(
         }
     }
     if rows.is_empty() {
-        if live_owner_from_locks(repo_root, task_name, profile).is_none() {
+        if live_owner_from_gates(repo_root, task_name, profile).is_none() {
             return Err(no_live_run_error(task_name, profile));
         }
         return Ok(String::new());
@@ -500,7 +482,7 @@ pub(in crate::runner) fn headless_logs_from_locks(
                 wrote = true;
             }
         }
-        if !wrote && live_owner_from_locks(repo_root, task_name, profile).is_none() {
+        if !wrote && live_owner_from_gates(repo_root, task_name, profile).is_none() {
             break;
         }
         std::thread::sleep(Duration::from_millis(250));
@@ -508,74 +490,23 @@ pub(in crate::runner) fn headless_logs_from_locks(
     Ok(String::new())
 }
 
-/// Release the lock records still attributed to the run's token.
-pub(in crate::runner) fn release_run_lock_residue(
-    repo_root: &Path,
-    run_token: Option<&str>,
-) -> Vec<String> {
-    let Some(run_token) = run_token else {
-        return Vec::new();
-    };
-    release_locks_attributed_to_run(repo_root, run_token, None)
-}
-
-/// Whether this host's process table can judge a record's holder. PIDs are
-/// only comparable inside the PID namespace that wrote the record: a
-/// container-side holder's PID means nothing on the host, and a host
-/// holder's PID means nothing inside a container. A record annotated with
-/// a different hostname is judged by its heartbeat lease elsewhere, never
-/// by a PID match here.
-fn pid_record_is_comparable_here(written: Option<&str>) -> bool {
-    let Some(written) = written else {
-        // Unannotated records keep today's behavior.
-        return true;
-    };
-    let local = crate::runner::locking::io::lock_hostname();
-    local.is_some_and(|local| local == written)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runner::task_engine::TaskRun;
+    use effigy_kernel::outcome::WorkloadOutcome;
 
-    #[test]
-    fn unannotated_hostname_is_always_comparable() {
-        assert!(pid_record_is_comparable_here(None));
+    fn hold_task(repo_root: &Path, token: Option<&str>) -> TaskRun {
+        TaskRun::hold_for_tests(repo_root, "dev", token)
     }
 
+    /// A judged-failed generation whose task gates are still held by a live
+    /// process must not be torn down: the dead-owner judgment can be wrong
+    /// through a stale or missing record.
     #[test]
-    fn foreign_hostname_is_never_comparable() {
-        assert!(!pid_record_is_comparable_here(Some(
-            "not-this-host-namespace"
-        )));
-    }
-
-    fn write_holder_lock(repo_root: &Path, pid: u32, token: &str, hostname: Option<&str>) {
-        let locks = repo_root.join(".effigy/locks");
-        std::fs::create_dir_all(&locks).expect("locks dir");
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock")
-            .as_millis();
-        let hostname = hostname
-            .map(|host| format!(r#""hostname":"{host}","#))
-            .unwrap_or_default();
-        std::fs::write(
-            locks.join("task-dev.lock"),
-            format!(
-                r#"{{"scope":"task:dev","pid":{pid},"started_at_epoch_ms":{now},{hostname}"managed_run_token":"{token}"}}"#
-            ),
-        )
-        .expect("holder record");
-    }
-
-    /// A judged-failed generation whose run-token locks are still held by a
-    /// live process must not be torn down: the dead-owner judgment can be
-    /// wrong through a stale or missing record.
-    #[test]
-    fn recovery_teardown_refuses_while_token_locks_are_live() {
+    fn recovery_teardown_refuses_while_token_gates_are_live() {
         let private = tempfile::tempdir().expect("recovery refusal fixture");
-        write_holder_lock(private.path(), std::process::id(), "managedrun-live", None);
+        let held = hold_task(private.path(), Some("managedrun-live"));
         let error = refuse_recovery_while_token_live(private.path(), "managedrun-live")
             .expect_err("live holder must refuse the recovery teardown");
         let rendered = error.to_string();
@@ -586,54 +517,54 @@ mod tests {
         // A different token's live holder does not block this recovery.
         refuse_recovery_while_token_live(private.path(), "managedrun-other")
             .expect("another token's holder is not this generation");
+        held.close(WorkloadOutcome::Succeeded);
     }
 
     #[test]
-    fn recovery_teardown_proceeds_for_actually_dead_holders() {
+    fn recovery_teardown_proceeds_once_the_holder_has_exited() {
         let private = tempfile::tempdir().expect("dead holder fixture");
-        write_holder_lock(private.path(), 999_999_999, "managedrun-dead", None);
+        hold_task(private.path(), Some("managedrun-dead")).abandon_for_tests();
         refuse_recovery_while_token_live(private.path(), "managedrun-dead")
-            .expect("a dead holder grants teardown authority");
+            .expect("a free gate is no holder, whatever its row says");
     }
 
     #[test]
     fn environment_recovery_refuses_a_different_live_successor_token() {
         let private = tempfile::tempdir().expect("successor fixture");
-        write_holder_lock(
-            private.path(),
-            std::process::id(),
-            "managedrun-successor",
-            None,
-        );
-        // The old token alone appears recoverable, but the environment's
-        // task/profile lock belongs to a live successor. No down is allowed.
+        let held = hold_task(private.path(), Some("managedrun-successor"));
+        // The old token alone appears recoverable, but the task's gate
+        // belongs to a live successor. No down is allowed.
         refuse_recovery_while_token_live(private.path(), "managedrun-old")
             .expect("old holder ended");
         let error = refuse_environment_mutation(private.path(), "stack", None, None)
             .expect_err("successor protects environment");
         assert!(error.to_string().contains("task:dev"));
+        held.close(WorkloadOutcome::Succeeded);
     }
 
     #[cfg(unix)]
     #[test]
     fn explicit_stop_exempts_its_calling_host_task_but_not_a_managed_ancestor() {
         let private = tempfile::tempdir().expect("calling task fixture");
-        let parent_pid = nix::unistd::getppid().as_raw() as u32;
-        write_holder_lock(private.path(), parent_pid, "managedrun-parent", None);
-        refuse_environment_mutation(private.path(), "stack", Some(std::process::id()), None)
+        // This process holds the gate; a child of it stands in for the
+        // explicit `down` running inside that task.
+        let mut caller = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .expect("caller fixture");
+        let held = hold_task(private.path(), Some("managedrun-parent"));
+        refuse_environment_mutation(private.path(), "stack", Some(caller.id()), None)
             .expect_err("a managed ancestor must use its own stop token");
-        let lock = private.path().join(".effigy/locks/task-dev.lock");
-        let mut record: serde_json::Value =
-            serde_json::from_slice(&fs::read(&lock).expect("lock")).expect("record");
-        record
-            .as_object_mut()
-            .expect("object")
-            .remove("managed_run_token");
-        fs::write(lock, record.to_string()).expect("ordinary calling task");
-        refuse_environment_mutation(private.path(), "stack", Some(std::process::id()), None)
+        held.close(WorkloadOutcome::Succeeded);
+
+        let held = hold_task(private.path(), None);
+        refuse_environment_mutation(private.path(), "stack", Some(caller.id()), None)
             .expect("an explicit down may finish its own calling host task");
         refuse_environment_mutation(private.path(), "stack", None, None)
             .expect_err("a reaper cannot borrow the calling-task exemption");
+        held.close(WorkloadOutcome::Succeeded);
+        let _ = caller.kill();
+        let _ = caller.wait();
     }
 
     /// The live-owner discovery sees a live holder through its run token even
@@ -641,23 +572,18 @@ mod tests {
     #[test]
     fn live_managed_lock_holders_sees_live_token_holders() {
         let private = tempfile::tempdir().expect("discovery fixture");
-        write_holder_lock(
-            private.path(),
-            std::process::id(),
-            "managedrun-live",
-            Some("not-this-host-namespace"),
-        );
+        let plain = hold_task(private.path(), None);
         assert!(
             live_managed_lock_holders(private.path()).is_empty(),
-            "a foreign-host holder names no local process"
+            "a holder without a managed run is not a managed holder"
         );
-        write_holder_lock(private.path(), std::process::id(), "managedrun-live", None);
+        plain.close(WorkloadOutcome::Succeeded);
+        let held = hold_task(private.path(), Some("managedrun-live"));
         let holders = live_managed_lock_holders(private.path());
         assert_eq!(holders.len(), 1);
-        assert_eq!(holders[0].scope, "task:dev");
-        assert_eq!(
-            holders[0].managed_run_token.as_deref(),
-            Some("managedrun-live")
-        );
+        assert_eq!(holders[0].scope_label(), "task:dev");
+        assert!(holders[0].carries_managed_run("managedrun-live"));
+        assert_eq!(holders[0].pid, Some(std::process::id()));
+        held.close(WorkloadOutcome::Succeeded);
     }
 }

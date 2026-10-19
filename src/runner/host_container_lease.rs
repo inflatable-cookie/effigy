@@ -1145,12 +1145,7 @@ mod tests {
         let _env = lease_env(&private.path().join("leases"));
         let policy = effigy_containers::load_container_policy(&repo_root, None).expect("policy");
         write_expired_lease(&repo_root, &policy, "prior-lease");
-        let _holder = crate::runner::locking::io::acquire_scopes_with_wait(
-            &repo_root,
-            &[effigy_builtin::LockScope::Task("seed".to_owned())],
-            0,
-        )
-        .expect("ordinary live task lock");
+        let _holder = crate::runner::task_engine::TaskRun::hold_for_tests(&repo_root, "seed", None);
         let script = stopped_liveness_script();
         let error = super::run_host_container_lease_reaper_for_tests(
             &repo_root,

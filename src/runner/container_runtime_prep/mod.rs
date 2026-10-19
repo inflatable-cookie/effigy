@@ -581,7 +581,7 @@ pub(in crate::runner) fn ensure_primary_service_exec_ready_for_runtime(
 /// services. A recovery restart would SIGKILL those remote processes (the
 /// mass exit-137 signature). The note names the run for the refusal.
 ///
-/// Lock holders establish liveness even when session.json is missing. A
+/// Task gates establish liveness even when session.json is missing. A
 /// matching record only narrows the environment; unknown binding protects
 /// every environment in the checkout.
 fn live_managed_exec_note(repo_root: &Path, policy: &EffectiveContainerPolicy) -> Option<String> {
@@ -593,8 +593,13 @@ fn live_managed_exec_note(repo_root: &Path, policy: &EffectiveContainerPolicy) -
         .iter()
         .map(|holder| {
             format!(
-                "`{}` (pid {}, run token {:?}; session record missing or lock-bound owner)",
-                holder.scope, holder.pid, holder.managed_run_token
+                "`{}` ({}, run {}; session record missing or gate-bound owner)",
+                holder.scope_label(),
+                holder
+                    .pid
+                    .map(|pid| format!("pid {pid}"))
+                    .unwrap_or_else(|| "pid unreadable".to_owned()),
+                holder.run
             )
         })
         .collect::<Vec<_>>()

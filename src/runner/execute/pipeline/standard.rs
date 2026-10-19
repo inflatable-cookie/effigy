@@ -1,13 +1,11 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use super::super::super::cache::ops::check_task_cache;
 use super::super::super::exec_command::{
     capture_routed_task_container_exec, capture_routed_task_container_exec_with_policy,
     run_routed_task_container_exec, run_routed_task_container_exec_with_policy,
     RoutedTaskExecRequest,
 };
-use super::super::super::locking::io::{acquire_scopes_with_wait, resolve_lock_wait_ms};
 use super::super::super::system_command::is_primary_service_running;
 use super::super::api::{
     effective_task_binding_inputs, execution_scope_root, resolve_execution_binding_resolution,
@@ -19,15 +17,15 @@ use super::super::routing::{
     route_standard_task_execution, routed_container_target, routed_not_running_container,
     RoutedTaskExecution,
 };
-use super::super::task_status::{
-    container_route_summary, host_route_summary, inline_route_summary, TaskStatusTracker,
-};
 use super::{super::process_run, command};
 use crate::runner::container_runtime_prep::{
     activate_container_runtime_for_task, build_runtime_activation_plan, ActivationRequest,
 };
 use crate::runner::error::RunnerError;
 use crate::runner::execute::nested;
+use crate::runner::task_engine::{
+    refuse_live_legacy_holder, resolve_lock_wait_ms, TaskRun, TaskRunRequest, TaskTarget,
+};
 use crate::runner::execute::render;
 use crate::runner::execute::workspace_seeded::{
     inside_container_handoff, run_workspace_seeded_task_session,
@@ -46,7 +44,8 @@ use effigy_env::schema_support::{
     SchemaSupportError,
 };
 use effigy_env::secret::SecretString;
-use effigy_execution::{ExecutionBindingInput, ExecutionSelectionPlan, TaskStatusStage};
+use effigy_execution::{ExecutionBindingInput, ExecutionSelectionPlan};
+use effigy_kernel::outcome::WorkloadOutcome;
 use effigy_manifest::{
     ManifestManagedRun, ManifestManagedRunStep, ManifestSecretTarget, ManifestSecretsBackend,
     ManifestSecretsConfig, ManifestTaskRunIn, TaskSelection,
@@ -60,47 +59,104 @@ pub(in crate::runner) fn run_standard_task(
     selection_plan: &ExecutionSelectionPlan,
     host_admitted_execution: bool,
 ) -> Result<String, RunnerError> {
-    let env_schema_catalog = effigy_manifest::env_schema_declaring_catalog(
-        &preflight.catalogs,
-        &selection.catalog.catalog_root,
-    );
-    let env_schema_resolved = resolve_env_schema_if_present(
-        env_schema_catalog.map_or(selection.catalog.catalog_root.as_path(), |catalog| {
-            catalog.catalog_root.as_path()
-        }),
-        preflight.runtime_args_raw.env_schema_override.as_deref(),
-        env_schema_catalog.and_then(|catalog| catalog.manifest.env_schema.as_ref()),
-    )?;
-
-    let context = ExecutionTaskContext::new(
-        preflight,
-        selection,
-        command::build_task_command(preflight, selection, &env_schema_resolved)?,
-        host_admitted_execution,
-    );
-
-    let lock_scope = crate::runner::manifest::task_lock_scope(selection.task, &preflight.selector);
-    let mut status = TaskStatusTracker::start(preflight, selection_plan, vec![lock_scope.label()])?;
-
-    let result = run_standard_task_inner(
-        preflight,
-        selection,
-        selection_plan,
-        &context,
-        &env_schema_resolved,
-        &lock_scope,
-        &mut status,
-    );
-    match result {
-        Ok((output, summary)) => {
-            status.finish_success(summary)?;
-            Ok(output)
-        }
-        Err(error) => {
-            status.finish_error(&error)?;
-            Err(error)
-        }
+    if selection.task.cache.is_some() {
+        return Err(retired_task_cache_error(&preflight.selector.task_name));
     }
+    let target = TaskTarget::for_selection(
+        &preflight.resolved.resolved_root,
+        &preflight.selector.task_name,
+        selection,
+    );
+    refuse_live_legacy_holder(&target)?;
+    let inherited_managed_run = std::env::var(effigy_managed::RUN_TOKEN_ENV)
+        .ok()
+        .filter(|token| !token.is_empty());
+    let mut run = TaskRun::begin(TaskRunRequest {
+        target: &target,
+        lock_wait_ms: resolve_lock_wait_ms(preflight.runtime_args_raw.lock_wait_ms)?,
+        custody: runs_plain_host_command(preflight, selection),
+        managed_run_token: inherited_managed_run.as_deref(),
+        args: &preflight.runtime_args_exec.passthrough,
+    })?;
+    let mut workload = None;
+    // Admitted commits before env-schema commands run (K3): they are the
+    // run's first effects, and a second spelling waits on the gate instead.
+    let result = (|| {
+        let env_schema_catalog = effigy_manifest::env_schema_declaring_catalog(
+            &preflight.catalogs,
+            &selection.catalog.catalog_root,
+        );
+        let env_schema_resolved = resolve_env_schema_if_present(
+            env_schema_catalog.map_or(selection.catalog.catalog_root.as_path(), |catalog| {
+                catalog.catalog_root.as_path()
+            }),
+            preflight.runtime_args_raw.env_schema_override.as_deref(),
+            env_schema_catalog.and_then(|catalog| catalog.manifest.env_schema.as_ref()),
+        )?;
+        let context = ExecutionTaskContext::new(
+            preflight,
+            selection,
+            command::build_task_command(preflight, selection, &env_schema_resolved)?,
+            host_admitted_execution,
+        );
+        run_standard_task_inner(
+            preflight,
+            selection,
+            selection_plan,
+            &context,
+            &env_schema_resolved,
+            &mut run,
+            &mut workload,
+        )
+    })();
+    let workload = workload.unwrap_or_else(|| workload_for_result(&result));
+    // Observability never changes the task's outcome or exit code (K10).
+    for warning in run.close(workload) {
+        eprintln!("warning: {}: {warning}", target.label);
+    }
+    result
+}
+
+/// The run's recorded outcome when the route did not report one itself.
+fn workload_for_result(result: &Result<String, RunnerError>) -> WorkloadOutcome {
+    match result {
+        Ok(_) => WorkloadOutcome::Succeeded,
+        Err(RunnerError::TaskCommandFailure {
+            code: Some(code), ..
+        }) if *code != 0 => crate::runner::task_engine::workload_for_exit(*code),
+        Err(_) => WorkloadOutcome::Failed { code: 1 },
+    }
+}
+
+/// A plain `run = "<command>"` on the host gets kernel custody (K6). The
+/// decision is made before admission so the run's sentinel exists before
+/// the spawn; a route that later goes elsewhere simply never spawns.
+fn runs_plain_host_command(preflight: &ExecutionPreflight, selection: &TaskSelection<'_>) -> bool {
+    let Some(ManifestManagedRun::Command(command)) = selection.task.run.as_ref() else {
+        return false;
+    };
+    if command.trim_start().starts_with("task:") {
+        return false;
+    }
+    let (default_run_in, systems, containers) =
+        effective_task_binding_inputs(&preflight.invocation_cwd, &preflight.catalogs, selection);
+    resolve_execution_binding_resolution(
+        default_run_in,
+        systems.as_ref(),
+        containers.as_ref(),
+        &preflight.selector.task_name,
+        selection.task,
+        "custody planning",
+    )
+    .is_ok_and(|binding| matches!(binding.binding(), ContainerExecutionBinding::Host))
+}
+
+fn retired_task_cache_error(task_name: &str) -> RunnerError {
+    RunnerError::task_invocation(format!(
+        "task `{task_name}` declares `cache`, which was removed in v0.15: Effigy no longer skips \
+         tasks from a fingerprint. Delete the `cache` table and let the tool's own cache \
+         (cargo, turbo, vite) decide; `.effigy/cache` can be deleted"
+    ))
 }
 
 fn run_standard_task_inner(
@@ -109,36 +165,9 @@ fn run_standard_task_inner(
     selection_plan: &ExecutionSelectionPlan,
     context: &ExecutionTaskContext<'_>,
     env_schema_resolved: &Option<ResolvedEnv>,
-    lock_scope: &crate::runner::locking::model::LockScope,
-    status: &mut TaskStatusTracker,
-) -> Result<(String, String), RunnerError> {
-    let wait_timeout_ms = resolve_lock_wait_ms(preflight.runtime_args_raw.lock_wait_ms)?;
-    let _lock_guards = acquire_scopes_with_wait(
-        &preflight.resolved.resolved_root,
-        std::slice::from_ref(lock_scope),
-        wait_timeout_ms,
-    )?;
-    status.update_stage(TaskStatusStage::Executing, host_route_summary())?;
-
-    let cache_check = check_task_cache(
-        &preflight.resolved.resolved_root,
-        context.repo_for_task(),
-        &selection.catalog.manifest_path,
-        &preflight.selector.task_name,
-        selection.task,
-        context.command(),
-    )?;
-    if cache_check.enabled && cache_check.hit {
-        let output = render::render_cache_hit_output(
-            preflight.output_json,
-            preflight.runtime_args_raw.verbose_root,
-            context,
-            &cache_check.reason,
-            &cache_check.fingerprint,
-        )?;
-        return Ok((output, format!("cache hit ({})", cache_check.reason)));
-    }
-
+    run: &mut TaskRun,
+    workload: &mut Option<WorkloadOutcome>,
+) -> Result<String, RunnerError> {
     let env_schema_secret_pairs = env_schema_resolved
         .as_ref()
         .map(|resolved| resolved.secret_env())
@@ -170,8 +199,7 @@ fn run_standard_task_inner(
         env_schema_resolved,
         secret_ref,
     )? {
-        status.update_stage(TaskStatusStage::Executing, host_route_summary())?;
-        return Ok((output, "in-process task sequence completed".to_owned()));
+        return Ok(output);
     }
 
     let (default_run_in, systems, containers) =
@@ -202,10 +230,6 @@ fn run_standard_task_inner(
             Some(ManifestManagedRun::Command(_))
         );
     if let ContainerExecutionBinding::Inline { synthetic_name, .. } = container_binding {
-        status.update_stage(
-            TaskStatusStage::Handoff,
-            inline_route_summary(synthetic_name),
-        )?;
         let output = run_inline_workspace_standard_task(
             preflight,
             selection,
@@ -214,7 +238,7 @@ fn run_standard_task_inner(
             &binding_resolution,
             host_owned_container_payload,
         )?;
-        return Ok((output, "inline workspace task completed".to_owned()));
+        return Ok(output);
     }
 
     let routed = route_with_running_check(
@@ -225,10 +249,6 @@ fn run_standard_task_inner(
         systems.as_ref(),
         containers.as_ref(),
     )?;
-    let initial_route = routed_container_target(&routed.decision)
-        .map(|(container, service)| container_route_summary(container, service))
-        .unwrap_or_else(host_route_summary);
-    status.update_stage(TaskStatusStage::RuntimePrep, initial_route)?;
 
     let mut task_activation = None;
     let routed = if let Some(container_name) = routed_not_running_container(&routed.decision) {
@@ -262,12 +282,6 @@ fn run_standard_task_inner(
     };
 
     if should_stay_in_workspace_shell(preflight.output_json, selection.task, container_binding) {
-        status.update_stage(
-            TaskStatusStage::ManagedSession,
-            routed_container_target(&routed.decision)
-                .map(|(container, service)| container_route_summary(container, service))
-                .unwrap_or_else(host_route_summary),
-        )?;
         let output = run_workspace_seeded_task_session(
             &selection.catalog.catalog_root,
             container_binding,
@@ -276,14 +290,10 @@ fn run_standard_task_inner(
             &preflight.runtime_args_exec.passthrough,
             Some(current_runtime_session_context().public_workspace_cleanup),
         )?;
-        return Ok((output, "workspace-seeded task session completed".to_owned()));
+        return Ok(output);
     }
 
     if let Some((container, service)) = routed_container_target(&routed.decision) {
-        status.update_stage(
-            TaskStatusStage::Executing,
-            container_route_summary(container, service),
-        )?;
         let task_execution_cwd = preflight.task_execution_root(&selection.catalog.catalog_root);
         if preflight.output_json {
             let output = capture_routed_task_container_exec(
@@ -319,7 +329,7 @@ fn run_standard_task_inner(
                 {
                     emit_host_container_lease_notice(container);
                 }
-                return Ok((rendered, "container task completed".to_owned()));
+                return Ok(rendered);
             }
             return Err(RunnerError::CommandJsonFailure { rendered });
         }
@@ -342,15 +352,11 @@ fn run_standard_task_inner(
             emit_host_container_lease_notice(container);
         }
         if preflight.runtime_args_raw.verbose_root {
-            return Ok((
-                context.render_resolution_trace(),
-                "container task completed".to_owned(),
-            ));
+            return Ok(context.render_resolution_trace());
         }
-        return Ok((String::new(), "container task completed".to_owned()));
+        return Ok(String::new());
     }
 
-    status.update_stage(TaskStatusStage::Executing, host_route_summary())?;
     if let Some(output) = nested::maybe_run_in_process_sequence(
         preflight,
         selection,
@@ -358,16 +364,17 @@ fn run_standard_task_inner(
         env_schema_resolved,
         secret_ref,
     )? {
-        return Ok((output, "nested task sequence completed".to_owned()));
+        return Ok(output);
     }
 
-    let output = process_run::run_task_process(
+    process_run::run_task_process(
         preflight.output_json,
         preflight.runtime_args_raw.verbose_root,
         context,
         secret_ref,
-    )?;
-    Ok((output, "host task completed".to_owned()))
+        run,
+        workload,
+    )
 }
 
 fn task_uses_direct_shell(run: Option<&ManifestManagedRun>) -> bool {

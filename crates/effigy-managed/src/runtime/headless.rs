@@ -195,13 +195,8 @@ pub fn run_managed_task_headless(
     let exec_cleanup = end_container_exec_groups(&runtime_dir, &state, settle);
     supervisor.terminate_all_graceful(SHUTDOWN_GRACE);
     let host_cleanup = verify_host_children_ended(&supervisor, &mut state);
-    // Release lock records the run's processes still hold: a SIGKILLed
-    // holder never drops its guard, and the env's teardown is not always
-    // part of this run's own cascade (a hybrid run attaches to an
-    // environment it does not own).
-    if exec_cleanup.is_ok() && host_cleanup.is_ok() {
-        release_run_locks(settle);
-    }
+    // Task gates held by the run's processes are released by the kernel
+    // when each holder exits; there are no lock records to sweep.
     if !owns_environment {
         exec_cleanup?;
     }
@@ -733,25 +728,6 @@ fn end_container_exec_groups(
             "managed exec cleanup failed: {}",
             failures.join("; ")
         )))
-    }
-}
-
-/// Release lock records attributed to this run's token through the lock
-/// owner-token rules.
-fn release_run_locks(settle: Option<&ManagedRunSettle<'_>>) {
-    let Some(settle) = settle else {
-        return;
-    };
-    let Some(release) = settle.release_run_locks else {
-        return;
-    };
-    let released = release();
-    if !released.is_empty() {
-        println!(
-            "[headless] released {} task lock(s) still attributed to this run: {}",
-            released.len(),
-            released.join(", ")
-        );
     }
 }
 

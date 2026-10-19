@@ -153,10 +153,6 @@ pub enum RunnerError {
         stderr: String,
     },
     TaskLockConflict(Box<TaskLockConflict>),
-    TaskLockIo {
-        path: PathBuf,
-        error: std::io::Error,
-    },
     CommandJsonFailure {
         rendered: String,
     },
@@ -688,7 +684,6 @@ impl From<effigy_builtin::BuiltinError> for RunnerError {
             B::TaskManifestCompose { path, detail } => Self::TaskManifestCompose { path, detail },
             B::TaskCommandLaunch { command, error } => Self::TaskCommandLaunch { command, error },
             B::TaskLockConflict(details) => Self::TaskLockConflict(details),
-            B::TaskLockIo { path, error } => Self::TaskLockIo { path, error },
             B::BuiltinTestNonZero { failures, rendered } => {
                 Self::BuiltinTestNonZero { failures, rendered }
             }

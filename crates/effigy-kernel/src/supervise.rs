@@ -55,36 +55,40 @@ pub struct Executable {
     device: u64,
     inode: u64,
     size: u64,
+    modified: (i64, i64),
+    changed: (i64, i64),
     digest: Digest,
 }
+/// Debug builds of the product binary exceed 128 MiB; the digest streams.
+const EXECUTABLE_MAX_BYTES: u64 = 1 << 30;
 impl Executable {
     pub fn current() -> io::Result<Self> {
         Self::capture(&std::env::current_exe()?)
     }
+    /// Identifies the file once: its inode, size, change times and a
+    /// streamed content digest.
     pub fn capture(path: &Path) -> io::Result<Self> {
-        let parent = path
-            .parent()
-            .ok_or_else(|| io::Error::other("binary parent missing"))?;
-        let dir = DirFd::walk(parent, Trust::Operator).map_err(io::Error::other)?;
-        let name = FileName::new(
-            path.file_name()
-                .and_then(|n| n.to_str())
-                .ok_or_else(|| io::Error::other("invalid binary name"))?,
-        )
-        .map_err(io::Error::other)?;
-        let (mut file, _) = dir
-            .open_file(&name, libc::O_RDONLY, None, Trust::Operator)
-            .map_err(io::Error::other)?
-            .ok_or_else(|| io::Error::other("binary missing"))?;
+        let mut file = open_executable(path)?;
         let metadata = file.metadata()?;
-        if metadata.len() > 128 << 20 {
+        if metadata.len() > EXECUTABLE_MAX_BYTES {
             return Err(io::Error::other("binary too large"));
         }
-        let mut bytes = Vec::new();
-        std::io::Read::by_ref(&mut file)
-            .take((128 << 20) + 1)
-            .read_to_end(&mut bytes)?;
-        if bytes.len() as u64 != metadata.len() {
+        use sha2::Digest as _;
+        let mut hasher = sha2::Sha256::new();
+        let mut buffer = vec![0u8; 1 << 20];
+        let mut total = 0u64;
+        loop {
+            let count = file.read(&mut buffer)?;
+            if count == 0 {
+                break;
+            }
+            total += count as u64;
+            if total > metadata.len() {
+                return Err(io::Error::other("binary changed during read"));
+            }
+            hasher.update(&buffer[..count]);
+        }
+        if total != metadata.len() {
             return Err(io::Error::other("binary changed during read"));
         }
         Ok(Self {
@@ -92,20 +96,43 @@ impl Executable {
             device: metadata.dev(),
             inode: metadata.ino(),
             size: metadata.len(),
-            digest: Digest::of(&bytes),
+            modified: (metadata.mtime(), metadata.mtime_nsec()),
+            changed: (metadata.ctime(), metadata.ctime_nsec()),
+            digest: Digest(hasher.finalize().into()),
         })
     }
+    /// A replaced or rewritten file changes its inode, size or change time
+    /// (I-SV4). Verification is a stat, so helpers start without re-hashing.
     pub fn verify(&self) -> io::Result<()> {
-        let fresh = Self::capture(&self.path)?;
-        if self.device != fresh.device
-            || self.inode != fresh.inode
-            || self.size != fresh.size
-            || self.digest != fresh.digest
+        let fresh = open_executable(&self.path)?.metadata()?;
+        if self.device != fresh.dev()
+            || self.inode != fresh.ino()
+            || self.size != fresh.len()
+            || self.modified != (fresh.mtime(), fresh.mtime_nsec())
+            || self.changed != (fresh.ctime(), fresh.ctime_nsec())
         {
             return Err(io::Error::other("startup binary replaced"));
         }
         Ok(())
     }
+}
+/// Descriptor-relative, no-follow open of a trusted binary (K13).
+fn open_executable(path: &Path) -> io::Result<std::fs::File> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| io::Error::other("binary parent missing"))?;
+    let dir = DirFd::walk(parent, Trust::Operator).map_err(io::Error::other)?;
+    let name = FileName::new(
+        path.file_name()
+            .and_then(|n| n.to_str())
+            .ok_or_else(|| io::Error::other("invalid binary name"))?,
+    )
+    .map_err(io::Error::other)?;
+    let (file, _) = dir
+        .open_file(&name, libc::O_RDONLY, None, Trust::Operator)
+        .map_err(io::Error::other)?
+        .ok_or_else(|| io::Error::other("binary missing"))?;
+    Ok(file)
 }
 #[derive(Debug, Clone)]
 pub struct LifecyclePlan {

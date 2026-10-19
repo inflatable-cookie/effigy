@@ -20,7 +20,7 @@ use managed::{
 };
 use task_failures::{
     write_defer_loop_detected, write_lock_conflict, write_task_command_failure,
-    write_task_command_launch, write_task_lock_io,
+    write_task_command_launch,
 };
 
 pub(super) fn fmt_runner_error(
@@ -175,7 +175,6 @@ pub(super) fn fmt_runner_error(
             stderr,
         } => write_task_command_failure(f, command, code, stdout, stderr),
         RunnerError::TaskLockConflict(details) => write_lock_conflict(f, details),
-        RunnerError::TaskLockIo { path, error } => write_task_lock_io(f, path, error),
         RunnerError::HostScheduler { detail, .. } => f.write_str(detail),
         RunnerError::HostRequestFailure { detail, .. } => f.write_str(detail),
         RunnerError::HostRunSettled { code } => {

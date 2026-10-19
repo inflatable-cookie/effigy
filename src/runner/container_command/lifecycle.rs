@@ -772,7 +772,7 @@ fn partial_activation_reconcile_pending(
             None,
         )?;
         // Never tear the environment down while a process of a judged-failed
-        // generation still holds its run-token locks: the dead-owner judgment
+        // generation still holds a task gate: the dead-owner judgment
         // can be wrong through a stale or missing record, and the down would
         // SIGKILL a live run's execs.
         for token in &failed_runs {
@@ -783,7 +783,6 @@ fn partial_activation_reconcile_pending(
         effigy_containers::exec::verify_owned_stack_for_shutdown(repo_root, &plan.policy)?;
         lifecycle_cleanup_failed_container_up(repo_root, &plan.policy)?;
         for token in failed_runs {
-            crate::runner::managed_settle::release_run_lock_residue(repo_root, Some(&token));
             effigy_managed::runtime::clear_managed_run_failure(repo_root, &token)?;
         }
         return Ok(false);
@@ -1106,9 +1105,10 @@ fn run_container_down_adapter(
 ) -> Result<String, RunnerError> {
     let policy = load_container_policy(repo_root, name)?;
     let stopping_token = std::env::var("EFFIGY_INTERNAL_MANAGED_STOP_TOKEN").ok();
-    // An explicit host task can finish under its own calling-task lock.
+    // An explicit host task can finish under its own calling task's gate.
     // A managed caller, even in this process, needs its runner's stop token.
     let calling_task_pid = std::env::var_os(effigy_managed::RUN_TOKEN_ENV)
+        .filter(|token| !token.is_empty())
         .is_none()
         .then(std::process::id);
     crate::runner::managed_settle::refuse_environment_mutation(

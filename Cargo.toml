@@ -52,6 +52,11 @@ license = "MIT"
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(effigy_shared_process)"] }
 
 # Size-bounded private docs proof artifact; ordinary dev/release profiles stay unchanged.
+# Task runs identify their own binary for the per-run sentinel (contract 052
+# §5.8). Debug builds keep that digest fast.
+[profile.dev.package.sha2]
+opt-level = 3
+
 [profile.qualified-docs]
 inherits = "release"
 strip = "symbols"
@@ -95,6 +100,7 @@ effigy-gateway = { path = "crates/effigy-gateway" }
 effigy-managed = { path = "crates/effigy-managed" }
 effigy-manifest = { path = "crates/effigy-manifest" }
 effigy-host-run = { path = "crates/effigy-host-run" }
+effigy-kernel = { path = "crates/effigy-kernel" }
 effigy-process = { path = "crates/effigy-process" }
 effigy-release = { path = "crates/effigy-release" }
 effigy-rhai = { path = "crates/effigy-rhai" }

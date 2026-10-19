@@ -74,6 +74,11 @@
 # Explicit baseline maintenance; ordinary QA never rewrites the baseline.
 "qa:kernel-ratchet:baseline" = { run = "cargo run -p effigy-kernel --example kernel-ratchet -- --inventory", timeout_ms = 600000 }
 
+# Task engine on the kernel (contract 052 §10.1): compile, strict lint and the
+# engine's own proofs. The kill matrix spawns the built binary.
+"check:task-engine" = { run = "cargo check -p effigy -p effigy-kernel --all-targets", timeout_ms = 900000 }
+"lint:task-engine" = { run = "cargo clippy -p effigy -p effigy-kernel -p effigy-builtin -p effigy-cli -p effigy-tasks -p effigy-routing -p effigy-core -p effigy-env -p effigy-execution -p effigy-runtime -p effigy-context --all-targets -- -D warnings", timeout_ms = 900000 }
+
 # Common local commands
 "fmt:check" = "cargo fmt --all -- --check"
 "fmt:apply" = "cargo fmt --all"

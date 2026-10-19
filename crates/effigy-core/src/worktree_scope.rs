@@ -128,6 +128,55 @@ pub fn load_or_create_scoped(repo_root: &Path) -> io::Result<Option<(ScopeKind, 
     load_or_create_token(&scope.token_dir).map(|token| Some((scope.kind, token)))
 }
 
+/// The scoped checkout's recorded token without creating one, for readers
+/// that must write nothing.
+pub fn load_scoped(repo_root: &Path) -> io::Result<Option<(ScopeKind, String)>> {
+    let Some(scope) = resolve(repo_root)? else {
+        return Ok(None);
+    };
+    match fs::read_to_string(scope.token_dir.join(SCOPE_FILE)) {
+        Ok(value) => valid_token(&value)
+            .map(|token| Some((scope.kind, token)))
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("invalid worktree scope in {}", scope.token_dir.display()),
+                )
+            }),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+/// File holding a primary checkout's own identity token, beside the
+/// runtime-scope token in Git's per-checkout directory.
+pub const CHECKOUT_TOKEN_FILE: &str = "effigy-checkout-id";
+
+/// A primary checkout's identity token, created once in its `.git`
+/// directory. `None` when `repo_root` has no `.git` directory of its own.
+pub fn load_or_create_checkout_token(repo_root: &Path) -> io::Result<Option<String>> {
+    let git_dir = repo_root.join(".git");
+    if !git_dir.is_dir() {
+        return Ok(None);
+    }
+    load_or_create_token_file(&git_dir.join(CHECKOUT_TOKEN_FILE)).map(Some)
+}
+
+/// The recorded primary checkout token without creating one.
+pub fn load_checkout_token(repo_root: &Path) -> io::Result<Option<String>> {
+    let path = repo_root.join(".git").join(CHECKOUT_TOKEN_FILE);
+    match fs::read_to_string(&path) {
+        Ok(value) => valid_token(&value).map(Some).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("invalid checkout token at {}", path.display()),
+            )
+        }),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
 /// Check whether a recorded owner still names this checkout generation.
 pub fn is_live(repo_root: &Path, token: &str) -> bool {
     let recorded = resolve(repo_root)
@@ -140,7 +189,11 @@ pub fn is_live(repo_root: &Path, token: &str) -> bool {
 }
 
 fn load_or_create_token(token_dir: &Path) -> io::Result<String> {
-    let path = token_dir.join(SCOPE_FILE);
+    load_or_create_token_file(&token_dir.join(SCOPE_FILE))
+}
+
+fn load_or_create_token_file(path: &Path) -> io::Result<String> {
+    let path = path.to_path_buf();
     match fs::read_to_string(&path) {
         Ok(value) => {
             return valid_token(&value).ok_or_else(|| {

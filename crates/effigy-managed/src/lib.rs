@@ -98,9 +98,6 @@ pub struct ManagedRunSettle<'a> {
     /// Ends one recorded exec'd process group through the exec adapter,
     /// given the group id the marker file recorded.
     pub end_container_process: Option<&'a dyn Fn(u32) -> Result<(), String>>,
-    /// Releases task locks still attributed to this run's token, returning
-    /// the released lock scopes.
-    pub release_run_locks: Option<&'a dyn Fn() -> Vec<String>>,
 }
 
 impl std::fmt::Debug for ManagedRunSettle<'_> {
@@ -111,7 +108,6 @@ impl std::fmt::Debug for ManagedRunSettle<'_> {
                 "end_container_process",
                 &self.end_container_process.is_some(),
             )
-            .field("release_run_locks", &self.release_run_locks.is_some())
             .finish()
     }
 }

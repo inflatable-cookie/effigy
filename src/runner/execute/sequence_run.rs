@@ -18,7 +18,6 @@ use effigy_manifest::{ManifestManagedRun, ManifestManagedRunStep, TaskSelection}
 use effigy_routing::{resolve_catalog_by_prefix, select_catalog_and_task_on_surface};
 use effigy_tasks::{parse_task_reference_invocation, render_task_selector, TaskSurface};
 
-use super::super::cache::ops::update_task_cache_entry;
 use super::context::ExecutionTaskContext;
 use super::preflight::ExecutionPreflight;
 use crate::runner::command_context::EmbeddedRepoOverrideMode;
@@ -77,15 +76,6 @@ pub(super) fn maybe_run_in_process_sequence(
             stderr: String::new(),
         });
     }
-
-    update_task_cache_entry(
-        context.resolved_root,
-        context.repo_for_task(),
-        &selection.catalog.manifest_path,
-        &preflight.selector.task_name,
-        selection.task,
-        context.command(),
-    )?;
 
     if preflight.runtime_args_raw.verbose_root {
         return Ok(Some(context.render_resolution_trace()));

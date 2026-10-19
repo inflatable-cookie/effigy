@@ -17,19 +17,13 @@ use crate::runner::error::RunnerError;
 use crate::runner::host_container_lease::{
     capture_detached_activation_context, workspace_builder_admission_retained,
 };
-use crate::runner::locking::{io::acquire_scopes_with_wait, model::LockScope};
+use crate::runner::task_engine::TaskRun;
 
 pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(), RunnerError> {
     // The maintained task already holds its ordinary task lock. This shared
     // operation lock also serializes callers using the helper from another
     // catalog/task declaration, without trying to reacquire that outer lock.
-    let _guards = acquire_scopes_with_wait(
-        repo_root,
-        &[LockScope::Shared(
-            "linux-workspace-artifact-builder".to_owned(),
-        )],
-        0,
-    )?;
+    let _section = TaskRun::exclusive(repo_root, "shared:linux-workspace-artifact-builder", 0)?;
     let stop = effigy_rhai::install_stop_requested_flag()
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let check_interruption = || {
@@ -138,3 +132,4 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
     }
     Ok(())
 }
+

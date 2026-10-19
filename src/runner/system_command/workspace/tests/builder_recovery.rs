@@ -566,11 +566,9 @@ fn failed_and_interrupted_changed_input_builds_retain_admission_and_retry() {
 fn concurrent_caller_and_expired_binding_have_no_effect() {
     let _lock = crate::contract_test_support::lock_test();
     let fixture = Fixture::new(true, true, "docker");
-    let guard = crate::runner::locking::io::acquire_scopes_with_wait(
+    let guard = crate::runner::task_engine::TaskRun::exclusive(
         &fixture.root,
-        &[crate::runner::locking::model::LockScope::Shared(
-            "linux-workspace-artifact-builder".to_owned(),
-        )],
+        "shared:linux-workspace-artifact-builder",
         0,
     )
     .unwrap();

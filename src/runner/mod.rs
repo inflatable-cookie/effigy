@@ -3,7 +3,6 @@ mod artifact_transport;
 mod bootstrap_command;
 mod builtin_ports;
 mod bundle_command;
-mod cache;
 mod changelog_command;
 mod command_context;
 mod container_command;
@@ -34,7 +33,6 @@ mod host_process;
 mod host_scheduler;
 mod host_transition_evidence;
 mod interactive_session;
-mod locking;
 mod managed_listener_readiness;
 mod managed_settle;
 mod managed_shell;
@@ -56,6 +54,7 @@ mod skill_command;
 mod state_command;
 mod state_command_render;
 mod system_command;
+mod task_engine;
 mod tasks_command;
 #[cfg(test)]
 mod test_support;
@@ -80,6 +79,7 @@ pub use entrypoints::{
     resolve_command_root, run_command, run_command_with_context, run_skill_passthrough_with_context,
 };
 pub use error::RunnerError;
+pub use task_engine::run_internal_kernel_entry;
 pub(in crate::runner) use exec_command::run_exec;
 pub(in crate::runner) use gateway_command::{
     run_gateway, run_internal_gateway, run_internal_gateway_identity,
@@ -113,6 +113,3 @@ mod json_contract_tests;
 #[path = "../tests/task_ref_parser_tests.rs"]
 mod task_ref_parser_tests;
 
-#[cfg(test)]
-#[path = "../tests/cache_tests/mod.rs"]
-mod cache_tests;

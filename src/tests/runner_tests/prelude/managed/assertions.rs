@@ -153,9 +153,3 @@ pub(in crate::runner::tests) fn assert_lock_conflict(
     assert_task_lock_conflict(err, expected_scope, expected_remediation);
 }
 
-pub(in crate::runner::tests) fn assert_unlock_invocation_error_contains(
-    err: RunnerError,
-    expected: &[&str],
-) {
-    assert_invocation_error_contains(err, expected);
-}

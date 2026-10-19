@@ -36,10 +36,6 @@ pub enum BuiltinError {
         error: std::io::Error,
     },
     TaskLockConflict(Box<TaskLockConflict>),
-    TaskLockIo {
-        path: PathBuf,
-        error: std::io::Error,
-    },
     BuiltinTestNonZero {
         failures: Vec<(String, Option<i32>)>,
         rendered: String,
@@ -96,9 +92,6 @@ impl std::fmt::Display for BuiltinError {
             }
             BuiltinError::TaskLockConflict(details) => {
                 write!(f, "lock conflict on scope `{}`", details.scope)
-            }
-            BuiltinError::TaskLockIo { path, error } => {
-                write!(f, "lock io at {}: {error}", path.display())
             }
             BuiltinError::BuiltinTestNonZero { failures, .. } => {
                 write!(f, "{} builtin test failure(s)", failures.len())

@@ -775,6 +775,7 @@ dependencies = [
  "effigy-execution",
  "effigy-gateway",
  "effigy-host-run",
+ "effigy-kernel",
  "effigy-managed",
  "effigy-manifest",
  "effigy-process",
