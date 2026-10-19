@@ -320,10 +320,6 @@ pub(crate) fn build_shared_composer_cache_mount(
         return Ok(None);
     };
     let source = effigy_home.join("shared").join("composer-cache");
-    std::fs::create_dir_all(&source).map_err(|error| ContainerPolicyError::Read {
-        path: source.clone(),
-        error,
-    })?;
     Ok(Some(RenderedWorkspaceMount {
         target: PHP_FPM_COMPOSER_CACHE_TARGET.to_owned(),
         rendered: format!("{}:{}", source.display(), PHP_FPM_COMPOSER_CACHE_TARGET),

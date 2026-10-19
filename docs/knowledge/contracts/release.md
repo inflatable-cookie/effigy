@@ -546,6 +546,18 @@ must not launch or reset that proof. The consumer owner retains its finite
 allowance and resource boundaries; the publication hold remains until both
 required consumer results pass.
 
+On 2026-10-19 Tom narrowed the Underlay proof to `underlay-reference` only,
+relayed by underlay-c0 through the effigy-a6 planner. Compli-me and songsprout
+are early in development and are out of scope. Acowtancy's separate proof is
+unchanged, and Underlay still requires Tom's direct go.
+
+The identified inputs for that proof are Underlay bundle main `f957857` and
+`v0.14.1+local.3113774`, SHA-256
+`84076b133c59f0656f4a944e6f2923495560b2e602fb72e6a230a6125e087abe`.
+This scope ruling does not resume the stopped interim release flow or qualify
+the rebuilt candidate: its required cohorts must still be proven against the
+exact rebuilt source and binary under the governing v0.15 direction above.
+
 Lifting the hold resumes decision `0116369e` version 2 with no gate waiver:
 fresh hosted CI on current clean, pushed main, a fresh prepare with all seven
 configured gates, then the supported tag, binary publication and isolated

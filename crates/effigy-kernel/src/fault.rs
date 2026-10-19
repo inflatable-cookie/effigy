@@ -21,6 +21,22 @@ macro_rules! points {
     };
 }
 points! {
+    ObjectStageBefore,
+    ObjectStageCreated,
+    ObjectWriteBefore,
+    ObjectWriteAfter,
+    ObjectSealBefore,
+    ObjectSealAfter,
+    ObjectRenameBefore,
+    ObjectRenameAfter,
+    ObjectRootSealBefore,
+    ObjectRootSealAfter,
+    ObjectPublishBefore,
+    ObjectPublishAfter,
+    ObjectRefBefore,
+    ObjectRefAfter,
+    ObjectCleanupBefore,
+    ObjectCleanupAfter,
     RemoteBeforeIdentity,
     RemoteAfterIntent,
     RemoteAfterRecord,

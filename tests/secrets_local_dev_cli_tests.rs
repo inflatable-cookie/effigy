@@ -314,3 +314,73 @@ fn secrets_old_placement_refuses_before_task_or_secret_output() {
     }
     eprintln!("old-placement secrets dev: report={report}; secret output absent");
 }
+
+#[test]
+fn cli_and_rhai_concurrent_vault_writers_preserve_both_updates() {
+    let fixture = tempfile::tempdir().expect("fresh fixture");
+    let root = fixture.path().join("repo");
+    let home = fixture.path().join("home");
+    fs::create_dir_all(&root).expect("repo");
+    fs::create_dir(&home).expect("HOME");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[secrets]
+backend = "effigy-vault"
+[secrets.vault]
+path = ".effigy/secrets/local.vault"
+[secrets.keys.cli_token]
+required = false
+targets = ["rhai"]
+[secrets.keys.rhai_token]
+required = false
+targets = ["rhai"]
+[tasks.write-rhai]
+run = [{ rhai = "write-rhai.rhai" }]
+"#,
+    )
+    .expect("manifest");
+    fs::write(
+        root.join("write-rhai.rhai"),
+        r#"secrets::set("rhai_token", "from-rhai");"#,
+    )
+    .expect("script");
+    let command = || {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_effigy"));
+        command
+            .current_dir(&root)
+            .env("HOME", &home)
+            .env("EFFIGY_TEST_SECRETS_PASSPHRASE", "vault-passphrase")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped());
+        command
+    };
+    let output = command().args(["secrets", "init"]).output().expect("init");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let first = command()
+        .args(["secrets", "set", "cli_token"])
+        .env("EFFIGY_TEST_SECRETS_VALUE", "from-cli")
+        .spawn()
+        .expect("CLI writer");
+    let second = command().arg("write-rhai").spawn().expect("Rhai writer");
+    for child in [first, second] {
+        let output = child.wait_with_output().expect("writer exits");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let path = root.join(".effigy/secrets/local.vault");
+    let payload = effigy_secrets::storage::read_envelope(&path)
+        .expect("selected vault")
+        .decrypt_with_passphrase("vault-passphrase")
+        .expect("decrypt");
+    assert_eq!(payload.records["cli_token"].value.expose(), "from-cli");
+    assert_eq!(payload.records["rhai_token"].value.expose(), "from-rhai");
+}

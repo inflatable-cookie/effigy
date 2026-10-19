@@ -6,7 +6,7 @@ use super::{
     EFFIGY_RHAI_ARGS_JSON, EFFIGY_RHAI_CATALOG_ROOT, EFFIGY_RHAI_INVOCATION_CWD,
 };
 use crate::surface::{rhai_feature_descriptors, RhaiFeatureDispatch, FEATURE_NAMES, MODULE_NAMES};
-use effigy_secrets::{SecretValue, VaultEnvelope, VaultPlaintextPayload, VaultSecretRecord};
+use effigy_secrets::{SecretValue, VaultPlaintextPayload, VaultSecretRecord};
 use serde_json::Value;
 use std::collections::BTreeSet;
 use std::fs;

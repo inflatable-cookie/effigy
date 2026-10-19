@@ -38,6 +38,40 @@ pub use reclaim::{
     edit_locked, sha256_hex, PortCapacity, PortRegistryEdit, PortRegistryEditOutcome,
 };
 
+/// One missing generated-Compose binding requested by the Prepare phase.
+#[derive(Debug)]
+pub struct PortRequest {
+    pub project_name: String,
+    pub project_path: String,
+    pub service_name: String,
+    pub container_port: u16,
+}
+
+/// The existing gateway-domain allocator, invoked only by Prepare. Resolution
+/// uses `assigned_port` and never takes this lock. This legacy single writer
+/// remains until the gateway endpoint store imports `ports.json` (#224).
+/// No runtime inventory or subprocess runs inside the critical section.
+pub fn prepare_ports(path: &Path, requests: &[PortRequest]) -> Result<(), GatewayError> {
+    if requests.is_empty() {
+        return Ok(());
+    }
+    let _guard = crate::routes::RouteTableLock::acquire(path)?;
+    let mut registry = PortRegistry::load(path)?;
+    let before = registry.allocations.clone();
+    for request in requests {
+        registry.assign_port(
+            &request.project_name,
+            &request.project_path,
+            &request.service_name,
+            request.container_port,
+        )?;
+    }
+    if registry.allocations != before {
+        registry.save(path)?;
+    }
+    Ok(())
+}
+
 /// Default port range start for auto-allocation.
 const DEFAULT_BASE: u16 = 8100;
 
@@ -331,6 +365,26 @@ impl PortRegistry {
                 .unwrap_or_else(|| alloc.port_for(ServicePortOffsets::MEMCACHED)),
             base: alloc.base,
         })
+    }
+
+    /// Read an existing binding without allocating, migrating legacy keys or
+    /// rewriting the registry. Absence stays unassigned until Prepare.
+    pub fn assigned_port(
+        &self,
+        project_name: &str,
+        service_name: &str,
+        container_port: u16,
+    ) -> Option<u16> {
+        let allocation = self.allocations.get(project_name)?;
+        allocation
+            .assigned_ports
+            .get(&Self::assigned_port_key(service_name, container_port))
+            .or_else(|| {
+                allocation
+                    .assigned_ports
+                    .get(&Self::legacy_port_key(container_port))
+            })
+            .copied()
     }
 
     /// Resolve a stable host port for one exposed container port.

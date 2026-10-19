@@ -7,6 +7,8 @@ mod claims;
 mod journal;
 mod lifecycle;
 pub use lifecycle::{metadata, RunMetadata, SentinelStatus};
+#[path = "../objects/run.rs"]
+mod objects;
 mod settle;
 mod socket;
 

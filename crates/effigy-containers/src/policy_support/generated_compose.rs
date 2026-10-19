@@ -973,7 +973,10 @@ fn resolve_shared_service_bindings(
         }
         let parsed_bindings = effective_ports
             .iter()
-            .map(|raw| parse_port_binding(raw))
+            .map(|raw| {
+                let raw = raw.replace(crate::policy::ports::UNASSIGNED_PORT_LABEL, "0");
+                parse_port_binding(&raw)
+            })
             .collect::<Result<Vec<_>, _>>()?;
         let binding = parsed_bindings
             .iter()
@@ -1118,7 +1121,7 @@ fn inject_service_env_vars(
 }
 
 fn apply_generated_compose_port_policy(
-    repo_root: &Path,
+    _repo_root: &Path,
     project_name: &str,
     explicit_bindings: &[PortBinding],
     loopback_rules: &[LoopbackPortRule],
@@ -1130,10 +1133,6 @@ fn apply_generated_compose_port_policy(
     let mut effective_ports = Vec::new();
 
     let mut registry = None;
-    let _port_lock = effigy_home_dir()
-        .map(|home| RouteTableLock::acquire(&home.join("ports.json")))
-        .transpose()
-        .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))?;
 
     for service_name in compose_document.sorted_service_names() {
         let Some(service) = compose_document.services.get_mut(&service_name) else {
@@ -1166,32 +1165,45 @@ fn apply_generated_compose_port_policy(
                 used_explicit_ports.insert(binding.container);
             }
             let host_port = if let Some(explicit) = explicit.filter(|_| !scope_explicit_ports) {
-                explicit.host
+                Some(explicit.host)
             } else {
                 if registry.is_none() {
                     registry = Some(load_port_registry()?.unwrap_or_default());
                 }
-                let registry = registry.as_mut().expect("registry exists");
-                registry
-                    .assign_port(
-                        project_name,
-                        &repo_root.display().to_string(),
-                        &service_name,
-                        binding.container,
-                    )
-                    .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))?
+                registry.as_mut().and_then(|registry| {
+                    let port =
+                        registry.assigned_port(project_name, &service_name, binding.container);
+                    // An old container-port-only binding belongs to the first
+                    // service, just as Prepare's allocator will migrate it.
+                    // Consume it only in this read snapshot; never save here.
+                    if let Some(allocation) = registry.allocations.get_mut(project_name) {
+                        if !allocation
+                            .assigned_ports
+                            .contains_key(&format!("{service_name}:{}", binding.container))
+                        {
+                            allocation
+                                .assigned_ports
+                                .remove(&binding.container.to_string());
+                        }
+                    }
+                    port
+                })
             };
+            let rendered_host = host_port.map_or_else(
+                || crate::policy::ports::UNASSIGNED_PORT_EXPRESSION.to_owned(),
+                |port| port.to_string(),
+            );
             rewritten_ports.push(GeneratedComposePort::String(format!(
-                "{publish_address}:{host_port}:{}",
+                "{publish_address}:{rendered_host}:{}",
                 binding.container
             )));
-            effective_ports.push(format!("{host_port}:{}", binding.container));
+            let reported_host = host_port.map_or_else(
+                || crate::policy::ports::UNASSIGNED_PORT_LABEL.to_owned(),
+                |port| port.to_string(),
+            );
+            effective_ports.push(format!("{reported_host}:{}", binding.container));
         }
         *ports = rewritten_ports;
-    }
-
-    if let Some(registry) = registry.as_ref() {
-        save_port_registry(registry)?;
     }
 
     if !explicit_bindings.is_empty() {
@@ -1359,6 +1371,15 @@ fn load_or_allocate_loopback_ip_with_inventory(
         return Ok(None);
     };
     let path = home.join("gateway").join("loopback-ips.json");
+    // Snapshot before probing: K14 forbids runtime inventory under the global
+    // registry lock. Only unchanged snapshot entries may be reclaimed later.
+    let snapshot = LoopbackRegistry::load(&path)
+        .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))?;
+    let inventory = if !snapshot.is_empty() && snapshot.get(identity).is_none() {
+        Some(discover_inventory())
+    } else {
+        None
+    };
     let _lock = RouteTableLock::acquire(&path)
         .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))?;
     let mut registry = LoopbackRegistry::load(&path)
@@ -1414,16 +1435,26 @@ fn load_or_allocate_loopback_ip_with_inventory(
     let prune = if registry.is_empty() {
         LoopbackPruneOutcome::default()
     } else {
-        let inventory = discover_inventory();
-        match route_table.as_ref() {
-            Some(route_table) => {
-                prune_loopback_assignments(&mut registry, route_table, &inventory)
+        match (route_table.as_ref(), inventory.as_ref()) {
+            (Some(route_table), Some(inventory)) => {
+                let mut candidates = registry.clone();
+                candidates.assignments.retain(|identity, assignment| {
+                    snapshot.get(identity) == Some(assignment)
+                });
+                let outcome = prune_loopback_assignments(&mut candidates, route_table, inventory);
+                if outcome.changed {
+                    registry.assignments.retain(|identity, assignment| {
+                        snapshot.get(identity) != Some(assignment)
+                            || candidates.get(identity).is_some()
+                    });
+                }
+                outcome
             }
-            None => LoopbackPruneOutcome {
+            _ => LoopbackPruneOutcome {
                 changed: false,
                 skipped_reason: Some(format!(
-                    "skipped stale loopback reclamation because the gateway route inventory could not be read; all uncertain assignments were preserved ({})",
-                    route_table_error.as_deref().unwrap_or("unknown error")
+                    "skipped stale loopback reclamation because no complete pre-lock inventory is available; all uncertain assignments were preserved ({})",
+                    route_table_error.as_deref().unwrap_or("registry changed after the read")
                 )),
             },
         }
@@ -1482,16 +1513,6 @@ fn load_port_registry() -> Result<Option<PortRegistry>, ContainerPolicyError> {
     let path = home.join("ports.json");
     PortRegistry::load(&path)
         .map(Some)
-        .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))
-}
-
-fn save_port_registry(registry: &PortRegistry) -> Result<(), ContainerPolicyError> {
-    let Some(home) = effigy_home_dir() else {
-        return Ok(());
-    };
-    let path = home.join("ports.json");
-    registry
-        .save(&path)
         .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))
 }
 
@@ -1777,7 +1798,7 @@ fn apply_generated_compose_host_mount_policy(
     Ok(())
 }
 
-fn parse_media_mount(
+pub(crate) fn parse_media_mount(
     repo_root: &Path,
     container_name: &str,
     mount: &str,
@@ -1827,12 +1848,6 @@ fn parse_media_mount(
             "container `{container_name}` media mount `{mount}` escapes the repo root"
         )));
     }
-
-    std::fs::create_dir_all(&resolved).map_err(|error| {
-        ContainerPolicyError::TaskInvocation(format!(
-            "container `{container_name}` media mount source `{source}` could not be prepared: {error}"
-        ))
-    })?;
 
     Ok((resolved, target.to_owned()))
 }
@@ -1934,6 +1949,67 @@ mod tests {
                 reloaded.get(&identity).map(|assignment| assignment.ip),
                 Some(ip)
             );
+        });
+    }
+
+    #[test]
+    fn loopback_inventory_runs_without_registry_lock_and_preserves_concurrent_assignments() {
+        let home = tempfile::tempdir().expect("private state");
+        with_test_effigy_home(home.path(), || {
+            let path = home.path().join("gateway/loopback-ips.json");
+            full_project_registry().save(&path).expect("full registry");
+            let changed = project_loopback_identity("stale-2", Path::new("/tmp/stale-2"));
+            let ip = load_or_allocate_loopback_ip_with_inventory(
+                "project:new:/tmp/new",
+                None,
+                "/tmp/new",
+                || {
+                    // A second opener must acquire the lock while runtime
+                    // inventory executes. try_lock makes a regression bounded.
+                    let file = std::fs::OpenOptions::new()
+                        .create(true)
+                        .truncate(false)
+                        .read(true)
+                        .write(true)
+                        .open(path.with_extension("lock"))
+                        .expect("private lock");
+                    file.try_lock()
+                        .expect("inventory must not hold global lock");
+                    let mut current = LoopbackRegistry::load(&path).expect("current registry");
+                    let old = project_loopback_identity("stale-1", Path::new("/tmp/stale-1"));
+                    let assignment = current.deallocate(&old).expect("replace old assignment");
+                    current
+                        .assignments
+                        .insert("project:late:/tmp/late".into(), assignment);
+                    current
+                        .assignments
+                        .get_mut(&changed)
+                        .expect("change existing assignment")
+                        .scope = "/tmp/new-owner".into();
+                    current.save(&path).expect("concurrent allocation");
+                    RunningComposeContainerInventory::default()
+                },
+            )
+            .expect("allocate after inventory")
+            .expect("assigned IP");
+            let registry = LoopbackRegistry::load(&path).expect("published registry");
+            assert_eq!(registry.len(), 3);
+            assert_eq!(
+                registry
+                    .get("project:late:/tmp/late")
+                    .expect("late assignment retained")
+                    .ip
+                    .to_string(),
+                "127.1.0.1"
+            );
+            assert_eq!(
+                registry
+                    .get(&changed)
+                    .expect("changed assignment retained")
+                    .scope,
+                "/tmp/new-owner"
+            );
+            assert_eq!(ip.to_string(), "127.1.0.3");
         });
     }
 
@@ -2238,6 +2314,9 @@ services:
     fn typed_generated_compose_port_policy_honours_custom_publish_address() {
         let tempdir = tempfile::tempdir().expect("tempdir");
         with_test_effigy_home(tempdir.path(), || {
+            // Explicit bindings do not depend on an unrelated allocation store.
+            std::fs::write(tempdir.path().join("ports.json"), "invalid registry").unwrap();
+
             let mut compose_document = GeneratedComposeDocument::parse(
                 "acme",
                 "test parse",
@@ -2280,7 +2359,7 @@ services:
     }
 
     #[test]
-    fn typed_generated_compose_port_policy_allocates_unpinned_ports() {
+    fn typed_generated_compose_port_policy_leaves_unpinned_ports_unassigned() {
         let tempdir = tempfile::tempdir().expect("tempdir");
         with_test_effigy_home(tempdir.path(), || {
             let mut compose_document = GeneratedComposeDocument::parse(
@@ -2314,7 +2393,12 @@ services:
             assert_eq!(effective_ports.len(), 2);
             assert_eq!(effective_ports[0], "18080:80");
             assert!(effective_ports[1].ends_with(":9000"));
-            assert_ne!(effective_ports[1], "9000:9000");
+            assert_eq!(
+                effective_ports[1],
+                "unassigned (assigned on first prepare):9000"
+            );
+            assert!(!tempdir.path().join("ports.json").exists());
+            assert!(!tempdir.path().join("ports.lock").exists());
 
             let ports = compose_document
                 .services
@@ -2328,7 +2412,7 @@ services:
             assert!(matches!(
                 &ports[1],
                 GeneratedComposePort::String(raw)
-                    if raw == &format!("127.0.0.1:{}", effective_ports[1])
+                    if raw == &format!("127.0.0.1:{}:9000", crate::policy::ports::UNASSIGNED_PORT_EXPRESSION)
             ));
         });
     }
@@ -2379,6 +2463,16 @@ services:
         with_test_effigy_home(home.path(), || {
             let mut assigned = Vec::new();
             for (project, repo) in [("app-wt-one", "/tmp/one"), ("app-wt-two", "/tmp/two")] {
+                effigy_gateway::ports::prepare_ports(
+                    &home.path().join("ports.json"),
+                    &[effigy_gateway::ports::PortRequest {
+                        project_name: project.to_owned(),
+                        project_path: repo.to_owned(),
+                        service_name: "app".to_owned(),
+                        container_port: 80,
+                    }],
+                )
+                .unwrap();
                 let mut document = GeneratedComposeDocument::parse(
                     project,
                     "test",

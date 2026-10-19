@@ -288,6 +288,9 @@ fn prepare_container_up(
                     c.startup == Some(effigy_manifest::ManifestContainerStartup::Detached)
                 }));
     operation.active = declared_detached;
+    // Allocation is a Prepare effect, before admission captures the render.
+    let preparation_policy = load_container_policy(repo_root, name)?;
+    effigy_containers::policy::ports::prepare_container_policy_ports(&preparation_policy)?;
     let (mut policy, mut preparation_admission) = if declared_detached {
         // A record of an earlier admission whose inputs have changed since is
         // retired here, before admission compares against it.
@@ -360,6 +363,7 @@ fn prepare_container_up(
     if let Some(context) = &admitted_context {
         context.verify(repo_root, &policy, context.marker_required)?;
     }
+    effigy_containers::policy::mounts::prepare_container_mount_sources(&policy)?;
     let shared_service_notes =
         ensure_shared_services_running(&policy, preparation_admission.as_ref())?;
     let primary_service_running = if reconcile_pending {

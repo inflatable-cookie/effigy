@@ -162,7 +162,12 @@ pub fn load_container_policy_for_creation(
     repo_root: &Path,
     requested_name: Option<&str>,
 ) -> Result<(EffectiveContainerPolicy, Vec<WorkspaceExtraMountDecision>), ContainerPolicyError> {
-    load_container_policy_with_workspace_decisions(repo_root, requested_name, None, true)
+    let policy = load_container_policy(repo_root, requested_name)?;
+    super::ports::prepare_container_policy_ports(&policy)?;
+    let resolved =
+        load_container_policy_with_workspace_decisions(repo_root, requested_name, None, true)?;
+    super::mounts::prepare_container_mount_sources(&resolved.0)?;
+    Ok(resolved)
 }
 
 pub fn load_admitted_container_policy(
@@ -393,10 +398,20 @@ fn resolve_container_workspace(
     Ok(workspace)
 }
 
-pub fn load_container_exec_working_dir(
+/// Manifest-only execution coordinates, safe to resolve inside the guest.
+/// No host catalog, Compose render, runtime registry or host mount is resolved.
+#[derive(Debug)]
+pub struct ContainerExecTarget {
+    pub container: String,
+    pub service: String,
+    pub working_dir: PathBuf,
+}
+
+pub fn load_container_exec_target(
     repo_root: &Path,
     requested_name: Option<&str>,
-) -> Result<PathBuf, ContainerPolicyError> {
+    requested_service: Option<&str>,
+) -> Result<ContainerExecTarget, ContainerPolicyError> {
     let manifest_path = repo_root.join(TASK_MANIFEST_FILE);
     let loaded = load_task_manifest_with_inspection(&manifest_path)?;
     let inferred_workspace =
@@ -419,7 +434,33 @@ pub fn load_container_exec_working_dir(
         ))
     })?;
 
-    resolve_container_exec_working_dir(repo_root, &name, config, inferred_workspace.as_ref())
+    let primary_service = config.primary_service.clone().ok_or_else(|| {
+        ContainerPolicyError::TaskInvocation(format!(
+            "container `{name}` must declare `primary_service`"
+        ))
+    })?;
+    let service = requested_service
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(&primary_service)
+        .to_owned();
+    let working_dir = if service == primary_service {
+        resolve_container_exec_working_dir(repo_root, &name, config, inferred_workspace.as_ref())?
+    } else {
+        repo_root.to_path_buf()
+    };
+    Ok(ContainerExecTarget {
+        container: name,
+        service,
+        working_dir,
+    })
+}
+
+pub fn load_container_exec_working_dir(
+    repo_root: &Path,
+    requested_name: Option<&str>,
+) -> Result<PathBuf, ContainerPolicyError> {
+    Ok(load_container_exec_target(repo_root, requested_name, None)?.working_dir)
 }
 
 pub fn effective_attach_mode(

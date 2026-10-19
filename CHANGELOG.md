@@ -21,6 +21,15 @@ During v0.x, MINOR bumps may include breaking changes.
   import automatically, and failed acquisition keeps the previous selection.
   A locally known newer version produces a bounded sync notice without a remote
   probe. `EFFIGY_GIT_BUNDLE_REMOTE_CHECK_TTL_SECS` is retired with a Prepare warning.
+- The runtime kernel exposes immutable file closures with journalled publication,
+  fenced desired/applied references, per-owner reset, retention protection and
+  backend metadata. Host container rendering adopts these APIs separately.
+- Generated host-port inspection leaves unassigned bindings explicit and keeps
+  `ports.json` unchanged. The first Prepare assigns ports through the existing
+  gateway allocator; later reads preserve those assignments.
+- Guest-local container shell and exec resolve manifest execution coordinates
+  without rendering host policy or touching host runtime state. Missing host
+  Compose files and catalogs no longer prevent local guest execution.
 - A whole-environment handover ends the losing environment's headless
   managed owners before stopping anything. When `container up` hands over
   a live conflicting environment, it first ends every live headless
@@ -258,6 +267,7 @@ During v0.x, MINOR bumps may include breaking changes.
   endpoints, or trust behavior change.
 
 ### Changed
+- Container inspection and validation no longer create declared media directories or the shared Composer cache; activation prepares those bind sources.
 - Graph now has six commands: `index`, `status`, `search`, `node`, `affected`
   and `explore`. Node accepts file paths and incoming/outgoing relationships;
   explore supports an excerpts-only mode. Removed command spellings and catalog
@@ -336,6 +346,11 @@ During v0.x, MINOR bumps may include breaking changes.
   1.2.0.
 
 ### Fixed
+- Vault writes from CLI commands, local-dev upgrades and Rhai now serialize
+  through the runtime kernel and atomically select complete encrypted
+  generations. Existing vaults migrate on their next write, retaining the
+  previous generation and preventing concurrent updates from being lost.
+- Loopback allocation probes the runtime before taking its global registry lock and preserves assignments added or changed during that probe.
 - A live managed headless run keeps its session record for its whole life:
   the record is written atomically before the first child starts and updated
   on every recorded state change, and it is never deleted while the owner is

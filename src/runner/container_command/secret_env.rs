@@ -94,12 +94,13 @@ pub(super) fn resolve_container_secret_runtime(
                         env: Vec::new(),
                     });
                 };
+                let write = crate::runner::secret_vault::begin_vault_write(&vault_path)?;
                 let payload = crate::runner::secret_vault::read_effigy_vault_payload(
                     &vault_path,
                     passphrase.expose(),
                 )?;
                 crate::runner::secret_vault::write_effigy_vault_payload(
-                    &vault_path,
+                    &write,
                     &payload,
                     passphrase.expose(),
                 )?;

@@ -16,6 +16,14 @@ development flows, not as a production hosted secret store. The optional
 `[secrets.vault].generate` hook belongs to that same boundary: local vault
 bootstrap for dev flows, not a general remote secret provisioning system.
 
+Vault mutations are serialized across CLI and Rhai commands. Existing vaults
+migrate automatically on their next write: the configured path becomes a
+pointer to an encrypted generation, with the prior generation kept as
+`<vault>.prev`. Keep the pointer, its `.ciphertext.g<N>` files and local unlock
+files together when backing up or moving a vault. A failed write leaves a
+complete old or new generation; unreadable vault state is never overwritten.
+Unlock, lock and consumer secret declarations keep their existing behavior.
+
 ## When To Use It
 
 Use `[secrets]` for:
