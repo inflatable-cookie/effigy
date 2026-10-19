@@ -191,10 +191,12 @@ merges reported `checks` into `provider_preflight.checks`, converts
 warnings/files into provider checks, and blocks the plan when the provider
 report returns blockers or a non-progress status without explicit blockers.
 
-`deploy apply` runs provider-package `apply.rhai` after the plan passes and
-`--yes` is supplied. The provider report determines the provider operation
-status in `effigy.deploy.apply.v1`; core Effigy still owns report persistence,
-state/hook/health bookkeeping, and transaction gates.
+In v0.15, `deploy apply` and `deploy redeploy` are not yet supported and refuse
+before provider loading, even with `--yes`. A declared `apply.rhai` capability
+remains readable for config compatibility but is never invoked by these
+commands. No deployment or success report is produced. The full execution
+design is in Queue's deploy lane (Q-003); see the
+[deployment guide](../../guides/074-deployment-guide.md).
 
 `deploy status` runs provider-package `status.rhai` when the deploy environment
 and provider package can be resolved, and includes the returned provider report
@@ -204,7 +206,8 @@ as `provider_status` in `effigy.deploy.status.v1`.
 
 Provider packages must default to read-only planning.
 
-Mutating phases require an explicit `--yes` gate from core Effigy. Provider
+For future execution, mutating phases require an explicit `--yes` gate from
+core Effigy; v0.15 grants no apply/redeploy mutation approval. Provider
 scripts must receive the approved mutation mode in context; they must not infer
 approval from environment variables or TTY state.
 
