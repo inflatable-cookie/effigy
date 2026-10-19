@@ -33,6 +33,7 @@ mod macos_socket;
 #[cfg(any(target_os = "macos", test))]
 pub mod bind_broker;
 pub mod dns;
+pub mod endpoint_store;
 pub mod error;
 pub mod identity;
 pub mod listener_handoff;

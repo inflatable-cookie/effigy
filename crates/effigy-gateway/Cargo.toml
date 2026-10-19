@@ -6,6 +6,9 @@ license.workspace = true
 publish = false
 description = "DNS resolver and reverse proxy gateway for Effigy local development"
 
+[features]
+endpoint-store-faults = ["effigy-kernel/fault-injection"]
+
 [dependencies]
 effigy-kernel = { path = "../effigy-kernel" }
 getrandom = "0.4"

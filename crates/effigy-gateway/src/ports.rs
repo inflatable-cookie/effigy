@@ -247,6 +247,41 @@ impl PortRegistry {
         Ok(&self.allocations[project_name])
     }
 
+    /// Allocate a generated range while respecting released endpoint claims.
+    pub fn allocate_avoiding(
+        &mut self,
+        project_name: &str,
+        project_path: &str,
+        reserved: &std::collections::HashSet<u16>,
+    ) -> Result<&PortAllocation, GatewayError> {
+        if reserved.is_empty() || self.allocations.contains_key(project_name) {
+            return self.allocate(project_name, project_path);
+        }
+        let mut spans = self
+            .allocations
+            .values()
+            .map(|a| (u32::from(a.base), a.end_u32()))
+            .collect::<Vec<_>>();
+        spans.extend(reserved.iter().map(|p| (u32::from(*p), u32::from(*p) + 1)));
+        spans.sort_unstable();
+        let mut base = u32::from(DEFAULT_BASE);
+        for (start, end) in spans {
+            if end <= base {
+                continue;
+            }
+            if start.saturating_sub(base) >= u32::from(DEFAULT_RANGE) {
+                break;
+            }
+            base = base.max(end);
+        }
+        if base + u32::from(DEFAULT_RANGE) > MAX_PORT_EXCLUSIVE {
+            return Err(GatewayError::PortRegistryExhausted {
+                range: DEFAULT_RANGE,
+            });
+        }
+        self.allocate_at(project_name, project_path, base as u16, DEFAULT_RANGE)
+    }
+
     /// Allocate with a specific base port.
     ///
     /// Returns an error if the range conflicts with an existing allocation.

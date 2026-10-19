@@ -841,7 +841,12 @@ async fn verify_connected_managed_listener(
         return Ok(());
     };
     tokio::task::spawn_blocking(move || {
-        crate::managed_listener::verify_managed_listener_owner(&owner)
+        let result = crate::managed_listener::verify_managed_listener_owner(&owner);
+        #[cfg(test)]
+        if let Err(error) = &result {
+            eprintln!("managed listener verification failed: {error}");
+        }
+        result
     })
     .await
     .map_err(|error| {
@@ -970,3 +975,7 @@ fn no_route_response(host: &str) -> Response<ProxyBody> {
 #[cfg(test)]
 #[path = "proxy/tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "proxy/performance.rs"]
+mod performance;

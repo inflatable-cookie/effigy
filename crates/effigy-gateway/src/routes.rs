@@ -14,6 +14,7 @@ use std::fs::OpenOptions;
 use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
+use std::time::{Duration, Instant};
 
 use fs2::FileExt;
 
@@ -153,6 +154,9 @@ pub struct RouteTableLock(std::fs::File);
 
 impl RouteTableLock {
     pub fn acquire(path: &Path) -> Result<Self, GatewayError> {
+        Self::acquire_until(path, Instant::now() + Duration::from_secs(30))
+    }
+    pub(crate) fn acquire_until(path: &Path, deadline: Instant) -> Result<Self, GatewayError> {
         let lock_path = path.with_extension("lock");
         if let Some(parent) = lock_path.parent() {
             std::fs::create_dir_all(parent).map_err(|error| {
@@ -185,11 +189,25 @@ impl RouteTableLock {
             path: lock_path.clone(),
             reason: error.to_string(),
         })?;
-        file.lock_exclusive()
-            .map_err(|error| GatewayError::RouteTableWriteError {
-                path: lock_path,
-                reason: format!("lock: {error}"),
-            })?;
+        loop {
+            match file.try_lock_exclusive() {
+                Ok(()) => break,
+                Err(e)
+                    if e.kind() == std::io::ErrorKind::WouldBlock && Instant::now() < deadline =>
+                {
+                    std::thread::sleep(
+                        Duration::from_millis(10)
+                            .min(deadline.saturating_duration_since(Instant::now())),
+                    );
+                }
+                Err(e) => {
+                    return Err(GatewayError::RouteTableWriteError {
+                        path: lock_path,
+                        reason: format!("lock refused or deadline expired: {e}"),
+                    })
+                }
+            }
+        }
         Ok(Self(file))
     }
 }

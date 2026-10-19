@@ -25,6 +25,18 @@ fn empty_table() {
 }
 
 #[test]
+fn legacy_import_lock_wait_respects_its_deadline() {
+    let fixture = tempfile::tempdir().unwrap();
+    let path = fixture.path().join("routes.json");
+    let _held = RouteTableLock::acquire(&path).unwrap();
+    let now = std::time::Instant::now();
+    assert!(
+        RouteTableLock::acquire_until(&path, now + std::time::Duration::from_millis(20)).is_err()
+    );
+    assert!(now.elapsed() < std::time::Duration::from_secs(1));
+}
+
+#[test]
 fn register_and_lookup() {
     let mut table = RouteTable::new();
     let route = test_route("myapp.test", "127.0.0.1:8080");
