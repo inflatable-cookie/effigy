@@ -781,8 +781,7 @@ absence, repeated fresh identity reads through TERM/KILL polling, signal order,
 byte-preserving refusal, and locked compare-and-remove before the replacement
 start path. A recording handoff control proves one interactive lifecycle
 handoff and zero handoff or replacement launch with null stdin. The maintained
-selectors remain `test:gateway:legacy-recovery`,
-`check:gateway:legacy-recovery`, `fmt:check`, and
+selectors are `test:retirements`, `check:retirements`, `fmt:check`, and
 `qa:docs:gateway-identity` when docs change.
 
 #### Follow-up correction in task 154 (structural diagnosis only, no trust change)
