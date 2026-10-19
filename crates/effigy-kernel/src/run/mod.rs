@@ -383,6 +383,16 @@ impl<'a> Run<'a> {
     pub fn fence(&self) -> &Fence {
         &self.owner
     }
+    /// The opaque engine payload of this run's gated resource. Observers use
+    /// `StoreReader::resource`; this read also works before first publication.
+    pub fn resource_state(&self) -> Result<Option<Value>, RunError> {
+        let state: Option<String> = self.store.conn().query_row(
+            "SELECT state FROM resources WHERE name=?1",
+            [self.owner.resource.name().to_string()],
+            |r| r.get(0),
+        )?;
+        Ok(state.map(|s| serde_json::from_str(&s)).transpose()?)
+    }
     pub fn phase(&self) -> Result<Phase, RunError> {
         Ok(journal::run(self.store.conn(), self.id)?.phase)
     }
