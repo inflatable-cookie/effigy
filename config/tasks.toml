@@ -1064,6 +1064,22 @@
 # Env-isolation regressions (papercut batch 067): parallel process-env
 # readers and writers. Build-identity readers take injected values and the
 # runner's remaining global writers share one proved boundary.
+# Bounded test-only isolation checks for the macOS shared-process failures.
+# nextest forces termination/leak failure; the libtest step additionally proves
+# the competing PATH fixtures together in one process under a task timeout.
+"test:shared-process:env-races" = [
+  { id = "environment-race-fixtures", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-host-run --lib --filterset 'package(effigy-host-run) | test(bootstrap_command::tests::) | test(container_runtime_prep::tests::) | test(output_mode_behavior_tests::) | test(release_preparation_fixture_env_isolation_) | test(release_preparation_fixture_signal_proof_lock_order_serializes_in_process)' --no-capture --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { id = "shared-path-mutators", run = "cargo test -p effigy --lib shared_process_ -- --nocapture --test-threads=8", timeout_ms = 240000 },
+]
+"test:shared-process:watch-isolation" = [
+  { id = "watch-contract-isolation", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(builtin_watch_bounded_json_contract_has_versioned_shape) | test(shared_process_watch_contract_)' --no-capture --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { id = "shared-path-mutators-with-watch", run = "cargo test -p effigy --lib shared_process_ -- --nocapture --test-threads=8", timeout_ms = 240000 },
+]
+"check:shared-process:env-races" = [
+  { run = "cargo check -p effigy -p effigy-host-run --lib --tests --profile test", timeout_ms = 600000 },
+  { run = "cargo clippy -p effigy -p effigy-host-run --lib --tests -- -D warnings", timeout_ms = 600000 },
+]
+
 "test:env-isolation:build-info" = "cargo test -p effigy-core --lib build_info::tests::env_isolation -- --nocapture"
 "test:env-isolation:runner" = [
   "cargo test -p effigy --lib runner::tests::env_isolation_tests -- --nocapture",

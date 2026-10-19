@@ -15,7 +15,7 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
@@ -1774,13 +1774,18 @@ fn authenticated_previous_epoch_status_recovers_within_the_bounded_window() {
     write_token_keys(&fixture.root_path, 4, [6u8; 32], Some((3, [5u8; 32])));
     let client = client(&fixture);
     let socket_path = fixture.socket_path.clone();
-    let listener = fixture.listener;
+    // Make the outage observable before the client starts; a sleep in a server
+    // thread can let the client connect to the old listener during its close.
+    drop(fixture.listener);
+    std::fs::remove_file(&socket_path).unwrap();
+    let (retry_tx, retry_rx) = mpsc::channel();
+    let (ready_tx, ready_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
     let server = thread::spawn(move || {
-        drop(listener);
-        std::fs::remove_file(&socket_path).unwrap();
-        thread::sleep(Duration::from_millis(80));
+        retry_rx.recv_timeout(PEER_FIXTURE_BOUND).unwrap();
         let replacement = UnixListener::bind(&socket_path).unwrap();
         std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        ready_tx.send(()).unwrap();
         let (mut status, _) = replacement.accept().unwrap();
         let request = read_request(&mut status);
         assert_eq!(request["method"], "status");
@@ -1791,6 +1796,35 @@ fn authenticated_previous_epoch_status_recovers_within_the_bounded_window() {
             &request,
             json!({"runId":"r-previous","state":"running","epoch":4}),
         );
+        release_rx.recv_timeout(PEER_FIXTURE_BOUND).unwrap();
+    });
+
+    struct RestoreEndpointOnRetry {
+        timer: FakeReconnectTimer,
+        retry: mpsc::Sender<()>,
+        ready: Mutex<mpsc::Receiver<()>>,
+    }
+
+    impl ReconnectTimer for RestoreEndpointOnRetry {
+        fn now(&self) -> Duration {
+            self.timer.now()
+        }
+
+        fn sleep(&self, duration: Duration) {
+            self.timer.sleep(duration);
+            self.retry.send(()).unwrap();
+            self.ready
+                .lock()
+                .unwrap()
+                .recv_timeout(PEER_FIXTURE_BOUND)
+                .unwrap();
+        }
+    }
+
+    let timer = Arc::new(RestoreEndpointOnRetry {
+        timer: FakeReconnectTimer::default(),
+        retry: retry_tx,
+        ready: Mutex::new(ready_rx),
     });
 
     let now = Utc.with_ymd_and_hms(2026, 10, 1, 14, 0, 0).unwrap();
@@ -1810,11 +1844,14 @@ fn authenticated_previous_epoch_status_recovers_within_the_bounded_window() {
     );
     let accepted = client
         .with_clock(Arc::new(FixedClock(now)))
-        .validate_parent_token(Some(&token), &fixture.root_path)
-        .unwrap()
-        .unwrap();
+        .with_reconnect_timer(timer.clone())
+        .validate_parent_token(Some(&token), &fixture.root_path);
+    // Release the accepted peer even if the client returned an error.
+    release_tx.send(()).unwrap();
+    let accepted = accepted.unwrap().unwrap();
     assert_eq!(accepted.run_id, "r-previous");
     assert_eq!(accepted.epoch, 3);
+    assert_eq!(timer.now(), Duration::from_millis(50), "one outage retry");
     server.join().unwrap();
 }
 

@@ -329,6 +329,12 @@ fn builtin_unlock_json_contract_has_versioned_shape() {
 
 #[test]
 fn builtin_watch_bounded_json_contract_has_versioned_shape() {
+    builtin_watch_bounded_json_contract_using(|| {});
+}
+
+fn builtin_watch_bounded_json_contract_using(after_serial: impl FnOnce()) {
+    let _locks =
+        crate::runner::owned_children::hold_signal_proof_test_locks_after_serial(after_serial);
     let root = temp_workspace("watch-json-contract");
     write_manifest(
         &root.join("effigy.toml"),
@@ -343,4 +349,11 @@ fn builtin_watch_bounded_json_contract_has_versioned_shape() {
     assert_schema_v1(&parsed, "effigy.watch.v1");
     assert_eq!(parsed["ok"], true);
     assert_eq!(parsed["runs"], 1);
+}
+
+#[test]
+fn shared_process_watch_contract_waits_for_path_mutator() {
+    crate::contract_test_support::assert_waits_for_path_mutator(|after_serial| {
+        builtin_watch_bounded_json_contract_using(after_serial)
+    });
 }
