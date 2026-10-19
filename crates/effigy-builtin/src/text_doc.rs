@@ -18,10 +18,6 @@ impl TextDoc {
         self.line(format!("{key}: {value}"))
     }
 
-    pub(super) fn bullet<S: AsRef<str>>(&mut self, value: S) -> &mut Self {
-        self.line(format!("- {}", value.as_ref()))
-    }
-
     pub(super) fn blank(&mut self) -> &mut Self {
         self.line(String::new())
     }

@@ -23,8 +23,8 @@ pub struct RunSummary {
     pub closed_at_ms: Option<i64>,
 }
 
-const COLUMNS: &str = "run_id,generation,phase,workload_outcome,cleanup_outcome,invocation,\
-    created_at,updated_at,closed_at";
+const COLUMNS: &str = "runs.run_id,runs.generation,runs.phase,runs.workload_outcome,\
+    runs.cleanup_outcome,runs.invocation,runs.created_at,runs.updated_at,runs.closed_at";
 
 /// An owner's runs, newest first, at most `limit`.
 pub fn history(reader: &StoreReader, owner: &ResourceId, limit: usize) -> Observed<Vec<RunSummary>> {

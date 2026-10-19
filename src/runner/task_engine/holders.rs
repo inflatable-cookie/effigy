@@ -33,7 +33,6 @@ pub(in crate::runner) struct LiveHolder {
     pub(in crate::runner) profile: Option<String>,
     pub(in crate::runner) pid: Option<u32>,
     pub(in crate::runner) managed_run: Option<Digest>,
-    pub(in crate::runner) started_at_ms: i64,
 }
 
 impl LiveHolder {
@@ -89,7 +88,6 @@ pub(in crate::runner) fn live_holders(repo_root: &Path) -> Vec<LiveHolder> {
                 profile: spec.task.profile().map(str::to_owned),
                 pid,
                 managed_run: spec.provenance.get(MANAGED_RUN_PROVENANCE).cloned(),
-                started_at_ms: summary.created_at_ms,
             })
         })
         .collect()

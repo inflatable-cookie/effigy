@@ -8,7 +8,7 @@ use crate::ctx::{
 use crate::custody::{Custody, EnvValue, Lifetime, ProcessSpec, SecretValue, Terminal};
 use crate::fs::{DirFd, FileName, Trust};
 use crate::gate::Wait;
-use crate::id::{Digest, ResolvedInvocation, ResourceId, RunId};
+use crate::id::{ResolvedInvocation, ResourceId, RunId};
 use crate::ident::{self, ProcessIdentity};
 use crate::observe::Observed;
 use crate::outcome::{Invocation, WorkloadOutcome};
@@ -49,6 +49,11 @@ pub enum ClientMode {
     Owning,
     Detach,
 }
+/// The binary a run's helpers re-exec, identified by its file: device,
+/// inode, size and modification and change times. Any replacement or
+/// rewrite changes at least one, and the change time cannot be set back by
+/// the writer (I-SV4). Identification is a stat, so a large debug build costs
+/// nothing per run.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Executable {
     path: PathBuf,
@@ -57,39 +62,15 @@ pub struct Executable {
     size: u64,
     modified: (i64, i64),
     changed: (i64, i64),
-    digest: Digest,
 }
-/// Debug builds of the product binary exceed 128 MiB; the digest streams.
-const EXECUTABLE_MAX_BYTES: u64 = 1 << 30;
 impl Executable {
     pub fn current() -> io::Result<Self> {
         Self::capture(&std::env::current_exe()?)
     }
-    /// Identifies the file once: its inode, size, change times and a
-    /// streamed content digest.
     pub fn capture(path: &Path) -> io::Result<Self> {
-        let mut file = open_executable(path)?;
-        let metadata = file.metadata()?;
-        if metadata.len() > EXECUTABLE_MAX_BYTES {
-            return Err(io::Error::other("binary too large"));
-        }
-        use sha2::Digest as _;
-        let mut hasher = sha2::Sha256::new();
-        let mut buffer = vec![0u8; 1 << 20];
-        let mut total = 0u64;
-        loop {
-            let count = file.read(&mut buffer)?;
-            if count == 0 {
-                break;
-            }
-            total += count as u64;
-            if total > metadata.len() {
-                return Err(io::Error::other("binary changed during read"));
-            }
-            hasher.update(&buffer[..count]);
-        }
-        if total != metadata.len() {
-            return Err(io::Error::other("binary changed during read"));
+        let metadata = open_executable(path)?.metadata()?;
+        if !metadata.is_file() {
+            return Err(io::Error::other("binary is not a regular file"));
         }
         Ok(Self {
             path: path.into(),
@@ -98,18 +79,15 @@ impl Executable {
             size: metadata.len(),
             modified: (metadata.mtime(), metadata.mtime_nsec()),
             changed: (metadata.ctime(), metadata.ctime_nsec()),
-            digest: Digest(hasher.finalize().into()),
         })
     }
-    /// A replaced or rewritten file changes its inode, size or change time
-    /// (I-SV4). Verification is a stat, so helpers start without re-hashing.
     pub fn verify(&self) -> io::Result<()> {
-        let fresh = open_executable(&self.path)?.metadata()?;
-        if self.device != fresh.dev()
-            || self.inode != fresh.ino()
-            || self.size != fresh.len()
-            || self.modified != (fresh.mtime(), fresh.mtime_nsec())
-            || self.changed != (fresh.ctime(), fresh.ctime_nsec())
+        let fresh = Self::capture(&self.path)?;
+        if self.device != fresh.device
+            || self.inode != fresh.inode
+            || self.size != fresh.size
+            || self.modified != fresh.modified
+            || self.changed != fresh.changed
         {
             return Err(io::Error::other("startup binary replaced"));
         }

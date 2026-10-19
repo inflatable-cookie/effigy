@@ -1,13 +1,14 @@
+//! Task exclusion through kernel gates (contract 052 §5.4, K1, K2): one gate
+//! per resolved task, held exactly while its run lives, named in every
+//! conflict, and never unlocked by hand.
+
 use crate::runner::tests::prelude::{
-    assert_live_dev_lock_conflict, assert_output_equals, assert_unlock_invocation_error_case_table,
-    assert_unlock_success_case_table, lock_test, parse_json_output_with_schema_version, run_dev,
-    run_task_status_from_repo, run_task_with_repo, start_held_dev_owner, temp_workspace,
-    wait_for_live_task_owner, write_lock_files, write_root_manifest,
-    ManagedUnlockInvocationErrorCase, ManagedUnlockSuccessCase, OwnedThread,
+    assert_live_dev_lock_conflict, assert_output_equals, lock_test,
+    parse_json_output_with_schema_version, run_dev, run_task_status_from_repo,
+    run_task_with_repo, start_held_dev_owner, temp_workspace, wait_for_live_task_owner,
+    write_lock_files, write_root_manifest, OwnedThread,
 };
-use std::path::Path;
-use std::process::{Command, Stdio};
-use std::time::{SystemTime, UNIX_EPOCH};
+use crate::runner::RunnerError;
 
 #[test]
 fn run_manifest_task_rejects_live_lock_conflict() {
@@ -20,269 +21,29 @@ run = "sleep 1"
 "#,
     );
 
-    assert_live_dev_lock_conflict(&root, "task:dev", "effigy tasks unlock task:dev");
+    assert_live_dev_lock_conflict(&root, "task:dev", "effigy tasks status dev");
 }
 
 #[test]
-fn live_lock_conflict_leaves_owner_active_record_in_place() {
+fn live_lock_conflict_names_the_holder_and_never_suggests_unlocking() {
     let _guard = lock_test();
-    let root = temp_workspace("lock-conflict-preserves-active");
+    let root = temp_workspace("lock-conflict-names-holder");
     let owner = start_held_dev_owner(&root);
 
-    let active_dir = root.join(".effigy/runtime/tasks/active");
-    let before = read_single_json_file(&active_dir);
-    assert!(
-        before.contains("\"stage\": \"executing\""),
-        "hold-ready owner must already be past runtime-prep: {before}"
-    );
-
-    let err = run_dev(&root, &[]).expect_err("second run should conflict on lock");
-    crate::runner::tests::prelude::assert_lock_conflict(
-        err,
-        "task:dev",
-        "effigy tasks unlock task:dev",
-    );
-
-    let after = read_single_json_file(&active_dir);
-    assert_eq!(
-        after, before,
-        "live contender must not overwrite or delete the owner's active record"
-    );
+    let err = run_dev(&root, &[]).expect_err("second run should conflict on the gate");
+    let RunnerError::TaskLockConflict(details) = &err else {
+        panic!("expected a lock conflict, got {err:?}");
+    };
+    assert_eq!(details.scope, "task:dev");
+    assert_eq!(details.holder_pid, Some(std::process::id()));
+    assert!(details.holder_run.is_some(), "holder run id: {details:?}");
+    let rendered = err.to_string();
+    assert!(rendered.contains("already running"), "{rendered}");
+    assert!(!rendered.contains("unlock"), "{rendered}");
+    let state = crate::runner::task_engine::root_task_state_for_tests(&root, "dev");
+    assert_eq!(state, "running", "the refused run never touches the owner's run");
 
     owner.release_and_join().expect("first run should complete");
-}
-
-#[test]
-fn live_waiter_fails_closed_on_corrupt_active_record() {
-    let _guard = lock_test();
-    let root = temp_workspace("lock-conflict-corrupt-active");
-    let owner = start_held_dev_owner(&root);
-
-    let active_path = single_json_path(&root.join(".effigy/runtime/tasks/active"));
-    std::fs::write(&active_path, "").expect("corrupt active record");
-
-    let err = run_dev(&root, &[]).expect_err("corrupt active record must fail closed");
-    let message = err.to_string();
-    assert!(
-        message.contains("failed to parse active task-status record"),
-        "corrupt active must stay a parse error, got {message}"
-    );
-    assert!(
-        message.contains("EOF while parsing a value at line 1 column 0"),
-        "empty active must stay EOF, got {message}"
-    );
-    assert_eq!(
-        std::fs::read_to_string(&active_path).expect("reread corrupt active"),
-        "",
-        "waiter must not delete or replace a foreign active record"
-    );
-
-    owner.release_and_join().expect("first run should complete");
-}
-
-#[test]
-fn run_manifest_task_reclaims_stale_lock_from_dead_pid() {
-    let _guard = lock_test();
-    let root = temp_workspace("lock-stale-reclaim");
-    write_root_manifest(
-        &root,
-        r#"[tasks.dev]
-run = "printf ok"
-"#,
-    );
-
-    write_lock_files(
-        &root,
-        &[(
-            "task-dev.lock",
-            r#"{"scope":"task:dev","pid":999999,"started_at_epoch_ms":0}"#,
-        )],
-    );
-
-    let out = run_dev(&root, &[]).expect("stale lock should be reclaimed");
-
-    assert_output_equals(&out, "");
-}
-
-#[test]
-fn run_manifest_task_reclaims_stale_lock_from_expired_lease_even_when_pid_is_alive() {
-    let _guard = lock_test();
-    let root = temp_workspace("lock-stale-expired-lease");
-    write_root_manifest(
-        &root,
-        r#"[tasks.dev]
-run = "printf ok"
-"#,
-    );
-
-    write_lock_files(
-        &root,
-        &[(
-            "task-dev.lock",
-            &format!(
-                r#"{{"scope":"task:dev","pid":{},"started_at_epoch_ms":0,"heartbeat_at_epoch_ms":0,"hostname":"test-host","workspace_root":"{}"}}"#,
-                std::process::id(),
-                root.display()
-            ),
-        )],
-    );
-
-    let out = run_dev(&root, &[]).expect("expired lease should be reclaimed");
-
-    assert_output_equals(&out, "");
-}
-
-#[cfg(unix)]
-#[test]
-fn run_manifest_task_reclaims_lock_from_reused_live_pid_that_is_not_effigy() {
-    let _guard = lock_test();
-    let root = temp_workspace("lock-stale-live-non-effigy");
-    write_root_manifest(
-        &root,
-        r#"[tasks.dev]
-run = "printf ok"
-"#,
-    );
-
-    let mut child = Command::new("sleep")
-        .arg("5")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("spawn sleep");
-
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("time")
-        .as_millis();
-    write_lock_files(
-        &root,
-        &[(
-            "task-dev.lock",
-            &format!(
-                r#"{{"scope":"task:dev","pid":{},"started_at_epoch_ms":{},"heartbeat_at_epoch_ms":{},"workspace_root":"{}"}}"#,
-                child.id(),
-                now,
-                now,
-                root.display()
-            ),
-        )],
-    );
-
-    let out = run_dev(&root, &[]).expect("non-effigy live pid lock should be reclaimed");
-    assert_output_equals(&out, "");
-
-    let _ = child.kill();
-    let _ = child.wait();
-}
-
-#[test]
-fn run_manifest_task_reclaims_invalid_lock_record() {
-    let _guard = lock_test();
-    let root = temp_workspace("lock-invalid-record-reclaim");
-    write_root_manifest(
-        &root,
-        r#"[tasks.dev]
-run = "printf ok"
-"#,
-    );
-
-    write_lock_files(&root, &[("task-dev.lock", "{invalid-json")]);
-    // A fresh unparsable record may still be mid-write; only an aged one is
-    // abandoned and reclaimed.
-    std::fs::File::options()
-        .write(true)
-        .open(root.join(".effigy/locks/task-dev.lock"))
-        .and_then(|file| file.set_modified(SystemTime::now() - std::time::Duration::from_secs(5)))
-        .expect("age invalid lock record");
-
-    let out = run_dev(&root, &[]).expect("invalid lock record should be reclaimed");
-
-    assert_output_equals(&out, "");
-}
-
-#[test]
-fn run_manifest_task_builtin_unlock_clears_explicit_scopes() {
-    let _guard = lock_test();
-    let cases = [
-        ManagedUnlockSuccessCase {
-            workspace: "unlock-explicit-task-scope",
-            args: &["task:dev"],
-            lock_files: &[("task-dev.lock", "{}")],
-            removed_lock_files: &["task-dev.lock"],
-            expected: &["removed: 1"],
-        },
-        ManagedUnlockSuccessCase {
-            workspace: "unlock-selector-form-task-scope",
-            args: &["validate:activity-routing"],
-            lock_files: &[("task-validate-activity-routing.lock", "{}")],
-            removed_lock_files: &["task-validate-activity-routing.lock"],
-            expected: &["removed: 1"],
-        },
-        ManagedUnlockSuccessCase {
-            workspace: "unlock-explicit-profile-scope",
-            args: &["profile:watch/test"],
-            lock_files: &[("profile-watch-test.lock", "{}")],
-            removed_lock_files: &["profile-watch-test.lock"],
-            expected: &["removed: 1"],
-        },
-        ManagedUnlockSuccessCase {
-            workspace: "unlock-explicit-broad-scopes-yes",
-            args: &["shared:dev-stack", "task:dev", "--yes"],
-            lock_files: &[("shared-dev-stack.lock", "{}"), ("task-dev.lock", "{}")],
-            removed_lock_files: &["shared-dev-stack.lock", "task-dev.lock"],
-            expected: &["removed: 2"],
-        },
-        ManagedUnlockSuccessCase {
-            workspace: "unlock-all-yes",
-            args: &["--all", "--yes"],
-            lock_files: &[("shared-dev-stack.lock", "{}"), ("task-dev.lock", "{}")],
-            removed_lock_files: &["shared-dev-stack.lock", "task-dev.lock"],
-            expected: &["mode: all", "removed: 2"],
-        },
-    ];
-
-    assert_unlock_success_case_table(&cases);
-}
-
-#[test]
-fn run_manifest_task_builtin_unlock_argument_validation_contract_table() {
-    let _guard = lock_test();
-    let cases = [
-        ManagedUnlockInvocationErrorCase {
-            workspace: "unlock-requires-scope-or-all",
-            args: &[],
-            expected: &["`tasks unlock` requires at least one scope (or `--all`)"],
-        },
-        ManagedUnlockInvocationErrorCase {
-            workspace: "unlock-rejects-all-with-scope",
-            args: &["--all", "workspace"],
-            expected: &["`tasks unlock` accepts either `--all` or explicit scope values, not both"],
-        },
-        ManagedUnlockInvocationErrorCase {
-            workspace: "unlock-all-requires-confirmation",
-            args: &["--all"],
-            expected: &["requires confirmation", "--yes"],
-        },
-        ManagedUnlockInvocationErrorCase {
-            workspace: "unlock-shared-requires-confirmation",
-            args: &["shared:dev-stack"],
-            expected: &["requires confirmation", "--yes"],
-        },
-        ManagedUnlockInvocationErrorCase {
-            workspace: "unlock-multiple-scopes-requires-confirmation",
-            args: &["task:dev", "profile:watch/test"],
-            expected: &["requires confirmation", "--yes"],
-        },
-        ManagedUnlockInvocationErrorCase {
-            workspace: "unlock-incomplete-profile-explains-selector-form",
-            args: &["profile:foo"],
-            expected: &["profile:<task>/<profile>", "task:validate:activity-routing"],
-        },
-    ];
-
-    assert_unlock_invocation_error_case_table(&cases);
 }
 
 #[test]
@@ -301,7 +62,7 @@ run = "printf build-ok"
 
     let root_for_thread = root.clone();
     let owner = OwnedThread::spawn(move || run_dev(&root_for_thread, &[]));
-    wait_for_live_task_owner(&root, "task-dev.lock");
+    wait_for_live_task_owner(&root, "dev");
 
     let _out = run_task_with_repo(&root, "build", &[]).expect("build should not block on dev");
 
@@ -326,13 +87,13 @@ lock = "dev-stack"
 
     let root_for_thread = root.clone();
     let owner = OwnedThread::spawn(move || run_dev(&root_for_thread, &[]));
-    wait_for_live_task_owner(&root, "shared-dev-stack.lock");
+    wait_for_live_task_owner(&root, "dev");
 
     let err = run_task_with_repo(&root, "build", &[]).expect_err("shared lock should conflict");
     crate::runner::tests::prelude::assert_lock_conflict(
         err,
         "shared:dev-stack",
-        "effigy tasks unlock shared:dev-stack",
+        "effigy tasks status build",
     );
 
     owner.join().expect("first run should complete");
@@ -347,7 +108,7 @@ fn colon_namespaced_validation_selectors_do_not_share_locks() {
         r#"[tasks."validate:activity-routing"]
 run = "sleep 1"
 
-[tasks."validate:other"]
+[tasks."validate-activity-routing"]
 run = "printf other-ok"
 "#,
     );
@@ -356,16 +117,16 @@ run = "printf other-ok"
     let owner = OwnedThread::spawn(move || {
         run_task_with_repo(&root_for_thread, "validate:activity-routing", &[])
     });
-    wait_for_live_task_owner(&root, "task-validate-activity-routing.lock");
+    wait_for_live_task_owner(&root, "validate:activity-routing");
 
-    let _out = run_task_with_repo(&root, "validate:other", &[])
-        .expect("independent validation selector should not block");
+    let _out = run_task_with_repo(&root, "validate-activity-routing", &[])
+        .expect("`a:b` and `a-b` never share a gate");
 
     owner.join().expect("first run should complete");
 }
 
 #[test]
-fn lock_wait_timeout_names_live_owner_and_status_path() {
+fn lock_wait_timeout_names_live_owner_and_status_reports_it_running() {
     let _guard = lock_test();
     let root = temp_workspace("lock-wait-timeout-live-owner");
     write_root_manifest(
@@ -377,23 +138,32 @@ run = "sleep 1"
 
     let root_for_thread = root.clone();
     let owner = OwnedThread::spawn(move || run_dev(&root_for_thread, &[]));
-    wait_for_live_task_owner(&root, "task-dev.lock");
+    wait_for_live_task_owner(&root, "dev");
 
     let err = run_dev(&root, &["--lock-wait-ms", "150"])
         .expect_err("live owner should survive a bounded wait");
-    crate::runner::tests::prelude::assert_lock_conflict(err, "task:dev", "effigy tasks status dev");
+    let RunnerError::TaskLockConflict(details) = &err else {
+        panic!("expected a lock conflict, got {err:?}");
+    };
+    assert_eq!(details.wait_timeout_ms, Some(150));
+    assert!(details
+        .details_json
+        .as_deref()
+        .is_some_and(|json| json.contains("effigy.lock-wait.v2")));
 
     let status = run_task_status_from_repo(&root, "dev", true);
-    let parsed = parse_json_output_with_schema_version(&status, "effigy.tasks-status.v1", 1);
+    let parsed = parse_json_output_with_schema_version(&status, "effigy.tasks-status.v2", 2);
     assert_eq!(parsed["state"], "running");
-    assert!(parsed["active"].is_object(), "live owner missing: {parsed}");
-    assert!(parsed["active"]["owner_pid"].as_u64().is_some());
+    assert_eq!(
+        parsed["current"]["pid"].as_u64(),
+        Some(u64::from(std::process::id()))
+    );
 
     owner.join().expect("first run should complete");
 }
 
 #[test]
-fn lock_wait_timeout_keeps_sequence_owner_on_status() {
+fn lock_wait_keeps_sequence_owner_on_status() {
     let _guard = lock_test();
     let root = temp_workspace("lock-wait-timeout-sequence-owner");
     write_root_manifest(
@@ -408,7 +178,7 @@ run = "sleep 1"
 
     let root_for_thread = root.clone();
     let owner = OwnedThread::spawn(move || run_task_with_repo(&root_for_thread, "validate", &[]));
-    wait_for_live_task_owner(&root, "task-validate.lock");
+    wait_for_live_task_owner(&root, "validate");
 
     let err = run_task_with_repo(&root, "validate", &["--lock-wait-ms", "150"])
         .expect_err("live sequence owner should survive a bounded wait");
@@ -419,15 +189,8 @@ run = "sleep 1"
     );
 
     let status = run_task_status_from_repo(&root, "validate", true);
-    let parsed = parse_json_output_with_schema_version(&status, "effigy.tasks-status.v1", 1);
-    assert_eq!(
-        parsed["state"], "running",
-        "sequence owner missing: {parsed}"
-    );
-    assert!(
-        parsed["active"].is_object(),
-        "live sequence owner missing: {parsed}"
-    );
+    let parsed = parse_json_output_with_schema_version(&status, "effigy.tasks-status.v2", 2);
+    assert_eq!(parsed["state"], "running", "sequence owner missing: {parsed}");
 
     owner.join().expect("first run should complete");
 }
@@ -445,7 +208,7 @@ run = "sleep 0.2"
 
     let root_for_thread = root.clone();
     let owner = OwnedThread::spawn(move || run_dev(&root_for_thread, &[]));
-    wait_for_live_task_owner(&root, "task-dev.lock");
+    wait_for_live_task_owner(&root, "dev");
 
     let out =
         run_dev(&root, &["--lock-wait-ms", "2000"]).expect("waiter should acquire after release");
@@ -454,151 +217,47 @@ run = "sleep 0.2"
     owner.join().expect("first run should complete");
 }
 
+/// v0.14 lease records are never imported or deleted: a dead or corrupt
+/// one is ignored and the task runs (contract 052 §11).
 #[test]
-fn lock_wait_reclaims_stopped_owner_during_wait() {
+fn legacy_lease_records_are_ignored_and_left_in_place() {
     let _guard = lock_test();
-    let root = temp_workspace("lock-wait-stopped-owner");
+    let root = temp_workspace("lock-legacy-ignored");
     write_root_manifest(
         &root,
         r#"[tasks.dev]
 run = "printf ok"
 "#,
     );
-
-    write_lock_files(
-        &root,
-        &[(
-            "task-dev.lock",
-            r#"{"scope":"task:dev","pid":999999,"started_at_epoch_ms":0}"#,
-        )],
-    );
-
-    let out = run_dev(&root, &["--lock-wait-ms", "250"])
-        .expect("stopped owner should be reclaimed during wait");
-    assert_output_equals(&out, "");
-}
-
-/// A lock written by an in-container Effigy process carries its managed
-/// run's token, so the run's settle can release it through the lock
-/// owner-token rules. Only the run's own records move; a foreign token or
-/// an unattributed record is never touched.
-#[test]
-fn run_settle_releases_only_locks_attributed_to_its_run_token() {
-    let _guard = lock_test();
-    let root = temp_workspace("lock-run-attribution");
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("time")
-        .as_millis();
-    let record = |scope: &str, token: Option<&str>| {
-        format!(
-            r#"{{"scope":"{scope}","pid":999999,"started_at_epoch_ms":{now},"heartbeat_at_epoch_ms":{now},"managed_run_token":{}}}"#,
-            token
-                .map(|token| format!("\"{token}\""))
-                .unwrap_or_else(|| "null".to_owned())
-        )
-    };
-    let api_record = record("task:api", Some("managedrun-A"));
-    let jobs_record = record("task:jobs", Some("managedrun-B"));
-    let dev_record = record("task:dev", None);
     write_lock_files(
         &root,
         &[
-            ("task-api.lock", api_record.as_str()),
-            ("task-jobs.lock", jobs_record.as_str()),
-            ("task-dev.lock", dev_record.as_str()),
+            (
+                "task-dev.lock",
+                r#"{"scope":"task:dev","pid":999999999,"started_at_epoch_ms":1,"heartbeat_at_epoch_ms":1}"#,
+            ),
+            ("shared-x.lock", "{invalid-json"),
         ],
     );
 
-    let released =
-        crate::runner::locking::io::release_locks_attributed_to_run(&root, "managedrun-A", None);
-
-    assert_eq!(released, vec!["task:api".to_owned()]);
-    assert!(
-        !root.join(".effigy/locks/task-api.lock").exists(),
-        "the run's own record is released"
-    );
-    assert!(
-        root.join(".effigy/locks/task-jobs.lock").exists(),
-        "another run's attributed record survives"
-    );
-    assert!(
-        root.join(".effigy/locks/task-dev.lock").exists(),
-        "an unattributed record survives"
-    );
+    run_dev(&root, &[]).expect("a dead legacy holder does not block");
+    assert!(root.join(".effigy/locks/task-dev.lock").exists());
+    assert!(root.join(".effigy/locks/shared-x.lock").exists());
 }
 
-/// A holder in another PID namespace - a container-side Effigy process -
-/// is judged by its heartbeat lease, never by the host process table: a
-/// fresh heartbeat means a genuinely live holder and still refuses, even
-/// when the recorded PID is dead on the host or names an unrelated live
-/// host process. An aged heartbeat is reclaimed.
-#[cfg(unix)]
 #[test]
-fn container_holder_pid_is_judged_by_its_heartbeat_not_the_host_table() {
+fn tasks_unlock_is_retired_with_an_actionable_refusal() {
     let _guard = lock_test();
-    let root = temp_workspace("lock-container-holder");
+    let root = temp_workspace("lock-unlock-retired");
     write_root_manifest(
         &root,
         r#"[tasks.dev]
 run = "printf ok"
 "#,
     );
-
-    let mut unrelated = Command::new("sleep")
-        .arg("9")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("spawn unrelated host process");
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("time")
-        .as_millis();
-    let container_record = |heartbeat_at_epoch_ms: u128| -> String {
-        format!(
-            r#"{{"scope":"task:dev","pid":{},"started_at_epoch_ms":{now},"heartbeat_at_epoch_ms":{heartbeat_at_epoch_ms},"hostname":"fixture-container-xyz","workspace_root":"{}"}}"#,
-            unrelated.id(),
-            root.display()
-        )
-    };
-    let fresh = container_record(now);
-    write_lock_files(&root, &[("task-dev.lock", fresh.as_str())]);
-
-    let error = run_dev(&root, &[]).expect_err("a live container holder still refuses");
-    crate::runner::tests::prelude::assert_lock_conflict(
-        error,
-        "task:dev",
-        "effigy tasks unlock task:dev",
-    );
-
-    // The heartbeat ages out: the holder is gone, the record is stale,
-    // and the reclaim must not be blocked by the unrelated live host PID.
-    let aged = container_record(now.saturating_sub(60_000));
-    write_lock_files(&root, &[("task-dev.lock", aged.as_str())]);
-    let out = run_dev(&root, &[]).expect("aged container lease should be reclaimed");
-    assert_output_equals(&out, "");
-
-    let _ = unrelated.kill();
-    let _ = unrelated.wait();
-}
-
-fn single_json_path(dir: &Path) -> std::path::PathBuf {
-    let entries: Vec<_> = std::fs::read_dir(dir)
-        .expect("read active dir")
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().and_then(|value| value.to_str()) == Some("json"))
-        .collect();
-    assert_eq!(
-        entries.len(),
-        1,
-        "expected exactly one active json record, got {entries:?}"
-    );
-    entries.into_iter().next().expect("active json")
-}
-
-fn read_single_json_file(dir: &Path) -> String {
-    std::fs::read_to_string(single_json_path(dir)).expect("read active json")
+    let err = run_task_with_repo(&root, "tasks", &["unlock", "--all"])
+        .expect_err("unlock is retired");
+    let rendered = err.to_string();
+    assert!(rendered.contains("was removed in v0.15"), "{rendered}");
+    assert!(rendered.contains("effigy tasks status"), "{rendered}");
 }

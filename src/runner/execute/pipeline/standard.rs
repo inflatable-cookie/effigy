@@ -148,7 +148,12 @@ fn runs_plain_host_command(preflight: &ExecutionPreflight, selection: &TaskSelec
         selection.task,
         "custody planning",
     )
-    .is_ok_and(|binding| matches!(binding.binding(), ContainerExecutionBinding::Host))
+    .is_ok_and(|binding| {
+        matches!(
+            binding.binding(),
+            ContainerExecutionBinding::None | ContainerExecutionBinding::Host
+        )
+    })
 }
 
 fn retired_task_cache_error(task_name: &str) -> RunnerError {
@@ -229,7 +234,7 @@ fn run_standard_task_inner(
             selection.task.run.as_ref(),
             Some(ManifestManagedRun::Command(_))
         );
-    if let ContainerExecutionBinding::Inline { synthetic_name, .. } = container_binding {
+    if let ContainerExecutionBinding::Inline { .. } = container_binding {
         let output = run_inline_workspace_standard_task(
             preflight,
             selection,

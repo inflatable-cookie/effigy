@@ -3,7 +3,7 @@ use super::super::execution::run_manifest_task_with_cwd;
 use super::super::harness::write_root_manifest;
 use super::super::output::{
     assert_output_contains_all, assert_output_contains_derived, assert_output_excludes_all,
-    assert_path_exists, assert_path_missing,
+    assert_path_exists,
 };
 use super::super::runtime::{
     fs, thread, Duration, Instant, Path, PathBuf, RunnerError, TaskInvocation,

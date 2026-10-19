@@ -42,9 +42,3 @@ pub(super) fn write_defer_loop_detected(
     )
 }
 
-fn render_optional<T: std::fmt::Display>(value: &Option<T>) -> String {
-    value
-        .as_ref()
-        .map(ToString::to_string)
-        .unwrap_or_else(|| "<unknown>".to_owned())
-}

@@ -18,11 +18,9 @@ mod status;
 pub(in crate::runner) use holders::{live_holders, HolderKind, LiveHolder};
 pub(in crate::runner) use identity::TaskTarget;
 pub use kernel::run_internal_kernel_entry;
-pub(in crate::runner) use legacy::{legacy_families, refuse_live_legacy_holder, LegacyFamily};
-pub(in crate::runner) use process::{run_plain, EnvOverride, PlainCommand, PlainExit};
-pub(in crate::runner) use run::{
-    resolve_lock_wait_ms, ExclusiveSection, TaskRun, TaskRunRequest, LOCK_WAIT_ENV,
-};
+pub(in crate::runner) use legacy::{legacy_families, refuse_live_legacy_holder};
+pub(in crate::runner) use process::{run_plain, EnvOverride, PlainCommand};
+pub(in crate::runner) use run::{resolve_lock_wait_ms, TaskRun, TaskRunRequest};
 pub(in crate::runner) use status::{task_status, RunView, TaskStatusView, HISTORY_LIMIT};
 
 /// The recorded outcome of a task command that exited with `code`.
@@ -30,10 +28,12 @@ pub(in crate::runner) fn workload_for_exit(code: i32) -> effigy_kernel::outcome:
     process::workload(Some(code), None)
 }
 
-/// The status state of root task `task` under `root`, for tests that wait
-/// on a live owner.
+/// The status of root task `task` under `root`, for tests.
 #[cfg(test)]
-pub(in crate::runner) fn root_task_state_for_tests(root: &std::path::Path, task: &str) -> String {
+pub(in crate::runner) fn root_task_status_for_tests(
+    root: &std::path::Path,
+    task: &str,
+) -> TaskStatusView {
     let target = TaskTarget {
         root: root.to_path_buf(),
         catalog: String::new(),
@@ -43,7 +43,14 @@ pub(in crate::runner) fn root_task_state_for_tests(root: &std::path::Path, task:
         shared_lock: None,
         label: task.to_owned(),
     };
-    task_status(&target, 1).state
+    task_status(&target, HISTORY_LIMIT)
+}
+
+/// The status state of root task `task` under `root`, for tests that wait
+/// on a live owner.
+#[cfg(test)]
+pub(in crate::runner) fn root_task_state_for_tests(root: &std::path::Path, task: &str) -> String {
+    root_task_status_for_tests(root, task).state
 }
 
 #[cfg(test)]

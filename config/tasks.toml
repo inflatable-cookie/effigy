@@ -78,6 +78,7 @@
 # engine's own proofs. The kill matrix spawns the built binary.
 "check:task-engine" = { run = "cargo check -p effigy -p effigy-kernel --all-targets", timeout_ms = 900000 }
 "lint:task-engine" = { run = "cargo clippy -p effigy -p effigy-kernel -p effigy-builtin -p effigy-cli -p effigy-tasks -p effigy-routing -p effigy-core -p effigy-env -p effigy-execution -p effigy-runtime -p effigy-context --all-targets -- -D warnings", timeout_ms = 900000 }
+"test:task-engine" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(/^runner::task_engine::/) | test(managed_and_locking_tests::locking_tests::) | test(direct_task_dispatch_tests::) | test(/^runner::managed_settle::tests::/) | test(/^runner::host_container_lease::tests::reaper_refuses_an_ordinary_live_task/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 }
 
 # Common local commands
 "fmt:check" = "cargo fmt --all -- --check"

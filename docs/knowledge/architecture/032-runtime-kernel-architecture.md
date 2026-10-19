@@ -337,10 +337,19 @@ controlled executable whose environment is observable.
 cancel token, which observes the signal mailbox without requiring an owner-loop
 poll. Cleanup tokens remain independent. Supervisor and sentinel are hidden
 same-binary re-exec entry points; product dispatch remains engine-lane work.
-The executable's file identity and digest are checked on both sides of startup.
+The executable's file identity (device, inode, size, modification and change
+times) is checked on both sides of startup; a stat, so debug builds of any size
+start helpers without hashing. Task-engine ruling (effigy#217): the content
+digest was dropped because a replacement or rewrite always changes that
+identity, and hashing a 185 MiB debug binary three times per run was the
+dominant per-task cost.
 Invocation and explicit spawn environments travel over bounded pipes, never argv.
 Capture merges stdout and stderr before redacting into the rotating log, bounded
-tail or event queue. A second streaming pass prevents replacement text or
+tail or event queue. Engines that report the two streams apart also drain two
+separately redacted queues, never joined. `Terminal::Inherit` hands the child
+the owner's own stdin (and stdout and stderr unless captured) and the terminal
+foreground when the owner holds it; inherited streams are the operator's, not an
+Effigy sink. A second streaming pass prevents replacement text or
 merged boundaries from reconstructing secrets; its fallback separator is NUL,
 which spawn secrets cannot contain. Log ENOSPC
 changes capture metadata without changing the workload outcome.

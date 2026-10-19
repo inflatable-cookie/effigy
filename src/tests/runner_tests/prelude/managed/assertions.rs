@@ -1,5 +1,5 @@
 use super::super::cases::assert_case_table;
-use super::super::errors::{assert_invocation_error_contains, assert_task_lock_conflict};
+use super::super::errors::assert_task_lock_conflict;
 use super::super::harness::{temp_workspace, write_root_manifest};
 use super::super::runtime::RunnerError;
 use super::cases::{ManagedInvalidDefinitionCase, ManagedTaskRefInvalidCase};

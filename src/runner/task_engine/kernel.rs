@@ -129,6 +129,11 @@ static CUSTODY_WAITING: AtomicBool = AtomicBool::new(false);
 /// Once installed, a signal that arrives while no custody wait is polling
 /// ends the process as its default action would.
 pub(super) fn install_router() -> Result<(), RunnerError> {
+    // Library tests run many tasks in one process that other tests signal;
+    // the kill matrix proves routing against the real binary instead.
+    if cfg!(test) {
+        return Ok(());
+    }
     if ROUTER.get().is_some() {
         return Ok(());
     }
@@ -277,3 +282,28 @@ pub(super) fn relative(root: &Path, path: &Path) -> Option<String> {
         .collect::<Option<Vec<_>>>()?;
     Some(parts.join("/"))
 }
+
+/// A library test binary is also its runs' sentinel: the kernel re-execs the
+/// current executable with `__kernel-sentinel`. This constructor dispatches
+/// that entry before the test harness parses its arguments.
+#[cfg(test)]
+#[used]
+#[cfg_attr(target_os = "linux", link_section = ".init_array")]
+#[cfg_attr(target_os = "macos", link_section = "__DATA,__mod_init_func")]
+static TEST_BINARY_KERNEL_ENTRY: extern "C" fn() = {
+    extern "C" fn dispatch() {
+        // Linux std may populate `env::args` after this constructor runs.
+        #[cfg(target_os = "linux")]
+        let entry = std::fs::read("/proc/self/cmdline").ok().and_then(|raw| {
+            raw.split(|byte| *byte == 0)
+                .nth(1)
+                .and_then(|arg| String::from_utf8(arg.to_vec()).ok())
+        });
+        #[cfg(not(target_os = "linux"))]
+        let entry = std::env::args().nth(1);
+        if let Some(code) = entry.as_deref().and_then(run_internal_kernel_entry) {
+            std::process::exit(code);
+        }
+    }
+    dispatch
+};

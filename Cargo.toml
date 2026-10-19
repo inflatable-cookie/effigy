@@ -52,11 +52,6 @@ license = "MIT"
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(effigy_shared_process)"] }
 
 # Size-bounded private docs proof artifact; ordinary dev/release profiles stay unchanged.
-# Task runs identify their own binary for the per-run sentinel (contract 052
-# §5.8). Debug builds keep that digest fast.
-[profile.dev.package.sha2]
-opt-level = 3
-
 [profile.qualified-docs]
 inherits = "release"
 strip = "symbols"

@@ -187,6 +187,10 @@ fn collect_runtime_diagnostics(
     // container policy at all, so it also precedes the early returns below.
     append_catalog_pack_diagnostics(&mut diagnostics);
 
+    // v0.14 task state is ignored, never imported or deleted (contract 052
+    // §11); listing it tells the operator what is safe to remove.
+    append_legacy_task_state_diagnostics(resolved_root, &mut diagnostics);
+
     let policies = match load_all_container_policies(resolved_root) {
         Ok(value) => value,
         Err(_) => return Ok(diagnostics),
@@ -383,6 +387,29 @@ fn workspace_ownership_finding(
 /// incompatible resolves to the compiled baseline silently as far as compose
 /// output is concerned, so doctor is where an operator finds out — with one
 /// direct repair command.
+fn append_legacy_task_state_diagnostics(
+    resolved_root: &Path,
+    diagnostics: &mut DoctorRuntimeDiagnostics,
+) {
+    for family in crate::runner::task_engine::legacy_families(resolved_root) {
+        diagnostics.findings.push(effigy_doctor::DoctorFinding {
+            check_id: format!("tasks.legacy-state.{}", family.family),
+            severity: effigy_doctor::DoctorSeverity::Info,
+            evidence: format!(
+                "{} entr{} of v0.14 task state at {}",
+                family.entries,
+                if family.entries == 1 { "y" } else { "ies" },
+                family.path.display()
+            ),
+            remediation: format!(
+                "{}. Effigy v0.15 never reads it for exclusion or status beyond the read-only view, and never deletes it",
+                family.disposition
+            ),
+            fixable: false,
+        });
+    }
+}
+
 fn append_catalog_pack_diagnostics(diagnostics: &mut DoctorRuntimeDiagnostics) {
     let selection =
         effigy_catalog::pack::select_pack(crate::runner::service_command::effigy_version());

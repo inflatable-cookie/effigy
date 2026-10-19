@@ -13,7 +13,7 @@ use std::io::Read;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use effigy_kernel::ctx::{EffectClass, Placement};
-use effigy_kernel::gate::{Gate, GateError, HolderDiag, Wait};
+use effigy_kernel::gate::{GateError, HolderDiag, Wait};
 use effigy_kernel::id::{
     Digest, ExecutionTarget, InvocationSpec, ResolvedInvocation, ResourceId, Route, RunId, TaskId,
 };
@@ -76,7 +76,6 @@ pub(in crate::runner) struct TaskRun {
     run: Option<Run<'static>>,
     shared: Option<Run<'static>>,
     target: TaskTarget,
-    started: Instant,
 }
 
 impl TaskRun {
@@ -186,7 +185,6 @@ impl TaskRun {
                 run: shared,
                 shared: None,
                 target: request.target.clone(),
-                started,
             });
         }
         let invocation = invocation(&task_id, owner.clone(), argv, &provenance)?;
@@ -218,7 +216,6 @@ impl TaskRun {
             run: Some(run),
             shared,
             target: request.target.clone(),
-            started,
         })
     }
 
@@ -226,6 +223,7 @@ impl TaskRun {
         self.run.as_mut().expect("open run")
     }
 
+    #[cfg(test)]
     pub(in crate::runner) fn id(&self) -> RunId {
         self.run.as_ref().expect("open run").id()
     }
@@ -252,10 +250,6 @@ impl TaskRun {
         }
         retain();
         warnings
-    }
-
-    pub(in crate::runner) fn elapsed(&self) -> Duration {
-        self.started.elapsed()
     }
 
     /// A live run of root task `task`, held by this process.
@@ -549,22 +543,4 @@ fn age_text(started_ms: i64) -> Option<String> {
         60..=3599 => format!("{}m{}s", seconds / 60, seconds % 60),
         _ => format!("{}h{}m", seconds / 3600, (seconds % 3600) / 60),
     })
-}
-
-/// A holder probe for code that needs to know whether a run is live
-/// without acquiring anything.
-pub(in crate::runner) fn gate_is_held(owner: &ResourceId) -> Observed<bool> {
-    let cx = kernel::observe();
-    match kernel::observe_root(&cx) {
-        Observed::Verified(root, _) => match Gate::probe(&cx, &root, owner) {
-            Observed::Verified(state, evidence) => Observed::Verified(
-                matches!(state, effigy_kernel::gate::GateState::Held(_)),
-                evidence,
-            ),
-            Observed::Absent(proof) => Observed::Absent(proof),
-            Observed::Unknown(reason) => Observed::Unknown(reason),
-        },
-        Observed::Absent(proof) => Observed::Absent(proof),
-        Observed::Unknown(reason) => Observed::Unknown(reason),
-    }
 }

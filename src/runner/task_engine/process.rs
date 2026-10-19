@@ -37,8 +37,9 @@ pub(in crate::runner) struct PlainCommand<'a> {
     pub(in crate::runner) capture: bool,
 }
 
+/// A spawn-environment override carried as a secret: redacted from every
+/// capture and never placed in argv.
 pub(in crate::runner) enum EnvOverride {
-    Plain(String),
     Secret(String),
 }
 
@@ -49,7 +50,6 @@ pub(in crate::runner) struct PlainExit {
     pub(in crate::runner) code: i32,
     pub(in crate::runner) stdout: Vec<u8>,
     pub(in crate::runner) stderr: Vec<u8>,
-    pub(in crate::runner) truncated: bool,
 }
 
 pub(in crate::runner) fn run_plain(
@@ -123,7 +123,6 @@ pub(in crate::runner) fn run_plain(
     Ok(PlainExit {
         workload,
         code,
-        truncated: stdout.truncated || stderr.truncated,
         stdout: stdout.bytes,
         stderr: stderr.bytes,
     })
@@ -172,7 +171,6 @@ fn environment(
     }
     for (key, value) in overrides {
         let value = match value {
-            EnvOverride::Plain(value) => EnvValue::Plain(OsString::from(value)),
             EnvOverride::Secret(value) if value.is_empty() => EnvValue::Plain(OsString::new()),
             EnvOverride::Secret(value) => {
                 EnvValue::Secret(SecretValue::new(value.into_bytes()).map_err(|error| {
@@ -185,10 +183,10 @@ fn environment(
     Ok(env)
 }
 
+/// A bounded capture that keeps the newest bytes (D1-23).
 #[derive(Default)]
 struct Tail {
     bytes: Vec<u8>,
-    truncated: bool,
 }
 impl Tail {
     fn push(&mut self, chunk: &[u8]) {
@@ -196,7 +194,6 @@ impl Tail {
         if self.bytes.len() > CAPTURE_TAIL {
             let excess = self.bytes.len() - CAPTURE_TAIL;
             self.bytes.drain(..excess);
-            self.truncated = true;
         }
     }
 }
