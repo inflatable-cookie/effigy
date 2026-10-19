@@ -24,7 +24,7 @@ const TASKS_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         ("--task <TASK_NAME>", "Filter output to matching task entries"),
         (
             "--resolve <SELECTOR>",
-            "Probe task routing evidence for a selector (for example `<catalog>/task` or `test`)",
+            "Show where a selector goes, exactly as running it would: typed command, task, built-in, exec alias or `[defer]`",
         ),
         (
             "--pretty <true|false>",
@@ -32,11 +32,11 @@ const TASKS_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         ),
         (
             "status <SELECTOR>",
-            "Show live-or-last-known status for one resolved task selector",
+            "Show the live run (held gate) or the last run of one resolved task, from the run journal",
         ),
         (
             "status --all",
-            "Show repo-plus-descendant task status inventory, including unknown and stale rows",
+            "Show every declared task's state, plus live runs of tasks no longer declared",
         ),
         (
             "request status|follow",
@@ -52,7 +52,7 @@ const TASKS_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         ),
         (
             "qa-group status <RUN_ID>",
-            "Show live-or-final QA-group run evidence; a dead owner stays unknown, never a pass",
+            "Show live-or-final QA-group run evidence; a run whose owner exited stays unknown, never a pass",
         ),
         (
             "qa-group logs <RUN_ID>",

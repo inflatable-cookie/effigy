@@ -35,7 +35,7 @@ fn watch_option_rows() -> Vec<(&'static str, &'static str)> {
         ),
         (
             "lock scope",
-            "Effigy owner mode acquires `task:watch:<target>`; clear manually with `effigy tasks unlock task:watch:<target>` when needed.",
+            "Effigy owner mode holds `task:watch:<target>` while it runs; the lock is released when the watcher exits.",
         ),
         ("-h, --help", "Print command help"),
     ]
