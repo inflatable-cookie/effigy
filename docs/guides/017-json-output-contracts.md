@@ -260,7 +260,7 @@ effigy --json state apply uat
 effigy --json state capture uat new-content
 effigy --json state capture uat --role uat-capture --source-env uat --key uat-capture-2026-05-08
 effigy --json state history uat --kind capture --limit 5
-effigy --json build --repo /path/to/workspace
+effigy --json --repo /path/to/workspace build
 effigy --json --plan --repo /path/to/workspace build
 ```
 

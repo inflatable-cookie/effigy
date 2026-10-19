@@ -17,7 +17,7 @@ mod status;
 
 pub(in crate::runner) use holders::{live_holders, HolderKind, LiveHolder};
 pub(in crate::runner) use identity::TaskTarget;
-pub use kernel::run_internal_kernel_entry;
+pub use kernel::{capture_startup_executable, run_internal_kernel_entry};
 pub(in crate::runner) use legacy::{legacy_families, refuse_live_legacy_holder};
 pub(in crate::runner) use process::{run_plain, EnvOverride, PlainCommand, RunExec};
 pub(in crate::runner) use run::{resolve_lock_wait_ms, TaskRun, TaskRunRequest};

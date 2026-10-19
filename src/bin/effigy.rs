@@ -7,6 +7,7 @@ fn main() {
             std::process::exit(code);
         }
     }
+    effigy::runner::capture_startup_executable();
     effigy::run_cli(raw_args);
     // run_cli exits internally on parse or runner error;
     // reaching here means success

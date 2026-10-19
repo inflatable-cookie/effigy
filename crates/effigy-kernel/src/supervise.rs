@@ -53,7 +53,9 @@ pub enum ClientMode {
 /// inode, size and modification and change times. Any replacement or
 /// rewrite changes at least one, and the change time cannot be set back by
 /// the writer (I-SV4). Identification is a stat, so a large debug build costs
-/// nothing per run.
+/// nothing per run. The capturing process also holds the startup image open,
+/// so a rebuild that replaces the path (a `cargo build` of the running binary)
+/// still leaves that image to re-exec.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Executable {
     path: PathBuf,
@@ -62,13 +64,16 @@ pub struct Executable {
     size: u64,
     modified: (i64, i64),
     changed: (i64, i64),
+    #[serde(skip)]
+    image: Option<std::sync::Arc<std::fs::File>>,
 }
 impl Executable {
     pub fn current() -> io::Result<Self> {
         Self::capture(&std::env::current_exe()?)
     }
     pub fn capture(path: &Path) -> io::Result<Self> {
-        let metadata = open_executable(path)?.metadata()?;
+        let image = open_executable(path)?;
+        let metadata = image.metadata()?;
         if !metadata.is_file() {
             return Err(io::Error::other("binary is not a regular file"));
         }
@@ -79,7 +84,19 @@ impl Executable {
             size: metadata.len(),
             modified: (metadata.mtime(), metadata.mtime_nsec()),
             changed: (metadata.ctime(), metadata.ctime_nsec()),
+            image: Some(std::sync::Arc::new(image)),
         })
+    }
+    /// The held startup image when its path no longer names it and its
+    /// content is unchanged. Unlinking the path updates the inode's change
+    /// time, so content identity here is device, inode, size and mtime.
+    fn replaced_image(&self) -> Option<&std::fs::File> {
+        let image = self.image.as_deref()?;
+        let held = image.metadata().ok()?;
+        (self.verify().is_err()
+            && (held.dev(), held.ino(), held.len()) == (self.device, self.inode, self.size)
+            && (held.mtime(), held.mtime_nsec()) == self.modified)
+            .then_some(image)
     }
     pub fn verify(&self) -> io::Result<()> {
         let fresh = Self::capture(&self.path)?;
@@ -170,6 +187,62 @@ pub(crate) fn helper(executable: &Executable, entry: &str) -> io::Result<Command
     }
     Ok(command)
 }
+/// A private copy of a replaced startup image under the state root, removed
+/// once the helper that runs it has acknowledged (I-SV4).
+struct PrivateImage<'a> {
+    dir: &'a DirFd,
+    name: FileName,
+    executable: Executable,
+}
+impl Drop for PrivateImage<'_> {
+    fn drop(&mut self) {
+        let _ = self.dir.remove(&self.name, false);
+    }
+}
+fn private_image<'a>(
+    root: &'a StateRoot,
+    executable: &Executable,
+) -> Result<Option<PrivateImage<'a>>, RunError> {
+    let Some(image) = executable.replaced_image() else {
+        return Ok(None);
+    };
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_nanos());
+    let name =
+        FileName::new(&format!("exe-{}-{nonce}", std::process::id())).map_err(io::Error::other)?;
+    let (mut copy, _) = root
+        .dir()
+        .open_file(
+            &name,
+            libc::O_WRONLY | libc::O_EXCL,
+            Some(0o700),
+            Trust::Private,
+        )
+        .map_err(io::Error::other)?
+        .ok_or_else(|| io::Error::other("private image missing"))?;
+    let mut pin = PrivateImage {
+        dir: root.dir(),
+        name,
+        executable: executable.clone(),
+    };
+    let mut buffer = vec![0u8; 1 << 20];
+    let mut offset = 0;
+    loop {
+        let count = std::os::unix::fs::FileExt::read_at(image, &mut buffer, offset)?;
+        if count == 0 {
+            break;
+        }
+        copy.write_all(&buffer[..count])?;
+        offset += count as u64;
+    }
+    if offset != executable.size {
+        return Err(io::Error::other("startup image changed while copied").into());
+    }
+    drop(copy);
+    pin.executable = Executable::capture(&root.dir().join(pin.name.as_str()))?;
+    Ok(Some(pin))
+}
 pub(crate) fn spawn_sentinel(
     run: &Run<'_>,
     root: &StateRoot,
@@ -184,9 +257,23 @@ pub(crate) fn spawn_sentinel(
         .parent()
         .and_then(Path::parent)
         .ok_or_else(|| RunError::Invalid("invalid state root".into()))?;
-    let mut command = helper(&plan.executable, "__kernel-sentinel")?;
-    command.stdout(Stdio::piped());
-    let mut child = command.spawn()?;
+    // A rebuilt path re-execs the startup image, never the replacement.
+    let pin = private_image(root, &plan.executable)?;
+    let executable = pin.as_ref().map_or(&plan.executable, |pin| &pin.executable);
+    let mut busy = 0;
+    let mut child = loop {
+        let mut command = helper(executable, "__kernel-sentinel")?;
+        command.stdout(Stdio::piped());
+        match command.spawn() {
+            // A just-written image can be briefly busy while another thread's
+            // fork still holds its write descriptor.
+            Err(error) if error.raw_os_error() == Some(libc::ETXTBSY) && busy < 200 => {
+                busy += 1;
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            spawned => break spawned?,
+        }
+    };
     // The fault driver waits for every helper, registered or not (§12.1).
     #[cfg(all(test, feature = "fault-injection"))]
     crate::fault::note_helper(child.id());
@@ -199,7 +286,7 @@ pub(crate) fn spawn_sentinel(
         owner: run.fence().resource.clone(),
         run: run.id(),
         next: next.argv().iter().map(|a| a.as_bytes().to_vec()).collect(),
-        executable: plan.executable.clone(),
+        executable: executable.clone(),
     };
     nonblocking(writer.as_raw_fd())?;
     write_frame(&mut writer, &config)?;
@@ -215,6 +302,8 @@ pub(crate) fn spawn_sentinel(
             "invalid sentinel ready acknowledgement".into(),
         ));
     }
+    // The sentinel verified and runs its image: the private copy can go.
+    drop(pin);
     let identity = ident::process_identity(child.id())
         .verified()
         .cloned()

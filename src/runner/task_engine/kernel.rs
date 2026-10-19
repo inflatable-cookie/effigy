@@ -118,6 +118,12 @@ pub(super) fn observe_root(cx: &ObserveContext) -> Observed<StateRoot> {
 }
 
 /// This binary, identified once for every sentinel this process spawns.
+/// Identifies the running binary, and holds its image, before any task can
+/// rebuild it: a later run's helpers re-exec this image, not a replacement.
+pub fn capture_startup_executable() {
+    let _ = executable();
+}
+
 pub(super) fn executable() -> Result<Executable, RunnerError> {
     static CURRENT: OnceLock<Result<Executable, String>> = OnceLock::new();
     CURRENT

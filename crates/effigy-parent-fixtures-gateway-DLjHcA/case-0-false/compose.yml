@@ -1,5 +1,0 @@
-services:
-  app:
-    image: alpine
-  db:
-    image: alpine

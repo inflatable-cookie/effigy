@@ -310,3 +310,53 @@ fn task_engine_equivalent_spellings_from_two_processes_serialize() {
     let _ = first.kill();
     let _ = first.wait();
 }
+
+/// A sequence whose step rebuilds the running binary (as `cargo run` of
+/// Effigy inside Effigy does) still starts its later runs: their helpers
+/// re-exec the startup image, never the replacement (I-SV4).
+#[test]
+fn task_engine_runs_after_the_running_binary_is_replaced_on_disk() {
+    let fixture = Fixture::new();
+    let bin = fixture.home.join("bin");
+    fs::create_dir_all(&bin).expect("bin dir");
+    let copy = bin.join("effigy");
+    fs::copy(env!("CARGO_BIN_EXE_effigy"), &copy).expect("copy binary");
+    fs::write(
+        fixture.repo.join("effigy.toml"),
+        r#"[tasks.rebuild]
+run = [
+  { run = "cp \"$EFFIGY_UNDER_TEST\" \"$EFFIGY_UNDER_TEST.new\" && mv \"$EFFIGY_UNDER_TEST.new\" \"$EFFIGY_UNDER_TEST\"" },
+  { task = "after" },
+]
+
+[tasks.after]
+run = "echo after >> runs.log"
+"#,
+    )
+    .expect("manifest");
+    let output = Command::new(&copy)
+        .arg("rebuild")
+        .current_dir(&fixture.repo)
+        .env("HOME", &fixture.home)
+        .env("EFFIGY_UNDER_TEST", &copy)
+        .env_remove("EFFIGY_MANAGED_RUN_TOKEN")
+        .env_remove("EFFIGY_CUSTODY_NONCE")
+        .stdin(Stdio::null())
+        .output()
+        .expect("run rebuild");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.repo.join("runs.log")).expect("runs log"),
+        "after\n"
+    );
+    let leftovers = fs::read_dir(fixture.home.join(".effigy/state"))
+        .expect("state root")
+        .flatten()
+        .filter(|entry| entry.file_name().to_string_lossy().starts_with("exe-"))
+        .count();
+    assert_eq!(leftovers, 0, "private images are removed after use");
+}

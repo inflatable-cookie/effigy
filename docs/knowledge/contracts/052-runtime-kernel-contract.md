@@ -1846,7 +1846,11 @@ Prerequisite kernel additions for that adoption: `run::history`,
 `run::unclosed` and `RunSummary` (§5.6 status reads); `TaskId` and
 `ResourceId::key` accessors (§5.1); `Terminal::Inherit { capture }` and
 separately redacted stdout and stderr queues (§5.7); `Executable` identified by
-file identity instead of a content digest (§5.8, I-SV4).
+file identity instead of a content digest, and holding the startup image open
+(§5.8, I-SV4). When a build replaces the running binary's path (`cargo run` of
+Effigy inside an Effigy sequence), a later sentinel re-execs a private copy of
+the unchanged startup image under the state root, removed once the sentinel
+acknowledges; a changed image still refuses.
 
 ### 10.2 Run supervisor
 
