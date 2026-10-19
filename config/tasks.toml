@@ -1507,3 +1507,5 @@ qa = { visibility = "public", group = "Validation", run = [{ task = "test" }, { 
 "test:tasks:visibility:help-fix" = { visibility = "internal", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests -E 'test(cli_tasks_help_is_command_specific)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 }] }
 
 "test:tasks:visibility:json-help" = { visibility = "internal", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests -E 'test(cli_public_task_help_json_disables_forced_color)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 }] }
+
+"test:tasks:visibility:completion" = { visibility = "internal", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-builtin --lib -E 'test(completion_visibility)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 }] }

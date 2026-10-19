@@ -42,6 +42,20 @@ pub(super) fn discover_completion_candidates(
                     candidates.insert(format!("{}/{}", catalog.alias, task_name));
                 }
             }
+            // Root tasks own their bare names ahead of built-ins. A public
+            // task in another catalog must not re-expose an internal root task.
+            if let Some(root) = catalogs
+                .iter()
+                .find(|catalog| catalog.catalog_root == repo_root)
+            {
+                for (name, task) in &root.manifest.tasks {
+                    if visibility.effective(root, name, task).0
+                        == effigy_manifest::ManifestTaskVisibility::Internal
+                    {
+                        candidates.remove(name);
+                    }
+                }
+            }
         }
         Err(RoutingError::TaskCatalogsMissing { .. }) => {}
         Err(error) => return Err(error.into()),
@@ -138,6 +152,7 @@ entry = [{ task = "step:helper" }, { task = "kept" }]
 "step:helper" = "echo step:helper"
 kept = { run = "echo kept", visibility = "public" }
 hidden = { run = "echo hidden", visibility = "internal" }
+release = { run = "echo internal release", visibility = "internal" }
 "#,
         )
         .expect("fixture manifest");
@@ -153,6 +168,8 @@ hidden = { run = "echo hidden", visibility = "internal" }
             "sample/step:helper",
             "hidden",
             "sample/hidden",
+            "release",
+            "sample/release",
         ] {
             assert!(
                 !candidates.iter().any(|candidate| candidate == internal),
