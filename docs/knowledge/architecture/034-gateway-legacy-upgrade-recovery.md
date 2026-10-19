@@ -296,9 +296,11 @@ owned by task #220, not this task.
 Reboot, actual launchd activation and CBS/Acowtancy URL qualification remain
 operator-run actions on the exact candidate. The guide records the steps.
 
-The shared binary dispatches source and gateway kernel helpers through one
-main signal router, selecting the owning settlement adapter from the resource
-identity (including the gateway setup store). Normal gateway status uses the
+The shared binary dispatches task, source and gateway helpers through the
+task engine's kernel entry point. It accepts the gateway's fixed recovery
+invocation alongside task selectors and bundle sync. Kernel-owned gateway
+effects settle in the kernel; unrecognized engine effects remain unknown.
+Operator startup and setup share the binary's one signal router. Status uses the
 kernel's native boot observation rather than a PATH-selected sysctl process.
 Legacy UUID spelling is compared without case sensitivity; legacy timeval
 records retain their existing conservative comparison. The DNS self-test uses

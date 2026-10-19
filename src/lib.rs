@@ -82,11 +82,18 @@ pub fn run_main(raw_args: Vec<String>) -> std::io::Result<()> {
         std::process::exit(code);
     }
     runner::capture_startup_executable();
-    // Source-capable commands own the router from the start; task runs inside
-    // them adopt it. Other commands install it at their first custody spawn.
+    // Source preparation and operator gateway commands own the router from
+    // the start; nested task runs adopt it before custody spawns.
     let uses_kernel = effigy_cli::parse_command(raw_args.clone())
         .as_ref()
-        .is_ok_and(runner::bundle_command::is_source_prepare_command);
+        .is_ok_and(|command| {
+            runner::bundle_command::is_source_prepare_command(command)
+                || matches!(command, effigy_cli::Command::Gateway(args)
+                    if args.private.is_none() && matches!(args.subcommand,
+                        effigy_cli::GatewaySubcommand::Up
+                        | effigy_cli::GatewaySubcommand::Setup { .. }
+                        | effigy_cli::GatewaySubcommand::SetupTls))
+        });
     if uses_kernel {
         let router = SignalRouter::install(RouterPolicy::Inline)?;
         runner::bundle_command::set_source_cancel(router.root_cancel());
@@ -94,49 +101,4 @@ pub fn run_main(raw_args: Vec<String>) -> std::io::Result<()> {
     }
     run_cli(raw_args);
     Ok(())
-}
-
-// Each engine retains authority over its own effects. Kernel-owned effects
-// settle in the kernel before this dispatcher is consulted.
-struct MainSettlement;
-impl MainSettlement {
-    fn gateway_owns(effect: &effigy_kernel::run::Effect) -> bool {
-        effect.spec.target.resource.kind() == effigy_kernel::id::ResourceKind::Gateway
-            || effect.spec.target.resource == effigy_gateway::setup::setup_owner()
-    }
-}
-impl effigy_kernel::run::SettlementAdapter for MainSettlement {
-    fn observe(
-        &mut self,
-        effect: &effigy_kernel::run::Effect,
-        cx: &effigy_kernel::ctx::CleanupContext,
-    ) -> effigy_kernel::observe::Observed<effigy_kernel::run::Fence> {
-        if Self::gateway_owns(effect) {
-            effigy_gateway::operator::Adapter.observe(effect, cx)
-        } else {
-            effigy_manifest::SourceSettlement.observe(effect, cx)
-        }
-    }
-    fn release(
-        &mut self,
-        effect: &effigy_kernel::run::Effect,
-        cx: &effigy_kernel::ctx::CleanupContext,
-    ) -> effigy_kernel::observe::Observed<()> {
-        if Self::gateway_owns(effect) {
-            effigy_gateway::operator::Adapter.release(effect, cx)
-        } else {
-            effigy_manifest::SourceSettlement.release(effect, cx)
-        }
-    }
-    fn reconcile(
-        &mut self,
-        effect: &effigy_kernel::run::Effect,
-        cx: &effigy_kernel::ctx::CleanupContext,
-    ) -> effigy_kernel::observe::Observed<effigy_kernel::run::Reconciled> {
-        if Self::gateway_owns(effect) {
-            effigy_gateway::operator::Adapter.reconcile(effect, cx)
-        } else {
-            effigy_manifest::SourceSettlement.reconcile(effect, cx)
-        }
-    }
 }
