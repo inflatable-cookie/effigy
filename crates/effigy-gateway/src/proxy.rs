@@ -33,8 +33,11 @@ use tracing::{debug, error, info, warn};
 
 use serde_json;
 
-use crate::routes::RouteTable;
+use crate::routes::{Route, RouteTable};
+
+mod upstreams;
 use crate::stats::GatewayStats;
+use upstreams::Upstreams;
 
 /// Configuration for the reverse proxy.
 #[derive(Debug, Clone)]
@@ -133,7 +136,9 @@ pub(crate) async fn run_proxy_server_on(
     mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> Result<(), crate::GatewayError> {
     let bind_addr = listener.local_addr().map_err(crate::GatewayError::Io)?;
+    let (upstreams, maintenance) = Upstreams::start(route_table.clone(), config.connect_timeout);
 
+    let _maintenance = AbortOnDrop(maintenance);
     info!(addr = %bind_addr, "HTTP proxy started");
 
     // Track in-flight connections for graceful drain.
@@ -144,6 +149,11 @@ pub(crate) async fn run_proxy_server_on(
             result = listener.accept() => {
                 match result {
                     Ok((stream, peer_addr)) => {
+                        if let Err(error) = stream.set_nodelay(true) {
+                            warn!(%error, "could not disable downstream Nagle delay");
+                            continue;
+                        }
+                        let upstreams = upstreams.clone();
                         let table = Arc::clone(&route_table);
                         let cfg = config.clone();
                         let st = Arc::clone(&stats);
@@ -154,10 +164,11 @@ pub(crate) async fn run_proxy_server_on(
                             let io = TokioIo::new(stream);
                             let service = service_fn(move |req| {
                                 let table = Arc::clone(&table);
+                                let upstreams = upstreams.clone();
                                 let cfg = cfg.clone();
                                 let st = Arc::clone(&st);
                                 async move {
-                                    handle_request(req, &table, &st, peer_addr, &cfg, false).await
+                                    handle_request(req, &table, &st, peer_addr, &cfg, false, &upstreams).await
                                 }
                             });
 
@@ -261,6 +272,9 @@ pub(crate) async fn run_tls_proxy_server_on(
 ) -> Result<(), crate::GatewayError> {
     let tls_acceptor = tokio_rustls::TlsAcceptor::from(tls_config);
     let bind_addr = listener.local_addr().map_err(crate::GatewayError::Io)?;
+    let (upstreams, maintenance) =
+        Upstreams::start(route_table.clone(), proxy_config.connect_timeout);
+    let _maintenance = AbortOnDrop(maintenance);
 
     info!(addr = %bind_addr, "HTTPS proxy started");
 
@@ -269,6 +283,11 @@ pub(crate) async fn run_tls_proxy_server_on(
             result = listener.accept() => {
                 match result {
                     Ok((stream, peer_addr)) => {
+                        if let Err(error) = stream.set_nodelay(true) {
+                            warn!(%error, "could not disable downstream Nagle delay");
+                            continue;
+                        }
+                        let upstreams = upstreams.clone();
                         let acceptor = tls_acceptor.clone();
                         let table = Arc::clone(&route_table);
                         let st = Arc::clone(&stats);
@@ -291,9 +310,10 @@ pub(crate) async fn run_tls_proxy_server_on(
                             let service = service_fn(move |req| {
                                 let table = Arc::clone(&table);
                                 let st = Arc::clone(&st);
+                                let upstreams = upstreams.clone();
                                 let cfg = cfg.clone();
                                 async move {
-                                    handle_request(req, &table, &st, peer_addr, &cfg, true).await
+                                    handle_request(req, &table, &st, peer_addr, &cfg, true, &upstreams).await
                                 }
                             });
 
@@ -432,6 +452,7 @@ async fn handle_request(
     peer_addr: SocketAddr,
     config: &ProxyConfig,
     forwarded_https: bool,
+    upstreams: &Arc<Upstreams>,
 ) -> Result<Response<ProxyBody>, hyper::Error> {
     GatewayStats::inc(&stats.http_requests);
 
@@ -482,9 +503,9 @@ async fn handle_request(
     };
 
     // Look up the route.
-    let route = {
+    let (route, revision) = {
         let table = crate::locks::read_tolerant(route_table);
-        table.lookup(&host).cloned()
+        (table.lookup(&host).cloned(), table.revision)
     };
 
     let route = match route {
@@ -526,12 +547,12 @@ async fn handle_request(
         debug!(host = %host, target = %target, "WebSocket upgrade");
         return handle_websocket_upgrade(
             req,
-            &target,
             &host,
             peer_addr,
-            config,
             forwarded_https,
-            route.managed_listener,
+            &route,
+            revision,
+            upstreams,
         )
         .await;
     }
@@ -546,12 +567,12 @@ async fn handle_request(
 
     match forward_request(
         req,
-        &target,
         &host,
         peer_addr,
         config,
         forwarded_https,
-        route.managed_listener,
+        (&route, revision),
+        upstreams,
     )
     .await
     {
@@ -625,41 +646,15 @@ fn is_websocket_upgrade(req: &Request<Incoming>) -> bool {
 /// Forward an HTTP request to an upstream target with streaming.
 async fn forward_request(
     mut req: Request<Incoming>,
-    target: &str,
     original_host: &str,
     peer_addr: SocketAddr,
     config: &ProxyConfig,
     forwarded_https: bool,
-    managed_listener: Option<crate::routes::ManagedListenerRouteOwner>,
+    published: (&Route, u64),
+    upstreams: &Arc<Upstreams>,
 ) -> Result<Response<ProxyBody>, Box<dyn std::error::Error + Send + Sync>> {
-    // Connect to upstream with timeout.
-    let stream = tokio::time::timeout(config.connect_timeout, TcpStream::connect(target))
-        .await
-        .map_err(|_| format!("connect timeout after {:?}", config.connect_timeout))?
-        .map_err(|e| format!("connect failed: {e}"))?;
-
-    verify_connected_managed_listener(managed_listener).await?;
-
-    let io = TokioIo::new(stream);
-
-    let (mut sender, conn) = hyper::client::conn::http1::handshake(io)
-        .await
-        .map_err(|error| format!("upstream HTTP handshake failed: {error}"))?;
-
-    // Spawn the connection driver.
-    tokio::spawn(async move {
-        if let Err(error) = conn.await {
-            debug!(error = %error, "upstream connection driver ended");
-        }
-    });
-
-    // The connection driver may not have polled the handshake yet. Wait until
-    // it is ready before dispatching the first request so the sender cannot
-    // report a canceled request during startup.
-    sender
-        .ready()
-        .await
-        .map_err(|error| format!("upstream connection was not ready: {error}"))?;
+    let (route, revision) = published;
+    let mut sender = upstreams.sender(route, revision).await?;
 
     // Prepare the upstream request.
     strip_hop_by_hop_headers(req.headers_mut());
@@ -676,6 +671,8 @@ async fn forward_request(
         })?
         .map_err(|error| format!("upstream request failed: {error}"))?;
 
+    upstreams.recycle(route, revision, sender);
+
     // Strip hop-by-hop headers from response.
     let (mut parts, body) = response.into_parts();
     strip_hop_by_hop_headers(&mut parts.headers);
@@ -686,41 +683,26 @@ async fn forward_request(
 /// Handle a WebSocket upgrade by performing bidirectional TCP piping.
 async fn handle_websocket_upgrade(
     req: Request<Incoming>,
-    target: &str,
     original_host: &str,
     peer_addr: SocketAddr,
-    config: &ProxyConfig,
     forwarded_https: bool,
-    managed_listener: Option<crate::routes::ManagedListenerRouteOwner>,
+    route: &Route,
+    revision: u64,
+    upstreams: &Arc<Upstreams>,
 ) -> Result<Response<ProxyBody>, hyper::Error> {
-    // Connect to upstream.
-    let upstream_stream =
-        match tokio::time::timeout(config.connect_timeout, TcpStream::connect(target)).await {
-            Ok(Ok(stream)) => stream,
-            Ok(Err(e)) => {
-                warn!(target = %target, error = %e, "WebSocket upstream connect failed");
-                return Ok(error_response(
-                    StatusCode::BAD_GATEWAY,
-                    &format!("WebSocket upstream connect failed: {e}"),
-                ));
-            }
-            Err(_) => {
-                return Ok(error_response(
-                    StatusCode::GATEWAY_TIMEOUT,
-                    "WebSocket upstream connect timeout",
-                ));
-            }
-        };
-
-    if verify_connected_managed_listener(managed_listener)
-        .await
-        .is_err()
-    {
-        return Ok(error_response(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "Managed listener ownership is unavailable",
-        ));
-    }
+    let upstream_stream = match upstreams.socket(route, revision).await {
+        Ok(stream) => stream,
+        Err(error) => {
+            return Ok(error_response(
+                if error.kind() == std::io::ErrorKind::PermissionDenied {
+                    StatusCode::SERVICE_UNAVAILABLE
+                } else {
+                    StatusCode::BAD_GATEWAY
+                },
+                &format!("WebSocket upstream is unavailable: {error}"),
+            ))
+        }
+    };
 
     let upstream_io = TokioIo::new(upstream_stream);
 
@@ -766,6 +748,13 @@ async fn handle_websocket_upgrade(
         peer_addr,
         forwarded_https,
     );
+
+    if let Err(error) = upstream_sender.ready().await {
+        return Ok(error_response(
+            StatusCode::BAD_GATEWAY,
+            &format!("WebSocket upstream was not ready: {error}"),
+        ));
+    }
 
     let upstream_response = match upstream_sender.send_request(upstream_req).await {
         Ok(r) => r,
@@ -834,29 +823,11 @@ async fn handle_websocket_upgrade(
     Ok(response)
 }
 
-async fn verify_connected_managed_listener(
-    owner: Option<crate::routes::ManagedListenerRouteOwner>,
-) -> Result<(), std::io::Error> {
-    let Some(owner) = owner else {
-        return Ok(());
-    };
-    tokio::task::spawn_blocking(move || {
-        let result = crate::managed_listener::verify_managed_listener_owner(&owner);
-        #[cfg(test)]
-        if let Err(error) = &result {
-            eprintln!("managed listener verification failed: {error}");
-        }
-        result
-    })
-    .await
-    .map_err(|error| {
-        std::io::Error::new(
-            std::io::ErrorKind::PermissionDenied,
-            format!("listener ownership check did not complete: {error}"),
-        )
-    })?
-    .map_err(|error| std::io::Error::new(std::io::ErrorKind::PermissionDenied, error))?;
-    Ok(())
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
 }
 
 /// Remove hop-by-hop headers from a header map.
@@ -979,3 +950,6 @@ mod tests;
 #[cfg(test)]
 #[path = "proxy/performance.rs"]
 mod performance;
+
+#[cfg(test)]
+mod pool_tests;

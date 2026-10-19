@@ -126,13 +126,21 @@ async fn loopback_keep_alive_latency_766() {
         ..route
     });
     measure(&mut routed, 8).await;
+    let proofs_before = crate::managed_listener::OWNERSHIP_PROOFS.load(Ordering::Relaxed);
     let managed_connections = connections.load(Ordering::Relaxed);
     let (managed_p50, managed_total) = measure(&mut routed, 766).await;
     let managed_opened = connections.load(Ordering::Relaxed) - managed_connections;
+    let managed_proofs =
+        crate::managed_listener::OWNERSHIP_PROOFS.load(Ordering::Relaxed) - proofs_before;
+    eprintln!("managed background ownership proofs during 766 requests: {managed_proofs}");
     eprintln!("gateway-latency requests=766 direct_p50_ms={:.3} plain_p50_ms={:.3} managed_p50_ms={:.3} direct_total_s={:.3} plain_total_s={:.3} managed_total_s={:.3} plain_upstream_connections={} managed_upstream_connections={}",
         direct_p50.as_secs_f64()*1000., plain_p50.as_secs_f64()*1000., managed_p50.as_secs_f64()*1000.,
         direct_total.as_secs_f64(), plain_total.as_secs_f64(), managed_total.as_secs_f64(), plain_opened, managed_opened);
     if std::env::var("EFFIGY_GATEWAY_PERF_BASELINE").as_deref() != Ok("1") {
+        assert!(
+            managed_proofs < 32,
+            "ownership proof ran on the request path"
+        );
         assert!(plain_p50.saturating_sub(direct_p50) < Duration::from_millis(5));
         assert!(managed_p50.saturating_sub(direct_p50) < Duration::from_millis(5));
         assert!(

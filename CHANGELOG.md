@@ -375,7 +375,9 @@ During v0.x, MINOR bumps may include breaking changes.
   endpoints, or trust behavior change.
 
 ### Changed
-
+- Gateway HTTP requests reuse upstream connections with low-latency TCP settings.
+  Managed listener ownership is verified at publication and off the request path;
+  stopped or replaced generations still refuse traffic, including reused connections.
 - Gateway routes, loopback addresses and generated host-port ranges now share
   one transactional endpoint store. Existing JSON registries import automatically
   and remain as backups, preserving URLs, IPs and pinned ports. Stopped stacks

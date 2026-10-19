@@ -78,6 +78,8 @@ from an inventory never frees its address. The previous shared-service key is
 translated only for its exact recorded owner, retaining the address.
 
 Container and managed-listener route edits run under the Store owner gate.
+Managed publication proves process generations, ancestry, readiness and exclusive
+listener ownership before committing the route and its fenced claim revision.
 Managed preflight reserves the persistent domain before child startup. Exact
 child-generation teardown withdraws active routing without releasing that
 stable owner; stale callbacks cannot withdraw a successor. Retirement releases
@@ -92,6 +94,35 @@ Store; modifying a backup has no effect. Unknown observations retain the last
 applied daemon table and report an error instead of falling back to backups.
 Status uses the same pure snapshot reader.
 
+## Proxy connection lifetime
+
+The daemon carries the committed Store revision into its in-memory route table.
+HTTP/1 pools are keyed by that fence and the complete route identity and target;
+a changed fence or route starts a separate pool. Idle senders expire after 30
+seconds, with at most eight idle connections per route. Hyper decides readiness
+and closes senders for upstream `Connection: close`, failed bodies and upgrades.
+Streaming bodies finish before a sender returns to the pool. WebSocket upgrades
+use a dedicated connection. Accepted HTTP/HTTPS and upstream sockets use
+`TCP_NODELAY`.
+
+Managed connections are prepared and fully verified by background workers before
+request code can acquire them. Request code never invokes the process table,
+ancestry or socket inventory. It checks the bounded supervisor readiness record
+and direct kernel identities for the three recorded PIDs, including on a reused
+HTTP connection. Thus a supervisor's unavailable record or a reused PID refuses
+immediately. The connected socket stays attached to the peer that was verified;
+a reconnect cannot consume an unverified connection on a reused port.
+
+Until the supervisor's claim revocation is represented directly in the kernel,
+background workers repeat the full liveness proof once per second and before
+publishing a newly prepared socket. An observation older than three seconds or
+any Unknown/error refuses traffic. Workers are owned by the proxy lifetime and
+canceled with it. This bounded cache is the interim liveness seam; the Store
+remains the sole persistent endpoint authority.
+
+The daemon runs its bounded HTTP/DNS self-test on a blocking worker, allowing
+the runtime to poll the same servers under test before identity publication.
+
 ## Proof surfaces
 
 - `test:gateway:endpoints`: import preservation and idempotence, persistent
@@ -104,3 +135,10 @@ Status uses the same pure snapshot reader.
 - `proof:gateway:proxy:baseline` and `proof:gateway:proxy:latency`: the same
   loopback workload records direct, plain-route and managed-route latency and
   upstream connection counts for 766 sequential requests.
+
+- `test:gateway:proxy`: cached revocation, publication refusal, pool reuse and
+  revision changes, streaming/concurrent uploads and upstream close semantics.
+  `faults_engine_gateway_endpoint_commit` runs the user-owned daemon and actual
+  Store watcher against before/after publication and persistent-transfer faults,
+  comparing recovered state with HTTP behavior. This replaces the kernel
+  placeholder.

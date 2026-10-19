@@ -114,7 +114,10 @@ impl EndpointSnapshot {
             .ok_or_else(|| error(format!("missing endpoint document {family}")))
     }
     pub fn routes(&self) -> Result<RouteTable, GatewayError> {
-        serde_json::from_value(self.document("routes")?.clone()).map_err(error)
+        let mut table: RouteTable =
+            serde_json::from_value(self.document("routes")?.clone()).map_err(error)?;
+        table.revision = self.revision;
+        Ok(table)
     }
     pub fn loopback(&self) -> Result<LoopbackRegistry, GatewayError> {
         serde_json::from_value(self.document("loopback")?.clone()).map_err(error)

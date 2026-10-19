@@ -4,10 +4,10 @@
 //!
 //! 1. DNS resolver (UDP)
 //! 2. HTTP reverse proxy (TCP)
-//! 3. Route table file watcher
+//! 3. Endpoint Store watcher
 //!
 //! All three tasks share the route table via `Arc<RwLock<RouteTable>>`.
-//! The file watcher reloads the table when the JSON file changes. Shutdown
+//! The watcher reloads committed snapshots when the kernel database changes. Shutdown
 //! is coordinated via a `tokio::sync::watch` channel.
 
 use std::fs::OpenOptions;
@@ -1592,7 +1592,15 @@ async fn run_gateway_with_cancel(
     });
     if !config.is_private() {
         let ready = match tokio::time::timeout(Duration::from_secs(2), alias_ready_rx).await {
-            Ok(Ok(Ok(()))) => crate::operator::http_test(&runtime_config, Duration::from_secs(2)),
+            Ok(Ok(Ok(()))) => {
+                let config = runtime_config.clone();
+                tokio::task::spawn_blocking(move || {
+                    crate::operator::http_test(&config, Duration::from_secs(2))
+                })
+                .await
+                .map_err(std::io::Error::other)
+                .and_then(|result| result)
+            }
             other => Err(std::io::Error::other(format!(
                 "TCP alias startup failed: {other:?}"
             ))),
@@ -1605,7 +1613,17 @@ async fn run_gateway_with_cancel(
             return Err(GatewayError::Io(error));
         }
         let _ = publication_tx.send(true);
-        if let Err(error) = crate::operator::self_test(&runtime_config, Duration::from_secs(2)) {
+        // Observe probes use bounded blocking sockets. Keep the runtime free
+        // to poll the very HTTP/DNS tasks being tested, including tasks woken
+        // into the current worker's non-stealable local queue.
+        let test_config = runtime_config.clone();
+        let tested = tokio::task::spawn_blocking(move || {
+            crate::operator::self_test(&test_config, Duration::from_secs(2))
+        })
+        .await
+        .map_err(std::io::Error::other)
+        .and_then(|result| result);
+        if let Err(error) = tested {
             let _ = shutdown_tx.send(true);
             while server_tasks.join_next().await.is_some() {}
             signal_task.abort();
@@ -1685,7 +1703,7 @@ fn setup_file_watcher(
             Ok(ev) => {
                 use notify::EventKind;
                 match ev.kind {
-                    EventKind::Create(_) | EventKind::Modify(_) => {
+                    EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_) => {
                         debug!(path = %watched_path.display(), "route table changed, reloading");
                         if let Err(error) = reload_route_table_and_maybe_schedule_shutdown(
                             &watched_path,
@@ -1708,7 +1726,8 @@ fn setup_file_watcher(
         })
         .map_err(|e| GatewayError::WatcherError(e.to_string()))?;
 
-    // Watch the parent directory (the file might not exist yet).
+    // Watch the database directory, including rollback-journal removal: that
+    // removal marks a commit whose earlier writes could still be unreadable.
     let database = crate::endpoint_store::EndpointStore::for_routes(path).database_path();
     let watch_dir = database.parent().expect("kernel database parent");
     if watch_dir.exists() {
@@ -1877,3 +1896,6 @@ fn handle_server_task_result(
 #[cfg(test)]
 #[path = "server/tests.rs"]
 mod tests;
+
+#[cfg(all(test, feature = "endpoint-store-faults"))]
+mod endpoint_faults;

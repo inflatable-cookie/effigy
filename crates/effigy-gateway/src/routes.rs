@@ -77,9 +77,9 @@ pub struct Route {
     pub registered: DateTime<Utc>,
 }
 
-/// Kernel identity for a managed host listener route. The gateway rechecks
-/// this identity after connecting to the upstream and before forwarding any
-/// request bytes, so a reused port cannot serve a foreign listener.
+/// Kernel identity for a managed host listener route. Publication proves the
+/// owner, and the proxy prepares verified connections in the background for
+/// this exact route revision. Revocation guards also apply to reused sockets.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ManagedListenerRouteOwner {
@@ -203,6 +203,9 @@ pub enum RouteSource {
 /// The route portion of one committed endpoint snapshot.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RouteTable {
+    /// Kernel publication fence of this snapshot; zero for uncommitted fixtures.
+    #[serde(skip)]
+    pub revision: u64,
     /// All registered routes, keyed by domain.
     pub routes: HashMap<String, Route>,
 }
@@ -211,6 +214,7 @@ impl RouteTable {
     /// Create an empty route table.
     pub fn new() -> Self {
         Self {
+            revision: 0,
             routes: HashMap::new(),
         }
     }

@@ -240,6 +240,27 @@ pub fn register_managed_listener_route(
     owner: ManagedListenerRouteOwner,
     expected_generation: Option<&str>,
 ) -> Result<ManagedListenerRoutePublication, GatewayError> {
+    register_managed_listener_route_verified(
+        route_table_path,
+        project_path,
+        domain,
+        target,
+        tls,
+        (owner, expected_generation),
+        crate::managed_listener::verify_managed_listener_owner,
+    )
+}
+
+fn register_managed_listener_route_verified(
+    route_table_path: &Path,
+    project_path: &str,
+    domain: &str,
+    target: &str,
+    tls: bool,
+    publication: (ManagedListenerRouteOwner, Option<&str>),
+    verify: impl FnOnce(&ManagedListenerRouteOwner) -> Result<(), std::io::Error>,
+) -> Result<ManagedListenerRoutePublication, GatewayError> {
+    let (owner, expected_generation) = publication;
     let parsed_target = target.parse::<std::net::SocketAddr>().map_err(|error| {
         GatewayError::RouteTableReadError {
             path: route_table_path.to_path_buf(),
@@ -301,6 +322,10 @@ pub fn register_managed_listener_route(
             ManagedListenerRoutePublication::Registered
         };
 
+        verify(&owner).map_err(|error| GatewayError::RouteTableReadError {
+            path: route_table_path.to_path_buf(),
+            reason: format!("managed listener ownership refused publication: {error}"),
+        })?;
         table.upsert(Route {
             domain: domain.to_owned(),
             target: Some(target.to_owned()),

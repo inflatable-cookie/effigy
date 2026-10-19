@@ -139,6 +139,7 @@ fn reserved_ips_cover_only_other_projects_container_routes() {
     }
 
     let table = RouteTable {
+        revision: 0,
         routes: [
             alias(
                 "stale.test",

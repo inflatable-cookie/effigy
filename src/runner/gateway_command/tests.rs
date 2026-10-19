@@ -26,6 +26,7 @@ fn tls_summary() -> GatewayTlsSummary {
 #[test]
 fn render_gateway_status_json_includes_routes_when_stopped() {
     let table = RouteTable {
+        revision: 0,
         routes: [(
             "demo.test".to_owned(),
             Route {
@@ -169,6 +170,7 @@ fn gateway_repair_plan_marks_inactive_and_missing_target_routes_repairable() {
     std::fs::create_dir_all(&stale_project).expect("mkdir stale");
 
     let table = RouteTable {
+        revision: 0,
         routes: [
             (
                 "postgres.live.test".to_owned(),
@@ -241,6 +243,7 @@ fn gateway_repair_plan_marks_inactive_and_missing_target_routes_repairable() {
 #[test]
 fn gateway_repair_plan_ignores_duplicate_bind_when_upstream_matches() {
     let table = RouteTable {
+        revision: 0,
         routes: [
             (
                 "postgres.app1.test".to_owned(),
@@ -306,6 +309,7 @@ fn tcp_alias_route(domain: &str, tcp_target: Option<&str>) -> (String, Route) {
 #[test]
 fn gateway_tcp_alias_unbound_routes_flags_missing_and_invalid_fallbacks() {
     let table = RouteTable {
+        revision: 0,
         routes: [
             tcp_alias_route("healthy.test", Some("127.0.0.1:15432")),
             tcp_alias_route("missing.test", None),
@@ -343,6 +347,7 @@ fn gateway_tcp_alias_unbound_routes_flags_missing_and_invalid_fallbacks() {
 #[test]
 fn gateway_tcp_alias_unbound_lines_name_alias_and_fallback() {
     let table = RouteTable {
+        revision: 0,
         routes: [tcp_alias_route("missing.test", None)]
             .into_iter()
             .collect(),

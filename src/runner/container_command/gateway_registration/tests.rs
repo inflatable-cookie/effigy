@@ -1080,9 +1080,7 @@ fn foreign_teardown_preserves_tls_material_and_tcp_alias() {
 fn container_down_after_listener_handover_preserves_the_successor_route() {
     with_test_home("container-down-after-handover", || {
         use effigy_gateway::identity::GatewayStartIdentity;
-        use effigy_gateway::registration::{
-            deregister_managed_listener_route, register_managed_listener_route,
-        };
+        use effigy_gateway::registration::deregister_managed_listener_route;
         use effigy_gateway::routes::ManagedListenerRouteOwner;
 
         let root = tempfile::tempdir().unwrap();
@@ -1124,16 +1122,18 @@ fn container_down_after_listener_handover_preserves_the_successor_route() {
             route_tls: false,
             availability_file: root.path().join("app.listener.json").display().to_string(),
         };
-        register_managed_listener_route(
-            &table_path,
-            &project,
-            "clientname.test",
-            "127.0.0.1:43123",
-            false,
-            owner,
-            None,
-        )
-        .expect("handover route publication");
+        // Seed a previously committed generation; this test exercises teardown,
+        // not the public writer's live-listener publication proof.
+        effigy_gateway::endpoint_store::EndpointStore::for_routes(&table_path)
+            .routes::<_, effigy_gateway::GatewayError>(|table| {
+                let mut route = table.lookup("clientname.test").unwrap().clone();
+                route.target = Some(owner.address.clone());
+                route.source = RouteSource::Task;
+                route.managed_listener = Some(owner);
+                table.upsert(route);
+                Ok(())
+            })
+            .expect("previously committed successor fixture");
 
         // `container down` must not remove the live successor route.
         assert!(deregister_gateway_routes_for_container(&policy)
