@@ -24,7 +24,8 @@ During v0.x, MINOR bumps may include breaking changes.
   Delete these keys and order steps explicitly; sequences stop on the first
   failure. Container task steps retain legacy execution and journal child
   outcomes pending the remote-custody cutover (#236). Container setup embedded
-  in lifecycle-managed commands still lacks per-step journal outcomes.
+  in lifecycle-managed commands retains process-level outcomes until #236,
+  preserving its existing readiness and startup order.
 - Task runs are now kernel runs. Every invocation resolves once to a task
   identity (catalog path relative to the root, task name), so `build` from
   inside a catalog, `api/build` and `./apps/api/build` share one lock and one

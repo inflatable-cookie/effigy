@@ -31,8 +31,9 @@ v0.15. Remove these keys and place steps in their required order. Use the invoke
 tool's retry policy when needed. Container steps retain legacy execution through
 one migration seam until remote custody and environment generations are available
 (effigy#236 after #232); guest re-entry remains unchanged. Container setup
-embedded in a lifecycle-managed process command still reports only its process
-exit, without per-step child outcomes.
+embedded in a lifecycle-managed process command retains its existing readiness
+and startup order and reports only its process exit. Its per-step journals are
+deferred to #236 (operator ruling, 2026-10-19).
 
 ## Lock Scopes
 

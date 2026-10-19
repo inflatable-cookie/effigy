@@ -1852,7 +1852,7 @@ Task engine adoption (effigy#217, 2026-10-19):
 | Status rows | Done. `effigy.tasks-status.v2` projects run rows plus a gate probe ([018](018-task-status-query-surface-and-read-model-contract.md)). |
 | Status write failure | Done. Journal failures are warnings; the task's exit code stands (K10). |
 | Process group always; owned-children stop | Done for plain host commands: `Custody::spawn` with `Terminal::Inherit`, a per-run sentinel, the router installed before the first custody spawn. Host sequence steps also use child-run custody (effigy#226). Container exec and managed processes keep their current spawners until remote custody and the supervisor adopt custody. |
-| Generated sequence script | Host sequences use one typed engine and child Runs in text and JSON (effigy#226). Container task steps remain behind `legacy_container_step` until #236 after #232. Container setup embedded in lifecycle-managed commands still uses its existing renderer and has no per-step journal. |
+| Generated sequence script | Host sequences use one typed engine and child Runs in text and JSON (effigy#226). Container task steps remain behind `legacy_container_step` until #236 after #232. Container setup embedded in lifecycle-managed commands keeps its existing renderer and process-level outcome to preserve readiness and startup order; its per-step journals are deferred to #236 by the operator on 2026-10-19. |
 | Env-schema commands | Done. Resolved after `Admitted`; each `exec()` is a custody effect of the run with bounded capture. |
 | `set_var` | Done for the vault passphrase, the local-dev marker and the managed run token. Sequence environments use lexical spawn inputs, never process-global mutation (effigy#226). The external task source isolation marker remains. |
 | Task cache | Done: removed. |
@@ -2131,3 +2131,9 @@ including after owner death. An unknown or incomplete child remains parent resid
 Existing begin, intent, applied and settle fault points cover both sides of child
 admission (`run_children_admission_faults_recover_both_sides`). No store migration
 is needed: `parent_run` is part of store schema v1.
+
+Consumer sequence compatibility compares JSON plans against the dispatch baseline
+and replays the real composed step graphs with harmless leaf commands, preserving
+nested references and injecting failures at step boundaries. These fixtures prove
+orchestration behavior; live database, deployment and full workflow qualification
+is separate and requires the operator's go.

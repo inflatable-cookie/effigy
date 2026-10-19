@@ -127,8 +127,11 @@ pub(in crate::runner) fn run_standard_task(
     let result = match crate::runner::task_engine::interrupted_by() {
         Some(signal) if result.is_err() => {
             workload = crate::runner::task_engine::workload_for_exit(128 + signal);
-            if preflight.output_json
-                && matches!(&result, Err(RunnerError::CommandJsonFailure { .. }))
+            if result
+                .as_ref()
+                .err()
+                .and_then(RunnerError::task_exit_status)
+                == Some(128 + signal)
             {
                 result
             } else {

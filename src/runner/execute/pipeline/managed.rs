@@ -321,6 +321,10 @@ pub(in crate::runner) fn run_managed_task(
     // Rendering the plan is a read; only a run that starts processes
     // holds the task's gate. The profile is recorded on the run; the gate
     // stays per task, so two profiles of one task still exclude each other.
+    // The managed frontend owns signals after setup. Keep the task engine's
+    // idle watcher from exiting between setup custody and frontend settlement.
+    let _managed_signals = (execution_mode != ManagedExecutionMode::RenderPlan)
+        .then(crate::runner::task_engine::CustodyWait::enter);
     let mut task_run = None;
     let mut task_target = TaskTarget::for_selection(
         &preflight.resolved.resolved_root,
@@ -360,15 +364,11 @@ pub(in crate::runner) fn run_managed_task(
     } else {
         Ok(())
     };
-    if let Err(error) = setup_result {
+    if setup_result.is_err() {
         if let Some(run) = task_run.take() {
-            close_task_run(
-                run,
-                &task_target,
-                &Err::<(), _>(RunnerError::task_invocation(error.to_string())),
-            );
+            close_task_run(run, &task_target, &setup_result);
         }
-        return Err(error);
+        setup_result?;
     }
     if execution_mode != ManagedExecutionMode::RenderPlan && !container_handoff {
         maybe_start_managed_gateway(
@@ -498,8 +498,15 @@ pub(in crate::runner) fn run_managed_task(
 fn close_task_run<T>(run: TaskRun, target: &TaskTarget, result: &Result<T, RunnerError>) {
     let workload = match result {
         Ok(_) => effigy_kernel::outcome::WorkloadOutcome::Succeeded,
-        Err(RunnerError::TaskManagedNonZeroExit { .. }) | Err(_) => {
-            effigy_kernel::outcome::WorkloadOutcome::Failed { code: 1 }
+        Err(error) => {
+            let code = error.task_exit_status().unwrap_or(1);
+            if code == 124 {
+                effigy_kernel::outcome::WorkloadOutcome::TimedOut {
+                    phase: target.label.clone(),
+                }
+            } else {
+                crate::runner::task_engine::workload_for_exit(code)
+            }
         }
     };
     for warning in run.close(workload) {

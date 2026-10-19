@@ -93,12 +93,26 @@ pub(in crate::runner) fn run_plain(
         label: run.target().label.clone(),
     };
     let cx = kernel::effects();
-    let mut process = Custody::spawn(&mut run.run_mut(), spec, &cx).map_err(|error| {
-        RunnerError::TaskCommandLaunch {
-            command: command.command.to_owned(),
-            error: std::io::Error::other(format!("{error:?}")),
+    let spawned = Custody::spawn(&mut run.run_mut(), spec, &cx);
+    let mut process = match spawned {
+        Ok(process) => process,
+        Err(error) => {
+            // Cancellation can win after the spawn barrier releases workload,
+            // before spawn returns. Settlement still owns that recorded effect.
+            if let Some((code, workload)) = super::pending_stop(&run.target().label) {
+                return Ok(PlainExit {
+                    code,
+                    workload,
+                    stdout: Vec::new(),
+                    stderr: Vec::new(),
+                });
+            }
+            return Err(RunnerError::TaskCommandLaunch {
+                command: command.command.to_owned(),
+                error: std::io::Error::other(format!("{error:?}")),
+            });
         }
-    })?;
+    };
     let mut stdout = Tail::default();
     let mut stderr = Tail::default();
     let mut signalled: Option<(i32, Instant)> = None;

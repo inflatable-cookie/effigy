@@ -231,11 +231,17 @@ fn run_steps(
                 let rendered = error
                     .rendered_output()
                     .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok());
-                let code = rendered
+                let pending = crate::runner::task_engine::pending_stop(&label);
+                let code = pending
                     .as_ref()
-                    .and_then(|value| value["exit_code"].as_i64())
-                    .map(|code| code as i32)
-                    .or(error.task_exit_status())
+                    .map(|(code, _)| *code)
+                    .or_else(|| {
+                        rendered
+                            .as_ref()
+                            .and_then(|value| value["exit_code"].as_i64())
+                            .map(|code| code as i32)
+                            .or(error.task_exit_status())
+                    })
                     .unwrap_or_else(|| error.process_exit_code());
                 let (stdout, stderr) = match (&rendered, &error) {
                     (Some(value), _) => (
@@ -253,13 +259,15 @@ fn run_steps(
                     code,
                     stdout,
                     stderr,
-                    if code == 124 {
-                        WorkloadOutcome::TimedOut {
-                            phase: label.clone(),
+                    pending.map(|(_, outcome)| outcome).unwrap_or_else(|| {
+                        if code == 124 {
+                            WorkloadOutcome::TimedOut {
+                                phase: label.clone(),
+                            }
+                        } else {
+                            crate::runner::task_engine::workload_for_exit(code)
                         }
-                    } else {
-                        crate::runner::task_engine::workload_for_exit(code)
-                    },
+                    }),
                 )
             }
         };

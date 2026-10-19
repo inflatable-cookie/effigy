@@ -11,8 +11,9 @@
 
 use std::fs;
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 const TASK: &str = r#"[tasks.hold]
@@ -21,6 +22,33 @@ run = "sleep 300 & echo $! > grandchild.pid; echo $$ > leader.pid; wait"
 [tasks.serial]
 run = "echo start >> runs.log; sleep 1; echo end >> runs.log"
 "#;
+
+/// Cargo doc/check invocations can relink the shared target while this matrix
+/// is running. Hold the exact candidate bytes in a private, immutable fixture
+/// image so ordinary cases exercise custody, not repeated image replacement.
+/// The explicit replacement test below still replaces its own executable.
+fn matrix_binary() -> &'static Path {
+    static IMAGE: OnceLock<(tempfile::TempDir, PathBuf)> = OnceLock::new();
+    &IMAGE
+        .get_or_init(|| {
+            let dir = tempfile::Builder::new()
+                .prefix("effigy-kill-matrix-image-")
+                .tempdir()
+                .expect("private candidate image");
+            let path = dir.path().join("effigy");
+            fs::copy(env!("CARGO_BIN_EXE_effigy"), &path).expect("snapshot candidate binary");
+            // Let the platform load this fresh image before starting a workload's
+            // readiness deadline. No task or state mutation happens here.
+            let version = Command::new(&path)
+                .arg("--version")
+                .env("HOME", dir.path())
+                .output()
+                .expect("load candidate image");
+            assert!(version.status.success(), "candidate load: {version:?}");
+            (dir, path)
+        })
+        .1
+}
 
 struct Fixture {
     _home: tempfile::TempDir,
@@ -49,7 +77,7 @@ impl Fixture {
     }
 
     fn effigy(&self, args: &[&str]) -> Command {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_effigy"));
+        let mut command = Command::new(matrix_binary());
         command
             .args(args)
             .current_dir(&self.repo)
@@ -357,7 +385,7 @@ fn task_engine_runs_after_the_running_binary_is_replaced_on_disk() {
     let bin = fixture.home.join("bin");
     fs::create_dir_all(&bin).expect("bin dir");
     let copy = bin.join("effigy");
-    fs::copy(env!("CARGO_BIN_EXE_effigy"), &copy).expect("copy binary");
+    fs::copy(matrix_binary(), &copy).expect("copy binary");
     fs::write(
         fixture.repo.join("effigy.toml"),
         r#"[tasks.rebuild]
@@ -437,10 +465,10 @@ fn sequence_signal_matrix_each_step_text_and_json_settles_the_entire_tree() {
                 // SAFETY: our direct fixture child, never a pattern or foreign PID.
                 assert_eq!(unsafe { libc::kill(owner.id() as i32, signal) }, 0);
                 let exit = wait_exit(&mut owner, Duration::from_secs(40)).expect("sequence exits");
-                if signal != libc::SIGKILL {
-                    assert_eq!(exit.code(), Some(128 + signal));
-                }
                 let output = owner.wait_with_output().expect("drain owner output");
+                if signal != libc::SIGKILL {
+                    assert_eq!(exit.code(), Some(128 + signal), "{cell}: {output:?}");
+                }
                 if json && signal != libc::SIGKILL {
                     let envelope: serde_json::Value =
                         serde_json::from_slice(&output.stdout).expect("one cancellation envelope");
@@ -585,5 +613,33 @@ run = "sleep 300 & echo $! > grandchild.pid; echo $$ > leader.pid; wait"
         assert_eq!(exit.code(), Some(124));
         assert!(wait_gone(grandchild, Duration::from_secs(20)));
         assert!(!fixture.repo.join("should-not-exist").exists());
+    }
+}
+
+#[test]
+fn host_managed_setup_failure_records_child_and_parent_exit_and_skips_launch() {
+    for json in [false, true] {
+        let fixture = Fixture::new();
+        fs::write(fixture.repo.join("effigy.toml"), r#"[tasks.dev]
+mode = "tui"
+concurrent = [{name = "api", setup = [{id = "prepare", run = "echo setup >> effects"}, {id = "failed", run = "exit 7"}], run = "touch should-not-exist", start = 1}]
+"#).unwrap();
+        let args = if json {
+            vec!["--json", "dev", "--headless"]
+        } else {
+            vec!["dev", "--headless"]
+        };
+        let output = fixture.effigy(&args).output().unwrap();
+        assert_eq!(output.status.code(), Some(7), "{output:?}");
+        assert_eq!(
+            fs::read_to_string(fixture.repo.join("effects")).unwrap(),
+            "setup\n"
+        );
+        assert!(!fixture.repo.join("should-not-exist").exists());
+        let status = fixture.status("dev");
+        assert_eq!(status["latest"]["exit_code"], 7, "{status}");
+        assert_eq!(status["latest"]["steps"][1]["step"], "failed");
+        assert_eq!(status["latest"]["steps"][1]["exit_code"], 7);
+        assert_eq!(status["latest"]["steps"][1]["cleanup"], "complete");
     }
 }
