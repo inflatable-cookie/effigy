@@ -135,11 +135,22 @@ pub(crate) fn recover_with(
         };
         // Every turn rechecks evidence, including after TERM/CONT and at KILL.
         let mut group_authority = false;
-        match table.leader(receipt) {
+        let leader = table.leader(receipt);
+        // O8 (§12.1): only a positive identity match may precede a signal.
+        #[cfg(all(test, feature = "fault-injection"))]
+        crate::fault::record(crate::fault::Event::Observed {
+            subject: format!("custody-leader:{}", receipt.nonce),
+            unknown: !matches!(&leader, Observed::Verified(current, _) if *current == receipt.identity),
+        });
+        match leader {
             Observed::Verified(current, _) if current == receipt.identity => {
                 group_authority = true;
                 let mut sent = false;
                 for sig in [signal, libc::SIGCONT] {
+                    #[cfg(all(test, feature = "fault-injection"))]
+                    crate::fault::record(crate::fault::Event::Destructive {
+                        subject: format!("custody-leader:{}", receipt.nonce),
+                    });
                     match table.signal_leader(receipt, sig) {
                         Observed::Verified(..) => sent = true,
                         // TERM/KILL may have terminated the leader before CONT.
@@ -170,12 +181,17 @@ pub(crate) fn recover_with(
             Observed::Verified(members, _) => {
                 let mut foreign = Vec::new();
                 for member in members {
-                    if member
+                    let evidenced = member
                         .nonce
                         .verified()
-                        .is_none_or(|nonce| nonce != &receipt.nonce)
-                        || !not_earlier(&member.identity, receipt)
-                    {
+                        .is_some_and(|nonce| nonce == &receipt.nonce)
+                        && not_earlier(&member.identity, receipt);
+                    #[cfg(all(test, feature = "fault-injection"))]
+                    crate::fault::record(crate::fault::Event::Observed {
+                        subject: format!("custody-member:{}", member.identity.pid),
+                        unknown: !evidenced,
+                    });
+                    if !evidenced {
                         foreign.push(format!(
                             "pid {} nonce={:?} age_verified={}",
                             member.identity.pid,
@@ -186,6 +202,10 @@ pub(crate) fn recover_with(
                     }
                     let mut sent = false;
                     for sig in [signal, libc::SIGCONT] {
+                        #[cfg(all(test, feature = "fault-injection"))]
+                        crate::fault::record(crate::fault::Event::Destructive {
+                            subject: format!("custody-member:{}", member.identity.pid),
+                        });
                         match table.signal_member(&member, receipt, sig) {
                             Observed::Verified(..) => sent = true,
                             Observed::Absent(_) => break,

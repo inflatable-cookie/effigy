@@ -7,6 +7,8 @@ mod tests;
 
 use crate::ctx::ObserveContext;
 use crate::observe::{Evidence, Observed, UnknownReason};
+#[cfg(all(test, feature = "fault-injection"))]
+pub(crate) use guard::GRACE;
 pub use guard::{internal_entry, maintain, MaintenanceReport, ProbeRuntime};
 pub use io::{HttpReadMethod, ObservationTarget, ProbeIo, StatusSet};
 pub use process::{ProbeCommand, ProbeOutput};

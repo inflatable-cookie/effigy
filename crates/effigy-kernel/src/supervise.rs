@@ -182,6 +182,9 @@ pub(crate) fn spawn_sentinel(
     let mut command = helper(&plan.executable, "__kernel-sentinel")?;
     command.stdout(Stdio::piped());
     let mut child = command.spawn()?;
+    // The fault driver waits for every helper, registered or not (§12.1).
+    #[cfg(all(test, feature = "fault-injection"))]
+    crate::fault::note_helper(child.id());
     let mut writer = child
         .stdin
         .take()

@@ -222,7 +222,14 @@ fn resolve(
         _ => {}
     }
     #[cfg(all(test, feature = "fault-injection"))]
-    let observed = crate::fault::injected().unwrap_or_else(|| adapter.observe(effect, cx));
+    let observed = {
+        let observed = crate::fault::injected().unwrap_or_else(|| adapter.observe(effect, cx));
+        crate::fault::record(crate::fault::Event::Observed {
+            subject: subject(effect),
+            unknown: matches!(observed, Observed::Unknown(_)),
+        });
+        observed
+    };
     #[cfg(not(all(test, feature = "fault-injection")))]
     let observed = adapter.observe(effect, cx);
     match observed {
@@ -239,6 +246,10 @@ fn resolve(
     if let Err(error) = crate::fault_point!(AdapterBefore) {
         return (EffectState::Residue, Some(error.to_string()));
     }
+    #[cfg(all(test, feature = "fault-injection"))]
+    crate::fault::record(crate::fault::Event::Destructive {
+        subject: subject(effect),
+    });
     let result = match effect.spec.settlement {
         Settlement::Release(_) => adapter.release(effect, cx).map(|()| Reconciled::Released),
         Settlement::Reconcile(_) => adapter.reconcile(effect, cx),
@@ -254,6 +265,16 @@ fn resolve(
         Observed::Verified(Reconciled::Retained, _) => (EffectState::Retained, None),
         Observed::Unknown(reason) => residue(reason),
     }
+}
+/// O8 subject: the exact fenced effect an observation or undo concerned.
+#[cfg(all(test, feature = "fault-injection"))]
+pub(crate) fn subject(effect: &Effect) -> String {
+    format!(
+        "{}@{}:{}",
+        effect.spec.kind,
+        effect.spec.target.generation.get(),
+        effect.spec.payload
+    )
 }
 fn residue(reason: UnknownReason) -> (EffectState, Option<String>) {
     (EffectState::Residue, Some(format!("{reason:?}")))
