@@ -9,7 +9,7 @@ use std::fs;
 use std::io::Read;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::ExitStatusExt;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Child, Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
@@ -90,11 +90,13 @@ impl Fixture {
         }
     }
 
-    fn hook(&self, name: &str, body: &str) -> PathBuf {
+    /// A hook command. It runs through `sh <script>`, never by exec of the
+    /// file just written: a sibling test's fork can still hold that file's
+    /// write descriptor, and exec would wait on `ETXTBSY`.
+    fn hook(&self, name: &str, body: &str) -> String {
         let path = self.repo.join(name);
         fs::write(&path, body).expect("hook");
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).expect("chmod");
-        path
+        format!("/bin/sh '{}'", path.display())
     }
 
     fn effigy(&self, args: &[&str]) -> Command {
@@ -121,7 +123,7 @@ impl Fixture {
         self.effigy(args).output().expect("effigy runs")
     }
 
-    fn with_hook(&self, hook: &Path, args: &[&str]) -> Output {
+    fn with_hook(&self, hook: &str, args: &[&str]) -> Output {
         self.effigy(args)
             .env("EFFIGY_ADMISSION_HOOK", hook)
             .output()
@@ -246,7 +248,7 @@ fn a_hook_timeout_or_crash_fails_closed_and_the_hook_never_outlives_the_run() {
     let started = Instant::now();
     let output = fixture
         .effigy(&["heavy"])
-        .env("EFFIGY_ADMISSION_HOOK", &slow)
+        .env("EFFIGY_ADMISSION_HOOK", slow)
         .env("EFFIGY_ADMISSION_HOOK_TIMEOUT_MS", "5000")
         .output()
         .expect("effigy runs");
