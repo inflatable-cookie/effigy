@@ -15,6 +15,7 @@ struct Fixture {
     repo: PathBuf,
     home: PathBuf,
     logs: PathBuf,
+    detached_terminal: bool,
 }
 impl Fixture {
     fn new() -> Self {
@@ -30,6 +31,7 @@ impl Fixture {
             repo,
             home,
             logs,
+            detached_terminal: false,
         }
     }
     fn run(&self, args: &[&str], extra: &[(&str, &Path)], bound: Duration) -> (bool, String) {
@@ -46,19 +48,23 @@ impl Fixture {
             .env_remove("EFFIGY_ACTIVE_VERSION")
             .stdout(Stdio::from(fs::File::create(&stdout).unwrap()))
             .stderr(Stdio::from(fs::File::create(&stderr).unwrap()));
-        // A queued CLI has no controlling terminal. Give each child its own
-        // session as well as its own process group so the proof is independent
-        // of the test runner's terminal and deadline cleanup stays local.
-        // SAFETY: after fork this callback only makes the async-signal-safe
-        // setsid syscall and reads errno on failure; it takes no locks and
-        // performs no allocation. This child is not yet a process-group leader.
-        unsafe {
-            command.pre_exec(|| {
-                if libc::setsid() == -1 {
-                    return Err(std::io::Error::last_os_error());
-                }
-                Ok(())
-            });
+        if self.detached_terminal {
+            // The presentation-helper proof must not inherit the runner's
+            // terminal. Existing sentinel proofs retain their original spawn
+            // mode and deadline so first-launch time stays in their bound.
+            // SAFETY: after fork this callback only makes the async-signal-safe
+            // setsid syscall and reads errno on failure; it takes no locks and
+            // performs no allocation. The child is not a process-group leader.
+            unsafe {
+                command.pre_exec(|| {
+                    if libc::setsid() == -1 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    Ok(())
+                });
+            }
+        } else {
+            command.process_group(0);
         }
         for (name, value) in extra {
             command.env(name, value);
@@ -226,7 +232,8 @@ fn discovery_is_write_free_and_cannot_reach_a_hung_source_remote() {
 }
 #[test]
 fn discovery_never_waits_for_presentation_helpers() {
-    let fixture = Fixture::new();
+    let mut fixture = Fixture::new();
+    fixture.detached_terminal = true;
     fixture.write_path_bundle();
     let tools = fixture.owner.path().join("tools");
     fs::create_dir(&tools).unwrap();
