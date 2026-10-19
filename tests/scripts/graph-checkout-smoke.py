@@ -1,4 +1,4 @@
-"""Exercise the compiled graph CLI against this checkout under Effigy admission."""
+"""Exercise the compiled graph CLI against this checkout under host scheduling."""
 import json
 from pathlib import Path
 import subprocess
