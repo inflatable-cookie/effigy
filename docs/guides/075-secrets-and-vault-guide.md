@@ -257,7 +257,7 @@ processes before launch, which is useful when the child commands expect
 runtime auth/env keys without spelling them out in the shell command. Host
 process entries, including entries with `run_in = "host"`, receive those
 values through the child environment. The values stay out of the rendered
-shell command and argv, and managed stream and headless logs redact matches.
+shell command and argv, and headless logs redact matches.
 The same startup eagerly unlocks container-targeted values, but it does not
 promote optional keys: a container key with `required = false` may be absent
 without blocking the managed task.

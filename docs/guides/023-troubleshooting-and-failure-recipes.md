@@ -16,7 +16,7 @@ Reach for this guide when:
 
 - a task does not resolve where you expected
 - a built-in command fails and you need the shortest diagnosis path
-- watch mode, locks, env resolution, or deferral behavior feels unclear
+- locks, env resolution, or deferral behavior feels unclear
 - CI is failing and you need the human-first version of the fix path
 
 ## 1) Fast Triage Flow
@@ -641,7 +641,7 @@ Fix:
 After this guide, you should be able to:
 
 - choose the shortest useful diagnosis command for a failure
-- separate routing issues from manifest, env, watch, and test issues
+- separate routing issues from manifest, env, and test issues
 - turn a symptom into a concrete fix or a more precise follow-up question
 
 ## Related Guides

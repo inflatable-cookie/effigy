@@ -327,6 +327,9 @@ fn render_service_help_shows_extract_options() {
     assert!(rendered.contains("project-local"));
     assert!(rendered.contains("effigy service pack update"));
     assert!(rendered.contains("effigy service pack status"));
+    assert!(rendered.contains("active installed pack"));
+    assert!(rendered.contains("compiled baseline"));
+    assert!(!rendered.contains("user override"));
 }
 
 #[test]
@@ -549,6 +552,7 @@ fn render_test_help_shows_detection_and_config() {
 #[test]
 fn render_init_help_shows_phase_scope() {
     let rendered = render_help_text(HelpTopic::Init);
+    assert!(!rendered.contains("task migration"));
     assert!(rendered.contains("init Help"));
     assert!(rendered.contains("effigy init [--check|--apply|--repair] [--json]"));
     assert!(rendered.contains("effigy init --checklist [--json]"));

@@ -8,7 +8,7 @@ pub(crate) fn render_service_help<R: HelpRenderer + ?Sized>(renderer: &mut R) ->
         &[
             "Inspect the layered service catalog used by catalog-backed container environments.",
             "Extraction writes bundled fragments into a project-local override directory so repos can take ownership without patching the bundled service catalog.",
-            "Catalog layers resolve in order: project override, user override, active installed pack, compiled baseline. The compiled baseline always ships with Effigy, so nothing here needs a pack store, `oras`, or a network.",
+            "Catalog layers resolve in order: project override, active installed pack, compiled baseline. The compiled baseline always ships with Effigy, so nothing here needs a pack store, `oras`, or a network.",
             "`service pack` manages independently versioned catalog packs. Registry acquisition is explicit: an immutable `oci://...@sha256:...` reference, a local directory, or `service pack update`. Update resolves the compiled official `stable` channel to a digest, then uses the same validate-store-activate transaction. Workspace handoff may prepare the selected retained pack in an empty guest store. Ordinary catalog use never probes a registry.",
         ],
         &[

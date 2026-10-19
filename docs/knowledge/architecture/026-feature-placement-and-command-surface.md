@@ -58,7 +58,7 @@ The exact primary help taxonomy is:
 
 | Topic | Primary commands and shapes |
 | --- | --- |
-| work | `<task>`, `<catalog>/<task>`, `tasks`, `draft`, `drafts`, `test`, `watch`, `doctor`, `init` |
+| work | `<task>`, `<catalog>/<task>`, `tasks`, `draft`, `drafts`, `test`, `doctor`, `init` |
 | `local` | `container`, `system`, `workspace`, `gateway`, `service`, `exec` |
 | `repo` | `graph`, `scan`, `docs`, `contracts` |
 | `deliver` | `artifact`, `state`, `deploy`, `release`, `bundle`, `bootstrap`, `demo` |
@@ -105,7 +105,7 @@ not an acceptable migration.
 Every supported install keeps a compiled baseline pack permanently. It is the
 automatic offline floor, including for `cargo install`, and remains available
 for recovery after independently installed packs are introduced. Resolution is
-project override, user override, active installed default pack, then compiled
+project override, active installed default pack, then compiled
 baseline.
 
 Independent pack releases use immutable OCI artifacts through Effigy's existing

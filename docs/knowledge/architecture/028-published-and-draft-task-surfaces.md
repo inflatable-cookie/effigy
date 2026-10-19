@@ -31,8 +31,8 @@ A published task should be a maintained repository capability. Effigy does not
 enforce an arbitrary count: visibility and explicit promotion create the
 review boundary, while repository owners decide the appropriate public size.
 
-Package-script migration continues to produce published tasks because a source
-package script is already part of that repository's declared command surface.
+Published task declarations are authored explicitly under `[tasks]`;
+initialization does not import package scripts.
 
 ## Draft Surface
 

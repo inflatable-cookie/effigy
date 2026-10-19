@@ -325,7 +325,7 @@ Main owners in `effigy-gateway`:
 | `resolver_setup` | macOS resolver file management |
 | `ports` | persistent project port allocation |
 | `tcp_alias` / `loopback` | local aliases and safe loopback binding |
-| `listener_handoff` | launchd socket-activation handoff of TCP `127.0.0.1:80`/`443` to the operator-owned gateway — SOURCE implementation candidate; the administrator install, live activation and cross-boot proof stay operator-owned (see [gateway recovery and the launchd handoff ruling](034-gateway-legacy-upgrade-recovery.md)) |
+| `listener_handoff` | launchd socket-activation handoff of TCP `127.0.0.1:80`/`443` to the operator-owned gateway — SOURCE implementation candidate; the administrator install, live activation and cross-boot proof stay operator-owned (see [gateway migration and the launchd handoff ruling](034-gateway-legacy-upgrade-recovery.md)) |
 | `server` / `stats` | daemon lifecycle and operator statistics |
 
 A manifest route can target a container service or a declared host listener:
@@ -640,12 +640,13 @@ remains distinct. Version-only, malformed, or symlink `gateway.version` state
 is the same fail-closed unknown: the shared classifier refuses before start
 can overwrite those files, and version publication refuses to follow a
 symlink target. The diagnostic does not assume the previous executable is
-still installed and does not authorize PID-only signaling. `effigy gateway
-recover` is the implemented consumer path; see
-[architecture 034](034-gateway-legacy-upgrade-recovery.md). `--yes` is only
-the absent-record start; a live daemon requires `--adopt-candidate` and
-interactive digest consent. A v0.13.1 rollback ignores `gateway.identity`
-and restores the PID-only risk; downgrade is not claimed safe. Host-run
+still installed and does not authorize PID-only signaling. A pre-0.14
+numeric-only record requires administrator migration: verify and stop that
+exact daemon, confirm absence, and remove only its old PID/version records.
+Unknown identity preserves all records and refuses replacement; see the
+[migration boundary](034-gateway-legacy-upgrade-recovery.md#migration-boundary).
+A v0.13.1 rollback ignores `gateway.identity` and restores the PID-only risk;
+downgrade is not claimed safe. Host-run
 contract 010 and its whole-second wire identity are unchanged. Non-Unix
 `down` remains unimplemented.
 
@@ -705,17 +706,11 @@ reclassified as absent or rewritten. `probe_live_identity` uses this
 comparison for both the ordinary and elevated readers; `Unknown` means the
 record is preserved and `status`/`up`/`down`/managed start refuse. A live
 pre-identity daemon requires the host administrator migration
-path. An ambiguous identity-bearing record is honestly refused, not guessed at:
-the approved `recover` route currently rejects sidecar-bearing records, so no
-automatic supported transition exists for that case. A bounded, implementable
-specification of the recovery input boundary and the ordered confirmed-absent
-cleanup (resumable only from the full triple or the numeric-only pair, with a
-version-only remnant kept fail-closed) is recorded in
-[034](034-gateway-legacy-upgrade-recovery.md#ambiguous-identity-bearing-records-task-117-boundary-and-proposal)
-for an operator ruling; it is not implemented and does not widen the
-numeric-only route. The legacy candidate digest path is unchanged: it inspects and
-re-inspects within one CLI generation, so it has no cross-version record to
-reconcile.
+path. An ambiguous identity-bearing record is honestly refused, not guessed at.
+There is no automatic cleanup or replacement path for that case; preserve the
+records until the administrator can establish the exact generation. The
+retained v0.14.1 lifecycle and the retired pre-identity window are distinguished
+in [architecture 034](034-gateway-legacy-upgrade-recovery.md#migration-boundary).
 
 Shared boot-ID callers are unaffected on macOS: `effigy_host_run` derives its
 wire identity from `pbi_start_tvsec` only, and the QA-group owner check uses
@@ -835,16 +830,13 @@ confirmed daemon, confirm it is gone before reconciling only its PID/version
 records, then start the current gateway. Routes, certificates, containers and
 volumes are preserved. This is explicit authority for that host transition,
 not a general exception allowing numeric-only records to authorize signals.
-The consumer upgrade path must identify this legacy transition and provide
-a supported recovery flow even when installation replaced the old executable.
-Identity checks and fail-closed behavior remain required. The proposed design
-covering the consumer transition, including the public channel posture and a
-fix-forward patch runway, is
-[034](034-gateway-legacy-upgrade-recovery.md). It keeps a numeric-only signal
-unauthorized. Its separate
-[operator ruling](034-gateway-legacy-upgrade-recovery.md#operator-ruling)
-authorized bounded candidate inspection and generation-bound stop; it does not
-extend this one-host ruling to previous-binary delegation.
+That historical pre-0.14 recovery window is retired in v0.15. The supported
+upgrade starts from v0.14.1 identity-bearing state; older numeric-only records
+require administrator migration. The earlier candidate-inspection and stop
+protocol is no longer an implemented surface. See the current
+[migration boundary](034-gateway-legacy-upgrade-recovery.md#migration-boundary).
+This historical one-host ruling is not standing authority to signal a PID-only
+record.
 
 Tom ruled on 2026-10-05: block v0.14.0 publication until a persisted
 start-identity sidecar and fail-closed legacy policy are implemented. He does

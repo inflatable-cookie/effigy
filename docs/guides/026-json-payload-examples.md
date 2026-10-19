@@ -30,9 +30,9 @@ Start with the family that matches your job:
 - health, repo checks, or diagnostics:
   `Doctor` and the `Scan *` payloads
 - test automation:
-  `Test Plan`, `Test Results`, `Watch`
+  `Test Plan`, `Test Results`
 - bootstrap and setup:
-  `Bootstrap`, `Deploy Model`, `Init`, `Migrate`, `Config`, `Unlock`
+  `Bootstrap`, `Deploy Model`, `Init`, `Config`, `Unlock`
 - secret declarations and diagnostics:
   `Secrets`
 - machine-local dependency links:
@@ -43,7 +43,7 @@ Start with the family that matches your job:
 - shell completion or editor integration:
   `Completion`, `Completion Candidates`
 - agent-facing repo context:
-  `Graph Status`, `Graph Explore`, `Graph Context`, `Graph Affected`, `Graph Watch`
+  `Graph Status`, `Graph Explore`, `Graph Affected`
 - scoped container hosts and retirement:
   `Container Hosts`, `Container Retire`
 
@@ -1607,7 +1607,7 @@ The same normalization applies to `scan.duplicate-blocks`, `scan.comment-ratio`,
 }
 ```
 
-## Test and Watch Payloads
+## Test Payloads
 
 ### 5) Test Plan (`effigy.test.plan.v1`)
 
@@ -2430,16 +2430,36 @@ expires against a live owner.
   "script": "# bash completion for effigy\n...",
   "commands": [
     "help",
-    "tasks",
-    "doctor",
-    "test",
-    "watch",
-    "init",
-    "migrate",
+    "version",
+    "artifact",
+    "bootstrap",
+    "bundle",
+    "changelog",
     "config",
-    "unlock",
-    "cache",
-    "completion"
+    "container",
+    "contracts",
+    "defer",
+    "demo",
+    "deploy",
+    "deps",
+    "help",
+    "doctor",
+    "distribution",
+    "docs",
+    "exec",
+    "gateway",
+    "init",
+    "release",
+    "scan",
+    "secrets",
+    "service",
+    "state",
+    "system",
+    "tasks",
+    "test",
+    "workspace",
+    "drafts",
+    "draft"
   ]
 }
 ```

@@ -134,9 +134,8 @@ task-run schema.
 ## Compatibility
 
 - Every existing `[tasks]` manifest parses and behaves unchanged.
-- `effigy tasks`, task help/completion, flat selectors, JSON, migration, task
+- `effigy tasks`, task help/completion, flat selectors, JSON, task
   status, doctor without drafts, and execution remain compatible.
-
 - Existing included manifests gain no draft behavior unless they explicitly
   declare `[drafts]`.
 - No repository task is rewritten, moved, or hidden automatically.

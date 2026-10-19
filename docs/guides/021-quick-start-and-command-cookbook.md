@@ -299,14 +299,15 @@ effigy test vitest
 
 Use `--plan` first when you want to confirm what will run before running it.
 
-### Start or migrate a manifest
+### Start an explicit manifest
 
 ```sh
 effigy init
 effigy config --schema --minimal
 ```
 
-Use these when the repo still depends on scattered scripts and ad-hoc setup.
+Use these to scaffold the baseline, then declare task commands explicitly.
+Initialization does not import package scripts.
 
 ### Bootstrap a repo from anywhere
 

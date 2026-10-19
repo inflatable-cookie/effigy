@@ -297,10 +297,10 @@ id = "effigy-gateway-preidentity-recovery"
 retired = "2026-10-19"
 replacement = "See the wave-A retirements in contract 043 for replacement commands and preserved-state migration."
 owner = "docs/knowledge/contracts/043-feature-placement-and-surface-migration-contract.md"
-terms = ["effigy gateway recover", "__gateway-legacy-candidate", "__gateway-legacy-stop", "effigy.gateway.recover.v1", "effigy.gateway.legacy-candidate.v1", "effigy.gateway.legacy-stop.v1", "test:gateway:legacy-recovery", "check:gateway:legacy-recovery"]
+terms = ["effigy gateway recover", "--adopt-candidate", "adopt_candidate", "__gateway-legacy-candidate", "__gateway-legacy-stop", "effigy.gateway.recover.v1", "effigy.gateway.legacy-candidate.v1", "effigy.gateway.legacy-stop.v1", "test:gateway:legacy-recovery", "check:gateway:legacy-recovery"]
 paths = ["src/runner/gateway_command/recover.rs", "crates/effigy-gateway/src/legacy.rs"]
 config_keys = []
-allow = ["CHANGELOG.md", "docs/guides/085-v0.15.0-consumer-migration.md", "crates/effigy-cli/src/command_parsing_runtime.rs", "src/tests/lib_tests_help_render_tests.rs"]
+allow = ["CHANGELOG.md", "docs/guides/085-v0.15.0-consumer-migration.md", "crates/effigy-cli/src/command_parsing_runtime.rs", "crates/effigy-cli/src/lib.rs", "src/tests/lib_tests_help_render_tests.rs"]
 
 [[retired]]
 id = "effigy-gateway-user-runtime-scaffold"

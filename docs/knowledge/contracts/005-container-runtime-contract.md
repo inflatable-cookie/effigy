@@ -1425,8 +1425,9 @@ No captured stdout/stderr, arbitrary argv/env, source paths or raw transport
 errors are inserted into catalog mismatch messages.
 
 This guarantees installed-pack parity, not whole-environment parity. Mounted
-project overrides and guest user overrides retain normal precedence; host user
-overrides, configuration, HOME and credentials are not transferred. No channel
+project overrides retain normal precedence. User-global catalog directories
+are ignored in both host and guest contexts. Host configuration, HOME and
+credentials are not transferred. No channel
 refresh, registry acquisition, binary rebuild or network update is implied by
 pack preparation. Private production-path controls live behind
 `test:workspace:catalog-handoff` and `check:workspace:catalog-handoff`.

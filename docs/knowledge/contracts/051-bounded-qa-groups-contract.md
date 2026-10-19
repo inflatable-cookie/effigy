@@ -85,7 +85,7 @@ become a task selector.
 
 Group commands are recognized only by the exact multiword forms shown above
 under `effigy tasks`. The current `tasks` parser has separate leading routes
-for `status`, `migrate`, `unlock`, and `cache`; implementation adds only the
+for `status`, `unlock`, and `cache`; implementation adds only the
 leading `qa-groups` and `qa-group` routes, leaving those forms, task-list flags,
 and top-level selectors unchanged. Group names use `[a-z][a-z0-9-]*` and
 cannot contain `/`, so only the catalog prefix can qualify a selector. The

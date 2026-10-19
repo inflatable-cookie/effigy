@@ -694,7 +694,7 @@ git diff --name-only | effigy graph affected --stdin --json
 Lock recovery:
 
 ```sh
-effigy tasks unlock task:watch:test
+effigy tasks unlock task:build
 effigy tasks unlock --all --yes
 ```
 
