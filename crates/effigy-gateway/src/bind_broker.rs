@@ -121,8 +121,8 @@ fn serve_one(
     authorize(operator, peer, addresses)?;
     let listeners = [bind(addresses[0])?, bind(addresses[1])?];
     let fds = listeners.each_ref().map(AsRawFd::as_raw_fd);
-    // SCM_RIGHTS duplicates the descriptors into the receiver. The broker
-    // drops its copies immediately and never accepts a TCP connection.
+    // Keep the donor copies until the receiver confirms validation and
+    // adoption. The broker never accepts a TCP connection.
     let sent = sendmsg::<()>(
         stream.as_raw_fd(),
         &[IoSlice::new(b"1")],
@@ -132,6 +132,11 @@ fn serve_one(
     )?;
     if sent != 1 {
         return Err(error("short bind broker reply"));
+    }
+    let mut adopted = [0];
+    stream.read_exact(&mut adopted)?;
+    if adopted != *b"A" {
+        return Err(error("bind broker adoption was not acknowledged"));
     }
     Ok(())
 }
@@ -189,7 +194,7 @@ fn receive_reply(
             endpoint: addresses[1],
         },
     ];
-    listener_handoff::validate_and_adopt(
+    let listeners = listener_handoff::validate_and_adopt(
         &specs,
         &[
             ("http", vec![http.into_raw_fd()]),
@@ -197,7 +202,9 @@ fn receive_reply(
         ],
         &HandoffIdentity::current(),
     )
-    .map_err(error)
+    .map_err(error)?;
+    stream.write_all(b"A")?;
+    Ok(listeners)
 }
 /// Connect only to setup's root-owned socket under the root-owned run directory.
 pub fn request(addresses: [SocketAddr; 2]) -> io::Result<HandedListeners> {
@@ -313,6 +320,10 @@ mod tests {
                     .unwrap(),
                 )
                 .unwrap();
+            // The donor must remain alive while descriptors are in transit,
+            // even when the receiver is delayed by scheduling or validation.
+            std::thread::sleep(Duration::from_millis(10));
+            assert!(!thread.is_finished(), "donor must wait for adoption");
             let listeners = receive_reply(&mut client, expected).unwrap();
             thread.join().unwrap();
             let (http, https) = listeners.into_tokio().unwrap();
@@ -360,5 +371,28 @@ mod tests {
             "foreign peer reached binder"
         ))
         .is_err());
+    }
+    #[test]
+    fn broker_refuses_an_invalid_adoption_acknowledgement() {
+        let uid = nix::unistd::Uid::effective().as_raw();
+        let (mut client, mut broker) = UnixStream::pair().unwrap();
+        let thread = std::thread::spawn(move || {
+            serve_one(&mut broker, uid, |_| TcpListener::bind("127.0.0.1:0"))
+        });
+        client
+            .write_all(
+                &encode([
+                    "127.0.0.1:80".parse().unwrap(),
+                    "127.0.0.1:443".parse().unwrap(),
+                ])
+                .unwrap(),
+            )
+            .unwrap();
+        client.write_all(b"X").unwrap();
+        let error = thread
+            .join()
+            .unwrap()
+            .expect_err("invalid adoption receipt");
+        assert!(error.to_string().contains("not acknowledged"));
     }
 }

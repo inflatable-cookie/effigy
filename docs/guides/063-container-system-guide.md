@@ -1340,8 +1340,9 @@ scoped `/etc/resolver` files and a native loopback alias boot job. If direct
 loopback port 80/443 binds are denied, a root-owned, socket-activated bind
 broker supplies only those listeners. Its setup-pinned operator UID is checked
 with `getpeereid`; allowed addresses are `127.0.0.1` and `127.1.0.1` through
-`127.1.0.50`. It transfers descriptors after the user daemon starts, then drops
-its copies. It never reads routes, certificates or user state, or serves traffic.
+`127.1.0.50`. It transfers descriptors after the user daemon starts and drops
+its copies after the daemon acknowledges adoption. It never reads routes,
+certificates or user state, or serves traffic.
 The helper image is copied into a root-owned private directory, rather than
 executed from a user-writable installation.
 

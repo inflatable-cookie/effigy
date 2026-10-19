@@ -273,9 +273,11 @@ directory. Its arguments pin the operator UID. `getpeereid` must match that UID
 before the broker reads a fixed-size request. Only TCP 80 and 443 at
 127.0.0.1 or the setup-installed 127.1.0.1–50 range are accepted. No wildcard
 bind, route/state reads, client accepts, TLS or HTTP processing run as root.
-The broker sends two listening descriptors using SCM_RIGHTS and drops its
-copies. The operator validates exact endpoints, listening state, identity and
-close-on-exec before adoption. Refused/partial exchanges publish nothing.
+The broker sends two listening descriptors using SCM_RIGHTS and retains its
+copies until the operator validates and adopts them, then acknowledges that
+ownership. The acknowledgement uses the same bounded socket I/O. Exact
+endpoints, listening state, identity and close-on-exec are checked before
+adoption. Refused/partial exchanges publish nothing.
 
 The daemon starts normally under kernel custody, then requests its listeners
 after exec. No listener crosses the custody spawn barrier and no inherited-FD
