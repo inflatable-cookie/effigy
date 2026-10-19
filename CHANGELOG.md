@@ -5,7 +5,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
+
 ### Added
+- The runtime kernel exposes immutable file closures with journalled publication,
+  fenced desired/applied references, per-owner reset, retention protection and
+  backend metadata. Host container rendering adopts these APIs separately.
 - Generated host-port inspection leaves unassigned bindings explicit and keeps
   `ports.json` unchanged. The first Prepare assigns ports through the existing
   gateway allocator; later reads preserve those assignments.

@@ -1,4 +1,14 @@
 [[retired]]
+id = "effigy-resolution-owned-port-and-mount-preparation"
+retired = "2026-10-19"
+replacement = "Host-port reads preserve existing ports.json assignments or report unassigned; Prepare uses gateway::ports::prepare_ports. Declared media and shared Composer cache directories are created only in Prepare. Existing port assignments and directory contents are retained automatically; no consumer configuration change is required. Host render purity and compose_file migration remain separate work."
+owner = "docs/knowledge/contracts/005-container-runtime-contract.md"
+terms = ["resolution-owned host-port allocation", "resolution-owned bind-source creation"]
+paths = []
+config_keys = []
+allow = ["CHANGELOG.md"]
+
+[[retired]]
 id = "effigy-graph-watch"
 retired = "2026-10-18"
 replacement = "Queries refresh automatically; use graph index to pre-warm. Removed spellings return replacement errors for one release."
