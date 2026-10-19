@@ -10,7 +10,7 @@ use effigy_manifest::{
 use effigy_secrets::{
     inspect_vault_permissions, local_dev_unlock_key_path, local_unlock_credential_path,
     read_local_unlock_passphrase, seal_local_unlock_passphrase, LocalDevUnlockKey, SecretValue,
-    VaultEnvelope, VaultPermissionStatus, VaultPlaintextPayload, VaultSecretRecord,
+    VaultPermissionStatus, VaultPlaintextPayload, VaultSecretRecord,
 };
 use serde_json::{json, Value};
 
@@ -137,13 +137,14 @@ fn run_secrets_init(
         "Create vault passphrase: ",
         "EFFIGY_TEST_SECRETS_PASSPHRASE",
     )?;
+    let write = crate::runner::secret_vault::begin_vault_write(&vault_path)?;
+    if vault_path.exists() {
+        return Err(RunnerError::task_invocation("secrets vault already exists"));
+    }
     let payload = VaultPlaintextPayload::empty();
-    crate::runner::secret_vault::write_effigy_vault_payload(
-        &vault_path,
-        &payload,
-        passphrase.expose(),
-    )?;
+    crate::runner::secret_vault::write_effigy_vault_payload(&write, &payload, passphrase.expose())?;
     remove_local_unlock_credential(&vault_path)?;
+    drop(write);
     if run_configured_vault_generate_task(repo_root, secrets)? {
         return render_mutation_result(
             repo_root,
@@ -173,6 +174,7 @@ fn run_secrets_unlock(
 ) -> Result<String, RunnerError> {
     let vault_path = resolve_shared_vault_path(repo_root, secrets)?;
     let passphrase = read_secret_input("Vault passphrase: ", "EFFIGY_TEST_SECRETS_PASSPHRASE")?;
+    let write = crate::runner::secret_vault::begin_vault_write(&vault_path)?;
     let payload = read_vault_payload(&vault_path, passphrase.expose())?;
     // A legacy vault, a deleted key, or a stale key needs a fresh local payload.
     if !matches!(
@@ -180,7 +182,7 @@ fn run_secrets_unlock(
         Ok(ref local_payload) if local_payload == &payload
     ) {
         crate::runner::secret_vault::write_effigy_vault_payload(
-            &vault_path,
+            &write,
             &payload,
             passphrase.expose(),
         )?;
@@ -193,6 +195,7 @@ fn run_secrets_unlock(
     let credential = seal_local_unlock_passphrase(&key, passphrase.expose())
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     crate::runner::secret_vault::write_private_file(
+        &write,
         &local_unlock_credential_path(&vault_path),
         &credential,
     )?;
@@ -213,6 +216,7 @@ fn run_secrets_lock(
     output_json: bool,
 ) -> Result<String, RunnerError> {
     let vault_path = resolve_shared_vault_path(repo_root, secrets)?;
+    let _write = crate::runner::secret_vault::begin_vault_write(&vault_path)?;
     for path in [
         local_dev_unlock_key_path(&vault_path),
         local_unlock_credential_path(&vault_path),
@@ -297,11 +301,12 @@ fn run_secrets_change_passphrase(
     let secrets = require_secrets(secrets)?;
     let vault_path = resolve_shared_vault_path(repo_root, Some(secrets))?;
     let current = read_vault_command_passphrase(&vault_path)?;
+    let new_passphrase = read_confirmed_new_passphrase()?;
+    let write = crate::runner::secret_vault::begin_vault_write(&vault_path)?;
     let payload = read_vault_payload(&vault_path, current.expose())?;
     let preserved = payload.records.len();
-    let new_passphrase = read_confirmed_new_passphrase()?;
     crate::runner::secret_vault::write_effigy_vault_payload(
-        &vault_path,
+        &write,
         &payload,
         new_passphrase.expose(),
     )?;
@@ -314,6 +319,7 @@ fn run_secrets_change_passphrase(
         let credential = seal_local_unlock_passphrase(&key, new_passphrase.expose())
             .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
         crate::runner::secret_vault::write_private_file(
+            &write,
             &local_unlock_credential_path(&vault_path),
             &credential,
         )?;
@@ -352,16 +358,13 @@ fn run_secrets_set(
         &format!("Secret value for `{name}`: "),
         "EFFIGY_TEST_SECRETS_VALUE",
     )?;
+    let write = crate::runner::secret_vault::begin_vault_write(&vault_path)?;
     let mut payload = read_vault_payload(&vault_path, passphrase.expose())?;
     payload.records.insert(
         name.to_owned(),
         VaultSecretRecord::new(SecretValue::new(value.expose())),
     );
-    crate::runner::secret_vault::write_effigy_vault_payload(
-        &vault_path,
-        &payload,
-        passphrase.expose(),
-    )?;
+    crate::runner::secret_vault::write_effigy_vault_payload(&write, &payload, passphrase.expose())?;
     render_mutation_result(
         repo_root,
         Some(secrets),
@@ -441,6 +444,8 @@ fn run_secrets_import(
             "EFFIGY_TEST_SECRETS_PASSPHRASE",
         )?
     };
+    let write = crate::runner::secret_vault::begin_vault_write(&vault_path)?;
+    let vault_exists = vault_path.exists();
     let mut payload = if vault_exists {
         read_vault_payload(&vault_path, passphrase.expose())?
     } else {
@@ -452,11 +457,7 @@ fn run_secrets_import(
             .records
             .insert(name, VaultSecretRecord::new(SecretValue::new(value)));
     }
-    crate::runner::secret_vault::write_effigy_vault_payload(
-        &vault_path,
-        &payload,
-        passphrase.expose(),
-    )?;
+    crate::runner::secret_vault::write_effigy_vault_payload(&write, &payload, passphrase.expose())?;
     if !vault_exists {
         remove_local_unlock_credential(&vault_path)?;
     }
@@ -520,13 +521,10 @@ fn run_secrets_unset(
     require_declared_key(secrets, name)?;
     let vault_path = resolve_shared_vault_path(repo_root, Some(secrets))?;
     let passphrase = read_vault_command_passphrase(&vault_path)?;
+    let write = crate::runner::secret_vault::begin_vault_write(&vault_path)?;
     let mut payload = read_vault_payload(&vault_path, passphrase.expose())?;
     payload.records.remove(name);
-    crate::runner::secret_vault::write_effigy_vault_payload(
-        &vault_path,
-        &payload,
-        passphrase.expose(),
-    )?;
+    crate::runner::secret_vault::write_effigy_vault_payload(&write, &payload, passphrase.expose())?;
     render_mutation_result(
         repo_root,
         Some(secrets),
@@ -1293,26 +1291,15 @@ fn inspect_vault_doctor_state(
         });
     };
 
-    let raw = match fs::read_to_string(&vault_path) {
-        Ok(raw) => raw,
-        Err(error) => {
-            blockers.push(format!(
-                "failed to read secrets vault {}: {error}",
-                vault_path.display()
-            ));
-            return Ok(VaultDoctorState {
-                status: "corrupt",
-                path,
-                stored_keys: None,
-                missing_required: Vec::new(),
-                undeclared_stored: Vec::new(),
-            });
-        }
-    };
-    let envelope = match VaultEnvelope::from_json(&raw) {
+    let envelope = match effigy_secrets::storage::read_envelope(&vault_path) {
         Ok(envelope) => envelope,
         Err(error) => {
-            blockers.push(format!("failed to parse secrets vault: {error}"));
+            let action = if matches!(error, effigy_secrets::storage::VaultStorageError::File(_)) {
+                "parse"
+            } else {
+                "read"
+            };
+            blockers.push(format!("failed to {action} secrets vault: {error}"));
             return Ok(VaultDoctorState {
                 status: "corrupt",
                 path,

@@ -7,7 +7,7 @@ use effigy_manifest::{
 };
 use effigy_secrets::{
     inspect_vault_permissions, local_dev_unlock_key_path, read_local_unlock_passphrase,
-    LocalDevUnlockKey, SecretValue, VaultEnvelope, VaultPermissionStatus, VaultPlaintextPayload,
+    LocalDevUnlockKey, SecretValue, VaultPermissionStatus, VaultPlaintextPayload,
     VaultSecretRecord,
 };
 use rhai::{EvalAltResult, ImmutableString, Map};
@@ -323,14 +323,8 @@ fn read_rhai_secret_vault_payload(
     vault_path: &Path,
     passphrase: &str,
 ) -> Result<VaultPlaintextPayload, RhaiHostError> {
-    let raw = std::fs::read_to_string(vault_path).map_err(|error| {
-        RhaiHostError::new(format!(
-            "failed to read vault {}: {error}",
-            vault_path.display()
-        ))
-    })?;
-    let envelope =
-        VaultEnvelope::from_json(&raw).map_err(|error| RhaiHostError::new(error.to_string()))?;
+    let envelope = effigy_secrets::storage::read_envelope(vault_path)
+        .map_err(|error| RhaiHostError::new(error.to_string()))?;
     envelope
         .decrypt_with_passphrase(passphrase)
         .map_err(|error| RhaiHostError::new(error.to_string()))
@@ -343,14 +337,8 @@ fn local_dev_secret_access_active() -> bool {
 fn read_rhai_local_dev_vault_payload(
     vault_path: &Path,
 ) -> Result<VaultPlaintextPayload, RhaiHostError> {
-    let raw = std::fs::read_to_string(vault_path).map_err(|error| {
-        RhaiHostError::new(format!(
-            "failed to read vault {}: {error}",
-            vault_path.display()
-        ))
-    })?;
-    let envelope =
-        VaultEnvelope::from_json(&raw).map_err(|error| RhaiHostError::new(error.to_string()))?;
+    let envelope = effigy_secrets::storage::read_envelope(vault_path)
+        .map_err(|error| RhaiHostError::new(error.to_string()))?;
     let key_path = local_dev_unlock_key_path(vault_path);
     match inspect_vault_permissions(&key_path) {
         Ok(VaultPermissionStatus::Safe) | Ok(VaultPermissionStatus::UnsupportedPlatform) => {}
@@ -592,6 +580,8 @@ fn active_rhai_set_secret_records(
             .map_err(|error| crate::rhai_runtime_error(error.to_string()))?
             .ok_or_else(|| crate::rhai_runtime_error("vault passphrase is required"))?,
     };
+    let write = effigy_secrets::storage::VaultWrite::acquire(&vault_path)
+        .map_err(|error| crate::rhai_runtime_error(error.to_string()))?;
     let mut payload = if vault_path.exists() {
         read_rhai_secret_vault_payload(&vault_path, passphrase.expose())
             .map_err(|error| crate::rhai_runtime_error(error.to_string()))?
@@ -622,7 +612,8 @@ fn active_rhai_set_secret_records(
             )));
         }
     };
-    write_rhai_secret_vault_file(&vault_path, &envelope)
+    write
+        .commit(&envelope)
         .map_err(|error| crate::rhai_runtime_error(error.to_string()))?;
 
     super::ACTIVE_RHAI_SECRETS.with(|active| {
@@ -645,35 +636,6 @@ fn active_rhai_unlocked_passphrase() -> Result<Option<SecretValue>, RhaiHostErro
             .ok_or_else(|| RhaiHostError::new("Rhai secret store is not active"))?;
         Ok(store.unlocked_passphrase.clone())
     })
-}
-
-fn write_rhai_secret_vault_file(
-    vault_path: &Path,
-    envelope: &VaultEnvelope,
-) -> Result<(), RhaiHostError> {
-    if let Some(parent) = vault_path.parent() {
-        std::fs::create_dir_all(parent).map_err(|error| {
-            RhaiHostError::new(format!(
-                "failed to create vault directory {}: {error}",
-                parent.display()
-            ))
-        })?;
-    }
-    let rendered = envelope
-        .to_json_pretty()
-        .map_err(|error| RhaiHostError::new(error.to_string()))?;
-    std::fs::write(vault_path, rendered).map_err(|error| {
-        RhaiHostError::new(format!(
-            "failed to write vault {}: {error}",
-            vault_path.display()
-        ))
-    })?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(vault_path, std::fs::Permissions::from_mode(0o600));
-    }
-    Ok(())
 }
 
 pub(crate) fn redact_active_rhai_secrets(input: &str) -> String {

@@ -1390,9 +1390,8 @@ fn faults_engine_legacy_import() {}
 #[test]
 #[ignore = "engine lane (gateway): endpoint commit through the user-owned daemon and its route effects"]
 fn faults_engine_gateway_endpoint_commit() {}
-#[test]
-#[ignore = "engine lane (vault): vault engine writes through commit_generation with key-wrap rotation"]
-fn faults_engine_vault_rotation() {}
+// Vault rotation is exercised by effigy-secrets::storage::tests::faults_engine_vault_rotation
+// through the dependency fault hooks (test:secrets:vault).
 #[test]
 #[ignore = "engine lane (supervisor): fault points inside the out-of-process detached supervisor binary"]
 fn faults_engine_detached_supervisor_internal_points() {}

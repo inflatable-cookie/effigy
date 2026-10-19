@@ -109,8 +109,9 @@ targets = ["tasks", "rhai"]
     )
     .expect("execute");
 
-    let raw = fs::read_to_string(root.join(".effigy/secrets/local.vault")).expect("read vault");
-    let envelope = VaultEnvelope::from_json(&raw).expect("parse vault");
+    let envelope =
+        effigy_secrets::storage::read_envelope(&root.join(".effigy/secrets/local.vault"))
+            .expect("read vault");
     let payload = envelope
         .decrypt_with_passphrase("vault-passphrase")
         .expect("decrypt vault");
@@ -159,8 +160,9 @@ targets = ["rhai"]
     )
     .expect("execute");
 
-    let raw = fs::read_to_string(root.join(".effigy/secrets/local.vault")).expect("read vault");
-    let envelope = VaultEnvelope::from_json(&raw).expect("parse vault");
+    let envelope =
+        effigy_secrets::storage::read_envelope(&root.join(".effigy/secrets/local.vault"))
+            .expect("read vault");
     let payload = envelope
         .decrypt_with_passphrase("vault-passphrase")
         .expect("decrypt vault");
@@ -220,8 +222,9 @@ targets = ["rhai"]
     )
     .expect("execute");
 
-    let raw = fs::read_to_string(root.join(".effigy/secrets/local.vault")).expect("read vault");
-    let envelope = VaultEnvelope::from_json(&raw).expect("parse vault");
+    let envelope =
+        effigy_secrets::storage::read_envelope(&root.join(".effigy/secrets/local.vault"))
+            .expect("read vault");
     let payload = envelope
         .decrypt_with_passphrase("vault-passphrase")
         .expect("decrypt vault");
@@ -476,11 +479,11 @@ targets = ["tasks", "rhai"]
         !worktree.join(".effigy/secrets/local.vault").exists(),
         "the worktree must not fork its own vault"
     );
-    let raw = fs::read_to_string(primary.join(".effigy/secrets/local.vault")).expect("read vault");
-    let payload = VaultEnvelope::from_json(&raw)
-        .expect("parse vault")
-        .decrypt_with_passphrase("vault-passphrase")
-        .expect("decrypt vault");
+    let payload =
+        effigy_secrets::storage::read_envelope(&primary.join(".effigy/secrets/local.vault"))
+            .expect("parse vault")
+            .decrypt_with_passphrase("vault-passphrase")
+            .expect("decrypt vault");
     assert_eq!(
         payload
             .records

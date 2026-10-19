@@ -829,8 +829,7 @@ fn secret_test_env_clear() -> EnvGuard {
 }
 
 fn read_test_vault(path: &std::path::Path) -> VaultEnvelope {
-    let raw = fs::read_to_string(path).expect("read vault");
-    VaultEnvelope::from_json(&raw).expect("parse vault")
+    effigy_secrets::storage::read_envelope(path).expect("read vault")
 }
 
 fn declared_secrets_manifest() -> &'static str {

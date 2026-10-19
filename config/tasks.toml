@@ -74,6 +74,19 @@
 # Explicit baseline maintenance; ordinary QA never rewrites the baseline.
 "qa:kernel-ratchet:baseline" = { run = "cargo run -p effigy-kernel --example kernel-ratchet -- --inventory", timeout_ms = 600000 }
 
+# Shared vault storage, CLI/Rhai parity, migration and every write-boundary fault.
+"test:secrets:vault" = { run = "bash tests/scripts/vault-validation.sh cargo nextest run --config-file tests/config/kernel-faults-nextest.toml --user-config-file none -p effigy-secrets --features fault-injection --lib --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 1800000 }
+"test:secrets:callers" = { run = "bash tests/scripts/vault-validation.sh cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-rhai --lib -E 'test(secrets_tests::) | test(secret_vault::tests::) | test(vault_generate_hook_tests::) | test(task_env_tests::) | test(secret_env::tests::) | (package(effigy-rhai) & test(secrets::))' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 }
+"test:secrets:cli" = { run = "bash tests/scripts/vault-validation.sh cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test secrets_local_dev_cli_tests --test secrets_vault_generate_cli_tests --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 }
+"test:secrets:shared" = [
+  { run = "RUSTFLAGS='--cfg effigy_shared_process' bash tests/scripts/vault-validation.sh cargo test -p effigy-secrets --features fault-injection --lib -- --test-threads=8", timeout_ms = 900000 },
+  { run = "RUSTFLAGS='--cfg effigy_shared_process' bash tests/scripts/vault-validation.sh cargo test -p effigy-rhai --lib secrets:: -- --test-threads=8", timeout_ms = 900000 },
+]
+"test:kernel:vault-hooks" = { run = "bash tests/scripts/vault-validation.sh cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib -E 'test(/^fault_injection::/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
+"check:secrets:vault" = { run = "cargo check -p effigy -p effigy-rhai -p effigy-secrets --all-targets --features effigy-secrets/fault-injection", timeout_ms = 900000 }
+"lint:secrets:vault" = { run = "cargo clippy -p effigy -p effigy-rhai -p effigy-secrets --all-targets --features effigy-secrets/fault-injection -- -D warnings", timeout_ms = 900000 }
+"fmt:secrets:vault" = "rustfmt --edition 2021 --config skip_children=true crates/effigy-secrets/src/lib.rs crates/effigy-secrets/src/storage.rs crates/effigy-secrets/src/storage/tests.rs crates/effigy-kernel/src/lib.rs crates/effigy-kernel/src/fault_injection.rs crates/effigy-kernel/qa/ratchet.rs crates/effigy-kernel/tests/ratchet.rs crates/effigy-kernel/src/faults/scenarios.rs crates/effigy-rhai/src/rhai_secrets.rs crates/effigy-rhai/src/tests/secrets.rs crates/effigy-rhai/src/tests/mod.rs src/runner/secret_vault.rs src/runner/secrets_command.rs src/runner/container_command/secret_env.rs src/runner/execute/pipeline/standard.rs src/tests/runner_tests/runner_core_tests/secrets_tests.rs tests/secrets_local_dev_cli_tests.rs"
+
 # Common local commands
 "fmt:check" = "cargo fmt --all -- --check"
 "fmt:apply" = "cargo fmt --all"

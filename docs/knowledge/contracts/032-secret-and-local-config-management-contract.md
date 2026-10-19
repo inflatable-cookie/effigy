@@ -304,6 +304,41 @@ Effigy owns the tooling. Underlay owns the app-facing convention.
   to run with those secrets.
 - No bespoke cryptographic primitives.
 
+## Vault persistence
+
+`effigy-secrets::storage` owns reads and writes for the CLI, runtime local-dev
+upgrades and Rhai. A bounded machine `Gate(Store vault)` covers each complete
+read–modify–write, including passphrase rotation and unlock/lock mutations.
+Prompts and generation hooks run outside the gate. Writers resolving through
+linked worktrees use the same gate as direct primary-checkout writers.
+
+The configured vault path selects a kernel generation. Its single part,
+`<vault>.ciphertext.g<N>`, contains the existing encrypted envelope, including
+both passphrase and optional local-dev ciphertext, salts and nonces. Kernel
+`commit_generation` writes and fsyncs that part, then atomically replaces the
+pointer. Ciphertext never enters `kernel.db`. The previous pointer is
+`<vault>.prev`; the selected and previous ciphertext generations are retained.
+A legacy envelope at the configured path is read directly and preserved as
+`.prev` on the first successful write. Unknown or unreadable state refuses
+mutation, rather than being replaced with an empty vault.
+
+The existing `.local-dev-key` remains stable while present. It is created
+with kernel `atomic_replace` before selecting a local-dev-enabled envelope;
+a failed first installation cannot remove the old passphrase ciphertext.
+`secrets lock` still removes that key and the `.local-unlock` credential.
+Auxiliary key and credential writes also use private (0600) atomic replacement
+under the same gate. Unlock policy and passphrase delivery are unchanged.
+
+`test:secrets:vault` proves legacy migration, retained decryptability,
+cross-process exclusion and Kill/ENOSPC/EPERM at every crossed kernel boundary
+during migration and passphrase rotation. The ratchet explicitly treats the
+CLI, Rhai and shared storage modules as state writers even though their vault
+paths arrive as parameters; the removed raw writes cannot return unnoticed.
+The engine proof
+`faults_engine_vault_rotation` lives with the shared writer, replacing the
+kernel's engine placeholder. `test:secrets:callers` and `test:secrets:cli` cover
+CLI/Rhai/task/container parity, including simultaneous CLI and Rhai updates.
+
 ## Acceptance Criteria
 
 - Repos can declare required secrets without storing values.

@@ -322,6 +322,10 @@ During v0.x, MINOR bumps may include breaking changes.
   1.2.0.
 
 ### Fixed
+- Vault writes from CLI commands, local-dev upgrades and Rhai now serialize
+  through the runtime kernel and atomically select complete encrypted
+  generations. Existing vaults migrate on their next write, retaining the
+  previous generation and preventing concurrent updates from being lost.
 - A live managed headless run keeps its session record for its whole life:
   the record is written atomically before the first child starts and updated
   on every recorded state change, and it is never deleted while the owner is
