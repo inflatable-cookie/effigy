@@ -46,7 +46,7 @@ Everything after the task name belongs to the task: `effigy lint --json`
 passes `--json` to the linter, and `effigy gh:sync --repo owner/x` passes
 `--repo owner/x` to the task. For one release, `--plan` and `--json` directly
 after the task name are still read as Effigy's, with a note naming the leading
-spelling. Built-in commands routed by name (`test`, `tasks`, `watch`, ...)
+spelling. Built-in commands routed by name (`test`, `tasks`, ...)
 keep their own flag positions.
 
 ## Root And Membership
@@ -57,13 +57,11 @@ tree for them.
 
 Running from inside a member catalog, however deep, resolves to the root that
 declares it, so the full catalog set, the same task identities and the same
-run history apply wherever you stand. The walk stops at the Git top level and
-at a manifest with `[manifest].root = true`. A catalog no ancestor declares
-stays its own root.
+run history apply wherever you stand. The walk stops at the Git top level. A
+catalog no ancestor declares stays its own root.
 
 Notes:
 - aliases must remain unique across the effective catalogs.
-- a nested `effigy.toml` with `[manifest].root = true` is always its own root.
 
 ## JSON Output
 

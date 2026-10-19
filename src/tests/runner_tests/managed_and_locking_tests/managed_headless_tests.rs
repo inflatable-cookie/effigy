@@ -512,3 +512,24 @@ concurrent = [
             .expect("settled state");
     assert_eq!(state["settle_complete"], true);
 }
+
+#[test]
+fn retirement_stream_mode_refuses_before_effects_even_with_headless() {
+    let _lock = lock_test();
+    let root = temp_workspace("retired-managed-stream");
+    write_root_manifest(
+        &root,
+        "[tasks.dev]\nmode = \"tui\"\nconcurrent = [{ name = \"app\", run = \"touch started\" }]\n",
+    );
+    for value in ["1", "0", "true"] {
+        let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_STREAM", Some(value.to_owned()))]);
+        let error = run_dev(&root, &["--headless"])
+            .expect_err("stream must refuse")
+            .to_string();
+        assert!(
+            error.contains("retired") && error.contains("--headless"),
+            "{error}"
+        );
+        assert!(!root.join("started").exists());
+    }
+}

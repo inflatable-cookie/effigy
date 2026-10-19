@@ -134,8 +134,7 @@ second membership resolver.
 
 Invocation root resolution remains separate from catalog membership.
 
-Effigy may walk ancestors to find the applicable repo or workspace root and
-continues to honor `[manifest].root = true` as a root boundary. It must not walk
+Effigy may walk ancestors to find the applicable repo or workspace root. It must not walk
 root descendants to find catalog members.
 
 This preserves cwd-aware invocation without restoring ambient membership.

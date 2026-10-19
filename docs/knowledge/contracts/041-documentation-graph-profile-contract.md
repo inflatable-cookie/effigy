@@ -125,11 +125,11 @@ Standard leading `--repo <PATH>` and `--json` behavior applies.
 - defaults: `max-sections = 8`, `max-bytes = 24000`, `max-hops = 1`
 - hard limits: `max-sections <= 32`, `max-bytes <= 100000`, `max-hops <= 3`
 - all budgets must be positive
-- a query refreshes the shared graph through the existing freshness path
-- lazy refresh uses the shared graph wall-clock policy,
+- a query reads the committed graph without writing or refreshing
+- read-only retrieval uses the shared graph wall-clock policy,
   `EFFIGY_GRAPH_TIMEOUT_MS`; `0` disables the bound
-- a cold or stale refresh emits one progress notice on stderr before the
-  repository walk; text and JSON stdout remain contract-pure
+- a cold or stale read emits an explicit `effigy graph index` hint on stderr;
+  text and JSON stdout remain contract-pure
 - an empty or whitespace-only query is a usage error
 - no-match is a successful empty report, not a fallback to arbitrary files
 

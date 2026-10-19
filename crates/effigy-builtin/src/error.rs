@@ -1,7 +1,7 @@
 //! Narrow error boundary for the built-in command layer.
 //!
 //! Produced by every built-in arm (dispatcher, registry, test, scan,
-//! config, watch, completion, …) and lifted to
+//! config, completion, …) and lifted to
 //! `RunnerError` at the runner's edge via `impl From<BuiltinError> for
 //! RunnerError` in `src/runner/error.rs`. Variant shapes mirror
 //! `RunnerError::*` one-for-one so the runner-side `From` impl is a

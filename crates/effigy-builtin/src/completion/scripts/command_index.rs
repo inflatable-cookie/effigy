@@ -49,7 +49,6 @@ pub(super) fn command_options(command: &str) -> &'static [&'static str] {
             "--repo",
             "--task",
             "--resolve",
-            "migrate",
             "status",
             "--json",
             "--pretty",
@@ -90,17 +89,6 @@ pub(super) fn command_options(command: &str) -> &'static [&'static str] {
             "--help",
             "-h",
         ],
-        "watch" => &[
-            "--owner",
-            "--debounce-ms",
-            "--include",
-            "--exclude",
-            "--once",
-            "--max-runs",
-            "--json",
-            "--help",
-            "-h",
-        ],
         "init" => &[
             "--check",
             "--apply",
@@ -111,7 +99,6 @@ pub(super) fn command_options(command: &str) -> &'static [&'static str] {
             "--help",
             "-h",
         ],
-        "migrate" => &["--from", "--script", "--apply", "--json", "--help", "-h"],
         "config" => &[
             "path",
             "get",

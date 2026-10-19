@@ -2,7 +2,7 @@ use std::path::Path;
 
 use effigy_cli::TaskInvocation;
 
-use super::{config, doctor, help, init, scan, tasks, test, watch};
+use super::{config, doctor, help, init, scan, tasks, test};
 use crate::BuiltinError;
 use crate::BuiltinRuntimePorts;
 use effigy_manifest::LoadedCatalog;
@@ -29,13 +29,12 @@ enum BuiltinDispatch {
     Tasks,
     Config,
     Help,
-    Watch,
     Init,
     Scan,
     Test,
 }
 
-const BUILTIN_REGISTRY: [BuiltinRegistryEntry; 8] = [
+const BUILTIN_REGISTRY: [BuiltinRegistryEntry; 7] = [
     BuiltinRegistryEntry {
         name: "doctor",
         dispatch: BuiltinDispatch::Doctor,
@@ -51,10 +50,6 @@ const BUILTIN_REGISTRY: [BuiltinRegistryEntry; 8] = [
     BuiltinRegistryEntry {
         name: "help",
         dispatch: BuiltinDispatch::Help,
-    },
-    BuiltinRegistryEntry {
-        name: "watch",
-        dispatch: BuiltinDispatch::Watch,
     },
     BuiltinRegistryEntry {
         name: "init",
@@ -114,7 +109,6 @@ impl BuiltinDispatch {
                     ports.deferred_builtins_from_catalogs(catalogs, target_root);
                 help::run_builtin_help(task, &runtime_args.passthrough, &deferred_builtins)
             }
-            Self::Watch => watch::run_builtin_watch(ports, task, runtime_args, target_root),
             Self::Init => {
                 init::run_builtin_init(ports, task, &runtime_args.passthrough, target_root)
             }

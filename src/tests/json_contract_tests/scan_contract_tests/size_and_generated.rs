@@ -57,14 +57,14 @@ fn builtin_scan_god_files_json_contract_top_level_keys_are_stable() {
 }
 
 #[test]
-fn builtin_scan_god_files_graph_context_refreshes_a_missing_index() {
+fn builtin_scan_god_files_graph_context_reports_a_missing_index() {
     let root = temp_workspace("scan-json-contract-graph-context");
     fs::create_dir_all(root.join("src")).expect("mkdir src");
     write_manifest(&root.join("effigy.toml"), "");
     write_large_code_file(&root.join("src/app.ts"), 12);
 
     let parsed = run_invocation_json(
-        root,
+        root.clone(),
         "scan",
         &[
             "god-files",
@@ -82,13 +82,13 @@ fn builtin_scan_god_files_graph_context_refreshes_a_missing_index() {
     );
     assert!(parsed["graph"].is_object());
     assert_eq!(parsed["graph"]["requested"], true);
-    assert_eq!(parsed["graph"]["applied"], true);
-    assert_eq!(parsed["graph"]["state"], "ready");
-    assert_eq!(parsed["graph"]["usable"], true);
-    assert!(parsed["graph"]["reason"]
+    assert_eq!(parsed["graph"]["applied"], false);
+    assert_eq!(parsed["graph"]["state"], "missing-index");
+    assert_eq!(parsed["graph"]["usable"], false);
+    assert!(parsed["graph"]["summary"]
         .as_str()
-        .is_some_and(|value| value.contains("applied graph file context")));
-    assert_eq!(parsed["findings"][0]["graph"]["language_id"], "typescript");
+        .is_some_and(|value| value.contains("effigy graph index")));
+    assert!(!root.join(".effigy/graph").exists());
 }
 
 #[test]

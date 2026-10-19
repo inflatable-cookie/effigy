@@ -22,11 +22,13 @@ matrix are implemented (`test:kernel:faults`, `test:kernel:matrix`);
 engine-specific §12.1 scenarios are placeholders owned by their engine lanes.
 Fault points inside helper processes (sentinel settle, guard acknowledgement,
 detached supervisor) are not yet armed; architecture 032 records the limit.
-The task engine has adopted the kernel (effigy#217; §10.1 records each row);
-the other engines have not, and their adoption-map rows remain current
-behavior. QA-group runs are kernel runs, but `stop` and `hard_timeout_ms`
-stay unavailable: contract [051](051-bounded-qa-groups-contract.md) keeps
-refusing them until the task engine exposes them.
+The task engine has adopted the kernel (effigy#217; §10.1 records each row),
+and bundle-source preparation uses Prepare runs, source custody, store gating
+and atomic lock publication. The other engines have not adopted it; their
+adoption-map rows (§10) remain current behavior. QA-group runs are kernel runs,
+but `stop` and `hard_timeout_ms` stay unavailable: contract
+[051](051-bounded-qa-groups-contract.md) keeps refusing them until the task
+engine exposes them.
 
 Owner: runtime kernel (Queue lane `v015-kernel`)
 Architecture: [032](../architecture/032-runtime-kernel-architecture.md)
@@ -730,9 +732,15 @@ pub struct ProcessSpec {
     label: String,
 }
 
+// Store runs publish engine-journalled file effects through
+// Run::replace_record(dir, name, bytes, ReplaceOpts), retaining their owner gate.
+// DirFd::prepare_child(cx, name) creates source directories no-follow and syncs
+// their parent; SourceDirOpen/SourceDirSync are its fault boundaries.
 impl Custody {
     pub fn spawn(run: &mut Run, spec: ProcessSpec, cx: &EffectContext)
         -> Result<OwnedProcess, SpawnError>;
+    pub fn spawn_source(run: &mut Run, spec: ProcessSpec, cx: &EffectContext)
+        -> Result<OwnedProcess, SpawnError>;               // Prepare: AcquireSource
     pub fn spawn_all(run: &mut Run, specs: Vec<ProcessSpec>, cx: &EffectContext)
         -> Result<Vec<OwnedProcess>, PartialSpawn>;          // rolls back on failure
 }
@@ -853,6 +861,11 @@ kernel restores it on exit.
 
 #### Proof
 
+- `custody_prepare_source_requires_its_class_and_settles_with_a_sentinel`
+  qualifies Prepare acquisition through `Custody::spawn_source`: successful,
+  failed and deadline-expired children settle through the registered sentinel.
+  Prepare cannot use ordinary `spawn`, and Mutate cannot use `spawn_source`.
+  Both entry points share the custody fault points and recovery machinery.
 - SIGINT, SIGTERM, SIGHUP and SIGKILL to the client, crossed with plain,
   sequence, managed and container runs: settle reports `Complete` and no
   fixture-tagged process survives (O1a).
@@ -1471,7 +1484,7 @@ for the rest.
 | 6 | Run logs | `state/runs/` | owner run | `OwnedProcess` capture | 8 MiB per stream, 2 rotations; 2 GiB total, oldest settled first | no |
 | 7 | Leaf certificates | `~/.effigy/gateway/certs/` | gateway | `atomic_replace` | reissued on expiry or CA change | no |
 | 8 | Preserved CA | mkcert `CAROOT` | external | read only | never touched | no |
-| 9 | Pinned sources | config lane decides | config | `Gate(Store bundles)` + `atomic_replace` | while pinned | no |
+| 9 | Pinned sources | `<checkout>/.effigy/sources.lock.json`; `.effigy/cache/sources/` | config | `Gate(Store bundles)` + `atomic_replace` | while pinned | no |
 | 10 | Private vault | `<checkout>/.effigy/secrets/local.vault` (+ `.prev`) | secrets | `Gate(Store vault)` + pointer commit | previous generation kept | no: masked from the workspace mount (§8.2) |
 | 11 | Key wraps | secrets lane decides | secrets | pointer commit with the vault | with the vault generation | no: masked from the workspace mount when beside the vault (§8.2) |
 | 12 | Machine preferences | `~/.effigy/config.toml` | config | `atomic_replace` | user-owned | no |
@@ -1672,12 +1685,12 @@ coverage matrix (`synthesis/GUEST-EFFIGY.md` §2).
 | Help, groups, version; `--plan` and `test --plan`; `rhai surface`; `config` inspect, schema, reference, completion | local | Static; binary metadata and the context |
 | `tasks` listing and resolve; implicit bundle load; `bundle` inspect; `service` list and extract | local | Static against the pinned snapshot (§8.2). No fetch, lock or cache write. |
 | `graph` queries and status; `docs` checks and context; `scan`; `contracts` and `changelog` static checks; `skill tasks`; `state` plan; `artifact` inspect | local | Static and Observe reads of the mounted checkout and graph store. A stale index reports stale; a query never refreshes it (R2). |
-| App tasks with `run_in` `host`, `container` or `either`; shell commands; task references, sequences and setup steps; Rhai tasks and host APIs; `test` and suites; drafts; QA groups and members; heavy tasks; `skill run`; `watch` | channel | Admission request. The host resolves placement, gates `Task(TaskId)` (K5 excludes host and guest runs alike), journals and runs: container targets in the target container through remote custody, host targets on the host. Rhai effects are classified on the host (§5.3). |
+| App tasks with `run_in` `host`, `container` or `either`; shell commands; task references, sequences and setup steps; Rhai tasks and host APIs; `test` and suites; drafts; QA groups and members; heavy tasks; `skill run` | channel | Admission request. The host resolves placement, gates `Task(TaskId)` (K5 excludes host and guest runs alike), journals and runs: container targets in the target container through remote custody, host targets on the host. Rhai effects are classified on the host (§5.3). |
 | `defer` | local inside an admitted workload; otherwise channel | Inside a workload it is that run's command, under its custody. From a shell it is an admission request targeting the current container. |
 | Workspace-only tasks, `workspace`, `system` | channel | Attach to the live workspace session run (§8.7); never a second shell or session. Lifecycle operations are requests. |
 | Managed TUI and headless (`dev`, profiles) | channel | Admission of a `Detached` managed run, child of the session run. The guest renders events; the host supervisor owns workloads and attachments. |
 | Managed `status`, `logs`, `stop`; `tasks status` | channel | Observe requests for status and logs; `stop` is a generation-fenced request (K7). Host and guest pids are never mixed. |
-| `tasks cache`, task-lock `unlock` | channel; `unlock` refused | Cache reads are host Observe requests; clears are RefreshDerived requests to the owning store engine. `unlock` refuses in both placements: there is no unlock command (I-G7). `migrate` and QA groups are in the Mutate and admission rows. |
+| `tasks cache`, task-lock `unlock` | channel; `unlock` refused | Cache reads are host Observe requests; clears are RefreshDerived requests to the owning store engine. `unlock` refuses in both placements: there is no unlock command (I-G7). QA groups are in the admission row. |
 | `doctor` | local and channel | Manifest and tool checks local; runtime checks (backend, gateway, routes, catalog pack, ownership, volumes) are host Observe requests. |
 | `container shell`, bounded shell, `exec`, aliases | channel | Admission request; the host launches the command in the named service, including the current container, through remote custody. |
 | `container up`, `down`, `reset`, `retire` | channel | Mutate requests to the environment engine under R4. A guest `down` of its own environment follows §8.7. |
@@ -1686,8 +1699,8 @@ coverage matrix (`synthesis/GUEST-EFFIGY.md` §2).
 | `secrets` list, doctor, get, export | channel | Observe requests to the secrets engine; plaintext follows the host CLI's policy. |
 | `secrets` init, set, unset, import, unlock, lock, passphrase change; required task secrets | channel | Mutate requests to the secrets engine; task secrets arrive as per-run grants (§8.2). |
 | `deps` status, link, unlink, pin, unpin | channel | Status is Observe; changes are requests to the deps engine. |
-| `graph` index and watch; `bundle` sync; `service` pack install, rollback and remove; `config` user settings | channel | RefreshDerived, Prepare or Mutate requests to the owning store engine. The guest has no separate preference file. |
-| `state` apply, capture; `artifact` stage, capture, push; `init`; `docs` index writes; `migrate`; `release`, `deploy`, `bootstrap`, `demo`, `uninstall` | channel | Requests under the same authorisation as the host CLI. |
+| `graph` index; `bundle` sync; `service` pack install, rollback and remove; `config` user settings | channel | RefreshDerived, Prepare or Mutate requests to the owning store engine. The guest has no separate preference file. |
+| `state` apply, capture; `artifact` stage, capture, push; `init`; `docs` index writes; `release`, `deploy`, `bootstrap`, `demo`, `uninstall` | channel | Requests under the same authorisation as the host CLI. |
 | `gateway` subcommands | channel | Requests to the gateway engine; never a guest gateway. |
 | Hidden internal entry points | refused | Never exposed on the channel; a guest invocation refuses. |
 
@@ -1824,8 +1837,10 @@ Current mechanisms and their kernel replacements. Evidence is at main
 | Env-schema commands before the lock; unbounded pipe drain | `crates/effigy-env/src/exec.rs:25-77` | after `Admitted`; bounded capture (K3, K8) |
 | `unsafe set_var` with threads alive | `src/runner/secret_session.rs:33`, `:52`, `:70`; `src/runner/execute/pipeline/managed.rs:229`; `src/runner/execute/sequence_run.rs:1034`, `:1044`; `crates/effigy-context/src/lib.rs:29`, `:45` | explicit context; spawn-spec env (K12) |
 | Task cache rewritten in place | `src/runner/cache/store.rs:58` | `atomic_replace`, or the cut-list removal |
-| Git exclude appended on reads | `crates/effigy-manifest/src/composition.rs:316` | Prepare and Mutate only (R2) |
-| Bundle refresh during reads; blocking cache lock | `crates/effigy-manifest/src/bundles/source.rs:483`, `:520-540` | Prepare class; `Gate(Store bundles)` with deadline |
+| Git exclude registration | Manifest composition reads only; source Prepare records registration before acting | Prepare and Mutate only (R2) |
+| Read-command presentation | Local window-size query and recorded version stamps only; no `tput` fallback or Git identity inference | Static (R2) |
+| Git provenance and identity diagnostics | Child Git probes disable optional index writes (`GIT_OPTIONAL_LOCKS=0`) | Observe (R2) |
+| Bundle and catalog source preparation | Checkout pins and immutable source generations; no read-time refresh or cache lock | Prepare run; `Gate(Store bundles)` with deadline; atomic checkout lock publication |
 | Scheduler client signal handler | `src/runner/host_scheduler/submit.rs:205-212` | subscribes to `SignalRouter` cancel; admission shape is Q-006 |
 | QA group records: 20 s staleness, truncating writes | `crates/effigy-runtime/src/qa_group_status.rs:19`, `:275-291` | `Run` rows; `stop` and `hard_timeout_ms` become possible |
 
@@ -1841,7 +1856,7 @@ Task engine adoption (effigy#217, 2026-10-19):
 | Env-schema commands | Done. Resolved after `Admitted`; each `exec()` is a custody effect of the run with bounded capture. |
 | `set_var` | Done for the vault passphrase, the local-dev marker and the managed run token. Not done: the external task source isolation marker and sequence step environments, which need every spawner on spawn-spec env (sequence engine follow-up). |
 | Task cache | Done: removed. |
-| Git exclude on reads; bundle refresh during reads; scheduler signal handler | Not this task: read-path and admission (Q-006) follow-ups. |
+| Git exclude on reads; bundle refresh during reads; scheduler signal handler | Not this task. Read paths no longer refresh bundles or append Git excludes (source pins, effigy#220); the scheduler signal handler is the admission (Q-006) follow-up. |
 | QA group records | Done for liveness: a group run is a kernel run, and status reads its gate, not a PID or heartbeat. The member report files remain reports. |
 
 Prerequisite kernel additions for that adoption: `run::history`,
@@ -1853,6 +1868,11 @@ file identity instead of a content digest, and holding the startup image open
 Effigy inside an Effigy sequence), a later sentinel re-execs a private copy of
 the unchanged startup image under the state root, removed once the sentinel
 acknowledges; a changed image still refuses.
+
+Read-boundary CLI proofs use the `discovery-proof` Cargo profile: the real,
+CLI and helper dispatch with release optimization and symbols stripped so macOS's
+pre-main loading does not dominate the unchanged eight-/ten-second fixture
+bounds. Ordinary dev, test and release profiles are unchanged.
 
 ### 10.2 Run supervisor
 
@@ -1871,7 +1891,7 @@ acknowledges; a changed image still refuses.
 | Progressive spawn without rollback | `crates/effigy-process/src/lib.rs:211-238` | `spawn_all` with barrier and rollback |
 | Supervisor shutdown grace | `crates/effigy-process/src/supervisor_shutdown.rs:7-11` | `OwnedProcess::stop` |
 | Host sidecar supervisors: setsid, PID and spec files, blocking lifecycle lock, best-effort stop | `src/runner/host_process.rs:104-128`, `:430-458`, `:745`; `src/runner/container_command/closeout.rs:33-36` | environment-owned detached run; `StopReport` |
-| Transition evidence receipts | `src/runner/host_transition_evidence.rs` | `events` table, or the cut-list removal |
+| Listener transition history | Removed; existing historical files are left untouched | No replacement writer or store |
 | Remote stop of a bare PGID in the current primary | `crates/effigy-containers/src/exec/managed_stop.rs:36` | `signal_session` on the registration (I-RC2) |
 
 ### 10.3 Environment reconciler
@@ -1896,7 +1916,7 @@ acknowledges; a changed image still refuses.
 | Current mechanism | Evidence | Kernel replacement |
 | --- | --- | --- |
 | PID, identity and version files published before standard binds | `crates/effigy-gateway/src/identity.rs:299`, `:436`; `crates/effigy-gateway/src/server.rs:1264-1265` before `:1388` | gateway lifecycle run: bind is `Applied` before publish (K3); liveness design is gateway-lane |
-| Record and transition locks | `crates/effigy-gateway/src/identity.rs:870`; `crates/effigy-gateway/src/legacy.rs:730-732` | `Gate(Gateway)` |
+| Record and transition locks | `crates/effigy-gateway/src/identity.rs:870`; `crates/effigy-gateway/src/transition_lock.rs` | `Gate(Gateway)` |
 | Routes, ports and loopback files under `RouteTableLock` | `crates/effigy-gateway/src/routes.rs:188`, `:262`; `crates/effigy-gateway/src/ports.rs:137-155`; `crates/effigy-gateway/src/ports/reclaim.rs:109-113`; `crates/effigy-gateway/src/loopback.rs:81` | endpoint claims with revisions (I-A3, I-A4) |
 | Listener claim check turns unknown into false | `crates/effigy-gateway/src/registration.rs:81` | `Observed` (R3) |
 | Reuse of an unverified gateway | `src/runner/gateway_command/mod.rs:168` | R3 |
@@ -1910,7 +1930,7 @@ acknowledges; a changed image still refuses.
 | Demo spawn and group signal | `src/runner/demo_command/execute.rs:48` | `OwnedProcess` |
 | Vault written in place, unlocked | `src/runner/secret_vault.rs:177-194`; `crates/effigy-rhai/src/rhai_secrets.rs:665` | `Gate(Store vault)` + pointer commit (§5.5) |
 | Deps state: try-only lock, local atomic helper | `crates/effigy-deps/src/state.rs:497`, `:573` | gate with deadline; `atomic_replace` |
-| Graph refresh: try-lock, snapshot copy, detached worker | `crates/effigy-codegraph/src/refresh.rs:107`; `crates/effigy-codegraph/src/storage.rs:116`; `src/runner/graph_time_budget.rs:77` | RefreshDerived; cooperative deadline (I-CX3); corpus semantics are graph-lane |
+| Graph reads and explicit refresh | `crates/effigy-codegraph/src/refresh.rs`; `storage.rs`; graph contract 045 | RefreshDerived owns a kernel store gate; Observe probes only. Queries never refresh; rollback-journal readers create no files. Existing WAL is migrated by explicit index. |
 | Catalog pack store lock | `crates/effigy-catalog/src/pack/store.rs:343` | `Gate`, or removal under Q-005 |
 | Pending-facts journal with file and directory `fsync` | `crates/effigy-host-run/src/secure_fs.rs:299-308` | the pattern `atomic_replace` absorbs |
 | Doctor publication marker | `crates/effigy-scan/src/execution/doctor_inventory.rs:586` | `Gate` |

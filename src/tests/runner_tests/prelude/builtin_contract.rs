@@ -37,7 +37,6 @@ pub(in crate::runner::tests) fn assert_builtin_error_contract_case_table(
 
 pub(in crate::runner::tests) fn builtin_shared_unknown_argument_cases(
     completion_workspace: &'static str,
-    watch_workspace: &'static str,
     scan_workspace: &'static str,
 ) -> Vec<BuiltinContractErrorCase> {
     vec![
@@ -46,12 +45,6 @@ pub(in crate::runner::tests) fn builtin_shared_unknown_argument_cases(
             "completion",
             &["candidates", "--wat"],
             &["unknown argument(s) for built-in `config completion`: candidates --wat"],
-        ),
-        builtin_contract_error_case(
-            watch_workspace,
-            "watch",
-            &["--wat"],
-            &["unknown argument(s) for built-in `watch`: --wat"],
         ),
         builtin_contract_error_case(
             scan_workspace,

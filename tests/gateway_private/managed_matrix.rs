@@ -169,7 +169,7 @@ impl<'a> Case<'a> {
         }
         manifest.push_str("]\n");
         for child in ["api", "jobs"] {
-            let run = format!("printf '%s\\n' \"$$\" > '{}/work-{child}.pid'; if [ -f '{}/fail-{child}' ]; then exit 7; fi; exec sleep 3600", root.display(), root.display());
+            let run = format!("printf '%s\\n' \"$$\" > '{root}/work-{child}.pid.tmp' && mv '{root}/work-{child}.pid.tmp' '{root}/work-{child}.pid'; if [ -f '{root}/fail-{child}' ]; then exit 7; fi; exec sleep 3600", root = root.display());
             manifest.push_str(&format!(
                 "[tasks.hold-{child}]\nrun_in = \"host\"\nrun = {}\n",
                 toml_quote(&run)
@@ -557,7 +557,10 @@ fn managed_matrix_down_ends_recorded_non_group_leader_workload() {
     fs::write(root.join("matrix-adapter.py"), ADAPTER).expect("adapter");
     let mut command = Command::new("sh");
     command
-        .args(["-c", "sleep 3600 & printf '%s\\n' \"$!\" > work.pid; wait"])
+        .args([
+            "-c",
+            "sleep 3600 & printf '%s\\n' \"$!\" > work.pid.tmp && mv work.pid.tmp work.pid; wait",
+        ])
         .current_dir(root)
         .process_group(0);
     let owner = ManagedSupervisor(command.spawn().expect("private process group"));
@@ -1116,7 +1119,10 @@ if op=='payload' or (op=='exec' and '.pgid' in args[-1]):
  payload=args[-1].replace('/usr/local/bin/effigy',str(root/'effigy-wrapper'))
  with open(root/('remote-'+str(os.getpid())+'.out'),'wb') as log:
   child=subprocess.Popen(['sh','-c',payload],start_new_session=True,stdout=log,stderr=log)
-  (root/('remote-'+str(os.getpid())+'.pid')).write_text(str(child.pid))
+  pid_file=root/('remote-'+str(os.getpid())+'.pid')
+  pending=pid_file.with_suffix('.pid.tmp')
+  pending.write_text(str(child.pid))
+  os.replace(pending,pid_file)
   sys.exit(child.wait())
 if op=='exec':
  if (state/'deny-exec').exists(): sys.exit(72)

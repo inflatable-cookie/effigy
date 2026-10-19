@@ -483,7 +483,7 @@ fn empty_user_state_selects_the_compiled_baseline() {
 }
 
 #[test]
-fn active_pack_outranks_baseline_but_not_project_or_user_overrides() {
+fn retired_user_catalog_is_ignored_and_project_override_still_wins() {
     let home = TempDir::new().expect("home");
     let src = TempDir::new().expect("src");
     let repo = TempDir::new().expect("repo");
@@ -509,7 +509,7 @@ fn active_pack_outranks_baseline_but_not_project_or_user_overrides() {
     );
     assert!(fragment.compose_template.contains("5432:5432"));
 
-    // User override beats the pack.
+    // A retired user override is ignored; the installed pack still wins.
     write(
         &home.path().join("catalog/postgres/service.toml"),
         "[service]\nname = \"postgres\"\ndescription = \"user\"\n",
@@ -525,13 +525,13 @@ fn active_pack_outranks_baseline_but_not_project_or_user_overrides() {
     assert!(
         matches!(
             fragment.source,
-            crate::fragment::FragmentSource::UserGlobal(_)
+            crate::fragment::FragmentSource::InstalledPack { .. }
         ),
         "{:?}",
         fragment.source
     );
 
-    // Project override beats both.
+    // Project override beats the installed pack.
     write(
         &repo.path().join("infra/dev/catalog/postgres/service.toml"),
         "[service]\nname = \"postgres\"\ndescription = \"project\"\n",

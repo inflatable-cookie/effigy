@@ -57,10 +57,6 @@ pub enum Command {
     #[doc(hidden)]
     InternalGatewayIdentity(InternalGatewayIdentityArgs),
     #[doc(hidden)]
-    InternalGatewayLegacyCandidate(InternalGatewayLegacyCandidateArgs),
-    #[doc(hidden)]
-    InternalGatewayLegacyStop(InternalGatewayLegacyStopArgs),
-    #[doc(hidden)]
     InternalContainerLeaseReaper(InternalContainerLeaseReaperArgs),
     #[doc(hidden)]
     InternalHostProcessSupervise(InternalHostProcessSuperviseArgs),
@@ -146,9 +142,7 @@ pub enum HelpTopic {
     Doctor,
     Tasks,
     Test,
-    Watch,
     Init,
-    Migrate,
     Uninstall,
     Drafts,
     Draft,
@@ -588,7 +582,6 @@ impl DemoHistoryOutcome {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DocsSubcommand {
     /// Resolve the bounded three-leaf host recipe; this is not an execution grant.
-    QualifiedResolve,
     Check {
         kind: DocsCheckKind,
         paths: Vec<PathBuf>,
@@ -887,7 +880,6 @@ pub enum GatewaySubcommand {
     Down,
     Status,
     Repair { yes: bool },
-    Recover { yes: bool, adopt_candidate: bool },
     SetupTls,
     SetupListenerHandoff,
     ListenerHandoffStatus,
@@ -907,41 +899,6 @@ pub struct InternalGatewayIdentityArgs {
     pub digest: String,
     pub target_digest: String,
     pub owner_uid: u32,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[doc(hidden)]
-pub struct InternalGatewayLegacyCandidateArgs {
-    pub target_digest: String,
-    pub record_digest: String,
-    pub owner_uid: u32,
-    pub directory_owner_uid: u32,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[doc(hidden)]
-pub enum GatewayLegacyStopPhase {
-    Term,
-    Kill,
-}
-
-impl GatewayLegacyStopPhase {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Term => "term",
-            Self::Kill => "kill",
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[doc(hidden)]
-pub struct InternalGatewayLegacyStopArgs {
-    pub target_digest: String,
-    pub record_digest: String,
-    pub owner_uid: u32,
-    pub candidate_digest: String,
-    pub phase: GatewayLegacyStopPhase,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1614,113 +1571,26 @@ mod gateway_identity_command_tests {
 }
 
 #[cfg(test)]
-mod gateway_legacy_recovery_command_tests {
-    use super::{
-        parse_command, Command, GatewayLegacyStopPhase, InternalGatewayLegacyCandidateArgs,
-        InternalGatewayLegacyStopArgs,
-    };
-
+mod retirement_tests {
     #[test]
-    fn gateway_legacy_candidate_requires_bounded_bindings() {
-        let digest = "a".repeat(64);
-        let parsed = parse_command([
-            "__gateway-legacy-candidate".to_owned(),
-            "--target-digest".to_owned(),
-            digest.clone(),
-            "--record-digest".to_owned(),
-            digest.clone(),
-            "--owner-uid".to_owned(),
-            "501".to_owned(),
-            "--directory-owner-uid".to_owned(),
-            "501".to_owned(),
-        ])
-        .expect("parse bounded candidate arguments");
-        assert_eq!(
-            parsed,
-            Command::InternalGatewayLegacyCandidate(InternalGatewayLegacyCandidateArgs {
-                target_digest: digest.clone(),
-                record_digest: digest,
-                owner_uid: 501,
-                directory_owner_uid: 501,
-            })
-        );
-    }
-
-    #[test]
-    fn gateway_legacy_candidate_rejects_arbitrary_pid() {
-        let digest = "a".repeat(64);
-        assert!(parse_command(vec![
-            "__gateway-legacy-candidate".to_owned(),
-            "--pid".to_owned(),
-            "42".to_owned(),
-            "--target-digest".to_owned(),
-            digest.clone(),
-            "--record-digest".to_owned(),
-            digest,
-            "--owner-uid".to_owned(),
-            "501".to_owned(),
-            "--directory-owner-uid".to_owned(),
-            "501".to_owned(),
-        ])
-        .is_err());
-    }
-
-    #[test]
-    fn gateway_legacy_stop_requires_enumerated_phase() {
-        let digest = "b".repeat(64);
-        let parsed = parse_command([
-            "__gateway-legacy-stop".to_owned(),
-            "--target-digest".to_owned(),
-            digest.clone(),
-            "--record-digest".to_owned(),
-            digest.clone(),
-            "--owner-uid".to_owned(),
-            "501".to_owned(),
-            "--candidate-digest".to_owned(),
-            digest.clone(),
-            "--phase".to_owned(),
-            "kill".to_owned(),
-        ])
-        .expect("parse bounded stop arguments");
-        assert_eq!(
-            parsed,
-            Command::InternalGatewayLegacyStop(InternalGatewayLegacyStopArgs {
-                target_digest: digest.clone(),
-                record_digest: digest.clone(),
-                owner_uid: 501,
-                candidate_digest: digest,
-                phase: GatewayLegacyStopPhase::Kill,
-            })
-        );
-        assert!(parse_command(vec![
-            "__gateway-legacy-stop".to_owned(),
-            "--target-digest".to_owned(),
-            "c".repeat(64),
-            "--record-digest".to_owned(),
-            "c".repeat(64),
-            "--owner-uid".to_owned(),
-            "501".to_owned(),
-            "--candidate-digest".to_owned(),
-            "c".repeat(64),
-            "--phase".to_owned(),
-            "term".to_owned(),
-            "--pid".to_owned(),
-            "9".to_owned(),
-        ])
-        .is_err());
-        assert!(parse_command(vec![
-            "__gateway-legacy-stop".to_owned(),
-            "--target-digest".to_owned(),
-            "c".repeat(64),
-            "--record-digest".to_owned(),
-            "c".repeat(64),
-            "--owner-uid".to_owned(),
-            "501".to_owned(),
-            "--candidate-digest".to_owned(),
-            "c".repeat(64),
-            "--phase".to_owned(),
-            "hup".to_owned(),
-        ])
-        .is_err());
+    fn retirement_commands_refuse_with_actionable_messages() {
+        for (args, replacement) in [
+            (vec!["watch", "--help"], "native watch"),
+            (
+                vec!["tasks", "migrate", "--apply"],
+                "define tasks explicitly",
+            ),
+            (
+                vec!["gateway", "recover", "--adopt-candidate"],
+                "host administrator",
+            ),
+            (vec!["docs", "qualified", "resolve"], "qa:docs"),
+        ] {
+            let error = super::parse_command(args.into_iter().map(str::to_owned))
+                .expect_err("retired command must refuse")
+                .to_string();
+            assert!(error.contains("retired"), "{error}");
+            assert!(error.contains(replacement), "{error}");
+        }
     }
 }

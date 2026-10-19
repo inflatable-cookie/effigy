@@ -16,7 +16,7 @@ Reach for this guide when:
 
 - a task does not resolve where you expected
 - a built-in command fails and you need the shortest diagnosis path
-- watch mode, locks, env resolution, or deferral behavior feels unclear
+- locks, env resolution, or deferral behavior feels unclear
 - CI is failing and you need the human-first version of the fix path
 
 ## 1) Fast Triage Flow
@@ -345,25 +345,7 @@ Fix:
 - add the value to the selected dotenv file, or
 - correct `env_file` on the suite table
 
-## 5) Watch Mode and Lock Errors
-
-### Symptom: ``--owner <effigy|external> is required``
-
-Fix:
-
-```sh
-effigy watch --owner effigy --once test
-```
-
-### Symptom: ``--json requires a bounded watch run``
-
-Fix:
-
-```sh
-effigy watch --owner effigy --once test --json
-# or
-effigy watch --owner effigy --max-runs 2 --json test
-```
+## 5) Lock Errors
 
 ### Symptom: `<task>` is already running
 
@@ -384,8 +366,8 @@ Fix: wait for the run, or stop it.
 effigy --lock-wait-ms 600000 <selector>
 ```
 
-A shared `lock = "<name>"` or a built-in section (a watcher in owner mode holds
-`task:watch:<target>`) can be held by another task or command: the error then
+A shared `lock = "<name>"` or a built-in section can be held by another task or
+command: the error then
 points at `effigy tasks status --all`, which lists every live holder. Stop the
 holder, or let it finish, to release it.
 
@@ -664,7 +646,7 @@ Fix:
 After this guide, you should be able to:
 
 - choose the shortest useful diagnosis command for a failure
-- separate routing issues from manifest, env, watch, and test issues
+- separate routing issues from manifest, env, and test issues
 - turn a symptom into a concrete fix or a more precise follow-up question
 
 ## Related Guides

@@ -420,124 +420,7 @@ top-level `status` for current state. `not_reached` and `not_attempted` mean the
 phase was not observed, not that it succeeded or failed. Ownership observations
 depend on the Linux procfs or macOS libproc interfaces described below.
 
-### Managed child transition evidence ruling
-
-Tom's standing bounded hybrid-profile approval, reaffirmed on 2026-10-11,
-authorizes a generic transition-evidence capability. Current listener state and
-startup diagnostics do not retain the selected child replacement reason or
-its dependency assignments at launch. Two ready snapshots with different
-child generations cannot distinguish child exit from dependency unavailability
-or a changed dependency tuple, and cannot prove continuous dependency stability.
-Historical consumer causes remain unresolved.
-
-The capability must record the supervisor's existing selected cause, precise
-owner/runtime/supervisor/child identities, expected and observed dependency
-tuples (including missing or unreadable observations), and the reserved endpoint
-assignments actually supplied to each launched generation. Evidence must be
-versioned, ordered, durable and bounded, with visible gaps or truncation. A
-separately owned additive receipt is preferred: strict listener-state parsing
-and the eight-field startup diagnostic retain their existing meanings.
-
-This ruling changes observation only. Restart policy, timing, ownership proofs,
-route withdrawal, readiness and teardown authority stay intact. Receipts cannot
-authorize signals, cleanup or acceptance of a changed survivor baseline. They
-exclude arbitrary environment, commands, credentials and request bodies. Private
-generic production-path fixtures and independent review must qualify the
-contract before a consumer changes its exact-source/checksum gate. No live
-consumer retry, installed binary replacement or release authority follows from
-this ruling.
-
-#### Transition receipt contract
-
-Each managed listener supervisor appends to `<name>.transitions.jsonl`, in the
-same profile directory as `<name>.listener.json`. New records use
-`effigy.managed.host-transition-evidence.v2`: one JSON object
-per line, with `sequence` starting at 1 and unknown fields rejected. Readers
-also accept historical v1 records, which have no `tuple_status` marker. A
-receipt can contain v1 and v2 records when a supervisor resumes an old file;
-the writer continues the sequence and appends v2 without rewriting history.
-Common fields are `event`, `owner`, `runtime_generation`, and `supervisor` (`pid`,
-`boot_identity`, `start_identity`). Event fields are `generation` (the listener
-generation the record concerns), `predecessor_generation` (the most recent
-earlier generation this supervisor launched), `phase` (`pre_publication` or
-`published`), `child` and `child_group` (the child PID leads its group), and
-`listener` only when readiness observed it. `exit` (`code`, `signal`),
-`observed_dependencies`, `assignments`, and `inspection_error` appear only for
-their events.
-
-Events are the supervisor's existing selections, recorded before its state,
-route or process effects:
-
-- `successor_launched`: a generation's child spawned. `assignments` holds the
-  reserved dependency values supplied at that launch.
-- `child_exited`: the child's exit code or signal, observed before any
-  dependency decision.
-- `shutdown`: the shutdown flag won the decision before child completion.
-- `dependency_unavailable`: the first failed predicate, in evaluation order,
-  is `state_file_missing`, `state_not_ready`, `route_owner_missing`,
-  `owner_unverified`, or `route_not_matching`. The record names that dependency
-  with status `unavailable`.
-- `dependency_tuple_changed`: every dependency was ready, but the generation
-  tuple differs from launch. `observed_dependencies` lists each observed name,
-  runtime generation, generation, and address, with `tuple_status: observed`.
-- `inspection_error`: `child_completion` or `dependency_state`. A dependency
-  inspection failure names the declared dependency and records its bounded
-  predicate: `state_file_unreadable`, `state_file_unsafe`,
-  `state_schema_invalid`, `state_identity_mismatch`, or
-  `route_table_unreadable`. V2 `tuple_status` is `unreadable`; tuple values are
-  omitted because they were not observed. Child-completion errors have no
-  dependency observation. No error text, environment, command, or response data
-  is recorded.
-- `retention_limit`: a bound was reached. No later record is written by that
-  supervisor.
-
-`assignments` is an allowlist: only `EFFIGY_MANAGED_HOST_<NAME>_INTERNAL_URL`,
-`_PUBLIC_URL`, `_STATE_FILE`, and `_GENERATION` for declared dependencies,
-copied from the values the child received. Spec environment, credentials and
-other keys are never recorded. Identity fields are correlation evidence. They
-never authorize signals, publication, cleanup or adoption.
-
-V2 dependency observations carry `tuple_status: observed` with all tuple
-fields, or an explicit `absent`, `unreadable`, or `unavailable` marker with no
-tuple fields. V1 records keep their original shape and carry no tuple marker.
-An older v1 `inspection_error: dependency_state` may have no dependency name or
-predicate, which the reader does not infer. It rejects a partial v2 observation
-rather than treating omitted tuple data as an empty tuple.
-
-Bounds are 512 records or 256 KiB per receipt, whichever comes first. A record
-that would cross a bound is replaced by one `retention_limit` marker and no
-further records follow. The receipt survives supervisor restarts for the same
-process name, and sequence numbers continue. A complete append syncs the file;
-when the receipt is created, Effigy also syncs its containing directory. A sync
-or write failure consumes a sequence and is logged as not confirmed durable. A
-complete record may still be visible after a sync failure; when no complete
-record is readable, the sequence gap is visible. Lifecycle, restart timing,
-readiness, route withdrawal and teardown do not change because of an evidence
-failure. If an existing receipt cannot be read, writes stop for that supervisor
-run and the failure is logged.
-
-Readers take a bounded snapshot through a no-follow file open. An absent receipt
-is not evidence that no transition happened. A symlink, non-regular file, or a
-file over the bound is refused. A blank line is skipped. A complete line that
-is malformed or has another schema is a gap. An unterminated final line is an
-incomplete tail. Sequences are checked from 1: a missing first record, jump,
-zero, duplicate, or regression is visible; duplicate and regressed records are
-not accepted. An unsupported schema or malformed/partial observation is a gap.
-A `retention_limit` marker means later transitions were not kept.
-
-The private production-path qualification drives signal exit, ready dependency
-tuple replacement without an unavailable observation, and dependency
-inspection failure with the failed name and bounded predicate. It also proves
-that a failed first append followed by a recovered second append reports the
-initial sequence gap. Receipt creation syncs the file and containing directory;
-failure remains evidence-only and does not change lifecycle authority or restart
-policy. Historical v1 records remain readable without inferred tuple details;
-a v1-only reader must treat v2 records as unsupported rather than reinterpret
-them as v1.
-
-Only listener-backed managed children write receipts. A `host_processes` entry
-without a listener keeps its collapsed dependency restart path and writes no
-receipt. Its absence is not evidence.
+### Managed listener socket ownership
 
 Socket ownership uses Linux procfs and macOS libproc interfaces.
 On macOS, the same-user process inventory from `ps -Ao pid=,uid=` may print a
@@ -1540,8 +1423,9 @@ No captured stdout/stderr, arbitrary argv/env, source paths or raw transport
 errors are inserted into catalog mismatch messages.
 
 This guarantees installed-pack parity, not whole-environment parity. Mounted
-project overrides and guest user overrides retain normal precedence; host user
-overrides, configuration, HOME and credentials are not transferred. No channel
+project overrides retain normal precedence. User-global catalog directories
+are ignored in both host and guest contexts. Host configuration, HOME and
+credentials are not transferred. No channel
 refresh, registry acquisition, binary rebuild or network update is implied by
 pack preparation. Private production-path controls live behind
 `test:workspace:catalog-handoff` and `check:workspace:catalog-handoff`.

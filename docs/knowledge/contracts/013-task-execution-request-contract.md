@@ -201,7 +201,7 @@ The CLI joins the two halves with an internal boundary, so the request knows
 which flags are Effigy's. For one release, `--plan` and `--json` directly
 after the selector are still read as Effigy's, with a note naming the leading
 spelling; any other Effigy flag after the selector reaches the task, with a
-note. Built-in commands routed by name (`test`, `tasks`, `watch`, ...) and
+note. Built-in commands routed by name (`test`, `tasks`, ...) and
 invocations built inside Effigy (sequence steps, deferral, built-ins) keep
 their own argument conventions.
 

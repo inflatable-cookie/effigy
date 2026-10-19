@@ -355,45 +355,6 @@ pub fn remove_if_unchanged(snapshot: &GatewayRecordSnapshot) -> Result<bool, Gat
     Ok(true)
 }
 
-/// Remove a legacy PID/version pair only if both files still match the
-/// captured bytes. Comparison and deletion share the record lock so a
-/// substituted PID or version cannot be deleted. A vanished captured PID or
-/// version is a changed record and returns `Ok(false)`.
-pub(crate) fn remove_legacy_pair_if_unchanged(
-    pid_path: &Path,
-    owner_uid: u32,
-    pid_bytes: &[u8],
-    version_bytes: &[u8],
-) -> Result<bool, GatewayError> {
-    let _lock = GatewayRecordLock::acquire(pid_path, owner_uid)?;
-    let version_path = version_path(pid_path);
-    let current_version =
-        read_trusted_file(&version_path, owner_uid, MAX_VERSION_BYTES)?.map(|(bytes, _, _)| bytes);
-    let snapshot = match read_snapshot(pid_path) {
-        Ok(snapshot) => snapshot,
-        Err(GatewayError::Io(ref error)) if error.kind() == std::io::ErrorKind::InvalidData => {
-            // Version-only, symlink, or other untrusted remainder is a changed
-            // record. Preserve it; do not treat classifier refusal as cleanup.
-            return Ok(false);
-        }
-        Err(error) => return Err(error),
-    };
-    match (snapshot, current_version.as_deref()) {
-        (Some(snapshot), Some(current))
-            if snapshot.is_legacy_pid_only()
-                && snapshot.pid_bytes() == pid_bytes
-                && current == version_bytes
-                && snapshot.owner_uid() == owner_uid =>
-        {
-            fs::remove_file(identity_path(pid_path)).or_else(ignore_not_found)?;
-            fs::remove_file(pid_path).or_else(ignore_not_found)?;
-            fs::remove_file(&version_path).or_else(ignore_not_found)?;
-            Ok(true)
-        }
-        _ => Ok(false),
-    }
-}
-
 /// Read and verify the only authorized target for the hidden elevated reader.
 /// It accepts a digest, never an arbitrary PID, and returns no live identity.
 pub fn read_only_elevated_check(
@@ -438,16 +399,6 @@ pub(crate) fn publish_gateway_version(pid_path: &Path, version: &str) -> Result<
     let path = version_path(pid_path);
     validate_version_replace_target(&path, owner_uid)?;
     atomic_publish(&path, version.as_bytes(), owner_uid)
-}
-
-/// Read a trusted sidecar next to the PID file (version, identity, …).
-pub(crate) fn read_trusted_sidecar_bytes(
-    pid_path: &Path,
-    sidecar: &Path,
-    max_bytes: usize,
-) -> Result<Option<Vec<u8>>, GatewayError> {
-    let owner_uid = trusted_directory_owner(pid_path)?;
-    Ok(read_trusted_file(sidecar, owner_uid, max_bytes)?.map(|(bytes, _, _)| bytes))
 }
 
 fn invalid_record(message: &str) -> GatewayError {

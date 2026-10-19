@@ -3,24 +3,16 @@ use super::super::execution::run_manifest_task_with_cwd;
 use super::super::harness::write_root_manifest;
 use super::super::output::{
     assert_output_contains_all, assert_output_contains_derived, assert_output_excludes_all,
-    assert_path_exists,
 };
 use super::super::runtime::{
     fs, thread, Duration, Instant, Path, PathBuf, RunnerError, TaskInvocation,
 };
-use super::assertions::{
-    assert_lock_conflict, assert_managed_non_zero_exit, assert_managed_profile_not_found,
-};
+use super::assertions::{assert_lock_conflict, assert_managed_profile_not_found};
 use super::cases::{
-    ManagedInvocation, ManagedNonZeroExitCase, ManagedOutputCase, ManagedOutputDerivedCase,
-    ManagedProfileNotFoundCase, ManagedStreamBuiltinTestCase,
+    ManagedInvocation, ManagedOutputCase, ManagedOutputDerivedCase, ManagedProfileNotFoundCase,
 };
-use super::fixtures::{
-    install_fake_container_runtime, write_managed_stream_builtin_test_manifest,
-    write_managed_stream_builtin_test_profile_manifest,
-};
+use super::fixtures::install_fake_container_runtime;
 use crate::contract_test_support::wait_for_path_exists;
-use crate::contract_test_support::ExecutableOverrideGuard;
 
 fn task_args(args: &[&str]) -> Vec<String> {
     args.iter().map(|arg| (*arg).to_owned()).collect()
@@ -209,27 +201,6 @@ fn workspace_root(workspace: &str) -> PathBuf {
     super::super::harness::temp_workspace(workspace)
 }
 
-fn compiled_effigy_binary() -> PathBuf {
-    let current_exe = std::env::current_exe().expect("current exe");
-    current_exe
-        .parent()
-        .and_then(|dir| dir.parent())
-        .map(|dir| dir.join("effigy"))
-        .filter(|path| path.is_file())
-        .expect("compiled effigy binary")
-}
-
-fn for_each_workspace_case<T>(
-    cases: &[T],
-    workspace_of: impl Fn(&T) -> &str,
-    mut visit: impl FnMut(PathBuf, &T),
-) {
-    assert_case_table(cases.iter(), |case| {
-        let root = workspace_root(workspace_of(case));
-        visit(root, case);
-    });
-}
-
 pub(in crate::runner::tests) fn ensure_locks_dir(root: &Path) -> PathBuf {
     let locks_dir = root.join(".effigy/locks");
     fs::create_dir_all(&locks_dir).expect("mkdir locks");
@@ -335,61 +306,4 @@ pub(in crate::runner::tests) fn assert_managed_profile_not_found_case_table(
             );
         },
     );
-}
-
-pub(in crate::runner::tests) fn assert_managed_non_zero_exit_case_table(
-    cases: &[ManagedNonZeroExitCase],
-) {
-    assert_managed_case_table(
-        cases,
-        |case| case.workspace,
-        |case| case.setup,
-        |case| &case.invocation,
-        |case| case.args,
-        |case, _root, result| {
-            let err = result.expect_err("expected managed non-zero exit error");
-            assert_managed_non_zero_exit(
-                err,
-                case.expected_task,
-                case.expected_profile,
-                case.expected_processes,
-            );
-        },
-    );
-}
-
-pub(in crate::runner::tests) fn assert_managed_stream_builtin_test_case_table(
-    cases: &[ManagedStreamBuiltinTestCase],
-) {
-    for_each_workspace_case(
-        cases,
-        |case| case.workspace,
-        |root, case| {
-            let marker = root.join("builtin-test-called.log");
-            write_managed_stream_builtin_test_manifest(&root, case.suite, case.task_ref, &marker);
-            let _exec =
-                ExecutableOverrideGuard::set(compiled_effigy_binary().display().to_string());
-
-            let out = run_dev(&root, &["default"])
-                .expect("run managed stream with builtin profile entry");
-            assert_output_contains_all(&out, &["Managed Task Runtime", "root: ok"]);
-            assert_path_exists(&marker, "built-in test task ref marker");
-        },
-    );
-}
-
-pub(in crate::runner::tests) fn assert_managed_stream_builtin_test_profile_entry(
-    workspace: &str,
-    suite: &str,
-    task_ref: &str,
-) {
-    let root = workspace_root(workspace);
-    let marker = root.join("builtin-test-called.log");
-    write_managed_stream_builtin_test_profile_manifest(&root, suite, task_ref, &marker);
-    let _runtime = install_fake_container_runtime(&root);
-    let _exec = ExecutableOverrideGuard::set(compiled_effigy_binary().display().to_string());
-
-    let out = run_dev(&root, &["default"]).expect("run managed stream profile entry");
-    assert_output_contains_all(&out, &["Managed Task Runtime", "root: ok"]);
-    assert_path_exists(&marker, "built-in test task ref marker");
 }

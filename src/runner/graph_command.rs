@@ -63,8 +63,8 @@ fn prepare_args(mut args: GraphArgs) -> Result<GraphArgs, RunnerError> {
 
 /// Whether a subcommand runs under the time budget.
 ///
-/// Queries do: they refresh a stale index behind the caller's back, so a slow
-/// walk shows up as an unexplained hang. Explicit `graph index` is unbounded.
+/// Read-only queries bound freshness walks and retrieval. Explicit indexing
+/// checks safe transaction boundaries and remains unbounded by default.
 fn subcommand_is_bounded(subcommand: &GraphSubcommand) -> bool {
     !matches!(subcommand, GraphSubcommand::Index)
 }

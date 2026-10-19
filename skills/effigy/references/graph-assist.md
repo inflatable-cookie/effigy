@@ -19,9 +19,9 @@ effigy graph explore "trace release orchestration" --max-files 6 --max-bytes 122
 git diff --name-only | effigy graph affected --stdin --json
 ```
 
-Queries refresh missing or stale files automatically. Explicit `graph index`
-pre-warms the whole-checkout cache. Plain status is report-only; `--refresh`
-opts it into mutation. Node defaults to both directions and its limit bounds
+Queries and status read committed data without writes or refreshes. Run
+`graph index` explicitly when the packet reports missing or stale data. The
+legacy status `--refresh` flag warns and stays report-only. Node defaults to both directions and its limit bounds
 each collection. Explore accepts repeated language and path filters.
 
 The graph uses one `.effigy/graph/graph.db`, including catalog members. Each
@@ -31,7 +31,7 @@ Queries have a cooperative 120000ms deadline; `EFFIGY_GRAPH_TIMEOUT_MS=<MS>`
 overrides it and `0` disables it. Explicit indexing is unbounded. Deadline expiry
 stops at a safe boundary and preserves committed progress for the next refresh.
 
-`--stale-index` skips refresh and lock wait. It reports `stale-index`, or
+All reads skip refresh and exclusive gate waits. `--stale-index` keeps an explicit stale label. It reports `stale-index`, or
 `refreshing` during a writer; neither means current. A cold stale read reports
 `missing-index`. Gate on freshness and `usable` before trusting a packet.
 

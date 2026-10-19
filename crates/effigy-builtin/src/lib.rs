@@ -2,7 +2,7 @@
 //!
 //! Extracted from `src/runner/builtin/**` under card 250. Owns the
 //! registry, dispatcher, every built-in arm (doctor, tasks, test,
-//! scan, config, watch, completion, init, migrate,
+//! scan, config, completion, init,
 //! help, …) plus the test-support fixtures.
 //!
 //! The narrow [`BuiltinError`] boundary lifts to `RunnerError` at the
@@ -29,7 +29,6 @@ mod error;
 mod help;
 mod help_text;
 mod init;
-mod migrate;
 pub mod ports;
 mod prompt_policy;
 mod registry;
@@ -40,7 +39,6 @@ mod tasks;
 mod test;
 pub mod test_support;
 mod text_doc;
-mod watch;
 
 pub use constants::{BUILTIN_TASKS, DEFAULT_BUILTIN_TEST_MAX_PARALLEL};
 pub use error::BuiltinError;

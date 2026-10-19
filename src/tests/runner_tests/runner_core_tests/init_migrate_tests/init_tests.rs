@@ -291,7 +291,7 @@ fn run_manifest_task_builtin_init_checklist_json_reports_setup_inventory() {
             "\"schema\": \"effigy.init.checklist.v1\"",
             "\"mode\": \"checklist\"",
             "\"jobs\":",
-            "\"id\": \"task_migration.package_json\"",
+            "\"id\": \"task_surface.scan\"",
             "\"id\": \"graph_status.inspect\"",
             "\"id\": \"skill.codex_project\"",
             "Create or refresh a repo-local Effigy skill snapshot (explicit opt-in).",
@@ -377,7 +377,7 @@ backend = "effigy-vault"
     assert_output_contains_all(
         &out,
         &[
-            "\"id\": \"task_migration.package_json\"",
+            "\"id\": \"task_surface.scan\"",
             "\"id\": \"bundle_surface.inspect\"",
             "\"id\": \"secrets_surface.inspect\"",
             "\"applicability\": \"applicable\"",
@@ -413,12 +413,13 @@ backend = "effigy-vault"
     )
     .expect("write package");
 
+    let before = std::fs::read(root.join("effigy.toml")).expect("manifest before");
     let out = run_builtin_ok(
         root.to_path_buf(),
         "init",
         &[
             "--apply-actions",
-            "task_migration.package_json,graph_status.inspect,secrets_surface.inspect,bundle_surface.inspect",
+            "task_surface.scan,graph_status.inspect,secrets_surface.inspect,bundle_surface.inspect",
             "--json",
         ],
     );
@@ -426,18 +427,14 @@ backend = "effigy-vault"
         &out,
         &[
             "\"schema\": \"effigy.init.actions.v1\"",
-            "\"id\": \"task_migration.package_json\"",
-            "\"status\": \"applied\"",
+            "\"id\": \"task_surface.scan\"",
             "\"id\": \"graph_status.inspect\"",
             "\"status\": \"inspected\"",
             "\"id\": \"secrets_surface.inspect\"",
             "\"id\": \"bundle_surface.inspect\"",
         ],
     );
-    assert_file_text_contains_all(
-        &root.join("effigy.toml"),
-        &["[tasks]", "dev = \"vite\"", "build = \"vite build\""],
-    );
+    assert_eq!(std::fs::read(root.join("effigy.toml")).unwrap(), before);
 }
 
 #[test]

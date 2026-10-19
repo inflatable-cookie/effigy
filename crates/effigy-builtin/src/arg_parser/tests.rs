@@ -34,28 +34,6 @@ fn context_bool_literal_flag_value_message_contract_is_stable() {
 }
 
 #[test]
-fn quoted_choice_flag_value_message_contract_is_stable() {
-    let mut parser = BuiltinArgParser::new(&[]);
-    let err = parser
-        .quoted_choice_flag_value("--owner", "`effigy` or `external`", |_| None::<()>)
-        .expect_err("missing enum choice should fail");
-    assert_task_invocation(err, "`--owner` requires a value (`effigy` or `external`)");
-
-    let args = vec!["wat".to_owned()];
-    let mut invalid_parser = BuiltinArgParser::new(&args);
-    let err = invalid_parser
-        .quoted_choice_flag_value("--owner", "`effigy` or `external`", |value| match value {
-            "effigy" | "external" => Some(()),
-            _ => None,
-        })
-        .expect_err("invalid enum choice should fail");
-    assert_task_invocation(
-        err,
-        "invalid `--owner` value `wat` (expected `effigy` or `external`)",
-    );
-}
-
-#[test]
 fn builtin_choice_flag_value_message_contract_is_stable() {
     let mut parser = BuiltinArgParser::new(&[]);
     let err = parser
@@ -94,15 +72,6 @@ fn choice_ignore_ascii_case_contract_is_stable() {
 
     let unmatched = BuiltinArgParser::choice_ignore_ascii_case("unknown", &[("vitest", 1u8)]);
     assert_eq!(unmatched, None);
-}
-
-#[test]
-fn flag_string_value_missing_message_contract_is_stable() {
-    let mut parser = BuiltinArgParser::new(&[]);
-    let err = parser
-        .flag_string_value("--from", "a file path")
-        .expect_err("missing flag value should fail");
-    assert_task_invocation(err, "`--from` requires a file path");
 }
 
 #[test]

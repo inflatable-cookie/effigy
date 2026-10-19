@@ -50,12 +50,9 @@ allow_paths = ["src/bin/**"]
 }
 
 #[test]
-fn run_manifest_task_builtin_scan_dead_code_auto_refreshes_stale_index() {
-    // Regression for g08.016: a stale graph index reports drifted symbol
-    // positions and missing edges, which surface as false-positive dead-code
-    // findings. The scan used to refuse on a stale index; it now refreshes on
-    // demand (like graph queries) and only refuses when the refresh cannot
-    // complete.
+fn run_manifest_task_builtin_scan_dead_code_refuses_stale_until_explicit_index() {
+    // Stale positions must not produce false-positive findings. Refuse until
+    // explicit indexing prepares fresh graph records, keeping the scan pure.
     let root = setup_scan_workspace(
         "builtin-scan-dead-code-stale-index",
         Some("[scan.dead_code]\ndoctor = false\n"),
@@ -77,6 +74,14 @@ fn run_manifest_task_builtin_scan_dead_code_auto_refreshes_stale_index() {
     )
     .expect("rewrite live");
 
+    let before = fs::read(root.join(".effigy/graph/graph.db")).unwrap();
+    let error = run_builtin_err(root.clone(), "scan", &["dead-code"]);
+    assert!(error.to_string().contains("effigy graph index"));
+    assert_eq!(
+        fs::read(root.join(".effigy/graph/graph.db")).unwrap(),
+        before
+    );
+    seed_graph_index(&root);
     let out = run_builtin_ok(root, "scan", &["dead-code"]);
     assert_output_excludes_all(&out, &["requires a fresh graph index"]);
     assert_output_contains_all(

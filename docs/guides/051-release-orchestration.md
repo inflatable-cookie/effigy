@@ -65,7 +65,6 @@ Good shape:
 For the current helper-command cleanup, the release-note section should read
 roughly like this:
 
-- `effigy migrate` -> `effigy tasks migrate`
 - `effigy unlock` and `effigy cache ...` were removed (v0.15 task engine):
   task locks are run gates that release themselves, and the task cache is gone
 - `effigy completion ...` -> `effigy config completion ...`

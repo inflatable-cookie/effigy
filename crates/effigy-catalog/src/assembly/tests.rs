@@ -125,7 +125,7 @@ fn build_compose_document_without_volumes() {
 
 #[test]
 fn empty_service_list_rejected() {
-    let resolver = CatalogResolver::new(None, None);
+    let resolver = CatalogResolver::new(None);
     let assembler = ComposeAssembler::new(resolver);
     let result = assembler.assemble(&[], "test", ".", ".effigy-catalog", 1000, 1000);
     assert!(result.is_err());

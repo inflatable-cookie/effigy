@@ -3,7 +3,6 @@ use std::path::Path;
 use effigy_cli::{HelpTopic, TaskInvocation, TasksArgs};
 
 use super::command_spec::run_passthrough_builtin_command;
-use super::migrate;
 use super::render_builtin_help_topic;
 use crate::BuiltinError;
 use crate::BuiltinRuntimePorts;
@@ -19,11 +18,8 @@ pub(super) fn run_builtin_tasks(
     _catalogs: &[effigy_manifest::LoadedCatalog],
     _invocation_cwd: &Path,
 ) -> Result<Option<String>, BuiltinError> {
-    if let Some(nested) = nested_tasks_builtin(task, runtime_args) {
+    if let Some(nested) = nested_tasks_builtin(runtime_args) {
         return match nested {
-            NestedTasksBuiltin::Migrate { task, args } => {
-                migrate::run_builtin_migrate(&task, &args, target_root)
-            }
             NestedTasksBuiltin::Retired(message) => Err(BuiltinError::task_invocation(message)),
         };
     }
@@ -70,33 +66,15 @@ pub(crate) const RETIRED_CACHE: &str = "`effigy tasks cache` was removed in v0.1
     delete `.effigy/cache`";
 
 enum NestedTasksBuiltin {
-    Migrate {
-        task: TaskInvocation,
-        args: Vec<String>,
-    },
     /// Removed in v0.15; one-release refusal naming the replacement.
     Retired(&'static str),
 }
 
-fn nested_tasks_builtin(
-    task: &TaskInvocation,
-    runtime_args: &TaskRuntimeArgs,
-) -> Option<NestedTasksBuiltin> {
-    let (subcommand, tail) = runtime_args.passthrough.split_first()?;
+fn nested_tasks_builtin(runtime_args: &TaskRuntimeArgs) -> Option<NestedTasksBuiltin> {
+    let subcommand = runtime_args.passthrough.first()?;
     match subcommand.as_str() {
-        "migrate" => Some(NestedTasksBuiltin::Migrate {
-            task: nested_task(task, "migrate"),
-            args: tail.to_vec(),
-        }),
         "unlock" => Some(NestedTasksBuiltin::Retired(RETIRED_UNLOCK)),
         "cache" => Some(NestedTasksBuiltin::Retired(RETIRED_CACHE)),
         _ => None,
-    }
-}
-
-fn nested_task(task: &TaskInvocation, subcommand: &str) -> TaskInvocation {
-    TaskInvocation {
-        name: format!("{} {subcommand}", task.name),
-        args: Vec::new(),
     }
 }

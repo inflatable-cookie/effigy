@@ -119,32 +119,6 @@ pub(in crate::runner::tests) fn assert_managed_task_reference_invalid(
     }
 }
 
-pub(in crate::runner::tests) fn assert_managed_non_zero_exit(
-    err: RunnerError,
-    expected_task: &str,
-    expected_profile: &str,
-    expected_processes: &[(&str, &str)],
-) {
-    match err {
-        RunnerError::TaskManagedNonZeroExit {
-            task,
-            profile,
-            processes,
-        } => {
-            assert_eq!(task, expected_task);
-            assert_eq!(profile, expected_profile);
-            assert_eq!(
-                processes,
-                expected_processes
-                    .iter()
-                    .map(|(process, exit)| ((*process).to_owned(), (*exit).to_owned()))
-                    .collect::<Vec<_>>()
-            );
-        }
-        other => panic!("unexpected error: {other}"),
-    }
-}
-
 pub(in crate::runner::tests) fn assert_lock_conflict(
     err: RunnerError,
     expected_scope: &str,

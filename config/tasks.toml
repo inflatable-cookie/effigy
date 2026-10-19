@@ -2,11 +2,38 @@
 # Aggregator tasks below call the built-in through task refs.
 
 [tasks]
+"test:retirements:docs" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-catalog --lib -E 'test(render_service_help_shows_extract_options) | test(render_init_help_shows_phase_scope) | test(builtin_completion_json_contract_has_versioned_shape) | test(committed_snapshot_)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 900000 }
+# Wave-A retirement compatibility and retained lifecycle boundaries.
+"test:retirements:graph-fixture" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-codegraph --lib -E 'test(graph_manifest_indexer_skips_blank_unresolved_targets)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
+"test:retirements:ci-fixtures" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests -E 'test(documentation_graph_runtime_inventory_is_current) | test(cli_tasks_text_output_matches_canonical_fixture_tail) | test(cli_tasks_text_output_managed_profiles_matches_canonical_fixture_tail)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 900000 }
+"test:retirements:json-routing" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-cli --lib -E 'test(global_json::) | test(builtin_init_) | test(builtin_entrypoint_)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 900000 }
+"test:retirements:fixes" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-catalog --lib --test documentation_coverage_tests -E 'test(gateway_identity_legacy_active_record_refused) | test(builtin_init_checklist_json_contract) | test(builtin_entrypoint_help_json_contract_table) | test(builtin_help_topics_render_expected_content) | test(builtin_init_apply_actions_can_run_contextual_setup_jobs) | test(builtin_init_checklist_json_reports_setup_inventory) | test(builtin_init_checklist_reports_contextual_bundle_and_secrets_jobs) | test(public_builtin_registry_routes) | test(committed_snapshot_)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 900000 }
+"test:retirements:cli" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests -E 'test(retirement_tests::) | test(json_envelope_tests::)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 900000 }
+"test:retirements:gateway" = { run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private -E 'test(managed_host_listener_) | test(container_hybrid_) | test(managed_host_dependent_replacement_)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 1800000 }
+"check:retirements" = { run = "cargo check -p effigy -p effigy-codegraph -p effigy-core -p effigy-cli -p effigy-builtin -p effigy-manifest -p effigy-managed -p effigy-catalog -p effigy-gateway -p effigy-containers --all-targets --profile test", timeout_ms = 900000 }
+"lint:retirements" = { run = "cargo clippy -p effigy -p effigy-codegraph -p effigy-core -p effigy-cli -p effigy-builtin -p effigy-manifest -p effigy-managed -p effigy-catalog -p effigy-gateway -p effigy-containers --all-targets -- -D warnings", timeout_ms = 900000 }
+"test:retirements" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-core -p effigy-cli -p effigy-builtin -p effigy-manifest -p effigy-managed -p effigy-catalog -p effigy-gateway --lib --test integration --test documentation_coverage_tests -E 'package(effigy-catalog) | test(retirement_) | test(command_surface) | test(parse_) | test(render_) | test(builtin_) | test(init_inventory) | test(resolver::) | test(composition::) | test(socket_ownership::) | test(transition_lock::) | test(gateway_identity) | test(legacy_recovery_) | test(host_process_) | test(managed_headless) | test(project_local_and_distributed_effigy_skills) | test(public_help_families)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 1800000 }
+
 # Contributor setup
 "bootstrap:local" = [
   { rhai = "scripts/build-local-bin.rhai" },
   { rhai = "scripts/install-local-bin-links.rhai" },
 ]
+
+# Pure discovery and pinned executable-source acquisition (contract 052 R2).
+"test:bundles:pins" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-manifest --lib -E 'test(bundles::) | test(composition::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
+"test:bundles:cli" = { run = "cargo nextest run --cargo-profile discovery-proof --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test bundle_pins --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
+"test:bundles:discovery-helpers" = { run = "cargo nextest run --cargo-profile discovery-proof --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test bundle_pins -E 'test(discovery_never_waits_for_presentation_helpers)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
+"test:bundles:presentation-cli" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests -E 'test(help_and_flags_tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
+"test:bundles:header" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-cli -p effigy-core -p effigy --lib -E 'test(header::) | test(help_render_tests::) | test(build_info::tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
+"test:bundles:consumers" = [
+  { run = "cargo build --profile discovery-proof -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 },
+  { run = "EFFIGY_BUNDLE_CONSUMERS=$HOME/Dev/legacy/sites/cbs:$HOME/Dev/legacy/libraries/decodelabs/archetype:$HOME/Dev/projects/acowtancy EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/discovery-proof/kernel-custody-fixture cargo nextest run --cargo-profile discovery-proof --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test bundle_pins --run-ignored only -E 'test(consumer_effective_)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
+]
+"test:bundles:surface" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(bundle_command::tests::) | test(config_builtin_tests::) | test(bootstrap_command::tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
+"test:kernel:source-store" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib -E 'test(source_directory_) | test(run_store_record_)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
+"check:bundles:compile" = { run = "cargo check -p effigy -p effigy-manifest -p effigy-kernel -p effigy-cli -p effigy-builtin -p effigy-core --all-targets --profile test", timeout_ms = 600000 }
+"check:bundles:clippy" = { run = "cargo clippy -p effigy -p effigy-manifest -p effigy-kernel -p effigy-cli -p effigy-builtin -p effigy-core --all-targets -- -D warnings", timeout_ms = 600000 }
 
 # Deploy execution refusal plus unchanged model/export and legacy readers.
 "test:deploy" = [
@@ -18,12 +45,22 @@
 "lint:deploy" = { run = "cargo clippy -p effigy -p effigy-cli --all-targets -- -D warnings", timeout_ms = 600000 }
 
 # Graph storage and CLI refresh contract; nextest bounds each case and leaks.
-"test:graph:storage" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-codegraph --lib --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail", timeout_ms = 600000 }
-"test:graph:runner" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(graph_) | test(docs_context_time_budget_tests::)' --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail", timeout_ms = 600000 }
-"test:graph:adoption" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-codegraph --lib --filterset 'test(builtin_init_actions_json_contract_has_versioned_shape) | test(graph_excerpts_payload_round_trips)' --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail", timeout_ms = 600000 }
-"test:graph:config" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-manifest -p effigy-routing --lib --filterset 'test(loaded_catalog::tests::) | test(owning_workspace_root_)' --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail", timeout_ms = 600000 }
-"test:graph:cli" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests --filterset 'test(graph_surface_tests::) | test(retired_graph_watch_) | test(documentation_graph_runtime_)' --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail", timeout_ms = 600000 }
-"test:graph:parity" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test documentation_coverage_tests --filterset 'test(project_local_and_distributed_effigy_skills_have_semantic_parity) | test(public_help_families_and_current_contract_paths_are_documented)' --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail", timeout_ms = 600000 }
+"test:graph:purity" = [
+  { run = "cargo build --profile discovery-proof --bin effigy", timeout_ms = 600000 },
+  { run = "EFFIGY_TEST_EFFIGY_EXECUTABLE=$PWD/target/discovery-proof/effigy cargo nextest run --cargo-profile discovery-proof --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-codegraph --lib --run-ignored only -E 'test(read_purity::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
+]
+"test:graph:docs" = [
+  { run = "sh tests/scripts/graph-test-home.sh cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests -E 'test(docs_context_tests::) | test(docs_context_sources_tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { run = "sh tests/scripts/graph-test-home.sh cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(docs_command::tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
+]
+"test:graph:contracts" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-contracts --lib --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
+"test:bundles:legacy-signal" = { run = "sh tests/scripts/graph-test-home.sh cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests -E 'test(cli_container_data_seed_reaper_detector_catches_enabled_control_and_cleans_owned_child)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
+"test:graph:storage" = { run = "sh tests/scripts/graph-test-home.sh cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-codegraph --lib --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail", timeout_ms = 600000 }
+"test:graph:runner" = { run = "sh tests/scripts/graph-test-home.sh cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(graph_) | test(docs_context_time_budget_tests::) | test(scan_tests::dead_code::) | test(scan_tests::boundary_violations::) | test(scan_tests::validation_gaps::)' --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail", timeout_ms = 600000 }
+"test:graph:adoption" = { run = "sh tests/scripts/graph-test-home.sh cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-codegraph --lib --filterset 'test(builtin_init_actions_json_contract_has_versioned_shape) | test(graph_excerpts_payload_round_trips)' --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail", timeout_ms = 600000 }
+"test:graph:config" = { run = "sh tests/scripts/graph-test-home.sh cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-manifest -p effigy-routing --lib --filterset 'test(loaded_catalog::tests::) | test(owning_workspace_root_)' --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail", timeout_ms = 600000 }
+"test:graph:cli" = { run = "sh tests/scripts/graph-test-home.sh cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests --filterset 'test(graph_surface_tests::) | test(retired_graph_watch_) | test(documentation_graph_runtime_)' --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail", timeout_ms = 600000 }
+"test:graph:parity" = { run = "sh tests/scripts/graph-test-home.sh cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test documentation_coverage_tests --filterset 'test(project_local_and_distributed_effigy_skills_have_semantic_parity) | test(public_help_families_and_current_contract_paths_are_documented)' --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail", timeout_ms = 600000 }
 
 "test:graph:checkout" = { admission = "heavy", run = [ { id = "graph-checkout-build", run = "cargo build --bin effigy", timeout_ms = 600000 }, { id = "graph-checkout-smoke", run = "python3 tests/scripts/graph-checkout-smoke.py ./target/debug/effigy", timeout_ms = 600000 } ] }
 "check:graph" = "cargo check -p effigy-codegraph -p effigy-cli -p effigy-manifest -p effigy-routing -p effigy-builtin -p effigy --all-targets --profile test"
@@ -399,7 +436,7 @@
   { id = "managed-host-listener-runner-registration", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(gateway_registration)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
   { id = "managed-host-listener-proxy", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy-gateway --lib --filterset 'test(proxy)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
   { id = "managed-host-listener-supervisor", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(host_process)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
-  { id = "managed-host-listener-gateway-transition", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy-gateway --lib --filterset 'test(legacy_recovery)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { id = "managed-host-listener-gateway-transition", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy-gateway --lib --filterset 'test(socket_ownership::) | test(transition_lock::)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
   { task = "test:gateway:route-handover" },
 ]
 # Managed listener routes follow the checkout host map that container DNS
@@ -418,10 +455,6 @@
 # production wait boundary: selected causes, dependency assignments, teardown,
 # ready-only tuple replacement, inspection failure and secret allowlist control.
 # Disposable loopback fixtures and owned child processes only.
-"proof:managed:host-transitions" = [
-  { id = "managed-host-transitions-cli-proof", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_host_transitions_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
-  { id = "managed-host-transitions-production-wait-proof", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(managed_host_transitions_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
-]
 # Isolated HTTP readiness compatibility and terminal diagnostic counterexamples
 # for managed host listeners. Disposable loopback fixtures only; no consumer
 # runtime, route table or host state is touched.
@@ -549,16 +582,8 @@
   "cargo check -p effigy-gateway -p effigy-cli -p effigy-containers -p effigy --all-targets",
   "cargo clippy -p effigy-gateway -p effigy-cli -p effigy-containers -p effigy --all-targets -- -D warnings",
 ]
-"test:gateway:legacy-recovery" = [
-  # Includes cold workspace compilation; native probe/readiness limits stay fixed.
-  { id = "gateway-legacy-recovery", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-gateway -p effigy-cli -p effigy --lib --filterset 'test(legacy_recovery) | test(gateway_identity_legacy) | test(gateway_identity)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
-]
 "test:gateway:macos-inspection" = [
   { id = "gateway-macos-inspection", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-gateway --lib --filterset 'test(legacy_recovery_macos_)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
-]
-"check:gateway:legacy-recovery" = [
-  "cargo check -p effigy-gateway -p effigy-cli -p effigy --all-targets",
-  "cargo clippy -p effigy-gateway -p effigy-cli -p effigy --all-targets -- -D warnings",
 ]
 # Stable per-boot identity primitives: parser/command controls, cross-process
 # uncached proof, and legacy `kern.boottime` compatibility. Private fixtures
@@ -591,13 +616,6 @@
 # refusal for stale/unknown/symlink records, unchanged operator defaults,
 # and one native loopback-lowport bind proof. Synthetic fixtures and owned
 # children only; no live gateway state, sudo, or cross-UID proof is claimed.
-"test:gateway:user-runtime" = [
-  { id = "gateway-user-runtime", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-gateway --lib --filterset 'test(user_runtime)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 240000 },
-]
-"check:gateway:user-runtime" = [
-  "cargo check -p effigy-gateway --all-targets",
-  "cargo clippy -p effigy-gateway --all-targets -- -D warnings",
-]
 # Launchd loopback listener handoff (task 156): descriptor validation and
 # adoption through the production boundary on ephemeral loopback endpoints,
 # the deterministic administrator setup definition with strict parse/refuse
@@ -1131,12 +1149,7 @@
 ]
 # Implicit runtime ignore registration (papercut 082): Git-local
 # info/exclude, never working-tree .gitignore. Private fixtures only.
-"test:runtime:local-ignores" = [
-  "cargo test -p effigy-core --lib runtime_dir:: -- --nocapture",
-  "cargo test -p effigy-core --lib git_worktree:: -- --nocapture",
-  "cargo test -p effigy-manifest --lib auto_discovered_local_overlay_registers_git_exclude_not_gitignore -- --nocapture",
-  "cargo test -p effigy --lib run_manifest_task_builtin_init -- --nocapture",
-]
+"test:runtime:local-ignores" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-core -p effigy-manifest -p effigy --lib -E 'test(runtime_dir::) | test(git_worktree::) | test(auto_discovered_local_overlay_does_not_write_git_exclude) | test(run_manifest_task_builtin_init)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
 "check:runtime:local-ignores" = [
   "cargo check -p effigy-core -p effigy-manifest -p effigy-containers -p effigy-release -p effigy-demo -p effigy --lib --tests --profile test",
   "cargo clippy -p effigy-core -p effigy-manifest --lib -- -D warnings",
@@ -1172,10 +1185,6 @@
   { id = "environment-race-fixtures", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-host-run --lib --filterset 'package(effigy-host-run) | test(bootstrap_command::tests::) | test(container_runtime_prep::tests::) | test(output_mode_behavior_tests::) | test(release_preparation_fixture_env_isolation_) | test(release_preparation_fixture_signal_proof_lock_order_serializes_in_process)' --no-capture --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
   { id = "shared-path-mutators", run = "cargo test -p effigy --lib shared_process_ -- --nocapture --test-threads=8", timeout_ms = 240000 },
 ]
-"test:shared-process:watch-isolation" = [
-  { id = "watch-contract-isolation", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(builtin_watch_bounded_json_contract_has_versioned_shape) | test(shared_process_watch_contract_)' --no-capture --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
-  { id = "shared-path-mutators-with-watch", run = "cargo test -p effigy --lib shared_process_ -- --nocapture --test-threads=8", timeout_ms = 240000 },
-]
 "check:shared-process:env-races" = [
   { run = "cargo check -p effigy -p effigy-host-run --lib --tests --profile test", timeout_ms = 600000 },
   { run = "cargo clippy -p effigy -p effigy-host-run --lib --tests -- -D warnings", timeout_ms = 600000 },
@@ -1197,7 +1206,7 @@
   { id = "prepared-tree-fixture-coordination", run = "cargo test -p effigy --lib release_preparation_fixture -- --nocapture --test-threads=8", timeout_ms = 240000 },
 ]
 "test:release:preparation-environment-isolation" = [
-  { id = "preparation-environment-isolation", run = "cargo nextest run --config-file tests/config/release-preparation-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(release_preparation_fixture_env_isolation_path_and_graph_budget_readers_wait_for_scoped_writer) | test(supervision_init_unbounded_wait_failure_reaps_owned_tree) | test(graph_explore_cold_stale_index_names_next_action) | test(graph_cwd_selection_uses_captured_invocation_context) | test(docs_cold_refresh_fails_within_a_deliberately_tiny_bound) | test(graph_timeout_uses_the_existing_two_minute_default_when_unset) | test(resolve_host_program_uses_host_cli_resolver_for_bare_names) | test(copy_file_into_service_invocation_prefers_policy_backend_over_installed_docker)' --max-fail 1:immediate --retries 0", timeout_ms = 240000 },
+  { id = "preparation-environment-isolation", run = "cargo nextest run --config-file tests/config/release-preparation-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(release_preparation_fixture_env_isolation_path_and_graph_budget_readers_wait_for_scoped_writer) | test(supervision_init_unbounded_wait_failure_reaps_owned_tree) | test(graph_explore_cold_stale_index_names_next_action) | test(graph_cwd_selection_uses_captured_invocation_context) | test(docs_cold_read_is_bounded_and_never_prepares) | test(graph_timeout_uses_the_existing_two_minute_default_when_unset) | test(resolve_host_program_uses_host_cli_resolver_for_bare_names) | test(copy_file_into_service_invocation_prefers_policy_backend_over_installed_docker)' --max-fail 1:immediate --retries 0", timeout_ms = 240000 },
 ]
 "check:release:preparation-environment-isolation" = [
   "cargo check -p effigy --lib --tests --profile test",
@@ -1340,17 +1349,6 @@
 ]
 
 # Documentation QA
-"check:docs:qualified-closure" = [
-  "cargo check -p effigy -p effigy-cli -p effigy-docs-policy --all-targets",
-  "cargo clippy -p effigy -p effigy-cli -p effigy-docs-policy --all-targets -- -D warnings",
-  "cargo build --profile qualified-docs --bin effigy",
-  "node --check scripts/qualified-docs-execution.mjs",
-]
-"test:docs:qualified-closure" = [
-  { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests --filterset 'test(documentation_graph_runtime_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
-  { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-docs-policy --lib --filterset 'test(docs_command::qualified::) | test(parse_docs_) | test(scan_markdown_links) | test(collect_link_check_files)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
-  { run = "node --test --test-timeout=120000 --test-force-exit tests/qualified_docs_execution.test.mjs", timeout_ms = 300000 },
-]
 "qa:docs:links" = "cargo run --bin effigy -- docs check links"
 "qa:docs:examples" = "cargo run --bin effigy -- docs check json-examples"
 "qa:docs:agent-defaults" = "cargo run --bin effigy -- docs check forbidden AGENTS.md .github/workflows/json-contracts.yml docs/knowledge/contracts/json-selection-contract.json --forbid '--repo .'"

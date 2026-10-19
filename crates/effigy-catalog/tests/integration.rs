@@ -22,7 +22,7 @@ mod workspace;
 
 /// Helper: create a resolver that only uses bundled fragments.
 pub(crate) fn bundled_resolver() -> CatalogResolver {
-    CatalogResolver::new(None, None)
+    CatalogResolver::new(None)
 }
 
 /// Parse the assembled compose YAML back into a `serde_yaml::Value` and

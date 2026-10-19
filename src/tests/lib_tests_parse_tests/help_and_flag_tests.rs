@@ -424,23 +424,6 @@ fn parse_help_command_alias_is_general_help() {
 }
 
 #[test]
-fn parse_tasks_migrate_routes_through_nested_builtin_entrypoint() {
-    let cmd = parse_command(vec![
-        "tasks".to_owned(),
-        "migrate".to_owned(),
-        "--apply".to_owned(),
-    ])
-    .expect("parse should succeed");
-    assert_eq!(
-        cmd,
-        Command::Task(TaskInvocation {
-            name: "tasks".to_owned(),
-            args: vec!["migrate".to_owned(), "--apply".to_owned()],
-        })
-    );
-}
-
-#[test]
 fn parse_tasks_unlock_routes_through_nested_builtin_entrypoint() {
     let cmd = parse_command(vec![
         "tasks".to_owned(),
@@ -491,13 +474,6 @@ fn parse_test_help_is_scoped() {
     let cmd =
         parse_command(vec!["test".to_owned(), "--help".to_owned()]).expect("parse should succeed");
     assert_eq!(cmd, Command::Help(HelpTopic::Test));
-}
-
-#[test]
-fn parse_watch_help_is_scoped() {
-    let cmd =
-        parse_command(vec!["watch".to_owned(), "--help".to_owned()]).expect("parse should succeed");
-    assert_eq!(cmd, Command::Help(HelpTopic::Watch));
 }
 
 #[test]

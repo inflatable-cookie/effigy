@@ -212,16 +212,8 @@ pub const COMMAND_DESCRIPTORS: &[CommandDescriptor] = &[
         command_name: Some("test"),
     },
     CommandDescriptor {
-        topic: HelpTopic::Watch,
-        command_name: Some("watch"),
-    },
-    CommandDescriptor {
         topic: HelpTopic::Init,
         command_name: Some("init"),
-    },
-    CommandDescriptor {
-        topic: HelpTopic::Migrate,
-        command_name: None,
     },
     CommandDescriptor {
         topic: HelpTopic::Changelog,
@@ -264,13 +256,6 @@ pub const GENERAL_HELP_ENTRIES: &[GeneralHelpEntry] = &[
     },
     GeneralHelpEntry {
         group: HelpGroup::Work,
-        command: "effigy tasks migrate",
-        description: "Import package scripts into `[tasks]` with preview/apply flow",
-        deferred_builtin: None,
-        help_argument: None,
-    },
-    GeneralHelpEntry {
-        group: HelpGroup::Work,
         command: "effigy drafts",
         description: "Inventory lifecycle-labelled draft definitions with expiry state and composed source",
         deferred_builtin: Some("drafts"),
@@ -289,13 +274,6 @@ pub const GENERAL_HELP_ENTRIES: &[GeneralHelpEntry] = &[
         description: "Run built-in auto-detected or `[test.suites]` tests; supports <catalog>/test targeting",
         deferred_builtin: Some("test"),
         help_argument: Some("test"),
-    },
-    GeneralHelpEntry {
-        group: HelpGroup::Work,
-        command: "effigy watch",
-        description: "Watch mode phase-1 runtime with explicit owner policy and debounce/glob controls",
-        deferred_builtin: Some("watch"),
-        help_argument: Some("watch"),
     },
     GeneralHelpEntry {
         group: HelpGroup::Work,
@@ -542,7 +520,6 @@ pub const HELP_COMMAND_TOPICS: &[(&str, HelpTopic)] = &[
     ("test", HelpTopic::Test),
     ("uninstall", HelpTopic::Uninstall),
     ("version", HelpTopic::General),
-    ("watch", HelpTopic::Watch),
     ("workspace", HelpTopic::Workspace),
 ];
 

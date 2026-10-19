@@ -33,12 +33,6 @@ pub(in crate::runner::tests) struct ManagedInvalidDefinitionCase {
     pub(in crate::runner::tests) expected_detail_substring: Option<&'static str>,
 }
 
-pub(in crate::runner::tests) struct ManagedStreamBuiltinTestCase {
-    pub(in crate::runner::tests) workspace: &'static str,
-    pub(in crate::runner::tests) suite: &'static str,
-    pub(in crate::runner::tests) task_ref: &'static str,
-}
-
 pub(in crate::runner::tests) struct ManagedTaskRefInvalidCase {
     pub(in crate::runner::tests) workspace: &'static str,
     pub(in crate::runner::tests) manifest: &'static str,
@@ -54,14 +48,4 @@ pub(in crate::runner::tests) struct ManagedProfileNotFoundCase {
     pub(in crate::runner::tests) expected_task: &'static str,
     pub(in crate::runner::tests) expected_profile: &'static str,
     pub(in crate::runner::tests) expected_available: &'static [&'static str],
-}
-
-pub(in crate::runner::tests) struct ManagedNonZeroExitCase {
-    pub(in crate::runner::tests) workspace: &'static str,
-    pub(in crate::runner::tests) invocation: ManagedInvocation,
-    pub(in crate::runner::tests) args: &'static [&'static str],
-    pub(in crate::runner::tests) setup: fn(&Path),
-    pub(in crate::runner::tests) expected_task: &'static str,
-    pub(in crate::runner::tests) expected_profile: &'static str,
-    pub(in crate::runner::tests) expected_processes: &'static [(&'static str, &'static str)],
 }

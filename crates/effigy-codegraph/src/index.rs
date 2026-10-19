@@ -239,22 +239,6 @@ fn relations_pending_key(scope: &GraphScope) -> String {
     format!("relations_pending:{}", scope.key())
 }
 
-pub(crate) fn index_configuration_matches(
-    scope: &GraphScope,
-    store: &GraphStore,
-) -> Result<bool, CodeGraphError> {
-    let profile = load_docs_profile_state(scope.workspace_root())?;
-    let registry = ExtractorRegistry::for_docs_profile(profile.compiled().cloned());
-    Ok(store
-        .metadata_value(DOCS_PROFILE_FINGERPRINT_KEY)?
-        .as_deref()
-        == Some(profile.fingerprint().as_str())
-        && store.extractor_version_map()? == extractor_version_map(registry.all())
-        && store
-            .metadata_value(&relations_pending_key(scope))?
-            .is_none())
-}
-
 fn file_freshness_keys(
     extractors: &BTreeMap<String, String>,
     profile: &str,
@@ -271,34 +255,24 @@ fn file_freshness_keys(
         .collect()
 }
 
-/// `status` with a lazy-refresh pass first: a stale or missing index is
-/// rebuilt on demand (the same gate queries use), and any refresh notes are
-/// appended to the reported freshness summary. Report-only by default;
-/// callers opt in.
+/// Compatibility spelling for report-only status. The old refresh request
+/// warns for one release and never rebuilds a missing or stale index.
 pub fn status_with_refresh(repo_root: &Path) -> Result<GraphStatusPayload, CodeGraphError> {
     status_in_scope(&repo_scope(repo_root)?, true)
 }
 
-/// Status for one selected scope. `refresh` opts into the lazy rebuild;
-/// without it the call never mutates graph state.
+/// Report-only status. The legacy `refresh` flag warns for one release.
 pub fn status_in_scope(
     scope: &GraphScope,
     refresh: bool,
 ) -> Result<GraphStatusPayload, CodeGraphError> {
-    if !refresh {
-        return status_report(scope);
-    }
-    let store = GraphStore::open_for_scope(scope)?;
-    let outcome = crate::refresh::ensure_fresh(scope, &store)?;
-    let mut payload = status_report(scope)?;
-    if !outcome.notes.is_empty() {
-        payload.freshness.summary = format!(
-            "{} ({})",
-            payload.freshness.summary,
-            outcome.notes.join("; ")
+    // Compatibility spelling only: status is always Observe under R2.
+    if refresh {
+        eprintln!(
+            "[graph] --refresh on status is retired; run `effigy graph index` to update the index"
         );
     }
-    Ok(payload)
+    status_report(scope)
 }
 
 pub fn status(repo_root: &Path) -> Result<GraphStatusPayload, CodeGraphError> {
@@ -363,7 +337,16 @@ fn status_report(scope: &GraphScope) -> Result<GraphStatusPayload, CodeGraphErro
         failed_paths.len(),
     );
     let lock = crate::refresh::inspect_refresh_lock(&scope.paths().refresh_lock_path);
-    if lock.held {
+    if GraphStore::has_wal(scope) {
+        freshness.state = "refresh-recommended".to_owned();
+        freshness.stale = true;
+        freshness.summary = "graph stale (refresh interrupted or in progress); run `effigy graph index` to migrate WAL storage".into();
+    } else if lock.unknown {
+        freshness.state = "refresh-recommended".into();
+        freshness.stale = true;
+        freshness.summary =
+            "graph refresh gate is unobservable; run `effigy graph index` on the host".into();
+    } else if lock.held {
         let progress = store
             .as_ref()
             .map(|store| store.metadata_value("refresh_progress"))

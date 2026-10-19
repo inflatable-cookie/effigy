@@ -18,9 +18,9 @@ pub fn ensure_effigy_ignored_in_git_root(repo_root: &Path) -> io::Result<bool> {
     ensure_pattern_ignored_in_git_root(repo_root, ".effigy", &[".effigy", ".effigy/"])
 }
 
-/// Append `effigy.local.toml` to Git's local exclude file the first time the
-/// auto-discovered local overlay is observed. Idempotent. No-op on non-git
-/// roots. Never amends `.gitignore`.
+/// Register `effigy.local.toml` during explicit Prepare or Mutate work.
+/// Idempotent; no-op on non-git roots. Manifest discovery never calls this.
+/// Never amends `.gitignore`.
 pub fn ensure_local_overlay_ignored_in_git_root(repo_root: &Path) -> io::Result<bool> {
     ensure_pattern_ignored_in_git_root(
         repo_root,

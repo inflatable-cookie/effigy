@@ -65,16 +65,3 @@ fn parse_runtime_task_passthrough() {
         })
     );
 }
-
-#[test]
-fn parse_watch_passthrough_without_help() {
-    let cmd = parse_command(vec!["watch".to_owned(), "services/api/dev".to_owned()])
-        .expect("parse should succeed");
-    assert_eq!(
-        cmd,
-        Command::Task(TaskInvocation {
-            name: "watch".to_owned(),
-            args: vec!["services/api/dev".to_owned()],
-        })
-    );
-}

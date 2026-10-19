@@ -9,4 +9,3 @@ fn parser_task() -> TaskInvocation {
 
 mod completion;
 mod config;
-mod watch;

@@ -27,20 +27,6 @@ fn run_manifest_task_builtin_help_json_contract_table_has_stable_schema_topic_an
             "effigy init [--check|--apply|--repair] [--json]",
         ),
         builtin_help_json_case(
-            "builtin-watch-help-json-contract",
-            "watch",
-            &["--help", "--json", "--wat"],
-            "watch",
-            "effigy watch --owner <effigy|external>",
-        ),
-        builtin_help_json_case(
-            "builtin-migrate-help-json-contract",
-            "migrate",
-            &["--help", "--json", "--wat"],
-            "tasks-migrate",
-            "effigy tasks migrate [--from <PATH>]",
-        ),
-        builtin_help_json_case(
             "builtin-doctor-help-json-contract",
             "doctor",
             &["--help", "--json", "--wat"],

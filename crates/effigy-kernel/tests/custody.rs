@@ -126,6 +126,91 @@ fn eventually(mut predicate: impl FnMut() -> bool) {
     }
 }
 #[test]
+fn custody_prepare_source_requires_its_class_and_settles_with_a_sentinel() {
+    for expected in [Some(0), Some(7), None] {
+        let home = home();
+        let mutate = context();
+        let cx = OperationContext::new(
+            Deadline::At(Instant::now() + Duration::from_secs(20)),
+            CancelToken::default(),
+            mutate.operation().limits().clone(),
+            EffectClass::Prepare,
+            effigy_kernel::ctx::Placement::Host,
+        )
+        .effects()
+        .unwrap();
+        let root = StateRoot::effects(&cx, home.path()).unwrap();
+        let mut coordinates = invocation().spec().clone();
+        coordinates.class = EffectClass::Prepare;
+        coordinates.owner = ResourceId::store(Scope::Machine, "bundles").unwrap();
+        let mut run = Run::begin(
+            &cx,
+            &root,
+            &ResolvedInvocation::new(coordinates).unwrap(),
+            BeginOpts {
+                id: id(1),
+                wait: Wait::FailFast,
+                acknowledge: vec![],
+                next: next(),
+                custody: Some(LifecyclePlan {
+                    executable: Executable::capture(&fixture()).unwrap(),
+                    placement: effigy_kernel::supervise::Placement::Inline,
+                }),
+            },
+            &cx.operation().cleanup(Duration::from_secs(10)).unwrap(),
+            &mut Strict,
+        )
+        .unwrap();
+        assert!(matches!(
+            Custody::spawn(&mut run, spec(home.path(), "exit 0"), &cx),
+            Err(SpawnError::Refused(_))
+        ));
+        assert!(matches!(
+            Custody::spawn_source(&mut run, spec(home.path(), "exit 0"), &mutate),
+            Err(SpawnError::Refused(_))
+        ));
+        let script = match expected {
+            Some(0) => "printf acquired",
+            Some(_) => "exit 7",
+            None => "sleep 60",
+        };
+        let mut process = spec(home.path(), script);
+        if expected.is_none() {
+            process.lifetime = Lifetime::Finite(Duration::from_millis(50));
+        }
+        let mut child = Custody::spawn_source(&mut run, process, &cx).unwrap();
+        match (expected, child.wait(cx.operation())) {
+            (Some(code), Observed::Verified(exit, _)) => {
+                assert_eq!(exit.code, code);
+                child.complete(&mut run, exit).unwrap();
+                if code == 0 {
+                    assert_eq!(child.take_output(), b"acquired");
+                    run.finish(WorkloadOutcome::Succeeded).unwrap();
+                } else {
+                    run.finish(WorkloadOutcome::Failed { code }).unwrap();
+                }
+            }
+            (None, Observed::Unknown(UnknownReason::TimedOut { .. })) => {
+                run.interrupt(
+                    &cx.operation().cleanup(Duration::from_secs(10)).unwrap(),
+                    WorkloadOutcome::TimedOut {
+                        phase: "source acquisition".into(),
+                    },
+                )
+                .unwrap();
+            }
+            other => panic!("unexpected acquisition result: {other:?}"),
+        }
+        let result = run
+            .settle(
+                &cx.operation().cleanup(Duration::from_secs(10)).unwrap(),
+                &mut Strict,
+            )
+            .unwrap();
+        assert_eq!(result.cleanup(), CleanupOutcome::Complete);
+    }
+}
+#[test]
 fn custody_partial_spawn_rolls_back_and_foreign_fixture_survives() {
     let home = home();
     let cx = context();

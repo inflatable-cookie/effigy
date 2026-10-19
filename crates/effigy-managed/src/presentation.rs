@@ -15,7 +15,6 @@ use crate::{render_utf8, text_renderer};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ManagedExecutionMode {
     RenderPlan,
-    Stream,
     Headless,
     Tui,
 }
@@ -36,7 +35,7 @@ fn render_managed_task_plan(
         Vec::new(),
         &[
             "Interactive TUI runtime is available for this task.",
-            "Set EFFIGY_MANAGED_STREAM=1 to run selected profile processes in stream mode.",
+            "Use --headless to run without the terminal UI.",
         ],
     )?;
     write_managed_plan_process_table(&mut renderer, &plan)?;
@@ -55,9 +54,6 @@ pub fn run_or_render_managed_task(
     settle: Option<&crate::ManagedRunSettle<'_>>,
 ) -> Result<String, ManagedError> {
     match execution_mode {
-        ManagedExecutionMode::Stream => {
-            runtime::run_managed_task_runtime(task_name, repo_root, plan)
-        }
         ManagedExecutionMode::Headless => {
             runtime::run_managed_task_headless(task_name, repo_root, plan, settle)
         }
@@ -70,19 +66,18 @@ pub fn run_or_render_managed_task(
     }
 }
 
-pub fn managed_execution_mode() -> ManagedExecutionMode {
+pub fn managed_execution_mode() -> Result<ManagedExecutionMode, ManagedError> {
+    if std::env::var_os("EFFIGY_MANAGED_STREAM").is_some() {
+        return Err(ManagedError::task_invocation(
+            "EFFIGY_MANAGED_STREAM is retired; unset it and use --headless",
+        ));
+    }
     let tui_override = std::env::var("EFFIGY_MANAGED_TUI").ok();
     if std::env::var("EFFIGY_MANAGED_HEADLESS")
         .ok()
         .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
     {
-        return ManagedExecutionMode::Headless;
-    }
-    if std::env::var("EFFIGY_MANAGED_STREAM")
-        .ok()
-        .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
-    {
-        return ManagedExecutionMode::Stream;
+        return Ok(ManagedExecutionMode::Headless);
     }
 
     let should_tui = match tui_override.as_deref() {
@@ -93,8 +88,8 @@ pub fn managed_execution_mode() -> ManagedExecutionMode {
         _ => std::io::stdin().is_terminal() && std::io::stdout().is_terminal(),
     };
     if should_tui {
-        ManagedExecutionMode::Tui
+        Ok(ManagedExecutionMode::Tui)
     } else {
-        ManagedExecutionMode::RenderPlan
+        Ok(ManagedExecutionMode::RenderPlan)
     }
 }

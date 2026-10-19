@@ -1,450 +1,246 @@
-//! Cooperative lazy refresh over committed per-file transactions.
-//! A reader may see different file generations and reports `refreshing (n/N)`
-//! while another process holds the refresh lock. No database copy is made.
-
-use std::fs::{File, OpenOptions};
-use std::io::{Read, Seek, SeekFrom, Write};
-use std::path::Path;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-
-use fs2::FileExt;
-use serde::{Deserialize, Serialize};
-
+//! Explicit graph refreshes own a kernel store gate. Queries only observe
+//! committed per-file transactions and never create or refresh graph state.
 use crate::error::CodeGraphError;
 use crate::index::{
     graph_freshness_payload, run_index_unlocked_in_scope, stale_index_freshness_payload,
     stale_paths_in_scope, IndexReport,
 };
 use crate::json::{GraphFreshnessPayload, GraphLockPayload};
-use crate::phase::{self, GraphPhase};
 use crate::scope::GraphScope;
 use crate::storage::GraphStore;
+use effigy_kernel::{
+    ctx::{CancelToken, Deadline, EffectClass, Limits, OperationContext, Placement},
+    gate::{Gate, GateError, GateGuard, GateState, Wait},
+    id::{ResourceId, Scope},
+    observe::Observed,
+    root::StateRoot,
+};
+use sha2::{Digest, Sha256};
+use std::os::unix::ffi::OsStrExt;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
-/// How long a query waits for an in-flight refresh before serving current
-/// data that is still marked stale.
-const IN_FLIGHT_WAIT_MS: u64 = 2_500;
 const EXPLICIT_REFRESH_WAIT_MS: u64 = 10_000;
-const LOCK_POLL_MS: u64 = 100;
-/// Extra polls allowed after a recorded holder pid is dead before treating
-/// the lock as abandoned for lookup purposes.
-const STALE_HOLDER_WAIT_MS: u64 = 200;
 
-/// Cross-process exclusive lock guarding checkout refreshes.
-/// Lazy refresh and explicit indexing share the same lock.
 pub(crate) struct RefreshLock {
-    file: File,
+    _gate: GateGuard,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct LockIdentityRecord {
-    pid: u32,
-    acquired_unix_ms: u64,
-}
-
-/// Observed refresh-lock identity for diagnostics and lookup decisions.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RefreshLockInspection {
     pub held: bool,
+    pub unknown: bool,
     pub identity: Option<LockIdentityRecordView>,
 }
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LockIdentityRecordView {
     pub pid: u32,
-    pub acquired_unix_ms: u64,
-    pub age_ms: u64,
-    pub stale_holder: bool,
 }
-
 impl RefreshLockInspection {
     pub fn payload(&self) -> GraphLockPayload {
         GraphLockPayload {
             held: self.held,
             pid: self.identity.as_ref().map(|identity| identity.pid),
-            age_ms: self.identity.as_ref().map(|identity| identity.age_ms),
-            stale_holder: self
-                .identity
-                .as_ref()
-                .is_some_and(|identity| identity.stale_holder),
+            // The kernel gate diagnostic carries process identity, not age.
+            age_ms: None,
+            stale_holder: false,
         }
     }
 }
-
+fn operation(class: EffectClass, budget: Duration) -> OperationContext {
+    OperationContext::new(
+        Deadline::At(Instant::now() + budget),
+        CancelToken::default(),
+        Limits {
+            capture_tail: 0,
+            log_rotate: 0,
+            log_keep: 0,
+            line_max: 0,
+            queue_bytes: 0,
+            probe_concurrency: 1,
+        },
+        class,
+        if effigy_core::container_detection::process_is_inside_effigy_workspace_container() {
+            Placement::Guest
+        } else {
+            Placement::Host
+        },
+    )
+}
+fn gate_coordinates(lock_path: &Path) -> Result<(PathBuf, ResourceId), CodeGraphError> {
+    let repo = lock_path
+        .parent()
+        .and_then(Path::parent)
+        .and_then(Path::parent)
+        .ok_or_else(|| CodeGraphError::validation("invalid graph store path"))?
+        .canonicalize()?;
+    // A derived cache is keyed by its canonical location, not a managed-run
+    // checkout token. Moving it gives it a different store; aliases share it.
+    let key = hex::encode(Sha256::digest(repo.as_os_str().as_bytes()));
+    let id = ResourceId::store(Scope::Machine, &format!("graph:{key}"))
+        .map_err(|err| CodeGraphError::validation(err.to_string()))?;
+    #[cfg(not(test))]
+    let home = StateRoot::home_from_env()
+        .ok_or_else(|| CodeGraphError::validation("graph indexing requires an absolute HOME"))?;
+    // Every unit-test scope owns a fresh TempDir. Never write the operator's HOME.
+    #[cfg(test)]
+    let home = repo;
+    Ok((home, id))
+}
 impl RefreshLock {
-    /// Acquire the refresh lock immediately, or return `None` when another
-    /// process currently holds it.
+    #[cfg(test)]
     pub(crate) fn try_acquire(scope: &GraphScope) -> Result<Option<Self>, CodeGraphError> {
-        let mut file = open_lock_file(scope)?;
-        match file.try_lock_exclusive() {
-            Ok(()) => {
-                write_lock_identity(&mut file)?;
-                Ok(Some(Self { file }))
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
-            Err(error) => Err(error.into()),
-        }
+        Self::acquire_wait(scope, 0)
     }
-
-    /// Acquire the refresh lock, polling up to `wait_ms` for an in-flight
-    /// refresh to release it. Returns `None` when the wait expires.
-    ///
-    /// A recorded holder whose pid is dead shortens the wait: the kernel
-    /// releases flock when the process exits, so a stale pid is not a reason
-    /// to spend the full in-flight budget.
     pub(crate) fn acquire_wait(
         scope: &GraphScope,
         wait_ms: u64,
     ) -> Result<Option<Self>, CodeGraphError> {
-        let deadline = Instant::now() + Duration::from_millis(wait_ms);
-        let stale_deadline =
-            Instant::now() + Duration::from_millis(STALE_HOLDER_WAIT_MS.min(wait_ms));
-        let mut waited = false;
-        loop {
-            crate::deadline::check()?;
-            if let Some(lock) = Self::try_acquire(scope)? {
-                return Ok(Some(lock));
-            }
-            let inspection = inspect_refresh_lock(&scope.paths().refresh_lock_path);
-            let stale_holder = inspection
-                .identity
-                .as_ref()
-                .is_some_and(|identity| identity.stale_holder);
-            let now = Instant::now();
-            if now >= deadline || (stale_holder && now >= stale_deadline) {
-                return Ok(None);
-            }
-            if !waited {
-                // Only a real wait is worth reporting: an uncontended acquire
-                // must not overwrite the phase the caller is actually in.
-                phase::enter(GraphPhase::RefreshLockWait);
-                waited = true;
-            }
-            std::thread::sleep(Duration::from_millis(LOCK_POLL_MS));
-        }
-    }
-}
-
-impl Drop for RefreshLock {
-    fn drop(&mut self) {
-        let _ = FileExt::unlock(&self.file);
-    }
-}
-
-#[cfg(test)]
-impl RefreshLock {
-    /// Rewrite lock metadata with a pid that is not this process, so a waiter
-    /// can observe a stale holder while this handle still owns the flock.
-    pub(crate) fn plant_stale_identity(&mut self, pid: u32) -> Result<(), CodeGraphError> {
-        let record = LockIdentityRecord {
-            pid,
-            acquired_unix_ms: unix_now_ms().saturating_sub(60_000),
+        crate::deadline::check()?;
+        let budget = crate::deadline::remaining()
+            .unwrap_or(Duration::from_millis(wait_ms))
+            .min(Duration::from_millis(wait_ms));
+        let op = operation(
+            EffectClass::RefreshDerived,
+            crate::deadline::remaining().unwrap_or(Duration::from_secs(10)),
+        );
+        let cx = op
+            .effects()
+            .map_err(|err| CodeGraphError::validation(format!("{err:?}")))?;
+        let (home, id) = gate_coordinates(&scope.paths().refresh_lock_path)?;
+        let root = StateRoot::effects(&cx, &home)
+            .map_err(|err| CodeGraphError::validation(err.to_string()))?;
+        let wait = if wait_ms == 0 {
+            Wait::FailFast
+        } else {
+            Wait::Until(Instant::now() + budget)
         };
-        let encoded = serde_json::to_vec(&record)?;
-        self.file.set_len(0)?;
-        self.file.seek(SeekFrom::Start(0))?;
-        self.file.write_all(&encoded)?;
-        self.file.write_all(b"\n")?;
-        self.file.flush()?;
-        Ok(())
-    }
-}
-
-fn open_lock_file(scope: &GraphScope) -> Result<File, CodeGraphError> {
-    let path = scope.paths().refresh_lock_path;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    Ok(OpenOptions::new()
-        .create(true)
-        .read(true)
-        .write(true)
-        .truncate(false)
-        .open(path)?)
-}
-
-fn write_lock_identity(file: &mut File) -> Result<(), CodeGraphError> {
-    let record = LockIdentityRecord {
-        pid: std::process::id(),
-        acquired_unix_ms: unix_now_ms(),
-    };
-    let encoded = serde_json::to_vec(&record)?;
-    file.set_len(0)?;
-    file.seek(SeekFrom::Start(0))?;
-    file.write_all(&encoded)?;
-    file.write_all(b"\n")?;
-    file.flush()?;
-    Ok(())
-}
-
-fn unix_now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis()
-        .min(u128::from(u64::MAX)) as u64
-}
-
-fn process_is_alive(pid: u32) -> bool {
-    if pid == 0 || pid > i32::MAX as u32 {
-        return false;
-    }
-    #[cfg(unix)]
-    {
-        extern "C" {
-            fn kill(pid: i32, sig: i32) -> i32;
+        match Gate::acquire(&cx, &root, &[id], wait) {
+            Ok(gate) => Ok(Some(Self { _gate: gate })),
+            Err(GateError::Busy { .. } | GateError::TimedOut { .. }) => Ok(None),
+            Err(err) => Err(CodeGraphError::validation(err.to_string())),
         }
-        // SAFETY: `kill(pid, 0)` is the POSIX existence check and does not
-        // deliver a signal. ESRCH (3) means the process table has no such pid.
-        let rc = unsafe { kill(pid as i32, 0) };
-        if rc == 0 {
-            return true;
-        }
-        std::io::Error::last_os_error().raw_os_error() != Some(3)
-    }
-    #[cfg(not(unix))]
-    {
-        true
     }
 }
-
-/// Inspect a refresh lock without taking it or creating the file.
+/// Probe with Observe authority: missing state is free; unobservable state is
+/// conservatively busy. The kernel takes only a momentary nonblocking shared lock.
 pub fn inspect_refresh_lock(lock_path: &Path) -> RefreshLockInspection {
-    let held = refresh_lock_held(lock_path);
-    let identity = read_lock_identity(lock_path).map(|record| {
-        let age_ms = unix_now_ms().saturating_sub(record.acquired_unix_ms);
-        let stale_holder = !process_is_alive(record.pid);
-        LockIdentityRecordView {
-            pid: record.pid,
-            acquired_unix_ms: record.acquired_unix_ms,
-            age_ms,
-            stale_holder,
+    let inspected = (|| {
+        let (home, id) = gate_coordinates(lock_path).ok()?;
+        let cx = operation(EffectClass::Observe, Duration::from_millis(100))
+            .observe()
+            .ok()?;
+        match StateRoot::observe(&cx, &home) {
+            Observed::Verified(root, _) => Some(Gate::probe(&cx, &root, &id)),
+            Observed::Absent(_) => Some(Observed::Verified(
+                GateState::Free,
+                effigy_kernel::observe::Evidence::new("no graph gate state".into(), None).ok()?,
+            )),
+            Observed::Unknown(_) => None,
         }
-    });
-    RefreshLockInspection { held, identity }
-}
-
-fn refresh_lock_held(lock_path: &Path) -> bool {
-    let Ok(file) = OpenOptions::new().read(true).write(true).open(lock_path) else {
-        return false;
-    };
-    match file.try_lock_exclusive() {
-        Ok(()) => {
-            let _ = FileExt::unlock(&file);
-            false
+    })();
+    match inspected {
+        Some(Observed::Verified(GateState::Free, _)) | Some(Observed::Absent(_)) => {
+            RefreshLockInspection {
+                held: false,
+                unknown: false,
+                identity: None,
+            }
         }
-        Err(error) => error.kind() == std::io::ErrorKind::WouldBlock,
+        Some(Observed::Verified(GateState::Held(holder), _)) => {
+            let identity = match *holder {
+                Observed::Verified(diag, _) => Some(LockIdentityRecordView { pid: diag.pid }),
+                _ => None,
+            };
+            RefreshLockInspection {
+                held: true,
+                unknown: false,
+                identity,
+            }
+        }
+        _ => RefreshLockInspection {
+            held: false,
+            unknown: true,
+            identity: None,
+        },
     }
 }
 
-fn read_lock_identity(lock_path: &Path) -> Option<LockIdentityRecord> {
-    let mut file = OpenOptions::new().read(true).open(lock_path).ok()?;
-    let mut buf = String::new();
-    file.read_to_string(&mut buf).ok()?;
-    serde_json::from_str(buf.trim()).ok()
-}
-
-/// Outcome of a lazy freshness pass on a query.
+#[derive(Debug)]
 pub struct RefreshOutcome {
-    /// Freshness payload describing current graph trust.
     pub freshness: GraphFreshnessPayload,
-    /// Human-readable notes describing what the pass did (empty when fresh).
     pub notes: Vec<String>,
-    /// Which database a lookup should open after this pass.
     pub source: RefreshSource,
 }
-
-/// Which corpus a lookup should read after a freshness pass.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RefreshSource {
-    /// The live scope database, current or honestly marked stale.
     Live,
-    /// No committed files are available. Callers must return status only.
     Unavailable,
 }
-
-/// How a lookup should treat refresh and cold builds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RefreshPolicy {
-    /// Skip refresh and lock wait; read the committed files.
     pub stale_index: bool,
-    /// When no committed index exists, build one under the refresh lock.
-    pub build_missing: bool,
 }
-
 impl RefreshPolicy {
-    /// Crate and scan default: refresh stale, build missing.
     pub fn query() -> Self {
-        Self {
-            stale_index: false,
-            build_missing: true,
-        }
+        Self { stale_index: false }
     }
-
-    /// Bounded CLI lookup: `--stale-index` reads the committed files.
     pub fn lookup(stale_index: bool) -> Self {
-        Self {
-            stale_index,
-            build_missing: !stale_index,
-        }
+        Self { stale_index }
     }
 }
-
 pub(crate) fn run_index_exclusive(scope: &GraphScope) -> Result<IndexReport, CodeGraphError> {
     run_index_exclusive_with_wait(scope, EXPLICIT_REFRESH_WAIT_MS)
 }
-
 pub(crate) fn run_index_exclusive_with_wait(
     scope: &GraphScope,
     wait_ms: u64,
 ) -> Result<IndexReport, CodeGraphError> {
     let Some(_lock) = RefreshLock::acquire_wait(scope, wait_ms)? else {
-        let inspection = inspect_refresh_lock(&scope.paths().refresh_lock_path);
         return Err(CodeGraphError::validation(lock_busy_message(
             scope,
             wait_ms,
-            &inspection,
+            &inspect_refresh_lock(&scope.paths().refresh_lock_path),
         )));
     };
+    crate::deadline::check()?;
     run_index_unlocked_in_scope(scope)
 }
-
 fn lock_busy_message(
     _scope: &GraphScope,
     wait_ms: u64,
     inspection: &RefreshLockInspection,
 ) -> String {
     match inspection.identity.as_ref() {
-        Some(identity) if identity.stale_holder => format!(
-            "graph refresh lock remained busy for {wait_ms}ms (stale holder pid {} age {}ms); run `effigy graph index --json` once the abandoned lock clears",
-            identity.pid, identity.age_ms
-        ),
-        Some(identity) => format!(
-            "graph refresh lock remained busy for {wait_ms}ms (holder pid {} age {}ms); wait for that process or pass `--stale-index` to read the committed files",
-            identity.pid, identity.age_ms
-        ),
-        None => format!(
-            "graph refresh lock remained busy for {wait_ms}ms; wait for the holder or pass `--stale-index` to read the committed files"
-        ),
+        Some(identity) => format!("graph refresh lock remained busy for {wait_ms}ms (holder pid {}); wait for that process or read committed files",identity.pid),
+        None => format!("graph refresh lock remained busy for {wait_ms}ms; wait for the holder or read committed files"),
     }
 }
 
-/// Ensure one scope is current, rebuilding it on demand.
-///
-/// Fresh scopes cost one scoped walk. Stale or missing scopes are rebuilt
-/// incrementally under the scope's refresh lock; when another process is
-/// already refreshing, the call waits a bounded budget and then reports the
-/// true trust state instead of inventing one.
+/// Observe freshness without rebuilding, even when the index is stale.
 pub fn ensure_fresh(
     scope: &GraphScope,
     store: &GraphStore,
 ) -> Result<RefreshOutcome, CodeGraphError> {
-    ensure_fresh_with_progress(scope, store, |_| {})
-}
-
-/// Same freshness pass with a progress callback that receives the refresh
-/// verdict before any rebuild walk starts, so a caller can announce cold or
-/// stale work while it is still inside the caller's bound. The verdict is
-/// derived from the same single freshness scan that feeds the rebuild — no
-/// duplicate scan is performed.
-pub(crate) fn ensure_fresh_with_progress(
-    scope: &GraphScope,
-    store: &GraphStore,
-    progress: impl FnMut(RefreshPending),
-) -> Result<RefreshOutcome, CodeGraphError> {
-    ensure_fresh_with_wait_and_progress(
-        scope,
-        store,
-        IN_FLIGHT_WAIT_MS,
-        RefreshPolicy::query(),
-        progress,
-    )
-}
-
-pub(crate) fn ensure_fresh_with_wait_and_progress(
-    scope: &GraphScope,
-    store: &GraphStore,
-    in_flight_wait_ms: u64,
-    policy: RefreshPolicy,
-    mut progress: impl FnMut(RefreshPending),
-) -> Result<RefreshOutcome, CodeGraphError> {
-    crate::deadline::check()?;
     let inspection = inspect_refresh_lock(&scope.paths().refresh_lock_path);
-    if inspection.held {
-        return committed_outcome(scope, store, &inspection, &[]);
-    }
-    if policy.stale_index {
-        return committed_outcome(scope, store, &inspection, &[]);
-    }
-    let ready = store.counts()?.files > 0;
-    if ready && crate::git::git_gate_says_fresh(scope, store)? {
-        return Ok(RefreshOutcome {
-            freshness: graph_freshness_payload(
-                true,
-                true,
-                &[],
-                store.failed_diagnostic_paths()?.len(),
-            ),
-            notes: Vec::new(),
-            source: RefreshSource::Live,
-        });
-    }
     let stale = stale_paths_in_scope(scope, store)?;
-    if ready && stale.is_empty() {
-        return current_outcome(scope, store, Vec::new());
-    }
-    progress(if ready {
-        RefreshPending::Stale
-    } else {
-        RefreshPending::Cold
-    });
-    if !ready && !policy.build_missing {
-        return committed_outcome(scope, store, &inspection, &stale);
-    }
-    let Some(lock) = RefreshLock::acquire_wait(scope, in_flight_wait_ms)? else {
-        return committed_outcome(
-            scope,
-            store,
-            &inspect_refresh_lock(&scope.paths().refresh_lock_path),
-            &stale,
-        );
-    };
-    let started = Instant::now();
-    let report = run_index_unlocked_in_scope(scope)?;
-    drop(lock);
-    current_outcome(
-        scope,
-        store,
-        vec![format!(
-            "{} ({} files in {}ms)",
-            if ready {
-                "graph auto-refreshed"
-            } else {
-                "graph index built on demand"
-            },
-            report.indexed_files,
-            started.elapsed().as_millis()
-        )],
-    )
-}
-
-fn current_outcome(
-    scope: &GraphScope,
-    store: &GraphStore,
-    notes: Vec<String>,
-) -> Result<RefreshOutcome, CodeGraphError> {
-    let stale = stale_paths_in_scope(scope, store)?;
-    Ok(RefreshOutcome {
-        freshness: graph_freshness_payload(
+    let mut outcome = committed_outcome(scope, store, &inspection, &stale)?;
+    if !inspection.held {
+        outcome.freshness = graph_freshness_payload(
             store.counts()?.files > 0,
             true,
             &stale,
             store.failed_diagnostic_paths()?.len(),
-        ),
-        notes,
-        source: RefreshSource::Live,
-    })
+        );
+    }
+    if inspection.unknown {
+        outcome.freshness.state = "refresh-recommended".into();
+        outcome.freshness.stale = true;
+        outcome.freshness.summary =
+            "graph refresh gate is unobservable; run `effigy graph index` on the host".into();
+    }
+    Ok(outcome)
 }
-
 fn committed_outcome(
     scope: &GraphScope,
     store: &GraphStore,
@@ -458,7 +254,12 @@ fn committed_outcome(
     } else {
         graph_freshness_payload(false, true, stale, failed)
     };
-    if inspection.held {
+    if inspection.unknown {
+        freshness.state = "refresh-recommended".into();
+        freshness.stale = true;
+        freshness.summary =
+            "graph refresh gate is unobservable; run `effigy graph index` on the host".into();
+    } else if inspection.held {
         freshness.state = "refreshing".to_owned();
         freshness.stale = true;
         freshness.lock = Some(inspection.payload());
@@ -481,51 +282,36 @@ fn committed_outcome(
     })
 }
 
-/// Open one SQLite read transaction over committed data after the lazy refresh.
-/// The transaction fixes the view across a query's multiple SQL reads.
+/// One read-only transaction over committed data; no refresh or exclusive gate.
 pub fn open_query_store(
     scope: &GraphScope,
     policy: RefreshPolicy,
 ) -> Result<(Option<GraphStore>, GraphFreshnessPayload), CodeGraphError> {
-    let existing = GraphStore::open_read_only(scope)?;
-    if existing.is_none() && policy.stale_index {
-        let mut freshness = graph_freshness_payload(false, false, &[], 0);
-        let lock = inspect_refresh_lock(&scope.paths().refresh_lock_path);
-        if lock.held {
-            freshness.state = "refreshing".to_owned();
+    let store = GraphStore::open_read_only(scope)?;
+    let lock = inspect_refresh_lock(&scope.paths().refresh_lock_path);
+    let Some(store) = store else {
+        let mut freshness = graph_freshness_payload(false, scope.paths().db_path.is_file(), &[], 0);
+        if GraphStore::has_wal(scope) {
+            freshness.state = "refresh-recommended".into();
+            freshness.stale = true;
+            freshness.summary="graph stale (refresh interrupted or in progress); run `effigy graph index` to migrate WAL storage".into();
+        } else if lock.held {
+            freshness.state = "refreshing".into();
             freshness.stale = true;
             freshness.lock = Some(lock.payload());
             freshness.summary =
-                "graph refreshing (0/?); no committed files yet; retry or run `effigy graph index`"
-                    .to_owned();
+                "graph refreshing (0/?); no committed files yet; run `effigy graph index`".into();
         }
         return Ok((None, freshness));
-    }
-    let store = match existing {
-        Some(store) => store,
-        None => GraphStore::open_for_scope(scope)?,
     };
-    let outcome =
-        ensure_fresh_with_wait_and_progress(scope, &store, IN_FLIGHT_WAIT_MS, policy, |_| {})?;
-    let freshness = apply_notes(outcome.freshness, &outcome.notes);
-    drop(store);
-    if outcome.source == RefreshSource::Unavailable {
-        return Ok((None, freshness));
-    }
-    let store = GraphStore::open_read_only(scope)?;
-    if let Some(store) = store.as_ref() {
-        store.begin_read()?;
-    }
-    Ok((store, freshness))
+    store.begin_read()?;
+    let outcome = if policy.stale_index {
+        committed_outcome(scope, &store, &lock, &[])?
+    } else {
+        ensure_fresh(scope, &store)?
+    };
+    Ok((Some(store), outcome.freshness))
 }
-
-fn apply_notes(mut freshness: GraphFreshnessPayload, notes: &[String]) -> GraphFreshnessPayload {
-    if !notes.is_empty() {
-        freshness.summary = format!("{} ({})", freshness.summary, notes.join("; "));
-    }
-    freshness
-}
-
 /// The refresh verdict reported by the lazy-refresh progress callback. The
 /// verdict is derived from the same freshness scan that feeds the rebuild, so
 /// callers can announce cold or stale work without a second scan.
@@ -533,8 +319,8 @@ fn apply_notes(mut freshness: GraphFreshnessPayload, notes: &[String]) -> GraphF
 pub enum RefreshPending {
     /// The next query verifies freshness without touching graph state.
     Current,
-    /// The graph store has no indexed files; the next query builds the index.
+    /// The graph store has no indexed files; explicit indexing is needed.
     Cold,
-    /// The index exists but is stale; the next query rebuilds changed parts.
+    /// The index exists but is stale; explicit indexing is needed.
     Stale,
 }

@@ -4,8 +4,8 @@ use std::time::{Duration, Instant};
 
 use crate::docs_context::DocsContextRequest;
 use crate::refresh::{
-    ensure_fresh_with_wait_and_progress, inspect_refresh_lock, open_query_store,
-    run_index_exclusive_with_wait, RefreshLock, RefreshPolicy, RefreshSource,
+    ensure_fresh, open_query_store, run_index_exclusive_with_wait, RefreshLock, RefreshPolicy,
+    RefreshSource,
 };
 use crate::scope::GraphScope;
 
@@ -14,7 +14,7 @@ fn repo_scope(root: &Path) -> GraphScope {
 }
 
 #[test]
-fn query_refreshes_stale_index_on_demand() {
+fn query_reports_stale_until_explicit_index() {
     let temp = tempfile::tempdir().expect("tempdir");
     fs::create_dir_all(temp.path().join("src")).expect("mkdir src");
     fs::write(
@@ -31,14 +31,15 @@ fn query_refreshes_stale_index_on_demand() {
     )
     .expect("rewrite rust");
 
+    let stale = query_search(temp.path(), "brand_new_symbol", Some(10)).expect("stale search");
+    assert!(stale.freshness.stale);
+    assert!(stale.matches.is_empty());
+    run_index(temp.path()).expect("explicit refresh");
     let search_payload = query_search(temp.path(), "brand_new_symbol", Some(10)).expect("search");
     assert!(!search_payload.freshness.stale);
     assert_eq!(search_payload.freshness.state, "ready");
     assert!(search_payload.freshness.stale_paths.is_empty());
-    assert!(search_payload
-        .freshness
-        .summary
-        .contains("graph auto-refreshed"));
+
     assert!(search_payload
         .matches
         .iter()
@@ -50,7 +51,7 @@ fn query_refreshes_stale_index_on_demand() {
 }
 
 #[test]
-fn query_builds_missing_index_on_demand() {
+fn query_leaves_missing_index_uncreated() {
     let temp = tempfile::tempdir().expect("tempdir");
     fs::create_dir_all(temp.path().join("src")).expect("mkdir src");
     fs::write(
@@ -60,17 +61,12 @@ fn query_builds_missing_index_on_demand() {
     .expect("write rust");
 
     let search_payload = query_search(temp.path(), "run_release", Some(10)).expect("search");
-    assert!(search_payload.freshness.usable);
-    assert_eq!(search_payload.freshness.state, "ready");
-    assert!(search_payload.freshness.stale_paths.is_empty());
+    assert!(!search_payload.freshness.usable);
     assert!(search_payload
         .freshness
         .summary
-        .contains("graph index built on demand"));
-    assert!(search_payload
-        .matches
-        .iter()
-        .any(|entry| entry.name.as_deref() == Some("run_release")));
+        .contains("effigy graph index"));
+    assert!(!temp.path().join(".effigy").exists());
 }
 
 #[test]
@@ -131,14 +127,7 @@ fn query_serves_stale_when_refresh_lock_is_held() {
 
     let store = GraphStore::open(temp.path()).expect("open store");
     let started = Instant::now();
-    let outcome = ensure_fresh_with_wait_and_progress(
-        &repo_scope(temp.path()),
-        &store,
-        2_500,
-        RefreshPolicy::query(),
-        |_| {},
-    )
-    .expect("ensure fresh");
+    let outcome = ensure_fresh(&repo_scope(temp.path()), &store).expect("ensure fresh");
     assert!(
         started.elapsed() < Duration::from_millis(500),
         "live holder with a complete snapshot must not spend the in-flight wait"
@@ -186,14 +175,7 @@ fn query_detects_refresh_completed_by_concurrent_process() {
 
     held_receiver.recv().expect("wait for concurrent holder");
     let store = GraphStore::open(temp.path()).expect("open store");
-    let outcome = ensure_fresh_with_wait_and_progress(
-        &repo_scope(temp.path()),
-        &store,
-        1_000,
-        RefreshPolicy::query(),
-        |_| {},
-    )
-    .expect("ensure fresh");
+    let outcome = ensure_fresh(&repo_scope(temp.path()), &store).expect("ensure fresh");
     handle.join().expect("join refresh thread");
 
     assert!(outcome.freshness.stale);
@@ -209,7 +191,7 @@ fn query_detects_refresh_completed_by_concurrent_process() {
 }
 
 #[test]
-fn status_stays_report_only_when_queries_auto_refresh() {
+fn status_and_queries_stay_report_only() {
     let temp = tempfile::tempdir().expect("tempdir");
     fs::create_dir_all(temp.path().join("src")).expect("mkdir src");
     fs::write(
@@ -233,6 +215,10 @@ fn status_stays_report_only_when_queries_auto_refresh() {
         .stale_paths
         .contains(&"src/lib.rs".to_owned()));
 
+    let stale = query_search(temp.path(), "later_symbol", Some(10)).expect("stale query");
+    assert!(stale.freshness.stale);
+    assert!(stale.matches.is_empty());
+    run_index(temp.path()).expect("explicit refresh");
     let search_payload = query_search(temp.path(), "later_symbol", Some(10)).expect("search");
     assert_eq!(search_payload.freshness.state, "ready");
     assert!(search_payload
@@ -318,55 +304,6 @@ fn live_holder_is_named_and_committed_files_are_served_read_only() {
         !names.iter().any(|name| name == "live_holder_only"),
         "must not read the in-progress live database"
     );
-}
-
-#[test]
-fn stale_holder_does_not_consume_the_in_flight_wait() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    fs::create_dir_all(temp.path().join("src")).expect("mkdir src");
-    fs::write(temp.path().join("src/lib.rs"), "pub fn alpha() {}\n").expect("write rust");
-    run_index(temp.path()).expect("index");
-    fs::write(
-        temp.path().join("src/lib.rs"),
-        "pub fn alpha() {}\npub fn beta() {}\n",
-    )
-    .expect("rewrite rust");
-
-    let mut held = RefreshLock::try_acquire(&repo_scope(temp.path()))
-        .expect("hold refresh lock")
-        .expect("lock must be free");
-    // A pid that is a valid positive `i32` and almost certainly unused. `u32::MAX`
-    // casts to `-1`, which `kill` treats as a process-group broadcast.
-    const DEAD_PID: u32 = 2_000_000;
-    held.plant_stale_identity(DEAD_PID).expect("plant dead pid");
-
-    let inspection = inspect_refresh_lock(&repo_scope(temp.path()).paths().refresh_lock_path);
-    assert!(inspection.held);
-    assert!(inspection
-        .identity
-        .as_ref()
-        .is_some_and(|identity| identity.stale_holder && identity.pid == DEAD_PID));
-
-    let store = GraphStore::open(temp.path()).expect("open store");
-    let started = Instant::now();
-    let outcome = ensure_fresh_with_wait_and_progress(
-        &repo_scope(temp.path()),
-        &store,
-        2_500,
-        RefreshPolicy::query(),
-        |_| {},
-    )
-    .expect("ensure fresh");
-    assert!(
-        started.elapsed() < Duration::from_millis(800),
-        "stale holder must not spend the full in-flight wait"
-    );
-    assert_eq!(outcome.freshness.state, "refreshing");
-    assert!(outcome
-        .freshness
-        .lock
-        .as_ref()
-        .is_some_and(|lock| lock.stale_holder && lock.pid == Some(DEAD_PID)));
 }
 
 #[test]

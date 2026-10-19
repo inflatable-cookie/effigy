@@ -25,7 +25,7 @@ Definition:
 Notes:
 - They must stay in the prefix segment consumed by the runtime parser, not
   mixed arbitrarily into passthrough.
-- Some built-ins that use the passthrough parser (`doctor`, `watch`, `scan`)
+- Some built-ins that use the passthrough parser (`doctor`, `scan`)
   reject `--verbose-root` and `--env-schema` on that built-in invocation.
 
 ## Selector plan

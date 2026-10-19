@@ -138,7 +138,7 @@ catalog = "memcached"
 ### Assembly flow
 
 1. Read service declarations from manifest.
-2. Load matching catalog fragments (project-local > user-global > active pack > bundled baseline).
+2. Load matching catalog fragments (project-local > active pack > bundled baseline).
 3. Substitute parameters into fragment templates.
 4. Assemble into a complete compose file.
 5. Write to `.effigy/runtime/compose/<container>.generated.compose.yml`
@@ -159,9 +159,8 @@ does not need a separate catalog checkout or network access for the baseline.
 User customization layers on top:
 
 1. **Project-local:** `infra/dev/catalog/` in the repo
-2. **User-global:** `~/.effigy/catalog/`
-3. **Active catalog pack:** an explicitly installed, versioned pack
-4. **Bundled baseline:** embedded in the binary (lowest priority)
+2. **Active catalog pack:** an explicitly installed, versioned pack
+3. **Bundled baseline:** embedded in the binary (lowest priority)
 
 `effigy service list` shows available services. `effigy service extract
 <service>` extracts a bundled fragment to the override directory for
@@ -326,7 +325,7 @@ Main owners in `effigy-gateway`:
 | `resolver_setup` | macOS resolver file management |
 | `ports` | persistent project port allocation |
 | `tcp_alias` / `loopback` | local aliases and safe loopback binding |
-| `listener_handoff` | launchd socket-activation handoff of TCP `127.0.0.1:80`/`443` to the operator-owned gateway — SOURCE implementation candidate; the administrator install, live activation and cross-boot proof stay operator-owned (see [gateway recovery and the launchd handoff ruling](034-gateway-legacy-upgrade-recovery.md)) |
+| `listener_handoff` | launchd socket-activation handoff of TCP `127.0.0.1:80`/`443` to the operator-owned gateway — SOURCE implementation candidate; the administrator install, live activation and cross-boot proof stay operator-owned (see [gateway migration and the launchd handoff ruling](034-gateway-legacy-upgrade-recovery.md)) |
 | `server` / `stats` | daemon lifecycle and operator statistics |
 
 A manifest route can target a container service or a declared host listener:
@@ -565,8 +564,7 @@ binary may have been overwritten, and using an older CLI for development may
 fail to parse newer linked manifests; a general CLI downgrade is not a recovery
 strategy. The supported upgrade/recovery design is
 [034](034-gateway-legacy-upgrade-recovery.md). Published v0.14.0 cannot complete
-a legacy upgrade; corrected main provides `effigy gateway recover` on the
-task-112/113 base.
+a pre-0.14 upgrade. Such numeric-only records now require administrator migration; see [architecture 034](034-gateway-legacy-upgrade-recovery.md).
 
 The decimal `gateway.pid` remains compatible. `gateway.identity` is a
 version-1 JSON sidecar containing `format_version`, the same `pid`,
@@ -642,12 +640,13 @@ remains distinct. Version-only, malformed, or symlink `gateway.version` state
 is the same fail-closed unknown: the shared classifier refuses before start
 can overwrite those files, and version publication refuses to follow a
 symlink target. The diagnostic does not assume the previous executable is
-still installed and does not authorize PID-only signaling. `effigy gateway
-recover` is the implemented consumer path; see
-[architecture 034](034-gateway-legacy-upgrade-recovery.md). `--yes` is only
-the absent-record start; a live daemon requires `--adopt-candidate` and
-interactive digest consent. A v0.13.1 rollback ignores `gateway.identity`
-and restores the PID-only risk; downgrade is not claimed safe. Host-run
+still installed and does not authorize PID-only signaling. A pre-0.14
+numeric-only record requires administrator migration: verify and stop that
+exact daemon, confirm absence, and remove only its old PID/version records.
+Unknown identity preserves all records and refuses replacement; see the
+[migration boundary](034-gateway-legacy-upgrade-recovery.md#migration-boundary).
+A v0.13.1 rollback ignores `gateway.identity` and restores the PID-only risk;
+downgrade is not claimed safe. Host-run
 contract 010 and its whole-second wire identity are unchanged. Non-Unix
 `down` remains unimplemented.
 
@@ -706,18 +705,12 @@ mandatory for every match, so a reused PID never matches. No old sidecar is
 reclassified as absent or rewritten. `probe_live_identity` uses this
 comparison for both the ordinary and elevated readers; `Unknown` means the
 record is preserved and `status`/`up`/`down`/managed start refuse. A live
-pre-identity daemon still has the explicit `effigy gateway recover` consent
-path. An ambiguous identity-bearing record is honestly refused, not guessed at:
-the approved `recover` route currently rejects sidecar-bearing records, so no
-automatic supported transition exists for that case. A bounded, implementable
-specification of the recovery input boundary and the ordered confirmed-absent
-cleanup (resumable only from the full triple or the numeric-only pair, with a
-version-only remnant kept fail-closed) is recorded in
-[034](034-gateway-legacy-upgrade-recovery.md#ambiguous-identity-bearing-records-task-117-boundary-and-proposal)
-for an operator ruling; it is not implemented and does not widen the
-numeric-only route. The legacy candidate digest path is unchanged: it inspects and
-re-inspects within one CLI generation, so it has no cross-version record to
-reconcile.
+pre-identity daemon requires the host administrator migration
+path. An ambiguous identity-bearing record is honestly refused, not guessed at.
+There is no automatic cleanup or replacement path for that case; preserve the
+records until the administrator can establish the exact generation. The
+retained v0.14.1 lifecycle and the retired pre-identity window are distinguished
+in [architecture 034](034-gateway-legacy-upgrade-recovery.md#migration-boundary).
 
 Shared boot-ID callers are unaffected on macOS: `effigy_host_run` derives its
 wire identity from `pbi_start_tvsec` only, and the QA-group owner check uses
@@ -783,8 +776,7 @@ absence, repeated fresh identity reads through TERM/KILL polling, signal order,
 byte-preserving refusal, and locked compare-and-remove before the replacement
 start path. A recording handoff control proves one interactive lifecycle
 handoff and zero handoff or replacement launch with null stdin. The maintained
-selectors remain `test:gateway:legacy-recovery`,
-`check:gateway:legacy-recovery`, `fmt:check`, and
+selectors are `test:retirements`, `check:retirements`, `fmt:check`, and
 `qa:docs:gateway-identity` when docs change.
 
 #### Follow-up correction in task 154 (structural diagnosis only, no trust change)
@@ -838,16 +830,13 @@ confirmed daemon, confirm it is gone before reconciling only its PID/version
 records, then start the current gateway. Routes, certificates, containers and
 volumes are preserved. This is explicit authority for that host transition,
 not a general exception allowing numeric-only records to authorize signals.
-The consumer upgrade path must identify this legacy transition and provide
-a supported recovery flow even when installation replaced the old executable.
-Identity checks and fail-closed behavior remain required. The proposed design
-covering the consumer transition, including the public channel posture and a
-fix-forward patch runway, is
-[034](034-gateway-legacy-upgrade-recovery.md). It keeps a numeric-only signal
-unauthorized. Its separate
-[operator ruling](034-gateway-legacy-upgrade-recovery.md#operator-ruling)
-authorized bounded candidate inspection and generation-bound stop; it does not
-extend this one-host ruling to previous-binary delegation.
+That historical pre-0.14 recovery window is retired in v0.15. The supported
+upgrade starts from v0.14.1 identity-bearing state; older numeric-only records
+require administrator migration. The earlier candidate-inspection and stop
+protocol is no longer an implemented surface. See the current
+[migration boundary](034-gateway-legacy-upgrade-recovery.md#migration-boundary).
+This historical one-host ruling is not standing authority to signal a PID-only
+record.
 
 Tom ruled on 2026-10-05: block v0.14.0 publication until a persisted
 start-identity sidecar and fail-closed legacy policy are implemented. He does
@@ -1124,14 +1113,6 @@ The [runtime operation contract](../contracts/015-runtime-operation-pipeline-con
 defines request, plan, adapter, and report responsibilities. Pure decisions
 belong below the runner; host side effects and human prompts remain at its
 edge.
-
-Managed listener transition receipts live in
-`src/runner/host_transition_evidence.rs`. The listener supervisor in
-`src/runner/host_process.rs` writes them at the decisions it already makes:
-launch, child exit, shutdown, dependency unavailability, and dependency tuple
-change. The module owns the bounded, versioned file format and its reader.
-Receipts are observation only. They are not gateway registration, route
-authority or process ownership.
 
 ## Example Manifest Boundary
 

@@ -71,3 +71,27 @@ mod tests;
 #[cfg(test)]
 #[path = "tests/testing_tests.rs"]
 mod testing_tests;
+
+/// Main-only kernel helper and signal dispatch, before command discovery.
+pub fn run_main(raw_args: Vec<String>) -> std::io::Result<()> {
+    use effigy_kernel::signal::{RouterPolicy, SignalRouter};
+    let entry = raw_args.first().map(String::as_str).unwrap_or("");
+    // The per-run sentinel, supervisor and probe guard re-exec this binary
+    // (contract 052 §5.8) before any CLI parsing, signal handling or spawn.
+    if let Some(code) = runner::run_internal_kernel_entry(entry) {
+        std::process::exit(code);
+    }
+    runner::capture_startup_executable();
+    // Source-capable commands own the router from the start; task runs inside
+    // them adopt it. Other commands install it at their first custody spawn.
+    let uses_kernel = effigy_cli::parse_command(raw_args.clone())
+        .as_ref()
+        .is_ok_and(runner::bundle_command::is_source_prepare_command);
+    if uses_kernel {
+        let router = SignalRouter::install(RouterPolicy::Inline)?;
+        runner::bundle_command::set_source_cancel(router.root_cancel());
+        runner::adopt_signal_router(router);
+    }
+    run_cli(raw_args);
+    Ok(())
+}

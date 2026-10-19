@@ -101,8 +101,8 @@ effigy --json release status --check-gates \
 effigy --json graph status | jq '.result.payload.stale_paths'
 ```
 
-Graph queries refresh before reading, so this is a diagnostic view rather than
-a required preflight.
+Graph queries report freshness without refreshing. Run `graph index` explicitly
+when the returned packet reports missing or stale data.
 
 **Detect error envelope:**
 

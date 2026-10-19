@@ -5,8 +5,8 @@ use std::io;
 use std::net::SocketAddr;
 
 use crate::identity::{read_live_process_identity, GatewayStartIdentity};
-use crate::legacy::{process_listening_endpoints, GatewayEndpoint, GatewayTransport};
 use crate::routes::ManagedListenerRouteOwner;
+use crate::socket_ownership::{process_listening_endpoints, GatewayEndpoint, GatewayTransport};
 
 #[derive(serde::Deserialize)]
 struct ManagedListenerAvailability {
@@ -122,7 +122,7 @@ fn verify_exclusive_listener_owner(
     address: SocketAddr,
     expected_pid: u32,
 ) -> Result<(), io::Error> {
-    crate::legacy::verify_process_listener_exclusive(
+    crate::socket_ownership::verify_process_listener_exclusive(
         expected_pid,
         &GatewayEndpoint {
             transport: GatewayTransport::Tcp,

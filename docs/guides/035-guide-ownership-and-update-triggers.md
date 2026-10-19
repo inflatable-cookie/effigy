@@ -27,7 +27,7 @@ Rules:
 | Routing behavior change | `016`, `021`, `023`, `025` |
 | Deferral behavior/policy change | `015`, `023`, `028` |
 | Locking/unlock behavior change | `020`, `023`, `025`, `034` |
-| Watch/init/migrate behavior change | `019`, `021`, `025`, `027` |
+| Initialization behavior change | `019`, `021`, `025`, `027` |
 | CI script or workflow changes | `024`, `029`, and this guide (`035`) |
 | Docs navigation/index changes | `README.md`, `docs/README.md`, `docs/guides/README.md`, `031`, `032` |
 

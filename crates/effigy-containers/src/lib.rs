@@ -162,7 +162,7 @@ fn project_local_catalog_dir(repo_root: Option<&Path>) -> Option<PathBuf> {
     path.is_dir().then_some(path)
 }
 
-/// Layered resolver for container work: project override, user override,
+/// Layered resolver for container work: project override,
 /// active installed pack, compiled baseline.
 ///
 /// Goes through `effigy_catalog::pack` so layer order and pack health live in
@@ -174,14 +174,14 @@ pub(crate) fn layered_catalog_resolver(repo_root: Option<&Path>) -> CatalogResol
 
 pub(crate) fn catalog_layers(project_local: Option<PathBuf>) -> CatalogLayers {
     let home = crate::policy_support::effigy_home_dir();
-    let user_global = home
+    let retired_user_catalog = home
         .as_ref()
         .map(|home| home.join("catalog"))
         .filter(|path| path.is_dir());
     let store = home.as_deref().map(PackStore::under_home);
     layered_resolver(
         project_local,
-        user_global,
+        retired_user_catalog,
         store.as_ref(),
         env!("CARGO_PKG_VERSION"),
     )

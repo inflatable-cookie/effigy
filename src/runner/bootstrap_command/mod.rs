@@ -469,6 +469,8 @@ fn execute_bootstrap_request(
     let mut result = crate_execute_bootstrap(
         &crate_request,
         |manifest_path| {
+            crate::runner::bundle_command::prepare_sources_for_manifest(manifest_path)
+                .map_err(|e| BootstrapError::task_invocation(e.to_string()))?;
             let manifest = load_task_manifest(manifest_path)
                 .map_err(|e| BootstrapError::task_invocation(e.to_string()))?;
             Ok(manifest.bootstrap)

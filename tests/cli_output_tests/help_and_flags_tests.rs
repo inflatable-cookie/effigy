@@ -483,6 +483,13 @@ fn cli_help_parity_is_stable_across_owned_checkout_identity_changes() {
     };
     assert_eq!(
         unpinned(&["--version"]),
+        format!("effigy v{}\n", env!("CARGO_PKG_VERSION")),
+        "an unstamped development binary must not probe Git"
+    );
+    let stamp = binary.with_extension("active-version");
+    fs::write(&stamp, &clean_version).expect("record clean build identity");
+    assert_eq!(
+        unpinned(&["--version"]),
         format!("effigy {clean_version}\n")
     );
     let clean_json: Value =
@@ -502,6 +509,12 @@ fn cli_help_parity_is_stable_across_owned_checkout_identity_changes() {
     fs::write(root.join("untracked-fixture"), "owned change\n").expect("dirty private checkout");
     assert_eq!(
         unpinned(&["--version"]),
+        format!("effigy {clean_version}\n"),
+        "checkout edits do not change the recorded build identity"
+    );
+    fs::write(&stamp, format!("{clean_version}.dirty")).expect("record changed build identity");
+    assert_eq!(
+        unpinned(&["--version"]),
         format!("effigy {clean_version}.dirty\n")
     );
     let dirty_json: Value = serde_json::from_str(&unpinned(&["--json", "--version"]))
@@ -518,7 +531,7 @@ fn cli_help_parity_is_stable_across_owned_checkout_identity_changes() {
     assert!(dirty_help.contains(&format!("{clean_version}.dirty")));
     assert_ne!(
         clean_help, dirty_help,
-        "default identity must expose the change"
+        "default identity must expose the changed stamp"
     );
     let help_facts = |text: &str| {
         text.split_once("\ndocs Help\n")
@@ -535,7 +548,7 @@ fn cli_help_parity_is_stable_across_owned_checkout_identity_changes() {
     assert_eq!(stable_help.stdout, stable_direct.stdout);
     eprintln!(
         "owned identity counterexample: {clean_version} -> {clean_version}.dirty; \
-         default help facts match, default output differs, pinned output matches exactly"
+         recorded help facts match, changed stamp changes output, env override matches exactly"
     );
 }
 
@@ -594,8 +607,10 @@ fn cli_version_json_uses_one_identity_snapshot_during_checkout_change() {
     fs::create_dir_all(binary.parent().unwrap()).expect("binary directory");
     fs::create_dir_all(&shim_dir).expect("shim directory");
     fs::copy(env!("CARGO_BIN_EXE_effigy"), &binary).expect("copy actual CLI");
-    // Real Git answers the first status query, then this process writes its
-    // own untracked file. A second identity sample sees .dirty deterministically.
+    let stamp = binary.with_extension("active-version");
+    fs::write(&stamp, &expected).expect("record build identity");
+    // Keep the old Git race control: any identity probe would mutate this
+    // private checkout. Version presentation must never invoke that probe.
     let shim = shim_dir.join("git");
     fs::write(
         &shim,
@@ -623,21 +638,21 @@ exit "$result"
     assert!(output.status.success(), "{output:?}");
     let value: Value = serde_json::from_slice(&output.stdout).expect("version JSON");
     assert!(
-        root.join("untracked-identity-change").exists(),
-        "race control never ran"
+        !root.join("untracked-identity-change").exists(),
+        "version invoked Git"
     );
-    assert_eq!(
-        fs::read_to_string(target.join("identity-status-count")).unwrap(),
-        "observed",
-        "one response must inspect identity exactly once"
+    assert!(
+        !target.join("identity-status-count").exists(),
+        "version invoked Git"
     );
     assert_eq!(value["binary"], value["result"]["binary"]);
     assert_eq!(value["binary"]["active_version"], expected);
     assert_eq!(value["binary"]["display_version"], expected);
     assert_eq!(value["result"]["active_version"], expected);
     assert_eq!(value["result"]["display"], format!("effigy {expected}"));
-    // The next public command still observes dirty identity; no global cache
-    // or pinned fixture override hides the default behavior.
+    // A subsequent public command observes a new recorded identity; no global
+    // cache or environment override hides the changed stamp.
+    fs::write(&stamp, format!("{expected}.dirty")).expect("record next identity");
     let dirty = help_cli_command(&binary, root, &["--version"])
         .env_remove("EFFIGY_ACTIVE_VERSION")
         .output()

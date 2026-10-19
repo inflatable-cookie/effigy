@@ -21,8 +21,8 @@ During v0.x, MINOR bumps may include breaking changes.
   reaches the linter. For one release `<task> --plan` and `<task> --json`
   are still read as Effigy's, with a note naming the leading spelling; other
   Effigy flags after the task name now reach the task, with a note. Built-ins
-  routed as tasks (`tasks`, `test`, `watch`, also with a catalog prefix such
-  as `catalog_a/tasks`) keep their own flag positions.
+  routed as tasks (`tasks`, `test`, also with a catalog prefix such as
+  `catalog_a/tasks`) keep their own flag positions.
 - A plain host task runs under kernel custody: always its own process group,
   a durable record before it executes, and a settle that stops everything it
   started. INT, TERM and HUP are forwarded to the task's group and Effigy exits
@@ -57,6 +57,15 @@ During v0.x, MINOR bumps may include breaking changes.
   credential or prompt.
 
 ### Removed
+- Retire `effigy watch`, `effigy tasks migrate`, managed stream mode,
+  transition-evidence receipts, pre-0.14 `gateway recover`, the unused
+  user-runtime scaffold, and qualified private docs assurance. Removed command
+  spellings give replacement instructions; unset `EFFIGY_MANAGED_STREAM` and
+  use `--headless`. Existing transition files remain untouched.
+- Reject the `[manifest].root` key with removal guidance. Ignore the
+  user-global `~/.effigy/catalog/` override with a one-release warning; move
+  custom fragments to each repository's `infra/dev/catalog/`. Secrets policy
+  keys remain unchanged pending consumer cleanup.
 - `effigy tasks unlock`. A task's lock releases itself when its run exits and
   is never taken from a live run; the command now refuses with that
   explanation. Find a live holder with `effigy tasks status <task>`.
@@ -70,6 +79,20 @@ During v0.x, MINOR bumps may include breaking changes.
   lists the families still present.
 
 ### Added
+- Keep CLI presentation local and bounded: banner sizing never launches `tput`, and version metadata reads environment or installed stamps without running Git. Unstamped development binaries report the package version.
+- Graph reads, documentation context and doctor never refresh or create graph
+  files. Explicit `graph index` uses a kernel store gate and migrates existing
+  WAL databases to rollback journaling. Until migration, reads report stale
+  with an index hint. The legacy status `--refresh` flag warns and remains
+  report-only for one release.
+- Checkout bundle and declared catalog source pins in `.effigy/sources.lock.json`.
+  Help, version, completion, inventory, plans, status, config views, doctor and
+  graph read paths no longer acquire or refresh bundle sources or append Git
+  excludes. Only `effigy bundle sync` updates selected path, Git and OCI bytes;
+  bootstrap and first dev prepare missing pins. Existing v0.14.1 cache bytes
+  import automatically, and failed acquisition keeps the previous selection.
+  A locally known newer version produces a bounded sync notice without a remote
+  probe. `EFFIGY_GIT_BUNDLE_REMOTE_CHECK_TTL_SECS` is retired with a Prepare warning.
 - The runtime kernel exposes immutable file closures with journalled publication,
   fenced desired/applied references, per-owner reset, retention protection and
   backend metadata. Host container rendering adopts these APIs separately.

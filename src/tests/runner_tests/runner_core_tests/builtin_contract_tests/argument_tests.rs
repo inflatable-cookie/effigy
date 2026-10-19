@@ -37,18 +37,6 @@ fn run_manifest_task_builtin_argument_contract_matrix_is_stable() {
             &["`--target` requires a value for built-in `config`"],
         ),
         builtin_contract_error_case(
-            "builtin-arg-contract-watch-missing-owner",
-            "watch",
-            &["--owner"],
-            &["`--owner` requires a value (`effigy` or `external`)"],
-        ),
-        builtin_contract_error_case(
-            "builtin-arg-contract-watch-unknown",
-            "watch",
-            &["--wat"],
-            &["unknown argument(s) for built-in `watch`: --wat"],
-        ),
-        builtin_contract_error_case(
             "builtin-arg-contract-completion-candidates-missing-prefix",
             "completion",
             &["candidates", "--prefix"],
@@ -60,28 +48,9 @@ fn run_manifest_task_builtin_argument_contract_matrix_is_stable() {
             &["--wat"],
             &["`init` received unknown flag(s): --wat"],
         ),
-        builtin_contract_error_case(
-            "builtin-arg-contract-migrate-missing-from",
-            "migrate",
-            &["--from"],
-            &["`--from` requires a file path"],
-        ),
-        builtin_contract_error_case(
-            "builtin-arg-contract-migrate-missing-script",
-            "migrate",
-            &["--script"],
-            &["`--script` requires a script name"],
-        ),
-        builtin_contract_error_case(
-            "builtin-arg-contract-migrate-unknown",
-            "migrate",
-            &["--wat"],
-            &["unknown argument(s) for built-in `tasks migrate`: --wat"],
-        ),
     ];
     cases.extend(builtin_shared_unknown_argument_cases(
         "builtin-arg-contract-completion-candidates-unknown",
-        "builtin-arg-contract-watch-unknown",
         "builtin-arg-contract-scan-unknown-flag",
     ));
 

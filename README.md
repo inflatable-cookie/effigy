@@ -352,13 +352,6 @@ effigy --json doctor          # Machine-readable health check
 
 Finite `system logs --json` and `container <NAME> logs --json` snapshots support JSON; their `--follow` modes reject it. Graph commands emit one JSON document. `workspace` and interactive `container shell` have no JSON form; finite shell capture requires bounded mode and its deadline and byte limits.
 
-### Watch Mode That Isn't a Footgun
-
-```bash
-effigy watch --owner effigy --once test   # Run tests on change, once
-effigy watch --max-runs 5 dev            # Bounded, explicit, composable
-```
-
 ### One-Command Repo Bring-Up
 
 Give a git URL. Effigy clones, runs the repo's declared setup, and starts the dev stack:

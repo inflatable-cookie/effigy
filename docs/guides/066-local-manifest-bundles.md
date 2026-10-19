@@ -82,8 +82,9 @@ effigy bundle sync
 
 - `bundle inspect` reports the active source type, local materialized path,
   version hint, and stale state
-- `bundle sync` refreshes git and OCI sources
-- local path bundles report `not-applicable` on sync
+- `bundle sync` snapshots path, Git and OCI sources and updates checkout pins
+- after editing a local path bundle, run `bundle sync` to select the new bytes
+- inspection and discovery never fetch or write source state
 
 ## Template Notes
 

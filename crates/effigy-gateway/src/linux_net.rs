@@ -6,7 +6,7 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
 
-use super::legacy::{GatewayEndpoint, GatewayTransport};
+use super::socket_ownership::{GatewayEndpoint, GatewayTransport};
 
 const TCP_LISTEN: u8 = 0x0A;
 

@@ -790,8 +790,8 @@ fn gateway_identity_legacy_active_record_refused_by_status_up_down_and_managed_s
         .expect("status --json emits a structured payload");
     assert!(status_payload.contains("\"schema\":\"effigy.gateway.status.v1\""));
     assert!(status_payload.contains("legacy_identity_required"));
-    assert!(status_payload.contains("effigy gateway recover"));
-    let up = run_gateway_up(false)
+    assert!(status_payload.contains("host administrator"));
+    let up = run_gateway_up_with_config(&gateway_config().expect("gateway config"), false)
         .expect_err("up must refuse to replace the unauthenticated process")
         .to_string();
     let down = run_gateway_down(false)
@@ -806,7 +806,7 @@ fn gateway_identity_legacy_active_record_refused_by_status_up_down_and_managed_s
     for message in [&status, &up, &down, &managed] {
         assert!(message.contains("legacy gateway identity migration required"));
         assert!(message.contains("gateway.identity` is missing"));
-        assert!(message.contains("previous executable may already have been replaced"));
+        assert!(message.contains("pre-0.14 recovery command is retired"));
         assert!(!message.contains("cannot determine gateway state"));
     }
     assert!(!marker.exists(), "managed startup command must not run");
@@ -845,7 +845,7 @@ fn gateway_identity_legacy_version_only_record_refused_by_status_up_down_and_man
     let status = run_gateway_status(false)
         .expect_err("status must refuse a version-only record")
         .to_string();
-    let up = run_gateway_up(false)
+    let up = run_gateway_up_with_config(&gateway_config().expect("gateway config"), false)
         .expect_err("up must refuse to overwrite a version-only record")
         .to_string();
     let down = run_gateway_down(false)
@@ -901,7 +901,7 @@ fn gateway_identity_legacy_version_symlink_refused_by_status_up_down_and_managed
     let status = run_gateway_status(false)
         .expect_err("status must refuse a symlink version")
         .to_string();
-    let up = run_gateway_up(false)
+    let up = run_gateway_up_with_config(&gateway_config().expect("gateway config"), false)
         .expect_err("up must refuse to follow a symlink version")
         .to_string();
     let down = run_gateway_down(false)
@@ -1037,7 +1037,9 @@ fn legacy_recovery_up_preflight_does_not_mutate_before_lock() {
         "unlocked classify must not stage elevated state"
     );
 
-    let _lock = super::recover::acquire_transition_lock(&config).expect("transition lock");
+    let _lock =
+        effigy_gateway::transition_lock::GatewayTransitionLock::try_acquire(&config.pid_file_path)
+            .expect("transition lock");
     match inspect_existing_gateway(
         &config,
         verified_gateway_status_for_up(&config).status,
@@ -1091,7 +1093,10 @@ fn gateway_identity_legacy_replacement_reconciles_unknown_process_probes() {
             .expect("gateway directory")
             .to_path_buf(),
     );
-    let _failed_lock = recover::acquire_transition_lock(&failed_config).expect("failed lock");
+    let _failed_lock = effigy_gateway::transition_lock::GatewayTransitionLock::try_acquire(
+        &failed_config.pid_file_path,
+    )
+    .expect("failed lock");
     let mut failed_process_states = VecDeque::from([GatewayProcessProbe::Running]);
     let failed_signals = RefCell::new(Vec::new());
     let failed_start = RefCell::new(false);
@@ -1136,8 +1141,10 @@ fn gateway_identity_legacy_replacement_reconciles_unknown_process_probes() {
             .expect("gateway directory")
             .to_path_buf(),
     );
-    let _reconciled_lock =
-        recover::acquire_transition_lock(&reconciled_config).expect("reconciliation lock");
+    let _reconciled_lock = effigy_gateway::transition_lock::GatewayTransitionLock::try_acquire(
+        &reconciled_config.pid_file_path,
+    )
+    .expect("reconciliation lock");
     let mut process_states = VecDeque::from([
         GatewayProcessProbe::Running,
         GatewayProcessProbe::Unknown,

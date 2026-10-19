@@ -141,6 +141,13 @@ static CUSTODY_WAITING: AtomicBool = AtomicBool::new(false);
 /// (K9). Commands that never spawn under custody keep default dispositions.
 /// Once installed, a signal that arrives while no custody wait is polling
 /// ends the process as its default action would.
+/// A command that owns the process's one router (source preparation) lends
+/// it to the task engine, so a run inside that command never installs a
+/// second one (K9). The owner keeps its own cancellation; no exit watcher.
+pub fn adopt_signal_router(handle: RouterHandle) {
+    let _ = ROUTER.set(Mutex::new(handle));
+}
+
 pub(super) fn install_router() -> Result<(), RunnerError> {
     // Library tests run many tasks in one process that other tests signal;
     // the kill matrix proves routing against the real binary instead.
@@ -235,17 +242,17 @@ pub(in crate::runner) struct TaskSettlement;
 impl SettlementAdapter for TaskSettlement {
     fn observe(&mut self, _effect: &Effect, _cx: &CleanupContext) -> Observed<Fence> {
         Observed::Unknown(UnknownReason::Inconsistent(
-            "not a task engine effect".to_owned(),
+            "no engine adapter settles this effect".to_owned(),
         ))
     }
     fn release(&mut self, _effect: &Effect, _cx: &CleanupContext) -> Observed<()> {
         Observed::Unknown(UnknownReason::Inconsistent(
-            "not a task engine effect".to_owned(),
+            "no engine adapter settles this effect".to_owned(),
         ))
     }
     fn reconcile(&mut self, _effect: &Effect, _cx: &CleanupContext) -> Observed<Reconciled> {
         Observed::Unknown(UnknownReason::Inconsistent(
-            "not a task engine effect".to_owned(),
+            "no engine adapter settles this effect".to_owned(),
         ))
     }
 }
@@ -284,17 +291,23 @@ pub fn run_internal_kernel_entry(entry: &str) -> Option<i32> {
     if !entry.starts_with("__kernel-") {
         return None;
     }
-    let policy = if entry == "__kernel-supervise" {
-        RouterPolicy::Supervisor
-    } else {
-        RouterPolicy::Sentinel
+    let policy = match entry {
+        "__kernel-sentinel" => RouterPolicy::Sentinel,
+        "__kernel-supervise" => RouterPolicy::Supervisor,
+        _ => RouterPolicy::Inline,
     };
     let mut router = match SignalRouter::install(policy) {
         Ok(router) => router,
         Err(_) => return Some(70),
     };
+    if let Some(result) = effigy_kernel::probe::internal_entry(entry, router.root_cancel()) {
+        return Some(i32::from(result.is_err()));
+    }
+    // One helper serves every engine's runs: a task run records its selector,
+    // source preparation records `bundle sync`.
     let mut adapter = TaskSettlement;
-    match effigy_kernel::supervise::internal_entry(entry, &mut router, &mut adapter, valid_next) {
+    let validate = |argv: &[OsString]| valid_next(argv) || argv == ["bundle", "sync"];
+    match effigy_kernel::supervise::internal_entry(entry, &mut router, &mut adapter, validate) {
         Some(Ok(())) => Some(0),
         Some(Err(_)) => Some(1),
         None => None,

@@ -51,8 +51,17 @@ license = "MIT"
 [workspace.lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(effigy_shared_process)"] }
 
-# Size-bounded private docs proof artifact; ordinary dev/release profiles stay unchanged.
-[profile.qualified-docs]
+# Custody fingerprints the real CLI in development proofs. Keep the cryptographic
+# compressor optimized, as in release builds, even for large debug executables.
+[profile.dev.package."sha2:0.11.0"]
+opt-level = 3
+
+[profile.test.package."sha2:0.11.0"]
+opt-level = 3
+
+# Read-boundary proofs exercise the shipping CLI configuration without symbols,
+# keeping macOS pre-main loading inside the unchanged fixture deadlines.
+[profile.discovery-proof]
 inherits = "release"
 strip = "symbols"
 
@@ -94,8 +103,8 @@ effigy-execution = { path = "crates/effigy-execution" }
 effigy-gateway = { path = "crates/effigy-gateway" }
 effigy-managed = { path = "crates/effigy-managed" }
 effigy-manifest = { path = "crates/effigy-manifest" }
-effigy-host-run = { path = "crates/effigy-host-run" }
 effigy-kernel = { path = "crates/effigy-kernel" }
+effigy-host-run = { path = "crates/effigy-host-run" }
 effigy-process = { path = "crates/effigy-process" }
 effigy-release = { path = "crates/effigy-release" }
 effigy-rhai = { path = "crates/effigy-rhai" }

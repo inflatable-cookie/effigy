@@ -279,14 +279,14 @@ status is uncertain, the excerpt is reported as working-tree content.
 
 ## Freshness
 
-The documentation graph shares the code graph database, lock, health, and lazy
-refresh under `.effigy/graph/`. There is no second index and no daemon. A
-normalized profile fingerprint joins the freshness identity, so editing the
-profile refreshes semantic records even when no Markdown file changed.
+The documentation graph shares the code graph database, kernel gate and health.
+There is no second index or daemon. Queries never refresh or write. A normalized
+profile fingerprint joins freshness, so profile edits report stale until an
+explicit `effigy graph index` updates semantic records.
 
-Lazy refresh shares the graph command's wall-clock policy through
+Read-only retrieval shares the graph command's wall-clock policy through
 `EFFIGY_GRAPH_TIMEOUT_MS` (default 120000 ms; `0` disables the bound). Cold and
-stale rebuilds announce progress on stderr. A timeout returns the shared
+stale reads name `effigy graph index` as the next action on stderr. A timeout returns the shared
 `effigy.graph.timeout.v1` detail with graph health, the phase the bound expired
 in, and recovery guidance; JSON stdout remains a valid standard command
 envelope. See [`076`](076-code-graph-and-agent-workflows.md) for the phase

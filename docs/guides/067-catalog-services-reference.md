@@ -52,14 +52,18 @@ runtime layout.
 Fragments resolve in one fixed order, highest priority first:
 
 1. project override — `<repo>/infra/dev/catalog/<name>/`
-2. user override — `~/.effigy/catalog/<name>/`
-3. active installed catalog pack — see [Catalog Packs](#catalog-packs)
-4. compiled baseline — the fragments listed below, embedded in the binary
+2. active installed catalog pack — see [Catalog Packs](#catalog-packs)
+3. compiled baseline — the fragments listed below, embedded in the binary
 
 The compiled baseline ships with every Effigy install and is permanent. A
 machine with no pack store, no `oras`, and no network resolves exactly the
 fragments documented here. `effigy service list` names the layer each fragment
 came from.
+
+The embedded pack's README is a frozen upstream publication document. Its
+user-global override statement is historical; the layer order above describes
+current Effigy behavior. See the [catalog integration note](../../crates/effigy-catalog/README.md)
+for the snapshot's provenance boundary.
 
 ## Catalog Packs
 
@@ -175,7 +179,7 @@ content and sibling files are preserved. Bounded handoffs share their original
 cumulative deadline/output limits and keep captured channels private.
 
 This does not promise all host and guest configuration matches. Mounted project
-overrides and guest user overrides still win; host user overrides, config and
+overrides still win; host config and
 credentials are not transferred. The selected pack must support the guest
 Effigy version and an explicit workspace user/home must be available. No
 registry freshness check or network update runs on handoff.
@@ -203,7 +207,7 @@ leaves the current selection untouched. `effigy doctor` recommends `rollback`
 only when that same proof passes, and recommends `reset` otherwise.
 
 `reset` selects the compiled baseline; it retains installed content and never
-touches project or user overrides, so `rollback` still works afterwards. It is
+touches project overrides, so `rollback` still works afterwards. It is
 also the recovery path for damaged store metadata: an unreadable or unsupported
 `state.json` is copied aside under a `state.json.unreadable-*` name — never
 moved or deleted — and the live document is then replaced atomically with a

@@ -112,7 +112,7 @@ fn load_graph_context(
         return None;
     }
 
-    match codegraph::status_with_refresh(target_root) {
+    match codegraph::status(target_root) {
         Ok(status) => Some(ScanGraphContext::from_freshness(
             &status.freshness,
             format!(

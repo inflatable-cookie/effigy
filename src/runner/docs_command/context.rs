@@ -2,8 +2,8 @@
 //!
 //! Ranking, traversal, and budgeting belong to `effigy-codegraph`. This module
 //! only turns one typed report into text or the versioned JSON payload. The
-//! lazy graph refresh inside that retrieval shares the graph command's
-//! wall-clock budget, typed timeout detail, and cold/stale progress notice.
+//! read-only retrieval shares the graph command's wall-clock budget, typed
+//! timeout detail, and cold/stale index hint.
 
 use std::path::Path;
 
@@ -67,15 +67,15 @@ pub(super) fn run_context(
 
 /// Map a refresh verdict to the stderr progress notice.
 ///
-/// `Some` only when the refresh will actually do work — a cold build or a
-/// stale rebuild — so warm and current queries never claim one.
+/// Cold and stale reads name explicit indexing as the recovery instruction; current
+/// reads need no notice.
 pub(super) fn refresh_progress_message(pending: RefreshPending) -> Option<String> {
     match pending {
         RefreshPending::Cold => Some(format!(
-            "[docs] {DOCS_CONTEXT_COMMAND}: graph index is missing; building the shared graph index before answering"
+            "[docs] {DOCS_CONTEXT_COMMAND}: graph index is missing; run `effigy graph index` before querying"
         )),
         RefreshPending::Stale => Some(format!(
-            "[docs] {DOCS_CONTEXT_COMMAND}: graph index is stale; refreshing it before answering"
+            "[docs] {DOCS_CONTEXT_COMMAND}: graph index is stale; run `effigy graph index` to refresh"
         )),
         RefreshPending::Current => None,
     }

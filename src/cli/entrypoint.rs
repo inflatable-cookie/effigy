@@ -190,8 +190,6 @@ pub fn run_cli(raw_args: Vec<String>) {
         | Command::Draft(_)
         | Command::InternalGateway(_)
         | Command::InternalGatewayIdentity(_)
-        | Command::InternalGatewayLegacyCandidate(_)
-        | Command::InternalGatewayLegacyStop(_)
         | Command::InternalScriptRun(_)
         | Command::InternalContainerLeaseReaper(_)
         | Command::InternalHostProcessSupervise(_)

@@ -12,7 +12,6 @@ effigy --json tasks
 effigy --json doctor
 effigy --json test --plan
 effigy --json <selector> --plan
-effigy --json watch --owner effigy --once test
 effigy --json <catalog-or-root-task>
 ```
 
@@ -114,8 +113,7 @@ failure), renders the normal `effigy.task.run.v1` payload, and attaches it to
 `error.details` while the top-level envelope stays failed (`ok: false`, non-zero
 exit). Automation reads captured diagnostics from
 `error.details.stdout`/`error.details.stderr` instead of scraping terminal
-text. Built-in surfaces that run a nested task — `effigy --json watch --once
-<target>` — preserve the same payload when the target fails. Capture honors
+text. Capture honors
 existing redaction; secrets are removed before the payload is rendered.
 
 ## Result Payload Schemas
@@ -156,7 +154,6 @@ Operator workflow and recovery: [`077-local-dependency-linking.md`](077-local-de
 - `effigy.bundle.sync.v1`
 - `effigy.test.plan.v1`
 - `effigy.test.results.v1`
-- `effigy.watch.v1`
 - `effigy.graph.index.v1`
 - `effigy.graph.status.v1`
 - `effigy.graph.search.v1`
@@ -175,7 +172,6 @@ Operator workflow and recovery: [`077-local-dependency-linking.md`](077-local-de
 - `effigy.init.list.v1`
 - `effigy.init.checklist.v1`
 - `effigy.init.actions.v1`
-- `effigy.migrate.v1`
 - `effigy.lock-wait.v2` (lock-conflict `error.details`)
 - `effigy.completion.v2`
 - `effigy.completion.candidates.v1`
@@ -200,7 +196,6 @@ Operator workflow and recovery: [`077-local-dependency-linking.md`](077-local-de
 - `effigy.container-partial-activation.v2` (detached `container up` failure details)
 - `effigy.host_run.request-status.v1` (`tasks request status`)
 - `effigy.host_run.request-follow.v1` (`tasks request follow`)
-- `effigy.docs.qualified.resolution.v1` (`docs qualified resolve`)
 - `effigy.state-stack.lineage.v1`
 - `effigy.state-stack.apply.v1`
 
@@ -254,9 +249,7 @@ effigy --json deploy plan uat --repo /path/to/workspace
 effigy --json deploy history uat --repo /path/to/workspace
 effigy --json test --plan
 effigy --json test
-effigy --json watch --owner effigy --once test
 effigy --json init --dry-run
-effigy --json tasks migrate --apply
 effigy --json config completion bash --export
 effigy --json config completion candidates --prefix farm
 effigy --json state plan ./state/example-app-uat.toml
@@ -439,7 +432,7 @@ Effigy validates JSON in two layers:
 
 | Layer | Scope | Primary tests |
 |---|---|---|
-| Runner payload contracts | Command-specific payload schema/shape (for example `effigy.watch.v1`, `effigy.init.v1`, `effigy.task.run.v1`) | `src/tests/json_contract_tests.rs` |
+| Runner payload contracts | Command-specific payload schema/shape (for example `effigy.init.v1`, `effigy.task.run.v1`) | `src/tests/json_contract_tests.rs` |
 | CLI envelope contracts | Top-level `effigy.command.v1` envelope, `command.kind/name`, and error wrapping/remediation propagation | `tests/cli_output_tests.rs` |
 
 Rule of thumb:
@@ -452,11 +445,13 @@ Rule of thumb:
 - `schema_version` is the top-level envelope version.
 - `binary.version` is the shipped semver; `binary.active_version` and
   `binary.display_version` can include local build identity such as
-  `+local.<hash>`.
+  `+local.<hash>` from `EFFIGY_ACTIVE_VERSION` or the installed sibling
+  `.active-version` stamp. Without either, they use the package version;
+  discovery never runs Git to infer an unstamped development identity.
 - Each binary metadata object samples active identity once and derives its
   display form from that observation. The version command shares that same
   snapshot between its result and outer envelope. A later command may observe
-  a changed checkout; identity is not cached across commands.
+  a changed stamp; identity is not cached across commands.
 - New optional fields may be added in `v1` without removing existing keys.
 - Release gate JSON (`effigy.release.gates.v1`, `effigy.release.status.v1`,
   `effigy.release.prepare.v1`, and the matching plan/simulate payloads) may
@@ -478,7 +473,7 @@ After this guide, you should be able to:
 
 ## Related Guides
 
-- Watch/init/migrate command contracts: [`019-watch-init-migrate-foundation.md`](019-watch-init-migrate-foundation.md)
+- Init command contracts: [`019-init-foundation.md`](019-init-foundation.md)
 - DAG/policy/locking behavior: [`020-dag-lock-policy-baseline.md`](020-dag-lock-policy-baseline.md)
 - CI automation patterns: [`024-ci-and-automation-recipes.md`](024-ci-and-automation-recipes.md)
 

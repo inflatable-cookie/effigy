@@ -431,7 +431,8 @@ fn answered_block(
 /// belongs to the repository-owned documentation corpus scope; a database
 /// indexed before scopes existed still answers from the root key.
 fn indexed_head(repo_root: &Path) -> Option<String> {
-    let store = GraphStore::open(repo_root).ok()?;
+    let scope = crate::scope::GraphScope::workspace(repo_root).ok()?;
+    let store = GraphStore::open_read_only(&scope).ok()??;
     let scope_key = crate::scope::GraphScope::workspace(repo_root)
         .ok()?
         .key()

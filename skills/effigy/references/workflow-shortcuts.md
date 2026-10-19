@@ -12,7 +12,8 @@ effigy graph explore "<question>" --max-files 6 --max-bytes 12288 --json
 git diff --name-only | effigy graph affected --stdin --json
 ```
 
-Both queries refresh a stale or missing index before reading it.
+Both queries read existing data without refreshing. Run `graph index` explicitly
+when the packet reports missing or stale data.
 
 See `graph-assist.md`.
 
@@ -88,10 +89,7 @@ proof.
 ```bash
 effigy init                        # idempotent baseline repo setup
 effigy init --check --json         # no-write setup report for agents/tools
-effigy tasks migrate --apply       # import package.json scripts into [tasks]
 ```
-
-Preview without writing: `effigy tasks migrate` (omit `--apply`).
 
 ## Repo scanners
 

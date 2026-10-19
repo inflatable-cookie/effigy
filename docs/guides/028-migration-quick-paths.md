@@ -202,7 +202,7 @@ If CI or scripts still reference them, migrate to `effigy doctor` or `effigy doc
 
 ## 7) Risk Controls During Migration
 
-- prefer `--plan` and `--dry-run` modes first (`test --plan`, `init --dry-run`, `migrate` preview)
+- prefer `--plan` and `--dry-run` modes first (`test --plan`, `init --dry-run`)
 - make one migration class at a time (manifest shape, then task routing, then CI JSON)
 - after an interrupted dev flow, `effigy tasks status <task>` names any live run; a killed run's lock is already released
 - use `effigy doctor --verbose` after each migration chunk

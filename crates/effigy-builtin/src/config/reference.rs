@@ -26,7 +26,7 @@ pub(super) fn render_config_reference(color_enabled: bool) -> Result<String, Bui
     )?;
     renderer.notice(
         NoticeLevel::Info,
-        "Use `effigy bundle inspect` to inspect the active repo bundle source and `effigy bundle sync` to refresh remote git or OCI bundle sources.",
+        "Use `effigy bundle inspect` to inspect the active repo bundle source and `effigy bundle sync` to update checkout pins for path, git or OCI bundle sources.",
     )?;
     renderer.notice(
         NoticeLevel::Info,

@@ -35,7 +35,6 @@ also supports `--headless` / `EFFIGY_MANAGED_HEADLESS=1` plus task-local
 | `doctor` | Health checks; `doctor <selector>` explain mode; running-workspace ownership diagnosis |
 | `test` | Built-in test orchestration (`--plan`, `--tui`) |
 | `defer` | Run `[defer]` fallback explicitly |
-| `watch` | File-triggered task reruns (`--owner` required) |
 | `scan` | Repo scanners (`god-files`, `attention-markers`, …) |
 | `config` | Inspect merged manifest; schema snippets; `config get/set` |
 | `config completion` | Shell completion + selector candidates |
@@ -65,7 +64,7 @@ Guide: `docs/guides/076-code-graph-and-agent-workflows.md`
 returns exact Markdown sections with path, span, kind, authority, currentness,
 fields, typed relation path, and match reason, as `effigy.docs.context.v1`.
 Defaults are 8 sections, 24000 bytes, 1 hop; maxima are 32, 100000, 3. It shares
-the graph database and lazy refresh - no second index. Semantics come from the
+the read-only graph database - no second index. Semantics come from the
 selected repository's committed `[docs_policy.graph]` block, never from an
 installed skill; baseline mode works with no profile.
 
@@ -103,7 +102,6 @@ Guide: `docs/guides/079-documentation-graph-profiles-and-context.md`
 | `docs` | Link/JSON/index/workflow-path QA checks, plus bounded `docs context` documentation retrieval |
 | `contracts` | JSON contract validation |
 | `init` | Repo setup wizard; `--check`, `--checklist`, `--apply` |
-| `tasks migrate` | Import `package.json` scripts |
 
 ## Distribution note
 

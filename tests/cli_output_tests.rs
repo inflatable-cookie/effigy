@@ -47,3 +47,6 @@ mod fixture_parent_tests;
 #[cfg(unix)]
 #[path = "cli_output_tests/partial_startup_tests.rs"]
 mod partial_startup_tests;
+
+#[path = "cli_output_tests/retirement_tests.rs"]
+mod retirement_tests;

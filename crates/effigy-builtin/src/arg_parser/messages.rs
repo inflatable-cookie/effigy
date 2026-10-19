@@ -24,10 +24,6 @@ impl BuiltinArgParser<'_> {
         format!("`{flag}` requires a value for built-in `{builtin}`")
     }
 
-    pub(crate) fn flag_requires_value_message(flag: &str, expected: &str) -> String {
-        format!("`{flag}` requires {expected}")
-    }
-
     pub(crate) fn builtin_requires_subcommand_message(builtin: &str, expected: &str) -> String {
         format!("`{builtin}` requires a subcommand: {expected}")
     }

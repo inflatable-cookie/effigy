@@ -86,20 +86,6 @@ Deep dive:
 - [`013-testing-orchestration.md`](013-testing-orchestration.md)
 - [`048-built-in-test-suite-lifecycle-and-env.md`](048-built-in-test-suite-lifecycle-and-env.md)
 
-### Watch mode
-
-```sh
-effigy watch --owner effigy --once test
-effigy watch --owner effigy --max-runs 2 test
-```
-
-Use watch mode when you want bounded reruns with explicit control over who owns
-the watch loop
-instead of nested watcher loops.
-
-Deep dive:
-- [`019-watch-init-migrate-foundation.md`](019-watch-init-migrate-foundation.md)
-
 ### Repo scans
 
 ```sh
@@ -252,7 +238,6 @@ effigy init
 effigy init --check --json
 effigy init --checklist --json
 effigy init --apply-actions manifest.effigy_toml,graph_status.inspect --json
-effigy tasks migrate --from package.json
 effigy config --schema --minimal
 ```
 
@@ -468,7 +453,7 @@ After this guide, you should have a clearer default path for:
 - using one coherent local-dev path for services, containers, gateway, exec,
   and repo-owned dev sessions
 - using artifacts for versioned data seeds, snapshots, and OCI workflows
-- using built-ins for health, watch, and scans
+- using built-ins for health, tests, and scans
 - using demos as an explicit proof path instead of script sprawl
 - using native release and distribution commands instead of wrapper-script
   bundles
