@@ -850,6 +850,7 @@ impl Scenario for OwnerLoss {
     fn oracles(&self) -> &'static [Oracle] {
         &[
             Oracle::O1b,
+            Oracle::O8,
             Oracle::O2,
             Oracle::O3,
             Oracle::O4,
@@ -1111,7 +1112,14 @@ impl Scenario for ObserveProbes {
             argv: vec![
                 "/bin/sh".into(),
                 "-c".into(),
-                format!("echo $$ >> '{}'; exec /bin/sleep 30", announce.display()).into(),
+                // The fixture, not a platform binary: macOS hides a platform
+                // binary's environment, and with it the probe nonce (O14).
+                format!(
+                    "echo $$ >> '{}'; exec '{}' nonce-workload",
+                    announce.display(),
+                    fixture_path().display()
+                )
+                .into(),
             ],
             cwd: aux(home),
             env: BTreeMap::new(),

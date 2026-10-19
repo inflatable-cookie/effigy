@@ -502,7 +502,20 @@ fails the drive, and every declared oracle must judge at least one subject.
   hides the environment of platform binaries from other processes, so
   lingering workloads exec `kernel-custody-fixture`, whose nonce stays readable.
 - O14 samples announced probe processes at deadline plus grace plus 250 ms of
-  scheduling slack.
+  scheduling slack. The probe execs the fixture so its nonce stays readable on
+  macOS, and any announced probe still alive then fails the oracle.
+- O8 is instrumented where the kernel decides an undo or a signal from an
+  observation: adapter undo in `run::settle::resolve` and local custody
+  recovery (`custody::platform::recover_with`), which the owner-loss scenario
+  drives. Remote session signals and probe-guard signals are not instrumented;
+  their suites (`test:kernel:remote`, `test:kernel:probe`) and O12's foreign
+  fixture cover them.
+- Points inside helper processes are not armed: `SentinelBeforeSettle`,
+  `SentinelAfterSettle`, the guard-side `ProbeGuardAck` and every point inside
+  the detached supervisor. Helpers run as `kernel-custody-fixture`, a non-test
+  build where `fault_point!` is a no-op. Owner-side `SentinelClose` is driven,
+  and owner Kill at every point exercises sentinel settlement. Arming them needs
+  fault hooks compiled into the fixture under `fault-injection`.
 - Each drive splits its jobs across six worker processes. Shards are processes,
   never threads: the probe runtime, the foreign fixture and child reaping are
   process-wide.

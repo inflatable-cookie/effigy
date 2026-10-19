@@ -18,6 +18,8 @@ are implemented in the kernel, with macOS/Linux qualification selectors. The
 §12.1 fault-injection driver, oracles O1–O14 and the §12.3 supervisor model
 matrix are implemented (`test:kernel:faults`, `test:kernel:matrix`);
 engine-specific §12.1 scenarios are placeholders owned by their engine lanes.
+Fault points inside helper processes (sentinel settle, guard acknowledgement,
+detached supervisor) are not yet armed; architecture 032 records the limit.
 Engines have not adopted the kernel; the
 mechanisms in the adoption map (§10) remain current behavior. QA-group `stop` and `hard_timeout_ms` stay unavailable: contract
 [051](051-bounded-qa-groups-contract.md) keeps refusing them until this

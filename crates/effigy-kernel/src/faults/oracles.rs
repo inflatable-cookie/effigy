@@ -404,16 +404,17 @@ fn o14(world: &World) -> Result<usize, String> {
         return Ok(0);
     }
     for probe in &world.probes {
-        if probe.alive && probe.nonce.is_some() {
+        // A live announced probe whose nonce cannot be read is not judged
+        // safe: its generation evidence is missing, so it fails (I-O6).
+        if probe.alive {
             return Err(format!(
-                "O14: probe {} outlived its deadline plus grace ({:?})",
-                probe.pid, world.probe_bound
+                "O14: probe {} alive past its deadline plus grace ({:?}), nonce {:?}",
+                probe.pid, world.probe_bound, probe.nonce
             ));
         }
     }
     Ok(world.probes.len())
 }
-
 #[cfg(test)]
 mod controls {
     //! Negative controls: every oracle fails on a world that breaks it.
@@ -783,6 +784,33 @@ mod controls {
         stray.kill().unwrap();
         stray.wait().unwrap();
         passes(Oracle::O1a, &world());
+        // O14: a probe process with readable generation evidence outliving
+        // its bound. The probe evidence is the fixture's readable nonce.
+        let mut probe = std::process::Command::new(fixture_path())
+            .arg("nonce-workload")
+            .env("EFFIGY_PROBE_NONCE", "control-probe")
+            .spawn()
+            .unwrap();
+        wait_until("probe exec", Duration::from_secs(5), || {
+            crate::custody::platform::read_nonce_key(probe.id(), b"EFFIGY_PROBE_NONCE=")
+                .verified()
+                .is_some()
+        });
+        let probes = World {
+            probes: vec![proc(probe.id(), b"EFFIGY_PROBE_NONCE=")],
+            probe_bound: Some(Duration::from_millis(1)),
+            ..World::default()
+        };
+        assert_eq!(probes.probes[0].nonce.as_deref(), Some("control-probe"));
+        fails(Oracle::O14, &probes);
+        probe.kill().unwrap();
+        probe.wait().unwrap();
+        let probes = World {
+            probes: vec![proc(probe.id(), b"EFFIGY_PROBE_NONCE=")],
+            probe_bound: Some(Duration::from_millis(1)),
+            ..World::default()
+        };
+        passes(Oracle::O14, &probes);
         // O4: a gate held by a process the harness never declared live.
         let guard =
             Gate::acquire(&cx, &root, std::slice::from_ref(&owner), Wait::FailFast).unwrap();
