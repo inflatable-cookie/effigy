@@ -61,7 +61,7 @@ existing catalog path prefix followed by `/` and the name. With no prefix,
 group resolution uses the existing task precedence (cwd-nearest, then
 shallowest) over the effective catalog set, but searches only the QA-group
 surface. A tie is an error listing qualified candidates; there is no fallback
-to a task or draft with the same name. With `--file`, `<SELECTOR>` must equal
+to a task with the same name. With `--file`, `<SELECTOR>` must equal
 the file's `name`; resolution selects only that temporary definition and
 never falls through to a maintained group. Without `--file`, temporary
 definitions are not candidates. The inventory lists maintained groups in
@@ -90,12 +90,10 @@ leading `qa-groups` and `qa-group` routes, leaving those forms, task-list flags,
 and top-level selectors unchanged. Group names use `[a-z][a-z0-9-]*` and
 cannot contain `/`, so only the catalog prefix can qualify a selector. The
 action precedes the name, so names
-such as `run` or `status` are valid. A QA-group name may match a published
-task name or a draft name because those definitions use separate command
-surfaces and typed identities. This does not relax contract
-[046](046-published-and-draft-task-surface-contract.md): a published task and
-a draft with the same name in one effective catalog remain invalid, even if a
-QA group with that name also exists. Duplicate group names inside one
+such as `run` or `status` are valid. A QA-group name may match a task name
+because groups and tasks have separate command routes and typed identities.
+Contract [046](046-published-and-draft-task-surface-contract.md) owns legacy
+syntax translation and rejects task namespace collisions. Duplicate group names inside one
 composed catalog are invalid; include order never overrides one definition
 with another. The same group name in distinct catalogs is valid and must be
 qualified if normal catalog precedence cannot choose one.
@@ -169,8 +167,8 @@ Each member requires:
 
 - unique `id` within the group, using `[a-z][a-z0-9-]*`;
 - `kind`: `test`, `compile`, `docs`, `proof`, or `setup`;
-- `surface`: `published` or `draft`; maintained groups use `published`, and
-  temporary groups must state the value explicitly;
+- optional `surface`: `published` (the default for public and internal tasks);
+  the legacy value `draft` translates to `published` for one release;
 - optional `catalog`: an effective catalog alias that explicitly pins a
   cross-catalog member (otherwise the owning group catalog is used);
 - exact task `selector` and a fixed `args` array (the example uses `task` as
@@ -232,19 +230,11 @@ expected cost. A selector may compose ordinary tasks using existing task
 semantics, but a group cannot invoke another QA group or invent an embedded
 command runner.
 
-Maintained groups may reference only published task selectors. They cannot
-depend on drafts or temporary group definitions. A temporary group may name a
-published or draft selector explicitly using a typed `surface` value. Before
-that is implemented, contract 046 must add the existing task `admission`
-metadata to draft definitions and their plan/run JSON. Its meaning matches
-published tasks: `heavy` opts in; absent metadata remains ordinary, preserving
-current direct-draft behavior. A group never guesses admission from a task
-name. Until the draft schema and direct execution path carry this field, a
-group plan rejects draft members instead of treating them as safely bounded.
-
-Published tasks cannot reference groups, and group dependencies are not
-allowed in v1. Task, draft, and group identity remain distinct even when their
-names match.
+Maintained and temporary groups may reference public or internal task
+selectors in the single task namespace. Legacy `surface = "draft"` members
+translate to `published` for one release; see
+[046](046-published-and-draft-task-surface-contract.md). Task admission metadata
+and group lifecycle remain independent of discovery visibility.
 
 ## Temporary definitions, trust, and cleanup
 
@@ -296,10 +286,8 @@ no directory-derived catalog or group-name fallback.
 
 Temporary files contain group metadata and task references only: no task body,
 shell command, include, directory glob, overlay, or environment override. The
-referenced task is resolved from the current composed manifest. A temporary
-group can reference a draft only with `surface = "draft"`; the draft keeps its
-existing task body, provenance, execution path, and status identity. The file
-cannot redefine or override a published task, draft, or manifest group.
+referenced task is resolved from the current composed manifest, regardless of
+its discovery visibility. The file cannot redefine a task or manifest group.
 
 `created` and `expires` are strict `YYYY-MM-DD` dates; expiry cannot precede
 creation and is required for a temporary group. Expiry is advisory: inventory
@@ -324,24 +312,17 @@ group, then shallowest group. Ambiguity fails before member resolution and
 reports qualified candidates. A qualified selector pins the owning catalog.
 A temporary file bypasses maintained-name lookup entirely.
 
-Each member has a `surface` of `published` or `draft`; maintained groups may
-use only `published` members. A temporary member must state its surface. A
-temporary group must also state `catalog` as an alias in the effective
-catalog set; this pins the file's owning catalog without inferring it from
-the file's directory. Member lookup defaults to the owning group catalog. An
-optional member `catalog` must name an alias in the effective catalog set and
-pins cross-catalog lookup; it never uses cwd-nearest or shallowest fallback.
-Within that catalog, `selector` is exact on the declared surface (the
-illustrative TOML uses `task` for this selector field). A published miss does
-not fall through to a same-named draft, and a draft miss does not fall through
-to a published task. Member dependencies inside an ordinary task continue to
-use their existing routing contract.
+Each member resolves an ordinary public or internal task. A temporary group
+states `catalog` as an alias in the effective catalog set; its file directory
+never supplies an inferred catalog. Member lookup defaults to the owning group
+catalog. An optional member `catalog` pins cross-catalog lookup and never uses
+cwd-nearest or shallowest fallback. Within that catalog the task selector is
+exact. Dependencies within the selected task retain ordinary routing.
 
 Typed group identity is `(repository root, owning catalog root, qa_group
 surface, lifecycle/source, name, source path, definition digest)`. A group may
-share its name with a published task or draft; the QA-group route selects only
-the group surface. Contract 046 still forbids a published task and draft with
-the same name in one effective catalog. Catalog scope permits equal group
+share its name with a task; the QA-group route selects only the group surface.
+Catalog scope permits equal group
 names in separate catalogs without identity collision; the route must qualify
 or be uniquely resolvable. Duplicate group keys after explicit manifest
 composition are invalid and are never resolved by include order. Member IDs
@@ -390,9 +371,8 @@ Heavy groups compose with heavy-task admission contract
   the hook again or wait behind themselves.
 - If a dependency cannot be resolved before execution, `--plan` fails closed;
   the runtime does not discover heavy work after it has begun.
-- A draft member's heavy classification comes from its typed draft definition.
-  `[drafts]` accepts the same optional `admission = "heavy"` metadata as
-  `[tasks]`; a direct heavy draft calls the hook like a task.
+- A member's heavy classification comes from its typed task definition,
+  regardless of public/internal discovery visibility.
 - A group with no heavy member calls no hook. Its execution is still timed and
   recorded; it does not receive machine-wide CPU or memory enforcement.
 
@@ -402,7 +382,7 @@ Current availability after the contract 051 implementation:
 | --- | --- | --- |
 | Legacy Effigy lease admission and the host-run client | Retired. | The old local store and its records remain untouched and opaque. Neither the lease nor the Queue/Nucleus scheduler client exists (Q-006). |
 | Admission hook | Implemented. | A heavy group is admitted once through `EFFIGY_ADMISSION_HOOK` under [049](049-heavy-validation-admission-contract.md#admission-hook); a refusal records no group and runs no member. |
-| Draft admission | Implemented. | `[drafts]` accept the same optional `admission = "heavy"` metadata as `[tasks]`; direct draft plans/runs/inventory carry it additively, and temporary groups may select draft members explicitly. |
+| Task admission | Implemented. | Public and internal tasks share typed admission metadata; legacy task syntax translates under contract 046. |
 | Group run status and logs | Implemented. | Runs persist a definition snapshot, head/worktree context, member ledger, and run-scoped pipeline-redacted logs; `tasks qa-group status/logs` read them live and after completion. |
 | Ordinary process stop | Unavailable. | Parsing exists so the command can refuse before any side effect with the precise prerequisite: the owned-run supervision contract [052](052-runtime-kernel-contract.md), proposed and unavailable until implementation. |
 | `hard_timeout_ms` | Unavailable. | Definitions naming it fail validation with the same contract 052 prerequisite diagnostic. |
@@ -569,20 +549,18 @@ full board, or omit an uncertain member.
 | --- | --- |
 | `[tasks]`, `effigy tasks`, ordinary selector runs | Keep syntax, routing, JSON, and identity. Group definitions do not become task aliases. |
 | Repository-owned `qa`, `validate`, hosted CI, release gates | Keep their definitions and routes unchanged. No group builtin replaces them. |
-| `[drafts]`, `effigy drafts`, `effigy draft`, draft JSON/status | Keep current task-draft grammar and advisory expiry; do not reinterpret a draft body as a group. The implementation brief adds the same optional `admission = "heavy"` metadata as `[tasks]` to draft definitions and additive plan/run JSON. Existing definitions without it retain today's ordinary classification and identity. |
-| Temporary non-QA environments | Continue to use existing drafts and status identity. No rename or deletion is implied. |
-| Existing temporary QA draft | Convert only by an explicit owner edit to a temporary group file; preserve the old draft until the replacement is reviewed and run. |
+| Temporary non-QA environments | Use ordinary internal tasks; migration is owned by contract 046. |
 | Maintained QA tasks | Leave as published tasks. A group may select a task, but a task cannot depend on a temporary group. Group adoption does not create duplicate shell runners. |
 | Saved task status and references | Keep existing task keys and records. Groups use a new `qa_group` surface identity containing catalog, lifecycle, name, source path, and definition digest. Never rewrite old records or join them to group records. |
 | Config composition | Do not infer, scan, or rewrite groups. Only explicit `[qa.groups]` entries or explicit `--file` selection create group discovery. |
-| JSON consumers | Add group schemas; do not change existing task/draft schema IDs or silently reshape their payloads. |
+| JSON consumers | Add group schemas; do not change existing task schema IDs or silently reshape their payloads. |
 
 Implementation sequence:
 
 1. Landed: the group parser, identity, `--plan`, inventory, pipeline
    execution, records, and versioned JSON shipped through the
-   `tasks qa-group` surfaces (task effigy#051), including the contract 046
-   draft `admission` metadata extension they depended on.
+   `tasks qa-group` surfaces (task effigy#051). Contract 046 now owns the
+   single task namespace and legacy syntax translation.
 2. Land contract [052](052-runtime-kernel-contract.md) before claiming
    general run-scoped stop, signal attribution, or safe cancellation of
    non-heavy/nested runs. The `stop` command and `hard_timeout_ms` stay
@@ -604,9 +582,8 @@ when each brief is approved and dispatched.
 
 - Parser and manifest tests cover maintained/temporary identity, include
   provenance, duplicate member IDs, missing selectors, malformed/escaping
-  temporary paths, expired execution, typed draft references, and the top-level
-  selector collision cases. Existing `qa`, `validate`, task and draft routes
-  remain unchanged.
+  temporary paths, expired execution, legacy reference translation, and the top-level
+  selector collision cases. Existing `qa`, `validate` and ordinary task routes remain unchanged.
 - Collision tests prove `[qa.groups.smoke]` may coexist with `[tasks.smoke]`
   and, separately, with `[drafts.smoke]`. The effective catalog still rejects
   `[tasks.smoke]` plus `[drafts.smoke]` under contract 046, including when
@@ -615,10 +592,9 @@ when each brief is approved and dispatched.
 - Routing tests cover root-owned effective catalog membership; alias/path,
   cwd-nearest, shallowest, ambiguity, and qualified group lookup; exact member
   lookup in the owning catalog; explicit cross-catalog member aliases; and no
-  published/draft fallback. Duplicate group keys in one composed catalog fail
-  regardless of include order; QA-group names may overlap either task surface,
-  while the published-task/draft same-name pair remains invalid per the
-  collision tests above. Equal group names across catalogs remain distinct.
+  fallback between task namespaces. Duplicate group keys in one composed catalog fail
+  regardless of include order; QA-group names may overlap task names. Legacy namespace collisions fail
+  during migration under contract 046. Equal group names across catalogs remain distinct.
   Temporary files are selected only by their explicit path.
 - Coverage tests cover required scope omitted, advisory scope omitted,
   exact typed-token matching, matching path `*`/`**` patterns, invalid and
@@ -634,8 +610,8 @@ when each brief is approved and dispatched.
   the group with the correct member ID and exit result. A stopped or timed-out
   member marks remaining members `not_started`; no pass is synthesized.
 - Heavy members run inside one admission for the group; nested heavy tasks
-  never call the hook again. Non-heavy runs do not claim OS resource
-  enforcement.
+  never call the hook again. Discovery visibility never changes admission
+  classification. Non-heavy runs do not claim OS resource enforcement.
 - Text and JSON distinguish capacity wait/timeout, pass, failed check,
   cancellation, execution timeout, unknown/interrupted evidence, and over
   budget. Tests inject capacity and execution timing; they do not sleep on wall

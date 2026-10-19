@@ -45,7 +45,7 @@ fn run_manifest_task_builtin_help_json_contract_table_has_stable_schema_topic_an
             "tasks",
             &["--help", "--json", "--wat"],
             "tasks",
-            "effigy tasks [--repo <PATH>] [--task <TASK_NAME>]",
+            "effigy tasks [--all] [--repo <PATH>] [--task <TASK_NAME>]",
         ),
     ];
 

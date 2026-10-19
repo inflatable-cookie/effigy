@@ -208,16 +208,16 @@ untracked files are visibly local. Temporary expiry is advisory and separate
 from runtime expectation. Cleanup is a human edit/removal, not automatic
 pruning.
 
-Temporary groups resolve draft-task classification from the typed definition.
-`[drafts]` accepts the same optional `admission = "heavy"` metadata as
-`[tasks]`; a direct heavy draft calls the hook like a task, and group members
-run inside the group's admission.
+Public and internal task members resolve in one namespace; admission comes
+from the typed task definition. Legacy member surface syntax translates as
+specified by [046](../contracts/046-published-and-draft-task-surface-contract.md).
+A direct heavy task calls the hook itself; group members run inside the
+group's admission.
 
 ## Boundaries
 
-- Keep current `[drafts]` for temporary ordinary tasks and environments as
-  specified by contracts [046](../contracts/046-published-and-draft-task-surface-contract.md)
-  and [028](028-published-and-draft-task-surfaces.md).
+- Temporary ordinary tasks use internal visibility; group lifecycle remains
+  separate from task discovery (contract 046).
 - Keep repository-owned `qa`, `validate`, CI, and release routes unchanged.
 - Do not infer group members from Git diff, graph output, a selector name, or a
   hand-written input map.

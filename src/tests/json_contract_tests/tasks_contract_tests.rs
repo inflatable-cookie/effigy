@@ -18,6 +18,7 @@ fn tasks_json_contract_has_versioned_top_level_shape() {
 
     let out = with_cwd(&root, || {
         run_tasks(TasksArgs {
+            all: false,
             repo_override: None,
             task_name: None,
             resolve_selector: None,
@@ -42,6 +43,7 @@ fn tasks_filtered_json_contract_has_versioned_shape_and_filter_fields() {
     let root = temp_workspace("tasks-filtered-json-contract");
     let out = with_cwd(&root, || {
         run_tasks(TasksArgs {
+            all: false,
             repo_override: None,
             task_name: Some("test".to_owned()),
             resolve_selector: None,
@@ -68,6 +70,7 @@ fn tasks_json_contract_catalog_payload_uses_expected_top_level_fields() {
     let root = temp_workspace("tasks-json-contract-top-level-catalog");
     let out = with_cwd(&root, || {
         run_tasks(TasksArgs {
+            all: false,
             repo_override: None,
             task_name: None,
             resolve_selector: None,
@@ -104,6 +107,7 @@ fn tasks_json_contract_filtered_payload_uses_expected_top_level_fields() {
     let root = temp_workspace("tasks-json-contract-top-level-filtered");
     let out = with_cwd(&root, || {
         run_tasks(TasksArgs {
+            all: false,
             repo_override: None,
             task_name: Some("test".to_owned()),
             resolve_selector: None,
@@ -152,6 +156,7 @@ fn tasks_json_contract_with_resolve_has_diagnostics_and_probe_fields() {
 
     let out = with_cwd(&root, || {
         run_tasks(TasksArgs {
+            all: false,
             repo_override: None,
             task_name: None,
             resolve_selector: Some("catalog_a/api".to_owned()),
@@ -190,6 +195,7 @@ fn tasks_filtered_json_contract_with_resolve_has_diagnostics_and_probe_fields() 
 
     let out = with_cwd(&root, || {
         run_tasks(TasksArgs {
+            all: false,
             repo_override: None,
             task_name: Some("build".to_owned()),
             resolve_selector: Some("catalog_a/build".to_owned()),
@@ -223,6 +229,7 @@ fn tasks_json_contract_excludes_explicitly_deferred_builtins() {
 
     let out = with_cwd(&root, || {
         run_tasks(TasksArgs {
+            all: false,
             repo_override: None,
             task_name: None,
             resolve_selector: None,
@@ -267,6 +274,7 @@ fn tasks_json_contract_selectors_inventory_is_portable_and_deterministic() {
 
     let out = with_cwd(&root, || {
         run_tasks(TasksArgs {
+            all: false,
             repo_override: None,
             task_name: None,
             resolve_selector: None,
@@ -383,6 +391,7 @@ fn tasks_status_json_contract_has_versioned_top_level_shape() {
 
     let out = with_cwd(&root, || {
         run_tasks(TasksArgs {
+            all: false,
             repo_override: None,
             task_name: None,
             resolve_selector: None,
@@ -422,6 +431,7 @@ fn tasks_status_all_json_contract_has_versioned_top_level_shape() {
     );
     let out = with_cwd(&root, || {
         run_tasks(TasksArgs {
+            all: false,
             repo_override: None,
             task_name: None,
             resolve_selector: None,

@@ -58,7 +58,7 @@ The exact primary help taxonomy is:
 
 | Topic | Primary commands and shapes |
 | --- | --- |
-| work | `<task>`, `<catalog>/<task>`, `tasks`, `draft`, `drafts`, `test`, `doctor`, `init` |
+| work | `<task>`, `<catalog>/<task>`, `tasks`, `test`, `doctor`, `init` |
 | `local` | `container`, `system`, `workspace`, `gateway`, `service`, `exec` |
 | `repo` | `graph`, `scan`, `docs`, `contracts` |
 | `deliver` | `artifact`, `state`, `deploy`, `release`, `bundle`, `bootstrap`, `demo` |
@@ -274,23 +274,16 @@ These lanes should remain separate. None implies release work.
 - extract provider-neutral repository intelligence;
 - treat façade exposure as implementation ownership.
 
-## Published And Draft Task Surfaces
+## Task visibility
 
-Architecture [`028`](028-published-and-draft-task-surfaces.md) separates the
-stable repository interface under `[tasks]` from lifecycle-labelled temporary
-definitions under `[drafts]`. `draft` and `drafts` belong in the direct work
-group because Effigy owns their manifest identity, routing, dependency safety,
-and reuse of the canonical execution pipeline. They are not an extension or a
-second runner.
-
-This additive surface does not reopen the rejected executable help namespaces.
-Normal flat selectors remain published-only; drafts require their explicit
-command. Contract [`046`](../contracts/046-published-and-draft-task-surface-contract.md)
-owns the grammar and compatibility boundary.
+Architecture [028](028-published-and-draft-task-surfaces.md) keeps public and
+internal discovery on one task namespace and execution path. The grouped
+human inventory and complete machine inventory share effective metadata.
+Contract [046](../contracts/046-published-and-draft-task-surface-contract.md)
+owns the grammar, defaults and one-release syntax migration.
 
 ## Drift Triggers
 
 Revisit this architecture when a new top-level family is proposed, a provider
 dependency enters mandatory core, catalog acquisition adds operator ceremony,
-product-specific release defaults enter reusable release code, published and
-draft task identity changes, or the S3 consumer dependency changes.
+product-specific release defaults enter reusable release code, task identity or visibility changes, or the S3 consumer dependency changes.

@@ -340,7 +340,6 @@ fn run_standard_task_inner(
                 output.status.code(),
                 &stdout,
                 &stderr,
-                context.selection,
             )?;
             if output.status.success() {
                 if task_activation
@@ -849,7 +848,6 @@ fn run_inline_workspace_standard_task(
             output.status.code(),
             &stdout,
             &stderr,
-            context.selection,
         )?;
         if output.status.success() {
             Ok(rendered)

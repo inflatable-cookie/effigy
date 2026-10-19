@@ -37,7 +37,7 @@ Workers run the changed-code tests, compile the touched targets, and run docs ch
 
 The planner runs milestone full QA on `main` through Queue `project.qa.run` and reads its result with `project.qa.get`, then briefs fixes for failures. Do not configure a per-task Queue validation command. Run `effigy skill run northstar/retired-concepts` when retiring concepts.
 
-Run validation through Effigy selectors, not raw Cargo, Bun, or Vitest commands. Record background exit codes. Stop only processes you started, using their recorded PIDs or process groups; never use pattern kills (`pkill -f`, `killall`, or `pgrep` piped into `kill`).
+Run validation through Effigy selectors, not raw Cargo, Bun, or Vitest commands. During the v0.15 rebuild, this checkout's `effigy.toml` uses keys the installed v0.14.1 binary rejects. Run selectors with the worktree build, `cargo run --bin effigy -- <selector>`, not the installed `effigy`. Until the host-run name rule is retired, don't invoke a selector named `qa`, `ci` or `ci:fresh` as a worker; use the narrow selectors under it. Record background exit codes. Stop only processes you started, using their recorded PIDs or process groups; never use pattern kills (`pkill -f`, `killall`, or `pgrep` piped into `kill`).
 
 <!-- northstar:rust-quality:start -->
 ## Northstar Rust Quality

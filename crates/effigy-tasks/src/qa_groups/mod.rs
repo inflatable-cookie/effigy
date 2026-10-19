@@ -500,7 +500,6 @@ pub(crate) mod test_support {
             defer_run: None,
             deferred_builtins: BTreeSet::new(),
             depth,
-            draft_sources: Default::default(),
         }
     }
 }
@@ -536,10 +535,9 @@ members = [{ id = "tests", kind = "test", surface = "published", task = "smoke",
 [tasks.smoke]
 run = "echo root"
 
-[drafts.smoke]
-created = "2026-09-01"
-purpose = "draft body"
-run = "echo draft"
+[tasks.internal]
+visibility = "internal"
+run = "echo internal"
 
 [qa.groups.alpha]
 lifecycle = "maintained"

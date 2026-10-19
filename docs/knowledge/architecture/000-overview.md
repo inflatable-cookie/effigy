@@ -51,8 +51,7 @@ Use these docs intentionally:
 - [027-catalog-scoped-code-graph.md](027-catalog-scoped-code-graph.md) defines
   one checkout corpus, per-file transactions and cooperative refresh
 - [028-published-and-draft-task-surfaces.md](028-published-and-draft-task-surfaces.md)
-  separates maintained published selectors from lifecycle-labelled provisional
-  drafts without creating a second execution runtime
+  keeps public/internal discovery metadata on one task namespace and runtime
 - [029-bounded-doctor-and-scan-cache.md](029-bounded-doctor-and-scan-cache.md)
   separates fast structural diagnosis from explicit catalog-scoped deep work
   with one shared inventory, exact incremental cache facts, and deadlines
@@ -70,8 +69,7 @@ Use these docs intentionally:
   defines checkout graph grammar, storage, refresh, and query
   isolation
 - [`contract/046`](../contracts/046-published-and-draft-task-surface-contract.md)
-  defines published/draft manifest grammar, discovery, routing, reference
-  direction, expiry evidence, and execution compatibility
+  defines task visibility, grouped discovery, complete JSON inventory and legacy syntax translation
 - [`contract/047`](../contracts/047-bounded-doctor-and-scan-cache-contract.md)
   defines doctor tiers, catalog scope, budgets, cache trust, cancellation, and
   incomplete-report evidence

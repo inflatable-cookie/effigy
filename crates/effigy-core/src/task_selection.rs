@@ -11,12 +11,11 @@ pub enum CatalogSelectionMode {
     RootShallowest,
 }
 
-/// Product lifecycle surface a task definition belongs to.
+/// Persisted task identity discriminator.
 ///
-/// `[tasks]` definitions are published; `[drafts]` definitions are
-/// provisional. The discriminator is carried through selection, execution
-/// requests, and status identity so the two surfaces cannot collide. It is
-/// never an access-control or secrecy boundary.
+/// Every current task uses Published, independently of public/internal
+/// discovery visibility. Draft remains decodable for historical records;
+/// it no longer names a selectable task namespace.
 #[derive(
     Debug,
     Clone,

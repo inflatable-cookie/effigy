@@ -250,7 +250,7 @@ fn managed_run_has_nested_invocation(run: Option<&ManifestManagedRun>) -> bool {
                 .strip_prefix("task:")
                 .map(str::trim)
                 .is_some_and(|value| !value.is_empty()),
-            ManifestManagedRunStep::Step(table) => table.task.is_some() || table.draft.is_some(),
+            ManifestManagedRunStep::Step(table) => table.task.is_some(),
         }),
     }
 }

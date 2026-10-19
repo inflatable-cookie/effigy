@@ -129,7 +129,6 @@ Payload examples guide: `026-json-payload-examples.md`
 - `effigy.tasks.filtered.v1`
 - `effigy.tasks-status.v2`
 - `effigy.tasks-status-all.v2`
-- `effigy.drafts.v1`
 - `effigy.deps.status.v1`
 - `effigy.deps.link.v1`
 - `effigy.deps.unlink.v1`
@@ -207,11 +206,9 @@ In v0.15, `deploy apply` and `deploy redeploy` exit nonzero with the existing
 `not_supported`. Supplying `--yes` does not enable execution. Full execution
 design is in the deploy lane (Q-003); see [guide 074](074-deployment-guide.md).
 
-Draft runs reuse `effigy.task.run.v1` unchanged for published payloads. When the
-selected surface is a draft, that payload additionally carries `surface:
-"draft"` and a `surface_identity` object naming the catalog alias, catalog root,
-and composed definition source. Repositories with no `[drafts]` see no new
-fields.
+Task inventory JSON always includes public and internal tasks. Catalog task
+rows add `visibility`, `visibility_reason` and `group`; `--all` does not change
+JSON. Internal tasks use ordinary task-run and task-plan schemas.
 
 Examples:
 
@@ -221,9 +218,8 @@ effigy --json tasks --task test
 effigy --json tasks --resolve catalog-a/api
 effigy --json tasks status test
 effigy --json tasks status --all
-effigy --json drafts
-effigy --json drafts provider-smoke
-effigy --json draft provider-smoke
+effigy --json tasks --all
+effigy --json provider-smoke
 effigy --json doctor
 effigy --json doctor --deep --catalog api
 effigy --json doctor --repo /path/to/workspace catalog-a/build --watch

@@ -15,7 +15,7 @@ admission store.
 
 ## Classification
 
-- A task or draft may declare `admission = "heavy"`. It changes no behaviour
+- A task, public or internal, may declare `admission = "heavy"`. It changes no behaviour
   by itself: a heavy task with no hook set runs exactly as a light one.
 - `heavy` is the only class. The key stays a closed set of named classes, so
   a later class is added by name; an unknown class is a manifest error.

@@ -254,7 +254,7 @@ pub const GENERAL_HELP_ENTRIES: &[GeneralHelpEntry] = &[
     GeneralHelpEntry {
         group: HelpGroup::Work,
         command: "effigy tasks",
-        description: "List effective catalogs/task commands and probe routing",
+        description: "List public tasks by group; --all and --json include internal tasks",
         deferred_builtin: Some("tasks"),
         help_argument: Some("tasks"),
     },
@@ -264,20 +264,6 @@ pub const GENERAL_HELP_ENTRIES: &[GeneralHelpEntry] = &[
         description: "List runs; follow, inspect or stop one with `effigy run status|logs|stop <run>`",
         deferred_builtin: Some("runs"),
         help_argument: Some("runs"),
-    },
-    GeneralHelpEntry {
-        group: HelpGroup::Work,
-        command: "effigy drafts",
-        description: "Inventory lifecycle-labelled draft definitions with expiry state and composed source",
-        deferred_builtin: Some("drafts"),
-        help_argument: Some("drafts"),
-    },
-    GeneralHelpEntry {
-        group: HelpGroup::Work,
-        command: "effigy draft",
-        description: "Run one explicitly selected draft through the ordinary task pipeline",
-        deferred_builtin: Some("draft"),
-        help_argument: Some("draft"),
     },
     GeneralHelpEntry {
         group: HelpGroup::Work,

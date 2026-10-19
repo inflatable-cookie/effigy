@@ -77,7 +77,7 @@ const CURRENT_TOP_LEVEL_HELP_ROUTES: &[(&str, HelpTopic)] = &[
 
 /// `effigy changelog --help` keeps its typed panel but stays out of the
 /// general inventory, exactly as it did before help-first grouping.
-const HELP_COMMANDS_WITHOUT_GENERAL_HELP_ROW: &[&str] = &["changelog"];
+const HELP_COMMANDS_WITHOUT_GENERAL_HELP_ROW: &[&str] = &["changelog", "draft", "drafts"];
 
 /// Primary ownership fixed by contract `043`.
 const CONTRACT_GROUP_INVENTORIES: &[(HelpGroup, &[&str])] = &[
@@ -89,8 +89,6 @@ const CONTRACT_GROUP_INVENTORIES: &[(HelpGroup, &[&str])] = &[
             "effigy <managed-task> --headless",
             "effigy tasks",
             "effigy runs",
-            "effigy drafts",
-            "effigy draft",
             "effigy test",
             "effigy doctor",
             "effigy init",

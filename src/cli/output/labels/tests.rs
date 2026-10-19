@@ -143,6 +143,7 @@ fn command_kind_and_name_maps_command_variants() {
         output_json: false,
     });
     let tasks = Command::Tasks(TasksArgs {
+        all: false,
         repo_override: None,
         task_name: None,
         resolve_selector: None,

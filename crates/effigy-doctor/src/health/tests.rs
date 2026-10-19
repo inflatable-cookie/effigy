@@ -87,7 +87,6 @@ fn loaded_catalog(catalog_root: &Path) -> LoadedCatalog {
         defer_run: None,
         deferred_builtins: Default::default(),
         depth: 1,
-        draft_sources: Default::default(),
     }
 }
 

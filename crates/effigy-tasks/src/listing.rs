@@ -3,7 +3,7 @@ use std::path::Path;
 
 use effigy_core::builtin_tasks::BUILTIN_TASKS;
 use effigy_core::widgets::{KeyValue, NoticeLevel};
-use effigy_manifest::{LoadedCatalog, ManifestTask};
+use effigy_manifest::{LoadedCatalog, ManifestTask, ManifestTaskVisibility};
 use effigy_ui::theme::Theme;
 use effigy_ui::{
     encode_json, plain_renderer, render_utf8, text_color_enabled, PlainRenderer, Renderer,
@@ -22,7 +22,9 @@ const BUILTIN_TEST_FALLBACK_NOTE: &str =
 const TASKS_SCHEMA: &str = "effigy.tasks.v1";
 const FILTERED_TASKS_SCHEMA: &str = "effigy.tasks.filtered.v1";
 const SCHEMA_VERSION: u64 = 1;
+#[derive(Debug)]
 pub struct ListTasksRequest<'a> {
+    pub all: bool,
     pub filter: Option<&'a str>,
     pub pretty_json: bool,
     pub resolved_root: &'a Path,
@@ -31,7 +33,9 @@ pub struct ListTasksRequest<'a> {
     pub deferred_builtins: &'a BTreeSet<String>,
 }
 
+#[derive(Debug)]
 pub struct ListTasksResult {
+    all: bool,
     catalog_count: usize,
     catalogs: Vec<Value>,
     precedence: Vec<String>,
@@ -39,6 +43,7 @@ pub struct ListTasksResult {
     selection: ListingSelectionResult,
 }
 
+#[derive(Debug)]
 enum ListingSelectionResult {
     Catalog {
         catalog_alias_rows: Vec<CatalogAliasProjection>,
@@ -53,12 +58,13 @@ enum ListingSelectionResult {
     },
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 struct BuiltinTaskProjection {
     task: String,
     description: String,
 }
 
+#[derive(Debug)]
 struct TaskSignatureProjection {
     task: String,
     run: String,
@@ -66,17 +72,22 @@ struct TaskSignatureProjection {
     admission: Option<&'static str>,
 }
 
+#[derive(Debug)]
 struct CatalogAliasProjection {
     alias: String,
     manifest: String,
 }
 
+#[derive(Debug)]
 struct CatalogTaskProjection {
     manifest: String,
     manifest_absolute: String,
     catalog_alias: String,
     task_row: Option<TaskSignatureProjection>,
     managed_profiles: Vec<ManagedProfileDisplayRow>,
+    visibility: Option<ManifestTaskVisibility>,
+    visibility_reason: Option<&'static str>,
+    group: Option<String>,
 }
 
 struct CatalogTaskMatch<'a> {
@@ -86,6 +97,9 @@ struct CatalogTaskMatch<'a> {
 
 #[derive(Clone, Serialize)]
 struct CatalogTaskJsonRow {
+    visibility: Option<ManifestTaskVisibility>,
+    visibility_reason: Option<&'static str>,
+    group: Option<String>,
     task: Option<String>,
     run: Option<String>,
     manifest: String,
@@ -133,21 +147,25 @@ pub fn list_tasks(
 ) -> Result<ListTasksResult, EffigyTasksError> {
     let ordered_catalogs = ordered_catalogs(catalogs);
     let catalog_diagnostics = build_catalog_diagnostics(&ordered_catalogs);
+    let visibility = crate::TaskVisibilityIndex::new(catalogs);
     let selection = match request.filter {
         Some(filter) => prepare_filtered_listing(
             catalogs,
             request.resolved_root,
             filter,
             request.deferred_builtins,
+            &visibility,
         )?,
         None => prepare_catalog_listing(
             &ordered_catalogs,
             request.resolved_root,
             request.deferred_builtins,
+            &visibility,
         ),
     };
 
     Ok(ListTasksResult {
+        all: request.all,
         catalog_count: catalogs.len(),
         catalogs: catalog_diagnostics,
         precedence: request.precedence.to_vec(),
@@ -190,6 +208,7 @@ pub fn render_task_listing_text(result: &ListTasksResult) -> Result<String, Effi
                 &theme,
                 !catalog_alias_rows.is_empty(),
                 catalog_task_rows,
+                result.all,
             )?;
             render_builtin_rows_section(
                 &mut renderer,
@@ -219,7 +238,13 @@ pub fn render_task_listing_text(result: &ListTasksResult) -> Result<String, Effi
                     result.resolve_probe.as_ref(),
                 )?;
             } else {
-                render_catalog_task_rows(&mut renderer, color_enabled, &theme, catalog_task_rows)?;
+                render_catalog_task_rows(
+                    &mut renderer,
+                    color_enabled,
+                    &theme,
+                    catalog_task_rows,
+                    result.all,
+                )?;
                 render_builtin_and_probe_followup_sections(
                     &mut renderer,
                     color_enabled,
@@ -233,6 +258,31 @@ pub fn render_task_listing_text(result: &ListTasksResult) -> Result<String, Effi
         }
     }
 
+    render_utf8(renderer.into_inner()).map_err(EffigyTasksError::from)
+}
+
+/// Render repository task discovery for general and work help using the inventory policy.
+pub fn render_public_task_help(
+    catalogs: &[LoadedCatalog],
+    root: &Path,
+    output_json: bool,
+) -> Result<String, EffigyTasksError> {
+    if catalogs.is_empty() {
+        return Ok(String::new());
+    }
+    let visibility = crate::TaskVisibilityIndex::new(catalogs);
+    let catalog_task_rows =
+        project_all_catalog_task_rows(&ordered_catalogs(catalogs), root, &visibility);
+    let color_enabled = effigy_ui::color_enabled_for_text_output(output_json);
+    let mut renderer = plain_renderer(color_enabled);
+    renderer.section("Repository Tasks")?;
+    render_catalog_task_rows(
+        &mut renderer,
+        color_enabled,
+        &Theme::default(),
+        &catalog_task_rows,
+        false,
+    )?;
     render_utf8(renderer.into_inner()).map_err(EffigyTasksError::from)
 }
 
@@ -325,6 +375,7 @@ fn prepare_catalog_listing(
     ordered_catalogs: &[&LoadedCatalog],
     resolved_root: &Path,
     deferred_builtins: &BTreeSet<String>,
+    visibility: &crate::TaskVisibilityIndex,
 ) -> ListingSelectionResult {
     let catalog_alias_rows = ordered_catalogs
         .iter()
@@ -333,7 +384,22 @@ fn prepare_catalog_listing(
             manifest: relative_display_path(resolved_root, &catalog.manifest_path),
         })
         .collect();
-    let catalog_task_rows = ordered_catalogs
+    let catalog_task_rows =
+        project_all_catalog_task_rows(ordered_catalogs, resolved_root, visibility);
+    let builtin_rows = builtin_task_rows_filtered(deferred_builtins);
+    ListingSelectionResult::Catalog {
+        catalog_alias_rows,
+        catalog_task_rows,
+        builtin_rows,
+    }
+}
+
+fn project_all_catalog_task_rows(
+    ordered_catalogs: &[&LoadedCatalog],
+    resolved_root: &Path,
+    visibility: &crate::TaskVisibilityIndex,
+) -> Vec<CatalogTaskProjection> {
+    ordered_catalogs
         .iter()
         .flat_map(|catalog| {
             let manifest = relative_display_path(resolved_root, &catalog.manifest_path);
@@ -356,18 +422,13 @@ fn prepare_catalog_listing(
                             catalog,
                             task_name,
                             task,
+                            visibility,
                         )
                     })
                     .collect::<Vec<_>>()
             }
         })
-        .collect();
-    let builtin_rows = builtin_task_rows_filtered(deferred_builtins);
-    ListingSelectionResult::Catalog {
-        catalog_alias_rows,
-        catalog_task_rows,
-        builtin_rows,
-    }
+        .collect()
 }
 
 fn prepare_filtered_listing(
@@ -375,6 +436,7 @@ fn prepare_filtered_listing(
     resolved_root: &Path,
     filter: &str,
     deferred_builtins: &BTreeSet<String>,
+    visibility: &crate::TaskVisibilityIndex,
 ) -> Result<ListingSelectionResult, EffigyTasksError> {
     let selector = crate::parse_task_selector(filter).map_err(EffigyTasksError::message)?;
     let catalog_matches = matched_catalog_tasks(catalogs, &selector);
@@ -387,6 +449,7 @@ fn prepare_filtered_listing(
                 matched.catalog,
                 &selector.task_name,
                 matched.task,
+                visibility,
             )
         })
         .collect();
@@ -464,11 +527,16 @@ fn project_catalog_task_rows(
     catalog: &LoadedCatalog,
     task_name: &str,
     task: &ManifestTask,
+    visibility: &crate::TaskVisibilityIndex,
 ) -> CatalogTaskProjection {
+    let (visibility, reason) = visibility.effective(catalog, task_name, task);
     CatalogTaskProjection {
         manifest,
         manifest_absolute,
         catalog_alias: catalog.alias.clone(),
+        visibility: Some(visibility),
+        visibility_reason: Some(reason),
+        group: task.group.clone(),
         task_row: Some(TaskSignatureProjection {
             task: catalog_task_label(catalog, task_name),
             run: task_run_preview(catalog, task_name, task),
@@ -487,6 +555,9 @@ fn project_empty_catalog_row(
         manifest,
         manifest_absolute,
         catalog_alias,
+        visibility: None,
+        visibility_reason: None,
+        group: None,
         task_row: None,
         managed_profiles: Vec::new(),
     }
@@ -495,6 +566,9 @@ fn project_empty_catalog_row(
 fn catalog_task_rows_json(rows: &[CatalogTaskProjection]) -> Vec<CatalogTaskJsonRow> {
     rows.iter()
         .map(|row| CatalogTaskJsonRow {
+            visibility: row.visibility,
+            visibility_reason: row.visibility_reason,
+            group: row.group.clone(),
             task: row
                 .task_row
                 .as_ref()
@@ -620,10 +694,11 @@ fn render_tasks_section(
     theme: &Theme,
     has_scope_rows: bool,
     task_rows: &[CatalogTaskProjection],
+    all: bool,
 ) -> Result<(), EffigyTasksError> {
     renderer.section("Tasks")?;
     if has_scope_rows && !task_rows.is_empty() {
-        render_catalog_task_rows(renderer, color_enabled, theme, task_rows)?;
+        render_catalog_task_rows(renderer, color_enabled, theme, task_rows, all)?;
     } else {
         renderer.notice(NoticeLevel::Info, "none")?;
     }
@@ -636,27 +711,49 @@ fn render_catalog_task_rows(
     color_enabled: bool,
     theme: &Theme,
     rows: &[CatalogTaskProjection],
+    all: bool,
 ) -> Result<(), EffigyTasksError> {
+    let mut groups = std::collections::BTreeMap::<&str, Vec<&CatalogTaskProjection>>::new();
     for row in rows {
-        if let Some(signature) = row.task_row.as_ref() {
-            render_task_text_row(
-                renderer,
-                color_enabled,
-                theme,
-                &row.manifest,
-                &signature.task,
-                &signature.run,
-            )?;
+        if row.task_row.is_none()
+            || (!all && row.visibility == Some(ManifestTaskVisibility::Internal))
+        {
+            continue;
         }
-        for profile_row in &row.managed_profiles {
-            render_task_text_row(
-                renderer,
-                color_enabled,
-                theme,
-                &row.manifest,
-                &profile_row.task,
-                &profile_row.run,
-            )?;
+        groups
+            .entry(row.group.as_deref().unwrap_or("General"))
+            .or_default()
+            .push(row);
+    }
+    if groups.is_empty() {
+        renderer.notice(
+            NoticeLevel::Info,
+            "no public tasks; use `effigy tasks --all` to include internal tasks",
+        )?;
+    }
+    for (group, rows) in groups {
+        renderer.section(group)?;
+        for row in rows {
+            if let Some(signature) = row.task_row.as_ref() {
+                render_task_text_row(
+                    renderer,
+                    color_enabled,
+                    theme,
+                    &row.manifest,
+                    &signature.task,
+                    &signature.run,
+                )?;
+            }
+            for profile_row in &row.managed_profiles {
+                render_task_text_row(
+                    renderer,
+                    color_enabled,
+                    theme,
+                    &row.manifest,
+                    &profile_row.task,
+                    &profile_row.run,
+                )?;
+            }
         }
     }
     Ok(())

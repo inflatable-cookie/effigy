@@ -133,6 +133,7 @@ fn parse_command_applies_leading_repo_and_json_to_tasks_builtin() {
     assert_eq!(
         cmd,
         Command::Tasks(TasksArgs {
+            all: false,
             repo_override: Some(PathBuf::from("/tmp/workspace")),
             task_name: None,
             resolve_selector: None,

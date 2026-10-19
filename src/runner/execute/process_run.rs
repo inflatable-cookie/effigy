@@ -44,7 +44,6 @@ pub(super) fn run_task_process(
             Some(exit.code),
             &stdout,
             &stderr,
-            context.selection,
         )?;
         if exit.workload == WorkloadOutcome::Succeeded {
             return Ok(rendered);

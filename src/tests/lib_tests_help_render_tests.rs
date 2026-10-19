@@ -477,7 +477,9 @@ fn render_tasks_help_shows_resolve_and_json_options() {
     let rendered = render_help_text(HelpTopic::Tasks);
     assert!(rendered.contains("tasks Help"));
     assert!(rendered.contains("--resolve <SELECTOR>"));
-    assert!(rendered.contains("routing probes only when debugging selector resolution"));
+    assert!(rendered.contains("List public tasks grouped by `group`"));
+    assert!(rendered.contains("--all"));
+    assert!(rendered.contains("visibility_reason"));
     assert!(rendered.contains("--json"));
     assert!(rendered.contains("--pretty <true|false>"));
     assert!(rendered.contains("effigy tasks --resolve <catalog>/<task>"));

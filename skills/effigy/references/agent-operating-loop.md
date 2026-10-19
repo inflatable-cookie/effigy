@@ -67,8 +67,9 @@ git diff --name-only | effigy graph affected --stdin --json
 effigy test <focused-selector>
 ```
 
-Use selectors named by the current work brief or a current
-`effigy draft <selector> --plan` when one provides the work-context proof.
+Use selectors named by the current work brief. `effigy tasks --json` includes
+internal tasks as well as public entry points; `effigy --plan <selector>`
+inspects either without execution.
 Run tests for changed code, compile touched targets, and run the docs selector
 once when documentation changed. Capture each exit status. For background
 processes, record the PID you started and stop only that PID or process group.

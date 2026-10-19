@@ -16,10 +16,8 @@ pub(super) fn render_task_command_json(
     exit_code: Option<i32>,
     stdout: &str,
     stderr: &str,
-    selection: &TaskSelection<'_>,
 ) -> Result<String, RunnerError> {
-    let payload =
-        payload::task_run_payload(selector, cwd, command, exit_code, stdout, stderr, selection);
+    let payload = payload::task_run_payload(selector, cwd, command, exit_code, stdout, stderr);
     encode_task_run_json(&payload)
 }
 

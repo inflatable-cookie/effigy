@@ -264,17 +264,19 @@ effigy --plan app/build
 
 Use these before running unfamiliar tasks.
 
-### Reach temporary proofs without polluting the catalog
+### Run internal proofs
+
+Declare temporary proof tasks with `visibility = "internal"`:
 
 ```sh
-effigy drafts
-effigy draft provider-smoke
-effigy draft provider-smoke -- --verbose
+effigy tasks --all
+effigy --json tasks
+effigy provider-smoke --verbose
 ```
 
-`[drafts]` entries stay out of `effigy tasks`, help, completion, and default
-status queries. `effigy drafts` reports each draft's purpose, lifecycle, and
-composed source, and `effigy draft` runs one through the ordinary pipeline.
+They use the normal runtime while staying out of human inventory and
+completion. See the [manifest cookbook](022-manifest-cookbook.md#public-and-internal-tasks)
+for grouping, defaults and migration.
 
 ### Check health and explain what Effigy sees
 
