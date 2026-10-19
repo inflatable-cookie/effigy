@@ -56,10 +56,10 @@ pub use release::{
     ManifestReleaseConfig, ManifestReleaseGateConfig, ManifestReleaseGateDetails,
     ManifestReleaseHostedEvidenceConfig,
 };
+pub(crate) use secrets::reject_retired_vault_keys;
 pub use secrets::{
     ManifestSecretKeyConfig, ManifestSecretTarget, ManifestSecretsBackend, ManifestSecretsConfig,
-    ManifestSecretsExternalConfig, ManifestSecretsUnlockPolicy, ManifestSecretsVaultConfig,
-    ManifestSecretsVaultIdentity,
+    ManifestSecretsExternalConfig, ManifestSecretsVaultConfig,
 };
 
 #[cfg(test)]

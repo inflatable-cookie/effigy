@@ -203,9 +203,10 @@ fn resolve_local_bundle_defaults(
         &resolved_inputs,
     )?;
     let defaults = toml::from_str::<Value>(&rendered).map_err(|error| ManifestError::Parse {
-        path: defaults_path,
+        path: defaults_path.clone(),
         error,
     })?;
+    crate::config_sections::reject_retired_vault_keys(&defaults_path, &rendered, &defaults)?;
     Ok((defaults, bundle_dir.join(&descriptor.bundle.defaults)))
 }
 

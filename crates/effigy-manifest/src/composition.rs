@@ -264,6 +264,7 @@ fn load_composed_value(
         path: manifest_path.to_path_buf(),
         error,
     })?;
+    crate::config_sections::reject_retired_vault_keys(manifest_path, &source, &raw)?;
     let mut table = raw
         .as_table()
         .cloned()

@@ -8,6 +8,7 @@ pub(crate) fn render_secrets_help<R: HelpRenderer + ?Sized>(renderer: &mut R) ->
         &[
             "Inspect and manage the local Effigy secrets vault.",
             "Mutation commands store values in `[secrets.vault].path` and never print values.",
+            "The vault uses a passphrase; delete retired identity, unlock and external keys under [secrets.vault].",
         ],
         &[
             "effigy secrets list [--repo <PATH>] [--json]",

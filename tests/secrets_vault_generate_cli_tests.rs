@@ -16,8 +16,6 @@ backend = "effigy-vault"
 
 [secrets.vault]
 path = ".effigy/secrets/local.vault"
-identity = "passphrase"
-unlock = "passphrase"
 generate = { rhai = "generate.rhai", run_in = "host" }
 
 [secrets.keys.api_token]

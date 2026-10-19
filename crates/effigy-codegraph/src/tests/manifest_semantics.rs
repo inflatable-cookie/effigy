@@ -56,8 +56,6 @@ backend = "effigy-vault"
 
 [secrets.vault]
 path = ".effigy/secrets.vault"
-identity = "ssh-agent"
-unlock = "external"
 
 [secrets.keys.deploy_token]
 required = true
