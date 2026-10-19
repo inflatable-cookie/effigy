@@ -19,8 +19,8 @@ use std::io::Write;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use effigy_kernel::custody::{Custody, EnvValue, Lifetime, OwnedProcess, ProcessSpec, Terminal};
 use effigy_kernel::ctx::OpenReason;
+use effigy_kernel::custody::{Custody, EnvValue, Lifetime, OwnedProcess, ProcessSpec, Terminal};
 use effigy_kernel::observe::Observed;
 use effigy_manifest::ManifestTaskAdmission;
 
@@ -53,7 +53,10 @@ pub(super) enum Plan {
     Run,
     /// Already inside an admitted run.
     Nested,
-    Hook { command: String, timeout: Duration },
+    Hook {
+        command: String,
+        timeout: Duration,
+    },
 }
 
 impl Plan {
@@ -144,7 +147,9 @@ pub(super) struct Admission {
 
 impl Drop for Admission {
     fn drop(&mut self) {
-        let mut held = HELD.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut held = HELD
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(index) = held.iter().rposition(|marker| *marker == self.marker) {
             held.remove(index);
         }
@@ -200,7 +205,10 @@ pub(super) fn admit(
         if let Some(routed) = kernel::poll_router().first() {
             return Err(refused(
                 "cancelled",
-                format!("signal {} arrived while waiting for admission", routed.received),
+                format!(
+                    "signal {} arrived while waiting for admission",
+                    routed.received
+                ),
             ));
         }
         let exited = hook.poll();

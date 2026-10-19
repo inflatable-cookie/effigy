@@ -17,12 +17,15 @@ use crate::runner::task_engine::{
     run_plain, PlainCommand, RunKey, TaskRun, TaskRunRequest, TaskTarget,
 };
 
+#[cfg(feature = "fault-injection")]
 const LINES: usize = 40;
 /// Prints numbered stdout and stderr lines over about a second, then fails
 /// with its own code, so a follower sees a live run and then its result.
+#[cfg(feature = "fault-injection")]
 const CHATTY: &str = "i=0; while [ $i -lt 40 ]; do echo out-$i; echo err-$i >&2; i=$((i+1)); \
                       sleep 0.025; done; exit 3";
 
+#[cfg(feature = "fault-injection")]
 fn expected(prefix: &str) -> Vec<u8> {
     (0..LINES)
         .map(|n| format!("{prefix}-{n}\n"))
@@ -194,9 +197,21 @@ fn assert_single_settled_run(root: &Path, id: RunId, ending: &Ending, collected:
     };
     assert_eq!(record.id, id, "bound to the exact run");
     assert_eq!(record.view.state, "failed");
-    assert_eq!(record.exit_code(), 3, "the run's real result, never unknown");
-    assert_eq!(collected.stdout, expected("out"), "stdout: no gap, no duplicate");
-    assert_eq!(collected.stderr, expected("err"), "stderr: no gap, no duplicate");
+    assert_eq!(
+        record.exit_code(),
+        3,
+        "the run's real result, never unknown"
+    );
+    assert_eq!(
+        collected.stdout,
+        expected("out"),
+        "stdout: no gap, no duplicate"
+    );
+    assert_eq!(
+        collected.stderr,
+        expected("err"),
+        "stderr: no gap, no duplicate"
+    );
     let runs = list_runs(Some(root), 50).expect("runs");
     assert_eq!(runs.len(), 1, "the run was never resubmitted");
 }
@@ -265,13 +280,22 @@ fn a_terminal_run_without_logs_still_reports_its_settled_outcome() {
         .join(key.id().to_string());
     std::fs::remove_dir_all(&logs).expect("remove the run's logs");
     let mut collected = Collected::default();
-    let ending = follow(key.id(), &mut Offsets::default(), true, &mut collected.sink())
-        .expect("journal still answers");
+    let ending = follow(
+        key.id(),
+        &mut Offsets::default(),
+        true,
+        &mut collected.sink(),
+    )
+    .expect("journal still answers");
     let Ending::Settled(record) = ending else {
         panic!("terminal run");
     };
     assert!(collected.logs_gone, "the missing log is reported");
-    assert_eq!(record.exit_code(), 5, "the real result comes from the journal");
+    assert_eq!(
+        record.exit_code(),
+        5,
+        "the real result comes from the journal"
+    );
 }
 
 #[test]
@@ -400,7 +424,10 @@ fn run_stop_settles_a_running_task_and_its_children() {
         .expect("pid");
     let record = found(key.id()).expect("live run");
     assert_eq!(record.view.state, "running");
-    assert_eq!(request_stop(&record).expect("request"), StopStarted::Requested);
+    assert_eq!(
+        request_stop(&record).expect("request"),
+        StopStarted::Requested
+    );
     assert_eq!(
         run.join().expect("run thread"),
         128 + libc::SIGTERM,

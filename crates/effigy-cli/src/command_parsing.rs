@@ -34,8 +34,8 @@ use crate::{
     DepsSubcommand, DoctorArgs, DraftArgs, DraftsArgs, GatewayPrivateArgs, HelpGroup, HelpTopic,
     InternalContainerLeaseReaperArgs, InternalGatewayArgs, InternalGatewayIdentityArgs,
     InternalHostProcessStopArgs, InternalHostProcessSuperviseArgs, InternalScriptRunArgs, RhaiArgs,
-    RhaiSubcommand, SkillArgs, SkillStdioMode, SkillSubcommand, TaskInvocation, TasksArgs,
-    RunsAction, RunsArgs, TasksQaCommand, UninstallArgs,
+    RhaiSubcommand, RunsAction, RunsArgs, SkillArgs, SkillStdioMode, SkillSubcommand,
+    TaskInvocation, TasksArgs, TasksQaCommand, UninstallArgs,
 };
 use artifact::parse_artifact_command;
 use bootstrap::parse_bootstrap_command;
@@ -102,7 +102,7 @@ where
         "tasks" => parse_tasks(args),
         "runs" => parse_runs(None, args),
         "run" => {
-            let mut args = args.into_iter();
+            let mut args = args;
             match args.next() {
                 Some(action) => parse_runs(Some(action), args),
                 None => Err(CliParseError::InvalidArguments(
@@ -1414,7 +1414,7 @@ where
         }
         return Ok(Command::Tasks(TasksArgs {
             repo_override,
-                qa: Some(TasksQaCommand::GroupsList {
+            qa: Some(TasksQaCommand::GroupsList {
                 filter,
                 file,
                 output_json,
@@ -1792,7 +1792,9 @@ where
             limit: limit.unwrap_or(20).clamp(1, 500),
             all,
         },
-        Some("status") => RunsAction::Status { run: required(run)? },
+        Some("status") => RunsAction::Status {
+            run: required(run)?,
+        },
         Some("logs") => RunsAction::Logs {
             run: required(run)?,
             follow,

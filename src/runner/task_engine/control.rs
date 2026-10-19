@@ -85,9 +85,7 @@ pub(in crate::runner) fn lookup(id: RunId) -> Lookup {
         Observed::Unknown(reason) => return Lookup::Unknown(format!("{reason:?}")),
     };
     match effigy_kernel::run::summary(&reader, id) {
-        Observed::Verified(summary, _) => {
-            Lookup::Found(Box::new(record(&cx, &root, summary)))
-        }
+        Observed::Verified(summary, _) => Lookup::Found(Box::new(record(&cx, &root, summary))),
         Observed::Absent(_) => Lookup::NotFound,
         Observed::Unknown(reason) => Lookup::Unknown(format!("{reason:?}")),
     }
@@ -158,9 +156,11 @@ pub(in crate::runner) fn list(
         .into_iter()
         .map(|summary| record(&cx, &state, summary))
         .filter(|record| {
-            let owner_is_task = record.summary.invocation.as_ref().is_some_and(|invocation| {
-                invocation.spec().owner.kind() == ResourceKind::Task
-            });
+            let owner_is_task = record
+                .summary
+                .invocation
+                .as_ref()
+                .is_some_and(|invocation| invocation.spec().owner.kind() == ResourceKind::Task);
             owner_is_task || record.task.starts_with("qa-group:")
         })
         .take(limit)

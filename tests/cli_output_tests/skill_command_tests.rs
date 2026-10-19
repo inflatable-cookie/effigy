@@ -1042,8 +1042,7 @@ fn run_skill_with_stdio(cwd: &Path, home: Option<&Path>, args: &[&str], stdin: &
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     if let Some(home) = home {
-        command
-            .env("HOME", home);
+        command.env("HOME", home);
     }
     let mut child = command.spawn_owned().expect("spawn skill command");
     child

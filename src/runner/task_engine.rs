@@ -17,6 +17,7 @@ mod process;
 mod run;
 mod status;
 
+pub(in crate::runner) use admission::mark_child;
 pub(in crate::runner) use control::{
     list as list_runs, lookup as lookup_run, read_log as read_run_log, request_stop,
     resolve as resolve_run, signal_owner, workload_process, Lookup, RunRecord, StopStarted,
@@ -27,7 +28,6 @@ pub(in crate::runner) use identity::TaskTarget;
 pub use kernel::{adopt_signal_router, capture_startup_executable, run_internal_kernel_entry};
 pub(in crate::runner) use legacy::{legacy_families, refuse_live_legacy_holder};
 pub(in crate::runner) use process::{run_plain, EnvOverride, PlainCommand, RunExec};
-pub(in crate::runner) use admission::mark_child;
 pub(in crate::runner) use run::{resolve_lock_wait_ms, RunKey, TaskRun, TaskRunRequest};
 pub(in crate::runner) use status::{
     run_liveness, task_status, RunLiveness, RunView, TaskStatusView, HISTORY_LIMIT,

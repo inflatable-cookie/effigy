@@ -12,8 +12,8 @@ pub(super) use effigy_cli::{
     GraphSubcommand, HelpGroup, HelpTopic, InternalGatewayArgs, ReleaseArgs,
     ReleaseEvidenceSubcommand, ReleaseSubcommand, RhaiArgs, RhaiSubcommand, ServiceArgs,
     ServiceSubcommand, SkillArgs, SkillStdioMode, SkillSubcommand, StateArgs, StateSubcommand,
-    SystemArgs, SystemSubcommand, TaskInvocation, TasksArgs, TasksQaCommand,
-    UninstallArgs, WorkspaceArgs,
+    SystemArgs, SystemSubcommand, TaskInvocation, TasksArgs, TasksQaCommand, UninstallArgs,
+    WorkspaceArgs,
 };
 pub(super) use effigy_ui::PlainRenderer;
 pub(super) use std::path::PathBuf;

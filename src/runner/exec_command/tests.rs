@@ -17,9 +17,8 @@ use crate::runner::exec_command::transport::{
     resolve_host_program,
 };
 use crate::runner::exec_command::{
-    activate_exec_surface_with,
-    routed_task_exec_requires_workspace_effigy, strategy_requires_workspace_effigy_install,
-    verified_target_exec_args,
+    activate_exec_surface_with, routed_task_exec_requires_workspace_effigy,
+    strategy_requires_workspace_effigy_install, verified_target_exec_args,
 };
 use crate::runner::runtime_session_context::{
     with_runtime_session_context, LeaseRefreshPolicy, RuntimeSessionContext,

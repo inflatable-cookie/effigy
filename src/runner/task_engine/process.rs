@@ -19,10 +19,10 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use effigy_kernel::ctx::{OpenReason, StopCause};
-use effigy_kernel::run::{Request, RequestAction};
 use effigy_kernel::custody::{Custody, EnvValue, Lifetime, ProcessSpec, SecretValue, Terminal};
 use effigy_kernel::observe::Observed;
 use effigy_kernel::outcome::WorkloadOutcome;
+use effigy_kernel::run::{Request, RequestAction};
 
 use super::kernel::{self, CustodyWait};
 use super::run::TaskRun;
@@ -70,8 +70,8 @@ pub(in crate::runner) fn run_plain(
     run: &mut TaskRun,
     command: PlainCommand<'_>,
 ) -> Result<PlainExit, RunnerError> {
-    let relay = !command.capture
-        && !(std::io::stdout().is_terminal() && std::io::stderr().is_terminal());
+    let relay =
+        !command.capture && !(std::io::stdout().is_terminal() && std::io::stderr().is_terminal());
     let spec = ProcessSpec {
         argv: vec![
             OsString::from("/bin/sh"),

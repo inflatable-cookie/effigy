@@ -1027,9 +1027,7 @@ mod tests {
     use crate::runner::container_runtime_prep::ContainerTaskActivation;
     use crate::runner::execute::workspace_seeded::render_workspace_seeded_task_command;
     use crate::runner::runtime_session_context::LeaseRefreshPolicy;
-    use effigy_containers::{
-        EffectiveComposeSource, EffectiveContainerPolicy,
-    };
+    use effigy_containers::{EffectiveComposeSource, EffectiveContainerPolicy};
     use effigy_manifest::{ManifestManagedRun, ManifestTask, ManifestTaskRunIn};
     use effigy_runtime_plan::RuntimeLeasePolicy;
     use std::path::{Path, PathBuf};

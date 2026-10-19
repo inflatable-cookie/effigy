@@ -20,8 +20,8 @@ use effigy_kernel::observe::Observed;
 use super::command_context::resolve_active_command_context;
 use super::error::RunnerError;
 use super::task_engine::{
-    list_runs, lookup_run, read_run_log, request_stop, resolve_run, signal_owner,
-    workload_process, Lookup, RunRecord, StopStarted, RUN_POLL,
+    list_runs, lookup_run, read_run_log, request_stop, resolve_run, signal_owner, workload_process,
+    Lookup, RunRecord, StopStarted, RUN_POLL,
 };
 
 const RUN_SCHEMA: &str = "effigy.run.v1";
@@ -345,7 +345,10 @@ pub(in crate::runner) fn follow(
                         .map_err(FollowError::Lost)?;
                         offsets.set(stream, read.from);
                     }
-                    if read.truncated && !truncated[index] && read.from + read.bytes.len() as u64 >= read.end {
+                    if read.truncated
+                        && !truncated[index]
+                        && read.from + read.bytes.len() as u64 >= read.end
+                    {
                         truncated[index] = true;
                         sink(Event::Truncated {
                             stream,
@@ -400,7 +403,12 @@ fn fault_point(name: &'static str) -> std::io::Result<()> {
     }
 }
 
-fn logs(selector: &str, keep_following: bool, from: Offsets, json: bool) -> Result<String, RunnerError> {
+fn logs(
+    selector: &str,
+    keep_following: bool,
+    from: Offsets,
+    json: bool,
+) -> Result<String, RunnerError> {
     let id = find(selector)?.id;
     let mut offsets = from;
     let ending = if json {

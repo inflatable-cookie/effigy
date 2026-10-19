@@ -225,7 +225,10 @@ fn a_denied_heavy_run_fails_closed_and_never_starts_its_task() {
     assert!(!output.status.success(), "{}", text(&output));
     assert!(!fixture.exists("ran.txt"), "the task never ran");
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("denied admission: host is busy"), "{stderr}");
+    assert!(
+        stderr.contains("denied admission: host is busy"),
+        "{stderr}"
+    );
 
     let output = fixture.with_hook(&hook, &["--json", "heavy"]);
     let envelope: serde_json::Value =
@@ -327,7 +330,10 @@ fn tasks_and_plan_json_expose_the_admission_class() {
         .iter()
         .find(|row| row["task"] == "light")
         .expect("light row");
-    assert!(light.get("admission").is_none(), "unclassified rows keep their shape");
+    assert!(
+        light.get("admission").is_none(),
+        "unclassified rows keep their shape"
+    );
 
     let output = fixture.run(&["--json", "--plan", "heavy"]);
     assert!(output.status.success(), "{}", text(&output));
@@ -490,13 +496,19 @@ fn a_killed_follower_process_reattaches_by_offset_without_gap_or_duplicate() {
     };
     assert_eq!(String::from_utf8_lossy(&out), expected("line"));
     assert_eq!(String::from_utf8_lossy(&err), expected("eline"));
-    assert!(wait_child(&mut owner).success(), "the run was never touched");
+    assert!(
+        wait_child(&mut owner).success(),
+        "the run was never touched"
+    );
 }
 
 #[test]
 fn an_unreadable_journal_is_unknown_and_names_the_run() {
     let fixture = Fixture::new();
-    assert!(fixture.run(&["--run-id", "dark-1", "light"]).status.success());
+    assert!(fixture
+        .run(&["--run-id", "dark-1", "light"])
+        .status
+        .success());
     let state = fixture.home.join(".effigy/state");
     fs::set_permissions(&state, fs::Permissions::from_mode(0o000)).expect("hide journal");
     let status = fixture.run(&["run", "status", "dark-1"]);
@@ -513,7 +525,10 @@ fn an_unreadable_journal_is_unknown_and_names_the_run() {
 #[test]
 fn runs_lists_this_checkouts_runs_and_retired_surfaces_refuse() {
     let fixture = Fixture::new();
-    assert!(fixture.run(&["--run-id", "list-1", "light"]).status.success());
+    assert!(fixture
+        .run(&["--run-id", "list-1", "light"])
+        .status
+        .success());
     let output = fixture.run(&["--json", "runs"]);
     assert!(output.status.success(), "{}", text(&output));
     let envelope: serde_json::Value = serde_json::from_slice(&output.stdout).expect("runs");
