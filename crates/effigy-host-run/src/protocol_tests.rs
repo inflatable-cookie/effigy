@@ -91,6 +91,57 @@ fn make_fixture() -> Fixture {
     }
 }
 
+// The reconnecting client can inspect the endpoint at any time. Keep a new
+// listener at a private staging name until its required mode is installed.
+fn publish_fixture_socket(socket_path: &Path, after_bind: impl FnOnce(&Path)) -> UnixListener {
+    let pending_path = socket_path.with_extension("next");
+    let listener = UnixListener::bind(&pending_path).unwrap();
+    after_bind(&pending_path);
+    std::fs::set_permissions(&pending_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    std::fs::rename(&pending_path, socket_path).unwrap();
+    listener
+}
+
+#[test]
+fn replacement_fixture_socket_is_not_published_before_private_mode_is_set() {
+    let fixture = make_fixture();
+    drop(fixture.listener);
+    std::fs::remove_file(&fixture.socket_path).unwrap();
+    let socket_path = fixture.socket_path.clone();
+    let (bound_tx, bound_rx) = mpsc::channel();
+    let (resume_tx, resume_rx) = mpsc::channel();
+    let server = thread::spawn(move || {
+        publish_fixture_socket(&socket_path, |pending_path| {
+            // Do not depend on the host's umask to expose the old unsafe mode.
+            std::fs::set_permissions(pending_path, std::fs::Permissions::from_mode(0o644)).unwrap();
+            bound_tx.send(()).unwrap();
+            resume_rx.recv_timeout(PEER_FIXTURE_BOUND).unwrap();
+        })
+    });
+    bound_rx.recv_timeout(PEER_FIXTURE_BOUND).unwrap();
+    // Inspect exactly between bind and chmod. Recovery must see an absent
+    // endpoint, never the unsafe socket waiting at the staging name.
+    let (root, authority) = HostRunRoot::open_for_recovery(&fixture.root_path).unwrap();
+    assert!(matches!(
+        root.verify_socket(&authority),
+        Err(crate::TrustError::Io(error)) if error.kind() == ErrorKind::NotFound
+    ));
+    resume_tx.send(()).unwrap();
+    let replacement = server.join().unwrap();
+    root.verify_socket(&authority).unwrap();
+    assert_eq!(
+        std::fs::metadata(&fixture.socket_path)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o600
+    );
+    // The renamed listener is reachable at the published endpoint.
+    let _stream = UnixStream::connect(&fixture.socket_path).unwrap();
+    replacement.accept().unwrap();
+}
+
 fn write_token_keys(
     root: &Path,
     current_epoch: u64,
@@ -1365,10 +1416,6 @@ fn attach_reports_expiration_and_preserves_stream_byte_offsets_without_duplicate
 }
 
 #[test]
-#[cfg_attr(
-    all(effigy_shared_process, target_os = "macos"),
-    ignore = "known v0.15 rebuild defect: papercut 8a44cfa4-235e-4da7-9588-6cc3156c291c; owner lane v015-task-engine"
-)]
 fn attach_queued_follow_recovers_after_short_endpoint_roll_with_exact_offsets() {
     let fixture = make_fixture();
     let mut client = client(&fixture);
@@ -1396,8 +1443,7 @@ fn attach_queued_follow_recovers_after_short_endpoint_roll_with_exact_offsets() 
         std::fs::remove_file(&socket_path).unwrap();
         drop(first);
         thread::sleep(Duration::from_millis(80));
-        let replacement = UnixListener::bind(&socket_path).unwrap();
-        std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let replacement = publish_fixture_socket(&socket_path, |_| {});
 
         let (mut status, _) = replacement.accept().unwrap();
         let request = read_request(&mut status);
@@ -1470,10 +1516,6 @@ fn attach_queued_follow_recovers_after_short_endpoint_roll_with_exact_offsets() 
 }
 
 #[test]
-#[cfg_attr(
-    target_os = "macos",
-    ignore = "known v0.15 rebuild defect: papercut 8a44cfa4-235e-4da7-9588-6cc3156c291c; owner lane v015-task-engine"
-)]
 fn output_expired_is_preserved_through_bounded_recovery() {
     let fixture = make_fixture();
     let mut client = client(&fixture);
@@ -1492,8 +1534,7 @@ fn output_expired_is_preserved_through_bounded_recovery() {
         std::fs::remove_file(&socket_path).unwrap();
         drop(first);
         thread::sleep(Duration::from_millis(80));
-        let replacement = UnixListener::bind(&socket_path).unwrap();
-        std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let replacement = publish_fixture_socket(&socket_path, |_| {});
 
         let (mut status, _) = replacement.accept().unwrap();
         let request = read_request(&mut status);
@@ -1721,10 +1762,6 @@ fn attach_recovery_refuses_an_unexpected_authority_epoch_without_retry() {
 }
 
 #[test]
-#[cfg_attr(
-    target_os = "macos",
-    ignore = "known v0.15 rebuild defect: papercut 8a44cfa4-235e-4da7-9588-6cc3156c291c; owner lane v015-task-engine"
-)]
 fn cancel_retries_the_same_run_during_endpoint_roll() {
     let fixture = make_fixture();
     let mut client = client(&fixture);
@@ -1739,8 +1776,7 @@ fn cancel_retries_the_same_run_during_endpoint_roll() {
         std::fs::remove_file(&socket_path).unwrap();
         drop(first);
         thread::sleep(Duration::from_millis(80));
-        let replacement = UnixListener::bind(&socket_path).unwrap();
-        std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let replacement = publish_fixture_socket(&socket_path, |_| {});
         let (mut second, _) = replacement.accept().unwrap();
         let retry = read_request(&mut second);
         assert_eq!(retry["method"], "cancel");
@@ -1779,8 +1815,7 @@ fn authenticated_previous_epoch_status_recovers_within_the_bounded_window() {
         drop(listener);
         std::fs::remove_file(&socket_path).unwrap();
         thread::sleep(Duration::from_millis(80));
-        let replacement = UnixListener::bind(&socket_path).unwrap();
-        std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let replacement = publish_fixture_socket(&socket_path, |_| {});
         let (mut status, _) = replacement.accept().unwrap();
         let request = read_request(&mut status);
         assert_eq!(request["method"], "status");

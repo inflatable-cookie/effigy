@@ -986,6 +986,15 @@
 ]
 
 # Trusted host-run protocol client (contract 010 Client protocol v1)
+# Publication-race fixtures: cover both complete changed test modules, then
+# exercise their shared-process model with the same bounded task lifetime.
+"test:fixtures:publication" = { run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy -p effigy-host-run --lib --filterset 'test(/^runner::managed_listener_readiness::tests::/) | test(/^protocol_tests::/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
+"test:fixtures:publication:shared" = [
+  { run = "RUSTFLAGS='--cfg effigy_shared_process' cargo test -p effigy --lib managed_listener_readiness::tests:: -- --test-threads=8", timeout_ms = 600000 },
+  { run = "RUSTFLAGS='--cfg effigy_shared_process' cargo test -p effigy-host-run --lib protocol_tests:: -- --test-threads=8", timeout_ms = 600000 },
+]
+"check:fixtures:publication" = { run = "cargo check -p effigy -p effigy-host-run --lib --tests --profile test", timeout_ms = 600000 }
+"lint:fixtures:publication" = { run = "cargo clippy -p effigy -p effigy-host-run --lib --tests -- -D warnings", timeout_ms = 600000 }
 "test:host-run:protocol" = "cargo test -p effigy-host-run --lib -- --nocapture"
 "test:host-run:request-recovery" = [
   { id = "request-lookup-protocol", run = "cargo nextest run -p effigy-host-run --lib --filterset 'test(exact_request_lookup)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
