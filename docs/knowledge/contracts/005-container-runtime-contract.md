@@ -270,11 +270,10 @@ uses an explicit `-wt-unprepared` or `-ec-unprepared` project suffix and never
 queries its primary checkout's project. Prepare establishes its persistent token
 and resolves the final isolated identity.
 
-The current manifest Git/OCI bundle resolver remains an effectful prerequisite:
-Git resolution acquires a writable cache lock, and ordinary loads can clone or
-refresh the cached checkout. Pure Observe on bundle consumers requires the
-bundle owner's read-only resolution and explicit-sync cutover first; the render
-boundary does not grant that loader mutation authority.
+Manifest resolution reads per-checkout source pins and immutable bundle source
+generations (contract 020). Observe never acquires the source cache lock or
+fetches a bundle. Existing materialized bytes remain readable during migration;
+Prepare imports them and `effigy bundle sync` explicitly updates selected pins.
 
 The Prepare stage of `up` and other Mutate commands publishes through kernel
 Objects under the environment owner gate. Files are sealed 0400 and directories
@@ -293,7 +292,8 @@ Missing allocated ports remain explicit placeholders until Prepare. Scope
 queries also leave an unprepared checkout's identity absent. Logs discover the
 selected backend's service container directly, including stopped containers,
 without opening an unpublished render. Activation stages share one prepared
-policy snapshot so later probes and leases use its final identity and paths.
+policy snapshot and return it to exec, deferred tasks and workspace handoff,
+so later commands, probes and leases use its final identity and paths.
 
 Detached admission records a v3 generation reference. Verification reads the
 kernel's desired object reference and verifies its complete immutable closure;
@@ -310,6 +310,17 @@ Reset drops only the selected environment's object references through kernel
 `Objects::reset`; physical reclamation is kernel retention's responsibility.
 Sibling environment references survive. Eject exports the resolved closure to
 `infra/dev` and does not require a previous `up` or remove admitted objects.
+
+The focused `test:containers:generations:cli` proof snapshots bytes and filesystem
+metadata around status, hosts, scope, plan, render and logs for direct Compose
+and pinned bundles. The operator-only `test:containers:generations:consumers`
+selector requires Python with PyYAML and the cbs/Acowtancy checkouts. It archives
+the pre-cutover main renderer into a private temporary fixture, copies the
+consumers' evaluated inputs, bundle bytes and host configuration, imports those
+bytes through source Prepare, then compares normalized Compose with the pure
+CLI's render of the same pins. It never updates a real consumer or its cache.
+Engine tests cover concurrent render/publication with admitted readers, refused
+admission preserving the desired reference, and reset preserving its sibling.
 
 A recorded *partial* activation reconciles only against its original admission;
 changed inputs refuse until `effigy container down`. With unchanged admitted
