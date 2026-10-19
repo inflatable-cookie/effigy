@@ -9,6 +9,8 @@ fn cli_tasks_filtered_text_output_managed_profiles_matches_canonical_fixture_tai
     let expected = "\
 Task Matches: dev
 ─────────────────
+General
+───────
 - dev : effigy.toml
       <managed:tui>
 - dev admin : effigy.toml
@@ -38,6 +40,8 @@ count: 1
 
 Tasks
 ─────
+General
+───────
 - dev : effigy.toml
       <managed:tui>
 - dev admin : effigy.toml

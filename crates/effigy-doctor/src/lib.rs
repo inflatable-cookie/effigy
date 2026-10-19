@@ -27,7 +27,6 @@ mod comment_ratio;
 mod conflicts;
 mod deep_inventory;
 mod dependency_health;
-mod draft_lifecycle;
 mod duplicate_blocks;
 mod environment;
 mod explain;

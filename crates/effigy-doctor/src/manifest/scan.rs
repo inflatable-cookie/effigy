@@ -113,7 +113,6 @@ impl<'a, 'b> ScanContext<'a, 'b> {
             .manifest_defined_catalog_alias()
             .map(str::to_owned)
             .unwrap_or_else(|| default_alias(&catalog_root, self.resolved_root));
-        let draft_sources = effigy_manifest::draft_source_map(&loaded.value_sources);
         let manifest = loaded.manifest;
         if self.preferred_js_pm.is_none() {
             self.preferred_js_pm = manifest.package_manager.as_ref().and_then(|pm| pm.js);
@@ -136,7 +135,6 @@ impl<'a, 'b> ScanContext<'a, 'b> {
                 .unwrap_or_default(),
             depth,
             manifest,
-            draft_sources,
         });
     }
 

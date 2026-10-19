@@ -1311,7 +1311,7 @@ pub enum TasksQaCommand {
     GroupStop { run_id: String, output_json: bool },
 }
 
-/// `effigy drafts [FILTER] [--json]`.
+/// Deprecated inventory compatibility arguments; execution names the replacement.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DraftsArgs {
     pub repo_override: Option<PathBuf>,
@@ -1320,7 +1320,7 @@ pub struct DraftsArgs {
     pub pretty_json: bool,
 }
 
-/// `effigy draft <SELECTOR> [--json] [-- <ARGS>]`.
+/// Legacy invocation arguments, translated to ordinary task execution.
 ///
 /// `args` carries the raw passthrough exactly as the canonical execution
 /// pipeline expects it, so `--json`, `--repo`, and `--` keep normal task-run

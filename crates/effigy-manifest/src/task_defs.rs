@@ -9,13 +9,31 @@ where
     D: serde::Deserializer<'de>,
 {
     let definitions =
-        <BTreeMap<String, ManifestTaskLikeDefinition> as serde::Deserialize>::deserialize(
-            deserializer,
-        )?;
-    Ok(definitions
+        <BTreeMap<String, toml::Value> as serde::Deserialize>::deserialize(deserializer)?;
+    definitions
         .into_iter()
-        .map(|(name, definition)| (name, definition.into_manifest_task()))
-        .collect())
+        .map(|(name, mut value)| {
+            // Discovery metadata belongs to every task shorthand, including a
+            // run-step table with timeout/retry fields.
+            let (visibility, group) = if let Some(table) = value.as_table_mut() {
+                (table.remove("visibility"), table.remove("group"))
+            } else {
+                (None, None)
+            };
+            let definition: ManifestTaskLikeDefinition =
+                value.try_into().map_err(serde::de::Error::custom)?;
+            let mut task = definition.into_manifest_task();
+            task.visibility = visibility
+                .map(toml::Value::try_into)
+                .transpose()
+                .map_err(serde::de::Error::custom)?;
+            task.group = group
+                .map(toml::Value::try_into)
+                .transpose()
+                .map_err(serde::de::Error::custom)?;
+            Ok((name, task))
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -38,6 +56,7 @@ mod tests {
 [tasks]
 full = { run = "echo full", visibility = "internal", group = "Checks" }
 compact = { task = "full", visibility = "public", group = "Development" }
+step = { run = "echo step", timeout_ms = 500, visibility = "internal", group = "Checks" }
 "#,
         )
         .expect("visibility keys");

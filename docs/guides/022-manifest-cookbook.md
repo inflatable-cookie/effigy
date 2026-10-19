@@ -635,75 +635,46 @@ Lock behavior:
 - wait for a live run with `effigy --lock-wait-ms <MS> <task>` or `EFFIGY_LOCK_WAIT_MS`; inspect it with `effigy tasks status <selector>`
 - a run's gate is released when it exits, crash and `kill -9` included; there is no unlock
 
-## Draft Tasks
+## Public and internal tasks
 
-Use `[drafts]` for temporary proofs and throwaway environments that still need
-Effigy's real execution, isolation, container, managed-session, and status
-guarantees. Drafts never appear in `effigy tasks`, help task inventories,
-completion task candidates, or default task-status queries.
+Keep a short human inventory by declaring groups and hiding maintenance helpers:
 
 ```toml
-[drafts.provider-smoke]
-created = "2026-09-15"
-expires = "2026-09-29"
-purpose = "Validate temporary provider integration"
-run = [{ task = "build" }, { run = "./scripts/provider-smoke {args}" }]
-```
+[tasks.build]
+run = [{ task = "build:prepare" }, { run = "./scripts/build {args}" }]
+group = "Development"
 
-Rules:
+[tasks."build:prepare"]
+run = "./scripts/prepare"
+visibility = "internal"
 
-- the full `[drafts.<name>]` table is required; compact string or sequence
-  shorthand is rejected because it cannot carry lifecycle metadata
-- `created` is a strict `YYYY-MM-DD` date; `purpose` must be non-empty;
-  `expires` is optional, strict, and may not precede `created`
-- after the lifecycle fields, the body supports the same runtime fields,
-  profiles, bindings, environment, secrets, managed mode, locks, cache, and
-  argument semantics as `[tasks]`
-- a published task may not contain a `{ draft = "..." }` step; a draft may
-  reference published tasks with `{ task = "..." }` and other drafts only with
-  an explicit `{ draft = "..." }` step
-- a name cannot be declared in both `[tasks]` and `[drafts]` of the same
-  effective catalog
-
-Inventory and execution:
-
-```bash
-effigy drafts
-effigy drafts provider-smoke
-effigy draft provider-smoke -- --verbose
-effigy draft catalog-a/provider-smoke
-```
-
-Expiry is advisory. `effigy drafts` marks an entry `expired` and `effigy doctor`
-reports it with its source, but the draft stays runnable until a human removes
-it or deliberately extends `expires`. Effigy never deletes, edits, disables, or
-silently omits an expired draft.
-
-### Dated Draft Fragments
-
-Keep generated drafts in dated committed fragments and include them explicitly
-with normal composition:
-
-```toml
-[manifest]
-include = ["config/drafts/2026-09-15-provider-smoke.toml"]
-```
-
-```toml
-# config/drafts/2026-09-15-provider-smoke.toml
-[drafts.provider-smoke]
-created = "2026-09-15"
-purpose = "Validate temporary provider integration"
+[tasks.provider-smoke]
 run = "./scripts/provider-smoke {args}"
+visibility = "internal"
+group = "Proofs"
 ```
 
-`effigy drafts` reports the fragment path as the composed source, so the
-definition and its include edge are removed together. Effigy never discovers a
-draft file implicitly, and an unreferenced file under `config/drafts/` is
-ignored.
+`effigy tasks` shows public tasks grouped by `group`, with `General` for
+ungrouped tasks. `tasks --all` and `tasks --json` include every task; JSON gives
+effective visibility, its reason and group. Internal tasks run directly:
 
-Promotion is deliberate: move the definition into `[tasks]` and delete the
-draft entry. There is no boolean that publishes a draft.
+```sh
+effigy provider-smoke --verbose
+effigy --plan provider-smoke
+```
+
+Explicit visibility wins. Otherwise unnamespaced task names remain public
+entry points, referenced namespaced helpers become internal, and unreferenced
+tasks stay public. The same keys work in compact task forms, includes and
+bundle exports. Use explicit internal visibility for standalone generated
+proofs; references alone cannot identify them.
+
+For v0.15, legacy `[drafts]` tables translate in memory to internal tasks with
+a warning. Move each definition to `[tasks.<name>]`, add
+`visibility = "internal"`, remove `created`/`expires`/`purpose`, and replace
+`draft` step keys with `task`. Then run it by name. Task expiry checks and the
+separate inventory are removed. Includes remain explicit; Effigy never scans
+for or deletes temporary task files.
 
 ## Testing and Legacy Interop
 

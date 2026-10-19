@@ -1,173 +1,99 @@
-# 046 Published And Draft Task Surface Contract
+# 046 Task Visibility And Grouping Contract
 
 Owner: task manifest, discovery, routing, and execution maintainers
 Architecture: [`028`](../architecture/028-published-and-draft-task-surfaces.md)
 
-## Purpose
+## Manifest grammar
 
-Keep the normal Effigy task inventory small and deliberate while allowing
-temporary proofs and environments to use the established task runtime without
-becoming published repository commands.
-
-## Manifest Grammar
-
-`[tasks]` retains its existing grammar and means published. Existing manifests
-need no migration.
-
-Drafts are keyed full tables:
+All runnable definitions belong to `[tasks]`. Every supported task shorthand,
+full task table, bundle export and included fragment may declare:
 
 ```toml
-[drafts.provider-smoke]
-created = "2026-09-15"
-expires = "2026-09-29"
-purpose = "Validate temporary provider integration"
-run = [{ task = "build" }, { run = "./scripts/provider-smoke {args}" }]
+[tasks.build]
+run = "./scripts/build"
+visibility = "public"
+group = "Development"
+
+[tasks."build:prepare"]
+run = "./scripts/prepare"
+visibility = "internal"
 ```
 
-Each draft requires:
+`visibility` accepts only `public` and `internal`. `group` is an optional,
+non-empty string. Visibility controls discovery, never execution permission or
+secrecy. Public tasks may call internal tasks and internal tasks may call public
+tasks. Both use the ordinary resolver, canonical TaskId, kernel gates, run
+journal and execution pipeline. Visibility and grouping do not change identity.
 
-- `created`: a strict `YYYY-MM-DD` string;
-- `purpose`: a non-empty human explanation;
-- one valid task body under the existing runtime rules.
+## Effective defaults
 
-`expires` is an optional strict `YYYY-MM-DD` string and must not precede
-`created`. Compact string, compact sequence, and inline shorthand definitions
-are rejected under `[drafts]` because they cannot carry lifecycle metadata.
+The planner's task-visibility ruling (2026-10-19, effigy#228) replaces the former
+provisional task namespace. Explicit visibility always wins, with reason
+`declared`. Otherwise:
 
-`admission` is optional draft metadata with the same meaning as its
-`[tasks]` counterpart: `admission = "heavy"` opts the draft into heavy
-validation admission (contract 049) when run directly, and a bounded QA group
-(contract 051) may classify it as heavy when nested. Absent metadata keeps
-today's ordinary classification, payload shape, and identity; the inventory,
-plan, and run JSON carry the field only when a definition declares it.
+1. A task with an unnamespaced name (no `:` in its local task name) is a public
+   top-level entry point, even when another task references it.
+2. A namespaced task referenced by another task is internal, with reason
+   `referenced-only`.
+3. Every other task is public, with reason `default`.
 
-After metadata is separated, the remaining draft body uses the same typed task
-definition, profiles, runtime binding, environment, secrets, managed mode,
-locks, cache, readiness, and argument semantics as `[tasks]`.
+References include typed sequence steps, `task:` steps, concurrent tasks and
+setup steps, and all managed profiles. They resolve through the ordinary
+resolver; bare references are pinned to the declaring catalog, while qualified
+references may cross catalogs. Missing or ambiguous references hide nothing.
 
-Manifest composition treats `drafts.<name>` as a normal keyed path for
-duplicate and explicit-override diagnostics. No directory is auto-discovered.
+The unnamespaced entry-point rule is a consumer-proof refinement: treating every
+reference as internal hid `cream/build`, `cream/dev`, `validate` and other normal
+Acowtancy entry points. This rule depends on task grammar, not consumer names or
+paths. Authors can explicitly hide an unnamespaced helper or publish a
+namespaced entry point. Standalone tasks remain public unless authors opt out;
+reference inference cannot identify every generated proof task.
 
-## Discovery And Commands
+Effigy's own focused test, compile and proof selectors explicitly declare
+internal visibility. Its main development, validation and release selectors
+are public and grouped. Consumers need no manifest migration to keep running.
 
-The published inventory remains:
+## Inventory and completion
 
-```text
-effigy tasks [FILTER] [--resolve <SELECTOR>] [--json]
-```
+- `effigy tasks` lists public tasks, grouped by `group`. Ungrouped rows use the
+  `General` section. Managed profile rows inherit their parent task's visibility
+  and group. Catalog and built-in inventory remain available.
+- `effigy tasks --all` includes internal tasks in the same grouped text view.
+- `effigy tasks --json` always includes every task, independently of `--all`.
+  Existing `effigy.tasks.v1` and filtered payloads gain additive `visibility`,
+  `visibility_reason` and `group` fields on each catalog task row. Group is
+  `null` when undeclared; empty-catalog placeholder rows have null metadata.
+  `selectors` remains the complete machine inventory.
+- Filtering with `--task` preserves the selected output's visibility policy;
+  `--resolve` and direct invocation resolve internal tasks normally.
+- Shell completion offers public tasks only. Its cache observes composed task
+  fragments and bundle source files so metadata edits invalidate candidates.
+- Help directs users to the grouped public inventory and the full agent view.
 
-It must exclude draft definitions and draft-only status rows from text, JSON,
-help, completion, and agent-oriented output.
+`tasks status --all` is a separate status query and retains its existing scope;
+the listing `--all` flag never changes execution or status identity.
 
-The draft inventory is:
+## Built-in migration from v0.14.1
 
-```text
-effigy drafts [FILTER] [--json]
-```
+For one release, the manifest decoder translates `[drafts.<name>]` into
+`[tasks.<name>]` with explicit internal visibility. It removes the old `created`,
+`expires` and `purpose` lifecycle fields and translates `{ draft = "..." }`
+steps into ordinary task references, including managed setup/profile steps.
+A definition declared in both namespaces fails with an actionable rename error;
+it is never silently overwritten. Includes and bundles use the same decoder.
+The translation is in memory and never edits a consumer checkout.
 
-Each draft row reports selector, catalog identity, purpose, created date,
-optional expiry, `active` or `expired` lifecycle state, and the composed source
-manifest. Its versioned JSON schema is additive and independent of
-`effigy.tasks.v1`.
+Legacy QA member `surface = "draft"` translates to `published`, the single
+runtime surface for public and internal tasks. QA group lifecycle dates remain
+supported independently of task visibility.
 
-Draft execution is:
+The decoder warns with the replacement syntax. `effigy draft <name>` warns and
+runs the ordinary task; `effigy drafts` refuses with `effigy tasks --all` and
+`effigy tasks --json` as replacements. The old commands are absent from general
+help and completion; their dedicated help panels explain migration.
 
-```text
-effigy draft <SELECTOR> [--json] [--plan] [-- <ARGS>]
-```
-
-It selects only `[drafts]`. It reuses explicit catalog alias, catalog path,
-cwd-nearest, and shallowest-unambiguous routing within the draft set. Ordinary
-flat task invocation never falls through to a draft. `--plan` resolves the
-draft, catalog, and command without executing; `--json` remains output format.
-
-`draft` and `drafts` join the work help group as direct built-ins. Existing
-repository-selector precedence and diagnostics remain consistent with other
-built-ins; help and completion expose the commands, never individual drafts.
-
-## Identity And References
-
-Task identity includes a surface discriminator: `published` or `draft`.
-
-- The same effective catalog cannot declare the same name in both surfaces.
-- A published task reference resolves only published tasks.
-- A draft's ordinary `{ task = "..." }` step resolves only published tasks.
-- Draft-to-draft composition uses an explicit `{ draft = "..." }` step and
-  resolves only through the draft catalog rules.
-- A published definition containing a draft step is invalid before execution.
-
-Cycles and nested execution retain current fail-closed task-graph rules across
-the combined explicitly referenced graph. Removing a draft cannot invalidate a
-published task graph.
-
-## Expiry And Doctor
-
-Expiry is advisory lifecycle evidence, not runtime policy.
-
-- `effigy drafts` marks an entry expired when the current local calendar date is
-  after `expires`.
-- `effigy doctor` reports each expired draft with selector, expiry, source
-  manifest, and guidance to remove or deliberately extend it.
-- Running an expired draft remains allowed and preserves normal task output and
-  exit behavior.
-- Effigy never deletes, edits, disables, or silently omits an expired draft.
-- A missing `expires` value produces no age threshold or invented warning.
-
-Tests must inject or otherwise control the evaluation date; wall-clock timing
-must not make fixtures flaky.
-
-## Execution And Status
-
-After explicit draft selection, execution uses the canonical task request and
-pipeline contracts. Drafts do not get a reduced runner or bypass isolation,
-locking, secrets, managed sessions, interruption, or container policy.
-
-Status records carry the surface discriminator. Default `effigy tasks status`
-queries remain published-only and do not report deleted draft history as stale
-published tasks. Draft inventory may report current draft execution status, but
-a broader draft history/prune interface is not required in v1.
-
-The draft run JSON result names the draft surface, resolved catalog, definition
-source, and ordinary execution outcome without changing the existing published
-task-run schema.
-
-## Compatibility
-
-- Every existing `[tasks]` manifest parses and behaves unchanged.
-- `effigy tasks`, task help/completion, flat selectors, JSON, task
-  status, doctor without drafts, and execution remain compatible.
-- Existing included manifests gain no draft behavior unless they explicitly
-  declare `[drafts]`.
-- No repository task is rewritten, moved, or hidden automatically.
-
-## Required Proof
-
-1. An unchanged manifest produces identical published task text, JSON,
-   completion candidates, resolution, and execution.
-2. A draft is absent from every default published discovery surface and cannot
-   run through flat selection.
-3. `effigy drafts` reports exact lifecycle fields and composed origin in text
-   and versioned JSON.
-4. `effigy draft` resolves root, alias-prefixed, path-prefixed, and cwd-nearest
-   drafts deterministically and passes arguments through the normal pipeline.
-5. Host, container-bound, managed, locked, secret-aware, cached, and profiled
-   draft fixtures use their existing execution guarantees rather than a second
-   runtime.
-6. Missing/malformed dates, empty purpose, reversed dates, compact definitions,
-   and cross-surface name collisions fail before side effects.
-7. Published-to-draft references fail validation; draft-to-published and
-   explicit draft-to-draft references resolve; removal of a referenced draft
-   gives source-aware failure.
-8. An expired draft remains runnable, appears expired in injected-date
-   inventory, and yields a useful doctor finding without file mutation.
-9. Published status queries exclude draft-only records and deleted draft
-   history; draft status identity cannot collide with published identity.
-10. Explicitly included dated fragments report their physical source, while an
-    unreferenced file under `config/drafts/` is not discovered.
-11. Existing human/JSON task contracts remain unchanged.
-
-## Change Triggers
-
-Revisit this contract for machine-local drafts, automatic creation or pruning,
-implicit directory discovery, enforced expiry, access control, draft export,
-or published-to-draft dependency support.
+The separate draft task model, inventory, expiry check, selection namespace,
+step executor and draft run-payload additions are removed. Existing historical
+surface discriminators remain readable as historical identities; migrated new
+runs always use the ordinary task identity. No draft-specific mutable state or
+parallel writer remains. No files are implicitly discovered, pruned or deleted.

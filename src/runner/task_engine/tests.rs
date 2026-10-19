@@ -20,7 +20,6 @@ fn catalog(root: &Path, relative: &str, alias: &str, depth: usize) -> LoadedCata
         defer_run: None,
         deferred_builtins: Default::default(),
         depth,
-        draft_sources: Default::default(),
     }
 }
 

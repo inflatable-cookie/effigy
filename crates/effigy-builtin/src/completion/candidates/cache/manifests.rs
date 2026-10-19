@@ -24,7 +24,14 @@ pub(super) fn discover_completion_candidates(
         Ok(catalogs) => {
             let visibility = effigy_tasks::TaskVisibilityIndex::new(&catalogs);
             for catalog in &catalogs {
-                manifest_stamps.push(read_manifest_stamp(&catalog.manifest_path));
+                let loaded =
+                    effigy_manifest::load_task_manifest_with_inspection(&catalog.manifest_path)
+                        .map_err(effigy_routing::RoutingError::from)?;
+                let sources = loaded
+                    .evaluation_order
+                    .into_iter()
+                    .chain(loaded.value_sources.into_iter().map(|source| source.source));
+                manifest_stamps.extend(sources.map(|source| read_manifest_stamp(&source)));
                 for (task_name, task) in &catalog.manifest.tasks {
                     if visibility.effective(catalog, task_name, task).0
                         != effigy_manifest::ManifestTaskVisibility::Public
@@ -40,6 +47,7 @@ pub(super) fn discover_completion_candidates(
         Err(error) => return Err(error.into()),
     }
     manifest_stamps.sort_by(|a, b| a.path.cmp(&b.path));
+    manifest_stamps.dedup_by(|a, b| a.path == b.path);
 
     Ok((
         candidates.into_iter().collect::<Vec<String>>(),
@@ -91,6 +99,33 @@ mod tests {
     use super::discover_completion_candidates;
 
     #[test]
+    fn completion_visibility_stamps_included_task_metadata() {
+        let root = tempfile::tempdir().expect("fresh fixture");
+        std::fs::write(
+            root.path().join("effigy.toml"),
+            "[manifest]\ninclude = ['tasks.toml']\n",
+        )
+        .expect("root");
+        let fragment = root.path().join("tasks.toml");
+        std::fs::write(
+            &fragment,
+            "[tasks.x]\nrun = 'echo x'\nvisibility = 'public'\n",
+        )
+        .expect("fragment");
+        let (_, stamps) = discover_completion_candidates(root.path()).expect("initial inventory");
+        assert!(super::manifest_stamps_unchanged(&stamps));
+        std::fs::write(
+            &fragment,
+            "[tasks.x]\nrun = 'echo x'\nvisibility = 'internal'\n",
+        )
+        .expect("metadata change");
+        assert!(!super::manifest_stamps_unchanged(&stamps));
+        let (candidates, _) =
+            discover_completion_candidates(root.path()).expect("updated inventory");
+        assert!(!candidates.iter().any(|name| name == "x"));
+    }
+
+    #[test]
     fn completion_visibility_excludes_internal_and_referenced_tasks() {
         let root = tempfile::tempdir().expect("fresh fixture directory");
         std::fs::write(
@@ -99,8 +134,8 @@ mod tests {
 [catalog]
 alias = "sample"
 [tasks]
-entry = [{ task = "helper" }, { task = "kept" }]
-helper = "echo helper"
+entry = [{ task = "step:helper" }, { task = "kept" }]
+"step:helper" = "echo step:helper"
 kept = { run = "echo kept", visibility = "public" }
 hidden = { run = "echo hidden", visibility = "internal" }
 "#,
@@ -113,7 +148,12 @@ hidden = { run = "echo hidden", visibility = "internal" }
                 "{public}"
             );
         }
-        for internal in ["helper", "sample/helper", "hidden", "sample/hidden"] {
+        for internal in [
+            "step:helper",
+            "sample/step:helper",
+            "hidden",
+            "sample/hidden",
+        ] {
             assert!(
                 !candidates.iter().any(|candidate| candidate == internal),
                 "{internal}"

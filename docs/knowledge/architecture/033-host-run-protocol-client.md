@@ -101,7 +101,7 @@ client; `EFFIGY_HOST_SCHEDULER=0` is retired and rejected. A present
   `RUSTC_WORKSPACE_WRAPPER`, `RUST_BACKTRACE`, `RUST_LIB_BACKTRACE`, `RUST_LOG`
   and `RUST_LOG_STYLE`. It also carries process variables explicitly named by
   `env = "NAME"` profile references reachable from the selected task, including
-  transitively composed published tasks and drafts. Heavy QA-group submissions
+  transitively composed published task references. Heavy QA-group submissions
   union the reachable names from each resolved member on its declared task or
   draft surface. Resolution uses the executor's existing catalog aliases and
   selector rules, with a visited-task guard for cycles. A profile name declared

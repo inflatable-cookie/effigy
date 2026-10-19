@@ -28,6 +28,8 @@ count: 2
 
 Tasks
 ─────
+General
+───────
 - cattle-grid/build : cattle-grid/effigy.toml
       tsc -p tsconfig.json {{args}}
 
@@ -45,6 +47,8 @@ fn cli_tasks_filtered_text_output_matches_canonical_fixture_tail() {
     let expected = "\
 Task Matches: build
 ───────────────────
+General
+───────
 - cattle-grid/build : cattle-grid/effigy.toml
       tsc -p tsconfig.json {args}
 

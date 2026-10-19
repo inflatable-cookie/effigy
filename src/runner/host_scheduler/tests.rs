@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::path::PathBuf;
 
@@ -55,7 +55,6 @@ fn loaded_catalog(alias: &str, root: &str, manifest: &str, depth: usize) -> Load
         defer_run: None,
         deferred_builtins: BTreeSet::new(),
         depth,
-        draft_sources: BTreeMap::new(),
     }
 }
 

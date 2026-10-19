@@ -464,7 +464,7 @@ run = "echo draft"
     );
     let text = String::from_utf8_lossy(&output.stdout).to_string()
         + String::from_utf8_lossy(&output.stderr).as_ref();
-    assert!(text.contains("cannot share a name"), "{text}");
+    assert!(text.contains("rename one before migrating"), "{text}");
 }
 
 #[test]
@@ -739,7 +739,7 @@ members = [{ id = "m", kind = "test", surface = "draft", task = "probe", args = 
     assert!(!output.status.success());
     let text = String::from_utf8_lossy(&output.stdout).to_string()
         + String::from_utf8_lossy(&output.stderr).as_ref();
-    assert!(text.contains("published tasks only"), "{text}");
+    assert!(text.contains("does not resolve"), "{text}");
 
     // A temporary group may select the draft explicitly.
     write_manifest(
@@ -775,7 +775,7 @@ run = "echo draft-ok"
     );
     let body = &payload["result"];
     assert_eq!(body["outcome"], "passed");
-    assert_eq!(body["members"][0]["surface"], "draft");
+    assert_eq!(body["members"][0]["surface"], "published");
 }
 
 #[test]
@@ -797,29 +797,15 @@ run = "echo light-ok"
 "#,
     );
 
-    // Direct draft plan/run JSON carries the classification additively.
+    // Migration keeps ordinary plan payloads and full inventory metadata.
     let payload = run_effigy_json(&root, &["draft", "heavy-probe", "--plan"]);
-    let body = &payload["result"];
-    assert_eq!(body["surface_identity"]["admission"], "heavy");
-
-    // Absent metadata preserves the prior payload shape exactly.
-    let payload = run_effigy_json(&root, &["draft", "light-probe", "--plan"]);
-    let body = &payload["result"];
-    assert!(body["surface_identity"].get("admission").is_none());
-
-    // Drafts inventory reports the class.
-    let payload = run_effigy_json(&root, &["drafts"]);
-    let rows = payload["result"]["drafts"].as_array().unwrap();
-    let heavy = rows
-        .iter()
-        .find(|row| row["name"] == "heavy-probe")
-        .unwrap();
-    assert_eq!(heavy["admission"], "heavy");
-    let light = rows
-        .iter()
-        .find(|row| row["name"] == "light-probe")
-        .unwrap();
-    assert!(light.get("admission").is_none());
+    assert!(payload["result"].get("surface_identity").is_none());
+    let payload = run_effigy_json(&root, &["tasks", "--json"]);
+    let rows = payload["result"]["catalog_tasks"].as_array().unwrap();
+    for name in ["heavy-probe", "light-probe"] {
+        let row = rows.iter().find(|row| row["task"] == name).unwrap();
+        assert_eq!(row["visibility"], "internal");
+    }
 }
 
 #[test]

@@ -1,7 +1,7 @@
 use serde_json::json;
 
 use effigy_manifest::TaskSelection;
-use effigy_tasks::{TaskSelector, TaskSurface};
+use effigy_tasks::TaskSelector;
 
 /// The resolved runtime target a selector plan exposes.
 ///
@@ -44,9 +44,8 @@ pub(super) fn task_run_payload(
     exit_code: Option<i32>,
     stdout: &str,
     stderr: &str,
-    selection: &TaskSelection<'_>,
 ) -> serde_json::Value {
-    let mut payload = json!({
+    json!({
         "schema": "effigy.task.run.v1",
         "schema_version": 1,
         "ok": exit_code == Some(0),
@@ -57,42 +56,7 @@ pub(super) fn task_run_payload(
         "exit_code": exit_code,
         "stdout": stdout,
         "stderr": stderr,
-    });
-
-    // Additive draft metadata. Published task-run payloads stay byte- and
-    // schema-compatible: these fields appear only for an explicit draft run.
-    if selection.surface == TaskSurface::Draft {
-        if let Some(object) = payload.as_object_mut() {
-            object.insert("surface".to_owned(), json!("draft"));
-            let mut surface_identity = json!({
-                "surface": "draft",
-                "catalog_alias": selection.catalog.alias,
-                "catalog_root": selection.catalog.catalog_root.display().to_string(),
-                "definition_source": selection
-                    .catalog
-                    .draft_source(&selector.task_name)
-                    .display()
-                    .to_string(),
-            });
-            // Additive heavy-admission metadata (contract 046 extension).
-            // Absent metadata keeps the payload exactly as before.
-            if selection.task.admission.is_some() {
-                if let Some(identity) = surface_identity.as_object_mut() {
-                    identity.insert(
-                        "admission".to_owned(),
-                        json!(selection
-                            .task
-                            .admission
-                            .as_ref()
-                            .map(|admission| admission.as_str())),
-                    );
-                }
-            }
-            object.insert("surface_identity".to_owned(), surface_identity);
-        }
-    }
-
-    payload
+    })
 }
 
 fn render_selector(selector: &TaskSelector) -> String {
@@ -129,36 +93,6 @@ pub(super) fn task_plan_payload(
     if let Some(runtime) = runtime {
         if let Some(object) = payload.as_object_mut() {
             object.insert("runtime".to_owned(), runtime.to_json());
-        }
-    }
-
-    if selection.surface == TaskSurface::Draft {
-        if let Some(object) = payload.as_object_mut() {
-            object.insert("surface".to_owned(), json!("draft"));
-            let mut surface_identity = json!({
-                "surface": "draft",
-                "catalog_alias": selection.catalog.alias,
-                "catalog_root": selection.catalog.catalog_root.display().to_string(),
-                "definition_source": selection
-                    .catalog
-                    .draft_source(&selector.task_name)
-                    .display()
-                    .to_string(),
-            });
-            // Additive heavy-admission metadata (contract 046 extension).
-            if selection.task.admission.is_some() {
-                if let Some(identity) = surface_identity.as_object_mut() {
-                    identity.insert(
-                        "admission".to_owned(),
-                        json!(selection
-                            .task
-                            .admission
-                            .as_ref()
-                            .map(|admission| admission.as_str())),
-                    );
-                }
-            }
-            object.insert("surface_identity".to_owned(), surface_identity);
         }
     }
 

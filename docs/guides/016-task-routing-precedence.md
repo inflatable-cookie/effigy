@@ -169,29 +169,17 @@ no task matches does a routed built-in (`test`, `tasks`, ...) run, then an exec
 alias, then the `[defer]` command (deferral before exec aliases inside a
 container handoff).
 
-## Draft Surface
+## Task visibility
 
-Draft definitions live in `[drafts]` and are reachable only through the
-explicit `draft` command:
+Public and internal tasks use the same routing and runtime. `effigy tasks`
+shows public tasks by group; `effigy tasks --all` and `effigy tasks --json`
+include internal tasks. Run an internal task directly with `effigy <selector>`.
+`--resolve` and `--plan` can inspect any task.
 
-```bash
-effigy drafts
-effigy drafts provider-smoke
-effigy draft provider-smoke
-effigy draft catalog-a/provider-smoke -- --verbose
-```
-
-`effigy drafts` lists selector, catalog, purpose, created date, optional expiry,
-lifecycle state, and composed source. `effigy draft <SELECTOR>` reuses the same
-precedence above (explicit alias, relative/absolute path, CWD-nearest,
-shallowest) but only over the draft set. Ordinary `effigy <selector>` never
-falls through to a draft, and drafts never appear in `effigy tasks`, help task
-inventories, or completion task candidates.
-
-Published tasks cannot reference drafts. A draft may reference a published task
-with a normal `{ task = "..." }` step and another draft only with an explicit
-`{ draft = "..." }` step, so an unresolved published reference never silently
-resolves to a same-named draft.
+Declare `visibility = "public" | "internal"` and optional `group` on a task.
+Unnamespaced entry points remain public; referenced namespaced helpers default
+to internal. See [contract 046](../knowledge/contracts/046-published-and-draft-task-surface-contract.md)
+for defaults and the one-release legacy syntax translation.
 
 ## Relative Prefix Notes
 

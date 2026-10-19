@@ -1,4 +1,3 @@
-mod drafts;
 mod error;
 mod listing;
 mod parsing;
@@ -12,10 +11,6 @@ pub use visibility::TaskVisibilityIndex;
 
 use std::path::PathBuf;
 
-pub use drafts::{
-    list_drafts, render_draft_listing_json, render_draft_listing_text, DraftProjection,
-    ListDraftsRequest, ListDraftsResult, DRAFTS_SCHEMA,
-};
 pub use effigy_core::resolver::ResolutionMode;
 pub use effigy_core::task_selection::{CatalogSelectionMode, TaskSelector, TaskSurface};
 pub use error::EffigyTasksError;

@@ -407,13 +407,9 @@ pub(in crate::runner) fn selector_env_names_for_tasks<'a>(
             prefix: Some(catalog_alias.to_owned()),
             task_name: task_name.to_owned(),
         };
-        let selection = effigy_routing::select_catalog_and_task_on_surface(
-            surface,
-            &selector,
-            catalogs,
-            invocation_cwd,
-        )
-        .map_err(|error| error.to_string())?;
+        let selection =
+            effigy_routing::select_catalog_and_task(&selector, catalogs, invocation_cwd)
+                .map_err(|error| error.to_string())?;
         collect_task_selector_env_names(
             task_name,
             selection.task,
@@ -506,16 +502,6 @@ fn collect_run_selector_env_names(
                         state,
                     )?;
                 }
-                if let Some(draft_ref) = table.draft.as_deref() {
-                    collect_composed_task_selector_env_names(
-                        draft_ref,
-                        TaskSurface::Draft,
-                        catalog,
-                        catalogs,
-                        invocation_cwd,
-                        state,
-                    )?;
-                }
             }
         }
     }
@@ -552,13 +538,8 @@ fn collect_composed_task_selector_env_names(
     {
         return Ok(());
     }
-    let selection = effigy_routing::select_catalog_and_task_on_surface(
-        surface,
-        &selector,
-        catalogs,
-        invocation_cwd,
-    )
-    .map_err(|error| error.to_string())?;
+    let selection = effigy_routing::select_catalog_and_task(&selector, catalogs, invocation_cwd)
+        .map_err(|error| error.to_string())?;
     collect_task_selector_env_names(
         &selector.task_name,
         selection.task,

@@ -43,7 +43,7 @@ impl TaskVisibilityIndex {
     }
 
     /// Explicit visibility wins. Otherwise referenced tasks are internal;
-    /// unreferenced tasks are public entry points.
+    /// unnamespaced names and unreferenced tasks are public entry points.
     pub fn effective(
         &self,
         catalog: &LoadedCatalog,
@@ -53,9 +53,10 @@ impl TaskVisibilityIndex {
         if let Some(visibility) = task.visibility {
             return (visibility, "declared");
         }
-        if self
-            .referenced
-            .contains(&(catalog.catalog_root.clone(), name.to_owned()))
+        if name.contains(':')
+            && self
+                .referenced
+                .contains(&(catalog.catalog_root.clone(), name.to_owned()))
         {
             (ManifestTaskVisibility::Internal, "referenced-only")
         } else {
@@ -121,7 +122,7 @@ mod tests {
             bundle_root: None,
             defer_run: None,
             deferred_builtins: BTreeSet::new(),
-            draft_sources: Default::default(),
+
             depth,
         }
     }
@@ -133,28 +134,30 @@ mod tests {
                 "root",
                 r#"
 [tasks]
-entry = [{ task = "helper --flag 'two words'" }, { task = "child/build" }]
-helper = "echo helper"
+entry = [{ task = "build" }, { task = "step:helper --flag 'two words'" }, { task = "child/compile:step" }]
+"step:helper" = "echo step:helper"
+build = "echo build"
 standalone = "echo standalone"
 kept = { run = "echo kept", visibility = "public", group = "Development" }
 hidden = { run = "echo hidden", visibility = "internal" }
-profile-helper = "echo profile"
-setup-helper = "echo setup"
+"profile-step:helper" = "echo profile"
+"setup-step:helper" = "echo setup"
 [tasks.dev]
 mode = "tui"
-concurrent = [{ task = "kept", setup = ["task:setup-helper"] }]
+concurrent = [{ task = "kept", setup = ["task:setup-step:helper"] }]
 [tasks.dev.profiles.extra]
-concurrent = [{ task = "profile-helper" }]
+concurrent = [{ task = "profile-step:helper" }]
 "#,
                 0,
             ),
-            catalog("child", "[tasks]\nbuild = 'echo child'", 1),
+            catalog("child", "[tasks]\n\"compile:step\" = 'echo child'", 1),
         ];
         let visibility = TaskVisibilityIndex::new(&catalogs);
         for (name, expected, reason) in [
             ("entry", ManifestTaskVisibility::Public, "default"),
+            ("build", ManifestTaskVisibility::Public, "default"),
             (
-                "helper",
+                "step:helper",
                 ManifestTaskVisibility::Internal,
                 "referenced-only",
             ),
@@ -162,12 +165,12 @@ concurrent = [{ task = "profile-helper" }]
             ("kept", ManifestTaskVisibility::Public, "declared"),
             ("hidden", ManifestTaskVisibility::Internal, "declared"),
             (
-                "profile-helper",
+                "profile-step:helper",
                 ManifestTaskVisibility::Internal,
                 "referenced-only",
             ),
             (
-                "setup-helper",
+                "setup-step:helper",
                 ManifestTaskVisibility::Internal,
                 "referenced-only",
             ),
@@ -179,7 +182,11 @@ concurrent = [{ task = "profile-helper" }]
             );
         }
         assert_eq!(
-            visibility.effective(&catalogs[1], "build", &catalogs[1].manifest.tasks["build"]),
+            visibility.effective(
+                &catalogs[1],
+                "compile:step",
+                &catalogs[1].manifest.tasks["compile:step"]
+            ),
             (ManifestTaskVisibility::Internal, "referenced-only")
         );
     }
@@ -190,10 +197,10 @@ concurrent = [{ task = "profile-helper" }]
             "root",
             r#"
 [tasks]
-entry = [{ task = "helper" }]
-helper = "echo helper"
+entry = [{ task = "step:helper" }]
+"step:helper" = "echo step:helper"
 named = { run = "echo named", group = "Development" }
-compact = { task = "helper", visibility = "public", group = "Development" }
+compact = { task = "step:helper", visibility = "public", group = "Development" }
 "#,
             0,
         )];
@@ -219,10 +226,10 @@ compact = { task = "helper", visibility = "public", group = "Development" }
         let text = render_task_listing_text(&public).expect("text");
         assert!(text.contains("Development"));
         assert!(text.contains("General"));
-        assert!(!text.contains("echo helper"));
+        assert!(!text.contains("echo step:helper"));
         assert!(render_task_listing_text(&all)
             .expect("all text")
-            .contains("echo helper"));
+            .contains("echo step:helper"));
         let json = render_task_listing_json(&public, false).expect("json");
         assert_eq!(
             json,
@@ -233,8 +240,8 @@ compact = { task = "helper", visibility = "public", group = "Development" }
             .as_array()
             .expect("rows")
             .iter()
-            .find(|row| row["task"] == "helper")
-            .expect("helper row");
+            .find(|row| row["task"] == "step:helper")
+            .expect("step:helper row");
         assert_eq!(helper["visibility"], "internal");
         assert_eq!(helper["visibility_reason"], "referenced-only");
         assert!(helper["group"].is_null());

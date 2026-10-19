@@ -150,7 +150,6 @@ mod tests {
             defer_run: None,
             deferred_builtins: Default::default(),
             depth,
-            draft_sources: Default::default(),
         }
     }
 

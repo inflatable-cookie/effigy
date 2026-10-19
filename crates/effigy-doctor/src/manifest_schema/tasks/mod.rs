@@ -82,94 +82,24 @@ pub(super) fn validate_tasks_table(context: &mut SchemaContext<'_, '_>, tasks: &
     }
 }
 
-/// Validate `[drafts]` tables.
-///
-/// Drafts require the full table form so lifecycle metadata cannot be hidden
-/// behind compact shorthand, and each entry must carry `created`, `purpose`,
-/// and a task body.
+/// One-release schema translation; task bodies have one validator.
 pub(super) fn validate_drafts_table(context: &mut SchemaContext<'_, '_>, drafts: &Value) {
-    let Some(drafts_table) = require_table(
-        context,
-        "drafts",
-        drafts,
-        "expected a table of draft definitions",
-    ) else {
+    let Some(drafts) = drafts.as_table() else {
         return;
     };
-
-    for (draft_name, draft_value) in drafts_table {
-        let draft_path = format!("drafts.{draft_name}");
-        let Some(draft_table) = require_table(
-            context,
-            &draft_path,
-            draft_value,
-            "expected a full draft table with `created`, `purpose`, and a task body",
-        ) else {
-            continue;
-        };
-
-        validate_allowed_keys(
-            context,
-            &draft_path,
-            draft_table,
-            &[
-                "created",
-                "expires",
-                "purpose",
-                "run",
-                "run_in",
-                "system",
-                "workspace",
-                "lock",
-                "env",
-                "env_file",
-                "mode",
-                "secrets",
-                "fail_on_non_zero",
-                "container_lifecycle",
-                "gateway",
-                "health_wait",
-                "health_wait_timeout_secs",
-                "ready_message",
-                "concurrent",
-                "profiles",
-            ],
-        );
-
-        for field in ["created", "purpose"] {
-            validate_optional_non_empty_string_field(
-                context,
-                draft_table.get(field),
-                &format!("{draft_path}.{field}"),
+    let mut tasks = drafts.clone();
+    for (_, task) in tasks.iter_mut() {
+        if let Some(body) = task.as_table_mut() {
+            for key in ["created", "expires", "purpose"] {
+                body.remove(key);
+            }
+            body.insert(
+                "visibility".to_owned(),
+                Value::String("internal".to_owned()),
             );
         }
-        validate_optional_non_empty_string_field(
-            context,
-            draft_table.get("expires"),
-            &format!("{draft_path}.expires"),
-        );
-        if let Some(run) = draft_table.get("run") {
-            if let Some(array) = run.as_array() {
-                for (index, step) in array.iter().enumerate() {
-                    if let Some(step_table) = step.as_table() {
-                        validate_run_step_table(context, &draft_path, index, step_table);
-                    } else if !step.is_str() {
-                        context.unsupported_value(
-                            &format!("{draft_path}.run[{index}]"),
-                            SchemaContext::value_type(step),
-                            "expected string command or table with `run`/`task`/`draft`",
-                        );
-                    }
-                }
-            }
-        }
-        if let Some(concurrent) = draft_table.get("concurrent") {
-            validate_concurrent_array(context, &format!("{draft_path}.concurrent"), concurrent);
-        }
-        if let Some(profiles) = draft_table.get("profiles") {
-            validate_task_profiles(context, draft_name, profiles);
-        }
     }
+    validate_tasks_table(context, &Value::Table(tasks));
 }
 
 fn is_compact_inline_task_table(task_table: &toml::map::Map<String, Value>) -> bool {

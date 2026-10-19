@@ -10,13 +10,15 @@ use std::path::{Path, PathBuf};
 mod bundles;
 mod composition;
 pub mod config_sections;
-mod draft_defs;
+mod lifecycle_date;
+pub use lifecycle_date::ManifestLifecycleDate;
 pub mod execution_binding;
 mod loaded_catalog;
 mod manifest_section;
 pub mod portfolio;
 mod qa_groups;
 mod task_defs;
+mod task_migration;
 pub mod task_runtime;
 mod test_config;
 pub mod user_config;
@@ -61,11 +63,6 @@ pub use config_sections::{
     ManifestShellConfig, ManifestSystemConfig, ManifestSystemMount, ManifestSystemMountTable,
     ManifestSystemsConfig, ManifestTaskDefaultsConfig, ManifestWorkspaceConfig,
     ManifestWorkspaceContainerRef,
-};
-use draft_defs::deserialize_drafts;
-pub use draft_defs::{
-    deserialize_drafts as deserialize_draft_definitions, draft_source_map, ManifestDraft,
-    ManifestDraftDate, ManifestDraftLikeDefinition, ManifestDraftTable,
 };
 pub use execution_binding::{
     resolve_task_execution_binding, resolve_task_execution_binding_from_parts,
@@ -175,7 +172,7 @@ pub const MANIFEST_TOP_LEVEL_KEYS: &[&str] = &[
 ];
 
 #[derive(Debug, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(remote = "Self", deny_unknown_fields)]
 pub struct TaskManifest {
     #[serde(default)]
     pub catalog: Option<ManifestCatalog>,
@@ -228,10 +225,6 @@ pub struct TaskManifest {
     pub demos: BTreeMap<String, ManifestDemoConfig>,
     #[serde(default, deserialize_with = "deserialize_tasks")]
     pub tasks: BTreeMap<String, ManifestTask>,
-    /// Lifecycle-labelled provisional definitions. Excluded from every
-    /// published discovery surface; reachable only through `effigy draft`.
-    #[serde(default, deserialize_with = "deserialize_drafts")]
-    pub drafts: BTreeMap<String, ManifestDraft>,
     /// Maintained bounded QA groups keyed under `[qa.groups.<name>]`
     /// (contract 051). Selected only through the explicit `tasks qa-group`
     /// surfaces; never task aliases and never implicit discovery.
@@ -303,17 +296,6 @@ impl TaskManifest {
         for (demo_id, demo) in &self.demos {
             demo.validate(manifest_path, demo_id)?;
         }
-        for (draft_name, draft) in &self.drafts {
-            if self.tasks.contains_key(draft_name) {
-                return Err(ManifestError::Compose {
-                    path: manifest_path.to_path_buf(),
-                    detail: format!(
-                        "`{draft_name}` is declared in both `[tasks]` and `[drafts]`; a published task and a draft cannot share a name in the same effective catalog"
-                    ),
-                });
-            }
-            let _ = draft;
-        }
         for (task_name, task) in &self.tasks {
             if task
                 .group
@@ -323,14 +305,6 @@ impl TaskManifest {
                 return Err(ManifestError::Compose {
                     path: manifest_path.to_path_buf(),
                     detail: format!("task `{task_name}` group must be a non-empty string"),
-                });
-            }
-            if let Some(reference) = first_draft_step_reference(task) {
-                return Err(ManifestError::Compose {
-                    path: manifest_path.to_path_buf(),
-                    detail: format!(
-                        "published task `{task_name}` references draft `{reference}`; published tasks cannot depend on disposable drafts (move the step into a draft or publish the target task)"
-                    ),
                 });
             }
         }
@@ -860,31 +834,6 @@ fn validate_target_host_format(
         });
     }
     Ok(())
-}
-
-/// First explicit `{ draft = "..." }` step reference in a published task body,
-/// if any. Published tasks must never depend on disposable drafts.
-fn first_draft_step_reference(task: &ManifestTask) -> Option<String> {
-    fn step_draft(step: &ManifestManagedRunStep) -> Option<String> {
-        match step {
-            ManifestManagedRunStep::Command(_) => None,
-            ManifestManagedRunStep::Step(table) => table.draft.clone(),
-        }
-    }
-
-    let mut references = Vec::new();
-    if let Some(ManifestManagedRun::Sequence(steps)) = task.run.as_ref() {
-        references.extend(steps.iter().filter_map(step_draft));
-    }
-    for entry in &task.concurrent {
-        references.extend(entry.setup.iter().filter_map(step_draft));
-    }
-    for profile in task.profiles.values() {
-        for entry in &profile.concurrent {
-            references.extend(entry.setup.iter().filter_map(step_draft));
-        }
-    }
-    references.into_iter().next()
 }
 
 impl ManifestDefer {
@@ -1455,7 +1404,7 @@ mod top_level_keys_tests {
         let declared: BTreeSet<&str> = MANIFEST_TOP_LEVEL_KEYS
             .iter()
             .copied()
-            .filter(|key| *key != "manifest")
+            .filter(|key| !matches!(*key, "manifest" | "drafts"))
             .collect();
         assert_eq!(declared, fields);
     }
