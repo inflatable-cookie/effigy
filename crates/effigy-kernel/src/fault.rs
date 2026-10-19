@@ -9,6 +9,13 @@ use std::io;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Point {
+    ProbeFork,
+    ProbeRegister,
+    ProbeGuardAck,
+    ProbeBeforeGo,
+    ProbeAfterGo,
+    ProbeConnect,
+    ProbeObservation,
     SocketBind,
     CaptureWrite,
     SpawnFork,

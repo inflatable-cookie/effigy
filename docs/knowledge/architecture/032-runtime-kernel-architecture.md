@@ -199,8 +199,8 @@ noncanonical or tampered frames are refused. Unix argv byte arrays round-trip
 without Unicode conversion. The decoder performs no selector resolution or I/O.
 Plan, execution and status consume this same object. Outcome next commands
 require an engine-supplied parser at construction; kernel code contains no
-command grammar. Observe capabilities expose bounds and checks only, with no
-conversion back into an effect context. Runtime Gate/Store/Custody compile-fail
+command grammar. Observe capabilities expose bounded subprocess and read-transport probes,
+with no conversion back into an effect context. Runtime Gate/Store/Custody compile-fail
 proofs follow their primitives; foundation compile-fail tests exercise their
 required effect-capability boundary now.
 
@@ -381,3 +381,52 @@ and ARM64 Linux container through host admission. It needs Colima and Docker
 client tools and leaves its stopped VM/cache and logs in its printed temporary
 directory. It never activates a Docker context or mounts the original checkout.
 The fixture binary requires `fault-injection` and is not a product executable.
+
+
+## Probe implementation
+
+Binary main installs `probe::ProbeRuntime` with its startup `Executable` and
+shares it explicitly through `ObserveContext::with_probes`. The runtime lazily
+starts one same-binary `__kernel-probe-guard`; `probe::internal_entry` handles
+that hidden entry after the main signal router is installed. There is no engine
+adoption or new product command. The runtime serializes its probes, below the
+context concurrency ceiling, and bounds admission by the caller's context.
+
+The observer uses custody's existing barrier fork, unreaped-child observation,
+process identity, process inventory and redaction mechanisms. The complete
+spawn environment receives `EFFIGY_PROBE_NONCE` instead of a journal custody
+nonce. The guard acknowledges the in-memory registration, including Linux's
+registration-time group capability, before the observer releases the barrier.
+Pipe EOF triggers backup cleanup; the guard also enforces the registered
+boot-monotonic deadline plus grace when the observer is stopped. A failed guard
+exchange invalidates that helper before another probe can execute. Successful
+capture includes guard-loss warnings; `guard_identity` is a pure diagnostic
+for unavailable backup custody.
+
+The guard retains its original Linux group pidfd. It never substitutes a numeric
+group after a descriptor failure. Without that capability it checks a live
+leader immediately before a numeric group signal; after leader loss it signals
+only members whose probe nonce and start identity it can verify. The same nonce
+path covers descendants in new sessions. `probe::maintain` requires a host
+Mutate context and two positively absent owner generations. It never signals a
+group or a process with an unreadable, foreign or missing nonce. These are the
+evidence limits in contract 052 §5.11, including processes outside custody after
+both owners die.
+
+`connect` accepts adapter-resolved loopback TCP, plain HTTP GET/HEAD, Unix
+control sockets and gateway DNS targets. It does no system name resolution,
+redirect following, proxy lookup or source acquisition. HTTP separately bounds
+connect and total time and evaluates the declared status set (200–299 by
+default); an unexpected status is a verified response with `ready: false`.
+Capture and HTTP headers are size-bounded. Readiness predicates and exact
+resource generations remain the adapter's responsibility; process exit is
+never converted into readiness.
+
+`test:kernel:probe` runs strict signal-policy fakes, transport/status/budget and
+fault-boundary proofs, plus native owner/guard death, SIGSTOP, descendants,
+both-dead maintenance and read-only filesystem oracles. Its telemetry travels
+over private sockets so probes and helpers produce no fixture files.
+`test:kernel:probe:linux` uses the isolated Colima qualification transport with
+an unprivileged Linux test user; the proof's denied-root assertion cannot be
+bypassed by root. It leaves its stopped private VM and printed artifact directory
+for inspection. The full fault-harness cross-product remains architecture cut 7.

@@ -122,6 +122,12 @@ fn checkout_mount_probe_accepts_selected_checkout_and_rejects_sibling() {
 
 #[test]
 fn host_edit_refreshes_cargo_input_before_container_check() {
+    host_edit_refreshes_cargo_input_before_container_check_using(|| {});
+}
+
+fn host_edit_refreshes_cargo_input_before_container_check_using(after_serial: impl FnOnce()) {
+    let _locks =
+        crate::runner::owned_children::hold_signal_proof_test_locks_after_serial(after_serial);
     let root = temp_test_dir("cargo-host-edit");
     let run_git = |args: &[&str]| {
         assert!(std::process::Command::new("git")
@@ -1671,4 +1677,11 @@ fn live_managed_exec_note_ignores_dead_holders() {
         live_managed_exec_note(private.path(), &policy).is_none(),
         "a dead holder grants no live-run refusal"
     );
+}
+
+#[test]
+fn shared_process_container_prep_waits_for_path_mutator() {
+    crate::contract_test_support::assert_waits_for_path_mutator(|after_serial| {
+        host_edit_refreshes_cargo_input_before_container_check_using(after_serial)
+    });
 }

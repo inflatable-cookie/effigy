@@ -27,31 +27,20 @@ use support::{
     create_root_remote_with_optional_missing_child, init_bare_remote, init_git_repo, temp_dir,
 };
 
-/// RAII guard that prepends `bin_dir` to `PATH` for the duration of a test
-/// and restores the prior value on drop while holding the shared test lock.
+/// Keep capture, prepend and restoration under the shared environment lock.
 struct PathPrepend {
-    original: String,
-    _lock: crate::contract_test_support::ReentrantTestLockGuard,
+    _env: crate::contract_test_support::EnvGuard,
 }
 
 impl PathPrepend {
     fn new(bin_dir: &Path) -> Self {
-        let lock = crate::contract_test_support::lock_test();
+        let _lock = crate::contract_test_support::lock_test();
         let original = std::env::var("PATH").unwrap_or_default();
-        unsafe {
-            std::env::set_var("PATH", format!("{}:{original}", bin_dir.display()));
-        }
         Self {
-            original,
-            _lock: lock,
-        }
-    }
-}
-
-impl Drop for PathPrepend {
-    fn drop(&mut self) {
-        unsafe {
-            std::env::set_var("PATH", &self.original);
+            _env: crate::contract_test_support::EnvGuard::set_many(&[(
+                "PATH",
+                Some(format!("{}:{original}", bin_dir.display())),
+            )]),
         }
     }
 }
@@ -514,6 +503,12 @@ printf visible > root-seed-check.txt
 
 #[test]
 fn run_bootstrap_with_cwd_starts_when_requested() {
+    run_bootstrap_with_cwd_starts_when_requested_using(|| {});
+}
+
+fn run_bootstrap_with_cwd_starts_when_requested_using(after_serial: impl FnOnce()) {
+    let _locks =
+        crate::runner::owned_children::hold_signal_proof_test_locks_after_serial(after_serial);
     let child_remote = create_child_remote("child-app-start");
     let root_remote = create_root_remote_with_bootstrap(&child_remote);
     let cwd = temp_dir("bootstrap-start");
@@ -546,6 +541,7 @@ fn run_bootstrap_with_cwd_starts_when_requested() {
 
 #[test]
 fn run_bootstrap_with_cwd_stages_db_seed_before_root_run() {
+    let _locks = crate::runner::owned_children::hold_signal_proof_test_locks();
     let root_remote = create_root_remote_with_bootstrap_run_db_seed_visibility();
     let cwd = temp_dir("bootstrap-db-seed-root-run");
     let dump = cwd.join("latest.sql");
@@ -589,6 +585,7 @@ fn run_bootstrap_with_cwd_stages_db_seed_before_root_run() {
 
 #[test]
 fn run_bootstrap_with_cwd_runs_standard_db_seed_task_before_start() {
+    let _locks = crate::runner::owned_children::hold_signal_proof_test_locks();
     let root_remote = create_root_remote_with_bootstrap_db_seed_task();
     let cwd = temp_dir("bootstrap-db-seed-task");
     let dump = cwd.join("latest.sql");
@@ -631,6 +628,7 @@ fn run_bootstrap_with_cwd_runs_standard_db_seed_task_before_start() {
 
 #[test]
 fn run_bootstrap_with_cwd_auto_targets_single_database_bundle_seed_input() {
+    let _locks = crate::runner::owned_children::hold_signal_proof_test_locks();
     let root_remote = create_root_remote_with_single_database_bundle_bootstrap_db_seed_task();
     let cwd = temp_dir("bootstrap-single-db-seed-task");
     let dump = cwd.join("latest.sql");
@@ -674,6 +672,7 @@ fn run_bootstrap_with_cwd_auto_targets_single_database_bundle_seed_input() {
 
 #[test]
 fn run_bootstrap_with_cwd_runs_multi_target_db_seed_task_for_bundle_databases() {
+    let _locks = crate::runner::owned_children::hold_signal_proof_test_locks();
     let root_remote = create_root_remote_with_multi_database_bootstrap_db_seed_task();
     let cwd = temp_dir("bootstrap-multi-db-seed-task");
     let cbs_dir = cwd.join("cbs-dumps");
@@ -734,6 +733,7 @@ fn run_bootstrap_with_cwd_runs_multi_target_db_seed_task_for_bundle_databases() 
 
 #[test]
 fn run_bootstrap_with_cwd_rejects_unnamed_db_seed_for_multi_database_bundle() {
+    let _locks = crate::runner::owned_children::hold_signal_proof_test_locks();
     let root_remote = create_root_remote_with_multi_database_bootstrap_db_seed_task();
     let cwd = temp_dir("bootstrap-multi-db-seed-unnamed");
     let dump = cwd.join("latest.sql");
@@ -770,6 +770,7 @@ fn run_bootstrap_with_cwd_rejects_unnamed_db_seed_for_multi_database_bundle() {
 
 #[test]
 fn run_bootstrap_with_cwd_requires_container_registry_for_builtin_db_seed_fallback() {
+    let _locks = crate::runner::owned_children::hold_signal_proof_test_locks();
     let child_remote = create_child_remote("child-app-db-seed-missing");
     let root_remote = create_root_remote_with_bootstrap(&child_remote);
     let cwd = temp_dir("bootstrap-db-seed-missing-task");
@@ -808,6 +809,7 @@ fn run_bootstrap_with_cwd_requires_container_registry_for_builtin_db_seed_fallba
 
 #[test]
 fn run_bootstrap_with_cwd_reports_optional_child_warning_in_text_output() {
+    let _locks = crate::runner::owned_children::hold_signal_proof_test_locks();
     let root_remote = create_root_remote_with_optional_missing_child();
     let cwd = temp_dir("bootstrap-optional-child-text");
     let out = run_bootstrap_with_cwd(
@@ -836,6 +838,7 @@ fn run_bootstrap_with_cwd_reports_optional_child_warning_in_text_output() {
 
 #[test]
 fn run_bootstrap_with_cwd_syncs_js_and_rust_dependencies() {
+    let _locks = crate::runner::owned_children::hold_signal_proof_test_locks();
     let root = temp_dir("bootstrap-deps-sync");
     fs::write(
         root.join("effigy.toml"),
@@ -871,7 +874,6 @@ fn run_bootstrap_with_cwd_syncs_js_and_rust_dependencies() {
         fs::set_permissions(&script, perms).expect("chmod script");
     }
 
-    let _process_lock = crate::contract_test_support::lock_test();
     let _path = PathPrepend::new(&bin_dir);
     let out = run_bootstrap_with_cwd(
         BootstrapArgs {
@@ -902,6 +904,7 @@ fn run_bootstrap_with_cwd_syncs_js_and_rust_dependencies() {
 
 #[test]
 fn bootstrap_bun_refresh_generates_lock_and_scrubs_metadata_from_managed_dependencies() {
+    let _locks = crate::runner::owned_children::hold_signal_proof_test_locks();
     let root = temp_dir("bootstrap-bun-refresh-metadata");
     fs::write(
         root.join("effigy.toml"),
@@ -946,7 +949,6 @@ fn bootstrap_bun_refresh_generates_lock_and_scrubs_metadata_from_managed_depende
     perms.set_mode(0o755);
     fs::set_permissions(&script, perms).expect("chmod fake bun");
 
-    let _process_lock = crate::contract_test_support::lock_test();
     let _path = PathPrepend::new(&bin_dir);
     let refreshed = run_bootstrap_with_cwd(
         BootstrapArgs {
@@ -1009,6 +1011,7 @@ fn bootstrap_bun_refresh_generates_lock_and_scrubs_metadata_from_managed_depende
 
 #[test]
 fn bootstrap_bun_frozen_install_fails_early_without_lock() {
+    let _locks = crate::runner::owned_children::hold_signal_proof_test_locks();
     let root = temp_dir("bootstrap-bun-missing-lock");
     fs::write(
         root.join("effigy.toml"),
@@ -1031,7 +1034,6 @@ fn bootstrap_bun_frozen_install_fails_early_without_lock() {
     perms.set_mode(0o755);
     fs::set_permissions(&script, perms).expect("chmod fake bun");
 
-    let _process_lock = crate::contract_test_support::lock_test();
     let _path = PathPrepend::new(&bin_dir);
     let error = run_bootstrap_with_cwd(
         BootstrapArgs {
@@ -1055,6 +1057,7 @@ fn bootstrap_bun_frozen_install_fails_early_without_lock() {
 
 #[test]
 fn run_bootstrap_with_cwd_resolves_bootstrap_deps_sync_relative_to_cloned_repo_root() {
+    let _locks = crate::runner::owned_children::hold_signal_proof_test_locks();
     let child_remote = create_js_child_remote("workspace-app-sibling");
     let root_remote = create_root_remote_with_sibling_bootstrap_deps(&child_remote);
     let cwd = temp_dir("bootstrap-sibling-deps");
@@ -1067,7 +1070,6 @@ fn run_bootstrap_with_cwd_resolves_bootstrap_deps_sync_relative_to_cloned_repo_r
     perms.set_mode(0o755);
     fs::set_permissions(bin_dir.join("bun"), perms).expect("chmod bun");
 
-    let _process_lock = crate::contract_test_support::lock_test();
     let _path = PathPrepend::new(&bin_dir);
     let out = run_bootstrap_with_cwd(
         BootstrapArgs {
@@ -1098,6 +1100,7 @@ fn run_bootstrap_with_cwd_resolves_bootstrap_deps_sync_relative_to_cloned_repo_r
 
 #[test]
 fn prompt_bootstrap_db_seeds_collects_named_paths() {
+    let _locks = crate::runner::owned_children::hold_signal_proof_test_locks();
     let root = temp_dir("bootstrap-db-seed-prompt");
     let cbs = root.join("cbs.sql");
     let mortcalc = root.join("mortcalc.sql");
@@ -1134,6 +1137,7 @@ fn prompt_bootstrap_db_seeds_collects_named_paths() {
 
 #[test]
 fn prompt_bootstrap_db_seeds_reprompts_invalid_paths_and_allows_skip() {
+    let _locks = crate::runner::owned_children::hold_signal_proof_test_locks();
     let root = temp_dir("bootstrap-db-seed-prompt-invalid");
     let valid = root.join("cbs.sql");
     fs::write(&valid, "cbs").expect("write cbs");
@@ -1202,6 +1206,7 @@ fn prompt_bootstrap_path_reuse_empty_response_cancels_by_default() {
 
 #[test]
 fn run_bootstrap_with_cwd_rejects_existing_non_empty_destination_without_tty_prompt() {
+    let _locks = crate::runner::owned_children::hold_signal_proof_test_locks();
     let child_remote = create_child_remote("child-app-path-reuse-non-tty");
     let root_remote = create_root_remote_with_bootstrap(&child_remote);
     let cwd = temp_dir("bootstrap-path-reuse-non-tty");
@@ -1239,6 +1244,7 @@ fn run_bootstrap_with_cwd_rejects_existing_non_empty_destination_without_tty_pro
 
 #[test]
 fn run_bootstrap_with_cwd_rejects_existing_non_empty_destination_in_json_mode() {
+    let _locks = crate::runner::owned_children::hold_signal_proof_test_locks();
     let child_remote = create_child_remote("child-app-path-reuse-json");
     let root_remote = create_root_remote_with_bootstrap(&child_remote);
     let cwd = temp_dir("bootstrap-path-reuse-json");
@@ -1275,6 +1281,7 @@ fn run_bootstrap_with_cwd_rejects_existing_non_empty_destination_in_json_mode() 
 
 #[test]
 fn run_bootstrap_with_cwd_plan_skips_existing_destination_prompt() {
+    let _locks = crate::runner::owned_children::hold_signal_proof_test_locks();
     let child_remote = create_child_remote("child-app-path-reuse-plan");
     let root_remote = create_root_remote_with_bootstrap(&child_remote);
     let cwd = temp_dir("bootstrap-path-reuse-plan");
@@ -1308,6 +1315,7 @@ fn run_bootstrap_with_cwd_plan_skips_existing_destination_prompt() {
 
 #[test]
 fn run_bootstrap_with_cwd_no_prompt_rejects_existing_checkout_without_reuse_path() {
+    let _locks = crate::runner::owned_children::hold_signal_proof_test_locks();
     let root_remote = create_plain_remote("root-path-reuse-bypass");
     let cwd = temp_dir("bootstrap-path-reuse-bypass");
     let destination = cwd.join("reuse-target");
@@ -1357,6 +1365,7 @@ fn run_bootstrap_with_cwd_no_prompt_rejects_existing_checkout_without_reuse_path
 
 #[test]
 fn run_bootstrap_with_cwd_reuse_path_bypasses_existing_checkout_confirmation() {
+    let _locks = crate::runner::owned_children::hold_signal_proof_test_locks();
     let root_remote = create_plain_remote("root-path-reuse-flag");
     let cwd = temp_dir("bootstrap-path-reuse-flag");
     let destination = cwd.join("reuse-target");
@@ -1406,6 +1415,7 @@ fn run_bootstrap_with_cwd_reuse_path_bypasses_existing_checkout_confirmation() {
 
 #[test]
 fn run_bootstrap_with_cwd_skips_missing_bootstrap_deps_sync_paths() {
+    let _locks = crate::runner::owned_children::hold_signal_proof_test_locks();
     let root = temp_dir("bootstrap-deps-sync-missing");
     fs::write(
         root.join("effigy.toml"),
@@ -1426,7 +1436,6 @@ fn run_bootstrap_with_cwd_skips_missing_bootstrap_deps_sync_paths() {
     perms.set_mode(0o755);
     fs::set_permissions(&script, perms).expect("chmod script");
 
-    let _process_lock = crate::contract_test_support::lock_test();
     let _path = PathPrepend::new(&bin_dir);
     let out = run_bootstrap_with_cwd(
         BootstrapArgs {
@@ -1445,4 +1454,11 @@ fn run_bootstrap_with_cwd_skips_missing_bootstrap_deps_sync_paths() {
     assert!(out.contains("ui [js]: bun install --frozen-lockfile"));
     assert!(out.contains("missing-ui [skip]: missing directory"));
     assert!(ui.join("bun.marker").is_file(), "bun marker should exist");
+}
+
+#[test]
+fn shared_process_bootstrap_waits_for_path_mutator() {
+    crate::contract_test_support::assert_waits_for_path_mutator(|after_serial| {
+        run_bootstrap_with_cwd_starts_when_requested_using(after_serial)
+    });
 }

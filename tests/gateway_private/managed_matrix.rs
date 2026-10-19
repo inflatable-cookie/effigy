@@ -22,7 +22,7 @@ enum Prior {
 // validator; no listener inventory is stubbed or suppressed.
 struct MatrixProxy {
     address: SocketAddr,
-    _owner: ManagedSupervisor,
+    owner: ManagedSupervisor,
 }
 
 impl MatrixProxy {
@@ -51,7 +51,7 @@ impl MatrixProxy {
             if let Ok(address) = fs::read_to_string(&report) {
                 return Self {
                     address: address.parse().expect("bound proxy address"),
-                    _owner: owner,
+                    owner,
                 };
             }
             assert!(
@@ -81,7 +81,7 @@ fn managed_matrix_proxy_keeps_its_published_port_during_a_concurrent_claim() {
     );
     let response = private_gateway_http_response(address).expect("proxy response");
     assert!(response.contains("matrix proxy"), "{response}");
-    let pid = proxy._owner.0.id();
+    let pid = proxy.owner.0.id();
     drop(proxy);
     assert!(!owned_process_is_live(pid), "proxy must be reaped on drop");
 }

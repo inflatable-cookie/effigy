@@ -91,6 +91,16 @@ fn run_manifest_task_builtin_test_tui_flag_falls_back_to_text_when_non_interacti
 
 #[test]
 fn run_manifest_task_builtin_test_verbose_results_and_json_report_suite_lifecycle_metadata() {
+    run_manifest_task_builtin_test_verbose_results_and_json_report_suite_lifecycle_metadata_using(
+        || {},
+    );
+}
+
+fn run_manifest_task_builtin_test_verbose_results_and_json_report_suite_lifecycle_metadata_using(
+    after_serial: impl FnOnce(),
+) {
+    let _locks =
+        crate::runner::owned_children::hold_signal_proof_test_locks_after_serial(after_serial);
     let root = temp_workspace("builtin-test-results-suite-lifecycle-metadata");
     write_root_manifest(
         &root,
@@ -141,4 +151,13 @@ teardown_policy = "always"
     );
     assert_eq!(parsed["targets"][0]["setup_steps"].as_u64(), Some(1));
     assert_eq!(parsed["targets"][0]["teardown_steps"].as_u64(), Some(1));
+}
+
+#[test]
+fn shared_process_suite_lifecycle_waits_before_capturing_path() {
+    crate::contract_test_support::assert_waits_for_path_mutator(|after_serial| {
+        run_manifest_task_builtin_test_verbose_results_and_json_report_suite_lifecycle_metadata_using(
+            after_serial,
+        );
+    });
 }

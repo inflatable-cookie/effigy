@@ -930,7 +930,7 @@ pub(super) fn hold_signal_proof_test_locks() -> (
 }
 
 #[cfg(all(test, unix))]
-fn hold_signal_proof_test_locks_after_serial(
+pub(super) fn hold_signal_proof_test_locks_after_serial(
     after_serial: impl FnOnce(),
 ) -> (
     std::sync::MutexGuard<'static, ()>,
