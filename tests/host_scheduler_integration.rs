@@ -1078,6 +1078,7 @@ fn nested_heavy_steps_inherit_direct_admission_without_a_scheduler() {
         let missing = ws.file("no-scheduler-here");
         let output = ws
             .command(Some(&missing), &args)
+            .env("HOME", ws.root())
             .output()
             .expect("run sequence");
         assert_eq!(code(&output), 0, "{}", text(&output.stderr));
@@ -1096,6 +1097,7 @@ fn top_level_heavy_steps_still_require_scheduler_admission() {
     for selector in ["qa", "ci", "ci:fresh", "heavy"] {
         let output = ws
             .command(Some(&missing), &[selector])
+            .env("HOME", ws.root())
             .output()
             .expect("run heavy task");
         assert_eq!(code(&output), 75, "{selector}");
