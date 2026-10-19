@@ -2,8 +2,9 @@
 
 Contract: [052](../contracts/052-runtime-kernel-contract.md)
 Status: foundation, gates and store, run journal and settle, local and remote
-custody, supervision, executable probes and their guard, strict fakes and the QA
-ratchet are implemented. Engine adoption remains specified. This note places the kernel in the
+custody, supervision, executable probes and their guard, strict fakes, the QA
+ratchet and the fault harness with its oracles and supervisor matrix are
+implemented. Engine adoption remains specified. This note places the kernel in the
 codebase, names the processes it runs, and orders the kernel
 lane's implementation cuts. Contract 052 owns every rule and primitive; this
 note adds no semantics.
@@ -469,4 +470,58 @@ over private sockets so probes and helpers produce no fixture files.
 `test:kernel:probe:linux` uses the isolated Colima qualification transport with
 an unprivileged Linux test user; the proof's denied-root assertion cannot be
 bypassed by root. It leaves its stopped private VM and printed artifact directory
-for inspection. The full fault-harness cross-product remains architecture cut 7.
+for inspection.
+
+## Fault harness (cut 7)
+
+`crates/effigy-kernel/src/faults/` is test-only (`cfg(test)` with
+`fault-injection`). `driver` traces a scenario, then runs every crossing ×
+{Kill, ENOSPC, EPERM, Unknown, Stall, ClockJump} and `Unknown` at every
+observation, each in a fresh `mktemp -d` HOME, followed by recovery and every
+oracle. A fault is armed at the n-th crossing of a named point, so a retry
+elsewhere cannot shift it; a deterministic point whose fault is not delivered
+fails the drive, and every declared oracle must judge at least one subject.
+
+- Kill and Stall run in a re-executed child. Stall is `SIGSTOP`: while it is
+  stopped, every held owner gate refuses `FailFast` acquisition and O4 accepts a
+  hold only with that declared live holder. The gate body is diagnostics only
+  (I-G2) and is stale between flock and rewrite, so the hold is attributed to
+  the stopped child; after it continues and exits, the strict O4 capture proves
+  the gate frees.
+- `Unknown` at a point makes the next observation return `Unknown(Injected)`;
+  every observation site also gets `Unknown` alone. ClockJump moves the
+  injected wall clock 40 days forward.
+- Recovery waits until every helper spawned for the HOME has exited, including a
+  sentinel killed before registration, which still settles under the owner gate
+  (§5.8). It diffs HOME around every Observe read (O10), settles each unresolved
+  run, runs the scenario's own step, then captures the world.
+- Audit triggers in `kernel.db` record attachment and claim releases and each
+  admission's unresolved predecessors inside the kernel's own transactions, so
+  a crash cannot hide a double release (O5) or an admission beside residue (O13).
+- A per-process foreign fixture records every catchable signal (O12). macOS
+  hides the environment of platform binaries from other processes, so
+  lingering workloads exec `kernel-custody-fixture`, whose nonce stays readable.
+- O14 samples announced probe processes at deadline plus grace plus 250 ms of
+  scheduling slack.
+- Each drive splits its jobs across six worker processes. Shards are processes,
+  never threads: a fork in one thread would inherit another job's gate
+  descriptors.
+
+Kernel scenarios: plain task, sequence, multi-child test, detached managed run
+with an environment attachment, environment up, down and handover with a
+concurrent attach, a closed predecessor with residue followed by `begin`, owner
+loss followed by recovery stop over reused and foreign groups, Observe with a
+guarded subprocess and an HTTP probe, endpoint reserve and commit, and a vault
+write. Real backend handover, legacy import, gateway endpoint commit, vault
+rotation and fault points inside the out-of-process supervisor are ignored
+placeholders that name their engine lanes.
+
+`matrix` runs the §12.3 cross product (3 front ends × 4 prior states × 8 stops
+× 3 attachments) as model tests over `Run` and `Attachments` with the strict
+fake. Every cell asserts exactly one release per attachment, then O2–O6, O11 and
+O13. The front ends differ at the kernel only by client mode: TUI and attached
+text own the run, detached survives client death.
+
+`test:kernel:faults` runs the oracle controls and every scenario;
+`test:kernel:matrix` runs the matrix. Runtime is recorded in the selectors'
+comment in `config/tasks.toml`.

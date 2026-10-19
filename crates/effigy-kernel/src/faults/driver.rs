@@ -288,7 +288,8 @@ fn run_job(scenario: &dyn Scenario, job: Job, baseline: Option<i32>, tally: &mut
         match job {
             Job::Point(point, ..) => assert!(
                 scenario.variable().contains(&point),
-                "{label}: fault was not delivered at a deterministic point"
+                "{label}: fault was not delivered at a deterministic point; crossed {:?}",
+                fault::trace()
             ),
             // Observation counts vary only where polling loops observe.
             Job::Observation(_) => {}

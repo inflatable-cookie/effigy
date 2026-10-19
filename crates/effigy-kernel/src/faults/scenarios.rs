@@ -751,6 +751,8 @@ impl Scenario for Residue {
             Point::SettleEffectBefore,
             Point::AdapterBefore,
             Point::BeginAdmitted,
+            Point::FailedBefore,
+            Point::FailedAfter,
         ]
     }
     fn owners(&self) -> Vec<ResourceId> {
@@ -777,6 +779,19 @@ impl Scenario for Residue {
             let _ = run.settle(&cleanup(&cx), fake);
         }
         let mut run = begin(&cx, &root, task(7), 32, None, vec![id(30)], fake).ok()?;
+        // An attempt the adapter proves never happened is Failed, not undone.
+        let skipped = attempt!(
+            run,
+            &cx,
+            fake,
+            run.intend(spec(run.fence().clone(), "skipped", Settlement::Release(Value::Null)))
+        );
+        attempt!(
+            run,
+            &cx,
+            fake,
+            run.failed(&skipped, AbsenceProof::NoFile { name: "skipped".into() })
+        );
         attempt!(run, &cx, fake, apply(&mut run, fake, "work"));
         attempt!(run, &cx, fake, run.finish(WorkloadOutcome::Succeeded));
         settle(run, &cx, fake)
@@ -928,7 +943,9 @@ fn probe_runtime() -> std::sync::Arc<crate::probe::ProbeRuntime> {
         .get_or_init(|| crate::probe::ProbeRuntime::install(fixture()).expect("runtime"))
         .clone()
 }
-const PROBE_DEADLINE: Duration = Duration::from_millis(300);
+/// Long enough that fork, identity and registration finish under host load;
+/// the probe itself never completes, so only the deadline ends it.
+const PROBE_DEADLINE: Duration = Duration::from_millis(1500);
 /// Scheduler slack on top of deadline plus grace when sampling survivors.
 const PROBE_SLACK: Duration = Duration::from_millis(250);
 fn probe_bound() -> Duration {
@@ -980,17 +997,27 @@ impl Scenario for ObserveProbes {
     fn owners(&self) -> Vec<ResourceId> {
         vec![task(9)]
     }
+    /// Leaves a live, acknowledged guard: a closure exchange that missed its
+    /// grace under load retires the guard, and the next probe restarts it.
     fn warm(&self) {
         use crate::probe::ProbeCommand;
-        let cx = observe().with_probes(probe_runtime());
-        let warmed = cx.probe_process(ProbeCommand {
-            argv: vec!["/usr/bin/true".into()],
-            cwd: "/".into(),
-            env: BTreeMap::new(),
-            deadline: Duration::from_secs(10),
-            max_output: 64,
-        });
-        assert!(matches!(warmed, Observed::Verified(..)), "guard warm-up: {warmed:?}");
+        let runtime = probe_runtime();
+        let cx = observe().with_probes(runtime.clone());
+        for _ in 0..5 {
+            let warmed = cx.probe_process(ProbeCommand {
+                argv: vec!["/usr/bin/true".into()],
+                cwd: "/".into(),
+                env: BTreeMap::new(),
+                deadline: Duration::from_secs(10),
+                max_output: 64,
+            });
+            if matches!(warmed, Observed::Verified(..))
+                && matches!(runtime.guard_identity(&cx), Observed::Verified(..))
+            {
+                return;
+            }
+        }
+        panic!("probe guard never warmed");
     }
     fn prepare(&self, home: &Path) {
         install_audits(home);
@@ -1009,30 +1036,6 @@ impl Scenario for ObserveProbes {
                 let _ = Attachments::holders(&cx, &root, &reader, &env());
             }
         }
-        let announce = aux(home).join("probe-pids");
-        std::fs::write(aux(home).join("probe-started"), wall_ms().to_string()).ok()?;
-        let hung = cx.probe_process(ProbeCommand {
-            argv: vec![
-                "/bin/sh".into(),
-                "-c".into(),
-                format!("echo $$ >> '{}'; exec /bin/sleep 30", announce.display()).into(),
-            ],
-            cwd: aux(home),
-            env: BTreeMap::new(),
-            deadline: PROBE_DEADLINE,
-            max_output: 1024,
-        });
-        assert!(
-            matches!(hung, Observed::Unknown(_)),
-            "a hung probe must read Unknown: {hung:?}"
-        );
-        let _ = cx.probe_process(ProbeCommand {
-            argv: vec!["/bin/sh".into(), "-c".into(), "echo ready".into()],
-            cwd: aux(home),
-            env: BTreeMap::new(),
-            deadline: Duration::from_secs(10),
-            max_output: 1024,
-        });
         let listener = std::net::TcpListener::bind("127.0.0.1:0").ok()?;
         let address = listener.local_addr().ok()?;
         listener.set_nonblocking(true).ok()?;
@@ -1062,6 +1065,26 @@ impl Scenario for ObserveProbes {
         if !matches!(http, Observed::Unknown(_)) {
             let _ = server.join();
         }
+        // One guarded subprocess per run, last: under load a closure exchange
+        // may retire the guard, so no later crossing may depend on it. The
+        // completing probe is `warm`, before arming.
+        let announce = aux(home).join("probe-pids");
+        std::fs::write(aux(home).join("probe-started"), wall_ms().to_string()).ok()?;
+        let hung = cx.probe_process(ProbeCommand {
+            argv: vec![
+                "/bin/sh".into(),
+                "-c".into(),
+                format!("echo $$ >> '{}'; exec /bin/sleep 30", announce.display()).into(),
+            ],
+            cwd: aux(home),
+            env: BTreeMap::new(),
+            deadline: PROBE_DEADLINE,
+            max_output: 1024,
+        });
+        assert!(
+            matches!(hung, Observed::Unknown(_)),
+            "a hung probe must read Unknown: {hung:?}"
+        );
         let after = world::tree(home);
         let diff = world::diff(&before, &after);
         std::fs::write(aux(home).join("observe-diff"), diff.join("\n")).ok()?;
