@@ -504,8 +504,8 @@ fails the drive, and every declared oracle must judge at least one subject.
 - O14 samples announced probe processes at deadline plus grace plus 250 ms of
   scheduling slack.
 - Each drive splits its jobs across six worker processes. Shards are processes,
-  never threads: a fork in one thread would inherit another job's gate
-  descriptors.
+  never threads: the probe runtime, the foreign fixture and child reaping are
+  process-wide.
 
 Kernel scenarios: plain task, sequence, multi-child test, detached managed run
 with an environment attachment, environment up, down and handover with a

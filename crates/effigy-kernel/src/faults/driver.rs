@@ -116,8 +116,8 @@ fn jobs(trace: &[Point], observations: usize) -> Vec<Job> {
     jobs.extend((0..observations).map(Job::Observation));
     jobs
 }
-/// Worker processes per drive. Shards are processes, never threads: a fork
-/// in one thread would inherit another job's gate descriptors (#216).
+/// Worker processes per drive. Shards are processes, never threads: the probe
+/// runtime, the foreign fixture and child reaping are process-wide.
 const SHARDS: usize = 6;
 const PLAN: &str = "EFFIGY_KERNEL_FAULT_PLAN";
 const SHARD: &str = "EFFIGY_KERNEL_FAULT_SHARD";
