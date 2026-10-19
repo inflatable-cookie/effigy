@@ -323,7 +323,7 @@ working_subdir = "managed-volumes"
 }
 
 #[test]
-fn generated_compose_policy_includes_declared_media_mounts_and_prepares_source_dirs() {
+fn generated_compose_policy_defers_media_source_dirs_until_prepare() {
     let _lock = crate::test_env_lock();
     let root = temp_repo("managed-media");
     fs::write(
@@ -358,6 +358,10 @@ catalog = "mariadb"
         policy.declared_media_mounts,
         vec!["storage/uploads:/var/www/html/storage/uploads".to_owned()]
     );
+    assert!(!root.join("storage").exists());
+    crate::validate_container_policy(&root, &policy).expect("validate without creating media");
+    assert!(!root.join("storage").exists());
+    crate::policy::mounts::prepare_container_mount_sources(&policy).expect("prepare media");
     assert!(root.join("storage/uploads").is_dir());
 
     let compose = fs::read_to_string(&policy.compose_files[0]).expect("read compose");

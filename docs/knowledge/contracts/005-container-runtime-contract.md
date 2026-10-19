@@ -1395,6 +1395,14 @@ This remains the legacy single writer until the gateway endpoint-store
 migration (#224) imports `ports.json` and owns persistent reservations. Kernel
 run-scoped Claims do not implement this temporary persistent allocation seam.
 
+### Bind-source preparation
+
+Policy assembly and validation resolve declared media paths and the shared
+Composer cache mount without creating their directories. Activation calls
+`policy::mounts::prepare_container_mount_sources` before Compose uses them,
+including detached admission and task preparation. Media sources are revalidated
+against the checkout at Prepare; other host mounts remain user-owned.
+
 ## Container manager contract
 
 Runner-facing container operations must route through `ContainerManager`.

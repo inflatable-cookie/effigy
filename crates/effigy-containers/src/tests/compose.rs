@@ -1450,7 +1450,7 @@ working_dir = "/var/www/html"
 
 #[test]
 fn generated_php_workspace_does_not_mount_host_composer_home_by_default() {
-    with_temp_effigy_home("catalog-php-composer-home-default-off", |_| {
+    with_temp_effigy_home("catalog-php-composer-home-default-off", |home| {
         let _lock = crate::test_env_lock();
         let root = temp_repo("catalog-php-composer-home-default-off");
         let host_composer_home = root.join("host-composer-home");
@@ -1481,6 +1481,9 @@ working_dir = "/var/www/html"
         let policy = with_test_host_composer_home(Some(&host_composer_home), || {
             load_container_policy(&root, Some("web")).expect("policy")
         });
+        assert!(!home.join("shared/composer-cache").exists());
+        crate::policy::mounts::prepare_container_mount_sources(&policy).expect("prepare cache");
+        assert!(home.join("shared/composer-cache").is_dir());
         let rewritten = fs::read_to_string(&policy.compose_files[0]).expect("read compose");
 
         assert!(

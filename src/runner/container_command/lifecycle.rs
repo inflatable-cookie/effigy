@@ -363,6 +363,7 @@ fn prepare_container_up(
     if let Some(context) = &admitted_context {
         context.verify(repo_root, &policy, context.marker_required)?;
     }
+    effigy_containers::policy::mounts::prepare_container_mount_sources(&policy)?;
     let shared_service_notes =
         ensure_shared_services_running(&policy, preparation_admission.as_ref())?;
     let primary_service_running = if reconcile_pending {

@@ -18,6 +18,7 @@ pub(super) fn prepare_runtime_mounts_stage(
         // before the following idempotent up stage consumes them.
         effigy_containers::load_container_policy(repo_root, Some(&policy.name))?;
     }
+    effigy_containers::policy::mounts::prepare_container_mount_sources(policy)?;
     prepare_host_bind_mount_dirs(repo_root, policy)
 }
 

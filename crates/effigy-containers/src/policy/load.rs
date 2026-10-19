@@ -164,7 +164,10 @@ pub fn load_container_policy_for_creation(
 ) -> Result<(EffectiveContainerPolicy, Vec<WorkspaceExtraMountDecision>), ContainerPolicyError> {
     let policy = load_container_policy(repo_root, requested_name)?;
     super::ports::prepare_container_policy_ports(&policy)?;
-    load_container_policy_with_workspace_decisions(repo_root, requested_name, None, true)
+    let resolved =
+        load_container_policy_with_workspace_decisions(repo_root, requested_name, None, true)?;
+    super::mounts::prepare_container_mount_sources(&resolved.0)?;
+    Ok(resolved)
 }
 
 pub fn load_admitted_container_policy(

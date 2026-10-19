@@ -1779,7 +1779,7 @@ fn apply_generated_compose_host_mount_policy(
     Ok(())
 }
 
-fn parse_media_mount(
+pub(crate) fn parse_media_mount(
     repo_root: &Path,
     container_name: &str,
     mount: &str,
@@ -1829,12 +1829,6 @@ fn parse_media_mount(
             "container `{container_name}` media mount `{mount}` escapes the repo root"
         )));
     }
-
-    std::fs::create_dir_all(&resolved).map_err(|error| {
-        ContainerPolicyError::TaskInvocation(format!(
-            "container `{container_name}` media mount source `{source}` could not be prepared: {error}"
-        ))
-    })?;
 
     Ok((resolved, target.to_owned()))
 }

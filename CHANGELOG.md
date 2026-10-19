@@ -5,7 +5,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
-
 ### Added
 - Generated host-port inspection leaves unassigned bindings explicit and keeps
   `ports.json` unchanged. The first Prepare assigns ports through the existing
@@ -250,6 +249,7 @@ During v0.x, MINOR bumps may include breaking changes.
   endpoints, or trust behavior change.
 
 ### Changed
+- Container inspection and validation no longer create declared media directories or the shared Composer cache; activation prepares those bind sources.
 - Graph now has six commands: `index`, `status`, `search`, `node`, `affected`
   and `explore`. Node accepts file paths and incoming/outgoing relationships;
   explore supports an excerpts-only mode. Removed command spellings and catalog
