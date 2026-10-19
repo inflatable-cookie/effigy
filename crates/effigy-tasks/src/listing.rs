@@ -22,6 +22,7 @@ const BUILTIN_TEST_FALLBACK_NOTE: &str =
 const TASKS_SCHEMA: &str = "effigy.tasks.v1";
 const FILTERED_TASKS_SCHEMA: &str = "effigy.tasks.filtered.v1";
 const SCHEMA_VERSION: u64 = 1;
+#[derive(Debug)]
 pub struct ListTasksRequest<'a> {
     pub all: bool,
     pub filter: Option<&'a str>,
@@ -32,6 +33,7 @@ pub struct ListTasksRequest<'a> {
     pub deferred_builtins: &'a BTreeSet<String>,
 }
 
+#[derive(Debug)]
 pub struct ListTasksResult {
     all: bool,
     catalog_count: usize,
@@ -41,6 +43,7 @@ pub struct ListTasksResult {
     selection: ListingSelectionResult,
 }
 
+#[derive(Debug)]
 enum ListingSelectionResult {
     Catalog {
         catalog_alias_rows: Vec<CatalogAliasProjection>,
@@ -55,22 +58,25 @@ enum ListingSelectionResult {
     },
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 struct BuiltinTaskProjection {
     task: String,
     description: String,
 }
 
+#[derive(Debug)]
 struct TaskSignatureProjection {
     task: String,
     run: String,
 }
 
+#[derive(Debug)]
 struct CatalogAliasProjection {
     alias: String,
     manifest: String,
 }
 
+#[derive(Debug)]
 struct CatalogTaskProjection {
     manifest: String,
     manifest_absolute: String,
