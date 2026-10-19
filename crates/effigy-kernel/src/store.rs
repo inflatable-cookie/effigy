@@ -656,10 +656,14 @@ impl BootDeadline {
 }
 
 pub(crate) fn wall_ms() -> i64 {
-    SystemTime::now()
+    let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|time| time.as_millis() as i64)
-        .unwrap_or(0)
+        .unwrap_or(0);
+    // ClockJump (§12.1): only diagnostics and retention read the wall clock.
+    #[cfg(all(test, feature = "fault-injection"))]
+    let now = now + crate::fault::clock_skew_ms();
+    now
 }
 pub(crate) fn token(checkout: &CheckoutId) -> String {
     checkout

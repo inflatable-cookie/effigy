@@ -63,7 +63,7 @@ pub enum EffectState {
     Residue,
 }
 impl EffectState {
-    fn terminal(self) -> bool {
+    pub(crate) fn terminal(self) -> bool {
         matches!(
             self,
             Self::Failed | Self::Released | Self::Retained | Self::Irreversible
@@ -761,6 +761,15 @@ pub fn status(
         Ok(value) => value,
         Err(error) => Observed::Unknown(UnknownReason::StoreUnreadable(error.to_string())),
     }
+}
+
+/// Read-only journal access for the fault-suite oracles (§12.1).
+#[cfg(all(test, feature = "fault-injection"))]
+pub(crate) fn journal_effects(
+    conn: &rusqlite::Connection,
+    id: RunId,
+) -> Result<Vec<Effect>, RunError> {
+    journal::effects(conn, id)
 }
 
 #[cfg(test)]

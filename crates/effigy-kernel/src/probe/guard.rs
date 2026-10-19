@@ -15,7 +15,7 @@ use std::sync::{
 };
 use std::time::Duration;
 
-pub(super) const GRACE: Duration = Duration::from_millis(100);
+pub(crate) const GRACE: Duration = Duration::from_millis(100);
 const FRAME_MAX: usize = 16 * 1024;
 static INSTALLED: AtomicBool = AtomicBool::new(false);
 

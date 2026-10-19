@@ -29,6 +29,8 @@ pub mod supervise;
 mod fault;
 #[cfg(all(test, feature = "fault-injection"))]
 mod fault_tests;
+#[cfg(all(test, feature = "fault-injection"))]
+mod faults;
 
 /// A named fault point (§12.1): `io::Result<()>`, always `Ok` outside
 /// fault-injection test builds.
