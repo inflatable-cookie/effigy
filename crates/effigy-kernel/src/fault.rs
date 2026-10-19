@@ -9,6 +9,11 @@ use std::io;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Point {
+    RemoteBeforeIdentity,
+    RemoteAfterIntent,
+    RemoteAfterRecord,
+    RemoteBeforeAck,
+    RemoteAfterAckBeforeRecord,
     ProbeFork,
     ProbeRegister,
     ProbeGuardAck,

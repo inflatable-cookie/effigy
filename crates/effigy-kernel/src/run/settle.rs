@@ -8,6 +8,10 @@ use std::time::Duration;
 /// Engine implementations must observe exact identity and make undo idempotent.
 /// No transaction or auxiliary resource gate spans these callbacks (K14).
 pub trait SettlementAdapter {
+    /// Same selected backend used by launch, also available in sentinel recovery.
+    fn remote(&mut self) -> Option<&mut dyn crate::remote::RemoteExecAdapter> {
+        None
+    }
     fn observe(&mut self, effect: &Effect, cx: &CleanupContext) -> Observed<Fence>;
     fn release(&mut self, effect: &Effect, cx: &CleanupContext) -> Observed<()>;
     /// Policy can retain a borrowed resource. Returning Verified(Retained) does
@@ -74,6 +78,19 @@ impl Run<'_> {
                             .any(|r| matches!(r.action, RequestAction::Escalate))
                     })
                 });
+                self.store.transaction(&cx, |txn| {
+                    journal::write_effect(
+                        txn,
+                        self.id,
+                        effect.sequence,
+                        state,
+                        None,
+                        reason.as_deref(),
+                    )
+                })?;
+            } else if effect.spec.kind == crate::remote::KIND {
+                let (state, reason) =
+                    crate::remote::settle_effect(effect, cleanup, adapter.remote());
                 self.store.transaction(&cx, |txn| {
                     journal::write_effect(
                         txn,

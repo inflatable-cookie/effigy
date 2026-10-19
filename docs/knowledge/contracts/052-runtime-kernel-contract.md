@@ -10,9 +10,12 @@ in `config/kernel-ratchet.json`. The run journal and settle (§5.6), attachments
 with generation-fenced tickets, positive completion, holder protection and
 journal-boundary fault proofs. Local custody, signal routing, detached supervision
 and per-run sentinels (§5.7–§5.8) are implemented in the kernel, with a
-same-binary qualification harness. Executable Observe capabilities (§5.11),
-the in-memory probe guard and nonce-only maintenance are implemented in the
-kernel, with macOS/Linux qualification selectors. Engines have not adopted the kernel; the
+same-binary qualification harness. Remote custody (§5.10), its in-band registration
+wrapper, backend conformance runner and feature-gated strict fakes (§12.2) are
+implemented. Real-engine remote qualification remains engine-lane work. Executable
+Observe capabilities (§5.11), the in-memory probe guard and nonce-only maintenance
+are implemented in the kernel, with macOS/Linux qualification selectors. Engines
+have not adopted the kernel; the
 mechanisms in the adoption map (§10) remain current behavior. QA-group `stop` and `hard_timeout_ms` stay unavailable: contract
 [051](051-bounded-qa-groups-contract.md) keeps refusing them until this
 kernel's run journal, custody and deadlines exist.

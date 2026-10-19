@@ -221,15 +221,16 @@ fn probe_runtime_fault_boundaries_preserve_no_execution_before_ack() {
         argv: vec!["/usr/bin/true".into()],
         cwd: dir.path().into(),
         env: Default::default(),
-        deadline: Duration::from_secs(2),
+        // This matrix proves barrier/fault ordering, including cold guard
+        // startup. Tight deadline behavior has separate transport and native
+        // custody proofs; leave this scenario enough startup headroom.
+        deadline: Duration::from_secs(10),
         max_output: 4096,
     };
     let cx = cx(Duration::from_secs(30)).with_probes(runtime);
     crate::fault::arm(None);
-    assert!(matches!(
-        cx.probe_process(command()),
-        Observed::Verified(..)
-    ));
+    let observed = cx.probe_process(command());
+    assert!(matches!(observed, Observed::Verified(..)), "{observed:?}");
     let trace = crate::fault::trace();
     for point in [
         crate::fault::Point::ProbeObservation,
@@ -246,10 +247,8 @@ fn probe_runtime_fault_boundaries_preserve_no_execution_before_ack() {
         }
     }
     crate::fault::arm(None);
-    assert!(matches!(
-        cx.probe_process(command()),
-        Observed::Verified(..)
-    ));
+    let observed = cx.probe_process(command());
+    assert!(matches!(observed, Observed::Verified(..)), "{observed:?}");
 }
 
 #[test]

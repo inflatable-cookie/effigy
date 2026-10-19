@@ -1,9 +1,10 @@
 # 032 - Runtime Kernel Architecture
 
 Contract: [052](../contracts/052-runtime-kernel-contract.md)
-Status: foundation crate and QA ratchet implemented; runtime primitives and
-engine adoption remain specified. This note places the
-kernel in the codebase, names the processes it runs, and orders the kernel
+Status: foundation, gates and store, run journal and settle, local and remote
+custody, supervision, executable probes and their guard, strict fakes and the QA
+ratchet are implemented. Engine adoption remains specified. This note places the kernel in the
+codebase, names the processes it runs, and orders the kernel
 lane's implementation cuts. Contract 052 owns every rule and primitive; this
 note adds no semantics.
 
@@ -19,7 +20,7 @@ dependency direction, not separate binaries.
  adapters  compose backends · Colima · Docker · Apple Containers (planned)
            macOS platform (launchd, resolver, lo0) · mkcert · host-run client
  kernel    effigy-kernel: identity · context · gate · store · run · custody
-           signal · remote custody contract · observe · probe · outcome
+           signal · remote custody · observe · probe · outcome
 ```
 
 Dependency rules, enforced by `qa:architecture`:
@@ -382,6 +383,45 @@ client tools and leaves its stopped VM/cache and logs in its printed temporary
 directory. It never activates a Docker context or mounts the original checkout.
 The fixture binary requires `fault-injection` and is not a product executable.
 
+## Remote custody and adapter qualification
+
+`remote::RemoteCustody` records the exact container identity, environment fence
+and recovery nonce before it asks an adapter for a local exec-client spec. The
+client uses local `Custody`; its private nonce is distinct from the guest's
+`EFFIGY_CUSTODY_NONCE`. Adapters forward the guest environment privately, never
+through command arguments. The fixed POSIX shell wrapper uses `setsid` when
+available, reads Linux process start ticks, boot and pid-namespace identity, emits
+the framed acknowledgement on stderr and execs the workload. It writes no files.
+
+Custody strips bounded registration frames before redaction, logs, queues and
+tails. Only an acknowledgement matching the intended nonce, boot and environment
+becomes a remote receipt. A client exit cannot complete the remote obligation.
+The existing Run writer settles the client first, then the remote effect via the
+selected engine's `SettlementAdapter::remote`, including in sentinel recovery.
+That adapter must also be installed in the engine's same-binary hidden entry
+points. Without it, remote effects remain residue.
+
+`remote::session` provides shared stop-helper evidence rules. Session delivery
+needs the live registered leader; fallback delivery needs member nonce and start
+identity. Transport delivery rechecks those facts in the registered container.
+No replacement container inherits a registration. Unknown identity, an exec
+failure, an unreadable member or a reused foreign session gives no signal
+permission. A nonce lookup returning no registration without a positive closure
+proof remains residue. Boot changes and exact container-inventory absence can
+release old effects. All calls have separate phase bounds within settle's budget;
+wall clocks across the host and guest are never compared.
+
+The `fault-injection` feature exposes `strict_fake` typed call tapes for backend,
+remote, platform and probe transports. Each invocation is recorded and consumes
+one exact expectation. Scripts can inject Unknown, timeout and partial effects;
+foreign sentinels reject writes, and unselected adapters assert an empty log.
+`remote::conformance::run` enumerates the remote qualification cases. A backend
+fixture supplies crash/guest perturbations and independent survivor, foreign and
+unselected-backend oracles. `test:kernel:remote` proves the kernel path with strict
+fakes, local exec clients and journal-boundary owner kills. It does not qualify a
+real engine: Colima docker/containerd, Docker Desktop and Linux Docker still need
+their disposable engine fixtures and qualification runs; Apple Containers remains
+unsupported until it passes the same suite.
 
 ## Probe implementation
 

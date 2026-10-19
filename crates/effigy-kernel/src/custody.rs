@@ -175,6 +175,7 @@ pub(crate) struct ProcessCore {
     deadline: Option<Instant>,
     terminal: Option<spawn::TerminalLease>,
     pty: bool,
+    registration: Option<Arc<Mutex<crate::remote::stream::RegistrationStream>>>,
 }
 pub(crate) struct Redactor {
     display: RedactionPass,
@@ -252,6 +253,22 @@ impl Custody {
         run: &mut Run<'_>,
         spec: ProcessSpec,
         cx: &EffectContext,
+    ) -> Result<OwnedProcess, SpawnError> {
+        Self::spawn_inner(run, spec, cx, None)
+    }
+    pub(crate) fn spawn_remote(
+        run: &mut Run<'_>,
+        spec: ProcessSpec,
+        cx: &EffectContext,
+        registration: Arc<Mutex<crate::remote::stream::RegistrationStream>>,
+    ) -> Result<OwnedProcess, SpawnError> {
+        Self::spawn_inner(run, spec, cx, Some(registration))
+    }
+    fn spawn_inner(
+        run: &mut Run<'_>,
+        spec: ProcessSpec,
+        cx: &EffectContext,
+        registration: Option<Arc<Mutex<crate::remote::stream::RegistrationStream>>>,
     ) -> Result<OwnedProcess, SpawnError> {
         cx.require(crate::ctx::Capability::AdapterEffect)
             .map_err(|_| SpawnError::Refused("spawn needs Mutate".into()))?;
@@ -336,6 +353,7 @@ impl Custody {
                 },
                 terminal,
                 pty: matches!(spec.terminal, Terminal::Pty),
+                registration,
             }));
             run.retain_process(ticket.sequence(), core.clone());
             pending.transfer();
@@ -481,7 +499,28 @@ impl ProcessCore {
                     }
                     break;
                 }
-                self.sink(&buf[..count as usize], false);
+                if index == 1 {
+                    let bytes = if let Some(registration) = &self.registration {
+                        registration
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .push(&buf[..count as usize], false)
+                    } else {
+                        buf[..count as usize].to_vec()
+                    };
+                    self.sink(&bytes, false);
+                } else {
+                    self.sink(&buf[..count as usize], false);
+                }
+            }
+            if eof && index == 1 {
+                if let Some(registration) = &self.registration {
+                    let bytes = registration
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .push(&[], true);
+                    self.sink(&bytes, false);
+                }
             }
             if !eof {
                 if index == 0 {

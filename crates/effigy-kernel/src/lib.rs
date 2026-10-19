@@ -15,11 +15,14 @@ pub mod observe;
 pub mod outcome;
 pub mod probe;
 pub mod record;
+pub mod remote;
 pub mod retention;
 pub mod root;
 pub mod run;
 pub mod signal;
 pub mod store;
+#[cfg(feature = "fault-injection")]
+pub mod strict_fake;
 pub mod supervise;
 
 #[cfg(all(test, feature = "fault-injection"))]

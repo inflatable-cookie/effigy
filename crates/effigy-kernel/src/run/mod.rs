@@ -332,6 +332,9 @@ impl<'a> Run<'a> {
     pub(crate) fn has_sentinel(&self) -> bool {
         self.sentinel.is_some()
     }
+    pub(crate) fn intend_remote(&mut self, spec: EffectSpec) -> Result<EffectTicket, RunError> {
+        self.intend_inner(spec)
+    }
     pub(crate) fn intend_process(&mut self, spec: EffectSpec) -> Result<EffectTicket, RunError> {
         self.intend_inner(spec)
     }
@@ -558,6 +561,7 @@ impl<'a> Run<'a> {
                 if e.state == EffectState::Applied
                     && e.spec.kind.starts_with("kernel:")
                     && e.spec.kind != crate::custody::KIND
+                    && e.spec.kind != crate::remote::KIND
                 {
                     crate::outcome::RequiredObligation::Applied
                 } else {
