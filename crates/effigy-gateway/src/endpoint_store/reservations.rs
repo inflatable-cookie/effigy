@@ -84,6 +84,27 @@ impl EndpointStore {
         legacy: Option<&str>,
         scope: &str,
     ) -> Result<Ipv4Addr, GatewayError> {
+        // Policy inspection repeatedly asks for the same assignment. A
+        // committed matching owner is already retained: do not admit writer
+        // runs for reads, or starve publication while policies are observed.
+        // Absent/unknown reads still enter the serialized import/recovery path.
+        if let effigy_kernel::observe::Observed::Verified(snapshot, _) = self.read() {
+            let registry = snapshot.loopback()?;
+            if let Some(assignment) = registry.get(identity) {
+                if assignment.scope != scope {
+                    return Err(error(
+                        "loopback lifetime owner differs; release the old owner explicitly",
+                    ));
+                }
+                if snapshot.unavailable_addresses().contains(&assignment.ip)
+                    || reserved_loopback_ips_for_other_projects(&snapshot.routes()?, scope)
+                        .contains(&assignment.ip)
+                {
+                    return Err(error("retained loopback address conflicts with another owner; explicit repair is required"));
+                }
+                return Ok(assignment.ip);
+            }
+        }
         self.edit(None, |snapshot| {
             let mut registry = snapshot.loopback()?;
             if registry.get(identity).is_none() {

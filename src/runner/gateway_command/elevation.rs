@@ -44,7 +44,8 @@ pub(super) fn prepare_gateway_state_for_elevated_run(
         identity::ensure_trusted_gateway_parent(&config.pid_file_path)
             .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     }
-    effigy_gateway::endpoint_store::EndpointStore::for_routes(&config.route_table_path).import()?;
+    // Endpoint writers and daemon startup own import/recovery. Certificate
+    // preparation may run inside their Store gate and must not re-enter it.
     if let Some(tls_config) = &config.tls {
         std::fs::create_dir_all(&tls_config.certs_dir).map_err(RunnerError::Cwd)?;
     }

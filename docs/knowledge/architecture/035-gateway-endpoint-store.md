@@ -72,8 +72,12 @@ files does not import or allocate anything.
 ## Callers and reload
 
 Container Prepare reserves or retains generated host-port ranges through this
-API, including an already assigned legacy range. Generated Compose and route
-registration use the same persistent loopback allocator; a missing container
+API, including an already assigned legacy range.
+Repeated policy reads use an already committed loopback assignment without
+admitting writer runs. Certificate preparation creates only its directories and
+certificates; endpoint writers and daemon startup own import/recovery, avoiding
+recursive acquisition of the endpoint Store gate during TLS publication.
+Generated Compose and route registration use the same persistent loopback allocator; a missing container
 from an inventory never frees its address. The previous shared-service key is
 translated only for its exact recorded owner, retaining the address.
 

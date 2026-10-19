@@ -431,3 +431,21 @@ fn withdrawn_tcp_alias_keeps_address_and_port_claims_until_retirement() {
         .is_empty());
     assert!(store.read_compatible().unwrap().port_unavailable(5432));
 }
+
+#[test]
+fn reading_a_committed_loopback_assignment_does_not_admit_writer_runs() {
+    let (_dir, store) = fixture();
+    let ip = store.reserve_loopback("policy-read", "/owner").unwrap();
+    let before = fs::read(store.database_path()).unwrap();
+    for _ in 0..32 {
+        assert_eq!(store.reserve_loopback("policy-read", "/owner").unwrap(), ip);
+    }
+    assert_eq!(
+        fs::read(store.database_path()).unwrap(),
+        before,
+        "observing retained assignments must not append run records or contend on the writer gate"
+    );
+    assert!(store.reserve_loopback("policy-read", "/foreign").is_err());
+    store.release_loopback("policy-read", "/owner").unwrap();
+    assert_ne!(store.reserve_loopback("replacement", "/other").unwrap(), ip);
+}
