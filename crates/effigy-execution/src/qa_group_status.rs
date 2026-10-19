@@ -258,8 +258,8 @@ pub struct QaGroupRunRecord {
     pub warnings: Vec<String>,
     /// The plan's capability declaration, repeated for honest records.
     pub capabilities: QaGroupRunCapabilities,
-    /// Which admission backend covered a heavy group and the scheduler run it
-    /// ran under. Absent on light groups and on records written before the
+    /// Which admission covered a heavy group. Absent on light groups, on a
+    /// heavy group run with no hook set, and on records written before the
     /// field existed; readers must treat absence as "not recorded".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backend: Option<QaGroupBackend>,
@@ -269,21 +269,19 @@ pub struct QaGroupRunRecord {
 /// when unavailable; null is never zero.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct QaGroupBackend {
+    /// `admission_hook` (Q-006). Records from v0.14 may say
     /// `host_scheduler` or `host_scheduler_override`.
     pub kind: String,
-    /// Scheduler run id. For a scheduler-launched child this is the run that
-    /// launched this very process; for a run that never launched it is the
-    /// submitted run.
+    /// Always null since the host-run client was retired; v0.14 records
+    /// carry the scheduler run that covered them.
     #[serde(default)]
     pub scheduler_run_id: Option<String>,
     #[serde(default)]
     pub scheduler_epoch: Option<u64>,
-    /// Time spent waiting for capacity, when the backend reported or measured
-    /// it.
+    /// Time the admission hook took to admit the group.
     #[serde(default)]
     pub queue_wait_ms: Option<u64>,
-    /// `capacity_timeout` or `cancelled` when the scheduler settled the run
-    /// without launching any member.
+    /// Always null since the host-run client was retired.
     #[serde(default)]
     pub settlement: Option<String>,
 }

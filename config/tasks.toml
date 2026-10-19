@@ -150,7 +150,7 @@
 "test:task-engine:crates" = { run = "cargo build --bin effigy && cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-builtin -p effigy-cli -p effigy-tasks -p effigy-routing -p effigy-core -p effigy-env -p effigy-execution -p effigy-runtime -p effigy-managed -p effigy-context -p effigy-doctor --lib --no-fail-fast --retries 0 {args}", timeout_ms = 3600000 }
 # CLI integration suites that run tasks, locks, status and flag placement
 # through the binary; extra arguments narrow the run.
-"test:task-engine:cli" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests --test documentation_coverage_tests --test env_schema_tests --test changelog_tests --test host_scheduler_integration --test bootstrap_cli_tests --no-fail-fast --retries 0 {args}", timeout_ms = 3600000 }
+"test:task-engine:cli" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests --test documentation_coverage_tests --test env_schema_tests --test changelog_tests --test bootstrap_cli_tests --no-fail-fast --retries 0 {args}", timeout_ms = 3600000 }
 # Runner secrets tests in one shared process, as hosted CI's shared-process
 # lane runs them: the in-process passphrase cache must not leak between tests.
 "test:task-engine:shared-secrets" = { run = "RUSTFLAGS='--cfg effigy_shared_process' cargo test -p effigy --lib secrets_tests:: -- --test-threads=8", timeout_ms = 1800000 }

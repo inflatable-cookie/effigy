@@ -17,7 +17,7 @@ use crate::runner::exec_command::transport::{
     resolve_host_program,
 };
 use crate::runner::exec_command::{
-    activate_exec_surface_with, determine_routed_task_exec_strategy,
+    activate_exec_surface_with,
     routed_task_exec_requires_workspace_effigy, strategy_requires_workspace_effigy_install,
     verified_target_exec_args,
 };
@@ -574,53 +574,6 @@ fn build_routed_task_exec_args_handoff_uses_installed_effigy_path() {
             OsString::from("tasks"),
             OsString::from("--json"),
         ]
-    );
-}
-
-#[test]
-fn authenticated_host_execution_uses_resolved_container_payload() {
-    let capabilities = effigy_exec::detection::ContainerCapabilities {
-        has_effigy: true,
-        effigy_version: Some("stale-container-copy".to_owned()),
-        shell: "sh".to_owned(),
-        tools: std::collections::HashMap::new(),
-        probed_at: std::time::Instant::now(),
-    };
-    let command = vec![
-        "sh".to_owned(),
-        "-lc".to_owned(),
-        "bun install --frozen-lockfile".to_owned(),
-    ];
-
-    let admitted = determine_routed_task_exec_strategy(
-        &capabilities,
-        "workspace:js:prepare",
-        &[],
-        "/workspace/subdir",
-        &command,
-        true,
-    );
-    assert_eq!(
-        admitted,
-        effigy_exec::ExecStrategy::RawExec {
-            working_dir: "/workspace/subdir".to_owned(),
-            command: command.clone(),
-        }
-    );
-
-    let unadmitted = determine_routed_task_exec_strategy(
-        &capabilities,
-        "workspace:js:prepare",
-        &[],
-        "/workspace/subdir",
-        &command,
-        false,
-    );
-    assert_eq!(
-        unadmitted,
-        effigy_exec::ExecStrategy::Handoff {
-            args: vec!["workspace:js:prepare".to_owned()],
-        }
     );
 }
 

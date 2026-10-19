@@ -51,6 +51,7 @@ points! {
     ProbeObservation,
     SocketBind,
     CaptureWrite,
+    LogRead,
     SpawnFork,
     SpawnBeforeRecord,
     SpawnBeforeGo,

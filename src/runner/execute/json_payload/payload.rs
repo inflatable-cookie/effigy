@@ -132,6 +132,14 @@ pub(super) fn task_plan_payload(
         }
     }
 
+    // Admission metadata (Q-006): present only for a classified task, so an
+    // unclassified plan stays byte-compatible. It changes nothing by itself.
+    if let Some(admission) = selection.task.admission {
+        if let Some(object) = payload.as_object_mut() {
+            object.insert("admission".to_owned(), json!(admission.as_str()));
+        }
+    }
+
     if selection.surface == TaskSurface::Draft {
         if let Some(object) = payload.as_object_mut() {
             object.insert("surface".to_owned(), json!("draft"));

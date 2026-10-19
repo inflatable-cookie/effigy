@@ -825,6 +825,7 @@ fn run_shell_step_once(
     let mut process = ProcessCommand::new("sh");
     process.arg("-c").arg(command).current_dir(cwd);
     with_local_node_bin_path(&mut process, cwd);
+    crate::runner::task_engine::mark_child(&mut process);
     process.envs(
         step_env
             .iter()
@@ -848,6 +849,7 @@ fn run_shell_step_once_owned(
     let mut process = ProcessCommand::new("sh");
     process.arg("-c").arg(command).current_dir(cwd);
     with_local_node_bin_path(&mut process, cwd);
+    crate::runner::task_engine::mark_child(&mut process);
     process.envs(
         step_env
             .iter()

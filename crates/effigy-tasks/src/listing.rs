@@ -62,6 +62,8 @@ struct BuiltinTaskProjection {
 struct TaskSignatureProjection {
     task: String,
     run: String,
+    /// The declared admission class (Q-006); metadata only.
+    admission: Option<&'static str>,
 }
 
 struct CatalogAliasProjection {
@@ -87,6 +89,9 @@ struct CatalogTaskJsonRow {
     task: Option<String>,
     run: Option<String>,
     manifest: String,
+    /// Present only for a classified task, so other rows keep their shape.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    admission: Option<&'static str>,
 }
 
 #[derive(Clone, Serialize)]
@@ -467,6 +472,7 @@ fn project_catalog_task_rows(
         task_row: Some(TaskSignatureProjection {
             task: catalog_task_label(catalog, task_name),
             run: task_run_preview(catalog, task_name, task),
+            admission: task.admission.map(|admission| admission.as_str()),
         }),
         managed_profiles: managed_profile_display_rows(catalog, task_name, task),
     }
@@ -495,6 +501,10 @@ fn catalog_task_rows_json(rows: &[CatalogTaskProjection]) -> Vec<CatalogTaskJson
                 .map(|signature| signature.task.clone()),
             run: row.task_row.as_ref().map(|signature| signature.run.clone()),
             manifest: row.manifest_absolute.clone(),
+            admission: row
+                .task_row
+                .as_ref()
+                .and_then(|signature| signature.admission),
         })
         .collect()
 }

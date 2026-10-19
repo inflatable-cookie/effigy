@@ -1086,3 +1086,115 @@ fn run_store_record_uses_owner_gate_and_atomic_replace_faults() {
         CleanupOutcome::Complete
     );
 }
+
+fn observe(cx: &EffectContext) -> crate::ctx::ObserveContext {
+    OperationContext::new(
+        Deadline::At(Instant::now() + Duration::from_secs(30)),
+        CancelToken::default(),
+        cx.operation().limits().clone(),
+        EffectClass::Observe,
+        Placement::Host,
+    )
+    .observe()
+    .unwrap()
+}
+
+fn log_read(
+    cx: &EffectContext,
+    root: &StateRoot,
+    stream: crate::custody::Stream,
+    offset: u64,
+    max: usize,
+) -> Observed<LogRead> {
+    read_log(&observe(cx), root, id(40), 3, stream, offset, max)
+}
+
+#[test]
+fn run_log_reads_resume_exactly_across_rotation_and_report_expiry() {
+    use crate::custody::Stream;
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    assert!(matches!(
+        log_read(&cx, &root, Stream::Stdout, 0, 64),
+        Observed::Absent(_)
+    ));
+    // 4096-byte segments, two kept behind the open one: 12 KiB retained.
+    let mut log = crate::custody::capture::Log::open(
+        &root,
+        id(40),
+        3,
+        Stream::Stdout,
+        cx.operation().limits(),
+    )
+    .unwrap();
+    let mut stderr = crate::custody::capture::Log::open(
+        &root,
+        id(40),
+        3,
+        Stream::Stderr,
+        cx.operation().limits(),
+    )
+    .unwrap();
+    let written: Vec<u8> = (0..10_000u32).map(|n| (n % 251) as u8).collect();
+    for chunk in written.chunks(777) {
+        log.append(chunk).unwrap();
+    }
+    stderr.append(b"err").unwrap();
+
+    // A reader that stops anywhere resumes at exactly that byte.
+    let mut resumed = Vec::new();
+    let mut offset = 0;
+    loop {
+        let Observed::Verified(read, _) = log_read(&cx, &root, Stream::Stdout, offset, 1000) else {
+            panic!("log is readable");
+        };
+        assert_eq!(read.from, offset, "nothing expired yet");
+        assert_eq!(read.end, 10_000);
+        if read.bytes.is_empty() {
+            break;
+        }
+        offset += read.bytes.len() as u64;
+        resumed.extend(read.bytes);
+    }
+    assert_eq!(resumed, written, "no gap and no duplicate across segments");
+    let Observed::Verified(err, _) = log_read(&cx, &root, Stream::Stderr, 0, 64) else {
+        panic!("stderr is its own log");
+    };
+    assert_eq!(err.bytes, b"err");
+
+    // Rotation past the kept segments expires the oldest bytes: a reader at
+    // offset 0 is told where the log now starts, never handed later bytes as
+    // if they were first.
+    log.append(&vec![b'x'; 8000]).unwrap();
+    let Observed::Verified(read, _) = log_read(&cx, &root, Stream::Stdout, 0, 16) else {
+        panic!("log is readable");
+    };
+    assert_eq!(read.end, 18_000);
+    assert_eq!(read.from, 4096 * 2, "the first two segments expired");
+    assert_eq!(read.bytes, written[8192..8192 + 16]);
+    assert!(!read.truncated);
+}
+
+#[test]
+fn run_log_write_failure_is_reported_as_truncation() {
+    use crate::custody::Stream;
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut log = crate::custody::capture::Log::open(
+        &root,
+        id(40),
+        3,
+        Stream::Stdout,
+        cx.operation().limits(),
+    )
+    .unwrap();
+    log.append(b"kept").unwrap();
+    log.mark_truncated();
+    let Observed::Verified(read, _) = log_read(&cx, &root, Stream::Stdout, 0, 64) else {
+        panic!("log is readable");
+    };
+    assert_eq!(read.bytes, b"kept");
+    assert!(read.truncated, "a failed write is never a silent end");
+}

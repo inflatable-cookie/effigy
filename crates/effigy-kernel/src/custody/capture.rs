@@ -1,12 +1,46 @@
 //! Bounded redacted rotating logs. I/O failure changes capture metadata only.
+//!
+//! Each process stream has its own log, as segments named by the absolute
+//! byte offset they start at: `<seq>.<stream>.<offset>.log`. A reader keeps
+//! an exact position across rotation, and a position older than the oldest
+//! kept segment is reported as expired, never silently skipped (§7.3 family 6).
 use super::*;
 use crate::fs::{DirFd, FileName, Trust};
 use crate::root::{Family, StateRoot};
+
+/// One process output stream, logged and read separately.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Stream {
+    Stdout,
+    Stderr,
+}
+impl Stream {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Stdout => "stdout",
+            Self::Stderr => "stderr",
+        }
+    }
+}
+
+pub(crate) fn segment_name(sequence: i64, stream: Stream, base: u64) -> String {
+    format!("{sequence}.{}.{base}.log", stream.name())
+}
+
+/// The marker a failed log write leaves, so readers report truncation.
+pub(crate) fn truncated_name(sequence: i64, stream: Stream) -> String {
+    format!("{sequence}.{}.truncated", stream.name())
+}
+
 #[derive(Debug)]
 pub(crate) struct Log {
     dir: DirFd,
-    name: FileName,
+    sequence: i64,
+    stream: Stream,
     file: std::fs::File,
+    /// Start offsets of the kept segments, oldest first; the last is open.
+    bases: VecDeque<u64>,
     written: u64,
     rotate: u64,
     keep: u8,
@@ -16,6 +50,7 @@ impl Log {
         root: &StateRoot,
         run: crate::id::RunId,
         sequence: i64,
+        stream: Stream,
         limits: &crate::ctx::Limits,
     ) -> io::Result<Self> {
         let parent = root
@@ -26,20 +61,13 @@ impl Log {
             .child(&run.to_string(), Trust::Private, true)
             .map_err(io::Error::other)?
             .ok_or_else(|| io::Error::other("run directory missing"))?;
-        let name = FileName::new(&format!("{sequence}.log")).map_err(io::Error::other)?;
-        let (file, _) = dir
-            .open_file(
-                &name,
-                libc::O_WRONLY | libc::O_EXCL,
-                Some(0o600),
-                Trust::Private,
-            )
-            .map_err(io::Error::other)?
-            .ok_or_else(|| io::Error::other("log missing"))?;
+        let file = create(&dir, sequence, stream, 0)?;
         Ok(Self {
             dir,
-            name,
+            sequence,
+            stream,
             file,
+            bases: VecDeque::from([0]),
             written: 0,
             rotate: limits.log_rotate.max(1),
             keep: limits.log_keep,
@@ -49,43 +77,16 @@ impl Log {
         crate::fault_point!(CaptureWrite)?;
         while !bytes.is_empty() {
             if self.written == self.rotate {
-                if self.keep > 0 {
-                    let last = FileName::new(&format!("{}.{}", self.name.as_str(), self.keep))
-                        .map_err(io::Error::other)?;
-                    self.dir.remove(&last, false).map_err(io::Error::other)?;
-                    for n in (1..self.keep).rev() {
-                        let from = FileName::new(&format!("{}.{}", self.name.as_str(), n))
-                            .map_err(io::Error::other)?;
-                        let to = FileName::new(&format!("{}.{}", self.name.as_str(), n + 1))
-                            .map_err(io::Error::other)?;
-                        if self.dir.entry(&from).map_err(io::Error::other)?.is_some() {
-                            self.dir.rename(&from, &to).map_err(io::Error::other)?;
-                        }
-                    }
-                    self.dir
-                        .rename(
-                            &self.name,
-                            &FileName::new(&format!("{}.1", self.name.as_str()))
-                                .map_err(io::Error::other)?,
-                        )
-                        .map_err(io::Error::other)?;
-                } else {
-                    self.dir
-                        .remove(&self.name, false)
-                        .map_err(io::Error::other)?;
-                }
-                self.file = self
-                    .dir
-                    .open_file(
-                        &self.name,
-                        libc::O_WRONLY | libc::O_EXCL,
-                        Some(0o600),
-                        Trust::Private,
-                    )
-                    .map_err(io::Error::other)?
-                    .ok_or_else(|| io::Error::other("log missing"))?
-                    .0;
+                let base = self.bases.back().copied().unwrap_or(0) + self.written;
+                self.file = create(&self.dir, self.sequence, self.stream, base)?;
+                self.bases.push_back(base);
                 self.written = 0;
+                while self.bases.len() > usize::from(self.keep) + 1 {
+                    let oldest = self.bases.pop_front().expect("kept segment");
+                    let name = FileName::new(&segment_name(self.sequence, self.stream, oldest))
+                        .map_err(io::Error::other)?;
+                    self.dir.remove(&name, false).map_err(io::Error::other)?;
+                }
             }
             let count = bytes
                 .len()
@@ -96,4 +97,27 @@ impl Log {
         }
         Ok(())
     }
+    /// Best effort: a failed write leaves a marker for readers. Failing to
+    /// write the marker too loses only that report (K10).
+    pub fn mark_truncated(&self) {
+        if let Ok(name) = FileName::new(&truncated_name(self.sequence, self.stream)) {
+            let _ = self
+                .dir
+                .open_file(&name, libc::O_WRONLY, Some(0o600), Trust::Private);
+        }
+    }
+}
+
+fn create(dir: &DirFd, sequence: i64, stream: Stream, base: u64) -> io::Result<std::fs::File> {
+    let name = FileName::new(&segment_name(sequence, stream, base)).map_err(io::Error::other)?;
+    Ok(dir
+        .open_file(
+            &name,
+            libc::O_WRONLY | libc::O_EXCL,
+            Some(0o600),
+            Trust::Private,
+        )
+        .map_err(io::Error::other)?
+        .ok_or_else(|| io::Error::other("log missing"))?
+        .0)
 }

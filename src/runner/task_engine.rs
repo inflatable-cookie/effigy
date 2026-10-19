@@ -6,7 +6,9 @@
 //! plain host command runs under kernel custody. There is no lease, no
 //! heartbeat, no unlock and no task cache.
 
+mod admission;
 mod checkout;
+mod control;
 mod holders;
 mod identity;
 mod kernel;
@@ -15,12 +17,18 @@ mod process;
 mod run;
 mod status;
 
+pub(in crate::runner) use control::{
+    list as list_runs, lookup as lookup_run, read_log as read_run_log, request_stop,
+    resolve as resolve_run, signal_owner, workload_process, Lookup, RunRecord, StopStarted,
+    POLL as RUN_POLL,
+};
 pub(in crate::runner) use holders::{live_holders, HolderKind, LiveHolder};
 pub(in crate::runner) use identity::TaskTarget;
 pub use kernel::{adopt_signal_router, capture_startup_executable, run_internal_kernel_entry};
 pub(in crate::runner) use legacy::{legacy_families, refuse_live_legacy_holder};
 pub(in crate::runner) use process::{run_plain, EnvOverride, PlainCommand, RunExec};
-pub(in crate::runner) use run::{resolve_lock_wait_ms, TaskRun, TaskRunRequest};
+pub(in crate::runner) use admission::mark_child;
+pub(in crate::runner) use run::{resolve_lock_wait_ms, RunKey, TaskRun, TaskRunRequest};
 pub(in crate::runner) use status::{
     run_liveness, task_status, RunLiveness, RunView, TaskStatusView, HISTORY_LIMIT,
 };

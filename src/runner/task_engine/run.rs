@@ -69,6 +69,56 @@ pub(in crate::runner) struct TaskRunRequest<'a> {
     pub(in crate::runner) custody: bool,
     pub(in crate::runner) managed_run_token: Option<&'a str>,
     pub(in crate::runner) args: &'a [String],
+    /// A caller's `--run-id` key: it names this run and no other.
+    pub(in crate::runner) key: Option<&'a RunKey>,
+    /// The task's declared admission class (Q-006).
+    pub(in crate::runner) admission: Option<effigy_manifest::ManifestTaskAdmission>,
+}
+
+/// A caller-chosen `--run-id` key and the one run id it derives. Equal keys
+/// derive equal ids on every host, so the journal's unique run id makes a
+/// repeat or a racing second invocation find the first run instead of
+/// starting another.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::runner) struct RunKey {
+    key: String,
+    id: RunId,
+}
+
+impl RunKey {
+    pub(in crate::runner) const MAX: usize = 128;
+
+    pub(in crate::runner) fn parse(key: &str) -> Result<Self, RunnerError> {
+        if key.is_empty()
+            || key.len() > Self::MAX
+            || !key
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"._:-".contains(&byte))
+        {
+            return Err(RunnerError::task_invocation(format!(
+                "`--run-id` must be 1-{} characters of letters, digits, `.`, `_`, `:` or `-`",
+                Self::MAX
+            )));
+        }
+        let digest = Digest::of(format!("effigy-run-key\0{key}").as_bytes());
+        let mut random = [0u8; 10];
+        random.copy_from_slice(&digest.0[..10]);
+        // Time 0 marks a keyed id; the key's digest is its entropy.
+        let id = RunId::new(0, random)
+            .map_err(|error| RunnerError::task_invocation(format!("run id: {error}")))?;
+        Ok(Self {
+            key: key.to_owned(),
+            id,
+        })
+    }
+
+    pub(in crate::runner) fn key(&self) -> &str {
+        &self.key
+    }
+
+    pub(in crate::runner) fn id(&self) -> RunId {
+        self.id
+    }
 }
 
 #[derive(Debug)]
@@ -76,6 +126,8 @@ pub(in crate::runner) struct TaskRun {
     run: Option<Run<'static>>,
     shared: Option<Run<'static>>,
     target: TaskTarget,
+    /// Held for the run's life; the run's settle stops the hook.
+    admission: Option<super::admission::Admission>,
 }
 
 impl TaskRun {
@@ -112,6 +164,8 @@ impl TaskRun {
                 custody: false,
                 managed_run_token: None,
                 args: &[],
+                key: None,
+                admission: None,
             },
             false,
         )
@@ -124,6 +178,7 @@ impl TaskRun {
     pub(in crate::runner) fn standalone(
         root: &std::path::Path,
         label: &str,
+        admission: Option<effigy_manifest::ManifestTaskAdmission>,
     ) -> Result<Self, RunnerError> {
         let nonce = new_run_id()?;
         let lock = format!("{BUILTIN_LOCK_PREFIX}run:{nonce}");
@@ -143,6 +198,8 @@ impl TaskRun {
                 custody: false,
                 managed_run_token: None,
                 args: &[],
+                key: None,
+                admission,
             },
             false,
         )
@@ -153,7 +210,15 @@ impl TaskRun {
         let checkout = checkout::mint(&request.target.root)?;
         let owner = request.target.owner(checkout)?;
         let task_id = request.target.task_id(checkout)?;
-        let custody = if request.custody {
+        let admission = super::admission::plan(request.admission)?;
+        let run_id = match request.key {
+            Some(key) => {
+                refuse_bound_key(key, &task_id)?;
+                key.id()
+            }
+            None => new_run_id()?,
+        };
+        let custody = if request.custody || admission.needs_custody() {
             kernel::install_router()?;
             Some(LifecyclePlan {
                 executable: kernel::executable()?,
@@ -217,11 +282,14 @@ impl TaskRun {
             None => None,
         };
         if !task_gate {
-            return Ok(Self {
+            let mut run = Self {
                 run: shared,
                 shared: None,
                 target: request.target.clone(),
-            });
+                admission: None,
+            };
+            run.admit(request.admission, admission)?;
+            return Ok(run);
         }
         let invocation = invocation(&task_id, owner.clone(), argv, &provenance)?;
         let run = Run::begin(
@@ -229,7 +297,7 @@ impl TaskRun {
             root,
             &invocation,
             BeginOpts {
-                id: new_run_id()?,
+                id: run_id,
                 wait,
                 acknowledge: Vec::new(),
                 next,
@@ -238,7 +306,14 @@ impl TaskRun {
             &cleanup,
             &mut TaskSettlement,
         )
-        .map_err(|error| begin_error(error, request.target, &owner, request.lock_wait_ms, started));
+        .map_err(|error| match request.key {
+            // The racing first invocation with this key holds the gate, or
+            // finished between our check and our insert: attach to it.
+            Some(key) if key_run_exists(key) => RunnerError::RunKeyExists {
+                run: key.id().to_string(),
+            },
+            _ => begin_error(error, request.target, &owner, request.lock_wait_ms, started),
+        });
         let run = match run {
             Ok(run) => run,
             Err(error) => {
@@ -248,11 +323,59 @@ impl TaskRun {
                 return Err(error);
             }
         };
-        Ok(Self {
+        let mut run = Self {
             run: Some(run),
             shared,
             target: request.target.clone(),
-        })
+            admission: None,
+        };
+        run.admit(request.admission, admission)?;
+        Ok(run)
+    }
+
+    /// Calls the admission hook before any workload effect. A refusal
+    /// closes the run as not started, so no task command ever runs.
+    fn admit(
+        &mut self,
+        class: Option<effigy_manifest::ManifestTaskAdmission>,
+        plan: super::admission::Plan,
+    ) -> Result<(), RunnerError> {
+        let (Some(class), super::admission::Plan::Hook { command, timeout }) = (class, plan) else {
+            return Ok(());
+        };
+        let target = self.target.clone();
+        let admitted = match self.run.as_mut() {
+            Some(run) => super::admission::admit(run, &target, class, &command, timeout),
+            None => return Ok(()),
+        };
+        match admitted {
+            Ok(admission) => {
+                self.admission = Some(admission);
+                Ok(())
+            }
+            Err(error) => {
+                let run = std::mem::replace(
+                    self,
+                    Self {
+                        run: None,
+                        shared: None,
+                        target,
+                        admission: None,
+                    },
+                );
+                for warning in run.close(WorkloadOutcome::NotStarted) {
+                    eprintln!("warning: {warning}");
+                }
+                Err(error)
+            }
+        }
+    }
+
+    /// How long the admission hook took to admit this run, when one did.
+    pub(in crate::runner) fn admission_wait_ms(&self) -> Option<u64> {
+        self.admission
+            .as_ref()
+            .map(|admission| admission.waited.as_millis().min(u128::from(u64::MAX)) as u64)
     }
 
     pub(in crate::runner) fn run_mut(&mut self) -> &mut Run<'static> {
@@ -271,6 +394,8 @@ impl TaskRun {
     /// gates. Returns warnings only: the task's result is already decided.
     pub(in crate::runner) fn close(mut self, workload: WorkloadOutcome) -> Vec<String> {
         let mut warnings = Vec::new();
+        // Settle stops the admission hook; the marker goes with it.
+        let admission = self.admission.take();
         if let Some(run) = self.run.take() {
             warnings.extend(close_run(run, workload.clone()));
         }
@@ -283,6 +408,7 @@ impl TaskRun {
             };
             warnings.extend(close_run(shared, mirrored));
         }
+        drop(admission);
         retain();
         warnings
     }
@@ -309,6 +435,8 @@ impl TaskRun {
             custody: false,
             managed_run_token,
             args: &[],
+            key: None,
+            admission: None,
         })
         .expect("live task fixture")
     }
@@ -417,6 +545,86 @@ fn invocation(
         provenance: provenance.clone(),
     })
     .map_err(|error| RunnerError::task_invocation(format!("task invocation is invalid: {error}")))
+}
+
+/// A key already naming a run of another task is refused: a key names
+/// exactly one run. A key naming a run of this task attaches to it.
+fn refuse_bound_key(key: &RunKey, task: &TaskId) -> Result<(), RunnerError> {
+    let cx = kernel::observe();
+    let root = match kernel::observe_root(&cx) {
+        Observed::Verified(root, _) => root,
+        Observed::Absent(_) => return Ok(()),
+        Observed::Unknown(reason) => return Err(unverifiable_key(key, &format!("{reason:?}"))),
+    };
+    let reader = match Store::read(&cx, &root) {
+        Observed::Verified(reader, _) => reader,
+        Observed::Absent(_) => return Ok(()),
+        Observed::Unknown(reason) => return Err(unverifiable_key(key, &format!("{reason:?}"))),
+    };
+    match effigy_kernel::run::summary(&reader, key.id()) {
+        Observed::Absent(_) => Ok(()),
+        Observed::Verified(existing, _) => {
+            let same = existing
+                .invocation
+                .as_ref()
+                .is_some_and(|invocation| invocation.spec().task.resource() == task.resource());
+            if same {
+                Err(RunnerError::RunKeyExists {
+                    run: key.id().to_string(),
+                })
+            } else {
+                let other = existing
+                    .invocation
+                    .as_ref()
+                    .map(|invocation| format!("`{}`", invocation.spec().task.task()))
+                    .unwrap_or_else(|| "another task".to_owned());
+                Err(RunnerError::task_invocation(format!(
+                    "`--run-id {}` already names run {} of {other}; a key names exactly one run. \
+                     Choose a new key, or inspect that run with `effigy run status {}`",
+                    key.key(),
+                    key.id(),
+                    key.key()
+                )))
+            }
+        }
+        Observed::Unknown(reason) => Err(unverifiable_key(key, &format!("{reason:?}"))),
+    }
+}
+
+fn unverifiable_key(key: &RunKey, reason: &str) -> RunnerError {
+    RunnerError::task_invocation(format!(
+        "`--run-id {}` cannot be checked against the run journal ({reason}); nothing was \
+         started, so a repeat can never run twice",
+        key.key()
+    ))
+}
+
+/// Whether the key's run appeared: a racing invocation may hold the gate
+/// before its row commits, so the check waits briefly for the row.
+fn key_run_exists(key: &RunKey) -> bool {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let cx = kernel::observe();
+        if let Observed::Verified(root, _) = kernel::observe_root(&cx) {
+            if let Observed::Verified(reader, _) = Store::read(&cx, &root) {
+                if matches!(
+                    effigy_kernel::run::summary(&reader, key.id()),
+                    Observed::Verified(..)
+                ) {
+                    return true;
+                }
+            }
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// A fresh random run id, for requests and runs no key names.
+pub(super) fn fresh_run_id() -> Result<RunId, RunnerError> {
+    new_run_id()
 }
 
 fn new_run_id() -> Result<RunId, RunnerError> {

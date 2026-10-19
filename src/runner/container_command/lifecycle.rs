@@ -1364,7 +1364,6 @@ fn run_container_exec_operation(
         let env = operation
             .env
             .iter()
-            .filter(|(key, _)| !crate::runner::host_scheduler::is_scheduler_owned_env(key))
             .map(|(key, value)| (key.clone(), value.to_string_lossy().into_owned()))
             .collect::<Vec<_>>();
         let mut argv = Vec::with_capacity(operation.command.len());

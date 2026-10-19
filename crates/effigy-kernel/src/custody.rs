@@ -1,6 +1,7 @@
 //! Journal-first local process custody (§5.7). No signal handlers live here.
 pub(crate) mod capture;
 pub(crate) mod platform;
+pub use capture::Stream;
 pub(crate) mod spawn;
 use crate::ctx::{CleanupContext, EffectContext, OperationContext};
 use crate::ident::ProcessIdentity;
@@ -168,7 +169,8 @@ pub struct OwnedProcess {
 #[derive(Debug)]
 pub(crate) struct ProcessCore {
     receipt: ProcessReceipt,
-    log: Option<capture::Log>,
+    /// stdout and stderr logs, each fed by its own stream's redactor.
+    logs: [Option<capture::Log>; 2],
     output: VecDeque<u8>,
     /// stdout and stderr kept apart for engines that report them separately.
     /// Each has its own redactor and is never joined with the other.
@@ -265,7 +267,31 @@ impl Custody {
         spec: ProcessSpec,
         cx: &EffectContext,
     ) -> Result<OwnedProcess, SpawnError> {
-        Self::spawn_inner(run, spec, cx, None, crate::ctx::Capability::AdapterEffect)
+        Self::spawn_inner(
+            run,
+            spec,
+            cx,
+            None,
+            crate::ctx::Capability::AdapterEffect,
+            true,
+        )
+    }
+    /// A process the run keeps in custody without making its exit a workload
+    /// obligation: an admission holder that runs until settle stops it. It
+    /// is journalled, sentinelled and settled exactly like `spawn`.
+    pub fn spawn_auxiliary(
+        run: &mut Run<'_>,
+        spec: ProcessSpec,
+        cx: &EffectContext,
+    ) -> Result<OwnedProcess, SpawnError> {
+        Self::spawn_inner(
+            run,
+            spec,
+            cx,
+            None,
+            crate::ctx::Capability::AdapterEffect,
+            false,
+        )
     }
     /// Acquire executable source under a Prepare run. This uses the same
     /// journal, sentinel, deadlines and settlement as ordinary process custody;
@@ -275,7 +301,14 @@ impl Custody {
         spec: ProcessSpec,
         cx: &EffectContext,
     ) -> Result<OwnedProcess, SpawnError> {
-        Self::spawn_inner(run, spec, cx, None, crate::ctx::Capability::AcquireSource)
+        Self::spawn_inner(
+            run,
+            spec,
+            cx,
+            None,
+            crate::ctx::Capability::AcquireSource,
+            true,
+        )
     }
     pub(crate) fn spawn_remote(
         run: &mut Run<'_>,
@@ -289,6 +322,7 @@ impl Custody {
             cx,
             Some(registration),
             crate::ctx::Capability::AdapterEffect,
+            true,
         )
     }
     fn spawn_inner(
@@ -297,6 +331,7 @@ impl Custody {
         cx: &EffectContext,
         registration: Option<Arc<Mutex<crate::remote::stream::RegistrationStream>>>,
         capability: crate::ctx::Capability,
+        required: bool,
     ) -> Result<OwnedProcess, SpawnError> {
         cx.require(capability)
             .map_err(|_| SpawnError::Refused(format!("spawn needs {capability:?}")))?;
@@ -332,7 +367,7 @@ impl Custody {
             kind: KIND.into(),
             payload: serde_json::json!({"digest":digest,"label":label}),
             settlement: Settlement::Release(Value::Null),
-            required: true,
+            required,
         })?;
         let nonce = format!("{}:{}", run.id(), ticket.sequence());
         let mut pending = spawn::Blocked::fork(&spec, &nonce, cx.operation())?;
@@ -356,15 +391,17 @@ impl Custody {
             )
             .map_err(SpawnError::Unrecorded)?;
             let (stdout, stderr, terminal) = pending.take_streams();
-            let log = run.capture_log(ticket.sequence(), cx.operation().limits());
-            let capture = if log.is_ok() {
+            let logs = [Stream::Stdout, Stream::Stderr]
+                .map(|stream| run.capture_log(ticket.sequence(), stream, cx.operation().limits()));
+            let capture = if logs.iter().all(Result::is_ok) {
                 CaptureState::Complete
             } else {
                 CaptureState::Truncated("log open failed".into())
             };
+            let [stdout_log, stderr_log] = logs;
             let core = Arc::new(Mutex::new(ProcessCore {
                 receipt,
-                log: log.ok(),
+                logs: [stdout_log.ok(), stderr_log.ok()],
                 output: VecDeque::new(),
                 streams: [VecDeque::new(), VecDeque::new()],
                 stream_redactors: [
@@ -484,16 +521,11 @@ impl OwnedProcess {
 impl ProcessCore {
     fn sink(&mut self, bytes: &[u8], eof: bool) {
         // Merge before redaction. Per-stream redaction could reconstruct a
-        // secret when stdout and stderr are joined by the log or tail sink.
+        // secret when stdout and stderr are joined by the tail sink. The
+        // per-stream logs are never joined; each has its stream's redactor.
         let clean = self.redactor.push(bytes, eof);
         if clean.is_empty() {
             return;
-        }
-        if let Some(log) = self.log.as_mut() {
-            if log.append(&clean).is_err() {
-                self.capture = CaptureState::Truncated("log write failed".into());
-                self.log = None;
-            }
         }
         self.output.extend(clean.iter().copied());
         while self.output.len() > self.queue_max {
@@ -506,6 +538,13 @@ impl ProcessCore {
     }
     fn stream_sink(&mut self, index: usize, bytes: &[u8], eof: bool) {
         let clean = self.stream_redactors[index].push(bytes, eof);
+        if let Some(log) = self.logs[index].as_mut() {
+            if !clean.is_empty() && log.append(&clean).is_err() {
+                log.mark_truncated();
+                self.capture = CaptureState::Truncated("log write failed".into());
+                self.logs[index] = None;
+            }
+        }
         let queue = &mut self.streams[index];
         queue.extend(clean);
         while queue.len() > self.queue_max {

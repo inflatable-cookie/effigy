@@ -122,11 +122,11 @@ pub fn render_qa_group_plan_text(plan: &QaGroupPlan) -> Result<String, EffigyTas
             "admission",
             if plan.admission.required {
                 format!(
-                    "heavy (members: {}); one Queue/Nucleus scheduler run for the whole group",
+                    "heavy (members: {}); one admission for the whole group when EFFIGY_ADMISSION_HOOK is set",
                     plan.admission.member_ids.join(", ")
                 )
             } else {
-                "standard; no heavy scheduler run needed".to_owned()
+                "standard; no admission needed".to_owned()
             },
         ),
     ])?;
@@ -239,7 +239,7 @@ mod tests {
   "unmatched_scope_inputs": [],
   "needs_planner_reasons": [{ "token": null, "kind": "required-scope-missing", "reason": "supply scope" }],
   "coverage_disclaimer": "Declared mappings do not establish map truth or caller scope completeness",
-  "admission": { "required": false, "member_ids": [], "model": "one host-wide heavy lease per group run; serial members reserve the maximum serial requirement" },
+  "admission": { "required": false, "member_ids": [], "model": "one admission per group run through EFFIGY_ADMISSION_HOOK, when set; members run inside it" },
   "members": [],
   "capabilities": { "hard_timeout": false, "stop": false, "prerequisite": "owned-run supervision (contract 052)" }
 }

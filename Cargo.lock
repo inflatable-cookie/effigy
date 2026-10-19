@@ -774,7 +774,6 @@ dependencies = [
  "effigy-exec",
  "effigy-execution",
  "effigy-gateway",
- "effigy-host-run",
  "effigy-kernel",
  "effigy-managed",
  "effigy-manifest",
@@ -1095,21 +1094,6 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tracing",
-]
-
-[[package]]
-name = "effigy-host-run"
-version = "0.14.1"
-dependencies = [
- "base64 0.22.1",
- "chrono",
- "effigy-process",
- "fs2",
- "libc",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "tempfile",
 ]
 
 [[package]]

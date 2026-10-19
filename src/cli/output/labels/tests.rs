@@ -150,7 +150,6 @@ fn command_kind_and_name_maps_command_variants() {
         status_all: false,
         output_json: false,
         pretty_json: true,
-        request: None,
         qa: None,
     });
     let task = Command::Task(TaskInvocation {
