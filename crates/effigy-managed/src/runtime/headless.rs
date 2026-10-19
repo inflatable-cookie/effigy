@@ -118,12 +118,7 @@ pub fn run_managed_task_headless(
         .iter()
         .map(|process| process.name.clone())
         .collect::<Vec<_>>();
-    let secret_values = supervised
-        .iter()
-        .flat_map(|process| process.secret_env.values())
-        .filter(|value| !value.is_empty())
-        .cloned()
-        .collect::<Vec<_>>();
+    let secret_values = crate::redacted_secret_values(supervised.iter());
     let mut log_files = open_process_logs(&runtime_dir, &process_names)?;
     // The session record exists before the first child starts: status, logs
     // and stop must never observe a live run through a missing record. The
@@ -573,6 +568,15 @@ pub fn managed_run_settle_error(
         ));
     }
     Ok(state.settle_error)
+}
+
+/// The run token the session record of this task/profile names, if any. A
+/// stop that found its run through the gate (which records only the token's
+/// digest) matches the owner's rewritten record with it.
+pub fn managed_session_run_token(repo_root: &Path, task: &str, profile: &str) -> Option<String> {
+    read_state(&managed_runtime_dir(repo_root, task, profile).join("session.json"))
+        .ok()
+        .and_then(|state| state.run_token)
 }
 
 /// Whether the session record of this task/profile is readable as the current

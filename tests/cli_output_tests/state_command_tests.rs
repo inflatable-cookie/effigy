@@ -9,10 +9,10 @@ fn cli_state_plan_json_reports_lineage() {
     fs::write(root.join("state-stack.toml"), state_stack_fixture()).expect("write state stack");
 
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .arg("--json")
-        .args(["state", "plan", "state-stack.toml"])
         .arg("--repo")
         .arg(&root)
+        .arg("--json")
+        .args(["state", "plan", "state-stack.toml"])
         .env("NO_COLOR", "1")
         .output()
         .expect("run effigy");
@@ -37,9 +37,9 @@ fn cli_state_plan_text_is_plan_only() {
     fs::write(root.join("state-stack.toml"), state_stack_fixture()).expect("write state stack");
 
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .args(["state", "plan", "state-stack.toml"])
         .arg("--repo")
         .arg(&root)
+        .args(["state", "plan", "state-stack.toml"])
         .env("NO_COLOR", "1")
         .output()
         .expect("run effigy");
@@ -63,10 +63,10 @@ fn cli_state_plan_uses_manifest_default_stack() {
         .expect("write effigy manifest");
 
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .arg("--json")
-        .args(["state", "plan"])
         .arg("--repo")
         .arg(&root)
+        .arg("--json")
+        .args(["state", "plan"])
         .env("NO_COLOR", "1")
         .output()
         .expect("run effigy");
@@ -88,10 +88,10 @@ fn cli_state_plan_uses_requested_manifest_stack() {
         .expect("write effigy manifest");
 
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .arg("--json")
-        .args(["state", "plan", "--stack", "prod"])
         .arg("--repo")
         .arg(&root)
+        .arg("--json")
+        .args(["state", "plan", "--stack", "prod"])
         .env("NO_COLOR", "1")
         .output()
         .expect("run effigy");
@@ -113,9 +113,9 @@ fn cli_state_plan_reports_missing_manifest_state_config() {
         .expect("write effigy manifest");
 
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .args(["state", "plan"])
         .arg("--repo")
         .arg(&root)
+        .args(["state", "plan"])
         .env("NO_COLOR", "1")
         .output()
         .expect("run effigy");
@@ -136,9 +136,9 @@ fn cli_state_plan_reports_ambiguous_manifest_stacks() {
     .expect("write effigy manifest");
 
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .args(["state", "plan"])
         .arg("--repo")
         .arg(&root)
+        .args(["state", "plan"])
         .env("NO_COLOR", "1")
         .output()
         .expect("run effigy");
@@ -157,9 +157,9 @@ fn cli_state_plan_rejects_stack_with_standalone_manifest() {
     fs::write(root.join("state-stack.toml"), state_stack_fixture()).expect("write state stack");
 
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .args(["state", "plan", "state-stack.toml", "--stack", "uat"])
         .arg("--repo")
         .arg(&root)
+        .args(["state", "plan", "state-stack.toml", "--stack", "uat"])
         .env("NO_COLOR", "1")
         .output()
         .expect("run effigy");
@@ -176,9 +176,9 @@ fn cli_state_plan_write_report_text_writes_lineage_file() {
         .expect("write effigy manifest");
 
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .args(["state", "plan", "--write-report"])
         .arg("--repo")
         .arg(&root)
+        .args(["state", "plan", "--write-report"])
         .env("NO_COLOR", "1")
         .output()
         .expect("run effigy");
@@ -219,10 +219,10 @@ fn cli_state_plan_write_report_json_reports_written_path() {
         .expect("write effigy manifest");
 
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .arg("--json")
-        .args(["state", "plan", "--write-report", "--stack", "prod"])
         .arg("--repo")
         .arg(&root)
+        .arg("--json")
+        .args(["state", "plan", "--write-report", "--stack", "prod"])
         .env("NO_COLOR", "1")
         .output()
         .expect("run effigy");
@@ -298,6 +298,8 @@ fn cli_state_history_json_scans_report_files() {
     fs::write(history_dir.join("broken.json"), "{not-json").expect("write broken report");
 
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("--repo")
+        .arg(&root)
         .arg("--json")
         .args([
             "state",
@@ -311,8 +313,6 @@ fn cli_state_history_json_scans_report_files() {
             "--limit",
             "5",
         ])
-        .arg("--repo")
-        .arg(&root)
         .env("NO_COLOR", "1")
         .output()
         .expect("run effigy");
@@ -361,9 +361,9 @@ fn cli_state_history_text_lists_reports() {
     .expect("write apply report");
 
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .args(["state", "history", "--stack", "uat"])
         .arg("--repo")
         .arg(&root)
+        .args(["state", "history", "--stack", "uat"])
         .env("NO_COLOR", "1")
         .output()
         .expect("run effigy");
@@ -408,10 +408,10 @@ fn cli_state_history_resolves_named_stack_to_report_stack_name() {
     .expect("write capture report");
 
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .arg("--json")
-        .args(["state", "history", "uat", "--kind", "capture"])
         .arg("--repo")
         .arg(&root)
+        .arg("--json")
+        .args(["state", "history", "uat", "--kind", "capture"])
         .env("NO_COLOR", "1")
         .output()
         .expect("run effigy");
@@ -433,10 +433,10 @@ fn cli_state_apply_without_yes_reports_plan_only() {
         .expect("write effigy manifest");
 
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .arg("--json")
-        .args(["state", "apply"])
         .arg("--repo")
         .arg(&root)
+        .arg("--json")
+        .args(["state", "apply"])
         .env("NO_COLOR", "1")
         .output()
         .expect("run effigy");
@@ -476,10 +476,10 @@ fn cli_state_apply_without_yes_reports_sql_import_plan() {
         .expect("write effigy manifest");
 
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .arg("--json")
-        .args(["state", "apply"])
         .arg("--repo")
         .arg(&root)
+        .arg("--json")
+        .args(["state", "apply"])
         .env("NO_COLOR", "1")
         .output()
         .expect("run effigy");
@@ -507,9 +507,9 @@ fn cli_state_apply_yes_rejects_ambiguous_sql_target_before_tasks() {
     .expect("write effigy manifest");
 
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .args(["state", "apply", "--yes"])
         .arg("--repo")
         .arg(&root)
+        .args(["state", "apply", "--yes"])
         .env("NO_COLOR", "1")
         .output()
         .expect("run effigy");
@@ -534,10 +534,10 @@ fn cli_state_apply_yes_imports_sql_layer_through_db_seed_task() {
     .expect("write effigy manifest");
 
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .arg("--json")
-        .args(["state", "apply", "--yes"])
         .arg("--repo")
         .arg(&root)
+        .arg("--json")
+        .args(["state", "apply", "--yes"])
         .env("NO_COLOR", "1")
         .output()
         .expect("run effigy");
@@ -654,10 +654,10 @@ fn cli_state_capture_uses_named_profile_from_stack_config() {
     .expect("write effigy manifest");
 
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .arg("--json")
-        .args(["state", "capture", "uat", "new-content", "--yes"])
         .arg("--repo")
         .arg(&root)
+        .arg("--json")
+        .args(["state", "capture", "uat", "new-content", "--yes"])
         .env("NO_COLOR", "1")
         .output()
         .expect("run effigy");
@@ -691,6 +691,8 @@ fn cli_state_capture_set_runs_named_profiles_with_shared_key() {
     .expect("write effigy manifest");
 
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("--repo")
+        .arg(&root)
         .arg("--json")
         .args([
             "state",
@@ -702,8 +704,6 @@ fn cli_state_capture_set_runs_named_profiles_with_shared_key() {
             "snapshot-1",
             "--yes",
         ])
-        .arg("--repo")
-        .arg(&root)
         .env("NO_COLOR", "1")
         .output()
         .expect("run effigy");
@@ -755,10 +755,10 @@ fn cli_state_capture_uses_named_profile_from_single_default_stack() {
     .expect("write effigy manifest");
 
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .arg("--json")
-        .args(["state", "capture", "uat", "new-content", "--yes"])
         .arg("--repo")
         .arg(&root)
+        .arg("--json")
+        .args(["state", "capture", "uat", "new-content", "--yes"])
         .env("NO_COLOR", "1")
         .output()
         .expect("run effigy");
@@ -783,6 +783,8 @@ fn cli_state_capture_text_is_plan_only() {
         .expect("write effigy manifest");
 
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("--repo")
+        .arg(&root)
         .args([
             "state",
             "capture",
@@ -793,8 +795,6 @@ fn cli_state_capture_text_is_plan_only() {
             "--key",
             "full-capture-2026-05-08",
         ])
-        .arg("--repo")
-        .arg(&root)
         .env("NO_COLOR", "1")
         .output()
         .expect("run effigy");
@@ -876,6 +876,8 @@ fn cli_state_capture_yes_requires_source() {
         .expect("write effigy manifest");
 
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("--repo")
+        .arg(&root)
         .args([
             "state",
             "capture",
@@ -889,8 +891,6 @@ fn cli_state_capture_yes_requires_source() {
             "oci://ghcr.io/acowtancy/content:uat-capture-2026-05-08",
             "--yes",
         ])
-        .arg("--repo")
-        .arg(&root)
         .env("NO_COLOR", "1")
         .output()
         .expect("run effigy");
@@ -997,6 +997,8 @@ fn cli_state_capture_named_profile_accepts_inline_rhai_task() {
     .expect("write effigy manifest");
 
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("--repo")
+        .arg(&root)
         .arg("--json")
         .args([
             "state",
@@ -1007,8 +1009,6 @@ fn cli_state_capture_named_profile_accepts_inline_rhai_task() {
             "inline-2026-05-13",
             "--yes",
         ])
-        .arg("--repo")
-        .arg(&root)
         .env("NO_COLOR", "1")
         .output()
         .expect("run effigy");
@@ -1087,10 +1087,10 @@ fn cli_state_apply_yes_executes_task_layers_in_order() {
     fs::write(root.join("legacy.sql"), "select 1;\n").expect("write legacy artifact");
 
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .arg("--json")
-        .args(["state", "apply", "--yes"])
         .arg("--repo")
         .arg(&root)
+        .arg("--json")
+        .args(["state", "apply", "--yes"])
         .env("NO_COLOR", "1")
         .output()
         .expect("run effigy");

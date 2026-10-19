@@ -14,12 +14,11 @@ use super::support::{parse_stdout_json, temp_execution_workspace, temp_workspace
 
 fn run_effigy(root: &Path, args: &[&str]) -> std::process::Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_effigy"));
+    command.arg("--repo").arg(root);
     for arg in args {
         command.arg(arg);
     }
     command
-        .arg("--repo")
-        .arg(root)
         .env("NO_COLOR", "1")
         .output()
         .expect("run effigy")
@@ -139,30 +138,37 @@ fn flat_invocation_never_falls_through_to_a_draft() {
 }
 
 #[test]
-fn draft_reuses_canonical_lock_and_cache_policy() {
-    let root = temp_execution_workspace("drafts-lock-cache");
+fn draft_reuses_canonical_lock_policy_and_refuses_the_retired_cache() {
+    let root = temp_execution_workspace("drafts-lock");
     write_manifest(
         &root,
         r#"
+[drafts.locked-smoke]
+created = "2026-09-15"
+purpose = "locked draft reuses canonical policy"
+lock = "drafts-locked-smoke"
+run = "sh -lc 'printf run >> runs.log'"
+
 [drafts.cached-smoke]
 created = "2026-09-15"
-purpose = "locked and cached draft reuses canonical policy"
-lock = "drafts-cached-smoke"
-run = "sh -lc 'mkdir -p out; printf run >> runs.log; cp input.txt out/result.txt'"
+purpose = "a draft that still declares the retired cache"
+run = "printf never"
 cache = { enabled = true, inputs = ["input.txt"], outputs = ["out/result.txt"] }
 "#,
     );
-    fs::write(root.join("input.txt"), "alpha\n").expect("write cache input");
 
-    let first = run_effigy(&root, &["draft", "cached-smoke", "--json"]);
-    assert!(first.status.success(), "{first:?}");
-    let second = run_effigy(&root, &["draft", "cached-smoke", "--json"]);
-    assert!(second.status.success(), "{second:?}");
-    let payload: Value = parse_stdout_json(&second);
-    assert_eq!(payload["result"]["cached"], true, "{payload}");
-
+    for _ in 0..2 {
+        let run = run_effigy(&root, &["draft", "locked-smoke", "--json"]);
+        assert!(run.status.success(), "{run:?}");
+    }
     let runs = fs::read_to_string(root.join("runs.log")).expect("read runs log");
-    assert_eq!(runs, "run", "cached second run must not re-execute");
+    assert_eq!(runs, "runrun", "every run executes: there is no task cache");
+
+    let cached = run_effigy(&root, &["draft", "cached-smoke", "--json"]);
+    assert!(!cached.status.success(), "{cached:?}");
+    let payload: Value = parse_stdout_json(&cached);
+    let message = payload["error"]["message"].as_str().expect("message");
+    assert!(message.contains("which was removed in v0.15"), "{message}");
 }
 
 #[test]

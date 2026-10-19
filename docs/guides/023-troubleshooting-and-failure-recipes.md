@@ -384,8 +384,10 @@ Fix: wait for the run, or stop it.
 effigy --lock-wait-ms 600000 <selector>
 ```
 
-A watcher in owner mode holds `task:watch:<target>` the same way; stop the
-watcher to release it.
+A shared `lock = "<name>"` or a built-in section (a watcher in owner mode holds
+`task:watch:<target>`) can be held by another task or command: the error then
+points at `effigy tasks status --all`, which lists every live holder. Stop the
+holder, or let it finish, to release it.
 
 ### Symptom: `<task>` status reads `interrupted`
 

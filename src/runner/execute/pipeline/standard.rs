@@ -153,10 +153,14 @@ fn workload_for_result(result: &Result<String, RunnerError>) -> WorkloadOutcome 
     }
 }
 
-/// A task bound to the host may reach the plain-command route, which runs
-/// under kernel custody (K6); its run plans the sentinel before admission so
-/// it exists before any spawn. A route that goes elsewhere never spawns.
+/// Every run that may reach the plain-command route plans its sentinel
+/// before admission, so custody (K6) exists before any spawn. Only a task
+/// the host routes into a container never spawns locally; inside a
+/// container handoff every task runs locally.
 fn runs_plain_host_command(preflight: &ExecutionPreflight, selection: &TaskSelection<'_>) -> bool {
+    if inside_container_handoff() {
+        return true;
+    }
     let (default_run_in, systems, containers) =
         effective_task_binding_inputs(&preflight.invocation_cwd, &preflight.catalogs, selection);
     resolve_execution_binding_resolution(
@@ -167,7 +171,7 @@ fn runs_plain_host_command(preflight: &ExecutionPreflight, selection: &TaskSelec
         selection.task,
         "custody planning",
     )
-    .is_ok_and(|binding| {
+    .map_or(true, |binding| {
         matches!(
             binding.binding(),
             ContainerExecutionBinding::None | ContainerExecutionBinding::Host

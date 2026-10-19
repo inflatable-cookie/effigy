@@ -66,12 +66,13 @@ pub(super) fn prepare_tasks_command(args: &TasksArgs) -> Result<PreparedTasksCom
     let catalogs = load_effective_catalogs_allow_missing(&resolved.resolved_root)?;
     let deferred_builtins = deferred_builtins_from_catalogs(&catalogs, &resolved.resolved_root);
     let resolve_probe = args.resolve_selector.as_deref().map(|selector| {
-        super::resolve::resolve_probe(
-            selector,
-            cwd.clone(),
-            args.repo_override.clone(),
-            &deferred_builtins,
-        )
+        // The CLI hands a typed command's word to the root's own task of that
+        // name, as it does to `[defer].builtins`; the probe applies the same rule.
+        let mut words = deferred_builtins.clone();
+        words.extend(crate::runner::deferred_builtins_for_root(
+            &resolved.resolved_root,
+        ));
+        super::resolve::resolve_probe(selector, cwd.clone(), args.repo_override.clone(), &words)
     });
 
     Ok(PreparedTasksCommand {

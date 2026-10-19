@@ -22,8 +22,9 @@ fn main() {
     };
 
     let status = match Command::new("cargo")
-        .args(["run", "--bin", "effigy", "--", &task, "--repo"])
+        .args(["run", "--bin", "effigy", "--", "--repo"])
         .arg(&repo_root)
+        .arg(&task)
         .current_dir(repo_root)
         .status()
     {

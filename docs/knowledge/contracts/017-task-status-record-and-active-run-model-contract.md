@@ -89,7 +89,9 @@ A SIGSTOPped holder keeps it. Nothing steals, reclaims or unlocks a gate.
   work.
 - Managed (`dev`) run supervision: the run supervisor lane. Managed runs hold
   the same task gate for their whole lifetime and record their run token's
-  digest on the run.
+  digest on the run. Each managed process receives the token through its spawn
+  environment, never the supervisor's global environment (K12). The token marks
+  ownership and grants nothing on its own, so process logs do not mask it.
 
 ## Migration
 

@@ -105,11 +105,17 @@ pub(in crate::runner) fn stop_and_settle_headless_run(
         return Err(did_not_settle(task_name, profile, &residue));
     }
 
+    // A gate-found run knows only its token's digest; the owner's rewritten
+    // record names the token itself.
+    let run_token = outcome.run_token.clone().or_else(|| {
+        effigy_managed::runtime::managed_session_run_token(repo_root, task_name, profile)
+            .filter(|token| run_digest == Some(Digest::of(token.as_bytes())))
+    });
     if let Some(error) = effigy_managed::runtime::managed_run_settle_error(
         repo_root,
         task_name,
         profile,
-        outcome.run_token.as_deref(),
+        run_token.as_deref(),
     )
     .map_err(RunnerError::from)?
     {

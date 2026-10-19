@@ -1523,9 +1523,9 @@ fn run_effigy_task(
     task: &str,
 ) -> Result<(), DistributionExecutionError> {
     let output = Command::new(effigy_bin)
-        .arg(task)
         .arg("--repo")
         .arg(repo_root)
+        .arg(task)
         .env("NO_COLOR", "1")
         .output()
         .map_err(|err| {

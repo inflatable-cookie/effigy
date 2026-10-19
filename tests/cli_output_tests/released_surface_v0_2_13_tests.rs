@@ -301,10 +301,10 @@ fn v0_2_13_repo_owned_smoke_task_runs_against_the_binary() {
     let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let binary = env!("CARGO_BIN_EXE_effigy");
     let output = Command::new(binary)
-        .arg("smoke:release")
-        .arg(binary)
         .arg("--repo")
         .arg(repo_root)
+        .arg("smoke:release")
+        .arg(binary)
         .env("NO_COLOR", "1")
         .output()
         .expect("run release smoke task");

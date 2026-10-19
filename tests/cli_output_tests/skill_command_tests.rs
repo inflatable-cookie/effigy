@@ -274,7 +274,7 @@ run_in = "host"
 }
 
 #[test]
-fn skill_env_files_and_cache_paths_are_target_relative() {
+fn skill_env_files_and_task_paths_are_target_relative() {
     let fixtures = fixture_root();
     let source = fixtures.join("source");
     let consumer = unique_temp_consumer("target-paths");
@@ -284,7 +284,7 @@ fn skill_env_files_and_cache_paths_are_target_relative() {
     )
     .expect("write target env file");
     std::fs::write(consumer.join("input.txt"), "consumer-input\n")
-        .expect("write target cache input");
+        .expect("write target input");
 
     let env = run_skill(
         &consumer,
@@ -303,25 +303,23 @@ fn skill_env_files_and_cache_paths_are_target_relative() {
         "env=from-consumer\n"
     );
 
-    let cache = run_skill(
+    let paths = run_skill(
         &consumer,
         &[
             "skill",
             "run",
             "--path",
             source.to_str().expect("utf8 source"),
-            "cache-probe",
+            "path-probe",
             "--json",
         ],
     );
-    assert!(cache.status.success(), "{cache:?}");
+    assert!(paths.status.success(), "{paths:?}");
     assert_eq!(
-        std::fs::read_to_string(consumer.join("out/result.txt")).expect("target cache output"),
+        std::fs::read_to_string(consumer.join("out/result.txt")).expect("target output"),
         "consumer-input\n"
     );
-    assert!(consumer.join(".effigy/cache/task-cache-v1.json").is_file());
     assert!(!source.join("out/result.txt").exists());
-    assert!(!source.join(".effigy/cache/tasks").exists());
 
     std::fs::remove_dir_all(&consumer).expect("remove temporary consumer");
 }

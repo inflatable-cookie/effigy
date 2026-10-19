@@ -111,9 +111,11 @@ pub fn apply_global_cli_options(
 ) -> Result<Command, CliParseError> {
     // A repository task: Effigy's flags are the ones before the selector,
     // and the task receives everything after it (D1-34). Built-in commands
-    // routed as tasks keep their own flag positions.
+    // routed as tasks keep their own flag positions, with or without a
+    // catalog prefix (`catalog_a/tasks`).
     if let Command::Task(task) = &mut cmd {
-        if !effigy_core::builtin_tasks::is_builtin_task_name(&task.name)
+        let routed_name = task.name.rsplit('/').next().unwrap_or(&task.name);
+        if !effigy_core::builtin_tasks::is_builtin_task_name(routed_name)
             && !task
                 .args
                 .iter()
@@ -359,14 +361,16 @@ pub(super) fn apply_global_json_flag(mut cmd: Command, json_mode: bool) -> Comma
         Command::Service(args) => args.output_json = true,
         Command::Task(task) => {
             if !runtime_flag_present_before_passthrough(&task.args, "--json") {
-                let insert_at =
-                    if task.args.first().map(String::as_str).is_some_and(|arg| {
-                        matches!(arg, "migrate" | "unlock" | "cache" | "completion")
-                    }) {
-                        1
-                    } else {
-                        0
-                    };
+                // After a nested built-in's subcommand word, which may follow
+                // a leading `--repo <PATH>`.
+                let insert_at = task
+                    .args
+                    .iter()
+                    .take(3)
+                    .position(|arg| {
+                        matches!(arg.as_str(), "migrate" | "unlock" | "cache" | "completion")
+                    })
+                    .map_or(0, |index| index + 1);
                 task.args.insert(insert_at, "--json".to_owned());
             }
         }

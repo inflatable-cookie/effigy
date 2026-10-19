@@ -118,7 +118,8 @@ Schema (stable keys):
 Notes:
 - `resolve` is `null` when `--resolve` is not passed.
 - `resolve.route` is where the selector goes: `typed-command` (a built-in
-  command such as `release`, which runs before any catalog task of that name),
+  command such as `release`, which runs before a member catalog's task of that
+  name; a root task of that name owns the word),
   `task`, `builtin` (`test`, `tasks`, ...), `exec-alias`, `defer` or `error`.
 - On resolution failures, `resolve.status` is `error` and `resolve.error` contains the message.
 - `task_id` is the identity a run of that task uses for its lock and status.
@@ -157,7 +158,8 @@ effigy --json tasks --pretty false --resolve catalog-a/api > /tmp/effigy-tasks-c
 ## Precedence Order
 
 A typed built-in command (`release`, `deploy`, `container`, ...) wins first,
-unless the root lists it in `[defer].builtins`. Otherwise a task is selected:
+unless the root lists it in `[defer].builtins` or declares a root task of that
+name. Otherwise a task is selected:
 
 1. Explicit catalog alias prefix (`catalog-a/api`)
 2. Relative or absolute catalog path prefix (`../shared/validate`)

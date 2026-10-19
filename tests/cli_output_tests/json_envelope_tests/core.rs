@@ -61,10 +61,10 @@ fn cli_json_mode_deps_wraps_read_only_status_payload() {
     let root = temp_workspace("cli-json-deps-success");
 
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .arg("--json")
-        .arg("deps")
         .arg("--repo")
         .arg(&root)
+        .arg("--json")
+        .arg("deps")
         .env("NO_COLOR", "1")
         .output()
         .expect("run effigy");

@@ -11,7 +11,7 @@ run with a private HOME.
 
 Usage:
   resolver-shadow-diff.py --old OLD_EFFIGY --new NEW_EFFIGY --roots ROOTS_FILE
-      [--base ~/Dev] [--report REPORT.json]
+      [--base ~/Dev] [--report REPORT.json] [--jobs N]
 
 ROOTS_FILE lists one consumer root per line (absolute, or relative to
 --base). Exit status is 0 whether or not differences exist; the report is
@@ -19,6 +19,7 @@ the result.
 """
 
 import argparse
+import concurrent.futures
 import json
 import os
 import shutil
@@ -110,6 +111,7 @@ def main() -> int:
     parser.add_argument("--roots", required=True)
     parser.add_argument("--base", default=str(Path.home() / "Dev"))
     parser.add_argument("--report")
+    parser.add_argument("--jobs", type=int, default=max(2, (os.cpu_count() or 4) // 2))
     options = parser.parse_args()
 
     options.old = str(Path(options.old).expanduser().resolve())
@@ -133,13 +135,14 @@ def main() -> int:
                 differences.append({"root": str(root), "kind": "missing-root"})
                 continue
             mirror(root, mirror_base / root.relative_to(base))
+        cases = []
         for root in roots:
             mirrored = mirror_base / root.relative_to(base)
             if not (mirrored / "effigy.toml").is_file():
                 continue
-            homes = {name: work / f"home-{name}" for name in ("old", "new")}
+            homes = {name: work / f"home-{name}" / root.relative_to(base) for name in ("old", "new")}
             for home in homes.values():
-                home.mkdir(exist_ok=True)
+                home.mkdir(parents=True, exist_ok=True)
             listing = run(options.new, mirrored, homes["new"], ["tasks", "--json"])
             if "_error" in listing:
                 old_listing = run(options.old, mirrored, homes["old"], ["tasks", "--json"])
@@ -155,7 +158,7 @@ def main() -> int:
             selectors = sorted(
                 {item["selector"] for item in listing.get("selectors", []) if item.get("kind") == "task"}
             )
-            cases = [(mirrored, selector) for selector in selectors]
+            root_cases = [(mirrored, selector) for selector in selectors]
             for member in member_dirs(listing, mirrored):
                 bare = sorted(
                     {
@@ -164,25 +167,38 @@ def main() -> int:
                         if Path(task["manifest"]).parent == member
                     }
                 )
-                cases += [(member, name) for name in bare]
-            for cwd, selector in cases:
-                old = classify(run(options.old, cwd, homes["old"], ["tasks", "--resolve", selector, "--json"]))
-                new = classify(run(options.new, cwd, homes["new"], ["tasks", "--resolve", selector, "--json"]))
+                root_cases += [(member, name) for name in bare]
+            cases += [(root, homes, cwd, selector) for cwd, selector in root_cases]
+        print(f"roots={len(roots)} cases={len(cases)} jobs={options.jobs}", file=sys.stderr, flush=True)
+
+        def strip(facts):
+            return {
+                key: str(value).replace(str(mirror_base), "~/Dev") if isinstance(value, str) else value
+                for key, value in facts.items()
+            }
+
+        def probe(case):
+            root, homes, cwd, selector = case
+            args = ["tasks", "--resolve", selector, "--json"]
+            old = strip(classify(run(options.old, cwd, homes["old"], args)))
+            new = strip(classify(run(options.new, cwd, homes["new"], args)))
+            if old == new:
+                return None
+            return {
+                "root": str(root.relative_to(base)),
+                "cwd": str(cwd.relative_to(mirror_base)),
+                "selector": selector,
+                "old": old,
+                "new": new,
+            }
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=options.jobs) as pool:
+            for index, result in enumerate(pool.map(probe, cases), start=1):
                 compared += 1
-                strip = lambda facts: {
-                    key: str(value).replace(str(mirror_base), "~/Dev") if isinstance(value, str) else value
-                    for key, value in facts.items()
-                }
-                if strip(old) != strip(new):
-                    differences.append(
-                        {
-                            "root": str(root.relative_to(base)),
-                            "cwd": str(cwd.relative_to(mirror_base)),
-                            "selector": selector,
-                            "old": strip(old),
-                            "new": strip(new),
-                        }
-                    )
+                if result is not None:
+                    differences.append(result)
+                if index % 500 == 0:
+                    print(f"compared {index}/{len(cases)}", file=sys.stderr, flush=True)
         report = {"roots": len(roots), "compared": compared, "differences": differences}
         text = json.dumps(report, indent=2)
         if options.report:
@@ -190,7 +206,10 @@ def main() -> int:
         print(f"roots={len(roots)} compared={compared} differences={len(differences)}")
         kinds = {}
         for item in differences:
-            key = (item.get("old", {}).get("route"), item.get("new", {}).get("route"))
+            if "kind" in item:
+                key = (item["kind"], item["kind"])
+            else:
+                key = (item["old"].get("route"), item["new"].get("route"))
             kinds[key] = kinds.get(key, 0) + 1
         for (old_route, new_route), count in sorted(kinds.items(), key=lambda kv: -kv[1]):
             print(f"  {old_route} -> {new_route}: {count}")

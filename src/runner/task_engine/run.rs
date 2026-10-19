@@ -496,7 +496,17 @@ fn conflict(
         }
         _ => format!("task:{}", target.label),
     };
-    let status_command = format!("effigy tasks status {}", target.label);
+    // A shared or built-in lock's holder may be another task or command:
+    // the inventory names every live holder. A built-in section has no
+    // selector to re-run with a wait.
+    let builtin = target
+        .shared_lock
+        .as_deref()
+        .is_some_and(|lock| lock.starts_with(BUILTIN_LOCK_PREFIX));
+    let status_command = match target.shared_lock {
+        Some(_) => "effigy tasks status --all".to_owned(),
+        None => format!("effigy tasks status {}", target.label),
+    };
     let holder_text = match &diag {
         Some(diag) => {
             let mut parts = vec![format!("pid {} on this host", diag.pid)];
@@ -519,15 +529,23 @@ fn conflict(
         } else {
             format!("`{}` is already running", target.label)
         };
-    let wait_flag = format!("effigy --lock-wait-ms 600000 {}", target.label);
-    let remediation = match wait {
-        Some((timeout, waited)) => format!(
+    let wait_flag = (!builtin).then(|| format!("effigy --lock-wait-ms 600000 {}", target.label));
+    let remediation = match (wait, &wait_flag) {
+        (Some((timeout, waited)), Some(wait_flag)) => format!(
             "{what} ({holder_text}); waited {waited}ms of {timeout}ms. Inspect it with \
              `{status_command}`, wait longer with `{wait_flag}`, or stop that run"
         ),
-        None => format!(
+        (Some((timeout, waited)), None) => format!(
+            "{what} ({holder_text}); waited {waited}ms of {timeout}ms. Inspect it with \
+             `{status_command}`, let it finish, or stop that run"
+        ),
+        (None, Some(wait_flag)) => format!(
             "{what} ({holder_text}). Inspect it with `{status_command}`, wait for it with \
              `{wait_flag}`, or stop that run"
+        ),
+        (None, None) => format!(
+            "{what} ({holder_text}). Inspect it with `{status_command}`, let it finish, or \
+             stop that run"
         ),
     };
     let details_json = serde_json::json!({
@@ -551,10 +569,9 @@ fn conflict(
             Some(started.elapsed().as_millis() as u64)
         }),
         "status_command": status_command,
-        "next": [
-            format!("inspect the live run with `{status_command}`"),
-            format!("wait for it with `{wait_flag}`"),
-        ],
+        "next": std::iter::once(format!("inspect the live run with `{status_command}`"))
+            .chain(wait_flag.iter().map(|flag| format!("wait for it with `{flag}`")))
+            .collect::<Vec<_>>(),
     })
     .to_string();
     RunnerError::TaskLockConflict(Box::new(effigy_core::task_lock::TaskLockConflict {

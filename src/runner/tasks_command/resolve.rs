@@ -132,8 +132,8 @@ pub(super) fn resolve_probe(
     }
 }
 
-/// A word the CLI parses as a typed command, unless the root remaps it to
-/// the repository with `[defer].builtins`.
+/// A word the CLI parses as a typed command, unless the root owns it: listed
+/// in `[defer].builtins` or declared as a root task.
 fn is_typed_command(word: &str, deferred_builtins: &std::collections::BTreeSet<String>) -> bool {
     if deferred_builtins.contains(word) {
         return false;

@@ -94,10 +94,10 @@ fn cli_runner_error_json_mode_emits_machine_readable_payload() {
     .expect("write manifest");
 
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .arg("--json")
-        .arg("missing-task")
         .arg("--repo")
         .arg(&root)
+        .arg("--json")
+        .arg("missing-task")
         .env("NO_COLOR", "1")
         .output()
         .expect("run effigy");

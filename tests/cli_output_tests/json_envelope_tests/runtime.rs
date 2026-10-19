@@ -26,9 +26,9 @@ impl HeldCliTask {
     ) -> Self {
         let mut command = Command::new(env!("CARGO_BIN_EXE_effigy"));
         command
-            .args(args)
             .arg("--repo")
             .arg(root)
+            .args(args)
             .env("NO_COLOR", "1")
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -46,7 +46,9 @@ impl HeldCliTask {
         }
     }
 
-    fn wait_until_ready(&mut self, lock_path: &Path, timeout: Duration) -> Result<u32, String> {
+    /// The holder is ready once its task wrote the readiness marker and still
+    /// lives: a running task holds its gate for exactly that long (K2).
+    fn wait_until_ready(&mut self, timeout: Duration) -> Result<u32, String> {
         let startup_deadline = self.child.as_ref().expect("holder child").deadline();
         let mut task_started = None;
         loop {
@@ -54,8 +56,7 @@ impl HeldCliTask {
             if let Some(status) = self.try_wait()? {
                 let output = self.take_output()?;
                 return Err(format!(
-                    "lock holder exited before readiness (lock={} ready={}): {}",
-                    lock_path.display(),
+                    "lock holder exited before readiness (ready={}): {}",
                     self.ready_path.display(),
                     describe_output(&output, status)
                 ));
@@ -63,7 +64,7 @@ impl HeldCliTask {
 
             if let Some(task_pid) = self.task_pid {
                 task_started.get_or_insert_with(Instant::now);
-                if self.ready_path.exists() && lock_path.exists() && process_is_live(task_pid)? {
+                if self.ready_path.exists() && process_is_live(task_pid)? {
                     return Ok(task_pid);
                 }
             }
@@ -87,8 +88,7 @@ impl HeldCliTask {
                     "cli_startup"
                 };
                 return Err(format!(
-                    "lock holder did not reach readiness (phase={phase}) within {timeout:?} (lock={} ready={} contents={readiness:?}); {child_diagnostic}",
-                    lock_path.display(),
+                    "lock holder did not reach readiness (phase={phase}) within {timeout:?} (ready={} contents={readiness:?}); {child_diagnostic}",
                     self.ready_path.display(),
                 ));
             }
@@ -96,11 +96,8 @@ impl HeldCliTask {
         }
     }
 
-    fn assert_holding(&mut self, lock_path: &Path, task_pid: u32) -> Result<(), String> {
+    fn assert_holding(&mut self, task_pid: u32) -> Result<(), String> {
         self.refresh_task_pid();
-        if !lock_path.exists() {
-            return Err(format!("holder lock disappeared: {}", lock_path.display()));
-        }
         if !self.ready_path.exists() {
             return Err(format!(
                 "holder readiness disappeared: {}",
@@ -345,7 +342,6 @@ fn assert_json_lock_conflict_is_held(
     manifest_task: &str,
     owner_args: &[&str],
     contender_args: &[&str],
-    lock_path: &str,
     command_name: &str,
     message_fragments: &[&str],
 ) {
@@ -363,18 +359,17 @@ fn assert_json_lock_conflict_is_held(
         &held_task_command(&task_pid_path, &ready_path, &release_path),
     );
 
-    let lock_path = root.join(lock_path);
     let mut holder = HeldCliTask::spawn(&root, owner_args, task_pid_path, ready_path, release_path);
     let task_pid = holder
-        .wait_until_ready(&lock_path, Duration::from_secs(5))
+        .wait_until_ready(Duration::from_secs(5))
         .unwrap_or_else(|diagnostic| panic!("{diagnostic}"));
     holder
-        .assert_holding(&lock_path, task_pid)
+        .assert_holding(task_pid)
         .unwrap_or_else(|diagnostic| panic!("holder was not ready: {diagnostic}"));
 
     let output = run_json_cli_command(&root, contender_args);
     holder
-        .assert_holding(&lock_path, task_pid)
+        .assert_holding(task_pid)
         .unwrap_or_else(|diagnostic| {
             panic!("holder ended before contender assertion: {diagnostic}")
         });
@@ -397,7 +392,7 @@ fn assert_json_lock_conflict_is_held(
     }
 
     holder
-        .assert_holding(&lock_path, task_pid)
+        .assert_holding(task_pid)
         .unwrap_or_else(|diagnostic| {
             panic!("holder did not stay alive through assertion: {diagnostic}")
         });
@@ -464,10 +459,10 @@ fn cli_json_mode_runner_error_wraps_runner_failure() {
     .expect("write manifest");
 
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .arg("--json")
-        .arg("missing-task")
         .arg("--repo")
         .arg(&root)
+        .arg("--json")
+        .arg("missing-task")
         .env("NO_COLOR", "1")
         .output()
         .expect("run effigy");
@@ -492,9 +487,8 @@ fn cli_json_mode_lock_conflict_wraps_runner_failure() {
         "dev",
         &["dev"],
         &["dev"],
-        ".effigy/locks/task-dev.lock",
         "dev",
-        &["lock conflict"],
+        &["`dev` is already running", "effigy tasks status dev"],
     );
 }
 
@@ -513,10 +507,7 @@ fn cli_json_lock_conflict_holder_exit_before_readiness_reports_child_output() {
 
     let mut holder = HeldCliTask::spawn(&root, &["dev"], task_pid_path, ready_path, release_path);
     let diagnostic = holder
-        .wait_until_ready(
-            &root.join(".effigy/locks/task-dev.lock"),
-            Duration::from_secs(5),
-        )
+        .wait_until_ready(Duration::from_secs(5))
         .expect_err("an exited holder must not count as lock readiness");
     assert!(diagnostic.contains("status=exit status:"), "{diagnostic}");
     assert!(diagnostic.contains("holder-stdout"), "{diagnostic}");
@@ -540,10 +531,7 @@ fn cli_lock_readiness_budget_starts_at_task_entry_without_rebasing_outer_deadlin
     let mut holder = HeldCliTask::spawn(&root, &["dev"], task_pid, ready, release);
     let outer = holder.child.as_ref().expect("holder child").deadline();
     let pid = holder
-        .wait_until_ready(
-            &root.join(".effigy/locks/task-dev.lock"),
-            Duration::from_secs(5),
-        )
+        .wait_until_ready(Duration::from_secs(5))
         .expect("actual task entry followed by timely readiness");
     assert!(pid > 0);
     assert_eq!(
@@ -572,10 +560,7 @@ fn cli_json_lock_conflict_readiness_timeout_reaps_owned_processes() {
 
     let mut holder = HeldCliTask::spawn(&root, &["dev"], task_pid_path, ready_path, release_path);
     let diagnostic = holder
-        .wait_until_ready(
-            &root.join(".effigy/locks/task-dev.lock"),
-            Duration::from_secs(5),
-        )
+        .wait_until_ready(Duration::from_secs(5))
         .expect_err("a task without readiness must time out");
     assert!(
         diagnostic.contains("did not reach readiness"),
@@ -611,10 +596,7 @@ fn cli_json_lock_conflict_holder_drop_releases_and_reaps_on_panic() {
     );
     let mut holder = HeldCliTask::spawn(&root, &["dev"], task_pid_path, ready_path, release_path);
     let task_pid = holder
-        .wait_until_ready(
-            &root.join(".effigy/locks/task-dev.lock"),
-            Duration::from_secs(5),
-        )
+        .wait_until_ready(Duration::from_secs(5))
         .unwrap_or_else(|diagnostic| panic!("{diagnostic}"));
     let cli_pid = holder.child.as_ref().expect("child").id();
     let cli_group_pid = holder.cli_group_pid;
@@ -645,28 +627,42 @@ fn cli_lock_wait_timeout_keeps_owner_on_status_and_omits_json_from_text_stdout()
         .expect("write manifest");
 
     let mut owner = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .arg("dev")
         .arg("--repo")
         .arg(&root)
+        .arg("dev")
         .env("NO_COLOR", "1")
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn_owned()
         .expect("spawn holding command");
 
-    let workspace_lock = root.join(".effigy/locks/task-dev.lock");
-    wait_for_path_exists(
-        &workspace_lock,
-        Duration::from_secs(15),
-        "task lock for task=dev",
-    );
+    // The owner holds the gate once its run reads `running`.
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        let probe = Command::new(env!("CARGO_BIN_EXE_effigy"))
+            .arg("--json")
+            .arg("--repo")
+            .arg(&root)
+            .args(["tasks", "status", "dev"])
+            .env("NO_COLOR", "1")
+            .output()
+            .expect("probe owner status");
+        let state = serde_json::from_slice::<Value>(&probe.stdout)
+            .ok()
+            .and_then(|parsed| parsed["result"]["state"].as_str().map(str::to_owned));
+        if state.as_deref() == Some("running") {
+            break;
+        }
+        assert!(Instant::now() < deadline, "owner never held `dev`");
+        std::thread::sleep(Duration::from_millis(50));
+    }
 
     let text = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .arg("dev")
-        .arg("--lock-wait-ms")
-        .arg("150")
         .arg("--repo")
         .arg(&root)
+        .arg("--lock-wait-ms")
+        .arg("150")
+        .arg("dev")
         .env("NO_COLOR", "1")
         .output()
         .expect("run timed-out waiter");
@@ -674,26 +670,30 @@ fn cli_lock_wait_timeout_keeps_owner_on_status_and_omits_json_from_text_stdout()
     let stdout = String::from_utf8(text.stdout).expect("utf8 stdout");
     let stderr = String::from_utf8(text.stderr).expect("utf8 stderr");
     assert!(
-        !stdout.contains("effigy.lock-wait.v1"),
+        !stdout.contains("effigy.lock-wait.v2"),
         "text mode dumped lock-wait JSON: {stdout}"
     );
-    assert!(stderr.contains("lock conflict"));
-    assert!(stderr.contains("effigy tasks status dev"));
+    assert!(stderr.contains("`dev` is already running"), "{stderr}");
+    assert!(stderr.contains("waited"), "{stderr}");
+    assert!(stderr.contains("effigy tasks status dev"), "{stderr}");
+    assert_eq!(text.status.code(), Some(75), "a lock conflict exits 75");
 
     let json = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .arg("--json")
-        .arg("dev")
-        .arg("--lock-wait-ms")
-        .arg("150")
         .arg("--repo")
         .arg(&root)
+        .arg("--json")
+        .arg("--lock-wait-ms")
+        .arg("150")
+        .arg("dev")
         .env("NO_COLOR", "1")
         .output()
         .expect("run json timed-out waiter");
     assert!(!json.status.success());
     let parsed: Value =
         serde_json::from_str(&String::from_utf8(json.stdout).expect("utf8 json")).expect("json");
-    assert_eq!(parsed["error"]["details"]["schema"], "effigy.lock-wait.v1");
+    assert_eq!(parsed["error"]["details"]["schema"], "effigy.lock-wait.v2");
+    assert_eq!(parsed["error"]["details"]["wait_timeout_ms"], 150);
+    assert!(parsed["error"]["details"]["holder"]["pid"].is_u64());
     assert_eq!(
         parsed["error"]["details"]["status_command"],
         "effigy tasks status dev"
@@ -709,31 +709,32 @@ fn cli_lock_wait_timeout_keeps_owner_on_status_and_omits_json_from_text_stdout()
         .env("NO_COLOR", "1")
         .output()
         .expect("run tasks status");
+    // The waiters never started a run of their own: the owner's run stays
+    // current.
     assert!(status.status.success(), "status failed: {status:?}");
     let status_parsed: Value =
         serde_json::from_str(&String::from_utf8(status.stdout).expect("utf8 status"))
             .expect("json");
     assert_eq!(status_parsed["result"]["state"], "running");
     assert!(
-        status_parsed["result"]["active"].is_object(),
+        status_parsed["result"]["current"].is_object(),
         "live owner missing: {status_parsed}"
     );
-    assert_ne!(status_parsed["result"]["active"]["owner_pid"], Value::Null);
+    assert_ne!(status_parsed["result"]["current"]["pid"], Value::Null);
 
     let _ = owner.kill();
     let _ = owner.wait();
 }
 
 #[test]
-fn cli_json_mode_watch_lock_conflict_has_unlock_remediation_hint() {
+fn cli_json_mode_watch_lock_conflict_points_at_the_live_holders() {
     assert_json_lock_conflict_is_held(
         "cli-json-watch-lock-conflict",
         "build",
         &["watch", "--owner", "effigy", "--once", "build"],
         &["watch", "--owner", "effigy", "--once", "build"],
-        ".effigy/locks/task-watch-build.lock",
         "watch",
-        &["task:watch:build", "effigy tasks unlock task:watch:build"],
+        &["lock `task:watch:build` is held", "effigy tasks status --all"],
     );
 }
 
@@ -893,34 +894,22 @@ fn cli_text_mode_failing_rhai_task_streams_output_without_envelope() {
 }
 
 #[test]
-fn cli_json_mode_unlock_watch_lock_reports_unlock_payload() {
-    let root = temp_workspace("cli-json-unlock-watch-lock");
+fn cli_json_mode_tasks_unlock_refuses_with_the_explanation() {
+    let root = temp_workspace("cli-json-retired-unlock");
     fs::create_dir_all(root.join(".effigy/locks")).expect("mkdir locks");
-    fs::write(root.join(".effigy/locks/task-watch-build.lock"), "{}").expect("write watch lock");
+    fs::write(root.join(".effigy/locks/task-watch-build.lock"), "{}").expect("write v0.14 lock");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .arg("--json")
-        .arg("tasks")
-        .arg("unlock")
-        .arg("task:watch:build")
-        .arg("--repo")
-        .arg(&root)
-        .env("NO_COLOR", "1")
-        .output()
-        .expect("run tasks unlock");
+    let output = run_json_cli_command(&root, &["tasks", "unlock", "task:watch:build"]);
 
-    assert!(output.status.success());
-    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
-    let parsed: Value = serde_json::from_str(&stdout).expect("json parse");
-    assert_eq!(parsed["schema"], "effigy.command.v1");
-    assert_eq!(parsed["ok"], true);
-    assert_eq!(parsed["command"]["kind"], "task");
-    assert_eq!(parsed["command"]["name"], "tasks");
-    assert_eq!(parsed["result"]["schema"], "effigy.unlock.v1");
-    assert_eq!(parsed["result"]["all"], false);
-    assert!(parsed["result"]["removed"]
-        .as_array()
-        .is_some_and(|entries| entries.iter().any(|entry| entry == "task:watch:build")));
+    assert!(!output.status.success());
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(parsed["ok"], false);
+    let message = parsed["error"]["message"].as_str().expect("message");
+    assert!(message.contains("was removed in v0.15"), "{message}");
+    assert!(
+        root.join(".effigy/locks/task-watch-build.lock").exists(),
+        "the refusal changes nothing"
+    );
 }
 
 #[test]

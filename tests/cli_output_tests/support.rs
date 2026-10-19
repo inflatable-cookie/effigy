@@ -268,12 +268,11 @@ pub(super) fn write_release_manifest(root: &Path, manifest: &str) {
 pub(super) fn run_json_cli_command(root: &Path, args: &[&str]) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_effigy"));
     command.arg("--json");
+    command.arg("--repo").arg(root);
     for arg in args {
         command.arg(arg);
     }
     command
-        .arg("--repo")
-        .arg(root)
         .env("NO_COLOR", "1")
         .output()
         .expect("run effigy")
@@ -281,12 +280,11 @@ pub(super) fn run_json_cli_command(root: &Path, args: &[&str]) -> Output {
 
 pub(super) fn run_cli_command(root: &Path, args: &[&str]) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_effigy"));
+    command.arg("--repo").arg(root);
     for arg in args {
         command.arg(arg);
     }
     command
-        .arg("--repo")
-        .arg(root)
         .env("NO_COLOR", "1")
         .output()
         .expect("run effigy")

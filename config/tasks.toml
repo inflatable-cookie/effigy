@@ -84,6 +84,9 @@
 # arguments narrow the run (for example `-E 'test(status_query)'`). Nested
 # `effigy` children in these tests need the current binary, so it builds first.
 "test:task-engine:crates" = { run = "cargo build --bin effigy && cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-builtin -p effigy-cli -p effigy-tasks -p effigy-routing -p effigy-core -p effigy-env -p effigy-execution -p effigy-runtime -p effigy-managed -p effigy-context --lib --no-fail-fast --retries 0 {args}", timeout_ms = 3600000 }
+# CLI integration suites that run tasks, locks, status and flag placement
+# through the binary; extra arguments narrow the run.
+"test:task-engine:cli" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests --test documentation_coverage_tests --test env_schema_tests --test changelog_tests --test host_scheduler_integration --test bootstrap_cli_tests --no-fail-fast --retries 0 {args}", timeout_ms = 3600000 }
 # Read-only resolver shadow diff over consumer roots: EFFIGY_SHADOW_OLD names the
 # previous binary, EFFIGY_SHADOW_ROOTS a file of roots relative to ~/Dev.
 "qa:resolver-shadow-diff" = { run = "cargo build --bin effigy && python3 tests/scripts/resolver-shadow-diff.py --old \"$EFFIGY_SHADOW_OLD\" --new target/debug/effigy --roots \"$EFFIGY_SHADOW_ROOTS\" ${EFFIGY_SHADOW_REPORT:+--report \"$EFFIGY_SHADOW_REPORT\"}", timeout_ms = 3600000 }

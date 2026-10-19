@@ -99,8 +99,6 @@ fn public_help_families_and_current_contract_paths_are_documented() {
         "`effigy version",
         "`effigy uninstall",
         "`effigy tasks migrate",
-        "`effigy tasks unlock",
-        "`effigy tasks cache",
         "`effigy config completion",
         "`effigy changelog",
         "`effigy scan",

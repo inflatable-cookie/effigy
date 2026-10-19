@@ -20,7 +20,9 @@ During v0.x, MINOR bumps may include breaking changes.
   Everything after the task name belongs to the task, so `effigy lint --json`
   reaches the linter. For one release `<task> --plan` and `<task> --json`
   are still read as Effigy's, with a note naming the leading spelling; other
-  Effigy flags after the task name now reach the task, with a note.
+  Effigy flags after the task name now reach the task, with a note. Built-ins
+  routed as tasks (`tasks`, `test`, `watch`, also with a catalog prefix such
+  as `catalog_a/tasks`) keep their own flag positions.
 - A plain host task runs under kernel custody: always its own process group,
   a durable record before it executes, and a settle that stops everything it
   started. INT, TERM and HUP are forwarded to the task's group and Effigy exits
@@ -38,8 +40,10 @@ During v0.x, MINOR bumps may include breaking changes.
   the same catalogs, locks and status.
 - `effigy tasks --resolve` uses the same resolver as execution and reports
   `route`: `typed-command`, `task`, `builtin`, `exec-alias`, `defer` or
-  `error`. A typed command such as `release` is reported as such, not as a
-  same-named catalog task it shadows.
+  `error`. A typed command such as `release` is reported as such when it
+  shadows a member catalog's task; a root task of that name owns the word.
+  `lock_scopes` names the gates a run takes: its task (one per task across
+  profiles) and any shared `lock`.
 - A `tasks qa-group run` is a kernel run: its run id is the kernel run id,
   and `tasks qa-group status` judges a live record by that run's gate, never
   a PID or a 20-second heartbeat. A run whose owner exited stays `unknown`,
