@@ -730,6 +730,8 @@ pub struct ProcessSpec {
 impl Custody {
     pub fn spawn(run: &mut Run, spec: ProcessSpec, cx: &EffectContext)
         -> Result<OwnedProcess, SpawnError>;
+    pub fn spawn_source(run: &mut Run, spec: ProcessSpec, cx: &EffectContext)
+        -> Result<OwnedProcess, SpawnError>;               // Prepare: AcquireSource
     pub fn spawn_all(run: &mut Run, specs: Vec<ProcessSpec>, cx: &EffectContext)
         -> Result<Vec<OwnedProcess>, PartialSpawn>;          // rolls back on failure
 }
@@ -850,6 +852,11 @@ kernel restores it on exit.
 
 #### Proof
 
+- `custody_prepare_source_requires_its_class_and_settles_with_a_sentinel`
+  qualifies Prepare acquisition through `Custody::spawn_source`: successful,
+  failed and deadline-expired children settle through the registered sentinel.
+  Prepare cannot use ordinary `spawn`, and Mutate cannot use `spawn_source`.
+  Both entry points share the custody fault points and recovery machinery.
 - SIGINT, SIGTERM, SIGHUP and SIGKILL to the client, crossed with plain,
   sequence, managed and container runs: settle reports `Complete` and no
   fixture-tagged process survives (O1a).
