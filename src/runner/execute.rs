@@ -20,6 +20,8 @@ mod preflight;
 mod process_run;
 #[path = "execute/render.rs"]
 mod render;
+#[path = "execute/route.rs"]
+pub(in crate::runner) mod route;
 #[path = "execute/routing.rs"]
 mod routing;
 #[path = "execute/selection.rs"]

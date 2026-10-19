@@ -69,6 +69,19 @@ fn resolve_builtin_task_target_root(
     Some(resolved_root.to_path_buf())
 }
 
+/// Whether `selector` names a built-in this layer would run: a registry
+/// name whose target catalog resolves. Runs nothing.
+pub fn builtin_handles(
+    selector: &TaskSelector,
+    catalogs: &[LoadedCatalog],
+    invocation_cwd: &Path,
+) -> bool {
+    registry::builtin_registry_entry(&selector.task_name).is_some()
+        && (selector.prefix.is_none()
+            || resolve_builtin_task_target_root(selector, Path::new("/"), catalogs, invocation_cwd)
+                .is_some())
+}
+
 pub fn try_run_builtin_task(
     ports: &dyn BuiltinRuntimePorts,
     selector: &TaskSelector,

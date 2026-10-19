@@ -219,3 +219,60 @@ fn phase_name(phase: Phase) -> &'static str {
         Phase::Closed => "closed",
     }
 }
+
+/// What the journal and the owner gate say about one run, by its id.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::runner) enum RunLiveness {
+    Live,
+    /// Its owner exited without closing it.
+    Interrupted,
+    Closed { succeeded: bool },
+    NotFound,
+    Unknown(String),
+}
+
+/// Pure read of one run's liveness (R2).
+pub(in crate::runner) fn run_liveness(run_id: &str, next: &[&str]) -> RunLiveness {
+    let Ok(id) = run_id.parse::<effigy_kernel::id::RunId>() else {
+        return RunLiveness::NotFound;
+    };
+    let Ok(next) = effigy_kernel::outcome::Invocation::validated(
+        next.iter().map(std::ffi::OsString::from).collect(),
+        super::kernel::valid_next,
+    ) else {
+        return RunLiveness::Unknown("invalid recovery command".to_owned());
+    };
+    let cx = kernel::observe();
+    let root = match kernel::observe_root(&cx) {
+        Observed::Verified(root, _) => root,
+        Observed::Absent(_) => return RunLiveness::NotFound,
+        Observed::Unknown(reason) => return RunLiveness::Unknown(format!("{reason:?}")),
+    };
+    let reader = match Store::read(&cx, &root) {
+        Observed::Verified(reader, _) => reader,
+        Observed::Absent(_) => return RunLiveness::NotFound,
+        Observed::Unknown(reason) => return RunLiveness::Unknown(format!("{reason:?}")),
+    };
+    match effigy_kernel::run::status(&cx, &root, &reader, id, next) {
+        Observed::Verified(effigy_kernel::run::RunStatus::Live(_), _) => RunLiveness::Live,
+        Observed::Verified(effigy_kernel::run::RunStatus::Interrupted { .. }, _) => {
+            RunLiveness::Interrupted
+        }
+        Observed::Verified(
+            effigy_kernel::run::RunStatus::Closed {
+                workload, complete, ..
+            },
+            _,
+        ) => RunLiveness::Closed {
+            succeeded: complete && workload == WorkloadOutcome::Succeeded,
+        },
+        Observed::Absent(_) => RunLiveness::NotFound,
+        Observed::Unknown(reason) => {
+            if format!("{reason:?}").contains("QueryReturnedNoRows") {
+                RunLiveness::NotFound
+            } else {
+                RunLiveness::Unknown(format!("{reason:?}"))
+            }
+        }
+    }
+}

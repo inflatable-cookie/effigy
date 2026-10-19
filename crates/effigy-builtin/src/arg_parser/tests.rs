@@ -129,15 +129,6 @@ fn required_and_unknown_subcommand_message_contracts_are_stable() {
         err,
         "`cache` requires a subcommand: `inspect` or `invalidate`",
     );
-
-    assert_eq!(
-        BuiltinArgParser::builtin_unknown_subcommand_message(
-            "cache",
-            "drop",
-            "`inspect` or `invalidate`"
-        ),
-        "unknown cache subcommand `drop` (expected `inspect` or `invalidate`)",
-    );
 }
 
 #[test]

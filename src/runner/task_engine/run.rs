@@ -118,6 +118,36 @@ impl TaskRun {
         .map(|run| ExclusiveSection(Some(run)))
     }
 
+    /// A run for an operation no single task owns, such as one QA-group run.
+    /// Its owner is fresh, so concurrent runs stay independent; the kernel
+    /// run id addresses it.
+    pub(in crate::runner) fn standalone(
+        root: &std::path::Path,
+        label: &str,
+    ) -> Result<Self, RunnerError> {
+        let nonce = new_run_id()?;
+        let lock = format!("{BUILTIN_LOCK_PREFIX}run:{nonce}");
+        let target = TaskTarget {
+            root: root.to_path_buf(),
+            catalog: String::new(),
+            task: label.to_owned(),
+            surface: effigy_core::task_selection::TaskSurface::Published,
+            profile: None,
+            shared_lock: Some(lock),
+            label: label.to_owned(),
+        };
+        Self::begin_with(
+            TaskRunRequest {
+                target: &target,
+                lock_wait_ms: 0,
+                custody: false,
+                managed_run_token: None,
+                args: &[],
+            },
+            false,
+        )
+    }
+
     fn begin_with(request: TaskRunRequest<'_>, task_gate: bool) -> Result<Self, RunnerError> {
         let root = kernel::effects_root()?;
         let checkout = checkout::mint(&request.target.root)?;
@@ -223,7 +253,6 @@ impl TaskRun {
         self.run.as_mut().expect("open run")
     }
 
-    #[cfg(test)]
     pub(in crate::runner) fn id(&self) -> RunId {
         self.run.as_ref().expect("open run").id()
     }

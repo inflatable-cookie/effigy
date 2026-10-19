@@ -1,156 +1,58 @@
 use effigy_cli::TaskInvocation;
 
 use super::super::planning::ExecutionPreflight;
+use super::super::route::Route;
 use super::super::selection::result;
 use super::super::selection::SelectionResolution;
 use crate::runner::builtin_ports::RunnerBuiltinPorts;
-use crate::runner::command_context::active_runtime_context;
-use crate::runner::deferral::{
-    deferred_builtins_from_catalogs, run_deferred_request, select_deferral, should_attempt_deferral,
-};
+use crate::runner::deferral::run_deferred_request;
 use crate::runner::error::RunnerError;
 use crate::runner::exec_command::try_run_exec_alias;
 use effigy_builtin::try_run_builtin_task;
-use effigy_tasks::TaskSelector;
 
-pub(super) fn resolve_selection_error<'a>(
+/// Carries out the route the one resolver chose for a selector that names
+/// no declared task.
+pub(super) fn run_fallback_route<'a>(
     task: &TaskInvocation,
     preflight: &'a ExecutionPreflight,
-    error: RunnerError,
+    route: Route<'a>,
 ) -> Result<SelectionResolution<'a>, RunnerError> {
-    if let Some(removed_builtin_error) = removed_builtin_invocation_error(&preflight.selector) {
-        return Err(removed_builtin_error);
-    }
-    if preflight.plan {
-        return resolve_plan_selection_error(task, preflight, error);
-    }
-    if let Some(output) = resolve_builtin_selection_output(task, preflight)? {
-        return Ok(result::output(output));
-    }
-
-    let prefer_deferral = should_try_deferral_before_exec_alias();
-    if prefer_deferral {
-        if let Some(output) = resolve_deferred_selection_output(task, preflight, &error)? {
-            return Ok(result::output(output));
+    match route {
+        Route::Task { selection, plan } => Ok(SelectionResolution::Selected { selection, plan }),
+        Route::Builtin => {
+            let ports = RunnerBuiltinPorts::new();
+            try_run_builtin_task(
+                &ports,
+                &preflight.selector,
+                task,
+                &preflight.runtime_args_raw,
+                &preflight.resolved.resolved_root,
+                &preflight.catalogs,
+                &preflight.invocation_cwd,
+            )
+            .map_err(RunnerError::from)?
+            .map(result::output)
+            .ok_or_else(|| route_vanished(preflight, "built-in"))
+        }
+        Route::ExecAlias => try_run_exec_alias(
+            &preflight.resolved.resolved_root,
+            &preflight.invocation_cwd,
+            &task.name,
+            &preflight.runtime_args_exec.passthrough,
+            preflight.output_json,
+        )?
+        .map(result::output)
+        .ok_or_else(|| route_vanished(preflight, "exec alias")),
+        Route::Defer { deferral, cause } => {
+            run_deferred_request(task, &preflight.runtime_args_raw, &deferral, &cause)
+                .map(result::output)
         }
     }
-
-    if let Some(output) = resolve_exec_alias_output(task, preflight, &error)? {
-        return Ok(result::output(output));
-    }
-    if !prefer_deferral {
-        if let Some(output) = resolve_deferred_selection_output(task, preflight, &error)? {
-            return Ok(result::output(output));
-        }
-    }
-    Err(error)
 }
 
-fn resolve_plan_selection_error<'a>(
-    task: &TaskInvocation,
-    preflight: &'a ExecutionPreflight,
-    error: RunnerError,
-) -> Result<SelectionResolution<'a>, RunnerError> {
-    // `effigy test --plan` is the test builtin's own plan, not a selector plan.
-    if preflight.selector.task_name == "test" {
-        if let Some(output) = resolve_builtin_selection_output(task, preflight)? {
-            return Ok(result::output(output));
-        }
-    }
-    // A remapped builtin (`[defer].builtins = ["release"]`) still owns `--plan`
-    // as that command's flag. Generic deferral and exec aliases do not run.
-    if selector_is_deferred_builtin(preflight) {
-        if let Some(output) = resolve_deferred_selection_output(task, preflight, &error)? {
-            return Ok(result::output(output));
-        }
-    }
-    Err(error)
-}
-
-fn selector_is_deferred_builtin(preflight: &ExecutionPreflight) -> bool {
-    deferred_builtins_from_catalogs(&preflight.catalogs, &preflight.resolved.resolved_root)
-        .contains(&preflight.selector.task_name)
-}
-
-fn should_try_deferral_before_exec_alias() -> bool {
-    active_runtime_context().is_some_and(|context| context.container().inside_container_handoff)
-}
-
-fn resolve_builtin_selection_output(
-    task: &TaskInvocation,
-    preflight: &ExecutionPreflight,
-) -> Result<Option<String>, RunnerError> {
-    let ports = RunnerBuiltinPorts::new();
-    try_run_builtin_task(
-        &ports,
-        &preflight.selector,
-        task,
-        &preflight.runtime_args_raw,
-        &preflight.resolved.resolved_root,
-        &preflight.catalogs,
-        &preflight.invocation_cwd,
-    )
-    .map_err(RunnerError::from)
-}
-
-fn removed_builtin_invocation_error(selector: &TaskSelector) -> Option<RunnerError> {
-    if !matches!(selector.task_name.as_str(), "repo-pulse" | "health") {
-        return None;
-    }
-    let request = selector
-        .prefix
-        .as_ref()
-        .map(|prefix| format!("{prefix}/{}", selector.task_name))
-        .unwrap_or_else(|| selector.task_name.clone());
-    Some(RunnerError::task_invocation(format!(
-        "`{request}` is no longer a built-in command. Use `effigy doctor` for consolidated health checks, or define `tasks.health` in your manifest for project-owned checks."
-    )))
-}
-
-fn resolve_exec_alias_output(
-    task: &TaskInvocation,
-    preflight: &ExecutionPreflight,
-    selection_error: &RunnerError,
-) -> Result<Option<String>, RunnerError> {
-    if preflight.selector.prefix.is_some() {
-        return Ok(None);
-    }
-    if !matches!(
-        selection_error,
-        RunnerError::TaskNotFound { .. } | RunnerError::TaskNotFoundAny { .. }
-    ) {
-        return Ok(None);
-    }
-    try_run_exec_alias(
-        &preflight.resolved.resolved_root,
-        &preflight.invocation_cwd,
-        &task.name,
-        &preflight.runtime_args_exec.passthrough,
-        preflight.output_json,
-    )
-}
-
-fn resolve_deferred_selection_output(
-    task: &TaskInvocation,
-    preflight: &ExecutionPreflight,
-    selection_error: &RunnerError,
-) -> Result<Option<String>, RunnerError> {
-    if !should_attempt_deferral(selection_error) {
-        return Ok(None);
-    }
-    let Some(deferral) = select_deferral(
-        &preflight.selector,
-        &preflight.catalogs,
-        &preflight.invocation_cwd,
-        &preflight.resolved.resolved_root,
-    ) else {
-        return Ok(None);
-    };
-    run_deferred_request(
-        task,
-        &preflight.runtime_args_raw,
-        &deferral,
-        selection_error,
-    )
-    .map(Some)
+fn route_vanished(preflight: &ExecutionPreflight, kind: &str) -> RunnerError {
+    RunnerError::task_invocation(format!(
+        "{kind} `{}` disappeared between resolution and execution",
+        preflight.selector.task_name
+    ))
 }

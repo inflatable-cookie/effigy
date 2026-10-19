@@ -48,7 +48,6 @@ pub(super) fn execute_group_run(
     selector_env_names: std::collections::BTreeSet<String>,
     output_json: bool,
 ) -> Result<String, RunnerError> {
-    let run_id = generate_run_id();
     let heavy = plan.admission.required;
     let selector = format!("qa-group:{}/{}", plan.group.catalog, plan.group.name);
     // Routing decisions that can refuse (invalid setting, forged token, down
@@ -69,7 +68,7 @@ pub(super) fn execute_group_run(
             plan,
             selector_env_names,
             output_json,
-            &run_id,
+            &generate_run_id(),
             &selector,
         );
     }
@@ -78,6 +77,10 @@ pub(super) fn execute_group_run(
     } else {
         RunMode::Light
     };
+    // The group run is a kernel run: its id is the run id, its liveness the
+    // run's gate, its outcome the run's row.
+    let run = crate::runner::task_engine::TaskRun::standalone(root, &selector)?;
+    let run_id = run.id().to_string();
     let mut record = initial_record(&run_id, plan);
     record.backend = route.as_ref().and_then(|route| backend_for(route, heavy));
     record.timing.admission_wait_ms = record
@@ -85,29 +88,32 @@ pub(super) fn execute_group_run(
         .as_ref()
         .and_then(|backend| backend.queue_wait_ms);
 
-    begin_qa_group_run_record(root, &record)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    // Record writes are observability: a failed write warns and never
+    // changes the group's outcome (K10).
+    if let Err(error) = begin_qa_group_run_record(root, &record) {
+        eprintln!("warning: qa-group run {run_id}: {error}");
+    }
 
     let outcome = run_members(root, plan, &mut record, run_mode);
+    if let Err(error) = finalize_qa_group_run_record(root, &record) {
+        eprintln!("warning: qa-group run {run_id}: {error}");
+    }
+    for warning in run.close(match outcome {
+        Ok(()) => effigy_kernel::outcome::WorkloadOutcome::Succeeded,
+        Err(_) => effigy_kernel::outcome::WorkloadOutcome::Failed { code: 1 },
+    }) {
+        eprintln!("warning: qa-group run {run_id}: {warning}");
+    }
     let rendered = if output_json {
         render_record_json(&record)?
     } else {
         render_record_text(&record)
     };
-
     match outcome {
-        Ok(()) => {
-            finalize_qa_group_run_record(root, &record)
-                .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-            Ok(rendered)
-        }
-        Err(_) => {
-            finalize_qa_group_run_record(root, &record)
-                .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-            // The final ledger is the failure payload: the caller sees the
-            // honest record with a failing exit, never a bare message.
-            Err(RunnerError::CommandJsonFailure { rendered })
-        }
+        Ok(()) => Ok(rendered),
+        // The final ledger is the failure payload: the caller sees the
+        // honest record with a failing exit, never a bare message.
+        Err(_) => Err(RunnerError::CommandJsonFailure { rendered }),
     }
 }
 

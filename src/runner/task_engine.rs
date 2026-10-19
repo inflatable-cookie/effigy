@@ -21,7 +21,9 @@ pub use kernel::run_internal_kernel_entry;
 pub(in crate::runner) use legacy::{legacy_families, refuse_live_legacy_holder};
 pub(in crate::runner) use process::{run_plain, EnvOverride, PlainCommand, RunExec};
 pub(in crate::runner) use run::{resolve_lock_wait_ms, TaskRun, TaskRunRequest};
-pub(in crate::runner) use status::{task_status, RunView, TaskStatusView, HISTORY_LIMIT};
+pub(in crate::runner) use status::{
+    run_liveness, task_status, RunLiveness, RunView, TaskStatusView, HISTORY_LIMIT,
+};
 
 /// The recorded outcome of a task command that exited with `code`.
 pub(in crate::runner) fn workload_for_exit(code: i32) -> effigy_kernel::outcome::WorkloadOutcome {

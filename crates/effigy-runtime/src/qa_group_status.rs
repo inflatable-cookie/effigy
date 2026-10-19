@@ -1,22 +1,18 @@
-//! QA-group run-record persistence and staleness reconciliation.
+//! QA-group run-record persistence.
 //!
 //! Live records live under `.effigy/runtime/qa-groups/<run-id>.json` and are
 //! refreshed as members progress. Final records live under
 //! `.effigy/reports/qa-groups/<run-id>/run.json` with per-member logs beside
-//! them. A live record whose owner is gone without a final record reconciles
-//! to `unknown`, never to a pass.
+//! them. Records are reports: whether a run still lives is its kernel run's
+//! (the runner reconciles a live record against the run journal and owner
+//! gate), never a PID or a heartbeat age.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use chrono::Utc;
-use effigy_execution::{QaGroupRunRecord, QaGroupRunState, QaGroupStatusSnapshot};
+use effigy_execution::{QaGroupRunRecord, QaGroupStatusSnapshot};
 
 use crate::EffigyRuntimeError;
-
-/// Heartbeat age after which a live record is stale even when its PID is
-/// still alive (mirrors task-status reconciliation).
-pub const QA_GROUP_ACTIVE_STALE_MS: i64 = 20_000;
 
 pub fn qa_group_live_record_path(repo_root: &Path, run_id: &str) -> PathBuf {
     repo_root
@@ -153,30 +149,12 @@ pub fn load_qa_group_run_record(
     else {
         return Ok(None);
     };
-    let mut warnings = Vec::new();
-    let mut record = record;
-    if !owner_is_live(&record) {
-        warnings.push(format!(
-            "live qa-group record pid {} is no longer live; evidence is incomplete and the run stays {} (never a pass)",
-            record.owner_pid,
-            QaGroupRunState::Unknown.as_str()
-        ));
-        record.state = QaGroupRunState::Unknown;
-        record.warnings.push(
-            "owner process is gone without a final record; incomplete evidence is preserved as unknown"
-                .to_owned(),
-        );
-    } else if heartbeat_is_stale(&record) {
-        warnings.push(format!(
-            "live qa-group record heartbeat is stale (older than {QA_GROUP_ACTIVE_STALE_MS}ms); the owner may be wedged"
-        ));
-    }
     Ok(Some(QaGroupStatusSnapshot {
         run_id: run_id.to_owned(),
         record_path: display_relative(repo_root, &live_path),
         live: true,
         record,
-        warnings,
+        warnings: Vec::new(),
     }))
 }
 
@@ -221,48 +199,6 @@ fn collect_run_ids_from_dir(
         }
     }
     Ok(())
-}
-
-/// Owner liveness for a non-final record. Completed records are final by
-/// definition; otherwise a recorded start identity must still match the PID,
-/// so a recycled PID never keeps a run looking live.
-fn owner_is_live(record: &QaGroupRunRecord) -> bool {
-    if record.state == QaGroupRunState::Completed {
-        return true;
-    }
-    match &record.owner_start_identity {
-        Some(start_identity) => {
-            effigy_process::process_start_identity_matches(record.owner_pid, start_identity)
-        }
-        None => pid_is_alive(record.owner_pid),
-    }
-}
-
-fn pid_is_alive(pid: u32) -> bool {
-    use nix::errno::Errno;
-    use nix::sys::signal;
-    use nix::unistd::Pid;
-    if pid == 0 {
-        return false;
-    }
-    match signal::kill(Pid::from_raw(pid as i32), None) {
-        Ok(()) => true,
-        Err(Errno::EPERM) => true,
-        Err(Errno::ESRCH) => false,
-        Err(_) => true,
-    }
-}
-
-fn heartbeat_is_stale(record: &QaGroupRunRecord) -> bool {
-    let Some(updated_at) = &record.updated_at else {
-        return true;
-    };
-    match chrono::DateTime::parse_from_rfc3339(updated_at) {
-        Ok(parsed) => {
-            Utc::now().signed_duration_since(parsed).num_milliseconds() > QA_GROUP_ACTIVE_STALE_MS
-        }
-        Err(_) => true,
-    }
 }
 
 fn display_relative(repo_root: &Path, path: &Path) -> String {

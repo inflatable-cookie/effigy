@@ -2,8 +2,7 @@ use std::path::PathBuf;
 
 use effigy_cli::TasksArgs;
 use effigy_tasks::{
-    list_tasks, probe_task_resolution, render_task_listing_json, render_task_listing_text,
-    ListTasksRequest, ProbeTaskResolutionRequest,
+    list_tasks, render_task_listing_json, render_task_listing_text, ListTasksRequest,
 };
 
 use super::super::command_context::{
@@ -66,16 +65,14 @@ pub(super) fn prepare_tasks_command(args: &TasksArgs) -> Result<PreparedTasksCom
     let resolved = context.resolved;
     let catalogs = load_effective_catalogs_allow_missing(&resolved.resolved_root)?;
     let deferred_builtins = deferred_builtins_from_catalogs(&catalogs, &resolved.resolved_root);
-    let resolve_probe = probe_task_resolution(
-        ProbeTaskResolutionRequest {
-            raw_selector: args.resolve_selector.as_deref(),
-            cwd: &cwd,
-            deferred_builtins: &deferred_builtins,
-        },
-        &catalogs,
-    )
-    .map_err(map_effigy_tasks_error)?
-    .map(|probe| probe.into_json());
+    let resolve_probe = args.resolve_selector.as_deref().map(|selector| {
+        super::resolve::resolve_probe(
+            selector,
+            cwd.clone(),
+            args.repo_override.clone(),
+            &deferred_builtins,
+        )
+    });
 
     Ok(PreparedTasksCommand {
         resolved_root: resolved.resolved_root,
