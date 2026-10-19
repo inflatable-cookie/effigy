@@ -55,8 +55,10 @@ use crate::runner::runtime_session_context::{LeaseRefreshPolicy, RuntimeSessionC
 // deadlines still bound both phases without being extended.
 pub(in crate::runner) const OWNED_EXEC_VERIFICATION_TIMEOUT: Duration = Duration::from_secs(15);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug)]
 pub(in crate::runner) struct ContainerTaskActivation {
+    /// The immutable snapshot used by every activation stage and its exec caller.
+    pub(in crate::runner) policy: EffectiveContainerPolicy,
     pub(in crate::runner) system_was_running: bool,
     pub(in crate::runner) refreshed_host_container_lease: bool,
 }
@@ -277,6 +279,7 @@ fn activate_container_runtime_plan_for_task_using(
         refresh_host_container_lease,
     )?;
     Ok(ContainerTaskActivation {
+        policy: policy.clone(),
         system_was_running,
         refreshed_host_container_lease,
     })

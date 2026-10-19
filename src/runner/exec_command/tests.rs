@@ -916,6 +916,7 @@ fn activate_exec_surface_uses_repo_root_as_repo_override() {
                 plan.lease.policy,
             ));
             Ok(ContainerTaskActivation {
+                policy: surface.policy.clone(),
                 system_was_running: false,
                 refreshed_host_container_lease: true,
             })
@@ -957,7 +958,7 @@ fn activate_exec_surface_preserves_skip_lease_policy_for_handoff_sessions() {
             ..RuntimeSessionContext::default()
         },
         || {
-            activate_exec_surface_with(&repo_root, &surface, move |_, _, plan| {
+            activate_exec_surface_with(&repo_root, &surface, move |_, surface, plan| {
                 *captured_clone.lock().expect("capture lock") = Some((
                     plan.request.repo_override.clone(),
                     plan.request.container_name.clone(),
@@ -965,6 +966,7 @@ fn activate_exec_surface_preserves_skip_lease_policy_for_handoff_sessions() {
                     plan.lease.policy,
                 ));
                 Ok(ContainerTaskActivation {
+                    policy: surface.policy.clone(),
                     system_was_running: true,
                     refreshed_host_container_lease: false,
                 })

@@ -131,7 +131,7 @@ pub(in crate::runner) fn try_run_exec_alias(
         invocation_cwd,
         container_name: &surface.container_name,
         config: &surface.config,
-        policy: &surface.policy,
+        policy: &activation.policy,
         service: &alias.service,
         command: &alias.command,
         output_json,
@@ -159,10 +159,14 @@ pub(in crate::runner) struct RoutedTaskExecRequest<'a> {
 pub(in crate::runner) fn run_routed_task_container_exec(
     request: RoutedTaskExecRequest<'_>,
     container_name: &str,
+    policy: &EffectiveContainerPolicy,
 ) -> Result<String, RunnerError> {
     let output = run_routed_task_container_exec_variant(
         &request,
-        RoutedTaskExecSurface::Named { container_name },
+        RoutedTaskExecSurface::Named {
+            container_name,
+            policy,
+        },
         false,
     )?;
 
@@ -172,10 +176,14 @@ pub(in crate::runner) fn run_routed_task_container_exec(
 pub(in crate::runner) fn capture_routed_task_container_exec(
     request: RoutedTaskExecRequest<'_>,
     container_name: &str,
+    policy: &EffectiveContainerPolicy,
 ) -> Result<Output, RunnerError> {
     run_routed_task_container_exec_variant(
         &request,
-        RoutedTaskExecSurface::Named { container_name },
+        RoutedTaskExecSurface::Named {
+            container_name,
+            policy,
+        },
         true,
     )
 }
@@ -305,7 +313,7 @@ fn run_explicit_exec(
         invocation_cwd,
         container_name: &surface.container_name,
         config: &surface.config,
-        policy: &surface.policy,
+        policy: &activation.policy,
         service,
         command,
         output_json,
@@ -431,6 +439,7 @@ fn run_raw_exec(request: RawExecRequest<'_>) -> Result<String, RunnerError> {
 enum RoutedTaskExecSurface<'a> {
     Named {
         container_name: &'a str,
+        policy: &'a EffectiveContainerPolicy,
     },
     ResolvedPolicy {
         policy: &'a EffectiveContainerPolicy,
@@ -446,7 +455,10 @@ fn run_routed_task_container_exec_variant(
     let repo_root = request.repo_root;
     let invocation_cwd = request.invocation_cwd;
     match surface {
-        RoutedTaskExecSurface::Named { container_name } => {
+        RoutedTaskExecSurface::Named {
+            container_name,
+            policy,
+        } => {
             let surface = resolve_running_named_exec_surface(repo_root, container_name)?;
             let mapped_cwd = map_host_cwd(
                 repo_root,
@@ -454,12 +466,7 @@ fn run_routed_task_container_exec_variant(
                 &surface.container_name,
                 &surface.config,
             )?;
-            run_routed_task_exec_internal_with_mapped_cwd(
-                request,
-                &surface.policy,
-                &mapped_cwd,
-                capture,
-            )
+            run_routed_task_exec_internal_with_mapped_cwd(request, policy, &mapped_cwd, capture)
         }
         RoutedTaskExecSurface::ResolvedPolicy {
             policy,

@@ -286,6 +286,7 @@ fn run_deferred_request_with_binding(
                     session_context,
                 },
             )?;
+            let policy = activation.policy;
             let tty = std::io::stdout().is_terminal() || std::io::stderr().is_terminal();
             let args = build_deferred_container_command_args(
                 &policy,
