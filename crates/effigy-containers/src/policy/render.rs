@@ -75,11 +75,16 @@ pub fn prepare_inputs(
     } else {
         prepared
     };
-    Ok(prepared)
+    // Owned mount directories can change canonical bind paths (for example
+    // macOS /var). Establish them before the admission snapshot is captured.
+    super::mounts::prepare_container_mount_sources(&prepared)?;
+    resolve()
 }
 
 impl EffectiveContainerPolicy {
     /// Read the resolved snapshot, including before its first publication.
+    /// Expand the reserved root before internal consumers parse bind syntax;
+    /// the immutable file itself retains Compose interpolation.
     /// Hand-built policies without a render retain ordinary file semantics.
     pub fn read_compose(&self, path: &Path) -> Result<String, ContainerPolicyError> {
         if let Some(render) = &self.render {
@@ -89,7 +94,17 @@ impl EffectiveContainerPolicy {
                     .files()
                     .get(&name.to_string_lossy().to_string())
                 {
-                    return String::from_utf8(bytes.clone()).map_err(error);
+                    let content = String::from_utf8(bytes.clone()).map_err(error)?;
+                    if !content.contains(ROOT_EXPRESSION) {
+                        return Ok(content);
+                    }
+                    let mut document: serde_yaml::Value =
+                        serde_yaml::from_str(&content).map_err(error)?;
+                    relocate(
+                        &mut document,
+                        &[(ROOT_EXPRESSION.into(), render.path.display().to_string())],
+                    );
+                    return serde_yaml::to_string(&document).map_err(error);
                 }
             }
         }
@@ -273,8 +288,11 @@ fn relocate_build_files(value: &mut serde_yaml::Value, replacements: &[(String, 
             continue;
         };
         if let Some(context) = context {
-            let resolved = context.join(&*file).display().to_string();
-            if let Some((_, target)) = replacements.iter().find(|(source, _)| source == &resolved) {
+            let resolved = context.join(&*file);
+            if let Some((_, target)) = replacements
+                .iter()
+                .find(|(source, _)| Path::new(source) == resolved)
+            {
                 *file = target.clone();
             }
         }

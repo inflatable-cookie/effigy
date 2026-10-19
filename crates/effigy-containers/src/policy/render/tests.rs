@@ -1,10 +1,12 @@
+#[path = "../../../../../tests/support/sealed_fixture.rs"]
+mod sealed_fixture;
 use super::*;
 use crate::policy::admission::PolicyAdmission;
 use crate::policy::load::{load_container_policy, prepare_container_policy};
 use std::os::unix::fs::PermissionsExt;
 
-fn fixture() -> (tempfile::TempDir, PathBuf, PathBuf) {
-    let fixture = tempfile::tempdir().unwrap();
+fn fixture() -> (sealed_fixture::SealedFixture, PathBuf, PathBuf) {
+    let fixture = sealed_fixture::SealedFixture(tempfile::tempdir().unwrap());
     let checkout = fixture.path().join("checkout");
     let home = fixture.path().join("home/.effigy");
     std::fs::create_dir_all(&checkout).unwrap();
@@ -243,5 +245,66 @@ fn retained_admission_refusal_preserves_the_desired_generation() {
             serde_json::from_slice::<serde_json::Value>(&std::fs::read(marker).unwrap()).unwrap(),
             context
         );
+    });
+}
+
+#[test]
+fn internal_path_consumers_resolve_generated_asset_mounts() {
+    let (_fixture, checkout, home) = fixture();
+    std::fs::write(checkout.join("effigy.toml"), "[containers]\ndefault='web'\n[containers.web]\nprimary_service='web'\n[containers.web.services.app]\ncatalog='php-fpm'\n[containers.web.services.web]\ncatalog='nginx'\nvariant='default'\n").unwrap();
+    crate::with_test_effigy_home(&home, || {
+        let policy = load_container_policy(&checkout, None).unwrap();
+        let render = policy.render.as_ref().unwrap();
+        assert!(render
+            .closure
+            .files()
+            .values()
+            .any(|bytes| String::from_utf8_lossy(bytes).contains(ROOT_EXPRESSION)));
+        let plan = crate::load_workspace_ownership_plan(&policy).unwrap();
+        let config = plan
+            .targets
+            .iter()
+            .find(|target| target.path == "/etc/nginx/conf.d/default.conf")
+            .expect("actual Compose mount target");
+        assert!(
+            Path::new(config.source.as_ref().unwrap()).starts_with(&render.path),
+            "source: {:?}, generation: {:?}",
+            config.source,
+            render.path
+        );
+        assert!(config.read_only);
+        let asset = Path::new(config.source.as_ref().unwrap())
+            .strip_prefix(&render.path)
+            .unwrap();
+        assert!(render
+            .closure
+            .files()
+            .contains_key(&asset.to_string_lossy().to_string()));
+        assert!(
+            !render.path.exists(),
+            "reading mount targets does not publish"
+        );
+    });
+}
+
+#[test]
+fn prepare_establishes_owned_cache_paths_before_admission() {
+    let (fixture, checkout, _) = fixture();
+    let real = fixture.path().join("real/home");
+    std::fs::create_dir_all(&real).unwrap();
+    let alias = fixture.path().join("alias");
+    std::os::unix::fs::symlink(real.parent().unwrap(), &alias).unwrap();
+    let home = alias.join("home/.effigy");
+    std::fs::write(checkout.join("effigy.toml"), "[containers]\ndefault='web'\n[containers.web]\nprimary_service='app'\nworking_dir='/workspace'\n[containers.web.services.app]\ncatalog='php-fpm'\n[systems.dev]\ndefault_workspace='app'\n[systems.dev.workspaces.app]\ncontainer='web'\n").unwrap();
+    crate::with_test_effigy_home(&home, || {
+        load_container_policy(&checkout, None).unwrap();
+        assert!(!home.join("shared/composer-cache").exists());
+        let prepared = prepare_container_policy(&checkout, None).unwrap();
+        assert!(home.join("shared/composer-cache").exists());
+        let admission =
+            PolicyAdmission::capture(&prepared, &fixture.path().join("markers")).unwrap();
+        crate::policy::mounts::prepare_container_mount_sources(&prepared).unwrap();
+        let fresh = load_container_policy(&checkout, None).unwrap();
+        admission.context_for_policy(&fresh).unwrap();
     });
 }

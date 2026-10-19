@@ -1523,22 +1523,13 @@ fn complete_inventory_keeps_a_full_pool_of_protected_live_owners() {
 
 #[test]
 fn generated_registration_and_regeneration_reuse_one_loopback_assignment() {
-    let home = std::env::temp_dir().join(format!(
-        "effigy-loopback-lifecycle-home-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("time")
-            .as_nanos()
-    ));
-    let repo_root = std::env::temp_dir().join(format!(
-        "effigy-loopback-lifecycle-repo-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("time")
-            .as_nanos()
-    ));
-    std::fs::create_dir_all(&home).expect("create isolated home");
-    std::fs::create_dir_all(&repo_root).expect("create isolated repo");
+    let _env = crate::contract_test_support::lock_test();
+    let owner = tempfile::tempdir().expect("private loopback fixture");
+    let home = owner.path().join("home");
+    let repo_root = owner.path().join("repo");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&repo_root).unwrap();
+    let repo_root = repo_root.canonicalize().unwrap();
     let _gateway_home = crate::runner::gateway_command::set_test_gateway_home(&home);
     effigy_containers::with_test_effigy_home(&home.join(".effigy"), || {
         std::fs::write(
@@ -1563,8 +1554,9 @@ password = "postgres"
         )
         .expect("write manifest");
 
-        let policy = effigy_containers::load_container_policy(&repo_root, None)
-            .expect("generate compose policy");
+        let observed = effigy_containers::load_container_policy(&repo_root, None).unwrap();
+        let policy = effigy_containers::policy::render::prepare_inputs(&observed)
+            .expect("Prepare allocates the loopback assignment");
         let loopback_path = gateway_dir()
             .expect("gateway dir")
             .join("loopback-ips.json");
@@ -1877,12 +1869,12 @@ fn load_or_allocate_project_loopback_ip_migrates_legacy_identity_for_same_repo()
     });
 }
 
-/// Real source files, owned children, fake backend transport and persisted
+/// Sealed generation files, owned children, fake backend transport and persisted
 /// production registration. The hook only chooses a mutation time; it never
 /// supplies readiness or admission evidence.
 #[cfg(unix)]
 #[test]
-fn detached_publication_refuses_source_and_marker_changes_after_owned_probe() {
+fn detached_publication_refuses_generation_and_marker_changes_after_owned_probe() {
     use crate::runner::host_container_lease::{
         capture_detached_activation_context, record_admitted_partial_activation,
         retained_detached_activation_context,
@@ -1952,10 +1944,12 @@ for line in sys.stdin: print('exec:'+line.strip(),flush=True)
         }
     }
 
-    let fixture = tempfile::Builder::new()
-        .prefix("effigy-158-publication-")
-        .tempdir_in(Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
-        .unwrap();
+    let fixture = crate::contract_test_support::sealed_fixture::SealedFixture(
+        tempfile::Builder::new()
+            .prefix("effigy-158-publication-")
+            .tempdir_in(Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
+            .unwrap(),
+    );
     let root = fixture.path();
     let checkout = root.join("selected");
     std::fs::create_dir(&checkout).unwrap();
@@ -2019,7 +2013,11 @@ else:sys.exit('unexpected private backend operation')
                 std::env::var("PATH").unwrap()
             )),
         ),
-        ("HOME", Some(root.display().to_string())),
+        ("HOME", Some(root.join("home").display().to_string())),
+        (
+            "EFFIGY_TEST_CONTAINERS_HOME",
+            Some(root.join("home/.effigy").display().to_string()),
+        ),
         ("EFFIGY_COMPOSE_BACKEND", Some("docker".to_owned())),
         ("PRIVATE_PROOF_ROOT", Some(root.display().to_string())),
         ("PRIVATE_PROOF_PORT", Some(services[0].port.to_string())),
@@ -2030,17 +2028,26 @@ else:sys.exit('unexpected private backend operation')
     ]);
     let _home = crate::runner::gateway_command::set_test_gateway_home(&root.join("home"));
     let _control = ControlReset;
-    let mut policy = test_policy();
-    policy.repo_root = checkout.clone();
-    policy.compose_files = vec![compose.clone()];
-    policy.service_aliases.clear();
-    policy.dns_domain = Some("app.fixture.test".to_owned());
-    policy.dns_tls = false;
-    policy.dns_routes[0].domain = "app.fixture.test".to_owned();
-    policy.dns_routes[0].declared_domain = "app.fixture.test".to_owned();
-    policy.dns_routes[0].tls = false;
-    policy.dns_routes[0].service = Some("app".to_owned());
-    policy.declared_ports = vec![format!("{}:80", services[0].port)];
+    // Publish a genuine generation. Corrupt its admitted source snapshots,
+    // rather than treating ordinary edits to the checkout as object mutation.
+    std::fs::write(&manifest, format!("[containers]\ndefault='web'\n[containers.web]\ncompose_file='compose.yml'\nprimary_service='app'\nproject_name='demo-web-dev'\nshare_runtime_identity=true\n[containers.web.dns]\nroutes=[{{domain='app.fixture.test',tls=false,port={},service='app'}}]\n", services[0].port)).unwrap();
+    std::fs::write(
+        &compose,
+        format!(
+            "services:\n  app:\n    image: private.invalid/app\n    ports: ['{}:80']\n",
+            services[0].port
+        ),
+    )
+    .unwrap();
+    let policy = effigy_containers::with_test_effigy_home(&root.join("home/.effigy"), || {
+        effigy_containers::prepare_container_policy(&checkout, Some("web"))
+    })
+    .unwrap();
+    let render = policy.render.as_ref().unwrap();
+    let manifest = render.path.join("inputs/declarations/0.toml");
+    let compose = policy.compose_files[0].clone();
+    let manifest_bytes = std::fs::read(&manifest).unwrap();
+    let compose_bytes = std::fs::read(&compose).unwrap();
     let admission = capture_detached_activation_context(&checkout, &policy).unwrap();
     record_admitted_partial_activation(&checkout, &policy, &admission).unwrap();
     let admission = retained_detached_activation_context(&checkout, &policy)
@@ -2139,24 +2146,37 @@ else:sys.exit('unexpected private backend operation')
                 .clone();
                 let checkout_copy = checkout_copy.clone();
                 let moved_copy = moved_copy.clone();
-                let mutate = move || match mutation {
-                    "missing" => std::fs::remove_file(file).unwrap(),
-                    "unreadable" => {
-                        std::fs::remove_file(&file).unwrap();
-                        std::fs::create_dir(file).unwrap();
+                let mutate = move || {
+                    let reseal = file.clone();
+                    if matches!(mutation, "manifest" | "compose") {
+                        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600))
+                            .unwrap();
                     }
-                    "marker" => std::fs::write(file, "{}\n").unwrap(),
-                    "scope" => std::fs::write(file, "dddddddddddddddddddddddddddddddd").unwrap(),
-                    "checkout" => {
-                        std::fs::rename(&checkout_copy, &moved_copy).unwrap();
-                        std::os::unix::fs::symlink(&moved_copy, &checkout_copy).unwrap();
+                    match mutation {
+                        "missing" => std::fs::remove_file(file).unwrap(),
+                        "unreadable" => {
+                            std::fs::remove_file(&file).unwrap();
+                            std::fs::create_dir(file).unwrap();
+                        }
+                        "marker" => std::fs::write(file, "{}\n").unwrap(),
+                        "scope" => {
+                            std::fs::write(file, "dddddddddddddddddddddddddddddddd").unwrap()
+                        }
+                        "checkout" => {
+                            std::fs::rename(&checkout_copy, &moved_copy).unwrap();
+                            std::os::unix::fs::symlink(&moved_copy, &checkout_copy).unwrap();
+                        }
+                        _ => std::fs::OpenOptions::new()
+                            .append(true)
+                            .open(file)
+                            .unwrap()
+                            .write_all(b"\n# changed after probe\n")
+                            .unwrap(),
                     }
-                    _ => std::fs::OpenOptions::new()
-                        .append(true)
-                        .open(file)
-                        .unwrap()
-                        .write_all(b"\n# changed after probe\n")
-                        .unwrap(),
+                    if matches!(mutation, "manifest" | "compose") {
+                        std::fs::set_permissions(reseal, std::fs::Permissions::from_mode(0o400))
+                            .unwrap();
+                    }
                 };
                 if stage == PublicationStage::DuringPreparation {
                     let writer = std::thread::spawn(move || {
@@ -2206,12 +2226,11 @@ else:sys.exit('unexpected private backend operation')
             std::fs::remove_file(&checkout).unwrap();
             std::fs::rename(root.join("moved-checkout"), &checkout).unwrap();
         }
-        std::fs::write(&manifest, "[containers]\n").unwrap();
-        std::fs::write(
-            &compose,
-            "services:\n  app:\n    image: private.invalid/app\n",
-        )
-        .unwrap();
+        for (file, bytes) in [(&manifest, &manifest_bytes), (&compose, &compose_bytes)] {
+            std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o600)).unwrap();
+            std::fs::write(file, bytes).unwrap();
+            std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o400)).unwrap();
+        }
         std::fs::write(&scope_file, &scope).unwrap();
         std::fs::write(&marker, &marker_bytes).unwrap();
         PUBLICATION_CONTROL.with(|control| *control.borrow_mut() = None);

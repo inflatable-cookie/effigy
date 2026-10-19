@@ -513,7 +513,7 @@ fn render_compose_relative_path(path: &str, compose_dir: &Path) -> String {
     let resolved = compose_dir.join(path);
     resolved
         .canonicalize()
-        .unwrap_or(resolved)
+        .unwrap_or_else(|_| resolved.components().collect())
         .display()
         .to_string()
 }

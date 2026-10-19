@@ -18,8 +18,9 @@ pub fn generation_context(
 ) -> Result<Value, ContainerPolicyError> {
     let render = policy.render.as_ref().ok_or_else(refusal)?;
     let scope = effigy_core::worktree_scope::load(&policy.repo_root).map_err(|_| refusal())?;
+    let checkout = std::fs::canonicalize(&policy.repo_root).map_err(|_| refusal())?;
     Ok(
-        json!({"schema":"effigy.container-partial-activation.v3","repo_root":policy.repo_root,
+        json!({"schema":"effigy.container-partial-activation.v3","repo_root":checkout,
         "scope_token":scope,"container_name":policy.name,"profile":policy.profile,
         "project_name":policy.project_name,"primary_service":policy.primary_service,
         "backend":backend_name(crate::compose::resolve_declared_backend(&policy.repo_root,&policy.name,policy.driver)),

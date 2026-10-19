@@ -1,3 +1,5 @@
+#[path = "../../tests/support/sealed_fixture.rs"]
+pub(crate) mod sealed_fixture;
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::fs;

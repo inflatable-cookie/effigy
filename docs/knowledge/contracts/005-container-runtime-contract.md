@@ -279,8 +279,13 @@ The Prepare stage of `up` and other Mutate commands publishes through kernel
 Objects under the environment owner gate. Files are sealed 0400 and directories
 0500. Compose receives `EFFIGY_RENDER_ROOT` for references to generated assets;
 this adapter-owned value overrides a caller's environment without changing the
-process-global environment. Relative user build contexts and Dockerfiles keep
-their Compose meaning. `compose.override.yml` and direct `compose_file` inputs
+process-global environment. Internal policy readers expand this reserved root
+before parsing bind syntax or estimating mount budgets; the immutable file bytes
+retain Compose interpolation. Prepare establishes owned mount directories before
+admission, so creating a cache cannot change canonical bind paths afterward.
+Relative generated asset paths, including `./` spellings, name files in that
+same generation. Relative user build contexts and Dockerfiles keep their
+Compose meaning. `compose.override.yml` and direct `compose_file` inputs
 are copied into the closure. Existing mutable generated files are not imported
 or rewritten; the next Prepare renders their replacement automatically.
 
@@ -297,8 +302,9 @@ so later commands, probes and leases use its final identity and paths.
 
 Detached admission records a v3 generation reference. Verification reads the
 kernel's desired object reference and verifies its complete immutable closure;
-it no longer fingerprints mutable declarations and renderer outputs. Source
-edits leave an admitted snapshot intact; a later Prepare publishes a new desired
+it no longer fingerprints mutable declarations and renderer outputs. Canonical
+checkout identity and scope remain fenced, including a checkout moved behind a
+symlink. Source edits leave an admitted snapshot intact; a later Prepare publishes a new desired
 generation and supersedes that admission. One-release v2 receipt import checks
 its original identity and fingerprints once, then writes a v3 reference in
 Prepare. Retained admission is validated before moving the desired reference;
