@@ -109,12 +109,16 @@ No path may stop, restart or recreate an environment's containers while a
 live lock holder of a run bound to that environment exists, except that run's
 own stop.
 
-Task/profile locks establish liveness; a matching owner PID and run token in a
-session record only narrow the environment binding. A missing, unreadable or
-stale session record never grants mutation authority. A live holder whose
-binding cannot be established protects every environment in the checkout.
-Local live PIDs protect independently of heartbeat age; another PID namespace
-uses the existing heartbeat lease, never a coincidentally matching local PID.
+Task gates establish liveness (contract 052, task engine adoption): a run
+whose gate is held on this host, or whose gate probe is unreadable, is a
+holder. A matching owner PID and run token in a session record only narrow the
+environment binding; runs record the digest of their managed run token. A
+missing, unreadable or stale session record never grants mutation authority.
+A live holder whose binding cannot be established protects every environment
+in the checkout. Gates are host-only (R1): an Effigy task run inside a
+workspace container holds its container's own gate and is not a host holder;
+container-mode guests requesting host authority is environment-lane work
+(contract 052 §8).
 
 The exec-readiness recovery restart therefore keeps probing with its
 post-restart window when a live holder exists, then reports any remaining
@@ -858,17 +862,11 @@ orphans, before down and keeps every volume.
 
 A managed run's stop - `effigy <task> stop`, a SIGINT/SIGTERM settle,
 or a handover-driven stop - reports settled only after that same whole
-cascade finished and nothing the run owns is left. Lock records
-carrying the run's settle token name their run: the processes a run
-starts on the host and through the exec surface write the token into
-their lock records, the run's settle releases records still attributed
-to it through the owner-token rules, and a genuinely live foreign
-holder still refuses. A lock holder in another PID namespace - a
-container-side Effigy process, or a host holder seen from inside a
-container - is judged by its heartbeat lease alone, never by a foreign
-process table, so an in-container PID is never mistaken for a live
-host process or the reverse. Records without the run token keep
-today's behavior.
+cascade finished and nothing the run owns is left. Task runs started by
+the managed run's processes carry its settle token in their spawn
+environment and record its digest; a dead holder's gate is already free,
+and a genuinely live holder carrying the token, or a live foreign holder,
+still refuses.
 The handover refuses only when ending a bound managed owner or
 stopping that environment itself fails; it
 then names the failure and leaves the environment recoverable by its own

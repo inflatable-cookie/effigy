@@ -84,7 +84,7 @@ Pick the first Effigy command that matches the job.
 | Diagnose routing or repo health | Selector resolution is unclear, or health/drift is the task | `effigy doctor` |
 | Inspect local dependency links | Cargo/Bun desired state, drift, or lock/peer hygiene is the task | `effigy --json deps status` |
 | Run installed skill tasks | A skill owns task code but the current repo owns runtime effects | `effigy skill tasks --path <SKILL>` |
-| Inspect a selector without running it | You need resolved task, catalog, and command shape | `effigy <selector> --plan` or `effigy --json <selector> --plan` |
+| Inspect a selector without running it | You need resolved task, catalog, and command shape | `effigy --plan <selector>` or `effigy --json --plan <selector>` |
 | Execute work | A task or built-in already covers the operation | `effigy <selector>` |
 | Narrow validation | You changed code and want likely tests/files first | `git diff --name-only | effigy graph affected --stdin --json` |
 | Parse results | Another tool/agent will consume the output | `effigy --json <command>` |
@@ -110,7 +110,7 @@ Details: `references/agent-operating-loop.md`, `references/graph-assist.md`.
 - use selectors and built-ins for real execution work
 - use `--json` whenever another agent step will consume the result; it is an
   output format, never a planning or safety flag
-- use `effigy <selector> --plan` to inspect command shape without executing
+- use `effigy --plan <selector>` to inspect command shape without executing; Effigy flags go before the task, everything after it is the task's
 
 Good graph-first question shapes:
 

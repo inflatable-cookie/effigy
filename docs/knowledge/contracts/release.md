@@ -212,7 +212,7 @@ changes, and `HEAD == origin/main`, then builds and runs the Effigy from the
 invocation checkout (`cargo run --bin effigy`), never an installed or PATH
 binary that may predate the preparation repairs.
 
-`effigy release:prepare --plan` is the runner's no-write task plan: it resolves
+`effigy --plan release:prepare` is the runner's no-write task plan: it resolves
 and prints the task command without running the entry point. The inner prepare
 plan is `effigy release:prepare -- --plan`; that path still builds the
 current-source Effigy but performs no mutation. The mutating planner command is

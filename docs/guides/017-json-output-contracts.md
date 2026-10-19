@@ -129,8 +129,8 @@ Payload examples guide: `026-json-payload-examples.md`
 - `effigy.help.v1`
 - `effigy.tasks.v1`
 - `effigy.tasks.filtered.v1`
-- `effigy.tasks-status.v1`
-- `effigy.tasks-status-all.v1`
+- `effigy.tasks-status.v2`
+- `effigy.tasks-status-all.v2`
 - `effigy.drafts.v1`
 - `effigy.deps.status.v1`
 - `effigy.deps.link.v1`
@@ -176,8 +176,7 @@ Operator workflow and recovery: [`077-local-dependency-linking.md`](077-local-de
 - `effigy.init.checklist.v1`
 - `effigy.init.actions.v1`
 - `effigy.migrate.v1`
-- `effigy.unlock.v1`
-- `effigy.lock-wait.v1` (lock-wait timeout `error.details`)
+- `effigy.lock-wait.v2` (lock-conflict `error.details`)
 - `effigy.completion.v2`
 - `effigy.completion.candidates.v1`
 - `effigy.task.run.v1`
@@ -253,7 +252,6 @@ effigy --json test
 effigy --json watch --owner effigy --once test
 effigy --json init --dry-run
 effigy --json tasks migrate --apply
-effigy --json tasks unlock --all --yes
 effigy --json config completion bash --export
 effigy --json config completion candidates --prefix farm
 effigy --json state plan ./state/example-app-uat.toml
@@ -263,7 +261,7 @@ effigy --json state capture uat new-content
 effigy --json state capture uat --role uat-capture --source-env uat --key uat-capture-2026-05-08
 effigy --json state history uat --kind capture --limit 5
 effigy --json build --repo /path/to/workspace
-effigy --json build --plan --repo /path/to/workspace
+effigy --json --plan --repo /path/to/workspace build
 ```
 
 ## Catalog-Pack Fallback Notice

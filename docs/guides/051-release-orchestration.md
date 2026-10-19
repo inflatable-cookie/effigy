@@ -66,8 +66,8 @@ For the current helper-command cleanup, the release-note section should read
 roughly like this:
 
 - `effigy migrate` -> `effigy tasks migrate`
-- `effigy unlock` -> `effigy tasks unlock`
-- `effigy cache ...` -> `effigy tasks cache ...`
+- `effigy unlock` and `effigy cache ...` were removed (v0.15 task engine):
+  task locks are run gates that release themselves, and the task cache is gone
 - `effigy completion ...` -> `effigy config completion ...`
 - `effigy catalogs` removed; use `effigy tasks`
 
@@ -424,7 +424,7 @@ clean, pushed `main` checkout; Queue milestone `project.qa.run` uses a
 disposable checkout and cannot transfer prepared fingerprints.
 
 ```sh
-effigy release:prepare --plan                  # outer, no-write task plan
+effigy --plan release:prepare                  # outer, no-write task plan
 effigy release:prepare -- --plan               # inner `release prepare --plan`
 effigy release:prepare --yes --version 0.14.0  # mutating preparation
 ```

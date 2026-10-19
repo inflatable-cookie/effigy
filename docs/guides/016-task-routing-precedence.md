@@ -15,8 +15,8 @@ Use the built-in diagnostic task:
 ```bash
 effigy tasks
 effigy tasks --resolve catalog-a/api
-effigy catalog-a/api --plan
-effigy --json catalog-a/api --plan
+effigy --plan catalog-a/api
+effigy --json --plan catalog-a/api
 effigy tasks --resolve ../shared/validate
 effigy tasks --resolve test
 effigy tasks --json
@@ -26,25 +26,44 @@ effigy tasks --json --pretty false --resolve catalog-a/api
 
 The `tasks` output shows effective catalogs plus routing precedence and resolution evidence.
 
-`effigy <selector> --plan` is the non-executing command-shape path. It is not
+One resolver decides where a selector goes. Running it, `--plan` and
+`tasks --resolve` all ask that resolver, so the probe always says what running
+the selector would do.
+
+`effigy --plan <selector>` is the non-executing command-shape path. It is not
 `tasks --resolve` and it is not `--json`. `--json` only chooses the envelope;
 `effigy --json <selector>` still runs the task. An unresolved selector with
-`--plan` fails without deferral or exec-alias fallback; `effigy test --plan`
+`--plan` fails without deferral or exec-alias fallback; `effigy --plan test`
 keeps the test builtin.
 
-## Discovery Scope
+## Effigy flags come before the task
 
-Catalog discovery walks the workspace tree recursively and includes symlinked directories.
+```bash
+effigy [--json] [--plan] [--repo <PATH>] [--lock-wait-ms <MS>] [--env-schema <PATH>] [--verbose-root] <task> [task args]
+```
+
+Everything after the task name belongs to the task: `effigy lint --json`
+passes `--json` to the linter, and `effigy gh:sync --repo owner/x` passes
+`--repo owner/x` to the task. For one release, `--plan` and `--json` directly
+after the task name are still read as Effigy's, with a note naming the leading
+spelling. Built-in commands routed by name (`test`, `tasks`, `watch`, ...)
+keep their own flag positions.
+
+## Root And Membership
+
+Catalog membership is explicit ([037](../knowledge/contracts/037-explicit-catalog-membership-contract.md)):
+the root manifest's `[catalog.members]` names its catalogs; nothing walks the
+tree for them.
+
+Running from inside a member catalog, however deep, resolves to the root that
+declares it, so the full catalog set, the same task identities and the same
+run history apply wherever you stand. The walk stops at the Git top level and
+at a manifest with `[manifest].root = true`. A catalog no ancestor declares
+stays its own root.
 
 Notes:
-- symlinked catalogs are treated the same as physical directories for routing.
-- dependency/build trees are skipped during discovery, including `.effigy/`,
-  `node_modules/`, `vendor/`, and `target/`.
-- nested `effigy.toml` files can declare `[manifest].root = true` to stop
-  automatic promotion to a parent Cargo/npm workspace when commands are invoked
-  from that nested tree.
-- aliases must remain unique across all discovered manifests.
-- if duplicate aliases are found (including through symlinked paths), Effigy returns a catalog alias conflict error.
+- aliases must remain unique across the effective catalogs.
+- a nested `effigy.toml` with `[manifest].root = true` is always its own root.
 
 ## JSON Output
 
@@ -79,9 +98,17 @@ Schema (stable keys):
   "resolve": {
     "selector": "catalog-a/api",
     "status": "ok",
+    "route": "task",
     "catalog": "catalog-a",
     "catalog_root": "/abs/path/catalog-a",
     "task": "api",
+    "task_id": {
+      "root": "/abs/path",
+      "catalog": "catalog-a",
+      "task": "api",
+      "selector": "catalog-a/api"
+    },
+    "lock_scopes": ["task:catalog-a/api"],
     "evidence": ["selected catalog via explicit prefix `catalog-a`"],
     "error": null
   }
@@ -90,8 +117,11 @@ Schema (stable keys):
 
 Notes:
 - `resolve` is `null` when `--resolve` is not passed.
+- `resolve.route` is where the selector goes: `typed-command` (a built-in
+  command such as `release`, which runs before any catalog task of that name),
+  `task`, `builtin` (`test`, `tasks`, ...), `exec-alias`, `defer` or `error`.
 - On resolution failures, `resolve.status` is `error` and `resolve.error` contains the message.
-- Built-in selectors (for example `test`) return `resolve.status = "ok"` with `catalog = null` and evidence showing built-in resolution.
+- `task_id` is the identity a run of that task uses for its lock and status.
 - `--pretty false` emits compact one-line JSON.
 
 ## CI-safe JSON Assertions
@@ -126,14 +156,18 @@ effigy --json tasks --pretty false --resolve catalog-a/api > /tmp/effigy-tasks-c
 
 ## Precedence Order
 
-Effigy resolves in this order:
+A typed built-in command (`release`, `deploy`, `container`, ...) wins first,
+unless the root lists it in `[defer].builtins`. Otherwise a task is selected:
 
 1. Explicit catalog alias prefix (`catalog-a/api`)
 2. Relative or absolute catalog path prefix (`../shared/validate`)
 3. Unprefixed nearest in-scope catalog by current working directory
 4. Unprefixed shallowest catalog from workspace root
 
-If a prefix can match both an alias and a relative path, alias wins.
+If a prefix can match both an alias and a relative path, alias wins. Only when
+no task matches does a routed built-in (`test`, `tasks`, ...) run, then an exec
+alias, then the `[defer]` command (deferral before exec aliases inside a
+container handoff).
 
 ## Draft Surface
 

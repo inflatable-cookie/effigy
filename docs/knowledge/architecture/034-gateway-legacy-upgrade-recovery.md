@@ -91,7 +91,7 @@ build that predates the identity sidecar:
    Unknown when no sidecar exists), so this is a real gap. Running an older CLI
    for ordinary work also fails on newer manifests: a v0.13.1 CLI run against
    this repo's linked Longhorn `proof:artifacts` manifest fails to parse
-   (`effigy dev --plan` fails before execution). A global downgrade is not a
+   (`effigy --plan dev` fails before execution). A global downgrade is not a
    consumer launch solution.
 5. Published `v0.14.0` additionally rejects the operator-owned gateway directory
    during elevation (`gateway directory is unsafe`), so even clearing the

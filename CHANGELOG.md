@@ -6,6 +6,65 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Breaking
+- Task runs are now kernel runs. Every invocation resolves once to a task
+  identity (catalog path relative to the root, task name), so `build` from
+  inside a catalog, `api/build` and `./apps/api/build` share one lock and one
+  status history, and `a:b` and `a-b` never share either. The lock is the
+  run's kernel gate: held exactly while the run's Effigy process lives,
+  released when it exits (crash and `kill -9` included), never reclaimed from
+  a live or SIGSTOPped holder. A lock conflict names the holder (pid, run id,
+  age), exits 75, and carries `effigy.lock-wait.v2` details in JSON mode.
+- Effigy's flags go before the task:
+  `effigy [--json] [--plan] [--repo <PATH>] [--lock-wait-ms <MS>] [--env-schema <PATH>] [--verbose-root] <task> [args]`.
+  Everything after the task name belongs to the task, so `effigy lint --json`
+  reaches the linter. For one release `<task> --plan` and `<task> --json`
+  are still read as Effigy's, with a note naming the leading spelling; other
+  Effigy flags after the task name now reach the task, with a note.
+- A plain host task runs under kernel custody: always its own process group,
+  a durable record before it executes, and a settle that stops everything it
+  started. INT, TERM and HUP are forwarded to the task's group and Effigy exits
+  128 + n with the run recorded `cancelled`; if Effigy itself is SIGKILLed, the
+  run's sentinel stops the group. Processes a task leaves running in its own
+  group (`cmd &` without `setsid`) no longer survive the task.
+- A failed task command now exits with the command's own code instead of 1.
+- `effigy tasks status` reads the run journal and the task's gate
+  (`effigy.tasks-status.v2`, `effigy.tasks-status-all.v2`). A run is `running`
+  while it holds its gate, however long it takes; a run whose owner died reads
+  `interrupted` with the command that settles it; the newest 20 runs are kept.
+  A task with no runs yet shows its v0.14 record read-only for one release.
+- Running from inside a member catalog, however deep, resolves to the root
+  that declares it in `[catalog.members]`, so subdirectory and root runs see
+  the same catalogs, locks and status.
+- `effigy tasks --resolve` uses the same resolver as execution and reports
+  `route`: `typed-command`, `task`, `builtin`, `exec-alias`, `defer` or
+  `error`. A typed command such as `release` is reported as such, not as a
+  same-named catalog task it shadows.
+- A `tasks qa-group run` is a kernel run: its run id is the kernel run id,
+  and `tasks qa-group status` judges a live record by that run's gate, never
+  a PID or a 20-second heartbeat. A run whose owner exited stays `unknown`,
+  never a pass. Record write failures warn instead of failing the group.
+- Env-schema `exec()` values run after the task is admitted, as effects of its
+  run: a run refused by a live holder executes none of them. Their stdout is
+  capped at 1 MiB and their stderr tail at 64 KiB.
+- The vault passphrase and the local-dev secret marker no longer go into
+  Effigy's process environment, so task children no longer inherit the
+  passphrase; nested commands that need the vault use the local unlock
+  credential or prompt.
+
+### Removed
+- `effigy tasks unlock`. A task's lock releases itself when its run exits and
+  is never taken from a live run; the command now refuses with that
+  explanation. Find a live holder with `effigy tasks status <task>`.
+- The task cache: `tasks.<name>.cache` and `effigy tasks cache`. A task that
+  still declares `cache` is refused with the fix; `.effigy/cache` can be
+  deleted.
+- v0.14 lease locks (`.effigy/locks/`), task status records
+  (`.effigy/runtime/tasks/`, `.effigy/reports/tasks/`) and the 20-second
+  status staleness. They are never read for exclusion or deleted; a live
+  v0.14 holder still refuses its task until it exits, and `effigy doctor`
+  lists the families still present.
+
 ### Added
 - A whole-environment handover ends the losing environment's headless
   managed owners before stopping anything. When `container up` hands over

@@ -20,10 +20,11 @@ matrix are implemented (`test:kernel:faults`, `test:kernel:matrix`);
 engine-specific §12.1 scenarios are placeholders owned by their engine lanes.
 Fault points inside helper processes (sentinel settle, guard acknowledgement,
 detached supervisor) are not yet armed; architecture 032 records the limit.
-Engines have not adopted the kernel; the
-mechanisms in the adoption map (§10) remain current behavior. QA-group `stop` and `hard_timeout_ms` stay unavailable: contract
-[051](051-bounded-qa-groups-contract.md) keeps refusing them until this
-kernel's run journal, custody and deadlines exist.
+The task engine has adopted the kernel (effigy#217; §10.1 records each row);
+the other engines have not, and their adoption-map rows remain current
+behavior. QA-group runs are kernel runs, but `stop` and `hard_timeout_ms`
+stay unavailable: contract [051](051-bounded-qa-groups-contract.md) keeps
+refusing them until the task engine exposes them.
 
 Owner: runtime kernel (Queue lane `v015-kernel`)
 Architecture: [032](../architecture/032-runtime-kernel-architecture.md)
@@ -1825,6 +1826,27 @@ Current mechanisms and their kernel replacements. Evidence is at main
 | Bundle refresh during reads; blocking cache lock | `crates/effigy-manifest/src/bundles/source.rs:483`, `:520-540` | Prepare class; `Gate(Store bundles)` with deadline |
 | Scheduler client signal handler | `src/runner/host_scheduler/submit.rs:205-212` | subscribes to `SignalRouter` cancel; admission shape is Q-006 |
 | QA group records: 20 s staleness, truncating writes | `crates/effigy-runtime/src/qa_group_status.rs:19`, `:275-291` | `Run` rows; `stop` and `hard_timeout_ms` become possible |
+
+Task engine adoption (effigy#217, 2026-10-19):
+
+| Row | State |
+| --- | --- |
+| Lock key, lease lock, `tasks unlock`, hostname as namespace | Done. `TaskId` from the one resolver; `Gate(Task)` per run; shared locks are `Store(task-lock:<name>)` runs; holders are host gates only. `tasks unlock` refuses for one minor. |
+| Status rows | Done. `effigy.tasks-status.v2` projects run rows plus a gate probe ([018](018-task-status-query-surface-and-read-model-contract.md)). |
+| Status write failure | Done. Journal failures are warnings; the task's exit code stands (K10). |
+| Process group always; owned-children stop | Done for plain host commands: `Custody::spawn` with `Terminal::Inherit`, a per-run sentinel, the router installed before the first custody spawn. Sequence steps, container exec and managed processes keep their current spawners until the sequence engine and supervisor adopt custody. |
+| Generated sequence script | Not done: the sequence engine follow-up. |
+| Env-schema commands | Done. Resolved after `Admitted`; each `exec()` is a custody effect of the run with bounded capture. |
+| `set_var` | Done for the vault passphrase, the local-dev marker and the managed run token. Not done: the external task source isolation marker and sequence step environments, which need every spawner on spawn-spec env (sequence engine follow-up). |
+| Task cache | Done: removed. |
+| Git exclude on reads; bundle refresh during reads; scheduler signal handler | Not this task: read-path and admission (Q-006) follow-ups. |
+| QA group records | Done for liveness: a group run is a kernel run, and status reads its gate, not a PID or heartbeat. The member report files remain reports. |
+
+Prerequisite kernel additions for that adoption: `run::history`,
+`run::unclosed` and `RunSummary` (§5.6 status reads); `TaskId` and
+`ResourceId::key` accessors (§5.1); `Terminal::Inherit { capture }` and
+separately redacted stdout and stderr queues (§5.7); `Executable` identified by
+file identity instead of a content digest (§5.8, I-SV4).
 
 ### 10.2 Run supervisor
 

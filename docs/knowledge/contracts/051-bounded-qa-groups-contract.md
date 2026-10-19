@@ -409,7 +409,7 @@ Current availability after the contract 051 implementation:
 | Group run status and logs | Implemented. | Runs persist a definition snapshot, head/worktree context, member ledger, and run-scoped pipeline-redacted logs; `tasks qa-group status/logs` read them live and after completion. |
 | Ordinary process stop | Unavailable. | Parsing exists so the command can refuse before any side effect with the precise prerequisite: the owned-run supervision contract [052](052-runtime-kernel-contract.md), proposed and unavailable until implementation. |
 | `hard_timeout_ms` | Unavailable. | Definitions naming it fail validation with the same contract 052 prerequisite diagnostic. |
-| Owner loss and PID reuse | Preserved fail-closed. | Run records keep owner PID plus start/boot identity; a live record whose owner is gone reconciles to `unknown`, never a pass, and never credits a reused PID. |
+| Owner loss and PID reuse | Preserved fail-closed. | A group run is a kernel run (contract 052): its run ID is the kernel run id and its liveness is that run's gate, never a PID, start identity or heartbeat age. A live record whose run is interrupted or closed without a final record reconciles to `unknown`, never a pass. |
 | Owner `SIGKILL` | Honest incomplete evidence. | A dead owner cannot write a final record; status stays `unknown`/incomplete. Never a fabricated complete receipt. |
 
 `status`, `logs`, and `stop` address a run ID, not a selector or PID. Stop is

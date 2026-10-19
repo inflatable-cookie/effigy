@@ -104,7 +104,6 @@ Guide: `docs/guides/079-documentation-graph-profiles-and-context.md`
 | `contracts` | JSON contract validation |
 | `init` | Repo setup wizard; `--check`, `--checklist`, `--apply` |
 | `tasks migrate` | Import `package.json` scripts |
-| `tasks unlock` / `tasks cache` | Lock recovery; task cache |
 
 ## Distribution note
 

@@ -52,10 +52,9 @@ effigy watch --owner external test
 
 - `--json` is supported for bounded runs only (`--once` or `--max-runs <N>`).
 - Default excludes include `.git/**`, `node_modules/**`, and `target/**`.
-- Effigy acquires a watch-owner lock scope per target (`task:watch:<target>`).
-- Concurrent owners for the same target fail fast with lock diagnostics.
-- If a watch lock must be cleared manually, use
-  `effigy tasks unlock task:watch:<target>`.
+- Effigy holds a watch-owner lock scope per target (`task:watch:<target>`)
+  while the watcher runs; it is released when the watcher exits.
+- Concurrent owners for the same target fail fast, naming the live holder.
 
 ## `effigy init`
 

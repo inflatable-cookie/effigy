@@ -49,53 +49,30 @@ Policy keys:
 
 ## 3) Lock Scopes
 
-Runtime locks are file-based under `.effigy/locks`:
-- `task:<selector>` by default, using the full rendered selector (`qa:docs`,
-  `validate:activity-routing`, `acme-api/dev`)
-- `shared:<name>` when a task opts into a shared lock name
-- `profile:<task>/<profile>` (managed `mode = "tui"` runs)
+Every task run holds a kernel gate for its resolved task identity
+([017](../knowledge/contracts/017-task-status-record-and-active-run-model-contract.md)):
 
-Independent selectors keep independent task locks. Two validation or QA
-selectors can run together unless they share an explicit `lock` name.
+- `task:<selector>`: one gate per declared task. `build` from inside a catalog,
+  `api/build` and `./apps/api/build` are the same task and share it; `a:b` and
+  `a-b` never do.
+- `shared:<name>` when a task opts into a shared lock name; every task
+  declaring the name excludes the others.
+- A managed profile is recorded on its run; the gate stays per task.
 
-On lock conflict, Effigy reports:
-- scope
-- lock path
-- holder pid (when available)
-- holder start time epoch ms (when available)
-- holder heartbeat (when available)
-- remediation hint, including `effigy tasks status <selector>` after a wait
+Independent tasks keep independent gates. Two validation or QA selectors can
+run together unless they share an explicit `lock` name.
 
-Stale locks are auto-reclaimed when the holder PID is no longer alive, the
-recorded process is not an Effigy owner, or the heartbeat lease has expired.
-A live owner is never stolen.
+The gate is held exactly while the run's Effigy process lives and is released
+when it exits, `kill -9` included. Nothing reclaims, steals or unlocks a live
+gate, and a SIGSTOPped holder keeps it.
 
-Callers may wait for a live owner with `--lock-wait-ms <N>` or
-`EFFIGY_LOCK_WAIT_MS`. `0` (the default) fails immediately. When the wait
-expires, the error names the live owner and the status command to inspect it.
-`effigy tasks status <selector>` keeps the still-running owner, including
-in-process sequence tasks; retry after that owner releases. Lock-wait JSON (`effigy.lock-wait.v1`) is `error.details`
-in `--json` mode, not text stdout.
+On conflict (exit 75), Effigy names the holder from the gate probe: pid on this
+host, run id, age, and `stopped` when SIGSTOPped, plus
+`effigy tasks status <selector>` and the wait flag. JSON callers get
+`effigy.lock-wait.v2` as `error.details`.
 
-## 4) Manual Unlock
-
-Use the built-in unlock command:
-
-```sh
-effigy tasks unlock task:dev
-effigy tasks unlock validate:activity-routing
-effigy tasks unlock shared:dev-stack task:dev profile:dev/admin
-effigy tasks unlock --all
-effigy tasks unlock --all --yes --json
-```
-
-A task selector such as `validate:activity-routing` unlocks
-`task:validate:activity-routing`. Incomplete typed scopes such as
-`profile:foo` fail with that example instead of targeting a different family.
-
-`--json` returns `effigy.unlock.v1`. Broad unlock actions such as `--all`,
-`workspace`, `shared:<name>`, or multiple explicit scopes require confirmation
-in a real TTY. Use `--yes` for intentional automation.
+Callers may wait for a live run with `--lock-wait-ms <N>` before the task name,
+or `EFFIGY_LOCK_WAIT_MS`. `0` (the default) fails immediately.
 
 ## Related Guides
 

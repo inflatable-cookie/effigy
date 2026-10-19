@@ -167,7 +167,7 @@
     {
       "schema": "effigy.command.v1",
       "schema_version": 1,
-      "command": "effigy --json build --plan --repo <fixture_task_success>",
+      "command": "effigy --json --plan --repo <fixture_task_success> build",
       "surface": "catalog task",
       "status": "active",
       "payload_schema": "effigy.task.plan.v1"

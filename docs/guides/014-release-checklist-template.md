@@ -46,7 +46,7 @@ Owner: `name/team`
   - [ ] `effigy tasks`
   - [ ] `effigy catalog-a/tasks`
   - [ ] `effigy test --plan`
-  - [ ] `effigy catalog-a/test --plan`
+  - [ ] `effigy --plan catalog-a/test`
 
 ## 3) Versioning and Notes
 
