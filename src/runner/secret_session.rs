@@ -24,54 +24,58 @@ fn cached_secret_passphrase() -> Option<SecretValue> {
         .and_then(|guard| guard.clone())
 }
 
+/// The passphrase stays in this process's memory, never in its global
+/// environment (contract 052 K12). Same-process readers use
+/// [`session_passphrase`]; a child receives it only through its own spawn
+/// environment.
 fn cache_secret_passphrase(value: &SecretValue) {
     if let Ok(mut guard) = secret_passphrase_cache().lock() {
         *guard = Some(value.clone());
     }
-    // SAFETY: this mutation is process-local and keeps the active invocation's
-    // passphrase visible to same-process Rhai helpers and nested internal calls.
-    unsafe {
-        std::env::set_var(INTERNAL_SECRET_PASSPHRASE_ENV, value.expose());
-    }
+}
+
+/// The passphrase this invocation already holds: read once in this process,
+/// or handed to it by its parent's spawn environment.
+pub(in crate::runner) fn session_passphrase() -> Option<SecretValue> {
+    cached_secret_passphrase().or_else(|| {
+        std::env::var(INTERNAL_SECRET_PASSPHRASE_ENV)
+            .ok()
+            .map(SecretValue::new)
+    })
 }
 
 pub(in crate::runner) const fn internal_secret_passphrase_env() -> &'static str {
     INTERNAL_SECRET_PASSPHRASE_ENV
 }
 
+/// Active local-dev secret access scopes in this process. The marker lives
+/// here, not in the global environment (K12); a child learns it from the
+/// explicit `env` prefix its command line is given.
+static LOCAL_DEV_SECRET_ACCESS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
 pub(in crate::runner) fn local_dev_secret_access_active() -> bool {
-    std::env::var_os(LOCAL_DEV_SECRET_ACCESS_ENV).is_some()
+    LOCAL_DEV_SECRET_ACCESS.load(std::sync::atomic::Ordering::Acquire) > 0
+        || std::env::var_os(LOCAL_DEV_SECRET_ACCESS_ENV).is_some()
 }
 
 pub(in crate::runner) fn activate_local_dev_secret_access(
     active: bool,
 ) -> LocalDevSecretAccessGuard {
-    let previous = std::env::var_os(LOCAL_DEV_SECRET_ACCESS_ENV);
     if active {
-        // SAFETY: the guard restores this process-local marker after the task invocation.
-        unsafe {
-            std::env::set_var(LOCAL_DEV_SECRET_ACCESS_ENV, "1");
-        }
+        LOCAL_DEV_SECRET_ACCESS.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
     }
-    LocalDevSecretAccessGuard { active, previous }
+    LocalDevSecretAccessGuard { active }
 }
 
 pub(in crate::runner) struct LocalDevSecretAccessGuard {
     active: bool,
-    previous: Option<OsString>,
 }
 
 impl Drop for LocalDevSecretAccessGuard {
     fn drop(&mut self) {
-        if !self.active {
-            return;
-        }
-        // SAFETY: this restores the value captured by `activate_local_dev_secret_access`.
-        unsafe {
-            match self.previous.take() {
-                Some(value) => std::env::set_var(LOCAL_DEV_SECRET_ACCESS_ENV, value),
-                None => std::env::remove_var(LOCAL_DEV_SECRET_ACCESS_ENV),
-            }
+        if self.active {
+            LOCAL_DEV_SECRET_ACCESS.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
         }
     }
 }
@@ -114,9 +118,7 @@ pub(in crate::runner) fn read_vault_passphrase(
     prompt: &str,
     missing_tty_error: &str,
 ) -> Result<Option<SecretValue>, RunnerError> {
-    if std::env::var_os(TEST_SECRET_PASSPHRASE_ENV).is_none()
-        && std::env::var_os(INTERNAL_SECRET_PASSPHRASE_ENV).is_none()
-    {
+    if std::env::var_os(TEST_SECRET_PASSPHRASE_ENV).is_none() && session_passphrase().is_none() {
         if let Some(passphrase) = effigy_secrets::read_local_unlock_passphrase(vault_path)
             .map_err(|error| RunnerError::task_invocation(error.to_string()))?
         {
@@ -175,11 +177,7 @@ pub(in crate::runner) fn secret_passphrase_child_env() -> Vec<(OsString, OsStrin
 }
 
 pub(in crate::runner) fn inject_secret_passphrase_into_internal_command(command: String) -> String {
-    let secret = cached_secret_passphrase().or_else(|| {
-        std::env::var(INTERNAL_SECRET_PASSPHRASE_ENV)
-            .ok()
-            .map(SecretValue::new)
-    });
+    let secret = session_passphrase();
     let original = "env EFFIGY_INTERNAL_SUPPRESS_HEADER=1";
     let mut prefix = String::from("env");
     if let Some(secret) = secret {
@@ -200,13 +198,7 @@ pub(in crate::runner) fn inject_secret_passphrase_into_internal_command(command:
 }
 
 pub(in crate::runner) fn wrap_command_with_secret_passphrase_env(command: String) -> String {
-    let passphrase = cached_secret_passphrase()
-        .or_else(|| {
-            std::env::var(INTERNAL_SECRET_PASSPHRASE_ENV)
-                .ok()
-                .map(SecretValue::new)
-        })
-        .map(|value| value.expose().to_owned());
+    let passphrase = session_passphrase().map(|value| value.expose().to_owned());
     wrap_command_with_secret_passphrase_env_value(command, passphrase.as_deref())
 }
 
