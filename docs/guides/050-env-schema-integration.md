@@ -164,7 +164,7 @@ Configuration guardrails:
 For ad hoc runs, override the schema path at invocation time:
 
 ```bash
-effigy serve --env-schema config/staging.env.schema
+effigy --env-schema config/staging.env.schema serve
 ```
 
 `--env-schema <PATH>` is resolved relative to the selected catalog root unless

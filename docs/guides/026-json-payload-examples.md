@@ -1166,44 +1166,57 @@ fields:
 }
 ```
 
-### 3) Task Status (`effigy.tasks-status.v1`)
+### 3) Task Status (`effigy.tasks-status.v2`)
 
 ```json
 {
-  "schema": "effigy.tasks-status.v1",
-  "schema_version": 1,
-  "resolved_selector": "catalog_a/build",
-  "selected_catalog_root": "/workspace/app/catalog_a",
-  "state": "succeeded",
-  "currently_declared": true,
-  "active": null,
-  "latest": {
-    "status_key": "catalog-a-build-2db43d3e62fd7311",
-    "identity": {
-      "repo_root": "/workspace/app",
-      "selected_catalog_root": "/workspace/app/catalog_a",
-      "resolved_selector": "catalog_a/build",
-      "resolved_task_name": "build"
-    },
-    "state": "succeeded",
-    "stage": "finishing",
-    "execution_surface": "direct-cli",
-    "runtime_route": {
-      "route": "host"
-    },
-    "started_at": "20260510T190000Z",
-    "finished_at": "20260510T190005Z",
-    "duration_ms": 5000,
-    "lock_scopes": [
-      "task:catalog_a/build"
-    ],
-    "outcome": {
-      "summary": "task completed"
-    },
-    "latest_report_path": ".effigy/reports/tasks/catalog-a-build-2db43d3e62fd7311/latest.json",
-    "history_report_path": ".effigy/reports/tasks/catalog-a-build-2db43d3e62fd7311/history/20260510t190005z-succeeded.json"
+  "schema": "effigy.tasks-status.v2",
+  "schema_version": 2,
+  "task": {
+    "selector": "catalog_a/build",
+    "catalog": "catalog_a",
+    "name": "build",
+    "surface": "published"
   },
-  "stale_active": null,
+  "state": "running",
+  "current": {
+    "run_id": "agqvgrlm6bercdndodnbeu4tb4",
+    "state": "running",
+    "phase": "starting",
+    "pid": 12345,
+    "started_at_epoch_ms": 1792398204551
+  },
+  "latest": {
+    "run_id": "agqvgq2xz7c4ytj6fsz3s5s4ka",
+    "state": "succeeded",
+    "phase": "closed",
+    "exit_code": 0,
+    "cleanup": "complete",
+    "started_at_epoch_ms": 1792398100000,
+    "finished_at_epoch_ms": 1792398105000,
+    "duration_ms": 5000
+  },
+  "history": [
+    {
+      "run_id": "agqvgrlm6bercdndodnbeu4tb4",
+      "state": "running",
+      "phase": "starting",
+      "pid": 12345,
+      "started_at_epoch_ms": 1792398204551
+    },
+    {
+      "run_id": "agqvgq2xz7c4ytj6fsz3s5s4ka",
+      "state": "succeeded",
+      "phase": "closed",
+      "exit_code": 0,
+      "cleanup": "complete",
+      "started_at_epoch_ms": 1792398100000,
+      "finished_at_epoch_ms": 1792398105000,
+      "duration_ms": 5000
+    }
+  ],
+  "next": null,
+  "legacy": null,
   "warnings": [],
   "routing": {
     "repo_root": "/workspace/app",
@@ -1218,12 +1231,15 @@ fields:
 }
 ```
 
-### 4) Task Status Inventory (`effigy.tasks-status-all.v1`)
+A run whose owner exited without a result reads `"state": "interrupted"` with
+`"next": "effigy catalog_a/build"`; rerunning the task settles it first.
+
+### 4) Task Status Inventory (`effigy.tasks-status-all.v2`)
 
 ```json
 {
-  "schema": "effigy.tasks-status-all.v1",
-  "schema_version": 1,
+  "schema": "effigy.tasks-status-all.v2",
+  "schema_version": 2,
   "scope_root": "/workspace/app",
   "catalog_scopes": [
     {
@@ -1240,10 +1256,9 @@ fields:
     }
   ],
   "counts_by_state": {
+    "never-run": 1,
     "running": 1,
-    "succeeded": 1,
-    "unknown": 1,
-    "failed": 1
+    "succeeded": 1
   },
   "warnings": [],
   "rows": [
@@ -1252,32 +1267,13 @@ fields:
       "selected_catalog_root": "root",
       "state": "running",
       "currently_declared": true,
-      "last_updated": "20260510T190000Z",
-      "route": "host",
-      "active": {
-        "status_key": "root-test-4f5e64bf373f4d3c",
-        "identity": {
-          "repo_root": "/workspace/app",
-          "selected_catalog_root": "/workspace/app",
-          "resolved_selector": "test",
-          "resolved_task_name": "test"
-        },
+      "current": {
+        "run_id": "agqvgrlm6bercdndodnbeu4tb4",
         "state": "running",
-        "stage": "executing",
-        "execution_surface": "direct-cli",
-        "runtime_route": {
-          "route": "host"
-        },
-        "owner_pid": 12345,
-        "started_at": "20260510T185955Z",
-        "updated_at": "20260510T190000Z",
-        "lock_scopes": [
-          "task:test"
-        ],
-        "active_record_path": ".effigy/runtime/tasks/active/root-test-4f5e64bf373f4d3c.json"
+        "phase": "starting",
+        "pid": 12345,
+        "started_at_epoch_ms": 1792398204551
       },
-      "latest": null,
-      "stale_active": null,
       "warnings": []
     },
     {
@@ -1285,86 +1281,23 @@ fields:
       "selected_catalog_root": "catalog_a",
       "state": "succeeded",
       "currently_declared": true,
-      "last_updated": "20260510T185930Z",
-      "route": "host",
-      "active": null,
       "latest": {
-        "status_key": "catalog-a-build-2db43d3e62fd7311",
-        "identity": {
-          "repo_root": "/workspace/app",
-          "selected_catalog_root": "/workspace/app/catalog_a",
-          "resolved_selector": "catalog_a/build",
-          "resolved_task_name": "build"
-        },
+        "run_id": "agqvgq2xz7c4ytj6fsz3s5s4ka",
         "state": "succeeded",
-        "stage": "finishing",
-        "execution_surface": "direct-cli",
-        "runtime_route": {
-          "route": "host"
-        },
-        "started_at": "20260510T185925Z",
-        "finished_at": "20260510T185930Z",
-        "duration_ms": 5000,
-        "lock_scopes": [
-          "task:catalog_a/build"
-        ],
-        "outcome": {
-          "summary": "task completed"
-        },
-        "latest_report_path": ".effigy/reports/tasks/catalog-a-build-2db43d3e62fd7311/latest.json",
-        "history_report_path": ".effigy/reports/tasks/catalog-a-build-2db43d3e62fd7311/history/20260510t185930z-succeeded.json"
+        "phase": "closed",
+        "exit_code": 0,
+        "cleanup": "complete",
+        "started_at_epoch_ms": 1792398100000,
+        "finished_at_epoch_ms": 1792398105000,
+        "duration_ms": 5000
       },
-      "stale_active": null,
       "warnings": []
     },
     {
       "selector": "idle",
       "selected_catalog_root": "root",
-      "state": "unknown",
+      "state": "never-run",
       "currently_declared": true,
-      "last_updated": null,
-      "route": null,
-      "active": null,
-      "latest": null,
-      "stale_active": null,
-      "warnings": []
-    },
-    {
-      "selector": "old-task",
-      "selected_catalog_root": "root",
-      "state": "failed",
-      "currently_declared": false,
-      "no_longer_declared": true,
-      "last_updated": "20260510T185900Z",
-      "route": "host",
-      "active": null,
-      "latest": {
-        "status_key": "root-old-task-1513d23936e3152d",
-        "identity": {
-          "repo_root": "/workspace/app",
-          "selected_catalog_root": "/workspace/app",
-          "resolved_selector": "old-task",
-          "resolved_task_name": "old-task"
-        },
-        "state": "failed",
-        "stage": "finishing",
-        "execution_surface": "direct-cli",
-        "runtime_route": {
-          "route": "host"
-        },
-        "started_at": "20260510T185855Z",
-        "finished_at": "20260510T185900Z",
-        "duration_ms": 5000,
-        "lock_scopes": [
-          "task:old-task"
-        ],
-        "outcome": {
-          "summary": "old task failed"
-        },
-        "latest_report_path": ".effigy/reports/tasks/root-old-task-1513d23936e3152d/latest.json",
-        "history_report_path": ".effigy/reports/tasks/root-old-task-1513d23936e3152d/history/20260510t185900z-failed.json"
-      },
-      "stale_active": null,
       "warnings": []
     }
   ]
@@ -2370,46 +2303,32 @@ Starter list / starter emission still use the starter-oriented init contracts.
 }
 ```
 
-### 17) Unlock (`effigy.unlock.v1`)
+### 17) Lock conflict (`effigy.lock-wait.v2`)
+
+Returned as `error.details` (exit 75) when the task's gate, or a shared lock
+it declares, is held by a live run, with or without `--lock-wait-ms` /
+`EFFIGY_LOCK_WAIT_MS`. The holder comes from the gate probe; holding the gate
+is the holder's liveness, so there is nothing to unlock.
 
 ```json
 {
-  "schema": "effigy.unlock.v1",
-  "schema_version": 1,
-  "ok": true,
-  "root": "/workspace/app",
-  "removed": [
-    "workspace"
-  ],
-  "missing": [],
-  "all": false
-}
-```
-
-### 17b) Lock wait timeout (`effigy.lock-wait.v1`)
-
-Returned as `error.details` when `--lock-wait-ms` or `EFFIGY_LOCK_WAIT_MS`
-expires against a live owner.
-
-```json
-{
-  "schema": "effigy.lock-wait.v1",
-  "schema_version": 1,
+  "schema": "effigy.lock-wait.v2",
+  "schema_version": 2,
   "scope": "task:dev",
-  "lock_path": "/workspace/app/.effigy/locks/task-dev.lock",
-  "holder_pid": 1234,
-  "holder_started_at_epoch_ms": 1710000000000,
-  "holder_heartbeat_at_epoch_ms": 1710000000500,
-  "holder_hostname": "dev-host",
-  "holder_workspace_root": "/workspace/app",
+  "task": "dev",
+  "holder": {
+    "pid": 1234,
+    "run": "agqvgrlm6bercdndodnbeu4tb4",
+    "start": "1792398204:551",
+    "state": "running"
+  },
+  "holder_started_at_epoch_ms": 1792398204551,
   "wait_timeout_ms": 150,
   "waited_ms": 150,
   "status_command": "effigy tasks status dev",
-  "unlock_command": "effigy tasks unlock task:dev",
   "next": [
-    "inspect the live owner with `effigy tasks status dev`",
-    "retry after that owner releases the lock",
-    "or clear the scope with `effigy tasks unlock task:dev`"
+    "inspect the live run with `effigy tasks status dev`",
+    "wait for it with `effigy --lock-wait-ms 600000 dev`"
   ]
 }
 ```

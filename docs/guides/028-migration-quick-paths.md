@@ -204,7 +204,7 @@ If CI or scripts still reference them, migrate to `effigy doctor` or `effigy doc
 
 - prefer `--plan` and `--dry-run` modes first (`test --plan`, `init --dry-run`)
 - make one migration class at a time (manifest shape, then task routing, then CI JSON)
-- keep lock recovery documented (`effigy tasks unlock ...`) for interrupted dev flows
+- after an interrupted dev flow, `effigy tasks status <task>` names any live run; a killed run's lock is already released
 - use `effigy doctor --verbose` after each migration chunk
 
 ## 7) Quick Selector

@@ -32,8 +32,8 @@ pub(in crate::runner::tests) mod parsing {
 
 pub(in crate::runner::tests) mod builtin_contracts {
     pub(in crate::runner::tests) use effigy_builtin::test_support::{
-        parse_completion_contract_request, parse_config_contract_request,
-        parse_unlock_contract_request, CompletionParseContract, ConfigParseContract,
+        parse_completion_contract_request, parse_config_contract_request, CompletionParseContract,
+        ConfigParseContract,
     };
 }
 

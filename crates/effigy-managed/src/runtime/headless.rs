@@ -118,12 +118,7 @@ pub fn run_managed_task_headless(
         .iter()
         .map(|process| process.name.clone())
         .collect::<Vec<_>>();
-    let secret_values = supervised
-        .iter()
-        .flat_map(|process| process.secret_env.values())
-        .filter(|value| !value.is_empty())
-        .cloned()
-        .collect::<Vec<_>>();
+    let secret_values = crate::redacted_secret_values(supervised.iter());
     let mut log_files = open_process_logs(&runtime_dir, &process_names)?;
     // The session record exists before the first child starts: status, logs
     // and stop must never observe a live run through a missing record. The
@@ -138,9 +133,7 @@ pub fn run_managed_task_headless(
         status: "running".to_owned(),
         started_at_unix_ms: unix_time_ms(),
         container_environment: plan.container_environment.clone(),
-        run_token: std::env::var(crate::RUN_TOKEN_ENV)
-            .ok()
-            .filter(|token| !token.is_empty()),
+        run_token: plan.run_token.clone(),
         processes: supervised
             .iter()
             .enumerate()
@@ -195,13 +188,8 @@ pub fn run_managed_task_headless(
     let exec_cleanup = end_container_exec_groups(&runtime_dir, &state, settle);
     supervisor.terminate_all_graceful(SHUTDOWN_GRACE);
     let host_cleanup = verify_host_children_ended(&supervisor, &mut state);
-    // Release lock records the run's processes still hold: a SIGKILLed
-    // holder never drops its guard, and the env's teardown is not always
-    // part of this run's own cascade (a hybrid run attaches to an
-    // environment it does not own).
-    if exec_cleanup.is_ok() && host_cleanup.is_ok() {
-        release_run_locks(settle);
-    }
+    // Task gates held by the run's processes are released by the kernel
+    // when each holder exits; there are no lock records to sweep.
     if !owns_environment {
         exec_cleanup?;
     }
@@ -279,9 +267,7 @@ impl TuiSessionControl {
             status: "running".to_owned(),
             started_at_unix_ms: unix_time_ms(),
             container_environment: plan.container_environment.clone(),
-            run_token: std::env::var(crate::RUN_TOKEN_ENV)
-                .ok()
-                .filter(|token| !token.is_empty()),
+            run_token: plan.run_token.clone(),
             processes: plan
                 .processes
                 .iter()
@@ -584,6 +570,15 @@ pub fn managed_run_settle_error(
     Ok(state.settle_error)
 }
 
+/// The run token the session record of this task/profile names, if any. A
+/// stop that found its run through the gate (which records only the token's
+/// digest) matches the owner's rewritten record with it.
+pub fn managed_session_run_token(repo_root: &Path, task: &str, profile: &str) -> Option<String> {
+    read_state(&managed_runtime_dir(repo_root, task, profile).join("session.json"))
+        .ok()
+        .and_then(|state| state.run_token)
+}
+
 /// Whether the session record of this task/profile is readable as the current
 /// schema. A stop, status and logs request uses it to choose the locks-based
 /// fallback while a run is live without its record.
@@ -733,25 +728,6 @@ fn end_container_exec_groups(
             "managed exec cleanup failed: {}",
             failures.join("; ")
         )))
-    }
-}
-
-/// Release lock records attributed to this run's token through the lock
-/// owner-token rules.
-fn release_run_locks(settle: Option<&ManagedRunSettle<'_>>) {
-    let Some(settle) = settle else {
-        return;
-    };
-    let Some(release) = settle.release_run_locks else {
-        return;
-    };
-    let released = release();
-    if !released.is_empty() {
-        println!(
-            "[headless] released {} task lock(s) still attributed to this run: {}",
-            released.len(),
-            released.join(", ")
-        );
     }
 }
 
@@ -1343,6 +1319,7 @@ mod tests {
             gateway_auto_start: false,
             readiness: crate::ManagedTaskReadiness::default(),
             container_environment: Some("stack".to_owned()),
+            run_token: None,
         };
         let session =
             super::TuiSessionControl::new("dev", private.path(), &plan).expect("register TUI");
@@ -1406,6 +1383,7 @@ mod tests {
             gateway_auto_start: false,
             readiness: crate::ManagedTaskReadiness::default(),
             container_environment: Some("stack".to_owned()),
+            run_token: None,
         };
         super::run_managed_task_headless("dev", temp.path(), plan, None)
             .expect("quick headless run");

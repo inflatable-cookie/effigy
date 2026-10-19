@@ -4,15 +4,18 @@ use std::time::Duration;
 
 use super::ast::{EnvSchema, EnvSchemaEntry, EnvValueExpr, TemplatePart};
 use super::error::EnvSchemaError;
-use super::exec::run_exec_command;
+use super::exec::{run_exec_command, ExecRunner};
 use super::secret::{ResolvedValue, SecretString};
 
 /// Configuration for environment resolution.
-pub struct ResolutionContext {
+pub struct ResolutionContext<'a> {
     pub process_env: BTreeMap<String, String>,
     pub dotenv_overrides: BTreeMap<String, String>,
     pub exec_timeout: Duration,
     pub project_root: PathBuf,
+    /// The owning run's executor for `exec()` values; `None` runs them with
+    /// the bounded default.
+    pub exec: Option<&'a dyn ExecRunner>,
 }
 
 /// The result of resolving an env schema — all entries with their values.
@@ -171,7 +174,10 @@ fn resolve_value_expr(
         })),
 
         EnvValueExpr::Exec(command) => {
-            let output = run_exec_command(command, context.exec_timeout, &context.project_root)?;
+            let output = match context.exec {
+                Some(runner) => runner.run(command, context.exec_timeout, &context.project_root)?,
+                None => run_exec_command(command, context.exec_timeout, &context.project_root)?,
+            };
             Ok(Some(ResolvedEntry {
                 value: wrap_value(output, entry.annotations.sensitive),
                 source: ResolvedSource::ExecCommand,

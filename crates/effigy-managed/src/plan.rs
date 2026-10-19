@@ -96,6 +96,7 @@ fn build_managed_task_plan(
         fail_on_non_zero: task.fail_on_non_zero.unwrap_or(true),
         passthrough: passthrough.iter().skip(1).cloned().collect(),
         gateway_auto_start: task.gateway.unwrap_or(false),
+        run_token: None,
         readiness: ManagedTaskReadiness {
             health_wait: task.health_wait.unwrap_or(false),
             timeout_secs: task

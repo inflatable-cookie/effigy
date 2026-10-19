@@ -1041,8 +1041,7 @@ fn read_vault_payload(
 
 fn read_vault_command_passphrase(vault_path: &Path) -> Result<SecretValue, RunnerError> {
     if std::env::var_os("EFFIGY_TEST_SECRETS_PASSPHRASE").is_none()
-        && std::env::var_os(crate::runner::secret_session::internal_secret_passphrase_env())
-            .is_none()
+        && crate::runner::secret_session::session_passphrase().is_none()
     {
         if let Some(passphrase) = read_local_unlock_passphrase(vault_path)
             .map_err(|error| RunnerError::task_invocation(error.to_string()))?
@@ -1383,10 +1382,8 @@ fn read_optional_vault_passphrase(
     if let Ok(value) = std::env::var("EFFIGY_TEST_SECRETS_PASSPHRASE") {
         return Ok(Some(SecretValue::new(value)));
     }
-    if let Ok(value) =
-        std::env::var(crate::runner::secret_session::internal_secret_passphrase_env())
-    {
-        return Ok(Some(SecretValue::new(value)));
+    if let Some(value) = crate::runner::secret_session::session_passphrase() {
+        return Ok(Some(value));
     }
     if let Some(passphrase) = read_local_unlock_passphrase(vault_path)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?

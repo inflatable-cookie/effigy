@@ -820,12 +820,16 @@ fn secret_test_env_with_new_passphrase(
 }
 
 fn secret_test_env_clear() -> EnvGuard {
-    EnvGuard::set_many(&[
+    // The guard holds the test lock, so no other test can cache a passphrase
+    // between this clear and the caller's reads.
+    let guard = EnvGuard::set_many(&[
         ("EFFIGY_TEST_SECRETS_PASSPHRASE", None),
         ("EFFIGY_INTERNAL_SECRET_PASSPHRASE", None),
         ("EFFIGY_TEST_SECRETS_VALUE", None),
         ("EFFIGY_TEST_SECRETS_NEW_PASSPHRASE", None),
-    ])
+    ]);
+    crate::runner::secret_session::forget_session_passphrase_for_tests();
+    guard
 }
 
 fn read_test_vault(path: &std::path::Path) -> VaultEnvelope {

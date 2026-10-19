@@ -8,7 +8,7 @@ use crate::ctx::{
 use crate::custody::{Custody, EnvValue, Lifetime, ProcessSpec, SecretValue, Terminal};
 use crate::fs::{DirFd, FileName, Trust};
 use crate::gate::Wait;
-use crate::id::{Digest, ResolvedInvocation, ResourceId, RunId};
+use crate::id::{ResolvedInvocation, ResourceId, RunId};
 use crate::ident::{self, ProcessIdentity};
 use crate::observe::Observed;
 use crate::outcome::{Invocation, WorkloadOutcome};
@@ -18,7 +18,6 @@ use crate::run::{
 };
 use crate::signal::RouterHandle;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest as _, Sha256};
 use std::ffi::OsString;
 use std::io::{self, Read, Write};
 use std::os::fd::{AsRawFd, RawFd};
@@ -50,75 +49,85 @@ pub enum ClientMode {
     Owning,
     Detach,
 }
+/// The binary a run's helpers re-exec, identified by its file: device,
+/// inode, size and modification and change times. Any replacement or
+/// rewrite changes at least one, and the change time cannot be set back by
+/// the writer (I-SV4). Identification is a stat, so a large debug build costs
+/// nothing per run. The capturing process also holds the startup image open,
+/// so a rebuild that replaces the path (a `cargo build` of the running binary)
+/// still leaves that image to re-exec.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Executable {
     path: PathBuf,
     device: u64,
     inode: u64,
     size: u64,
-    digest: Digest,
+    modified: (i64, i64),
+    changed: (i64, i64),
+    #[serde(skip)]
+    image: Option<std::sync::Arc<std::fs::File>>,
 }
 impl Executable {
     pub fn current() -> io::Result<Self> {
         Self::capture(&std::env::current_exe()?)
     }
     pub fn capture(path: &Path) -> io::Result<Self> {
-        let parent = path
-            .parent()
-            .ok_or_else(|| io::Error::other("binary parent missing"))?;
-        let dir = DirFd::walk(parent, Trust::Operator).map_err(io::Error::other)?;
-        let name = FileName::new(
-            path.file_name()
-                .and_then(|n| n.to_str())
-                .ok_or_else(|| io::Error::other("invalid binary name"))?,
-        )
-        .map_err(io::Error::other)?;
-        let (mut file, _) = dir
-            .open_file(&name, libc::O_RDONLY, None, Trust::Operator)
-            .map_err(io::Error::other)?
-            .ok_or_else(|| io::Error::other("binary missing"))?;
-        let metadata = file.metadata()?;
-        // Production debug executables can exceed 128 MiB. Fingerprint in
-        // bounded chunks rather than allocating the executable's full size.
-        if metadata.len() > 1 << 30 {
-            return Err(io::Error::other("binary too large"));
-        }
-        let mut hash = Sha256::new();
-        let mut bytes = 0u64;
-        let mut buffer = [0u8; 64 * 1024];
-        loop {
-            let read = file.read(&mut buffer)?;
-            if read == 0 {
-                break;
-            }
-            bytes += read as u64;
-            if bytes > metadata.len() {
-                return Err(io::Error::other("binary changed during read"));
-            }
-            hash.update(&buffer[..read]);
-        }
-        if bytes != metadata.len() {
-            return Err(io::Error::other("binary changed during read"));
+        let image = open_executable(path)?;
+        let metadata = image.metadata()?;
+        if !metadata.is_file() {
+            return Err(io::Error::other("binary is not a regular file"));
         }
         Ok(Self {
             path: path.into(),
             device: metadata.dev(),
             inode: metadata.ino(),
             size: metadata.len(),
-            digest: Digest(hash.finalize().into()),
+            modified: (metadata.mtime(), metadata.mtime_nsec()),
+            changed: (metadata.ctime(), metadata.ctime_nsec()),
+            image: Some(std::sync::Arc::new(image)),
         })
+    }
+    /// The held startup image when its path no longer names it and its
+    /// content is unchanged. Unlinking the path updates the inode's change
+    /// time, so content identity here is device, inode, size and mtime.
+    fn replaced_image(&self) -> Option<&std::fs::File> {
+        let image = self.image.as_deref()?;
+        let held = image.metadata().ok()?;
+        (self.verify().is_err()
+            && (held.dev(), held.ino(), held.len()) == (self.device, self.inode, self.size)
+            && (held.mtime(), held.mtime_nsec()) == self.modified)
+            .then_some(image)
     }
     pub fn verify(&self) -> io::Result<()> {
         let fresh = Self::capture(&self.path)?;
         if self.device != fresh.device
             || self.inode != fresh.inode
             || self.size != fresh.size
-            || self.digest != fresh.digest
+            || self.modified != fresh.modified
+            || self.changed != fresh.changed
         {
             return Err(io::Error::other("startup binary replaced"));
         }
         Ok(())
     }
+}
+/// Descriptor-relative, no-follow open of a trusted binary (K13).
+fn open_executable(path: &Path) -> io::Result<std::fs::File> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| io::Error::other("binary parent missing"))?;
+    let dir = DirFd::walk(parent, Trust::Operator).map_err(io::Error::other)?;
+    let name = FileName::new(
+        path.file_name()
+            .and_then(|n| n.to_str())
+            .ok_or_else(|| io::Error::other("invalid binary name"))?,
+    )
+    .map_err(io::Error::other)?;
+    let (file, _) = dir
+        .open_file(&name, libc::O_RDONLY, None, Trust::Operator)
+        .map_err(io::Error::other)?
+        .ok_or_else(|| io::Error::other("binary missing"))?;
+    Ok(file)
 }
 #[derive(Debug, Clone)]
 pub struct LifecyclePlan {
@@ -178,6 +187,62 @@ pub(crate) fn helper(executable: &Executable, entry: &str) -> io::Result<Command
     }
     Ok(command)
 }
+/// A private copy of a replaced startup image under the state root, removed
+/// once the helper that runs it has acknowledged (I-SV4).
+struct PrivateImage<'a> {
+    dir: &'a DirFd,
+    name: FileName,
+    executable: Executable,
+}
+impl Drop for PrivateImage<'_> {
+    fn drop(&mut self) {
+        let _ = self.dir.remove(&self.name, false);
+    }
+}
+fn private_image<'a>(
+    root: &'a StateRoot,
+    executable: &Executable,
+) -> Result<Option<PrivateImage<'a>>, RunError> {
+    let Some(image) = executable.replaced_image() else {
+        return Ok(None);
+    };
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_nanos());
+    let name =
+        FileName::new(&format!("exe-{}-{nonce}", std::process::id())).map_err(io::Error::other)?;
+    let (mut copy, _) = root
+        .dir()
+        .open_file(
+            &name,
+            libc::O_WRONLY | libc::O_EXCL,
+            Some(0o700),
+            Trust::Private,
+        )
+        .map_err(io::Error::other)?
+        .ok_or_else(|| io::Error::other("private image missing"))?;
+    let mut pin = PrivateImage {
+        dir: root.dir(),
+        name,
+        executable: executable.clone(),
+    };
+    let mut buffer = vec![0u8; 1 << 20];
+    let mut offset = 0;
+    loop {
+        let count = std::os::unix::fs::FileExt::read_at(image, &mut buffer, offset)?;
+        if count == 0 {
+            break;
+        }
+        copy.write_all(&buffer[..count])?;
+        offset += count as u64;
+    }
+    if offset != executable.size {
+        return Err(io::Error::other("startup image changed while copied").into());
+    }
+    drop(copy);
+    pin.executable = Executable::capture(&root.dir().join(pin.name.as_str()))?;
+    Ok(Some(pin))
+}
 pub(crate) fn spawn_sentinel(
     run: &Run<'_>,
     root: &StateRoot,
@@ -192,9 +257,23 @@ pub(crate) fn spawn_sentinel(
         .parent()
         .and_then(Path::parent)
         .ok_or_else(|| RunError::Invalid("invalid state root".into()))?;
-    let mut command = helper(&plan.executable, "__kernel-sentinel")?;
-    command.stdout(Stdio::piped());
-    let mut child = command.spawn()?;
+    // A rebuilt path re-execs the startup image, never the replacement.
+    let pin = private_image(root, &plan.executable)?;
+    let executable = pin.as_ref().map_or(&plan.executable, |pin| &pin.executable);
+    let mut busy = 0;
+    let mut child = loop {
+        let mut command = helper(executable, "__kernel-sentinel")?;
+        command.stdout(Stdio::piped());
+        match command.spawn() {
+            // A just-written image can be briefly busy while another thread's
+            // fork still holds its write descriptor.
+            Err(error) if error.raw_os_error() == Some(libc::ETXTBSY) && busy < 200 => {
+                busy += 1;
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            spawned => break spawned?,
+        }
+    };
     // The fault driver waits for every helper, registered or not (§12.1).
     #[cfg(all(test, feature = "fault-injection"))]
     crate::fault::note_helper(child.id());
@@ -207,7 +286,7 @@ pub(crate) fn spawn_sentinel(
         owner: run.fence().resource.clone(),
         run: run.id(),
         next: next.argv().iter().map(|a| a.as_bytes().to_vec()).collect(),
-        executable: plan.executable.clone(),
+        executable: executable.clone(),
     };
     nonblocking(writer.as_raw_fd())?;
     write_frame(&mut writer, &config)?;
@@ -223,6 +302,8 @@ pub(crate) fn spawn_sentinel(
             "invalid sentinel ready acknowledgement".into(),
         ));
     }
+    // The sentinel verified and runs its image: the private copy can go.
+    drop(pin);
     let identity = ident::process_identity(child.id())
         .verified()
         .cloned()

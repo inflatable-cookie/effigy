@@ -43,7 +43,7 @@ contexts.
 | --- | --- | --- |
 | `id` | 5.1 | typed-selector lock names (`src/runner/manifest.rs`), FNV status keys (`crates/effigy-execution/src/task_status.rs`), `safe_component` slugs, runtime-scope tokens (`crates/effigy-core/src/worktree_scope.rs`) |
 | `ctx` | 5.2, 5.3 | ad hoc budgets (`src/runner/graph_time_budget.rs`, `crates/effigy-env/src/exec.rs`) |
-| `gate` | 5.4 | the task lease (`src/runner/locking/io.rs`), `RouteTableLock`, `fs2` sites; keeps the flock rationale in `crates/effigy-codegraph/src/refresh.rs` |
+| `gate` | 5.4 | the task lease (replaced by task gates in effigy#217), `RouteTableLock`, `fs2` sites; keeps the flock rationale in `crates/effigy-codegraph/src/refresh.rs` |
 | `store` | 5.5 | seven atomic-write helpers; the fsynced journal in `crates/effigy-host-run/src/secure_fs.rs` is the model |
 | `run` | 5.6, 5.9 | `session.json`, task status records, environment markers, `stop.requested`, transition receipts |
 | `custody` | 5.7 | `crates/effigy-process`, `src/runner/owned_children.rs`, the retained host child identity in `src/runner/host_process.rs` |
@@ -376,10 +376,19 @@ controlled executable whose environment is observable.
 cancel token, which observes the signal mailbox without requiring an owner-loop
 poll. Cleanup tokens remain independent. Supervisor and sentinel are hidden
 same-binary re-exec entry points; product dispatch remains engine-lane work.
-The executable's file identity and digest are checked on both sides of startup.
+The executable's file identity (device, inode, size, modification and change
+times) is checked on both sides of startup; a stat, so debug builds of any size
+start helpers without hashing. Task-engine ruling (effigy#217): the content
+digest was dropped because a replacement or rewrite always changes that
+identity, and hashing a 185 MiB debug binary three times per run was the
+dominant per-task cost.
 Invocation and explicit spawn environments travel over bounded pipes, never argv.
 Capture merges stdout and stderr before redacting into the rotating log, bounded
-tail or event queue. A second streaming pass prevents replacement text or
+tail or event queue. Engines that report the two streams apart also drain two
+separately redacted queues, never joined. `Terminal::Inherit` hands the child
+the owner's own stdin (and stdout and stderr unless captured) and the terminal
+foreground when the owner holds it; inherited streams are the operator's, not an
+Effigy sink. A second streaming pass prevents replacement text or
 merged boundaries from reconstructing secrets; its fallback separator is NUL,
 which spawn secrets cannot contain. Log ENOSPC
 changes capture metadata without changing the workload outcome.

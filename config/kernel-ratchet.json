@@ -286,7 +286,6 @@
       "std::fs::write": 0
     },
     "crates/effigy-runtime/src/qa_group_status.rs": {
-      "nix::sys::signal::kill": 1,
       "std::fs::remove_file": 1,
       "std::fs::write": 2
     },
@@ -347,9 +346,6 @@
       "std::env::remove_var": 1,
       "std::env::set_var": 2,
       "std::fs::remove_file": 1,
-      "std::fs::write": 1
-    },
-    "src/runner/cache/store.rs": {
       "std::fs::write": 1
     },
     "src/runner/container_command/data/hooks.rs": {
@@ -424,12 +420,7 @@
     },
     "src/runner/execute/pipeline/managed.rs": {
       "std.process.Command.new": 1,
-      "std.process.Command.spawn": 1,
-      "std::env::remove_var": 1,
-      "std::env::set_var": 1
-    },
-    "src/runner/execute/process.rs": {
-      "std.process.Command.new": 1
+      "std.process.Command.spawn": 1
     },
     "src/runner/execute/sequence_run.rs": {
       "std.process.Command.new": 2,
@@ -437,11 +428,6 @@
       "std.process.Command.status": 1,
       "std::env::remove_var": 1,
       "std::env::set_var": 2
-    },
-    "src/runner/execute/task_status.rs": {
-      "std.fs.OpenOptions.write": 2,
-      "std::fs::remove_file": 4,
-      "std::fs::rename": 1
     },
     "src/runner/gateway_command/daemon.rs": {
       "nix::sys::signal::kill": 1,
@@ -484,20 +470,6 @@
     "src/runner/host_scheduler/submit.rs": {
       "signal_hook.registration": 1
     },
-    "src/runner/locking/io.rs": {
-      "std.fs.OpenOptions.write": 2,
-      "std::fs::remove_file": 9,
-      "std::fs::rename": 1,
-      "std::fs::write": 2
-    },
-    "src/runner/locking/io/files.rs": {
-      "std::fs::remove_file": 1
-    },
-    "src/runner/locking/io/stale.rs": {
-      "nix::sys::signal::kill": 1,
-      "std.process.Command.new": 1,
-      "std.process.Command.output": 1
-    },
     "src/runner/owned_children.rs": {
       "nix::sys::signal::kill": 11,
       "signal_hook.registration": 1
@@ -505,10 +477,6 @@
     "src/runner/qa_group_command/mod.rs": {
       "std.process.Command.new": 1,
       "std.process.Command.output": 1
-    },
-    "src/runner/secret_session.rs": {
-      "std::env::remove_var": 1,
-      "std::env::set_var": 3
     },
     "src/runner/secret_vault.rs": {
       "std.fs.OpenOptions.write": 0,
@@ -542,13 +510,6 @@
   "tests": {
     "crates/effigy-artifacts/src/lib.rs": {
       "std::fs::write": 8
-    },
-    "crates/effigy-builtin/src/completion/install.rs": {
-      "std::env::remove_var": 1,
-      "std::env::set_var": 1
-    },
-    "crates/effigy-builtin/src/completion/prompt.rs": {
-      "std::env::set_var": 1
     },
     "crates/effigy-builtin/src/init/agent.rs": {
       "std::fs::write": 2
@@ -738,8 +699,7 @@
       "std.process.Command.spawn": 7
     },
     "crates/effigy-gateway/src/tls/tests.rs": {
-      "std::env::remove_var": 3,
-      "std::env::set_var": 7
+      "std::env::set_var": 1
     },
     "crates/effigy-gateway/src/transition_lock.rs": {
       "std::fs::write": 3
@@ -783,7 +743,6 @@
       "std.process.Command.new": 14,
       "std.process.Command.output": 7,
       "std.process.Command.status": 7,
-      "std::env::set_var": 1,
       "std::fs::write": 50
     },
     "crates/effigy-rhai/src/tests/copy_if_missing.rs": {
@@ -799,13 +758,9 @@
       "std.process.Command.output": 12
     },
     "crates/effigy-rhai/src/tests/mod.rs": {
-      "std::env::remove_var": 2,
-      "std::env::set_var": 3,
+      "std::env::remove_var": 1,
+      "std::env::set_var": 2,
       "std::fs::write": 3
-    },
-    "crates/effigy-rhai/src/tests/runtime.rs": {
-      "std::env::remove_var": 2,
-      "std::env::set_var": 2
     },
     "crates/effigy-runtime/src/container_manager.rs": {
       "std::env::remove_var": 9,
@@ -839,7 +794,6 @@
       "std::fs::write": 1
     },
     "src/runner/bootstrap_command/tests.rs": {
-      "std::env::set_var": 2,
       "std::fs::write": 64
     },
     "src/runner/container_command/bounded_exec/tests.rs": {
@@ -888,8 +842,6 @@
       "std::fs::write": 3
     },
     "src/runner/demo_command/tests.rs": {
-      "std::env::remove_var": 2,
-      "std::env::set_var": 2,
       "std::fs::write": 2
     },
     "src/runner/deps_command.rs": {
@@ -923,17 +875,11 @@
     },
     "src/runner/execute/pipeline/standard.rs": {
       "std.process.Command.new": 1,
-      "std.process.Command.output": 1,
-      "std::env::remove_var": 2,
-      "std::env::set_var": 1
+      "std.process.Command.output": 1
     },
     "src/runner/execute/sequence_run.rs": {
       "std.process.Command.new": 1,
       "std.process.Command.spawn": 1
-    },
-    "src/runner/execute/task_status.rs": {
-      "std::fs::File::create": 1,
-      "std::fs::write": 1
     },
     "src/runner/gateway_command/daemon.rs": {
       "nix::sys::signal::kill": 3,
@@ -962,11 +908,9 @@
       "std.process.Command.new": 1,
       "std.process.Command.spawn": 1
     },
-    "src/runner/locking/io.rs": {
-      "std::fs::write": 3
-    },
     "src/runner/managed_settle.rs": {
-      "std::fs::write": 2
+      "std.process.Command.new": 1,
+      "std.process.Command.spawn": 1
     },
     "src/runner/owned_children.rs": {
       "nix::sys::signal::kill": 3,
@@ -982,7 +926,6 @@
       "std::fs::write": 5
     },
     "src/runner/secrets_command.rs": {
-      "std::env::remove_var": 1,
       "std::fs::write": 1
     },
     "src/runner/service_command/pack/tests.rs": {
@@ -1017,6 +960,11 @@
       "std::fs::remove_file": 1,
       "std::fs::write": 13
     },
+    "src/runner/task_engine/legacy.rs": {
+      "std.process.Command.new": 1,
+      "std.process.Command.spawn": 1,
+      "std::fs::write": 2
+    },
     "src/runner/uninstall_command.rs": {
       "std::fs::write": 2
     },
@@ -1032,8 +980,6 @@
       "std.process.Command.status": 1
     },
     "src/tests/runner_tests/managed_and_locking_tests/locking_tests.rs": {
-      "std.process.Command.new": 2,
-      "std.process.Command.spawn": 2,
       "std::fs::write": 1
     },
     "src/tests/runner_tests/managed_and_locking_tests/managed_headless_tests.rs": {
@@ -1051,7 +997,7 @@
       "std::fs::write": 22
     },
     "src/tests/runner_tests/runner_core_tests/direct_task_dispatch_tests.rs": {
-      "std::fs::write": 2
+      "std::fs::write": 1
     },
     "src/tests/runner_tests/runner_core_tests/graph_catalog_tests.rs": {
       "std::fs::write": 3

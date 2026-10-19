@@ -40,11 +40,11 @@ Built-in Tasks
 
 fn run_effigy(args: &[&str], repo: Option<&Path>, color: bool) -> String {
     let mut command = Command::new(env!("CARGO_BIN_EXE_effigy"));
-    for arg in args {
-        command.arg(arg);
-    }
     if let Some(repo) = repo {
         command.arg("--repo").arg(repo);
+    }
+    for arg in args {
+        command.arg(arg);
     }
     if color {
         command.env("EFFIGY_COLOR", "always").env_remove("NO_COLOR");

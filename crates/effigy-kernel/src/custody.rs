@@ -54,6 +54,13 @@ pub enum Terminal {
     None,
     Pty,
     Foreground,
+    /// The owner's own stdin, and its stdout and stderr unless `capture`:
+    /// the operator's terminal or pipe, never an Effigy sink. The child's
+    /// group takes the terminal only when the owner is that terminal's
+    /// foreground group. Captured streams are bounded and redacted as usual.
+    Inherit {
+        capture: bool,
+    },
 }
 #[derive(Clone)]
 pub struct ProcessSpec {
@@ -163,6 +170,10 @@ pub(crate) struct ProcessCore {
     receipt: ProcessReceipt,
     log: Option<capture::Log>,
     output: VecDeque<u8>,
+    /// stdout and stderr kept apart for engines that report them separately.
+    /// Each has its own redactor and is never joined with the other.
+    streams: [VecDeque<u8>; 2],
+    stream_redactors: [Redactor; 2],
     queue_max: usize,
     stdout: Option<OwnedFd>,
     stderr: Option<OwnedFd>,
@@ -355,6 +366,11 @@ impl Custody {
                 receipt,
                 log: log.ok(),
                 output: VecDeque::new(),
+                streams: [VecDeque::new(), VecDeque::new()],
+                stream_redactors: [
+                    Redactor::new(secrets.clone()),
+                    Redactor::new(secrets.clone()),
+                ],
                 queue_max: cx.operation().limits().queue_bytes,
                 stdout: Some(stdout),
                 stderr: Some(stderr),
@@ -416,6 +432,12 @@ impl OwnedProcess {
     }
     pub fn take_output(&self) -> Vec<u8> {
         lock(&self.core).output.drain(..).collect()
+    }
+    /// Drains the separately redacted stdout and stderr queues.
+    pub fn take_stream_output(&self) -> (Vec<u8>, Vec<u8>) {
+        let mut core = lock(&self.core);
+        let [stdout, stderr] = &mut core.streams;
+        (stdout.drain(..).collect(), stderr.drain(..).collect())
     }
     pub fn tail(&self) -> Vec<u8> {
         lock(&self.core).tail.iter().copied().collect()
@@ -482,6 +504,14 @@ impl ProcessCore {
             self.tail.pop_front();
         }
     }
+    fn stream_sink(&mut self, index: usize, bytes: &[u8], eof: bool) {
+        let clean = self.stream_redactors[index].push(bytes, eof);
+        let queue = &mut self.streams[index];
+        queue.extend(clean);
+        while queue.len() > self.queue_max {
+            queue.pop_front();
+        }
+    }
     fn drain(&mut self) {
         for index in 0..2 {
             let fd = if index == 0 {
@@ -525,8 +555,10 @@ impl ProcessCore {
                     } else {
                         buf[..count as usize].to_vec()
                     };
+                    self.stream_sink(index, &bytes, false);
                     self.sink(&bytes, false);
                 } else {
+                    self.stream_sink(index, &buf[..count as usize], false);
                     self.sink(&buf[..count as usize], false);
                 }
             }
@@ -536,8 +568,12 @@ impl ProcessCore {
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner)
                         .push(&[], true);
+                    self.stream_sink(index, &bytes, false);
                     self.sink(&bytes, false);
                 }
+            }
+            if eof {
+                self.stream_sink(index, &[], true);
             }
             if !eof {
                 if index == 0 {

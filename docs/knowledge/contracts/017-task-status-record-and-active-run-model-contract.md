@@ -1,300 +1,107 @@
 # 017 - Task Status Record And Active Run Model Contract
 
-Owner: Platform
+Owner: Platform (task engine, Queue lane `v015-task-engine`)
 Created: 2026-05-10
+Rebuilt: 2026-10-19 on the runtime kernel ([052](052-runtime-kernel-contract.md) §5.1, §5.4, §5.6, §10.1)
 
 ## Purpose
 
-Effigy needs one status truth model for repo tasks that survives beyond live
-locks and caller-local runtime state.
-
-The task-status contract sits above lock ownership and below any future
-operator-facing `effigy tasks status` query surface. It defines what a task
-status target is, how active versus completed records are represented, and how
-stale active records are reconciled before they can be trusted.
-
-## Scope
-
-The task-status model owns:
-
-- task-status identity across repo root, selected catalog root, and resolved
-  selector
-- normalized status state and running-stage taxonomy
-- active status record layout under runtime state
-- completed status record layout under report history
-- stale/live reconciliation rules for active records
-- shared write-side ownership through Effigy's execution pipeline
-
-The task-status model does not own:
-
-- final `effigy tasks status` CLI output shape
-- machine-wide inventory
-- control verbs such as stop, restart, tail, or repair
-- status for non-task built-ins such as `doctor`, `release`, or `container`
-- retention or pruning policy for task-status history
-
-## Core Terms
-
-Task status target:
-
-- one resolved repo task identity
-- keyed internally by repo root, selected catalog root, resolved selector, and
-  optional resolved profile label
-
-Task status key:
-
-- the stable filesystem-safe identifier derived from task-status identity
-- used for both runtime active-record storage and report-history storage
-- deterministic across repeated executions of the same resolved task in the
-  same selected scope
-
-Active record:
-
-- the runtime-state record for work Effigy currently believes is executing
-
-Completed record:
-
-- the latest plus append-only history record for work Effigy finished, blocked,
-  or cancelled
-
-Live record:
-
-- an active record whose pid, heartbeat, and ownership evidence are still
-  trustworthy
-
-Stale active record:
-
-- an active record that still exists on disk but no longer corresponds to a
-  live Effigy-owned execution
-
-## Status Identity Rules
-
-The public query identity remains the selector an operator runs.
-
-The internal status key must include:
-
-- repo root
-- selected catalog root
-- resolved selector string
-- optional resolved profile label when profile dispatch is involved
-
-This is required so descendant catalogs with the same selector do not collide
-in one repo.
-
-The first-round implementation must derive the status key from normalized
-identity fields rather than caller-local temporary paths.
-
-The status key does not need to be human-friendly, but it must be:
-
-- deterministic
-- filesystem-safe
-- collision-resistant across descendant scopes in one repo
-
-## Normalized Status States
-
-The first-round high-level state set is:
-
-- `running`
-- `succeeded`
-- `failed`
-- `cancelled`
-- `blocked`
-- `unknown`
-
-`blocked` is reserved for bounded operator-visible failures where execution did
-not truly begin, such as:
-
-- lock conflict, including a caller wait that expired against a live owner
-- unsupported runtime route
-- missing required runtime dependency
-
-Any task that executed and ended unsuccessfully is `failed`.
-
-## Running Stage Taxonomy
-
-Active records may also carry a narrower stage value under `running`.
-
-First-round stage set:
-
-- `routing`
-- `waiting_for_lock`
-- `runtime_prep`
-- `executing`
-- `managed_session`
-- `handoff`
-- `finishing`
-
-These stages refine `running`. They are not independent top-level states.
-
-`waiting_for_lock` covers both immediate lock acquisition and a bounded wait.
-The wait is `--lock-wait-ms` or `EFFIGY_LOCK_WAIT_MS`; omitted or `0` fails
-without waiting. A live owner is never stolen. A waiter that does not acquire
-the lock must not replace or delete that owner's active record. The owner
-publishes an active record as soon as the lock is held, including in-process
-sequence tasks (`run = [{ task = ... }]`). When the wait expires, the blocked
-outcome names the live owner and `effigy tasks status <selector>`; that query
-keeps showing the running owner.
-Independent selectors use the full rendered selector as `task:<selector>` lock
-identity unless a task opts into `shared:<name>`.
-
-## Persistence Layout
-
-Active records live under runtime state:
-
-- `.effigy/runtime/tasks/active/<status-key>.json`
-
-Completed records live under report history:
-
-- `.effigy/reports/tasks/<status-key>/latest.json`
-- `.effigy/reports/tasks/<status-key>/history/<timestamp>-<slug>.json`
-
-The first round adds no retention or pruning policy.
-
-Active, latest, and history JSON files are published as complete documents.
-The writer stages bytes in a sibling temporary file in the destination
-directory, then replaces the destination name with an atomic rename. Readers
-observe:
-
-- no file, before the first successful publication
-- a complete previous document
-- a complete new document
-
-They never observe a destination truncated to empty or a partial JSON body from
-an in-progress write. A failed publication leaves the previous valid destination
-in place and removes only that writer's staged file. Staged names are not status
-records; they use a reserved `.*.effigy-status-*.tmp` form and are not listed as
-status keys.
-
-Unreadable or unparseable destination bytes remain a fail-closed error. Absence
-is only `NotFound`. Empty or corrupt content is not treated as no record.
-
-## Minimum Active Record Fields
-
-Active records must capture at least:
-
-- status key
-- normalized state, always `running`
-- current stage
-- repo root
-- selected catalog root
-- resolved selector
-- resolved task name
-- resolved profile when present
-- execution surface
-- runtime route summary
-- owner pid
-- started timestamp
-- last heartbeat/update timestamp
-- lock scopes when known
-- active record path
-
-The first round may add extra evidence fields, but it must not require the
-later read/query lane to inspect arbitrary caller-local files to understand the
-active task.
-
-## Active Truth Rules
-
-Effigy may present a task as actively running only when:
-
-- an active record exists
-- its pid or heartbeat evidence is still live enough to trust
-- it still corresponds to real Effigy-owned execution
-
-If an active record is stale:
-
-- do not present it as `running`
-- fall back to latest completed status when present
-- surface stale-record evidence to the later query/report layer
-- leave cleanup or repair to a later bounded lane
-
-The first-round reconciliation order is:
-
-1. load active record by status key
-2. verify the recorded pid still exists
-3. verify heartbeat/update freshness when heartbeat evidence is present
-4. verify the record still maps to an Effigy-owned execution context when that
-   evidence exists
-5. only then trust the active record as live
-
-If any required live check fails, the record is stale for status purposes even
-if its file still exists on disk.
-
-## Shared Write-Side Ownership
-
-Task status must be written through the shared execution pipeline rather than
-caller-local branches.
-
-The first covered execution surfaces are:
-
-- direct routed task execution
-- managed task execution
-- task-backed `dev` or managed-session entry
-- deferred execution
-- bootstrap delegated task execution
-- run-array and Rhai embedded task re-entry through the shared request path
-
-The first implementation slice may start at the canonical execution
-request/plan boundary and does not need to hook every legacy caller-local path
-independently if those paths already converge there.
-
-## Minimum Record Fields
-
-Completed records must capture at least:
-
-- status key
-- normalized state
-- stage reached
-- started and finished timestamps
-- duration
-- selector
-- selected catalog root
-- resolved task name
-- resolved profile when present
-- execution surface
-- runtime route summary
-- lock scopes
-- outcome summary
-- error family/code for `failed` and `blocked`
-- written report paths
-
-The first round may represent `TaskStatusRecord` as a shared envelope with
-active/completed variants, or as sibling typed structs under one model. The
-later query lane must not depend on caller-specific ad hoc JSON.
-
-## First Implementation Slice
-
-The smallest acceptable first implementation slice is:
-
-- typed task-status key and record model
-- runtime/report path helpers for active and completed record locations
-- one shared writer owner on the canonical execution path
-- write coverage for direct routed execution plus any other surfaces that
-  already converge through the same path
-- focused stale/live reconciliation helpers
-
-This first slice does not need to add the final read/query CLI surface yet.
-
-## Drift Triggers
-
-Update this contract when any of these change:
-
-- task-status identity key fields
-- normalized state or stage taxonomy
-- on-disk status record locations
-- stale/live reconciliation rules
-- execution surfaces that are covered by the shared writer
-- minimum record fields expected by later read/query layers
-- lock-wait timeout source, live-owner inspect path, or default task lock identity
-- whole-record publication visibility, including staged-file replace and
-  fail-closed empty or corrupt destination bytes
-
-## Validation
-
-- focused task execution tests across routed, managed, bootstrap, deferred, and
-  embedded surfaces
-- active-record stale/live reconciliation tests
-- descendant-scope collision tests
-- writer/reader publication regression for truncated versus complete records
-- publication failure preserves the prior valid record and removes only the
-  owned staged file
-- docs path checks for roadmap/spec/contract front doors
+One identity, one exclusion and one status truth for every repository task
+run. A task run is a kernel `Run`; its owner is the task's `TaskId`; holding
+the owner gate is the run's liveness. There is no lease, heartbeat,
+staleness window, unlock command or task cache.
+
+## Task identity (K1)
+
+The resolver produces one `TaskTarget` per invocation. Its kernel `TaskId` is:
+
+| Field | Value |
+| --- | --- |
+| checkout | the root's `CheckoutId` (below) |
+| catalog | the selected catalog's path relative to the resolved root, `/`-separated; `""` for the root catalog |
+| surface | `published` or `draft` |
+| task | the declared task name |
+| profile | a managed profile, recorded on the run; the gate stays per task |
+
+Every spelling that selects the same declared task (`build` from inside the
+catalog, `api/build`, `./apps/api/build`) gives one `TaskId`, one gate and one
+history. Distinct tasks never collide: `a:b` and `a-b` are two identities.
+Identity never derives from the selector as typed.
+
+`CheckoutId`:
+
+- linked worktree or ephemeral clone: its runtime-scope token, so Compose names
+  do not change;
+- primary Git checkout: `.git/effigy-checkout-id`, minted on the first run;
+- a root with no `.git` of its own: derived from its canonical path.
+
+Only a run (Mutate) mints a token; status reads it and reports "no runs yet"
+when it is absent.
+
+## Exclusion (K2)
+
+`Gate(Task)` on the owner, acquired by `Run::begin` before anything else
+happens. It is held exactly while the owning Effigy process lives, and the
+kernel releases it when that process exits for any reason, SIGKILL included.
+A SIGSTOPped holder keeps it. Nothing steals, reclaims or unlocks a gate.
+
+- `--lock-wait-ms <MS>` (before the task name) or `EFFIGY_LOCK_WAIT_MS`
+  bounds the wait; omitted or `0` fails at once.
+- `lock = "<name>"` adds a shared lock: a `Store(task-lock:<name>)` resource
+  held by its own run around the task's run, so every task declaring the name
+  excludes the others.
+- A refused admission writes nothing. Its error (`effigy.lock-wait.v2` in JSON
+  details, exit 75) names the holder from the gate probe: pid on this host, run
+  id and age, and `stopped` for a SIGSTOPped holder. It points at
+  `effigy tasks status <task>` and `--lock-wait-ms`, never at breaking the lock.
+- A v0.14 lease record (`.effigy/locks/*.lock`) whose holder is still alive on
+  this host refuses its task until that process exits. Dead, foreign or
+  corrupt records are ignored and never deleted; `doctor` lists them.
+
+## Run record
+
+| Phase | Gate | Status state |
+| --- | --- | --- |
+| `admitted`, `starting`, `active` | held | `running` |
+| `stopping` | held | `stopping` |
+| `closed`, complete cleanup | free | `succeeded`, `failed`, `cancelled`, `timed-out`, `not-started` or `interrupted` |
+| `closed`, incomplete cleanup | free | `failed-cleanup` |
+| not closed | free | `interrupted`; rerunning the task settles it first (K5) |
+| unreadable | any | `unknown` |
+
+- `Admitted` commits before the first effect, including env-schema `exec()`
+  commands (K3). A run refused by a live holder executes none of them.
+- A plain host command runs under kernel custody: its own process group, a
+  durable custody record before it executes, a per-run sentinel that settles
+  the run if the owner is SIGKILLed, and a settle that verifies the group
+  closed. INT, TERM and HUP reach the group through the one signal router;
+  the owner exits 128 + n with the run recorded `cancelled`.
+- The workload outcome is recorded before settle. A failed journal write is a
+  warning on stderr and never changes the task's exit code (K10).
+- Retention keeps the newest 20 settled runs per task (K15).
+- Runs live in the kernel store, `~/.effigy/state/kernel.db`. Nothing about
+  a task run is written into the checkout.
+
+## Not owned here
+
+- `effigy tasks status` output: [018](018-task-status-query-surface-and-read-model-contract.md).
+- Sequence step journals and the one sequence engine: the follow-up task engine
+  work.
+- Managed (`dev`) run supervision: the run supervisor lane. Managed runs hold
+  the same task gate for their whole lifetime and record their run token's
+  digest on the run. Each managed process receives the token through its spawn
+  environment, never the supervisor's global environment (K12). The token marks
+  ownership and grants nothing on its own, so process logs do not mask it.
+
+## Migration
+
+v0.14 status records (`.effigy/runtime/tasks/`, `.effigy/reports/tasks/`) are
+never imported or rewritten. For one minor, `effigy tasks status` shows a
+task's v0.14 latest record read-only until the task first runs. `doctor`
+lists the v0.14 families still present.
+
+## Drift triggers
+
+Update this contract when `TaskId` fields, the checkout token rule, gate
+semantics, the phase-to-state table, custody for plain commands, the
+lock-conflict shape or retention change.

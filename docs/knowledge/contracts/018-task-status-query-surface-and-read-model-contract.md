@@ -1,209 +1,79 @@
 # 018 - Task Status Query Surface And Read Model Contract
 
-Owner: Platform
+Owner: Platform (task engine)
 Created: 2026-05-10
+Rebuilt: 2026-10-19 on run records ([017](017-task-status-record-and-active-run-model-contract.md), [052](052-runtime-kernel-contract.md) §5.6 status)
 
 ## Purpose
 
-Effigy needs one read-side contract for task status so the later
-`effigy tasks status` surface can answer operator questions without weakening
-task routing rules or silently dropping stale status truth.
+`effigy tasks status` answers "is this task running, and how did it last
+end?" truthfully. It projects the task's run rows plus a fresh probe of its
+gate. History never stands in for current state, and age never makes a live
+run stale.
 
-This contract sits above the persisted task-status record model from `017` and
-below the final CLI/help/docs layer. It defines the read-side scope, selector
-resolution rules, and the minimum text/JSON result shape the query surface must
-honor.
+## Command surface
 
-## Scope
+- `effigy tasks status <selector> [--json]`
+- `effigy tasks status --all [--json]`
 
-The task-status query contract owns:
+Both are pure reads (R2): they create, import and repair nothing, and never
+acquire a gate.
 
-- selector-based read semantics for `effigy tasks status <selector>`
-- repo-scoped inventory semantics for `effigy tasks status --all`
-- merging live active records, latest completed records, and current task
-  discovery into one read model
-- visibility rules for stale or no-longer-declared records
-- minimum single-selector and `--all` JSON contract fields
+## Selector resolution
 
-The task-status query contract does not own:
+`<selector>` resolves through the same resolver as execution, from the same
+directory rules, so it names the same `TaskId` the run used. An ambiguous or
+unknown selector returns the normal routing error; status never guesses a
+nearby record.
 
-- machine-wide or `--global` status inventory
-- control verbs such as stop, restart, unlock, or tail
-- retention or cleanup policy for task-status history
-- status for non-task built-ins such as `doctor`, `release`, or `container`
+## Read model
 
-## Command Surface
+For the resolved task, newest run first (at most 20):
 
-The first read-side surface is:
+- the newest run is not closed and its gate is held: `running` (or
+  `stopping`), with the holder's pid;
+- the newest run is not closed and its gate is free: `interrupted`, with
+  `next` naming the command that settles it (`effigy <task>`);
+- the newest run is closed: its recorded outcome;
+- no runs: `never-run`;
+- the run journal or checkout identity is unreadable: `unknown`, with a
+  warning.
 
-- `effigy tasks status <selector>`
-- `effigy tasks status --all`
-- `--json`
-- standard repo targeting through normal command-context rules
+`current` is the newest run while it is open. `latest` is the newest closed
+run. A live run is never replaced by an older outcome.
 
-The first round adds no extra filter flags beyond `--all`.
+A task with no runs shows its v0.14 `latest` record, read-only and marked
+`legacy`, for one minor.
 
-## Selector Resolution Rules
+## JSON
 
-For `effigy tasks status <selector>`:
+Single selector: `effigy.tasks-status.v2`.
 
-- resolve through the same routing rules as normal task execution
-- return status for the resolved selector in the selected catalog scope
-- include routing evidence so the operator can see what scope won
+| Field | Meaning |
+| --- | --- |
+| `task` | `selector` (runnable spelling), `catalog` (root-relative), `name`, `surface` |
+| `state` | the state above |
+| `current` | the open run: `run_id`, `phase`, `pid`, `profile`, `started_at_epoch_ms` |
+| `latest` | the newest closed run: adds `exit_code`, `signal`, `cleanup`, `finished_at_epoch_ms`, `duration_ms` |
+| `history` | newest first, the same run shape |
+| `next` | the settling command for an interrupted run |
+| `legacy` | the v0.14 record when the task has no runs |
+| `warnings` | unreadable-state evidence |
+| `routing` | repo root, catalog alias, catalog root and manifest, selection mode and evidence |
 
-If routing is ambiguous:
+`--all`: `effigy.tasks-status-all.v2`, with `scope_root`, `catalog_scopes`,
+`counts_by_state`, `warnings` and one row per declared task (`selector`,
+`selected_catalog_root`, `state`, `currently_declared`, `current`, `latest`,
+`next`, `warnings`). A live run of a task no longer declared is a row with
+`currently_declared: false`.
 
-- use the normal task-routing failure family
-- do not invent a best-effort fallback
+## Text
 
-If the selector does not resolve:
+One selector shows the task, state, catalog and root; the open run's id, phase,
+start and pid; the settling command for an interrupted run; and the last run's
+outcome, exit code, duration and cleanup. `--all` groups rows by catalog.
 
-- return the normal not-found failure family
-- do not fabricate an `unknown` status row for a missing task
+## Drift triggers
 
-For one-selector queries, there is no fallback to “closest known status record”
-when routing fails. The read surface must stay aligned with execution routing.
-
-## `--all` Inventory Scope
-
-`--all` is repo-local. It inventories:
-
-- the current repo root
-- descendant catalogs/workspaces under that repo root
-
-It must not scan outside the current repo boundary.
-
-Inventory sources are:
-
-- known task selectors from current task discovery
-- active task-status records under this repo scope
-- latest completed task-status records under this repo scope
-
-If a status record exists for a selector no longer declared in the current
-manifest set:
-
-- keep it visible
-- mark it as unresolved / no-longer-declared
-- do not silently drop it
-
-If a selector is currently declared but has never run and has no persisted
-record yet:
-
-- include it in `--all`
-- classify it as `unknown`
-- keep it distinct from stale/no-longer-declared rows
-
-## Read Model
-
-The query surface merges status truth in this order:
-
-1. trusted live active record when present
-2. otherwise latest completed record
-3. otherwise no known status
-
-A missing record file is absence. An existing file that cannot be read or
-parsed is an error, not `unknown` and not a fallback to latest as if the
-active record were missing. The read path does not retry empty or corrupt
-bytes into absence.
-
-The read model must surface:
-
-- stale active record warnings/evidence from the `017` reconciliation layer
-- whether the row still maps to a currently declared task
-- the selected catalog scope for the row
-
-For one-selector queries:
-
-- if a stale active record exists and a latest completed record exists, return
-  the latest completed record plus warnings/evidence about the stale active
-  record
-- if a stale active record exists and no completed record exists, return
-  `unknown` plus the stale-record warnings/evidence
-
-`unknown` is reserved for rows the read model knows about but cannot currently
-classify beyond “no trusted active record and no completed record”.
-
-## Text Output Rules
-
-For one selector, text output must show at least:
-
-- resolved selector
-- current state
-- live stage, pid, elapsed time, and route/runtime summary when running
-- otherwise last outcome, when, and duration
-- selected catalog root / repo target
-- warnings like stale active record ignored
-
-A caller whose lock wait expired uses this one-selector query to inspect the
-live owner named in the lock-conflict error, then retries after release. The
-query must keep a trusted live active record for that owner; a waiter's
-blocked completed record must not hide it.
-
-For `--all`, text output must:
-
-- group by selected catalog root or logical task scope
-- show one row per selector with state, last update, short route/runtime
-  summary, and unresolved/stale notes when present
-
-## JSON Schemas
-
-The first read-side schemas are:
-
-- `effigy.tasks-status.v1`
-- `effigy.tasks-status-all.v1`
-
-Single-selector payload must include at least:
-
-- resolved selector
-- selected catalog root
-- resolved/current state
-- trusted active record when live
-- latest completed record when present
-- stale active record warnings/evidence when present
-- warnings/evidence
-- routing summary
-
-`--all` payload must include at least:
-
-- scope root
-- effective catalog scopes
-- rows
-- counts by state
-- warnings/evidence
-
-Each `--all` row must include at least:
-
-- selector
-- selected catalog root
-- state
-- currently-declared boolean
-- trusted active record when live
-- latest completed record when present
-- unresolved/no-longer-declared marker when applicable
-- stale active warnings/evidence when applicable
-
-## Read-Side Ownership
-
-The read path should stay below CLI glue.
-
-Expected ownership split:
-
-- task inventory and selector mapping: task discovery/routing layer
-- active/latest record load and stale reconciliation: runtime task-status read
-  module
-- text/JSON shaping: dedicated report module
-
-The CLI layer should only parse and dispatch.
-
-## Drift Triggers
-
-Update this contract when any of these change:
-
-- `tasks status` selector resolution rules
-- repo-plus-descendant `--all` scope rules
-- visibility rules for stale or undeclared records
-- minimum text result content
-- JSON schema ids or minimum fields
-- read-side ownership boundary between runtime/task discovery/report layers
-- the lock-wait inspect path that names `tasks status <selector>`
-- fail-closed handling of empty, partial, or otherwise unparseable status files
+Update this contract when the projection rules, the state set, the history
+bound, the legacy view or either schema changes.

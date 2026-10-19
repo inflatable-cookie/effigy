@@ -102,7 +102,6 @@ Guide: `docs/guides/079-documentation-graph-profiles-and-context.md`
 | `docs` | Link/JSON/index/workflow-path QA checks, plus bounded `docs context` documentation retrieval |
 | `contracts` | JSON contract validation |
 | `init` | Repo setup wizard; `--check`, `--checklist`, `--apply` |
-| `tasks unlock` / `tasks cache` | Lock recovery; task cache |
 
 ## Distribution note
 

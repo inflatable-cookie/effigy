@@ -162,6 +162,20 @@ impl Blocked {
         drop(input_write);
         match spec.terminal {
             Terminal::None => {}
+            Terminal::Inherit { capture } => {
+                // A closed owner descriptor keeps the EOF pipe or capture pipe.
+                if let Ok(fd) = duplicate(libc::STDIN_FILENO) {
+                    input_read = fd;
+                }
+                if !capture {
+                    if let Ok(fd) = duplicate(libc::STDOUT_FILENO) {
+                        out_write = fd;
+                    }
+                    if let Ok(fd) = duplicate(libc::STDERR_FILENO) {
+                        err_write = fd;
+                    }
+                }
+            }
             Terminal::Foreground => {
                 // A foreground child reads the real terminal, not an EOF pipe.
                 input_read = duplicate(libc::STDIN_FILENO)?;
@@ -290,6 +304,12 @@ impl Blocked {
         if matches!(spec.terminal, Terminal::Foreground) {
             child.streams.as_mut().expect("streams present").2 =
                 Some(TerminalLease::take(pid as u32)?);
+        }
+        if matches!(spec.terminal, Terminal::Inherit { .. }) && owner_holds_terminal() {
+            // Best effort: without the terminal an interactive child stops on
+            // its first read, but a non-interactive one is unaffected.
+            child.streams.as_mut().expect("streams present").2 =
+                TerminalLease::take(pid as u32).ok();
         }
         Ok(child)
     }
@@ -462,6 +482,16 @@ fn descriptor_limit() -> io::Result<i32> {
     Ok(limit)
 }
 
+/// The owner is its controlling terminal's foreground group. A background
+/// owner never takes the terminal (tcsetpgrp would stop it with SIGTTOU).
+fn owner_holds_terminal() -> bool {
+    // SAFETY: isatty, tcgetpgrp and getpgrp only observe borrowed stdin and
+    // the calling process.
+    unsafe {
+        libc::isatty(libc::STDIN_FILENO) == 1
+            && libc::tcgetpgrp(libc::STDIN_FILENO) == libc::getpgrp()
+    }
+}
 fn duplicate(fd: RawFd) -> io::Result<OwnedFd> {
     // SAFETY: borrows the live source; the returned descriptor has sole ownership.
     let copy = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 10) };

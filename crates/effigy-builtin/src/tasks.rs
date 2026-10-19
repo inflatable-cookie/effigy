@@ -4,7 +4,6 @@ use effigy_cli::{HelpTopic, TaskInvocation, TasksArgs};
 
 use super::command_spec::run_passthrough_builtin_command;
 use super::render_builtin_help_topic;
-use super::{cache, unlock};
 use crate::BuiltinError;
 use crate::BuiltinRuntimePorts;
 use effigy_tasks::TaskRuntimeArgs;
@@ -16,22 +15,12 @@ pub(super) fn run_builtin_tasks(
     task: &TaskInvocation,
     runtime_args: &TaskRuntimeArgs,
     target_root: &Path,
-    catalogs: &[effigy_manifest::LoadedCatalog],
-    invocation_cwd: &Path,
+    _catalogs: &[effigy_manifest::LoadedCatalog],
+    _invocation_cwd: &Path,
 ) -> Result<Option<String>, BuiltinError> {
-    if let Some(nested) = nested_tasks_builtin(task, runtime_args) {
+    if let Some(nested) = nested_tasks_builtin(runtime_args) {
         return match nested {
-            NestedTasksBuiltin::Unlock { task, args } => {
-                unlock::run_builtin_unlock(ports, &task, &args, target_root)
-            }
-            NestedTasksBuiltin::Cache { task, runtime_args } => cache::run_builtin_cache(
-                ports,
-                &task,
-                &runtime_args,
-                target_root,
-                catalogs,
-                invocation_cwd,
-            ),
+            NestedTasksBuiltin::Retired(message) => Err(BuiltinError::task_invocation(message)),
         };
     }
 
@@ -64,48 +53,28 @@ pub(super) fn run_builtin_tasks(
     )
 }
 
+/// `tasks unlock` has no job: a run's gate is released by the kernel when
+/// its holder exits, and is never stolen from a live one.
+pub(crate) const RETIRED_UNLOCK: &str =
+    "`effigy tasks unlock` was removed in v0.15. A task's lock is \
+    its run's kernel gate: it is released the moment that run exits, including after a crash or \
+    SIGKILL, and is never taken from a live run. Find the live holder with \
+    `effigy tasks status <task>`; wait for it with `effigy --lock-wait-ms <ms> <task>`, or stop \
+    that run";
+pub(crate) const RETIRED_CACHE: &str = "`effigy tasks cache` was removed in v0.15 with the task \
+    cache. Effigy no longer skips tasks from a fingerprint; let the tool's own cache decide, and \
+    delete `.effigy/cache`";
+
 enum NestedTasksBuiltin {
-    Unlock {
-        task: TaskInvocation,
-        args: Vec<String>,
-    },
-    Cache {
-        task: TaskInvocation,
-        runtime_args: TaskRuntimeArgs,
-    },
+    /// Removed in v0.15; one-release refusal naming the replacement.
+    Retired(&'static str),
 }
 
-fn nested_tasks_builtin(
-    task: &TaskInvocation,
-    runtime_args: &TaskRuntimeArgs,
-) -> Option<NestedTasksBuiltin> {
-    let (subcommand, tail) = runtime_args.passthrough.split_first()?;
+fn nested_tasks_builtin(runtime_args: &TaskRuntimeArgs) -> Option<NestedTasksBuiltin> {
+    let subcommand = runtime_args.passthrough.first()?;
     match subcommand.as_str() {
-        "unlock" => Some(NestedTasksBuiltin::Unlock {
-            task: nested_task(task, "unlock"),
-            args: tail.to_vec(),
-        }),
-        "cache" => Some(NestedTasksBuiltin::Cache {
-            task: nested_task(task, "cache"),
-            runtime_args: nested_runtime_args(runtime_args, tail),
-        }),
+        "unlock" => Some(NestedTasksBuiltin::Retired(RETIRED_UNLOCK)),
+        "cache" => Some(NestedTasksBuiltin::Retired(RETIRED_CACHE)),
         _ => None,
-    }
-}
-
-fn nested_task(task: &TaskInvocation, subcommand: &str) -> TaskInvocation {
-    TaskInvocation {
-        name: format!("{} {subcommand}", task.name),
-        args: Vec::new(),
-    }
-}
-
-fn nested_runtime_args(runtime_args: &TaskRuntimeArgs, tail: &[String]) -> TaskRuntimeArgs {
-    TaskRuntimeArgs {
-        repo_override: runtime_args.repo_override.clone(),
-        verbose_root: runtime_args.verbose_root,
-        env_schema_override: runtime_args.env_schema_override.clone(),
-        lock_wait_ms: runtime_args.lock_wait_ms,
-        passthrough: tail.to_vec(),
     }
 }

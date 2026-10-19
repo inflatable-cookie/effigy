@@ -14,6 +14,15 @@ mod text;
 use crate::DoctorError;
 use crate::DoctorReport;
 
+/// Info findings stay out of the report except those an operator acts on.
+pub(crate) fn renders_section(section: &crate::DoctorFindingSection) -> bool {
+    section.severity != crate::DoctorSeverity::Info
+        || section.check_id == crate::check_id::DEPENDENCY_LINK_HEALTH
+        || section
+            .check_id
+            .starts_with(crate::check_id::TASKS_LEGACY_STATE_PREFIX)
+}
+
 pub(super) fn render_text(report: &DoctorReport, verbose: bool) -> Result<String, DoctorError> {
     text::render_text(report, verbose)
 }

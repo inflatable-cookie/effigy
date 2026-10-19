@@ -8,6 +8,8 @@ pub struct GlobalCliOptions {
     pub repo_override: Option<PathBuf>,
     pub task_verbose_root: bool,
     pub task_env_schema: Option<PathBuf>,
+    pub task_lock_wait_ms: Option<String>,
+    pub task_plan: bool,
     pub host_run_request_id: Option<String>,
 }
 
@@ -54,6 +56,13 @@ pub fn strip_global_cli_flags(
                     })?);
             }
             "--verbose-root" => options.task_verbose_root = true,
+            "--lock-wait-ms" => {
+                options.task_lock_wait_ms =
+                    Some(args.next().ok_or(CliParseError::MissingFlagValue {
+                        flag: "--lock-wait-ms".to_owned(),
+                    })?);
+            }
+            "--plan" => options.task_plan = true,
             "--help" | "-h" => {
                 parsing_leading_globals = false;
                 stripped.push(arg);
@@ -100,6 +109,68 @@ pub fn apply_global_cli_options(
     mut cmd: Command,
     options: &GlobalCliOptions,
 ) -> Result<Command, CliParseError> {
+    // A repository task: Effigy's flags are the ones before the selector,
+    // and the task receives everything after it (D1-34). Built-in commands
+    // routed as tasks keep their own flag positions, with or without a
+    // catalog prefix (`catalog_a/tasks`).
+    if let Command::Task(task) = &mut cmd {
+        let routed_name = task.name.rsplit('/').next().unwrap_or(&task.name);
+        if !effigy_core::builtin_tasks::is_builtin_task_name(routed_name)
+            && !task
+                .args
+                .iter()
+                .any(|arg| arg == effigy_core::task_args::TASK_ARGS_BOUNDARY)
+        {
+            let mut effigy = Vec::new();
+            if let Some(repo) = options.repo_override.as_ref() {
+                effigy.extend(["--repo".to_owned(), repo.display().to_string()]);
+            }
+            if options.task_verbose_root {
+                effigy.push("--verbose-root".to_owned());
+            }
+            if let Some(schema) = options.task_env_schema.as_ref() {
+                effigy.extend(["--env-schema".to_owned(), schema.display().to_string()]);
+            }
+            if let Some(wait) = options.task_lock_wait_ms.as_ref() {
+                effigy.extend(["--lock-wait-ms".to_owned(), wait.clone()]);
+            }
+            if options.task_plan {
+                effigy.push("--plan".to_owned());
+            }
+            if options.json_mode {
+                effigy.push("--json".to_owned());
+            }
+            let task_args = std::mem::take(&mut task.args);
+            task.args = effigy_core::task_args::join_task_args(effigy, task_args);
+            if let Some(request_id) = options.host_run_request_id.as_ref() {
+                task.args
+                    .push(crate::INTERNAL_HOST_RUN_REQUEST_ID_ARG.to_owned());
+                task.args.push(request_id.clone());
+            }
+            return Ok(cmd);
+        }
+    }
+    if let Some(wait) = options.task_lock_wait_ms.as_ref() {
+        match &mut cmd {
+            Command::Task(task) => {
+                if !runtime_flag_present_before_passthrough(&task.args, "--lock-wait-ms") {
+                    task.args.insert(0, wait.clone());
+                    task.args.insert(0, "--lock-wait-ms".to_owned());
+                }
+            }
+            _ => return Err(unknown_argument("--lock-wait-ms")),
+        }
+    }
+    if options.task_plan {
+        match &mut cmd {
+            Command::Task(task) => {
+                if !runtime_flag_present_before_passthrough(&task.args, "--plan") {
+                    task.args.insert(0, "--plan".to_owned());
+                }
+            }
+            _ => return Err(unknown_argument("--plan")),
+        }
+    }
     if let Some(repo_override) = options.repo_override.as_ref() {
         match &mut cmd {
             Command::Bundle(args) => {
@@ -288,16 +359,14 @@ pub(super) fn apply_global_json_flag(mut cmd: Command, json_mode: bool) -> Comma
         Command::Service(args) => args.output_json = true,
         Command::Task(task) => {
             if !runtime_flag_present_before_passthrough(&task.args, "--json") {
-                let insert_at = if task
+                // After a nested built-in's subcommand word, which may follow
+                // a leading `--repo <PATH>`.
+                let insert_at = task
                     .args
-                    .first()
-                    .map(String::as_str)
-                    .is_some_and(|arg| matches!(arg, "unlock" | "cache" | "completion"))
-                {
-                    1
-                } else {
-                    0
-                };
+                    .iter()
+                    .take(3)
+                    .position(|arg| matches!(arg.as_str(), "unlock" | "cache" | "completion"))
+                    .map_or(0, |index| index + 1);
                 task.args.insert(insert_at, "--json".to_owned());
             }
         }
@@ -378,6 +447,9 @@ pub(super) fn command_requests_json(cmd: &Command, global_json_mode: bool) -> bo
 }
 
 pub fn runtime_flag_present_before_passthrough(args: &[String], flag: &str) -> bool {
+    if let Some(split) = effigy_core::task_args::split_task_args(args) {
+        return split.effigy.iter().any(|arg| arg == flag);
+    }
     args.iter()
         .take_while(|arg| arg.as_str() != "--")
         .any(|arg| arg == flag)

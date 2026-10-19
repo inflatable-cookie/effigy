@@ -51,7 +51,7 @@ Resolution: dev front
 status: ok
 catalog: root
 task: dev
-lock_scopes: task:dev, profile:dev/front
+lock_scopes: task:dev
 evidence:
 - selected shallowest catalog `root` by depth 0 from workspace root
 - managed profile `front` resolved via invocation `dev front`
@@ -91,7 +91,7 @@ Resolution: dev missing-profile
 status: error
 catalog: <none>
 task: dev
-lock_scopes: task:dev, profile:dev/missing-profile
+lock_scopes: <none>
 • warn: managed profile `missing-profile` not found for task `dev`; available: default, front
 
 ";
@@ -125,7 +125,7 @@ Resolution: api
 status: ok
 catalog: root
 task: api
-lock_scopes: shared:backend
+lock_scopes: task:api, shared:backend
 evidence:
 - selected shallowest catalog `root` by depth 0 from workspace root
 

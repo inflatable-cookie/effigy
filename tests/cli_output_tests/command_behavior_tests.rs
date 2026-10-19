@@ -197,10 +197,10 @@ fn run_json_cli_command_with_path(
     )
     .expect("join test PATH");
     Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .arg("--json")
-        .args(args)
         .arg("--repo")
         .arg(root)
+        .arg("--json")
+        .args(args)
         .env("NO_COLOR", "1")
         .env("PATH", joined_path)
         .output()
@@ -392,12 +392,12 @@ task = "dev"
 
 fn spawn_demo_run_process(root: &std::path::Path, demo_id: &str) -> OwnedCliChild {
     Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("--repo")
+        .arg(root)
         .arg("--json")
         .arg("demo")
         .arg("run")
         .arg(demo_id)
-        .arg("--repo")
-        .arg(root)
         .env("NO_COLOR", "1")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -407,11 +407,11 @@ fn spawn_demo_run_process(root: &std::path::Path, demo_id: &str) -> OwnedCliChil
 
 fn spawn_demo_text_run_process_with_input(root: &std::path::Path, demo_id: &str) -> OwnedCliChild {
     Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("--repo")
+        .arg(root)
         .arg("demo")
         .arg("run")
         .arg(demo_id)
-        .arg("--repo")
-        .arg(root)
         .env("NO_COLOR", "1")
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
@@ -2031,11 +2031,11 @@ run = "sh -lc 'test -t 1 && printf \"tty-yes\\n\" || printf \"tty-no\\n\"; print
     .expect("write demo manifest");
 
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("--repo")
+        .arg(&root)
         .arg("demo")
         .arg("run")
         .arg("prompt")
-        .arg("--repo")
-        .arg(&root)
         .env("NO_COLOR", "1")
         .output()
         .expect("run attached text demo");
@@ -3625,9 +3625,9 @@ fn run_cli_command_with_input(
     input: &str,
 ) -> std::process::Output {
     let mut child = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .args(args)
         .arg("--repo")
         .arg(root)
+        .args(args)
         .env("NO_COLOR", "1")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -3842,10 +3842,10 @@ fn write_cargo_link_consumer(consumer: &std::path::Path, library: &std::path::Pa
 
 fn link_cargo_library(consumer: &std::path::Path, library: &std::path::Path) {
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .args(["deps", "link", "cargo"])
-        .arg(library)
         .arg("--repo")
         .arg(consumer)
+        .args(["deps", "link", "cargo"])
+        .arg(library)
         .output()
         .expect("run deps link");
     assert!(output.status.success(), "deps link failed: {output:?}");
@@ -8259,9 +8259,9 @@ fn cli_deferral_outputs_runner_result_with_cli_preamble_header() {
     .expect("write manifest");
 
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .arg("unknown-task")
         .arg("--repo")
         .arg(&root)
+        .arg("unknown-task")
         .env("NO_COLOR", "1")
         .output()
         .expect("run effigy");
@@ -10195,10 +10195,10 @@ mounts = ["./app:/workspace"]
     ];
     let run_headless = |extra_env: &[(&str, &str)]| -> std::process::Output {
         let mut child = Command::new(env!("CARGO_BIN_EXE_effigy"))
-            .arg("dev")
-            .arg("--headless")
             .arg("--repo")
             .arg(&root)
+            .arg("dev")
+            .arg("--headless")
             .envs(
                 base_env
                     .iter()
@@ -10435,10 +10435,10 @@ detach_timeout_secs = 1
     };
 
     let mut first = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .arg("dev")
-        .arg("--headless")
         .arg("--repo")
         .arg(&root)
+        .arg("dev")
+        .arg("--headless")
         .envs(
             base_env
                 .iter()
@@ -10450,7 +10450,24 @@ detach_timeout_secs = 1
         .expect("spawn first headless run");
     let session_dir = root.join(".effigy/runtime/managed/dev-default");
     let marker = session_dir.join("exec/api.pgid");
-    let lock_file = root.join(".effigy/locks/task-hold.lock");
+    // The remote holder's run state, read through its gate.
+    let hold_state = || -> Option<String> {
+        let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+            .arg("--json")
+            .arg("--repo")
+            .arg(&root)
+            .args(["tasks", "status", "hold"])
+            .envs(
+                base_env
+                    .iter()
+                    .map(|(key, value)| (key.as_str(), value.as_str())),
+            )
+            .output()
+            .ok()?;
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).ok()?["result"]["state"]
+            .as_str()
+            .map(str::to_owned)
+    };
     let marker_deadline = Instant::now() + Duration::from_secs(60);
     while !marker.is_file() {
         assert!(
@@ -10478,15 +10495,8 @@ detach_timeout_secs = 1
         .parse()
         .expect("session leader pgid");
     wait_for(
-        &|| lock_file.is_file(),
-        "the remote holder's task lock to appear",
-    );
-    // The in-container Effigy process wrote its lock with the managed
-    // run's token: the run's settle can release it.
-    let lock_record = fs::read_to_string(&lock_file).expect("read remote holder lock");
-    assert!(
-        lock_record.contains("\"managed_run_token\":\"managedrun-"),
-        "the remote lock must carry the run token: {lock_record}"
+        &|| hold_state().as_deref() == Some("running"),
+        "the remote holder's run to hold its gate",
     );
     assert!(
         effigy_process::process_is_running(pgid),
@@ -10503,10 +10513,10 @@ detach_timeout_secs = 1
     fs::write(&volume, "keep this data").expect("volume sentinel");
 
     let stop = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .arg("dev")
-        .arg("stop")
         .arg("--repo")
         .arg(&root)
+        .arg("dev")
+        .arg("stop")
         .envs(
             base_env
                 .iter()
@@ -10517,9 +10527,21 @@ detach_timeout_secs = 1
     let stop_deadline = Instant::now() + Duration::from_secs(120);
     assert!(
         stop.status.success(),
-        "stop failed: stdout={} stderr={}",
+        "stop failed: stdout={} stderr={}\nhold state: {:?}\nprocesses:\n{}\nrecorded pgid {pgid}\nruntime calls:\n{}",
         String::from_utf8_lossy(&stop.stdout),
-        String::from_utf8_lossy(&stop.stderr)
+        String::from_utf8_lossy(&stop.stderr),
+        hold_state(),
+        Command::new("ps")
+            .args(["-eo", "pid,ppid,pgid,sid,stat,command"])
+            .output()
+            .map(|output| String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .filter(|line| line.contains("effigy") || line.contains("sleep") || line.contains("hold"))
+                .collect::<Vec<_>>()
+                .join("\n"))
+            .unwrap_or_default(),
+        fs::read_to_string(&colima_args).unwrap_or_default()
+            + &fs::read_to_string(&docker_args).unwrap_or_default()
     );
     let stop_output = String::from_utf8_lossy(&stop.stdout);
     assert!(
@@ -10547,9 +10569,10 @@ detach_timeout_secs = 1
         !effigy_process::process_is_running(pgid),
         "the remote holder process (pgid {pgid}) was ended through the exec adapter"
     );
-    assert!(
-        !lock_file.exists(),
-        "the run's settle released the remote holder's lock"
+    assert_ne!(
+        hold_state().as_deref(),
+        Some("running"),
+        "the run's stop ended the remote holder, releasing its gate"
     );
     assert!(
         !marker.exists(),
@@ -10575,10 +10598,10 @@ detach_timeout_secs = 1
     // keeps a live remote holder, then settles cleanly through the same
     // stop path.
     let mut second = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .arg("dev")
-        .arg("--headless")
         .arg("--repo")
         .arg(&root)
+        .arg("dev")
+        .arg("--headless")
         .envs(
             base_env
                 .iter()
@@ -10589,7 +10612,7 @@ detach_timeout_secs = 1
         .spawn()
         .expect("spawn restart headless run");
     let restart_deadline = Instant::now() + Duration::from_secs(60);
-    while !lock_file.exists() {
+    while hold_state().as_deref() != Some("running") {
         assert!(
             Instant::now() < restart_deadline,
             "the restart did not reach a live remote holder"
@@ -10605,10 +10628,10 @@ detach_timeout_secs = 1
         std::thread::sleep(Duration::from_millis(200));
     }
     let restart_stop = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .arg("dev")
-        .arg("stop")
         .arg("--repo")
         .arg(&root)
+        .arg("dev")
+        .arg("stop")
         .envs(
             base_env
                 .iter()
@@ -10826,10 +10849,10 @@ detach_timeout_secs = 1
     ];
     let spawn_headless = |task: &str, extra_env: &[(&str, &str)]| {
         Command::new(binary)
-            .arg(task)
-            .arg("--headless")
             .arg("--repo")
             .arg(&root)
+            .arg(task)
+            .arg("--headless")
             .envs(
                 base_env
                     .iter()
@@ -11195,9 +11218,9 @@ fn cli_workspace_binding_handoff_stops_environment_after_return() {
     );
 
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .arg("workspace")
         .arg("--repo")
         .arg(&root)
+        .arg("workspace")
         .env("NO_COLOR", "1")
         .env("HOME", &root)
         .env("EFFIGY_HOST_RUN_ROOT", scheduler_state_root())

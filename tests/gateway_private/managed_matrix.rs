@@ -482,19 +482,21 @@ impl<'a> Case<'a> {
                     .output()
             );
         }
-        let locks = self.root.join(".effigy/locks");
-        if locks.exists() {
-            for entry in fs::read_dir(locks).expect("locks").flatten() {
-                assert!(
-                    entry
-                        .path()
-                        .extension()
-                        .is_none_or(|extension| extension != "lock"),
-                    "residual lock: {}",
-                    entry.path().display()
-                );
-            }
-        }
+        // No run of this checkout still holds its gate.
+        let status = self
+            .command(&["--json", "tasks", "status", "--all"])
+            .output()
+            .expect("status inventory");
+        let parsed: serde_json::Value =
+            serde_json::from_slice(&status.stdout).expect("status inventory json");
+        let held = parsed["result"]["rows"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|row| matches!(row["state"].as_str(), Some("running" | "stopping")))
+            .map(|row| row["selector"].to_string())
+            .collect::<Vec<_>>();
+        assert!(held.is_empty(), "residual live runs: {held:?}");
         let log = fs::read_to_string(&self.log).expect("runtime calls");
         assert!(
             !log.contains("down -v") && !log.contains("--volumes"),
@@ -945,7 +947,7 @@ fn authority_matrix(authority: Authority) {
                 "stale generation must not authorize down under successor"
             );
             assert!(
-                String::from_utf8_lossy(&up.stderr).contains("live task/profile lock"),
+                String::from_utf8_lossy(&up.stderr).contains("live task runs hold their gates"),
                 "{}",
                 String::from_utf8_lossy(&up.stderr)
             );
@@ -977,7 +979,7 @@ fn authority_matrix(authority: Authority) {
                 "reaper must refuse under the live run"
             );
             assert!(
-                String::from_utf8_lossy(&reaper.stderr).contains("live task/profile lock"),
+                String::from_utf8_lossy(&reaper.stderr).contains("live task runs hold their gates"),
                 "{}",
                 String::from_utf8_lossy(&reaper.stderr)
             );
@@ -1043,7 +1045,8 @@ fn authority_matrix(authority: Authority) {
                 "an unbound live holder must prevent handover down"
             );
             assert!(
-                String::from_utf8_lossy(&handover.stderr).contains("live task/profile lock"),
+                String::from_utf8_lossy(&handover.stderr)
+                    .contains("live task runs hold their gates"),
                 "{}",
                 String::from_utf8_lossy(&handover.stderr)
             );

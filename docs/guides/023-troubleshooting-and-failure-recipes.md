@@ -347,7 +347,12 @@ Fix:
 
 ## 5) Lock Errors
 
-### Symptom: `lock conflict for <scope> ...`
+### Symptom: `<task>` is already running
+
+A task's lock is its run's gate, held exactly while that run's Effigy process
+lives. The error names the holder (pid on this host, run id, age, and
+`stopped` for a SIGSTOPped holder). Nothing reclaims or unlocks a live gate,
+and a crashed or killed holder has already released it.
 
 Diagnosis:
 
@@ -355,21 +360,21 @@ Diagnosis:
 effigy tasks status <selector>
 ```
 
-A timed-out waiter (`--lock-wait-ms` or `EFFIGY_LOCK_WAIT_MS`) names the live
-owner and this status command. Retry after that owner releases. Do not unlock a
-live owner unless you intend to interrupt it.
-
-Fix:
+Fix: wait for the run, or stop it.
 
 ```sh
-effigy tasks unlock task:<selector>
-effigy tasks unlock validate:activity-routing
-effigy tasks unlock shared:<name>
-effigy tasks unlock profile:<task>/<profile>
+effigy --lock-wait-ms 600000 <selector>
 ```
 
-A bare task selector unlocks the matching `task:<selector>` scope. Use `--all`
-only when you cannot isolate a safe scope.
+A shared `lock = "<name>"` or a built-in section can be held by another task or
+command: the error then
+points at `effigy tasks status --all`, which lists every live holder. Stop the
+holder, or let it finish, to release it.
+
+### Symptom: `<task>` status reads `interrupted`
+
+Its owner exited without recording a result (for example after `kill -9`).
+Rerunning the task settles the interrupted run first, then starts.
 
 ## 6) Managed TUI and Argument Errors
 

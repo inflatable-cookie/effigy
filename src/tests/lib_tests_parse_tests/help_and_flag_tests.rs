@@ -163,11 +163,12 @@ fn parse_command_applies_leading_task_runtime_flags_to_task_selectors() {
         Command::Task(TaskInvocation {
             name: "snapshot".to_owned(),
             args: vec![
-                "--env-schema".to_owned(),
-                "config/env.schema.toml".to_owned(),
-                "--verbose-root".to_owned(),
                 "--repo".to_owned(),
                 "/tmp/workspace".to_owned(),
+                "--verbose-root".to_owned(),
+                "--env-schema".to_owned(),
+                "config/env.schema.toml".to_owned(),
+                effigy_core::task_args::TASK_ARGS_BOUNDARY.to_owned(),
                 "--plan".to_owned(),
             ],
         })
@@ -192,6 +193,7 @@ fn parse_command_injects_leading_repo_when_task_repo_is_after_passthrough_delimi
             args: vec![
                 "--repo".to_owned(),
                 "/tmp/global".to_owned(),
+                effigy_core::task_args::TASK_ARGS_BOUNDARY.to_owned(),
                 "--".to_owned(),
                 "--repo".to_owned(),
                 "/tmp/task".to_owned(),
@@ -223,6 +225,7 @@ fn parse_command_carries_the_caller_request_id_only_to_a_selector() {
             name: "heavy-check".to_owned(),
             args: vec![
                 "--json".to_owned(),
+                effigy_core::task_args::TASK_ARGS_BOUNDARY.to_owned(),
                 INTERNAL_HOST_RUN_REQUEST_ID_ARG.to_owned(),
                 request_id.to_owned(),
             ],
@@ -385,7 +388,10 @@ fn parse_catalogue_help_alias_falls_back_to_task_routing() {
         catalogue,
         Command::Task(TaskInvocation {
             name: "catalogue".to_owned(),
-            args: vec!["--help".to_owned()],
+            args: vec![
+                effigy_core::task_args::TASK_ARGS_BOUNDARY.to_owned(),
+                "--help".to_owned()
+            ],
         })
     );
 }
@@ -485,7 +491,10 @@ fn parse_migrate_help_is_scoped() {
         cmd,
         Command::Task(TaskInvocation {
             name: "migrate".to_owned(),
-            args: vec!["--help".to_owned()],
+            args: vec![
+                effigy_core::task_args::TASK_ARGS_BOUNDARY.to_owned(),
+                "--help".to_owned()
+            ],
         })
     );
 }
@@ -569,7 +578,7 @@ fn parse_help_group_words_stay_available_to_task_selectors() {
             parse(&[group.slug()]),
             Command::Task(TaskInvocation {
                 name: group.slug().to_owned(),
-                args: Vec::new(),
+                args: vec![effigy_core::task_args::TASK_ARGS_BOUNDARY.to_owned()],
             }),
             "`effigy {}` must keep task routing",
             group.slug()
@@ -580,7 +589,10 @@ fn parse_help_group_words_stay_available_to_task_selectors() {
         parse(&["repo", "docs"]),
         Command::Task(TaskInvocation {
             name: "repo".to_owned(),
-            args: vec!["docs".to_owned()],
+            args: vec![
+                effigy_core::task_args::TASK_ARGS_BOUNDARY.to_owned(),
+                "docs".to_owned(),
+            ],
         })
     );
 }

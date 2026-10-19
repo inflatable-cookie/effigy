@@ -20,8 +20,8 @@ pub use headless::{
     clear_managed_run_failure, exec_group_file_path, failed_managed_run_token,
     failed_managed_run_tokens, live_headless_sessions, managed_headless_logs,
     managed_headless_state_readable, managed_headless_status, managed_headless_stop,
-    managed_owner_is_running, managed_run_settle_error, record_managed_run_settle,
-    run_managed_task_headless, session_runtime_dir, LiveHeadlessSession,
+    managed_owner_is_running, managed_run_settle_error, managed_session_run_token,
+    record_managed_run_settle, run_managed_task_headless, session_runtime_dir, LiveHeadlessSession,
     ManagedHeadlessStopOutcome, LIFECYCLE_CLEANUP_TIMEOUT_SECS, MANAGED_SETTLE_BUDGET,
 };
 

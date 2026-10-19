@@ -612,9 +612,9 @@ exec {source_effigy} nested-heavy --repo "$PWD"
     ) -> Command {
         let mut command = Command::new(EFFIGY);
         command
-            .args(args)
             .arg("--repo")
             .arg(self.root())
+            .args(args)
             .current_dir(self.root())
             .env("NO_COLOR", "1")
             .env("EFFIGY_ADMISSION_CPU_UNITS", "1")

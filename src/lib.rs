@@ -76,33 +76,21 @@ mod testing_tests;
 pub fn run_main(raw_args: Vec<String>) -> std::io::Result<()> {
     use effigy_kernel::signal::{RouterPolicy, SignalRouter};
     let entry = raw_args.first().map(String::as_str).unwrap_or("");
-    // Only source-capable commands and kernel helpers own this router. Legacy
-    // commands retain their existing signal policy until their owner adopts it.
-    let uses_kernel = entry.starts_with("__kernel-")
-        || effigy_cli::parse_command(raw_args.clone())
-            .as_ref()
-            .is_ok_and(runner::bundle_command::is_source_prepare_command);
-    if !uses_kernel {
-        run_cli(raw_args);
-        return Ok(());
+    // The per-run sentinel, supervisor and probe guard re-exec this binary
+    // (contract 052 §5.8) before any CLI parsing, signal handling or spawn.
+    if let Some(code) = runner::run_internal_kernel_entry(entry) {
+        std::process::exit(code);
     }
-    let policy = match entry {
-        "__kernel-sentinel" => RouterPolicy::Sentinel,
-        "__kernel-supervise" => RouterPolicy::Supervisor,
-        _ => RouterPolicy::Inline,
-    };
-    let mut router = SignalRouter::install(policy)?;
-    runner::bundle_command::set_source_cancel(router.root_cancel());
-    if let Some(result) = effigy_kernel::probe::internal_entry(entry, router.root_cancel()) {
-        return result.map_err(std::io::Error::other);
-    }
-    if let Some(result) = effigy_kernel::supervise::internal_entry(
-        entry,
-        &mut router,
-        &mut effigy_manifest::SourceSettlement,
-        |args| args == ["bundle", "sync"],
-    ) {
-        return result.map_err(std::io::Error::other);
+    runner::capture_startup_executable();
+    // Source-capable commands own the router from the start; task runs inside
+    // them adopt it. Other commands install it at their first custody spawn.
+    let uses_kernel = effigy_cli::parse_command(raw_args.clone())
+        .as_ref()
+        .is_ok_and(runner::bundle_command::is_source_prepare_command);
+    if uses_kernel {
+        let router = SignalRouter::install(RouterPolicy::Inline)?;
+        runner::bundle_command::set_source_cancel(router.root_cancel());
+        runner::adopt_signal_router(router);
     }
     run_cli(raw_args);
     Ok(())

@@ -64,7 +64,7 @@ manifest or use Bun `--save`. Guide:
 
 ```bash
 effigy tasks
-effigy <focused-selector> --plan
+effigy --plan <focused-selector>
 effigy test <suite-or-runner-filter>
 ```
 

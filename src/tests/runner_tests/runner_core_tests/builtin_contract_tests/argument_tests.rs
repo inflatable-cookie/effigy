@@ -48,24 +48,10 @@ fn run_manifest_task_builtin_argument_contract_matrix_is_stable() {
             &["--wat"],
             &["`init` received unknown flag(s): --wat"],
         ),
-        builtin_contract_error_case(
-            "builtin-arg-contract-unlock-unknown",
-            "unlock",
-            &["--wat"],
-            &["unknown argument(s) for built-in `tasks unlock`: --wat"],
-        ),
-        builtin_contract_error_case(
-            "builtin-arg-contract-cache-missing-subcommand",
-            "cache",
-            &[],
-            &["`tasks cache` requires a subcommand: `inspect` or `invalidate`"],
-        ),
     ];
     cases.extend(builtin_shared_unknown_argument_cases(
-        "builtin-arg-contract-cache-unknown-flag",
         "builtin-arg-contract-completion-candidates-unknown",
         "builtin-arg-contract-scan-unknown-flag",
-        "builtin-arg-contract-unlock-unknown",
     ));
 
     assert_builtin_error_contract_case_table(&cases);

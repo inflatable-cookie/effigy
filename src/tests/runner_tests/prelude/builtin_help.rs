@@ -4,17 +4,10 @@ use super::output::assert_output_equals;
 use super::runtime::{Path, RunnerError};
 
 pub(in crate::runner::tests) fn builtin_shared_help_precedence_cases(
-    cache_workspace: &'static str,
     completion_workspace: &'static str,
     completion_candidates_workspace: &'static str,
 ) -> Vec<BuiltinHelpCase> {
     vec![
-        builtin_help_case(
-            cache_workspace,
-            "cache",
-            &["--wat", "--help"],
-            &["tasks cache Help", "effigy tasks cache inspect"],
-        ),
         builtin_help_case(
             completion_workspace,
             "completion",

@@ -1,94 +1,66 @@
-use super::super::cache::ops::update_task_cache_entry;
 use super::context::ExecutionTaskContext;
-use super::pipeline::standard::redact_task_secret_values;
-use super::process::{build_shell_process, command_launch_error};
 use crate::runner::error::RunnerError;
+use crate::runner::task_engine::{run_plain, EnvOverride, PlainCommand, TaskRun};
 use effigy_env::secret::SecretString;
-use std::process::Stdio;
+use effigy_kernel::outcome::WorkloadOutcome;
 
+/// A plain host command under kernel custody. Text and JSON run the same
+/// way; JSON only captures stdout and stderr for its envelope (K11).
 pub(super) fn run_task_process(
     output_json: bool,
     verbose_root: bool,
     context: &ExecutionTaskContext<'_>,
     secret_env: Option<&[(&str, &SecretString)]>,
+    run: &mut TaskRun,
+    workload: &mut Option<WorkloadOutcome>,
 ) -> Result<String, RunnerError> {
-    if output_json {
-        return run_task_process_json(context, secret_env);
-    }
-    run_task_process_text(verbose_root, context, secret_env)
-}
-
-fn run_task_process_json(
-    context: &ExecutionTaskContext<'_>,
-    secret_env: Option<&[(&str, &SecretString)]>,
-) -> Result<String, RunnerError> {
-    let mut process = build_shell_process(context, secret_env);
-    process.stdout(Stdio::piped()).stderr(Stdio::piped());
-    let child = process
-        .spawn()
-        .map_err(|error| command_launch_error(context, error))?;
-    let child_pid = child.id();
-    crate::runner::owned_children::register_process_group(child_pid);
-    let output = child
-        .wait_with_output()
-        .map_err(|error| command_launch_error(context, error))?;
-    crate::runner::owned_children::unregister_process_group(child_pid);
-    let stdout = redact_task_secret_values(&String::from_utf8_lossy(&output.stdout), secret_env);
-    let stderr = redact_task_secret_values(&String::from_utf8_lossy(&output.stderr), secret_env);
-    let rendered = super::json_payload::render_task_command_json(
-        context.selector,
-        context.repo_for_task(),
-        context.command(),
-        output.status.code(),
-        &stdout,
-        &stderr,
-        context.selection,
+    let env = secret_env
+        .unwrap_or_default()
+        .iter()
+        .map(|(key, secret)| {
+            (
+                (*key).to_owned(),
+                EnvOverride::Secret(secret.expose().to_owned()),
+            )
+        })
+        .collect();
+    let exit = run_plain(
+        run,
+        PlainCommand {
+            command: context.command(),
+            cwd: context.repo_for_task(),
+            env,
+            capture: output_json,
+        },
     )?;
-    if output.status.success() {
-        update_cache(context)?;
-        return Ok(rendered);
+    *workload = Some(exit.workload.clone());
+    if output_json {
+        let stdout = String::from_utf8_lossy(&exit.stdout);
+        let stderr = String::from_utf8_lossy(&exit.stderr);
+        let rendered = super::json_payload::render_task_command_json(
+            context.selector,
+            context.repo_for_task(),
+            context.command(),
+            Some(exit.code),
+            &stdout,
+            &stderr,
+            context.selection,
+        )?;
+        if exit.workload == WorkloadOutcome::Succeeded {
+            return Ok(rendered);
+        }
+        return Err(RunnerError::CommandJsonFailure { rendered });
     }
-    Err(RunnerError::CommandJsonFailure { rendered })
-}
-
-fn run_task_process_text(
-    verbose_root: bool,
-    context: &ExecutionTaskContext<'_>,
-    secret_env: Option<&[(&str, &SecretString)]>,
-) -> Result<String, RunnerError> {
-    let mut child = build_shell_process(context, secret_env)
-        .spawn()
-        .map_err(|error| command_launch_error(context, error))?;
-    let child_pid = child.id();
-    crate::runner::owned_children::register_process_group(child_pid);
-    let status = child
-        .wait()
-        .map_err(|error| command_launch_error(context, error))?;
-    crate::runner::owned_children::unregister_process_group(child_pid);
-
-    if status.success() {
-        update_cache(context)?;
+    if exit.workload == WorkloadOutcome::Succeeded {
         if verbose_root {
             return Ok(context.render_resolution_trace());
         }
         return Ok(String::new());
     }
-
     Err(RunnerError::TaskCommandFailure {
         command: context.command().to_owned(),
-        code: status.code(),
+        code: Some(exit.code),
         stdout: String::new(),
         stderr: String::new(),
     })
-}
-
-fn update_cache(context: &ExecutionTaskContext<'_>) -> Result<(), RunnerError> {
-    update_task_cache_entry(
-        context.resolved_root,
-        context.repo_for_task(),
-        &context.selection.catalog.manifest_path,
-        &context.selector.task_name,
-        context.selection.task,
-        context.command(),
-    )
 }

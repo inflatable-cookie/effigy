@@ -2,8 +2,6 @@ use super::super::super::container_command::{
     run_container_exec_operation_capture, support::validate_running_container_runtime_match,
 };
 use super::super::super::gateway_command::gateway_up_for_managed_task;
-use super::super::super::locking::io::{acquire_scopes_with_wait, resolve_lock_wait_ms};
-use super::super::super::locking::model::LockScope;
 use super::super::super::managed_shell::{
     managed_readiness_probe_urls, render_handoff_managed_lifecycle_command,
     render_inline_compose_command, render_inline_managed_lifecycle_command,
@@ -23,6 +21,9 @@ use crate::runner::error::RunnerError;
 use crate::runner::execute::sequence_run::run_in_process_sequence_steps;
 use crate::runner::execute::workspace_seeded::{
     inside_container_handoff, run_workspace_seeded_task_session,
+};
+use crate::runner::task_engine::{
+    refuse_live_legacy_holder, resolve_lock_wait_ms, TaskRun, TaskRunRequest, TaskTarget,
 };
 use effigy_containers::compose::compose_args;
 use effigy_containers::session::{
@@ -173,9 +174,7 @@ pub(in crate::runner) fn run_managed_task(
         &effigy_routing::resolve_task_selection,
     )?;
     let Some(mut plan) = plan else {
-        // Not a managed run: leave the environment untouched. A plain task
-        // executed inside a managed run's tree must keep carrying that
-        // run's settle token so its lock records stay attributable.
+        // Not a managed run: leave the environment untouched.
         if should_open_workspace_shell_for_non_managed_task(
             selection.task.run.is_some(),
             container_binding,
@@ -184,26 +183,30 @@ pub(in crate::runner) fn run_managed_task(
             let ContainerExecutionBinding::Container { name, .. } = &container_binding else {
                 unreachable!("workspace shell guard should only match named containers");
             };
-            let lock_scopes = vec![crate::runner::manifest::task_lock_scope(
-                selection.task,
-                &preflight.selector,
-            )];
-            let wait_timeout_ms = resolve_lock_wait_ms(preflight.runtime_args_raw.lock_wait_ms)?;
-            let _lock_guards = acquire_scopes_with_wait(
-                &preflight.resolved.resolved_root,
-                &lock_scopes,
-                wait_timeout_ms,
-            )?;
             let _ = name;
-            return run_workspace_with_repo_root_and_cleanup_override(
+            let target = TaskTarget::for_selection(
+                &preflight.resolved.resolved_root,
+                &preflight.selector.task_name,
+                selection,
+            );
+            refuse_live_legacy_holder(&target)?;
+            let run = TaskRun::begin(TaskRunRequest {
+                target: &target,
+                lock_wait_ms: resolve_lock_wait_ms(preflight.runtime_args_raw.lock_wait_ms)?,
+                custody: false,
+                managed_run_token: None,
+                args: &preflight.runtime_args_exec.passthrough,
+            })?;
+            let result = run_workspace_with_repo_root_and_cleanup_override(
                 &preflight.resolved.resolved_root,
                 selection.task.system.as_deref(),
                 selection.task.workspace.as_deref(),
                 preflight.runtime_args_raw.repo_override.clone(),
                 preflight.output_json,
                 Some(current_runtime_session_context().public_workspace_cleanup),
-            )
-            .map(Some);
+            );
+            close_task_run(run, &target, &result);
+            return result.map(Some);
         }
         ensure_inline_workspace_supported(
             container_binding,
@@ -214,27 +217,22 @@ pub(in crate::runner) fn run_managed_task(
         return Ok(None);
     };
     // One managed run owns a settle identity that every process it starts
-    // carries: host children inherit the environment variable, and the
-    // rendered exec commands inject it on the far side of the exec
-    // surface. Lock records written anywhere in the run's tree name the
-    // token, so the run's settle can release them through the lock
-    // owner-token rules. A managed run that does not own a settle identity
-    // must not attribute its locks to a stale token left in the
-    // environment.
+    // carries in its spawn environment, never in this process's global
+    // environment (K12): host children get it through their process spec,
+    // and the rendered exec commands inject it on the far side of the exec
+    // surface. Task runs anywhere in the run's tree record its digest. A
+    // managed run that does not own a settle identity blanks an inherited
+    // one so nothing it starts is attributed to a stale run.
     let managed_run_token = matches!(
         execution_mode,
         ManagedExecutionMode::Headless | ManagedExecutionMode::Tui
     )
     .then(generate_managed_run_token);
-    if let Some(token) = managed_run_token.as_deref() {
-        std::env::set_var(effigy_managed::RUN_TOKEN_ENV, token);
-    } else {
-        std::env::remove_var(effigy_managed::RUN_TOKEN_ENV);
-    }
     let env_schema_resolved = super::standard::resolve_env_schema_if_present(
         &selection.catalog.catalog_root,
         preflight.runtime_args_raw.env_schema_override.as_deref(),
         selection.catalog.manifest.env_schema.as_ref(),
+        None,
     )?;
     let container_repo_root =
         binding_resolution.exec_working_dir(&selection.catalog.catalog_root)?;
@@ -326,23 +324,37 @@ pub(in crate::runner) fn run_managed_task(
         &selection.catalog.catalog_root,
     );
 
-    let repo_for_task = selection.catalog.catalog_root.clone();
-    let mut lock_scopes = vec![crate::runner::manifest::task_lock_scope(
-        selection.task,
-        &preflight.selector,
-    )];
-    if selection.task.mode.as_deref() == Some("tui") {
-        lock_scopes.push(LockScope::Profile {
-            task: crate::runner::manifest::selector_lock_name(&preflight.selector),
-            profile: plan.profile.clone(),
-        });
+    plan.run_token = managed_run_token.clone();
+    for process in &mut plan.processes {
+        process.secret_env.insert(
+            effigy_managed::RUN_TOKEN_ENV.to_owned(),
+            managed_run_token.clone().unwrap_or_default(),
+        );
     }
-    let wait_timeout_ms = resolve_lock_wait_ms(preflight.runtime_args_raw.lock_wait_ms)?;
-    let _lock_guards = acquire_scopes_with_wait(
+
+    let repo_for_task = selection.catalog.catalog_root.clone();
+    // Rendering the plan is a read; only a run that starts processes
+    // holds the task's gate. The profile is recorded on the run; the gate
+    // stays per task, so two profiles of one task still exclude each other.
+    let mut task_run = None;
+    let mut task_target = TaskTarget::for_selection(
         &preflight.resolved.resolved_root,
-        &lock_scopes,
-        wait_timeout_ms,
-    )?;
+        &preflight.selector.task_name,
+        selection,
+    );
+    if execution_mode != ManagedExecutionMode::RenderPlan {
+        if selection.task.mode.as_deref() == Some("tui") {
+            task_target = task_target.with_profile(&plan.profile);
+        }
+        refuse_live_legacy_holder(&task_target)?;
+        task_run = Some(TaskRun::begin(TaskRunRequest {
+            target: &task_target,
+            lock_wait_ms: resolve_lock_wait_ms(preflight.runtime_args_raw.lock_wait_ms)?,
+            custody: false,
+            managed_run_token: managed_run_token.as_deref(),
+            args: &preflight.runtime_args_exec.passthrough,
+        })?);
+    }
 
     if execution_mode != ManagedExecutionMode::RenderPlan && !container_handoff {
         maybe_start_managed_gateway(
@@ -363,6 +375,7 @@ pub(in crate::runner) fn run_managed_task(
         Some(build_managed_lifecycle_cleanup_command(
             &repo_for_task,
             container_binding,
+            managed_run_token.as_deref(),
         )?)
     } else {
         None
@@ -403,10 +416,6 @@ pub(in crate::runner) fn run_managed_task(
                 )?;
                 effigy_containers::exec::verify_owned_stack_for_shutdown(&repo_for_task, &policy)?;
                 run_managed_lifecycle_cleanup(command)?;
-                crate::runner::managed_settle::release_run_lock_residue(
-                    &repo_for_task,
-                    Some(&token),
-                );
                 effigy_managed::runtime::clear_managed_run_failure(&repo_for_task, &token)?;
             }
         }
@@ -417,30 +426,11 @@ pub(in crate::runner) fn run_managed_task(
     } else {
         build_container_process_end_hook(&repo_for_task, container_binding, container_handoff)?
     };
-    let release_run_locks = managed_run_token.as_ref().map(|token| {
-        let repo_root = preflight.resolved.resolved_root.clone();
-        let token = token.clone();
-        move || {
-            // The run's own guards still hold their records until
-            // `run_managed_task` returns; only the records of the run's
-            // children (host and exec'd) are released inside the cascade.
-            crate::runner::locking::io::release_locks_attributed_to_run(
-                &repo_root,
-                &token,
-                Some(std::process::id()),
-            )
-        }
-    });
-    let settle = (end_container_process.is_some() || release_run_locks.is_some()).then(|| {
-        effigy_managed::ManagedRunSettle {
-            end_container_process: end_container_process
-                .as_ref()
-                .map(|hook| hook as &dyn Fn(u32) -> Result<(), String>),
-            release_run_locks: release_run_locks
-                .as_ref()
-                .map(|hook| hook as &dyn Fn() -> Vec<String>),
-        }
-    });
+    let settle = end_container_process
+        .as_ref()
+        .map(|hook| effigy_managed::ManagedRunSettle {
+            end_container_process: Some(hook as &dyn Fn(u32) -> Result<(), String>),
+        });
 
     let managed_profile = plan.profile.clone();
     let result = run_or_render_managed_task(
@@ -452,7 +442,7 @@ pub(in crate::runner) fn run_managed_task(
         settle.as_ref(),
     );
 
-    finish_managed_task(
+    let finished = finish_managed_task(
         result.map(Some).map_err(Into::into),
         lifecycle_cleanup.as_deref(),
         || {
@@ -466,11 +456,6 @@ pub(in crate::runner) fn run_managed_task(
                 effigy_containers::exec::verify_owned_stack_for_shutdown(&repo_for_task, &policy)?;
             }
             Ok(())
-        },
-        || {
-            if let Some(release) = &release_run_locks {
-                release();
-            }
         },
         |error| {
             if matches!(
@@ -487,7 +472,25 @@ pub(in crate::runner) fn run_managed_task(
             }
             Ok(())
         },
-    )
+    );
+    if let Some(run) = task_run {
+        close_task_run(run, &task_target, &finished);
+    }
+    finished
+}
+
+/// Records the managed run's outcome and releases its gate. Journal
+/// failures are warnings; they never change the run's result (K10).
+fn close_task_run<T>(run: TaskRun, target: &TaskTarget, result: &Result<T, RunnerError>) {
+    let workload = match result {
+        Ok(_) => effigy_kernel::outcome::WorkloadOutcome::Succeeded,
+        Err(RunnerError::TaskManagedNonZeroExit { .. }) | Err(_) => {
+            effigy_kernel::outcome::WorkloadOutcome::Failed { code: 1 }
+        }
+    };
+    for warning in run.close(workload) {
+        eprintln!("warning: {}: {warning}", target.label);
+    }
 }
 
 struct ManagedSetupContext<'a, 'catalog> {
@@ -743,6 +746,7 @@ fn managed_runtime_activation_plan(
 fn build_managed_lifecycle_cleanup_command(
     repo_root: &std::path::Path,
     container_binding: &ContainerExecutionBinding,
+    managed_run_token: Option<&str>,
 ) -> Result<String, RunnerError> {
     match container_binding {
         ContainerExecutionBinding::Inline { .. } => {
@@ -766,12 +770,12 @@ fn build_managed_lifecycle_cleanup_command(
                     .and_then(normalize_managed_lifecycle_container_ref),
                 &executable,
             );
-            Ok(match std::env::var(effigy_managed::RUN_TOKEN_ENV) {
-                Ok(token) => format!(
+            Ok(match managed_run_token {
+                Some(token) => format!(
                     "env EFFIGY_INTERNAL_MANAGED_STOP_TOKEN={} {command}",
-                    effigy_core::shell::shell_quote(&token)
+                    effigy_core::shell::shell_quote(token)
                 ),
-                Err(_) => command,
+                None => command,
             })
         }
     }
@@ -824,7 +828,6 @@ fn finish_managed_task(
     task_result: Result<Option<String>, RunnerError>,
     cleanup_command: Option<&str>,
     admit_cleanup: impl FnOnce() -> Result<(), RunnerError>,
-    release_settled_locks: impl FnOnce(),
     record_settle: impl FnOnce(Option<&RunnerError>) -> Result<(), RunnerError>,
 ) -> Result<Option<String>, RunnerError> {
     // Child failure does not revoke the run's responsibility for its env.
@@ -841,11 +844,6 @@ fn finish_managed_task(
         .as_ref()
         .err()
         .filter(|error| !matches!(error, RunnerError::TaskManagedNonZeroExit { .. }));
-    // Down ends container exec holders; a local cleanup error still prevents
-    // claiming that every owned process ended or sweeping its lock records.
-    if cleanup_result.is_ok() && runtime_cleanup_error.is_none() {
-        release_settled_locks();
-    }
     if let Err(record_error) =
         record_settle(cleanup_result.as_ref().err().or(runtime_cleanup_error))
     {
@@ -1249,6 +1247,7 @@ fn managed_role_schema_env(
         declaring.map_or(catalog_root, |catalog| catalog.catalog_root.as_path()),
         runtime_env_schema_override,
         declaring.and_then(|catalog| catalog.manifest.env_schema.as_ref()),
+        None,
     )?;
     Ok(resolved
         .map(|resolved| resolved.plain_env())
@@ -1420,7 +1419,6 @@ mod tests {
             Err(RunnerError::task_invocation("task failed")),
             Some("missing-cleanup-command >/dev/null 2>&1"),
             || Ok(()),
-            || {},
             |_| Ok(()),
         )
         .expect_err("primary task failure should surface");
@@ -1445,7 +1443,6 @@ mod tests {
             Err(RunnerError::task_invocation("startup refused")),
             Some(&command),
             || Err(RunnerError::task_invocation("foreign ownership")),
-            || panic!("foreign stack cannot authorize a lock sweep"),
             |_| Ok(()),
         )
         .expect_err("unverified cleanup refuses");
@@ -1464,7 +1461,6 @@ mod tests {
             )),
             Some("true"),
             || Ok(()),
-            || panic!("surviving host process cannot authorize a lock sweep"),
             |error| {
                 *recorded.borrow_mut() = error.map(ToString::to_string);
                 Ok(())
@@ -1486,7 +1482,6 @@ mod tests {
             Ok(None),
             Some("exit 19"),
             || Ok(()),
-            || panic!("failed down cannot authorize a lock sweep"),
             |error| {
                 *recorded.borrow_mut() = error.map(ToString::to_string);
                 Ok(())
@@ -1932,6 +1927,7 @@ mod tests {
             gateway_auto_start: false,
             readiness: effigy_managed::ManagedTaskReadiness::default(),
             container_environment: None,
+            run_token: None,
         }
     }
 

@@ -19,15 +19,11 @@ use super::support::{parse_stdout_json, temp_execution_workspace, temp_workspace
 
 fn run_effigy(root: &Path, args: &[&str]) -> std::process::Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_effigy"));
+    command.arg("--repo").arg(root);
     for arg in args {
         command.arg(arg);
     }
-    command
-        .arg("--repo")
-        .arg(root)
-        .env("NO_COLOR", "1")
-        .output()
-        .expect("run effigy")
+    command.env("NO_COLOR", "1").output().expect("run effigy")
 }
 
 fn run_effigy_json(root: &Path, args: &[&str]) -> Value {
@@ -37,10 +33,11 @@ fn run_effigy_json(root: &Path, args: &[&str]) -> Value {
 fn run_effigy_json_with_env(root: &Path, args: &[&str], envs: &[(&str, &Path)]) -> Value {
     let mut command = Command::new(env!("CARGO_BIN_EXE_effigy"));
     command.arg("--json");
+    command.arg("--repo").arg(root);
     for arg in args {
         command.arg(arg);
     }
-    command.arg("--repo").arg(root).env("NO_COLOR", "1");
+    command.env("NO_COLOR", "1");
     for (key, value) in envs {
         command.env(key, value);
     }
@@ -927,10 +924,11 @@ run = "exit 130"
 /// return the finalized run directory.
 fn run_group_and_capture(root: &Path, args: &[&str]) -> PathBuf {
     let mut command = Command::new(env!("CARGO_BIN_EXE_effigy"));
+    command.arg("--repo").arg(root);
     for arg in args {
         command.arg(arg);
     }
-    command.arg("--repo").arg(root).env("NO_COLOR", "1");
+    command.env("NO_COLOR", "1");
     let output = command.output().expect("run group");
     assert!(!output.status.success(), "expected a failing group run");
     let reports = root.join(".effigy/reports/qa-groups");

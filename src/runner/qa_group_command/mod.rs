@@ -230,18 +230,64 @@ fn run_qa_group_status(
 ) -> Result<String, RunnerError> {
     let context = resolve_active_command_context(args.repo_override.clone())?;
     let root = context.resolved.resolved_root;
-    let snapshot = load_qa_group_run_record(&root, run_id)
+    let mut snapshot = load_qa_group_run_record(&root, run_id)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?
         .ok_or_else(|| {
             RunnerError::task_invocation(format!(
-                "no qa-group run named `{run_id}` in this repository; run IDs look like `qa-<pid>-<nanos>-<n>` and are printed when a group starts"
+                "no qa-group run named `{run_id}` in this repository; the run id is printed when a group starts"
             ))
         })?;
+    reconcile_live_snapshot(&mut snapshot);
     if output_json {
         render_status_json(&snapshot)
     } else {
         render_status_text(&snapshot)
     }
+}
+
+/// A live record is only progress: whether its run still lives is the run
+/// journal's and the owner gate's to say (contract 052 §10.1), never a PID
+/// or a heartbeat age. A run that ended without its final record is
+/// `unknown`, never a pass.
+fn reconcile_live_snapshot(snapshot: &mut effigy_execution::QaGroupStatusSnapshot) {
+    if !snapshot.live {
+        return;
+    }
+    let next = [
+        "effigy",
+        "tasks",
+        "qa-group",
+        "status",
+        snapshot.run_id.as_str(),
+    ];
+    let gone = match crate::runner::task_engine::run_liveness(&snapshot.run_id, &next) {
+        crate::runner::task_engine::RunLiveness::Live => return,
+        crate::runner::task_engine::RunLiveness::Interrupted => {
+            "its owner exited without a final record".to_owned()
+        }
+        crate::runner::task_engine::RunLiveness::Closed { .. } => {
+            "its run closed without writing a final record".to_owned()
+        }
+        crate::runner::task_engine::RunLiveness::NotFound => {
+            "it was recorded by an earlier Effigy whose liveness cannot be verified".to_owned()
+        }
+        crate::runner::task_engine::RunLiveness::Unknown(reason) => {
+            snapshot
+                .warnings
+                .push(format!("run liveness is unknown: {reason}"));
+            return;
+        }
+    };
+    snapshot.warnings.push(format!(
+        "qa-group run {} is no longer live: {gone}; evidence is incomplete and the run stays {} (never a pass)",
+        snapshot.run_id,
+        effigy_execution::QaGroupRunState::Unknown.as_str()
+    ));
+    snapshot.record.state = effigy_execution::QaGroupRunState::Unknown;
+    snapshot.record.warnings.push(
+        "owner run ended without a final record; incomplete evidence is preserved as unknown"
+            .to_owned(),
+    );
 }
 
 fn run_qa_group_logs(args: &TasksArgs, run_id: &str, follow: bool) -> Result<String, RunnerError> {

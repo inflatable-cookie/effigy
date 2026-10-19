@@ -85,22 +85,32 @@ pub struct ManagedProcessSpec {
 
 /// Environment variable that carries the owning managed run's token into
 /// every process the run starts, on the host and through the exec surface.
-/// Lock records written by those processes name the token, so the run's
-/// settle can release them through the lock owner-token rules.
+/// Runs those processes start record the token's digest, so the run's stop
+/// and settle find them through their live gates.
 pub const RUN_TOKEN_ENV: &str = "EFFIGY_MANAGED_RUN_TOKEN";
+
+/// Values that output redaction must mask: every secret a process receives
+/// except the run token, which marks ownership and is no credential. Masking
+/// it would hold back every output shorter than the token.
+pub fn redacted_secret_values<'a>(
+    processes: impl IntoIterator<Item = &'a ManagedProcessSpec>,
+) -> Vec<String> {
+    processes
+        .into_iter()
+        .flat_map(|process| process.secret_env.iter())
+        .filter(|(key, value)| key.as_str() != RUN_TOKEN_ENV && !value.is_empty())
+        .map(|(_, value)| value.clone())
+        .collect()
+}
 
 /// Settle hooks the host runner lends one headless run for its stop. The
 /// runtime calls them inside the stop cascade: container-side groups are
-/// ended while the environment is still up, and lock records outliving a
-/// SIGKILLed holder are released after the host children are gone.
+/// ended while the environment is still up.
 #[derive(Clone, Copy)]
 pub struct ManagedRunSettle<'a> {
     /// Ends one recorded exec'd process group through the exec adapter,
     /// given the group id the marker file recorded.
     pub end_container_process: Option<&'a dyn Fn(u32) -> Result<(), String>>,
-    /// Releases task locks still attributed to this run's token, returning
-    /// the released lock scopes.
-    pub release_run_locks: Option<&'a dyn Fn() -> Vec<String>>,
 }
 
 impl std::fmt::Debug for ManagedRunSettle<'_> {
@@ -111,7 +121,6 @@ impl std::fmt::Debug for ManagedRunSettle<'_> {
                 "end_container_process",
                 &self.end_container_process.is_some(),
             )
-            .field("release_run_locks", &self.release_run_locks.is_some())
             .finish()
     }
 }
@@ -131,6 +140,9 @@ pub struct ManagedTaskPlan {
     /// session state so a whole-environment handover can find and end
     /// the live owner bound to the environment coming down.
     pub container_environment: Option<String>,
+    /// The owning managed run's settle token, passed explicitly so it never
+    /// travels through the process's global environment (contract 052 K12).
+    pub run_token: Option<String>,
 }
 
 #[derive(Debug, Clone)]

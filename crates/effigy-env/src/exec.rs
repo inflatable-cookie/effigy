@@ -1,25 +1,33 @@
 //! Shell command executor for `exec('...')` value expressions.
 //!
-//! Runs a command via `sh -c` with a configurable timeout. The child process
-//! stdout and stderr are both drained on background threads; if the timeout
-//! expires the child is killed and an [`EnvSchemaError::ExecTimeout`] is
-//! returned. On success the trimmed stdout content is returned as the resolved
-//! value.
+//! A caller that owns a run passes its own [`ExecRunner`], so each command is
+//! an effect of that run (contract 052 K3). Without one, [`run_exec_command`]
+//! runs `sh -c` under the configured timeout with bounded capture: stdout
+//! beyond [`STDOUT_MAX_BYTES`] is refused and only the last
+//! [`STDERR_TAIL_BYTES`] of stderr are kept. On timeout the child is killed
+//! and the readers are abandoned rather than waited on, so a descendant that
+//! holds a pipe open cannot extend the wait.
 
 use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
 use super::error::EnvSchemaError;
 
-/// Run a shell command and return its trimmed stdout.
-///
-/// The command is executed with `sh -c` in the given working directory.
-/// Background threads drain stdout and stderr while the main thread polls
-/// process status until the timeout expires. If the command exceeds the
-/// timeout the child is killed.
+/// The most stdout an `exec()` value may produce.
+pub const STDOUT_MAX_BYTES: usize = 1 << 20;
+/// The stderr tail kept for a failure message.
+pub const STDERR_TAIL_BYTES: usize = 64 * 1024;
+
+/// Runs one `exec()` command and returns its trimmed stdout.
+pub trait ExecRunner {
+    fn run(&self, command: &str, timeout: Duration, cwd: &Path) -> Result<String, EnvSchemaError>;
+}
+
+/// Run a shell command and return its trimmed stdout, with bounded capture.
 pub(super) fn run_exec_command(
     command: &str,
     timeout: Duration,
@@ -29,6 +37,7 @@ pub(super) fn run_exec_command(
         .arg("-c")
         .arg(command)
         .current_dir(cwd)
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -37,21 +46,22 @@ pub(super) fn run_exec_command(
             error,
         })?;
 
-    let mut stdout_handle = child.stdout.take().expect("stdout piped");
-    let mut stderr_handle = child.stderr.take().expect("stderr piped");
-
-    let stdout_thread = thread::spawn(move || {
-        let mut buf = String::new();
-        stdout_handle.read_to_string(&mut buf).ok();
-        buf
+    let (stdout_tx, stdout_rx) = mpsc::channel();
+    let (stderr_tx, stderr_rx) = mpsc::channel();
+    let stdout_handle = child.stdout.take().expect("stdout piped");
+    let stderr_handle = child.stderr.take().expect("stderr piped");
+    thread::spawn(move || {
+        let _ = stdout_tx.send(read_bounded(stdout_handle, STDOUT_MAX_BYTES, false));
     });
-    let stderr_thread = thread::spawn(move || {
-        let mut buf = String::new();
-        stderr_handle.read_to_string(&mut buf).ok();
-        buf
+    thread::spawn(move || {
+        let _ = stderr_tx.send(read_bounded(stderr_handle, STDERR_TAIL_BYTES, true));
     });
 
     let deadline = Instant::now() + timeout;
+    let timed_out = || EnvSchemaError::ExecTimeout {
+        command: command.to_owned(),
+        timeout,
+    };
     loop {
         if let Some(status) = child
             .try_wait()
@@ -60,33 +70,61 @@ pub(super) fn run_exec_command(
                 error,
             })?
         {
-            let stdout = stdout_thread.join().unwrap_or_default();
-            let stderr = stderr_thread.join().unwrap_or_default();
-
+            // A descendant holding a pipe open must not outlast the budget.
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            let (stdout, overflow) = stdout_rx.recv_timeout(remaining).map_err(|_| timed_out())?;
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            let (stderr, _) = stderr_rx.recv_timeout(remaining).unwrap_or_default();
+            if overflow {
+                return Err(EnvSchemaError::ExecFailed {
+                    command: command.to_owned(),
+                    code: status.code(),
+                    stderr: format!("stdout exceeded {STDOUT_MAX_BYTES} bytes"),
+                });
+            }
             if !status.success() {
                 return Err(EnvSchemaError::ExecFailed {
                     command: command.to_owned(),
                     code: status.code(),
-                    stderr: stderr.trim().to_owned(),
+                    stderr: String::from_utf8_lossy(&stderr).trim().to_owned(),
                 });
             }
-
-            return Ok(stdout.trim().to_owned());
+            return Ok(String::from_utf8_lossy(&stdout).trim().to_owned());
         }
 
         if Instant::now() >= deadline {
             child.kill().ok();
             child.wait().ok();
-            let _ = stdout_thread.join();
-            let _ = stderr_thread.join();
-            return Err(EnvSchemaError::ExecTimeout {
-                command: command.to_owned(),
-                timeout,
-            });
+            return Err(timed_out());
         }
 
         thread::sleep(Duration::from_millis(10));
     }
+}
+
+/// Reads to EOF keeping at most `limit` bytes: the head (with an overflow
+/// flag) or, for `tail`, the newest bytes.
+fn read_bounded(mut reader: impl Read, limit: usize, tail: bool) -> (Vec<u8>, bool) {
+    let mut kept = Vec::new();
+    let mut overflow = false;
+    let mut buffer = [0u8; 8192];
+    loop {
+        let count = match reader.read(&mut buffer) {
+            Ok(0) | Err(_) => break,
+            Ok(count) => count,
+        };
+        kept.extend_from_slice(&buffer[..count]);
+        if kept.len() > limit {
+            overflow = true;
+            if tail {
+                let excess = kept.len() - limit;
+                kept.drain(..excess);
+            } else {
+                kept.truncate(limit);
+            }
+        }
+    }
+    (kept, overflow)
 }
 
 #[cfg(test)]

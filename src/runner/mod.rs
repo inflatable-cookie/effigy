@@ -3,7 +3,6 @@ mod artifact_transport;
 mod bootstrap_command;
 mod builtin_ports;
 pub(crate) mod bundle_command;
-mod cache;
 mod changelog_command;
 mod command_context;
 mod container_command;
@@ -33,7 +32,6 @@ mod host_container_lease;
 mod host_process;
 mod host_scheduler;
 mod interactive_session;
-mod locking;
 mod managed_listener_readiness;
 mod managed_settle;
 mod managed_shell;
@@ -55,6 +53,7 @@ mod skill_command;
 mod state_command;
 mod state_command_render;
 mod system_command;
+mod task_engine;
 mod tasks_command;
 #[cfg(test)]
 mod test_support;
@@ -96,6 +95,7 @@ pub(in crate::runner) use service_command::run_service;
 pub(in crate::runner) use skill_command::{run_skill, run_skill_passthrough};
 pub(in crate::runner) use state_command::run_state;
 pub(in crate::runner) use system_command::{run_system, run_workspace};
+pub use task_engine::{adopt_signal_router, capture_startup_executable, run_internal_kernel_entry};
 pub(in crate::runner) use tasks_command::run_tasks;
 pub(in crate::runner) use uninstall_command::run_uninstall;
 
@@ -110,7 +110,3 @@ mod json_contract_tests;
 #[cfg(test)]
 #[path = "../tests/task_ref_parser_tests.rs"]
 mod task_ref_parser_tests;
-
-#[cfg(test)]
-#[path = "../tests/cache_tests/mod.rs"]
-mod cache_tests;

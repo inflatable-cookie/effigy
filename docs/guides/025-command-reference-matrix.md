@@ -133,7 +133,7 @@ through the help route.
 | `effigy help` / `effigy --help` | Show job-grouped CLI help; `effigy help <group>` renders one group and `effigy help <command>` renders command detail | `--json` | `effigy.help.v1` (inside command envelope) | `021-quick-start-and-command-cookbook.md` |
 | `effigy version` / `effigy --version` | Print the current Effigy version and active local build identity | `--json` | `effigy.version.v1` (inside command envelope) | `021-quick-start-and-command-cookbook.md` |
 | `effigy uninstall` | Plan or remove Effigy-owned local installation state | `--plan`, `--yes`, `--json` | command envelope with cleanup plan/result | `effigy uninstall --help` |
-| `effigy tasks` | List effective catalogs/tasks, probe routing, or inspect repo-scoped task status | `status <SELECTOR>`, `status --all`, `--repo`, `--task`, `--resolve`, `--json`, `--pretty true\|false` | `effigy.tasks.v1`, `effigy.tasks.filtered.v1`, `effigy.tasks-status.v1`, `effigy.tasks-status-all.v1` | `016-task-routing-precedence.md` |
+| `effigy tasks` | List effective catalogs/tasks, probe routing, or inspect repo-scoped task status | `status <SELECTOR>`, `status --all`, `--repo`, `--task`, `--resolve`, `--json`, `--pretty true\|false` | `effigy.tasks.v1`, `effigy.tasks.filtered.v1`, `effigy.tasks-status.v2`, `effigy.tasks-status-all.v2` | `016-task-routing-precedence.md` |
 | `effigy drafts` | Inventory lifecycle-labelled `[drafts]` definitions with purpose, created/expiry, lifecycle state, and composed source; never mutates or expires them | `[FILTER]`, `--repo`, `--json`, `--pretty true\|false` | `effigy.drafts.v1` | `016-task-routing-precedence.md`, `022-manifest-cookbook.md` |
 | `effigy draft` | Run one explicitly selected draft through ordinary catalog routing, request, and execution; `--plan` inspects without executing; never falls through from published selectors | `<SELECTOR>`, `--repo`, `--json`, `--plan`, `-- <ARGS>` | `effigy.task.run.v1` with additive `surface` / `surface_identity` for drafts; `effigy.task.plan.v1` | `016-task-routing-precedence.md`, `022-manifest-cookbook.md` |
 | `effigy skill` | List or execute one explicitly selected, isolated skill task catalog while a separate consumer repo owns runtime effects | `tasks`, `run`, `--path`, `--repo`, `--json`, `-- <ARGS>` | `effigy.skill.tasks.v1`, `effigy.skill.run.v1` | `021-quick-start-and-command-cookbook.md`, [`../contracts/042-external-skill-task-runner-contract.md`](../knowledge/contracts/042-external-skill-task-runner-contract.md) |
@@ -160,13 +160,11 @@ through the help route.
 | `effigy test` | Plan or run detected and configured test suites | `--plan`, `--verbose-results`, `--tui`, `--json` | `effigy.test.plan.v1`, `effigy.test.results.v1` | `013-testing-orchestration.md` |
 | `effigy init` | Prepare repo setup through one front door: bounded TTY wizard for plain terminal use, baseline managed setup without a project skill copy, wider setup inventory via checklist mode, explicit optional skill snapshot action, or named starter emission | `--check`, `--apply`, `--repair`, `--checklist`, `--apply-actions`, `<name>`, `--list`, `--dry-run`, `--force`, `--json` | `effigy.init.v1`, `effigy.init.checklist.v1`, `effigy.init.actions.v1`, `effigy.init.list.v1` | `019-init-foundation.md` |
 | `effigy config` | Render config reference/schema snippets, including the optional repository-defined `[docs_policy.graph]` profile, inspect the effective composed manifest, or manage user-global container defaults | `inspect`, `schema`, `path`, `get`, `set`, `unset`, `--inspect`, `--path`, `--schema`, `--minimal`, `--target`, `--runner`, `--user-inspect`, `--json` | `effigy.config.v1` | `021-quick-start-and-command-cookbook.md`, [`../contracts/041-documentation-graph-profile-contract.md`](../knowledge/contracts/041-documentation-graph-profile-contract.md) |
-| `effigy tasks unlock` | Clear lock scopes manually | `--all`, `--yes`, `--json`; typed scopes or a task selector such as `validate:activity-routing` | `effigy.unlock.v1` | `020-dag-lock-policy-baseline.md` |
 | `effigy artifact` | Inspect, stage, capture, and push versioned data artifacts to OCI registries or local staging | `inspect`, `stage`, `capture`, `--ref`, `--kind`, `--environment`, `--push`, `--farmyard-handoff`, `--json` | `effigy.artifact.inspect.v1`, `effigy.artifact.stage.v1`, `effigy.artifact.capture.v1` | `072-artifact-commands-guide.md` |
-| `effigy tasks cache` | Inspect and invalidate phase-1 cache metadata | `inspect`, `invalidate`, `--all`, `--json` | `effigy.cache.v1` | `022-manifest-cookbook.md` |
 | `effigy config completion` | Prompt for shell completion setup on a real TTY, export raw shell completion scripts, install user-local completion files, wire bash/zsh startup automatically when needed, and surface selector candidates | `bash\|zsh\|fish`, `--install`, `--export`, `candidates`, `--repo`, `--prefix`, `--json` | `effigy.completion.v2`, `effigy.completion.candidates.v1` | `021-quick-start-and-command-cookbook.md` |
 | `effigy changelog` | Validate, format, analyze, and extract Northstar changelog content | `validate`, `format`, `analyze`, `extract`, `--repo`, `--write`, `--preview`, `--version`, `--json` | changelog subcommands render direct output; some results can be wrapped in `effigy.command.v1` with global JSON mode | `052-changelog-workflows-and-northstar-profile.md` |
 | `effigy state` | Plan, apply, capture, and inspect layered state-stack reports without moving app semantics into Effigy | `plan [<STACK>]`, `plan --manifest <PATH>`, `plan --stack <NAME>`, `apply [<STACK>]`, `capture <STACK> <PROFILE>`, `capture --role ... --source-env ... --key ...`, `history [<STACK>]`, `--write-report`, `--yes`, `--push`, `--repo`, `--json` | `effigy.state-stack.lineage.v1`, `effigy.state-stack.apply.v1`, `effigy.state-stack.capture.v1`, `effigy.state-stack.history.v1` | `073-state-stack-guide.md`, [`../contracts/016-state-stack-and-layered-seed-framework-contract.md`](../knowledge/contracts/016-state-stack-and-layered-seed-framework-contract.md) |
-| `effigy <task>` / `effigy <catalog>/<task>` | Run manifest-defined tasks with routing rules; `--plan` inspects the resolved task, catalog, and command without executing; managed tasks also support a concurrent headless supervisor selected by flag or environment | leading `--repo`, `--verbose-root`, `--env-schema`, `--lock-wait-ms`; `EFFIGY_LOCK_WAIT_MS`; `--plan`; managed `--headless` / `EFFIGY_MANAGED_HEADLESS=1`, `status`, `logs [process] [--follow]`, `stop`; passthrough args; task-local `--json` where supported | `effigy.task.run.v1`, `effigy.task.plan.v1`; lock-wait timeout details use `effigy.lock-wait.v1` | `012-dev-process-manager-tui.md`, `016-task-routing-precedence.md`, `020-dag-lock-policy-baseline.md`, `022-manifest-cookbook.md`, `050-env-schema-integration.md` |
+| `effigy <task>` / `effigy <catalog>/<task>` | Run manifest-defined tasks with routing rules; `--plan` inspects the resolved task, catalog, and command without executing; managed tasks also support a concurrent headless supervisor selected by flag or environment | Effigy flags before the task: `--json`, `--plan`, `--repo`, `--verbose-root`, `--env-schema`, `--lock-wait-ms`; `EFFIGY_LOCK_WAIT_MS`; everything after the task name is the task's (`<task> --plan` / `<task> --json` still Effigy's for one release); managed `--headless` / `EFFIGY_MANAGED_HEADLESS=1`, `status`, `logs [process] [--follow]`, `stop` | `effigy.task.run.v1`, `effigy.task.plan.v1`; lock-conflict details use `effigy.lock-wait.v2` | `012-dev-process-manager-tui.md`, `016-task-routing-precedence.md`, `020-dag-lock-policy-baseline.md`, `022-manifest-cookbook.md`, `050-env-schema-integration.md` |
 | `effigy --host-run-request-id <UUID> <task>` | Submit one top-level heavy selector with a caller-persisted identity | leading `--host-run-request-id`; existing `EFFIGY_CALLER` label | request status `effigy.host_run.request-status.v1`; follow `effigy.host_run.request-follow.v1` | `080-host-wide-validation-admission.md` |
 
 ## JSON Envelope
@@ -389,12 +387,9 @@ Use `effigy scan <subcommand> --help` (and per-scanner help) for optional scan
 flags such as `--include`, `--exclude`, `--threshold`, `--source-root`, marker
 overrides, and `--no-gitignore`.
 
-### Cache, Completion, Changelog, and Release
+### Completion, Changelog, and Release
 
 ```sh
-effigy tasks unlock [--all | <scope>...] [--yes] [--json]
-effigy tasks cache inspect [<selector>] [--json]
-effigy tasks cache invalidate [<selector>...] [--all] [--json]
 effigy config completion [<bash|zsh|fish>] [--install|--export] [--json]
 effigy config completion candidates [--repo <PATH>] [--prefix <value>] [--json]
 effigy changelog <validate|format|analyze|extract> [--repo <PATH>] [ARGS...] [--json]
@@ -542,10 +537,8 @@ environment in `session.json` so a whole-environment handover can end
 - `config --inspect` cannot be combined with `--schema`
 - `config --path` requires `--inspect`
 - `config --runner` requires `--schema --target test`
-- `tasks unlock` accepts either explicit scopes or `--all`, not both
-- `tasks unlock` accepts a task selector such as `validate:activity-routing` as
-  `task:validate:activity-routing`; incomplete typed scopes fail with that example
-- `tasks cache invalidate` accepts selectors or `--all`, not both
+- a task's lock is its run's gate: it is released when that run exits and is
+  never removed by hand; `effigy tasks status <task>` names a live holder
 - release operator flows should prefer built-in `effigy release ...` commands,
   not wrapper scripts
 - there is no top-level `effigy distribution` command; distribution validation
@@ -620,7 +613,7 @@ Routing diagnosis:
 
 ```sh
 effigy tasks --resolve test
-effigy app/build --plan
+effigy --plan app/build
 effigy doctor --repo /path/to/workspace app/build --watch
 ```
 
@@ -691,11 +684,11 @@ effigy --json graph explore "trace release orchestrator" --max-files 6 --max-byt
 git diff --name-only | effigy graph affected --stdin --json
 ```
 
-Lock recovery:
+Live run inspection:
 
 ```sh
-effigy tasks unlock task:build
-effigy tasks unlock --all --yes
+effigy tasks status dev
+effigy --lock-wait-ms 600000 dev
 ```
 
 ## Related Guides

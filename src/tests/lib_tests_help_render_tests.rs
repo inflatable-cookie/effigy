@@ -29,7 +29,8 @@ fn render_help_writes_structured_sections() {
     assert!(!rendered.contains("effigy watch"));
     assert!(rendered.contains("effigy init"));
     assert!(!rendered.contains("effigy tasks migrate"));
-    assert!(rendered.contains("effigy tasks cache"));
+    assert!(!rendered.contains("effigy tasks cache"));
+    assert!(!rendered.contains("effigy tasks unlock"));
     assert!(rendered.contains("effigy config completion"));
     assert!(rendered.contains("supports <catalog>/test targeting"));
     assert!(!rendered.contains("effigy test --plan"));

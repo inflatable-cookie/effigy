@@ -8,6 +8,9 @@ pub mod check_id {
     pub const TASK_REFERENCES_RESOLVE: &str = "tasks.references.resolve";
     pub const DRAFT_LIFECYCLE: &str = "drafts.lifecycle";
     pub const DEPENDENCY_LINK_HEALTH: &str = "dependencies.link-health";
+    /// v0.14 task state families (`tasks.legacy-state.<family>`): informational,
+    /// but listed so an operator knows what is safe to delete.
+    pub const TASKS_LEGACY_STATE_PREFIX: &str = "tasks.legacy-state.";
     pub const GRAPH_INDEX: &str = "graph.index";
     pub const SCAN_GOD_FILES: &str = "scan.god-files";
     pub const SCAN_DUPLICATE_BLOCKS: &str = "scan.duplicate-blocks";

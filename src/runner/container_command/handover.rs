@@ -515,7 +515,9 @@ fn execute_handover(
     // owner's whole stop cascade - including its own `container <env>
     // down` - finishes before the handover continues.
     let owner_notes = end_headless_managed_owners(repo_root, target)?;
-    let incoming_token = std::env::var(effigy_managed::RUN_TOKEN_ENV).ok();
+    let incoming_token = std::env::var(effigy_managed::RUN_TOKEN_ENV)
+        .ok()
+        .filter(|token| !token.is_empty());
     crate::runner::managed_settle::refuse_environment_mutation(
         repo_root,
         &target.environment,
@@ -992,20 +994,6 @@ domain = "switch.test"
     }
 
     #[cfg(unix)]
-    fn repo_lock_files(repo_root: &Path) -> Vec<PathBuf> {
-        let locks_dir = repo_root.join(".effigy/locks");
-        std::fs::read_dir(&locks_dir)
-            .map(|entries| {
-                entries
-                    .flatten()
-                    .map(|entry| entry.path())
-                    .filter(|path| path.extension().is_some_and(|ext| ext == "lock"))
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-
-    #[cfg(unix)]
     fn patch_headless_session_environment(state_path: &Path, environment: &str) {
         let raw = fs::read_to_string(state_path).expect("read headless session");
         let mut state: serde_json::Value =
@@ -1051,10 +1039,13 @@ run = "printf reverse-ok"
         .expect("write manifest");
         let binary = compiled_effigy_binary();
         let repo_arg = repo_root.display().to_string();
+        // The children's runs land in the test's private kernel home.
+        let home = crate::runner::task_engine::test_state_home();
         // The owner is a separate process, so its lock guard drops only
         // when the handover actually ends it.
         let mut owner = ReapedChild::spawn(
             std::process::Command::new(&binary)
+                .env("HOME", &home)
                 .args(["--repo", &repo_arg, "dev", "--headless"])
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::null())
@@ -1097,12 +1088,13 @@ run = "printf reverse-ok"
         // plan records it.
         patch_headless_session_environment(&state_path, "stack");
         assert!(
-            !repo_lock_files(&repo_root).is_empty(),
+            !crate::runner::task_engine::live_holders(&repo_root).is_empty(),
             "the live owner holds its task lock"
         );
         // While the owner lives, the reverse invocation on the same lock
         // scope refuses.
         let refused = std::process::Command::new(&binary)
+            .env("HOME", &home)
             .args(["--repo", &repo_arg, "rev"])
             .output()
             .expect("reverse attempt");
@@ -1111,7 +1103,7 @@ run = "printf reverse-ok"
             "reverse handover must refuse while the owner lives"
         );
         assert!(
-            String::from_utf8_lossy(&refused.stderr).contains("lock conflict"),
+            String::from_utf8_lossy(&refused.stderr).contains("is held"),
             "{}",
             String::from_utf8_lossy(&refused.stderr)
         );
@@ -1137,12 +1129,13 @@ run = "printf reverse-ok"
         );
         owner.join();
         assert!(
-            repo_lock_files(&repo_root).is_empty(),
+            crate::runner::task_engine::live_holders(&repo_root).is_empty(),
             "ending the owner released its task lock"
         );
         // The following invocation on the same scope succeeds: the
         // reverse handover.
         let reverse = std::process::Command::new(&binary)
+            .env("HOME", &home)
             .args(["--repo", &repo_arg, "rev"])
             .output()
             .expect("reverse run");

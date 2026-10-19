@@ -1,11 +1,6 @@
-use crate::runner::json_contract_tests::prelude::{harness::*, json::*, runtime::*};
-use chrono::Utc;
-use effigy_execution::{
-    ExecutionSurface, TaskStatusCompletedRecord, TaskStatusOutcome, TaskStatusRuntimeRouteSummary,
-    TaskStatusStage, TaskStatusState, TaskStatusTargetIdentity,
+use crate::runner::json_contract_tests::prelude::{
+    execution::run_manifest_task_with_cwd, harness::*, json::*, runtime::*,
 };
-use effigy_runtime::task_status::task_status_latest_record_path;
-use std::path::Path;
 
 #[test]
 fn tasks_json_contract_has_versioned_top_level_shape() {
@@ -385,7 +380,14 @@ fn tasks_status_json_contract_has_versioned_top_level_shape() {
         &root.join("effigy.toml"),
         "[tasks.check]\nrun = \"printf check\"\n",
     );
-    seed_latest_task_status(&root, "check");
+    run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "check".to_owned(),
+            args: Vec::new(),
+        },
+        root.clone(),
+    )
+    .expect("run check");
 
     let out = with_cwd(&root, || {
         run_tasks(TasksArgs {
@@ -403,11 +405,13 @@ fn tasks_status_json_contract_has_versioned_top_level_shape() {
     .expect("run task status json");
 
     let parsed = parse_json(&out);
-    assert_schema_v1(&parsed, "effigy.tasks-status.v1");
-    assert_eq!(parsed["resolved_selector"], "check");
+    assert_eq!(parsed["schema"], "effigy.tasks-status.v2");
+    assert_eq!(parsed["schema_version"], 2);
+    assert_eq!(parsed["task"]["selector"], "check");
     assert_eq!(parsed["state"], "succeeded");
-    assert!(parsed["active"].is_null());
+    assert!(parsed["current"].is_null());
     assert!(parsed["latest"].is_object());
+    assert!(parsed["history"].is_array());
     assert!(parsed["warnings"].is_array());
     assert!(parsed["routing"].is_object());
 }
@@ -425,8 +429,6 @@ fn tasks_status_all_json_contract_has_versioned_top_level_shape() {
         &catalog_a.join("effigy.toml"),
         "[catalog]\nalias = \"catalog_a\"\n[tasks.build]\nrun = \"printf build\"\n",
     );
-    seed_latest_task_status(&root, "catalog_a/build");
-
     let out = with_cwd(&root, || {
         run_tasks(TasksArgs {
             repo_override: None,
@@ -443,7 +445,8 @@ fn tasks_status_all_json_contract_has_versioned_top_level_shape() {
     .expect("run task status all json");
 
     let parsed = parse_json(&out);
-    assert_schema_v1(&parsed, "effigy.tasks-status-all.v1");
+    assert_eq!(parsed["schema"], "effigy.tasks-status-all.v2");
+    assert_eq!(parsed["schema_version"], 2);
     assert_eq!(
         parsed["scope_root"],
         fs::canonicalize(&root)
@@ -466,57 +469,4 @@ fn sorted_object_keys(value: &serde_json::Value) -> Vec<&str> {
         .collect::<Vec<&str>>();
     keys.sort_unstable();
     keys
-}
-
-fn seed_latest_task_status(root: &Path, selector: &str) {
-    let canonical_root = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
-    let selected_catalog_root = selector
-        .split_once('/')
-        .map(|(prefix, _)| canonical_root.join(prefix))
-        .unwrap_or_else(|| canonical_root.clone());
-    let identity = TaskStatusTargetIdentity::new(
-        canonical_root.clone(),
-        selected_catalog_root,
-        selector,
-        selector.rsplit('/').next().unwrap_or(selector),
-        None,
-    );
-    let key = identity.status_key();
-    let path = task_status_latest_record_path(root, &key);
-    let record = TaskStatusCompletedRecord {
-        status_key: key,
-        identity,
-        state: TaskStatusState::Succeeded,
-        stage: Some(TaskStatusStage::Finishing),
-        execution_surface: ExecutionSurface::DirectCli,
-        runtime_route: TaskStatusRuntimeRouteSummary {
-            route: "host".to_owned(),
-            container: None,
-            service: None,
-        },
-        started_at: timestamp_now(),
-        finished_at: timestamp_now(),
-        duration_ms: Some(42),
-        lock_scopes: vec!["task:test".to_owned()],
-        outcome: TaskStatusOutcome {
-            summary: "task completed".to_owned(),
-            error_family: None,
-            error_code: None,
-        },
-        latest_report_path: path.display().to_string(),
-        history_report_path: root
-            .join(".effigy/reports/tasks/history-placeholder.json")
-            .display()
-            .to_string(),
-    };
-    fs::create_dir_all(path.parent().expect("latest parent")).expect("create status dir");
-    fs::write(
-        &path,
-        serde_json::to_vec_pretty(&record).expect("encode latest status"),
-    )
-    .expect("write latest status");
-}
-
-fn timestamp_now() -> String {
-    Utc::now().format("%Y%m%dT%H%M%SZ").to_string()
 }

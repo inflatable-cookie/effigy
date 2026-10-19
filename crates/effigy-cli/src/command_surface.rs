@@ -256,20 +256,6 @@ pub const GENERAL_HELP_ENTRIES: &[GeneralHelpEntry] = &[
     },
     GeneralHelpEntry {
         group: HelpGroup::Work,
-        command: "effigy tasks unlock",
-        description: "Manually clear lock scopes (`workspace`, `shared:*`, `task:*`, `profile:*/*`, or a task selector)",
-        deferred_builtin: None,
-        help_argument: None,
-    },
-    GeneralHelpEntry {
-        group: HelpGroup::Work,
-        command: "effigy tasks cache",
-        description: "Inspect/invalidate phase-1 task cache metadata (`inspect`, `invalidate`)",
-        deferred_builtin: None,
-        help_argument: None,
-    },
-    GeneralHelpEntry {
-        group: HelpGroup::Work,
         command: "effigy drafts",
         description: "Inventory lifecycle-labelled draft definitions with expiry state and composed source",
         deferred_builtin: Some("drafts"),

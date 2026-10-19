@@ -2,7 +2,7 @@
 
 Owner: Platform
 Created: 2026-05-05
-Last Updated: 2026-10-06
+Last Updated: 2026-10-19
 
 ## Purpose
 
@@ -188,6 +188,23 @@ resolution must not change because a caller wrapped the output differently.
 must not be treated as a safety flag. Inspecting a selector without running it
 is a separate `--plan` operation on the task or draft invocation.
 
+## Argument Rule
+
+Effigy's own flags come before the selector; everything after it belongs to
+the task (D1-34):
+
+```text
+effigy [--json] [--plan] [--repo <PATH>] [--lock-wait-ms <MS>] [--env-schema <PATH>] [--verbose-root] <selector> [task args]
+```
+
+The CLI joins the two halves with an internal boundary, so the request knows
+which flags are Effigy's. For one release, `--plan` and `--json` directly
+after the selector are still read as Effigy's, with a note naming the leading
+spelling; any other Effigy flag after the selector reaches the task, with a
+note. Built-in commands routed by name (`test`, `tasks`, ...) and
+invocations built inside Effigy (sequence steps, deferral, built-ins) keep
+their own argument conventions.
+
 Direct CLI presentation (the framed header) is not task output. For
 `effigy <selector>` and `effigy draft <selector>` text runs, that header goes
 to stderr so stdout is only the task's own bytes and the process keeps the
@@ -214,7 +231,7 @@ policy must come from the resolved execution plan.
 is not a public CLI payload.
 
 The public non-executing selector plan is a separate schema,
-`effigy.task.plan.v1`. `effigy <selector> --plan` and
+`effigy.task.plan.v1`. `effigy --plan <selector>` and
 `effigy draft <selector> --plan` resolve the task, catalog, and command shape
 without starting a task process, acquiring locks, activating containers,
 resolving env-schema `exec()` values, or writing task-status records. `--plan`

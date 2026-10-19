@@ -22,11 +22,13 @@ matrix are implemented (`test:kernel:faults`, `test:kernel:matrix`);
 engine-specific §12.1 scenarios are placeholders owned by their engine lanes.
 Fault points inside helper processes (sentinel settle, guard acknowledgement,
 detached supervisor) are not yet armed; architecture 032 records the limit.
-Bundle-source preparation uses Prepare runs, source custody, store gating and
-atomic lock publication. Other engines have not adopted the kernel; their
-mechanisms in the adoption map (§10) remain current behavior. QA-group `stop` and `hard_timeout_ms` stay unavailable: contract
-[051](051-bounded-qa-groups-contract.md) keeps refusing them until this
-kernel's run journal, custody and deadlines exist.
+The task engine has adopted the kernel (effigy#217; §10.1 records each row),
+and bundle-source preparation uses Prepare runs, source custody, store gating
+and atomic lock publication. The other engines have not adopted it; their
+adoption-map rows (§10) remain current behavior. QA-group runs are kernel runs,
+but `stop` and `hard_timeout_ms` stay unavailable: contract
+[051](051-bounded-qa-groups-contract.md) keeps refusing them until the task
+engine exposes them.
 
 Owner: runtime kernel (Queue lane `v015-kernel`)
 Architecture: [032](../architecture/032-runtime-kernel-architecture.md)
@@ -1841,6 +1843,31 @@ Current mechanisms and their kernel replacements. Evidence is at main
 | Bundle and catalog source preparation | Checkout pins and immutable source generations; no read-time refresh or cache lock | Prepare run; `Gate(Store bundles)` with deadline; atomic checkout lock publication |
 | Scheduler client signal handler | `src/runner/host_scheduler/submit.rs:205-212` | subscribes to `SignalRouter` cancel; admission shape is Q-006 |
 | QA group records: 20 s staleness, truncating writes | `crates/effigy-runtime/src/qa_group_status.rs:19`, `:275-291` | `Run` rows; `stop` and `hard_timeout_ms` become possible |
+
+Task engine adoption (effigy#217, 2026-10-19):
+
+| Row | State |
+| --- | --- |
+| Lock key, lease lock, `tasks unlock`, hostname as namespace | Done. `TaskId` from the one resolver; `Gate(Task)` per run; shared locks are `Store(task-lock:<name>)` runs; holders are host gates only. `tasks unlock` refuses for one minor. |
+| Status rows | Done. `effigy.tasks-status.v2` projects run rows plus a gate probe ([018](018-task-status-query-surface-and-read-model-contract.md)). |
+| Status write failure | Done. Journal failures are warnings; the task's exit code stands (K10). |
+| Process group always; owned-children stop | Done for plain host commands: `Custody::spawn` with `Terminal::Inherit`, a per-run sentinel, the router installed before the first custody spawn. Sequence steps, container exec and managed processes keep their current spawners until the sequence engine and supervisor adopt custody. |
+| Generated sequence script | Not done: the sequence engine follow-up. |
+| Env-schema commands | Done. Resolved after `Admitted`; each `exec()` is a custody effect of the run with bounded capture. |
+| `set_var` | Done for the vault passphrase, the local-dev marker and the managed run token. Not done: the external task source isolation marker and sequence step environments, which need every spawner on spawn-spec env (sequence engine follow-up). |
+| Task cache | Done: removed. |
+| Git exclude on reads; bundle refresh during reads; scheduler signal handler | Not this task. Read paths no longer refresh bundles or append Git excludes (source pins, effigy#220); the scheduler signal handler is the admission (Q-006) follow-up. |
+| QA group records | Done for liveness: a group run is a kernel run, and status reads its gate, not a PID or heartbeat. The member report files remain reports. |
+
+Prerequisite kernel additions for that adoption: `run::history`,
+`run::unclosed` and `RunSummary` (§5.6 status reads); `TaskId` and
+`ResourceId::key` accessors (§5.1); `Terminal::Inherit { capture }` and
+separately redacted stdout and stderr queues (§5.7); `Executable` identified by
+file identity instead of a content digest, and holding the startup image open
+(§5.8, I-SV4). When a build replaces the running binary's path (`cargo run` of
+Effigy inside an Effigy sequence), a later sentinel re-execs a private copy of
+the unchanged startup image under the state root, removed once the sentinel
+acknowledges; a changed image still refuses.
 
 Read-boundary CLI proofs use the `discovery-proof` Cargo profile: the real,
 CLI and helper dispatch with release optimization and symbols stripped so macOS's

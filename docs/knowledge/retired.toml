@@ -16,7 +16,7 @@ owner = "docs/knowledge/contracts/020-remote-bundle-sources-git-and-oci-delivery
 terms = ["EFFIGY_GIT_BUNDLE_REMOTE_CHECK_TTL_SECS"]
 paths = []
 config_keys = []
-allow = ["CHANGELOG.md", "crates/effigy-manifest/src/bundles/source/prepare.rs"]
+allow = ["CHANGELOG.md", "crates/effigy-manifest/src/bundles/source/prepare.rs", "tests/scripts/resolver-shadow-diff.py"]
 
 [[retired]]
 id = "effigy-resolution-owned-port-and-mount-preparation"
@@ -251,6 +251,46 @@ replacement = "The plan is Queue lanes, lane documents and plan order; leads are
 owner = "docs/knowledge/README.md"
 paths = ["docs/plan.md", "docs/triage/"]
 allow = ["CHANGELOG.md"]
+
+[[retired]]
+id = "effigy-tasks-unlock"
+retired = "2026-10-19"
+replacement = "A task's lock is its run's kernel gate, released when the run exits and never taken from a live run. Find a live holder with effigy tasks status <task>; wait with effigy --lock-wait-ms <MS> <task>. The removed command refuses with this explanation for one release."
+owner = "docs/knowledge/contracts/017-task-status-record-and-active-run-model-contract.md"
+terms = ["effigy tasks unlock", "effigy.unlock.v1"]
+paths = ["crates/effigy-builtin/src/unlock.rs", "crates/effigy-builtin/src/unlock/"]
+config_keys = []
+allow = ["CHANGELOG.md", "crates/effigy-builtin/src/tasks.rs", "src/tests/runner_tests/managed_and_locking_tests/locking_tests.rs", "docs/guides/085-v0.15.0-consumer-migration.md", "src/tests/lib_tests_help_render_tests.rs"]
+
+[[retired]]
+id = "effigy-task-cache"
+retired = "2026-10-19"
+replacement = "Removed with no replacement in Effigy: the tool's own cache (cargo, turbo, vite) decides. A task declaring cache is refused with the fix, and .effigy/cache can be deleted."
+owner = "docs/knowledge/contracts/017-task-status-record-and-active-run-model-contract.md"
+terms = ["effigy tasks cache", "effigy.cache.v1", "effigy.task.cache.store.v1", "task-cache-v1.json"]
+paths = ["src/runner/cache/", "src/runner/cache.rs", "crates/effigy-builtin/src/cache/", "crates/effigy-builtin/src/cache.rs"]
+config_keys = []
+allow = ["CHANGELOG.md", "crates/effigy-builtin/src/tasks.rs", "docs/guides/022-manifest-cookbook.md", "docs/guides/085-v0.15.0-consumer-migration.md", "src/runner/task_engine/legacy.rs", "docs/knowledge/contracts/052-runtime-kernel-contract.md", "src/tests/lib_tests_help_render_tests.rs", "tests/cli_output_tests/json_envelope_tests/runtime.rs"]
+
+[[retired]]
+id = "effigy-task-lease-lock"
+retired = "2026-10-19"
+replacement = "Kernel gates (contract 052 §5.4): one per resolved task, held while its run lives. v0.14 lease records are ignored, never deleted; a live v0.14 holder still refuses its task until it exits, and doctor lists the files."
+owner = "docs/knowledge/contracts/017-task-status-record-and-active-run-model-contract.md"
+terms = ["effigy.lock-wait.v1", "LOCK_STALE_LEASE_MS", "LOCK_HEARTBEAT_INTERVAL_MS"]
+paths = ["src/runner/locking/", "src/runner/locking.rs"]
+config_keys = []
+allow = ["CHANGELOG.md", "docs/knowledge/contracts/052-runtime-kernel-contract.md"]
+
+[[retired]]
+id = "effigy-task-status-v1"
+retired = "2026-10-19"
+replacement = "effigy.tasks-status.v2 and effigy.tasks-status-all.v2: run rows plus a fresh gate probe, no staleness window. A task with no runs shows its v0.14 record read-only for one release."
+owner = "docs/knowledge/contracts/018-task-status-query-surface-and-read-model-contract.md"
+terms = ["effigy.tasks-status-all.v1", "stale_active", "TASK_STATUS_ACTIVE_STALE_MS"]
+paths = ["src/runner/execute/task_status.rs"]
+config_keys = []
+allow = ["CHANGELOG.md", "crates/effigy-runtime/src/task_status.rs", "crates/effigy-execution/src/task_status.rs", "docs/knowledge/contracts/052-runtime-kernel-contract.md"]
 
 [[retired]]
 id = "effigy-watch"

@@ -25,7 +25,7 @@ pub use parsing::{
     normalize_builtin_test_suite, parse_task_runtime_args, parse_task_selector,
     render_task_selector,
 };
-pub use probe::{probe_task_resolution, ProbeTaskResolutionRequest, TaskResolutionProbe};
+pub use probe::{available_concurrent_profiles, has_concurrent_profile};
 pub use qa_groups::budget_state;
 pub use qa_groups::{
     build_qa_group_plan, canonical_definition_digest, list_qa_groups, load_temporary_qa_group,

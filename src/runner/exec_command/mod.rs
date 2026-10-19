@@ -73,6 +73,26 @@ pub(super) fn run_exec(args: ExecArgs) -> Result<String, RunnerError> {
     )
 }
 
+/// Whether `alias_name` is an exec alias of the default exec surface. Reads
+/// the surface declaration only: no activation, no probe.
+pub(in crate::runner) fn exec_alias_declared(
+    repo_root: &Path,
+    alias_name: &str,
+    extra_args: &[String],
+) -> Result<bool, RunnerError> {
+    let surface = match resolve_default_exec_surface(repo_root) {
+        Ok(surface) => surface,
+        Err(error) if exec_alias_surface_absent(&error) => return Ok(false),
+        Err(error) => return Err(error),
+    };
+    let alias_table = build_alias_table(&surface.config)?;
+    match alias_table.resolve_command(alias_name, extra_args) {
+        Ok(_) => Ok(true),
+        Err(effigy_exec::ExecError::AliasNotFound { .. }) => Ok(false),
+        Err(error) => Err(RunnerError::task_invocation(error.to_string())),
+    }
+}
+
 pub(in crate::runner) fn try_run_exec_alias(
     repo_root: &Path,
     invocation_cwd: &Path,

@@ -503,6 +503,7 @@ fn public_resolve_and_validate_env_surfaces_validation_errors_without_reloading(
         dotenv_overrides: BTreeMap::new(),
         exec_timeout: Duration::from_secs(5),
         project_root: dir.clone(),
+        exec: None,
     };
 
     let resolved = env_schema::resolve_env(&schema, &context).expect("resolve schema");

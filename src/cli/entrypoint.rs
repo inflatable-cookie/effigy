@@ -244,7 +244,7 @@ pub fn run_and_render_command(context: &CliExecutionContext<'_>, command: Comman
                 // envelope; relay its status without adding text.
                 std::process::exit(scheduler_exit.unwrap_or(1));
             }
-            let exit_code = scheduler_exit.unwrap_or(1);
+            let exit_code = err.process_exit_code();
             if context.emit_json_envelope {
                 emit_json_envelope_error(
                     exit_code,

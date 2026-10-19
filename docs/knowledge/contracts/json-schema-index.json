@@ -160,14 +160,14 @@
     {
       "schema": "effigy.command.v1",
       "schema_version": 1,
-      "command": "effigy --json build --repo <fixture_task_success>",
+      "command": "effigy --json --repo <fixture_task_success> build",
       "surface": "catalog task",
       "status": "active"
     },
     {
       "schema": "effigy.command.v1",
       "schema_version": 1,
-      "command": "effigy --json build --plan --repo <fixture_task_success>",
+      "command": "effigy --json --plan --repo <fixture_task_success> build",
       "surface": "catalog task",
       "status": "active",
       "payload_schema": "effigy.task.plan.v1"
@@ -215,7 +215,7 @@
     {
       "schema": "effigy.command.v1",
       "schema_version": 1,
-      "command": "effigy --json missing-task --repo <fixture_task_success>",
+      "command": "effigy --json --repo <fixture_task_success> missing-task",
       "surface": "catalog task",
       "status": "active",
       "expect_failure": true

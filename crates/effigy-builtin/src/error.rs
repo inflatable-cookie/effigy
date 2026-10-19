@@ -1,7 +1,7 @@
 //! Narrow error boundary for the built-in command layer.
 //!
 //! Produced by every built-in arm (dispatcher, registry, test, scan,
-//! config, unlock, cache, completion, …) and lifted to
+//! config, completion, …) and lifted to
 //! `RunnerError` at the runner's edge via `impl From<BuiltinError> for
 //! RunnerError` in `src/runner/error.rs`. Variant shapes mirror
 //! `RunnerError::*` one-for-one so the runner-side `From` impl is a
@@ -36,10 +36,6 @@ pub enum BuiltinError {
         error: std::io::Error,
     },
     TaskLockConflict(Box<TaskLockConflict>),
-    TaskLockIo {
-        path: PathBuf,
-        error: std::io::Error,
-    },
     BuiltinTestNonZero {
         failures: Vec<(String, Option<i32>)>,
         rendered: String,
@@ -96,9 +92,6 @@ impl std::fmt::Display for BuiltinError {
             }
             BuiltinError::TaskLockConflict(details) => {
                 write!(f, "lock conflict on scope `{}`", details.scope)
-            }
-            BuiltinError::TaskLockIo { path, error } => {
-                write!(f, "lock io at {}: {error}", path.display())
             }
             BuiltinError::BuiltinTestNonZero { failures, .. } => {
                 write!(f, "{} builtin test failure(s)", failures.len())

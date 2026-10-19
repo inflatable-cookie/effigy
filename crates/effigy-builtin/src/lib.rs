@@ -2,7 +2,7 @@
 //!
 //! Extracted from `src/runner/builtin/**` under card 250. Owns the
 //! registry, dispatcher, every built-in arm (doctor, tasks, test,
-//! scan, config, unlock, cache, completion, init,
+//! scan, config, completion, init,
 //! help, …) plus the test-support fixtures.
 //!
 //! The narrow [`BuiltinError`] boundary lifts to `RunnerError` at the
@@ -19,7 +19,6 @@ use effigy_routing::resolve_catalog_by_prefix;
 use effigy_tasks::{TaskRuntimeArgs, TaskSelector};
 
 mod arg_parser;
-mod cache;
 mod command_spec;
 mod completion;
 mod config;
@@ -40,13 +39,12 @@ mod tasks;
 mod test;
 pub mod test_support;
 mod text_doc;
-mod unlock;
 
 pub use constants::{BUILTIN_TASKS, DEFAULT_BUILTIN_TEST_MAX_PARALLEL};
 pub use error::BuiltinError;
 pub use ports::{
     BuiltinContainerSuiteTarget, BuiltinLockGuards, BuiltinRuntimePorts, BuiltinTestChildEvidence,
-    LockScope, TaskCacheEntry, UnlockResult,
+    LockScope,
 };
 pub use prompt_policy::{PromptDecision, PromptPolicy};
 
@@ -67,6 +65,19 @@ fn resolve_builtin_task_target_root(
             .map(|catalog| catalog.catalog_root.clone());
     }
     Some(resolved_root.to_path_buf())
+}
+
+/// Whether `selector` names a built-in this layer would run: a registry
+/// name whose target catalog resolves. Runs nothing.
+pub fn builtin_handles(
+    selector: &TaskSelector,
+    catalogs: &[LoadedCatalog],
+    invocation_cwd: &Path,
+) -> bool {
+    registry::builtin_registry_entry(&selector.task_name).is_some()
+        && (selector.prefix.is_none()
+            || resolve_builtin_task_target_root(selector, Path::new("/"), catalogs, invocation_cwd)
+                .is_some())
 }
 
 pub fn try_run_builtin_task(

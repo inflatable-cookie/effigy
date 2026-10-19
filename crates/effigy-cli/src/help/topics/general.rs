@@ -23,7 +23,7 @@ pub(crate) fn render_general_help<R: HelpRenderer + ?Sized>(
     )?;
     renderer.notice(
         NoticeLevel::Info,
-        "Global `--json` and `--repo <PATH>` work before built-ins and task selectors. `--host-run-request-id <UUID>` is for a caller-persisted identity on one top-level heavy selector; recover it with `effigy tasks request status|follow`. `--json` is an output format, never a planning or safety flag. Generic task invocations also accept `--verbose-root`, `--env-schema <PATH>`, and `--plan` after the selector.",
+        "Effigy's flags go before the task: `effigy [--json] [--plan] [--repo <PATH>] [--lock-wait-ms <MS>] [--env-schema <PATH>] [--verbose-root] <task> [task args]`. Everything after the task name belongs to the task; `<task> --plan` and `<task> --json` are still read as Effigy's for one release. `--host-run-request-id <UUID>` is for a caller-persisted identity on one top-level heavy selector; recover it with `effigy tasks request status|follow`. `--json` is an output format, never a planning or safety flag.",
     )?;
     renderer.notice(
         NoticeLevel::Info,
@@ -38,8 +38,12 @@ pub(crate) fn render_general_help<R: HelpRenderer + ?Sized>(
             "Use a caller-persisted identity for one top-level heavy selector",
         ),
         KeyValue::new(
-            "<task> --plan",
+            "--plan <task>",
             "Inspect the resolved task, catalog, and command without executing",
+        ),
+        KeyValue::new(
+            "--lock-wait-ms <MS> <task>",
+            "Wait up to MS for a live run of the same task to finish",
         ),
     ])?;
     Ok(())

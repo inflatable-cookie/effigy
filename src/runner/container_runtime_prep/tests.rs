@@ -1604,28 +1604,19 @@ fn task_activation_surfaces_dependency_volume_failure_before_lease_refresh() {
 }
 
 /// A live managed owner whose session record is missing is still visible
-/// through its task/profile run-token lock holders. Attempt B's actual state:
-/// the record was gone while the owner was live, and a guard that only reads
-/// records would have failed open. Lock-discovered owners carry no recorded
-/// environment, so they refuse the restart for this checkout's environments.
+/// through its run's gate. Attempt B's actual state: the record was gone
+/// while the owner was live, and a guard that only reads records would have
+/// failed open. Gate-discovered owners carry no recorded environment, so they
+/// refuse the restart for this checkout's environments.
 #[test]
 fn live_managed_exec_note_discovers_owners_without_a_session_record() {
-    let private = tempfile::tempdir().expect("live lock fixture");
+    let private = tempfile::tempdir().expect("live holder fixture");
     let repo_root = private.path();
-    let locks = repo_root.join(".effigy/locks");
-    fs::create_dir_all(&locks).expect("locks dir");
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock")
-        .as_millis();
-    fs::write(
-        locks.join("task-dev.lock"),
-        format!(
-            r#"{{"scope":"task:dev","pid":{},"started_at_epoch_ms":{now},"managed_run_token":"managedrun-live-1"}}"#,
-            std::process::id()
-        ),
-    )
-    .expect("live holder record");
+    let held = crate::runner::task_engine::TaskRun::hold_for_tests(
+        repo_root,
+        "dev",
+        Some("managedrun-live-1"),
+    );
 
     let policy = test_policy(PathBuf::from("docker-compose.yml"));
     let note = live_managed_exec_note(repo_root, &policy).expect("live owner without a record");
@@ -1634,44 +1625,23 @@ fn live_managed_exec_note_discovers_owners_without_a_session_record() {
         "got: {note}"
     );
     assert!(
-        note.contains("managedrun-live-1") || note.contains("run token"),
+        note.contains(&format!("pid {}", std::process::id())),
         "got: {note}"
     );
-
-    // A foreign PID namespace is protected by its heartbeat lease, not by
-    // a coincidentally matching local PID.
-    fs::write(
-        locks.join("task-dev.lock"),
-        format!(
-            r#"{{"scope":"task:dev","pid":{},"started_at_epoch_ms":{now},"hostname":"fixture-other-host","managed_run_token":"managedrun-live-1"}}"#,
-            std::process::id()
-        ),
-    )
-    .expect("foreign holder record");
-    assert!(
-        live_managed_exec_note(repo_root, &policy).is_some(),
-        "an unexpired foreign-host lock protects its environment"
-    );
+    held.close(effigy_kernel::outcome::WorkloadOutcome::Succeeded);
 }
 
 /// Without any live holder, the recovery restart keeps its ordinary
-/// authority.
+/// authority: a run that ended, or whose owner died, holds no gate.
 #[test]
 fn live_managed_exec_note_ignores_dead_holders() {
     let private = tempfile::tempdir().expect("dead holder fixture");
-    let locks = private.path().join(".effigy/locks");
-    fs::create_dir_all(&locks).expect("locks dir");
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock")
-        .as_millis();
-    fs::write(
-        locks.join("task-dev.lock"),
-        format!(
-            r#"{{"scope":"task:dev","pid":999999,"started_at_epoch_ms":{now},"managed_run_token":"managedrun-dead-1"}}"#
-        ),
+    crate::runner::task_engine::TaskRun::hold_for_tests(
+        private.path(),
+        "dev",
+        Some("managedrun-dead-1"),
     )
-    .expect("dead holder record");
+    .abandon_for_tests();
     let policy = test_policy(PathBuf::from("docker-compose.yml"));
     assert!(
         live_managed_exec_note(private.path(), &policy).is_none(),

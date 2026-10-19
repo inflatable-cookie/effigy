@@ -399,7 +399,7 @@ fails before execution instead of silently running on the host.
 Inspect the resolved target without executing:
 
 ```bash
-effigy cattle-grid/check --plan
+effigy --plan cattle-grid/check
 ```
 
 The plan prints the `runtime` target (`host`, `container`, or
@@ -628,12 +628,12 @@ web/dev processes automatically instead of leaving them running in the
 background.
 
 Lock behavior:
-- tasks lock on `task:<selector>` by default, so unrelated selectors can run concurrently in the same repo
-- colon-namespaced selectors such as `validate:activity-routing` and `validate:other` stay distinct
+- each run holds its task's gate, so unrelated tasks run concurrently in the same repo and every spelling of one task shares one gate
+- distinct names such as `validate:activity-routing` and `validate-activity-routing` stay distinct
 - set `tasks.<name>.lock = "<shared-name>"` when multiple tasks should serialize together
-- managed TUI tasks still add `profile:<task>/<profile>` so profile-specific runs stay isolated
-- wait for a live owner with `--lock-wait-ms` or `EFFIGY_LOCK_WAIT_MS`; inspect it with `effigy tasks status <selector>`
-- recover specific collisions with `effigy tasks unlock task:<selector>`, a task selector such as `validate:activity-routing`, `effigy tasks unlock shared:<name>`, or `effigy tasks unlock profile:<task>/<profile>`
+- a managed TUI run records its profile; two profiles of one task still exclude each other
+- wait for a live run with `effigy --lock-wait-ms <MS> <task>` or `EFFIGY_LOCK_WAIT_MS`; inspect it with `effigy tasks status <selector>`
+- a run's gate is released when it exits, crash and `kill -9` included; there is no unlock
 
 ## Draft Tasks
 
@@ -828,30 +828,11 @@ run = "exec ${SHELL:-/bin/zsh} -i"
 
 Use when you need predictable interactive shell startup behavior in TUI shell tabs.
 
-### Explicit Task Cache (Phase 1)
+### Task Cache (removed)
 
-```toml
-[tasks.build]
-run = "cargo build --workspace"
-
-[tasks.build.cache]
-enabled = true
-inputs = ["src/**/*.rs", "Cargo.toml", "Cargo.lock"]
-outputs = ["target/debug/my-app"]
-env = ["RUSTFLAGS", "CARGO_PROFILE_DEV_DEBUG"]
-```
-
-Use this for deterministic local up-to-date checks.
-
-Phase-1 guardrails:
-- cache is opt-in only (`enabled = true`)
-- no implicit input/output discovery
-- cache hit requires matching fingerprint and declared outputs to exist
-
-Inspection and invalidation:
-- `effigy tasks cache inspect build`
-- `effigy tasks cache invalidate build`
-- `effigy tasks cache invalidate --all`
+The `cache` task key and `effigy tasks cache` were removed in v0.15. A task
+that still declares `cache` is refused with a message naming the fix: delete
+the table and let the tool's own cache (cargo, turbo, vite) decide.
 
 ## Built-in Scans
 

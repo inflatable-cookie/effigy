@@ -153,8 +153,8 @@ passthrough):
 
 ```sh
 effigy --repo /path/to/other-project api/build
-effigy serve --env-schema config/staging.env.schema
-effigy validate --verbose-root
+effigy --env-schema config/staging.env.schema serve
+effigy --verbose-root validate
 ```
 
 - **`--repo <PATH>`** — same meaning as the global form, but carried on a task
@@ -259,7 +259,7 @@ Read more: [`063-container-system-guide.md`](063-container-system-guide.md)
 effigy tasks
 effigy tasks --resolve test
 effigy tasks --resolve app/build
-effigy app/build --plan
+effigy --plan app/build
 ```
 
 Use these before running unfamiliar tasks.

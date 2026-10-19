@@ -38,8 +38,8 @@ Definition:
 Examples:
 
 ```sh
-effigy app/build --plan
-effigy --json app/build --plan
+effigy --plan app/build
+effigy --json --plan app/build
 ```
 
 ## Selector
@@ -173,24 +173,17 @@ Notes:
 ## Lock Scope
 
 Definition:
-- Runtime lock key used to avoid conflicting executions.
+- The gate a run holds while it lives, keyed by the resolved task identity,
+  never by the selector as typed.
 
 Common scopes:
-- `task:<selector>` by default, using the full rendered selector
-- `shared:<name>` for explicit cross-task serialization
-- `profile:<task>/<profile>`
+- `task:<selector>`: one per declared task; every spelling of the task shares it
+- `shared:<name>` for explicit cross-task serialization (`lock = "<name>"`)
 
-Independent selectors do not share a default task lock. Wait for a live owner
-with `--lock-wait-ms` or `EFFIGY_LOCK_WAIT_MS`; a timed-out waiter inspects
-that owner with `effigy tasks status <selector>`.
-
-Recovery command:
-
-```sh
-effigy tasks unlock shared:dev-stack
-effigy tasks unlock task:build
-effigy tasks unlock validate:activity-routing
-```
+Independent tasks never share a gate. Wait for a live run with
+`--lock-wait-ms` (before the task name) or `EFFIGY_LOCK_WAIT_MS`; inspect it
+with `effigy tasks status <selector>`. A gate is released when its run exits,
+crash and `kill -9` included; there is no unlock command.
 
 ## Explain Mode
 

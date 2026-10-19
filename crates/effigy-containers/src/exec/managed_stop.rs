@@ -101,8 +101,83 @@ pub fn end_owned_container_process_group(
     }
 }
 
+/// Each signal tries the group with `--` (bash), then without it: dash and
+/// busybox read `--` after `-SIG` as an illegal pid, which would otherwise
+/// fall through to the leader alone and leave the group running.
 fn group_stop_command(pgid: u32) -> String {
+    let signal = |name: &str| {
+        format!(
+            "kill -{name} -- -{pgid} 2>/dev/null || kill -{name} -{pgid} 2>/dev/null || kill -{name} {pgid} 2>/dev/null"
+        )
+    };
+    let alive = signal("0");
+    let term = signal("TERM");
+    let kill = signal("KILL");
     format!(
-        "alive() {{ kill -0 -- -{pgid} 2>/dev/null || kill -0 {pgid} 2>/dev/null; }}; kill -TERM -- -{pgid} 2>/dev/null || kill -TERM {pgid} 2>/dev/null || true; i=0; while [ \"$i\" -lt 12 ]; do alive || exit 0; sleep 0.25; i=$((i+1)); done; kill -KILL -- -{pgid} 2>/dev/null || kill -KILL {pgid} 2>/dev/null || true; i=0; while [ \"$i\" -lt 12 ]; do alive || exit 0; sleep 0.25; i=$((i+1)); done; printf '%s\\n' 'managed exec group {pgid} survived termination' >&2; exit 1"
+        "alive() {{ {alive}; }}; {term} || true; i=0; while [ \"$i\" -lt 12 ]; do alive || exit 0; sleep 0.25; i=$((i+1)); done; {kill} || true; i=0; while [ \"$i\" -lt 12 ]; do alive || exit 0; sleep 0.25; i=$((i+1)); done; printf '%s\\n' 'managed exec group {pgid} survived termination' >&2; exit 1"
     )
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::group_stop_command;
+    use std::os::unix::process::CommandExt;
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    fn alive(pid: i32) -> bool {
+        nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), None).is_ok()
+    }
+
+    /// The recorded leader has exited and its group lives on: the stop must
+    /// reach the group under every shell a container may run, not just bash.
+    #[test]
+    fn group_stop_ends_a_leaderless_group_under_dash_and_sh() {
+        for shell in ["/bin/sh", "/bin/dash"] {
+            if !std::path::Path::new(shell).exists() {
+                continue;
+            }
+            let output = Command::new("/bin/sh")
+                .args(["-c", "sleep 60 >/dev/null 2>&1 & echo $!; sleep 60 >/dev/null 2>&1 & echo $!; echo $$"])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .process_group(0)
+                .output()
+                .expect("start group");
+            let pids: Vec<i32> = String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .filter_map(|line| line.trim().parse().ok())
+                .collect();
+            let (members, leader) = (&pids[..2], pids[2] as u32);
+            assert!(
+                members.iter().all(|pid| alive(*pid)),
+                "{shell}: group started"
+            );
+            let stop = Command::new(shell)
+                .args(["-c", &group_stop_command(leader)])
+                .output()
+                .expect("run stop script");
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while members.iter().any(|pid| alive(*pid)) && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            for pid in members {
+                if alive(*pid) {
+                    let _ = nix::sys::signal::kill(
+                        nix::unistd::Pid::from_raw(*pid),
+                        nix::sys::signal::Signal::SIGKILL,
+                    );
+                }
+            }
+            assert!(
+                stop.status.success(),
+                "{shell}: {}",
+                String::from_utf8_lossy(&stop.stderr)
+            );
+            assert!(
+                members.iter().all(|pid| !alive(*pid)),
+                "{shell}: the group survived its stop"
+            );
+        }
+    }
 }

@@ -266,33 +266,17 @@ Use only when unresolved selectors must forward to legacy tooling.
 
 See [`015-deferral-fallback-migration.md`](015-deferral-fallback-migration.md) for the full deferral migration guide.
 
-## 8) Cache Configuration Snippet
-
-```toml
-[tasks.build]
-run = "cargo build --workspace"
-
-[tasks.build.cache]
-enabled = true
-inputs = ["src/**/*.rs", "Cargo.toml", "Cargo.lock"]
-outputs = ["target/debug/my-app"]
-env = ["RUSTFLAGS", "CARGO_PROFILE_DEV_DEBUG"]
-```
-
-Run:
+## 8) Waiting For A Live Run
 
 ```sh
-# Check if the task would be a cache hit or miss
-effigy tasks cache inspect build
+# Inspect a live or interrupted run of `build`
+effigy tasks status build
 
-# Invalidate a specific task cache
-effigy tasks cache invalidate build
-
-# Invalidate all caches
-effigy tasks cache invalidate --all
+# Wait up to ten minutes for a live run of `build` to finish, then run
+effigy --lock-wait-ms 600000 build
 ```
 
-Use when you want deterministic local up-to-date checks for expensive tasks.
+Use when parallel agents or terminals run the same task.
 
 ## 9) Shell Completion Setup
 

@@ -281,20 +281,19 @@ fn builtin_init_actions_json_contract_has_versioned_shape() {
 }
 
 #[test]
-fn builtin_unlock_json_contract_has_versioned_shape() {
-    let root = temp_workspace("unlock-json-contract");
-    fs::create_dir_all(root.join(".effigy/locks")).expect("mkdir locks");
-    fs::write(root.join(".effigy/locks/shared-dev-stack.lock"), "{}").expect("write shared lock");
-
-    let repo_arg = root.display().to_string();
-    let parsed = run_invocation_json(
-        root,
-        "unlock",
-        &["--repo", &repo_arg, "--json", "--yes", "shared:dev-stack"],
-    );
-    assert_schema_v1(&parsed, "effigy.unlock.v1");
-    assert_eq!(parsed["ok"], true);
-    assert_eq!(parsed["all"], false);
-    assert!(parsed["removed"].is_array());
-    assert!(parsed["missing"].is_array());
+fn retired_tasks_unlock_and_cache_refuse_with_the_explanation() {
+    for (word, needle) in [("unlock", "--lock-wait-ms"), ("cache", "task cache")] {
+        let root = temp_workspace(&format!("retired-tasks-{word}"));
+        let error = run_manifest_task_with_cwd(
+            &TaskInvocation {
+                name: "tasks".to_owned(),
+                args: vec![word.to_owned(), "--json".to_owned()],
+            },
+            root,
+        )
+        .expect_err("a retired tasks command refuses");
+        let message = error.to_string();
+        assert!(message.contains("was removed in v0.15"), "{message}");
+        assert!(message.contains(needle), "{message}");
+    }
 }
