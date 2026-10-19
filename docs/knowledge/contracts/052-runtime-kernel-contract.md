@@ -1837,6 +1837,7 @@ Current mechanisms and their kernel replacements. Evidence is at main
 | Task cache rewritten in place | `src/runner/cache/store.rs:58` | `atomic_replace`, or the cut-list removal |
 | Git exclude registration | Manifest composition reads only; source Prepare records registration before acting | Prepare and Mutate only (R2) |
 | Read-command presentation | Local window-size query and recorded version stamps only; no `tput` fallback or Git identity inference | Static (R2) |
+| Git provenance and identity diagnostics | Child Git probes disable optional index writes (`GIT_OPTIONAL_LOCKS=0`) | Observe (R2) |
 | Bundle and catalog source preparation | Checkout pins and immutable source generations; no read-time refresh or cache lock | Prepare run; `Gate(Store bundles)` with deadline; atomic checkout lock publication |
 | Scheduler client signal handler | `src/runner/host_scheduler/submit.rs:205-212` | subscribes to `SignalRouter` cancel; admission shape is Q-006 |
 | QA group records: 20 s staleness, truncating writes | `crates/effigy-runtime/src/qa_group_status.rs:19`, `:275-291` | `Run` rows; `stop` and `hard_timeout_ms` become possible |

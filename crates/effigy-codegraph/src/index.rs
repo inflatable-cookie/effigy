@@ -255,10 +255,8 @@ fn file_freshness_keys(
         .collect()
 }
 
-/// `status` with a lazy-refresh pass first: a stale or missing index is
-/// rebuilt on demand (the same gate queries use), and any refresh notes are
-/// appended to the reported freshness summary. Report-only by default;
-/// callers opt in.
+/// Compatibility spelling for report-only status. The old refresh request
+/// warns for one release and never rebuilds a missing or stale index.
 pub fn status_with_refresh(repo_root: &Path) -> Result<GraphStatusPayload, CodeGraphError> {
     status_in_scope(&repo_scope(repo_root)?, true)
 }
