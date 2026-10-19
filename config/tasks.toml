@@ -14,6 +14,18 @@
 "lint:retirements" = { run = "cargo clippy -p effigy -p effigy-codegraph -p effigy-core -p effigy-cli -p effigy-builtin -p effigy-manifest -p effigy-managed -p effigy-catalog -p effigy-gateway -p effigy-containers --all-targets -- -D warnings", timeout_ms = 900000 }
 "test:retirements" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-core -p effigy-cli -p effigy-builtin -p effigy-manifest -p effigy-managed -p effigy-catalog -p effigy-gateway --lib --test integration --test documentation_coverage_tests -E 'package(effigy-catalog) | test(retirement_) | test(command_surface) | test(parse_) | test(render_) | test(builtin_) | test(init_inventory) | test(resolver::) | test(composition::) | test(socket_ownership::) | test(transition_lock::) | test(gateway_identity) | test(legacy_recovery_) | test(host_process_) | test(managed_headless) | test(project_local_and_distributed_effigy_skills) | test(public_help_families)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 1800000 }
 
+
+"check:gateway:operator" = { run = "cargo check -p effigy -p effigy-gateway -p effigy-kernel -p effigy-cli --all-targets --profile test", timeout_ms = 600000 }
+"lint:gateway:operator" = [
+  { run = "cargo clippy -p effigy -p effigy-gateway -p effigy-cli --all-targets -- -D warnings", timeout_ms = 600000 },
+  { run = "cargo clippy -p effigy-kernel --lib --tests -- -D warnings", timeout_ms = 600000 },
+]
+"test:gateway:operator" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-gateway -p effigy-kernel -p effigy-cli --lib --filterset '(test(operator::) | test(setup::) | test(gateway_option_tests::) | test(gateway_command::tests::) | test(run::tests::gateway_) | test(store_latest_run)) & not test(macos_operator_can_bind_low_ports)' --no-capture --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
+"test:gateway:operator:process" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test gateway_operator --no-capture --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
+"test:gateway:operator:bind" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-gateway --lib -E 'test(operator_can_bind_low_ports)' --no-capture --retries 0 --no-tests fail", timeout_ms = 600000 }
+"test:gateway:operator:private-compat" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-gateway -p effigy-containers --lib -E 'test(private_) | test(tls::tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
+"proof:gateway:bind-addresses" = { run = "python3 tests/scripts/gateway-bind-probe.py", timeout_ms = 10000 }
+"format:gateway:operator" = "rustfmt --edition 2021 --config skip_children=true {args}"
 # Contributor setup
 "bootstrap:local" = [
   { rhai = "scripts/build-local-bin.rhai" },

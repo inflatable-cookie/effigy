@@ -876,6 +876,7 @@ pub enum BundleSubcommand {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GatewaySubcommand {
+    Setup { suffixes: Vec<String> },
     Up,
     Down,
     Status,

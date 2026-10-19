@@ -141,6 +141,7 @@ pub(crate) enum Trust {
 pub struct DirFd {
     fd: OwnedFd,
     path: PathBuf,
+    setup_uid: Option<u32>,
 }
 impl DirFd {
     /// Opens a user directory. The operator's own path spelling (for example
@@ -150,6 +151,9 @@ impl DirFd {
         Self::walk(path, Trust::Operator)
     }
     pub(crate) fn walk(path: &Path, last: Trust) -> Result<Self, FsError> {
+        Self::walk_with_setup(path, last, None)
+    }
+    fn walk_with_setup(path: &Path, last: Trust, setup_uid: Option<u32>) -> Result<Self, FsError> {
         if !path.is_absolute() {
             return Err(FsError::untrusted(path, "relative path"));
         }
@@ -158,8 +162,9 @@ impl DirFd {
             fd: open_raw(libc::AT_FDCWD, c"/", libc::O_RDONLY | libc::O_DIRECTORY, 0)
                 .map_err(|e| FsError::io("open", Path::new("/"), &e))?,
             path: PathBuf::from("/"),
+            setup_uid,
         };
-        check(&dir.stat()?, Trust::Ancestor, Kind::Dir, &dir.path)?;
+        dir.check(&dir.stat()?, Trust::Ancestor, Kind::Dir, &dir.path)?;
         let parts: Vec<_> = real
             .components()
             .filter_map(|part| match part {
@@ -217,9 +222,143 @@ impl DirFd {
                 FsError::io("open", &path, &e)
             }
         })?;
-        let dir = Self { fd, path };
-        check(&dir.stat()?, trust, Kind::Dir, &dir.path)?;
+        let dir = Self {
+            fd,
+            path,
+            setup_uid: self.setup_uid,
+        };
+        dir.check(&dir.stat()?, trust, Kind::Dir, &dir.path)?;
         Ok(dir)
+    }
+    /// Setup adapters create one verified operator-owned directory component.
+    /// Existing modes are checked, never relaxed; no mutation is available to Observe.
+    pub fn prepare_child(
+        &self,
+        cx: &crate::ctx::EffectContext,
+        name: &FileName,
+        mode: u32,
+    ) -> Result<Self, FsError> {
+        cx.require(crate::ctx::Capability::HostAuthority)
+            .map_err(|_| FsError::HostAuthorityRequired)?;
+        if mode & !0o777 != 0 || mode & 0o022 != 0 {
+            return Err(FsError::untrusted(self.path(), "unsafe directory mode"));
+        }
+        cx.operation()
+            .check("prepare directory")
+            .map_err(|e| FsError::untrusted(self.path(), format!("{e:?}")))?;
+        self.require_local()?;
+        self.descend(name.as_str().as_bytes(), Trust::Operator, Some(mode))
+    }
+    /// Setup-only owner transfer. Runtime state roots and Store continue to
+    /// accept only the effective operator; this handle cannot open a Store.
+    pub fn open_setup(
+        cx: &crate::ctx::EffectContext,
+        home: &Path,
+        uid: u32,
+    ) -> Result<Self, FsError> {
+        cx.require(crate::ctx::Capability::HostAuthority)
+            .map_err(|_| FsError::HostAuthorityRequired)?;
+        if cx.operation().class() != crate::ctx::EffectClass::Mutate
+            || (operator_uid() != 0 && operator_uid() != uid)
+        {
+            return Err(FsError::untrusted(home, "setup owner authority required"));
+        }
+        let dir = Self::walk_with_setup(home, Trust::Operator, Some(uid))?;
+        if dir.stat()?.st_uid != uid {
+            return Err(FsError::untrusted(home, "setup home owner mismatch"));
+        }
+        Ok(dir)
+    }
+    /// Descriptor-relative descendants never canonicalize a mutable child.
+    pub fn setup_child(&self, name: &FileName) -> Result<Option<Self>, FsError> {
+        if self.setup_uid.is_none() {
+            return Err(FsError::untrusted(self.path(), "setup handle required"));
+        }
+        self.child(name.as_str(), Trust::Operator, false)
+    }
+    pub fn setup_entries(&self, max: usize) -> Result<Vec<OsString>, FsError> {
+        if self.setup_uid.is_none() {
+            return Err(FsError::untrusted(self.path(), "setup handle required"));
+        }
+        self.list(max)
+    }
+    /// Transfer one positive, bounded file/directory identity; no recursion,
+    /// symlink following, path-based chmod/chown, or unchecked hard links.
+    pub fn adopt_setup_entry(
+        &self,
+        cx: &crate::ctx::EffectContext,
+        name: &FileName,
+        directory: bool,
+        max: u64,
+    ) -> Result<(), FsError> {
+        cx.require(crate::ctx::Capability::HostAuthority)
+            .map_err(|_| FsError::HostAuthorityRequired)?;
+        if cx.operation().class() != crate::ctx::EffectClass::Mutate {
+            return Err(FsError::untrusted(self.path(), "setup mutation required"));
+        }
+        let uid = self
+            .setup_uid
+            .ok_or_else(|| FsError::untrusted(self.path(), "setup handle required"))?;
+        cx.operation()
+            .check("setup ownership")
+            .map_err(|e| FsError::untrusted(self.path(), format!("{e:?}")))?;
+        self.require_local()?;
+        let path = self.join(name.as_str());
+        let cname = cstring(name.as_str().as_bytes(), &path)?;
+        let fd = match open_raw(
+            self.raw(),
+            &cname,
+            libc::O_RDONLY
+                | libc::O_NOFOLLOW
+                | libc::O_NONBLOCK
+                | if directory { libc::O_DIRECTORY } else { 0 },
+            0,
+        ) {
+            Ok(fd) => fd,
+            Err(e) if e.raw_os_error() == Some(libc::ENOENT) => return Ok(()),
+            Err(e) => return Err(FsError::io("setup open", &path, &e)),
+        };
+        let stat = fstat(fd.as_raw_fd()).map_err(|e| FsError::io("setup stat", &path, &e))?;
+        self.check(
+            &stat,
+            Trust::Operator,
+            if directory { Kind::Dir } else { Kind::File },
+            &path,
+        )?;
+        if !directory && (stat.st_size as u64 > max || stat.st_nlink as u64 != 1) {
+            return Err(FsError::untrusted(&path, "unbounded or linked setup input"));
+        }
+        // SAFETY: verified live descriptor; selected operator UID and fixed safe mode.
+        if unsafe { libc::fchown(fd.as_raw_fd(), uid, !0) } != 0
+            || unsafe { libc::fchmod(fd.as_raw_fd(), if directory { 0o700 } else { 0o600 }) } != 0
+        {
+            return Err(FsError::io(
+                "setup transfer",
+                &path,
+                &io::Error::last_os_error(),
+            ));
+        }
+        Ok(())
+    }
+    fn check(
+        &self,
+        stat: &libc::stat,
+        trust: Trust,
+        kind: Kind,
+        path: &Path,
+    ) -> Result<(), FsError> {
+        if let Some(uid) = self.setup_uid {
+            if stat.st_uid != 0 && stat.st_uid != uid {
+                return Err(FsError::untrusted(path, "foreign setup owner"));
+            }
+            // Preserve the normal type/mode/link policy after checking the
+            // explicitly selected setup owner, without changing process UID.
+            let mut owned = *stat;
+            owned.st_uid = operator_uid();
+            check(&owned, trust, kind, path)
+        } else {
+            check(stat, trust, kind, path)
+        }
     }
     pub fn path(&self) -> &Path {
         &self.path
@@ -292,7 +431,7 @@ impl DirFd {
             }
         };
         let stat = fstat(fd.as_raw_fd()).map_err(|e| FsError::io("stat", &path, &e))?;
-        check(&stat, trust, Kind::File, &path)?;
+        self.check(&stat, trust, Kind::File, &path)?;
         Ok(Some((File::from(fd), stat)))
     }
     /// `lstat` of an entry; `None` when it does not exist.

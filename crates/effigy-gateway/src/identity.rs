@@ -1007,6 +1007,19 @@ pub(crate) fn write_test_record(pid_path: &Path, pid: u32) {
     }
 }
 
+/// Bounded, owner-checked legacy version input for the setup migration only.
+pub fn read_gateway_version(pid_path: &Path) -> Result<Option<String>, GatewayError> {
+    read_trusted_sidecar_bytes(pid_path, &version_path(pid_path), MAX_VERSION_BYTES)?
+        .map(|bytes| {
+            String::from_utf8(bytes)
+                .map(|s| s.trim().to_owned())
+                .map_err(|e| {
+                    GatewayError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+                })
+        })
+        .transpose()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -250,3 +250,24 @@ require their existing generation checks and administrator lifecycle path.
   immediate generation recheck. Endpoint installation, socket permissions,
   runtime-directory lifecycle and the cross-platform peer APIs need an explicit
   operator ruling before implementation.
+
+## Operator daemon custody and privileged listeners
+
+The operator daemon lifecycle uses the kernel gateway run and its control
+socket in `~/.effigy/gateway/runtime/`. Routine control must not elevate.
+Platform mutations belong to `gateway setup`; the three existing JSON
+registries remain the route/allocation input until endpoint-store adoption.
+
+Direct low-port binding is not a qualified macOS transport. An unprivileged
+bind to `127.1.0.1:80` returned `EACCES` on the operator host. The launchd
+listener handoff is the fallback: setup owns the privileged listener
+installation, while serving remains in the operator account. Reboot and
+consumer qualification remain operator-run actions.
+
+The kernel process spawn barrier closes descriptors above stderr and its
+internal barrier descriptors. `ProcessSpec` and detached startup currently
+carry no inherited-listener capability. A launchd activation cannot simply
+be wrapped in detached custody: the socket needs explicit descriptor
+transfer, ownership validation, rollback and recovery proofs before that
+path can serve through an `OwnedProcess`. Do not work around this by
+retaining arbitrary descriptors, elevating a runtime, or bypassing custody.

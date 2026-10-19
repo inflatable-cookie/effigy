@@ -261,3 +261,21 @@ fn parse_gateway_run_defaults_listener_handoff_off() {
         })
     );
 }
+
+#[test]
+fn parse_gateway_setup_accepts_explicit_public_suffixes() {
+    let command = effigy_cli::parse_command(
+        [
+            "gateway",
+            "setup",
+            "--suffix",
+            "dev.cumberland.co.uk",
+            "--json",
+        ]
+        .map(String::from),
+    )
+    .unwrap();
+    assert!(
+        matches!(command, effigy_cli::Command::Gateway(effigy_cli::GatewayArgs { subcommand: effigy_cli::GatewaySubcommand::Setup { suffixes }, output_json: true, .. }) if suffixes == ["dev.cumberland.co.uk"])
+    );
+}

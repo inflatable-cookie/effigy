@@ -1073,8 +1073,10 @@ version = "0.14.1"
 dependencies = [
  "chrono",
  "effigy-core",
+ "effigy-kernel",
  "effigy-process",
  "fs2",
+ "getrandom 0.4.3",
  "hex",
  "hickory-proto",
  "hickory-server",

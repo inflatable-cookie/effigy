@@ -578,6 +578,28 @@ impl StoreReader {
             },
         )
     }
+    /// The latest operation for one canonical owner. A missing row is not
+    /// proof of process absence; callers also observe its gate and custody.
+    pub fn latest_run(&self, owner: &ResourceId) -> Observed<(RunId, Generation)> {
+        let row: Observed<(String, i64)> = self.row(
+            "runs",
+            "SELECT run_id,generation FROM runs WHERE owner=?1 ORDER BY generation DESC LIMIT 1",
+            [owner.name().to_string()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        );
+        match row {
+            Observed::Verified((id, generation), evidence) => match id.parse() {
+                Ok(id) if generation > 0 => {
+                    Observed::Verified((id, Generation::new(generation as u64)), evidence)
+                }
+                _ => Observed::Unknown(UnknownReason::StoreUnreadable(
+                    "invalid run identity".into(),
+                )),
+            },
+            Observed::Absent(proof) => Observed::Absent(proof),
+            Observed::Unknown(reason) => Observed::Unknown(reason),
+        }
+    }
     pub fn run_phase(&self, run: &RunId) -> Observed<RunPhaseFact> {
         self.row(
             "runs",

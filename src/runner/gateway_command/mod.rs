@@ -35,23 +35,15 @@ use super::error::RunnerError;
 use daemon::normalize_gateway_daemon_output;
 use daemon::{
     spawn_gateway_daemon, stop_gateway_process, stop_gateway_process_for_replacement,
-    stop_private_gateway_process, wait_for_pid_file, wait_for_private_gateway_ready,
+    stop_private_gateway_process, wait_for_private_gateway_ready,
 };
-#[cfg(all(test, target_os = "macos"))]
-use elevation::build_gateway_elevated_shell_command;
-use elevation::{
-    ensure_gateway_up_privileges, gateway_down_requires_elevation, gateway_invocation_is_escalated,
-    gateway_setup_tls_requires_elevation, gateway_up_requires_elevation,
-    install_resolver_if_needed, prepare_gateway_state_for_elevated_run,
-    provision_loopback_aliases_if_needed, run_gateway_elevated, uninstall_resolver_if_needed,
-};
+use elevation::{gateway_invocation_is_escalated, prepare_gateway_state_for_elevated_run};
 
 mod daemon;
 mod elevation;
 
 pub(super) const GATEWAY_DIR_NAME: &str = ".effigy/gateway";
 pub(super) const GATEWAY_ESCALATED_ENV: &str = "EFFIGY_GATEWAY_ESCALATED";
-pub(super) const GATEWAY_KEEP_RESOLVER_ENV: &str = "EFFIGY_GATEWAY_KEEP_RESOLVER";
 pub(super) const GATEWAY_PRIVATE_STATE_ROOT_ENV: &str =
     effigy_gateway::private_state::PRIVATE_STATE_ROOT_ENV;
 #[cfg(unix)]
@@ -121,8 +113,12 @@ impl Drop for TestGatewayHomeGuard {
 }
 
 pub(super) fn run_gateway(args: GatewayArgs) -> Result<String, RunnerError> {
+    if let GatewaySubcommand::Setup { ref suffixes } = args.subcommand {
+        return run_gateway_setup(suffixes, args.output_json);
+    }
     let config = gateway_config_with_private(args.private.as_ref())?;
     match args.subcommand {
+        GatewaySubcommand::Setup { .. } => unreachable!("setup dispatched before config"),
         GatewaySubcommand::Up => run_gateway_up_with_config(&config, args.output_json),
         GatewaySubcommand::Down => run_gateway_down_with_config(&config, args.output_json),
         GatewaySubcommand::Status => run_gateway_status_with_config(&config, args.output_json),
@@ -143,6 +139,12 @@ pub(super) fn run_gateway(args: GatewayArgs) -> Result<String, RunnerError> {
 }
 
 pub(in crate::runner) fn gateway_up_for_managed_task(command: &str) -> Result<(), RunnerError> {
+    let config = gateway_config()?;
+    if !config.is_private() && effigy_core::executable_override::current().is_none() {
+        effigy_gateway::operator::up(&config)
+            .map_err(|e| RunnerError::task_invocation(e.to_string()))?;
+        return Ok(());
+    }
     gateway_up_for_managed_task_with(command, verified_gateway_status_for_up)
 }
 
@@ -476,15 +478,6 @@ fn inspect_existing_gateway(
     Ok(ExistingGateway::Running(Box::new(status)))
 }
 
-fn replacement_requires_elevation(
-    config: &GatewayConfig,
-    status: &VerifiedGatewayStatus,
-) -> Result<bool, RunnerError> {
-    Ok(!gateway_invocation_is_escalated()
-        && (!elevation::gateway_signal_accessible(status.pid)
-            || gateway_up_requires_elevation(config)))
-}
-
 fn stop_existing_gateway(status: &VerifiedGatewayStatus) -> Result<(), RunnerError> {
     stop_existing_gateway_with(status, stop_gateway_process_for_replacement)
 }
@@ -520,37 +513,21 @@ fn run_gateway_up_with_config(
     config: &GatewayConfig,
     output_json: bool,
 ) -> Result<String, RunnerError> {
-    if config.is_private() {
-        return run_private_gateway_up(config, output_json);
+    if !config.is_private() {
+        let result = effigy_gateway::operator::up(config)
+            .map_err(|e| RunnerError::task_invocation(e.to_string()))?;
+        return Ok(if output_json {
+            serde_json::to_string(&result)
+                .map_err(|e| RunnerError::task_invocation(e.to_string()))?
+        } else {
+            format!(
+                "Gateway {}{}",
+                result.status,
+                result.reason.map(|r| format!(": {r}")).unwrap_or_default()
+            )
+        });
     }
-    let probe = verified_gateway_status_for_up(config);
-    if probe.identity_permission_denied {
-        return run_gateway_up_after_identity_permission_denied(
-            config,
-            probe.status,
-            std::io::stdin().is_terminal(),
-            elevation::gateway_identity_elevation_allowed(),
-            || run_gateway_elevated(GatewaySubcommand::Up, output_json),
-        );
-    }
-    match inspect_existing_gateway(config, probe.status, output_json)? {
-        ExistingGateway::Rendered(rendered) => Ok(rendered),
-        ExistingGateway::Running(status) => {
-            if replacement_requires_elevation(config, status.as_ref())? {
-                return run_gateway_elevated(GatewaySubcommand::Up, output_json);
-            }
-            run_gateway_up_after_lock(config, output_json)
-        }
-        ExistingGateway::Absent => {
-            if !gateway_invocation_is_escalated() && gateway_up_requires_elevation(config) {
-                if let Some(rendered) = stage_absent_up_under_lock(config, output_json)? {
-                    return Ok(rendered);
-                }
-                return run_gateway_elevated(GatewaySubcommand::Up, output_json);
-            }
-            run_gateway_up_after_lock(config, output_json)
-        }
-    }
+    run_private_gateway_up(config, output_json)
 }
 
 fn run_private_gateway_up(
@@ -593,136 +570,23 @@ fn run_private_gateway_up(
     )
 }
 
-fn run_gateway_up_after_identity_permission_denied(
-    config: &GatewayConfig,
-    status: Result<VerifiedGatewayStatus, effigy_gateway::GatewayError>,
-    interactive: bool,
-    elevation_allowed: bool,
-    elevate: impl FnOnce() -> Result<String, RunnerError>,
-) -> Result<String, RunnerError> {
-    if interactive && elevation_allowed {
-        return elevate();
-    }
-    match resolve_gateway_status_for_config(config, status) {
-        Err(error) => Err(error),
-        Ok(_) => Err(RunnerError::task_invocation(
-            "gateway identity is unknown; refusing replacement",
-        )),
-    }
-}
-
-fn run_gateway_down_after_identity_permission_denied(
-    config: &GatewayConfig,
-    status: Result<VerifiedGatewayStatus, effigy_gateway::GatewayError>,
-    interactive: bool,
-    elevation_allowed: bool,
-    elevate: impl FnOnce() -> Result<String, RunnerError>,
-) -> Result<String, RunnerError> {
-    if interactive && elevation_allowed {
-        return elevate();
-    }
-    match resolve_gateway_status_for_config(config, status) {
-        Err(error) => Err(error),
-        Ok(_) => Err(RunnerError::task_invocation(format!(
-            "gateway process identity is unreadable without administrator access; current diagnosis: {}; no signal was sent and gateway records are preserved. Run `effigy gateway down` from an interactive admin-capable terminal and approve the bounded administrator request",
-            gateway_diagnosis_hint(config)
-        ))),
-    }
-}
-
-/// Operator-owned first-start files are created under the transition lock,
-/// then the lock is dropped before elevation so the child can acquire it.
-fn stage_absent_up_under_lock(
-    config: &GatewayConfig,
-    output_json: bool,
-) -> Result<Option<String>, RunnerError> {
-    let _lock =
-        effigy_gateway::transition_lock::GatewayTransitionLock::try_acquire(&config.pid_file_path)
-            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    let probe = verified_gateway_status_for_up(config);
-    match inspect_existing_gateway(config, probe.status, output_json)? {
-        ExistingGateway::Rendered(rendered) => Ok(Some(rendered)),
-        ExistingGateway::Running(_) => Ok(None),
-        ExistingGateway::Absent => {
-            prepare_gateway_state_for_elevated_run(config)?;
-            Ok(None)
-        }
-    }
-}
-
-fn run_gateway_up_after_lock(
-    config: &GatewayConfig,
-    output_json: bool,
-) -> Result<String, RunnerError> {
-    let _lock =
-        effigy_gateway::transition_lock::GatewayTransitionLock::try_acquire(&config.pid_file_path)
-            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    let probe = verified_gateway_status_for_up(config);
-    match inspect_existing_gateway(config, probe.status, output_json)? {
-        ExistingGateway::Rendered(rendered) => return Ok(rendered),
-        ExistingGateway::Running(status) => {
-            if !gateway_invocation_is_escalated()
-                && !elevation::gateway_signal_accessible(status.pid)
-            {
-                return Err(RunnerError::task_invocation(
-                    "gateway replacement requires elevation while the transition lock is held; refusing nested elevation",
-                ));
-            }
-            stop_existing_gateway(status.as_ref())?;
-        }
-        ExistingGateway::Absent => {}
-    }
-    prepare_gateway_state_for_elevated_run(config)?;
-    if !config.is_private() {
-        ensure_gateway_up_privileges(config)?;
-    }
-
-    spawn_gateway_daemon(config)?;
-    wait_for_pid_file(config)?;
-    let warnings = if config.is_private() {
-        Vec::new()
-    } else {
-        let mut warnings = install_resolver_if_needed(config);
-        warnings.extend(provision_loopback_aliases_if_needed(config));
-        warnings
-    };
-    let status = verified_gateway_status(config)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    let route_table = RouteTable::load(&config.route_table_path)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    let tls = gateway_tls_summary(config, &route_table);
-    render_gateway_up_result(
-        config,
-        GatewayUpState::Started(status.status),
-        &tls,
-        &warnings,
-        output_json,
-    )
-}
-
 fn run_gateway_down_with_config(
     config: &GatewayConfig,
     output_json: bool,
 ) -> Result<String, RunnerError> {
-    let probe = verified_gateway_status_for_up(config);
-    if !config.is_private()
-        && !gateway_invocation_is_escalated()
-        && probe.identity_permission_denied
-    {
-        return run_gateway_down_after_identity_permission_denied(
-            config,
-            probe.status,
-            std::io::stdin().is_terminal(),
-            elevation::gateway_identity_elevation_allowed(),
-            || run_gateway_elevated(GatewaySubcommand::Down, output_json),
-        );
-    }
-    let status = resolve_gateway_status_for_config(config, probe.status)?;
-    if !config.is_private()
-        && !gateway_invocation_is_escalated()
-        && gateway_down_requires_elevation(config, status.as_ref())?
-    {
-        return run_gateway_elevated(GatewaySubcommand::Down, output_json);
+    if !config.is_private() {
+        let result = effigy_gateway::operator::down(config)
+            .map_err(|e| RunnerError::task_invocation(e.to_string()))?;
+        return Ok(if output_json {
+            serde_json::to_string(&result)
+                .map_err(|e| RunnerError::task_invocation(e.to_string()))?
+        } else {
+            format!(
+                "Gateway {}{}",
+                result.status,
+                result.reason.map(|r| format!(": {r}")).unwrap_or_default()
+            )
+        });
     }
     let _lock =
         effigy_gateway::transition_lock::GatewayTransitionLock::try_acquire(&config.pid_file_path)
@@ -735,11 +599,7 @@ fn run_gateway_down_with_config(
         )));
     }
     let status = resolve_gateway_status_for_config(config, probe.status)?;
-    let warnings = if config.is_private() || keep_gateway_resolver_on_down() {
-        Vec::new()
-    } else {
-        uninstall_resolver_if_needed(config)
-    };
+    let warnings: Vec<String> = Vec::new();
 
     if let Some(ref running) = status {
         if config.is_private() {
@@ -812,12 +672,6 @@ fn run_gateway_down_with_config(
     })
 }
 
-fn keep_gateway_resolver_on_down() -> bool {
-    std::env::var(GATEWAY_KEEP_RESOLVER_ENV)
-        .ok()
-        .is_some_and(|value| matches!(value.trim(), "1" | "true" | "yes"))
-}
-
 /// Map a route-table trust verdict to a status label and optional reason.
 fn route_table_trust_fields(
     trust: &effigy_gateway::trust::RouteTableTrust,
@@ -859,6 +713,20 @@ fn run_gateway_status_with_config(
     config: &GatewayConfig,
     output_json: bool,
 ) -> Result<String, RunnerError> {
+    if !config.is_private() {
+        let result = effigy_gateway::operator::status(config)
+            .map_err(|e| RunnerError::task_invocation(e.to_string()))?;
+        return Ok(if output_json {
+            serde_json::to_string(&result)
+                .map_err(|e| RunnerError::task_invocation(e.to_string()))?
+        } else {
+            format!(
+                "Gateway {}{}",
+                result.status,
+                result.reason.map(|r| format!(": {r}")).unwrap_or_default()
+            )
+        });
+    }
     let status = match verified_gateway_status(config) {
         Err(error @ effigy_gateway::GatewayError::LegacyIdentityRequired { .. }) => {
             return Err(legacy_identity_status_error(error, output_json));
@@ -1379,6 +1247,9 @@ fn run_gateway_setup_tls_with_config(
     config: &GatewayConfig,
     output_json: bool,
 ) -> Result<String, RunnerError> {
+    if !config.is_private() {
+        return run_gateway_setup(&[], output_json);
+    }
     let tls_config = gateway_tls_config(config)?;
 
     let mkcert_available = if config.is_private() {
@@ -1600,14 +1471,12 @@ fn ensure_gateway_tls_ca_ready(
         return Ok(ca_path.is_file());
     }
     let already_installed = TlsConfig::ca_installed();
-    if !already_installed
-        && !gateway_invocation_is_escalated()
-        && gateway_setup_tls_requires_elevation()
-    {
-        run_gateway_elevated(GatewaySubcommand::SetupTls, output_json)?;
-    } else if !already_installed {
-        TlsConfig::install_ca().map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    if !already_installed {
+        return Err(RunnerError::task_invocation(
+            "gateway TLS trust is missing; run `effigy gateway setup`",
+        ));
     }
+    let _ = output_json;
     Ok(already_installed)
 }
 
@@ -2044,3 +1913,73 @@ enum GatewayUpState {
 
 #[cfg(test)]
 mod tests;
+
+fn run_gateway_setup(extra: &[String], output_json: bool) -> Result<String, RunnerError> {
+    use effigy_gateway::{operator, setup};
+    let execute = || -> std::io::Result<String> {
+        if nix::unistd::Uid::effective().is_root() {
+            let (uid, home) = setup::authenticated_operator()?;
+            let config = GatewayConfig::standard(home.join(".effigy/gateway"));
+            let suffixes = setup::approved_suffixes(&config, extra)?;
+            let root_home = nix::unistd::User::from_uid(nix::unistd::Uid::effective())
+                .map_err(std::io::Error::other)?
+                .ok_or_else(|| std::io::Error::other("root account missing"))?
+                .dir;
+            setup::session(&root_home, true, |run, cx| {
+                setup::migrate_root(&config, uid, |snapshot| {
+                    stop_gateway_process_for_replacement(snapshot)
+                        .map_err(|e| std::io::Error::other(e.to_string()))
+                })?;
+                setup::apply_platform(run, cx, &config, &suffixes)
+            })?;
+            return Ok("Gateway platform setup applied".into());
+        }
+        let home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .ok_or_else(|| std::io::Error::other("HOME is missing"))?;
+        let config = GatewayConfig::standard(home.join(".effigy/gateway"));
+        // Reading legacy files may need the administrator; the privileged
+        // child derives the same suffixes again after verifying its operator.
+        let mut suffixes =
+            setup::approved_suffixes(&config, extra).unwrap_or_else(|_| vec!["test".into()]);
+        if let Ok(previous) = setup::read_receipt(&home) {
+            suffixes.extend(previous.suffixes);
+        }
+        suffixes.extend(extra.iter().cloned());
+        suffixes.sort();
+        suffixes.dedup();
+        setup::session(&home, false, |run, cx| {
+            // mkcert uses this operator's preserved CA. It is never run by the daemon.
+            if !TlsConfig::mkcert_available() {
+                return Err(std::io::Error::other(
+                    "install mkcert, then run `effigy gateway setup`",
+                ));
+            }
+            setup::command(run, cx, vec!["mkcert".into(), "-install".into()], true)?;
+            let mut argv = vec![
+                "/usr/bin/sudo".into(),
+                "-H".into(),
+                "--".into(),
+                std::env::current_exe()?.into(),
+                "gateway".into(),
+                "setup".into(),
+            ];
+            for suffix in &suffixes {
+                argv.extend(["--suffix".into(), suffix.into()]);
+            }
+            setup::command(run, cx, argv, true)?;
+            // Re-read the now operator-owned legacy state, preserving every manual route.
+            suffixes.extend(setup::approved_suffixes(&config, extra)?);
+            suffixes.sort();
+            suffixes.dedup();
+            setup::save_receipt(run, cx, &home, suffixes)
+        })?;
+        let result = operator::up(&config)?;
+        Ok(if output_json {
+            serde_json::to_string(&result).map_err(std::io::Error::other)?
+        } else {
+            "Gateway setup complete; gateway running as the operator".into()
+        })
+    };
+    execute().map_err(|e| RunnerError::task_invocation(e.to_string()))
+}

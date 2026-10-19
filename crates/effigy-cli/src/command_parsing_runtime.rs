@@ -22,6 +22,7 @@ where
     let mut yes = false;
     let mut subcommand = match subcmd.as_str() {
         "--help" | "-h" => return Ok(Command::Help(HelpTopic::Gateway)),
+        "setup" => GatewaySubcommand::Setup { suffixes: vec![] },
         "up" => GatewaySubcommand::Up,
         "down" => GatewaySubcommand::Down,
         "status" => GatewaySubcommand::Status,
@@ -43,6 +44,17 @@ where
     let mut args = args.peekable();
     while let Some(arg) = args.next() {
         match arg.as_str() {
+            "--suffix" if matches!(subcommand, GatewaySubcommand::Setup { .. }) => {
+                let value = next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--suffix".into(),
+                    },
+                )?;
+                if let GatewaySubcommand::Setup { suffixes } = &mut subcommand {
+                    suffixes.push(value);
+                }
+            }
             "--json" => output_json = true,
             "--private-state-root"
                 if matches!(

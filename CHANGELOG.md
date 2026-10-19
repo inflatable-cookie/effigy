@@ -102,6 +102,7 @@ During v0.x, MINOR bumps may include breaking changes.
 - Guest-local container shell and exec resolve manifest execution coordinates
   without rendering host policy or touching host runtime state. Missing host
   Compose files and catalogs no longer prevent local guest execution.
+- Kernel-backed operator gateway lifecycle APIs and a `gateway setup` command for platform prerequisites and v0.14.1 migration.
 - A whole-environment handover ends the losing environment's headless
   managed owners before stopping anything. When `container up` hands over
   a live conflicting environment, it first ends every live headless
