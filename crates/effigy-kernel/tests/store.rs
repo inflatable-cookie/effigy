@@ -9,7 +9,7 @@ use effigy_kernel::observe::*;
 use effigy_kernel::record::*;
 use effigy_kernel::root::StateRoot;
 use effigy_kernel::store::*;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 use std::time::Duration;
 use support::*;
@@ -160,6 +160,36 @@ fn store_reads_are_pure_including_on_a_read_only_root() {
     std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o700)).unwrap();
     std::fs::set_permissions(state.join(DB_NAME), std::fs::Permissions::from_mode(0o600)).unwrap();
     assert_eq!(verified, Some(true));
+}
+
+#[test]
+fn store_file_before_its_schema_commits_reads_absent_not_corrupt() {
+    // A writer creates kernel.db before its schema transaction commits; a
+    // reader racing it sees an empty database, which holds nothing yet.
+    let home = home();
+    let root = root(home.path());
+    std::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .mode(0o600)
+        .open(root.path().join(DB_NAME))
+        .unwrap();
+    assert!(matches!(
+        reader(home.path()),
+        Observed::Absent(AbsenceProof::NoStore)
+    ));
+    // A database with tables but no schema version is still corrupt.
+    let path = root.path().join(DB_NAME);
+    std::fs::remove_file(&path).unwrap();
+    rusqlite::Connection::open(&path)
+        .unwrap()
+        .execute_batch("CREATE TABLE other(x);")
+        .unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    assert!(matches!(
+        reader(home.path()),
+        Observed::Unknown(UnknownReason::StoreUnreadable(_))
+    ));
 }
 
 #[test]

@@ -202,7 +202,8 @@ pub fn run_cli(raw_args: Vec<String>) {
 pub fn run_and_render_command(context: &CliExecutionContext<'_>, command: Command) {
     let task_stdout_owned = command_owns_task_stdout(&command);
     let stdout_is_terminal = std::io::stdout().is_terminal();
-    let clean_machine_output = !stdout_is_terminal && command_emits_release_notes(&command);
+    let clean_machine_output = (!stdout_is_terminal && command_emits_release_notes(&command))
+        || command_streams_run_logs(&command);
     let suppress_header = context.suppress_header || clean_machine_output;
     let mut renderer = PlainRenderer::stdout(context.output_mode);
     if !suppress_header {
@@ -270,6 +271,18 @@ pub fn run_and_render_command(context: &CliExecutionContext<'_>, command: Comman
 
 fn command_owns_task_stdout(command: &Command) -> bool {
     matches!(command, Command::Task(_) | Command::Draft(_))
+}
+
+/// `run logs` writes a run's raw output bytes: no header, no trailing line,
+/// so a reader's byte offsets match the run's logs exactly.
+fn command_streams_run_logs(command: &Command) -> bool {
+    matches!(
+        command,
+        Command::Runs(effigy_cli::RunsArgs {
+            action: effigy_cli::RunsAction::Logs { .. },
+            ..
+        })
+    )
 }
 
 fn command_emits_release_notes(command: &Command) -> bool {

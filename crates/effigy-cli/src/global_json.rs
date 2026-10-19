@@ -322,11 +322,24 @@ pub fn apply_global_cli_options(
         }
     }
 
-    if options.run_id.is_some() {
+    if let Some(key) = options.run_id.as_ref() {
         // A built-in routed as a task (`tasks`, `test`) is not a task run.
-        return Err(CliParseError::InvalidArguments(
-            "`--run-id` names one repository task run: `effigy --run-id <key> <task>`".to_owned(),
-        ));
+        match &mut cmd {
+            Command::Task(task)
+                if !effigy_core::builtin_tasks::is_builtin_task_name(
+                    task.name.rsplit('/').next().unwrap_or(&task.name),
+                ) =>
+            {
+                task.args.push(crate::INTERNAL_RUN_ID_ARG.to_owned());
+                task.args.push(key.clone());
+            }
+            _ => {
+                return Err(CliParseError::InvalidArguments(
+                    "`--run-id` names one repository task run: `effigy --run-id <key> <task>`"
+                        .to_owned(),
+                ))
+            }
+        }
     }
 
     if options.json_mode {
