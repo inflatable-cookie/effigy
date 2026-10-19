@@ -306,10 +306,7 @@ run = [{ run = "printf invalid", rhai = "print(\"nope\")" }]
         root,
     )
     .expect_err("conflicting rhai step should fail");
-    assert_invocation_error_contains(
-        error,
-        &["define exactly one of `run`, `task`, `draft`, or `rhai`"],
-    );
+    assert_invocation_error_contains(error, &["define exactly one of `run`, `task`, or `rhai`"]);
 }
 
 #[test]
