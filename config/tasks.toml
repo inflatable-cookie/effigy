@@ -76,8 +76,8 @@
 
 # Task engine on the kernel (contract 052 §10.1): compile, strict lint and the
 # engine's own proofs. The kill matrix spawns the built binary.
-"check:task-engine" = { run = "cargo check -p effigy -p effigy-kernel -p effigy-builtin -p effigy-cli -p effigy-tasks -p effigy-routing -p effigy-core -p effigy-env -p effigy-execution -p effigy-runtime -p effigy-managed -p effigy-context --all-targets", timeout_ms = 900000 }
-"lint:task-engine" = { run = "cargo clippy -p effigy -p effigy-kernel -p effigy-builtin -p effigy-cli -p effigy-tasks -p effigy-routing -p effigy-core -p effigy-env -p effigy-execution -p effigy-runtime -p effigy-managed -p effigy-context --all-targets -- -D warnings", timeout_ms = 900000 }
+"check:task-engine" = { run = "cargo check -p effigy -p effigy-kernel -p effigy-builtin -p effigy-cli -p effigy-tasks -p effigy-routing -p effigy-core -p effigy-env -p effigy-execution -p effigy-runtime -p effigy-managed -p effigy-context -p effigy-containers -p effigy-distribution --all-targets", timeout_ms = 900000 }
+"lint:task-engine" = { run = "cargo clippy -p effigy -p effigy-kernel -p effigy-builtin -p effigy-cli -p effigy-tasks -p effigy-routing -p effigy-core -p effigy-env -p effigy-execution -p effigy-runtime -p effigy-managed -p effigy-context -p effigy-containers -p effigy-distribution --all-targets -- -D warnings", timeout_ms = 900000 }
 "test:task-engine" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(/^runner::task_engine::/) | test(managed_and_locking_tests::locking_tests::) | test(direct_task_dispatch_tests::) | test(/^runner::managed_settle::tests::/) | test(/^runner::host_container_lease::tests::reaper_refuses_an_ordinary_live_task/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 }
 "test:task-engine:kill-matrix" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test task_engine_kill_matrix --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 }
 # Covering unit tests for every crate the task-engine cutover touched; extra
@@ -90,6 +90,8 @@
 # Runner secrets tests in one shared process, as hosted CI's shared-process
 # lane runs them: the in-process passphrase cache must not leak between tests.
 "test:task-engine:shared-secrets" = { run = "RUSTFLAGS='--cfg effigy_shared_process' cargo test -p effigy --lib secrets_tests:: -- --test-threads=8", timeout_ms = 1800000 }
+# The exec adapter's remote group stop under bash and dash (a leaderless group).
+"test:task-engine:remote-stop" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib -E 'test(/exec::managed_stop::/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
 # Read-only resolver shadow diff over consumer roots: EFFIGY_SHADOW_OLD names the
 # previous binary, EFFIGY_SHADOW_ROOTS a file of roots relative to ~/Dev.
 "qa:resolver-shadow-diff" = { run = "cargo build --bin effigy && python3 tests/scripts/resolver-shadow-diff.py --old \"$EFFIGY_SHADOW_OLD\" --new target/debug/effigy --roots \"$EFFIGY_SHADOW_ROOTS\" ${EFFIGY_SHADOW_REPORT:+--report \"$EFFIGY_SHADOW_REPORT\"}", timeout_ms = 3600000 }

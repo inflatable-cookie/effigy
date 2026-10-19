@@ -385,6 +385,10 @@ During v0.x, MINOR bumps may include breaking changes.
   1.2.0.
 
 ### Fixed
+- Stopping a managed run now ends the process group it started through
+  container exec in containers whose shell is dash or busybox. The stop
+  previously reached only the group's leader there, so an Effigy task running
+  inside the container kept running and kept its lock.
 - Vault writes from CLI commands, local-dev upgrades and Rhai now serialize
   through the runtime kernel and atomically select complete encrypted
   generations. Existing vaults migrate on their next write, retaining the
