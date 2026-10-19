@@ -162,12 +162,16 @@ run = "echo dev"
 
 #[test]
 fn retirement_vault_policy_keys_reject_every_value() {
+    let root = tempfile::tempdir().expect("temporary manifest root");
+    let manifest = root.path().join("effigy.toml");
     for key in ["identity", "unlock", "external"] {
         for value in ["\"passphrase\"", "false", "{}"] {
             let source = format!("[secrets.vault]\npath = \"local.vault\"\n{key} = {value}\n");
-            let error = toml::from_str::<TaskManifest>(&source)
+            std::fs::write(&manifest, source).expect("write manifest");
+            let error = effigy_manifest::load_task_manifest(&manifest)
                 .expect_err("retired key must fail")
                 .to_string();
+            assert!(error.contains(&manifest.display().to_string()), "{error}");
             assert!(error.contains("retired"), "{error}");
             assert!(error.contains("line 3"), "{error}");
             assert!(
