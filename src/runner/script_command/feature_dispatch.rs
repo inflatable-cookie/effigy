@@ -28,6 +28,7 @@ pub(super) fn run_rhai_feature(
         FEATURE_TASKS_LIST | FEATURE_CATALOG_TASKS => run_typed_command(
             repo_root,
             effigy_cli::Command::Tasks(TasksArgs {
+                all: false,
                 repo_override: Some(repo_root.to_path_buf()),
                 task_name: string_option(&options, "task")?,
                 resolve_selector: string_option(&options, "resolve")?,
@@ -65,6 +66,7 @@ pub(super) fn run_rhai_feature(
         FEATURE_TASKS_RESOLVE => run_typed_command(
             repo_root,
             effigy_cli::Command::Tasks(TasksArgs {
+                all: false,
                 repo_override: Some(repo_root.to_path_buf()),
                 task_name: None,
                 resolve_selector: Some(required_string(&options, "selector")?),
@@ -79,6 +81,7 @@ pub(super) fn run_rhai_feature(
         FEATURE_TASKS_INFO => run_typed_command(
             repo_root,
             effigy_cli::Command::Tasks(TasksArgs {
+                all: false,
                 repo_override: Some(repo_root.to_path_buf()),
                 task_name: Some(required_string(&options, "selector")?),
                 resolve_selector: None,

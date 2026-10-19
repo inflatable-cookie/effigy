@@ -32,6 +32,34 @@ mod tests {
     }
 
     #[test]
+    fn task_visibility_metadata_survives_full_and_compact_forms() {
+        let parsed: TasksEnvelope = toml::from_str(
+            r#"
+[tasks]
+full = { run = "echo full", visibility = "internal", group = "Checks" }
+compact = { task = "full", visibility = "public", group = "Development" }
+"#,
+        )
+        .expect("visibility keys");
+        assert_eq!(
+            parsed.tasks["full"].visibility,
+            Some(crate::ManifestTaskVisibility::Internal)
+        );
+        assert_eq!(
+            parsed.tasks["compact"].visibility,
+            Some(crate::ManifestTaskVisibility::Public)
+        );
+        assert_eq!(
+            parsed.tasks["compact"].group.as_deref(),
+            Some("Development")
+        );
+        assert!(toml::from_str::<TasksEnvelope>(
+            "[tasks.x]\nrun = 'echo x'\nvisibility = 'private'"
+        )
+        .is_err());
+    }
+
+    #[test]
     fn shorthand_task_definition_accepts_single_task_object_without_array_wrapper() {
         let parsed: TasksEnvelope = toml::from_str(
             r#"

@@ -89,6 +89,7 @@ pub use task_runtime::{
     ManifestManagedRunStep, ManifestManagedRunStepTable, ManifestRunStepEnv, ManifestTask,
     ManifestTaskAdmission, ManifestTaskCache, ManifestTaskLikeDefinition,
     ManifestTaskOrReferenceDefinition, ManifestTaskRunIn, ManifestTaskSecretsMode,
+    ManifestTaskVisibility,
 };
 use test_config::ManifestTestConfig;
 pub use test_config::{
@@ -314,6 +315,16 @@ impl TaskManifest {
             let _ = draft;
         }
         for (task_name, task) in &self.tasks {
+            if task
+                .group
+                .as_ref()
+                .is_some_and(|group| group.trim().is_empty())
+            {
+                return Err(ManifestError::Compose {
+                    path: manifest_path.to_path_buf(),
+                    detail: format!("task `{task_name}` group must be a non-empty string"),
+                });
+            }
             if let Some(reference) = first_draft_step_reference(task) {
                 return Err(ManifestError::Compose {
                     path: manifest_path.to_path_buf(),

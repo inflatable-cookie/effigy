@@ -1237,6 +1237,8 @@ pub struct DoctorArgs {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TasksArgs {
+    /// Include internal tasks in text discovery. JSON always includes them.
+    pub all: bool,
     pub repo_override: Option<PathBuf>,
     pub task_name: Option<String>,
     pub resolve_selector: Option<String>,
@@ -1255,6 +1257,7 @@ pub struct TasksArgs {
 impl Default for TasksArgs {
     fn default() -> Self {
         Self {
+            all: false,
             repo_override: None,
             task_name: None,
             resolve_selector: None,
@@ -1592,5 +1595,29 @@ mod retirement_tests {
             assert!(error.contains("retired"), "{error}");
             assert!(error.contains(replacement), "{error}");
         }
+    }
+}
+
+#[cfg(test)]
+mod task_visibility_tests {
+    use super::{parse_command, Command};
+
+    #[test]
+    fn task_visibility_all_is_distinct_from_status_all() {
+        let Command::Tasks(list) =
+            parse_command(["tasks", "--all"].map(str::to_owned)).expect("all inventory")
+        else {
+            panic!("tasks command");
+        };
+        assert!(list.all);
+        assert!(!list.status_all);
+        let Command::Tasks(status) =
+            parse_command(["tasks", "status", "--all"].map(str::to_owned)).expect("all status")
+        else {
+            panic!("tasks command");
+        };
+        assert!(!status.all);
+        assert!(status.status_all);
+        assert!(parse_command(["tasks", "--all", "status", "build"].map(str::to_owned)).is_err());
     }
 }

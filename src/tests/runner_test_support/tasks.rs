@@ -8,6 +8,7 @@ pub(crate) fn run_tasks_from_repo(
 ) -> String {
     crate::contract_test_support::with_cwd(root, || {
         run_tasks(TasksArgs {
+            all: false,
             repo_override: None,
             task_name: task_name.map(|value| value.to_owned()),
             resolve_selector: resolve_selector.map(|value| value.to_owned()),
@@ -25,6 +26,7 @@ pub(crate) fn run_tasks_from_repo(
 pub(crate) fn run_task_status_from_repo(root: &Path, selector: &str, output_json: bool) -> String {
     crate::contract_test_support::with_cwd(root, || {
         run_tasks(TasksArgs {
+            all: false,
             repo_override: None,
             task_name: None,
             resolve_selector: None,
@@ -42,6 +44,7 @@ pub(crate) fn run_task_status_from_repo(root: &Path, selector: &str, output_json
 pub(crate) fn run_task_status_all_from_repo(root: &Path, output_json: bool) -> String {
     crate::contract_test_support::with_cwd(root, || {
         run_tasks(TasksArgs {
+            all: false,
             repo_override: None,
             task_name: None,
             resolve_selector: None,
@@ -58,6 +61,7 @@ pub(crate) fn run_task_status_all_from_repo(root: &Path, output_json: bool) -> S
 
 pub(crate) fn run_tasks_with_repo(root: PathBuf) -> Result<String, RunnerError> {
     run_tasks(TasksArgs {
+        all: false,
         repo_override: Some(root),
         task_name: None,
         resolve_selector: None,

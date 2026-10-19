@@ -4,6 +4,10 @@ use std::collections::BTreeMap;
 #[serde(deny_unknown_fields)]
 pub struct ManifestTask {
     #[serde(default)]
+    pub visibility: Option<ManifestTaskVisibility>,
+    #[serde(default)]
+    pub group: Option<String>,
+    #[serde(default)]
     pub run: Option<ManifestManagedRun>,
     #[serde(default)]
     pub run_in: Option<ManifestTaskRunIn>,
@@ -45,6 +49,23 @@ pub struct ManifestTask {
     pub profiles: BTreeMap<String, ManifestManagedProfile>,
     #[serde(default)]
     pub cache: Option<ManifestTaskCache>,
+}
+
+/// Discovery policy only: internal tasks remain directly runnable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ManifestTaskVisibility {
+    Public,
+    Internal,
+}
+
+impl ManifestTaskVisibility {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Public => "public",
+            Self::Internal => "internal",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
@@ -322,6 +343,10 @@ pub struct ManifestTaskCache {
 #[serde(deny_unknown_fields)]
 pub struct ManifestInlineTaskDefinition {
     #[serde(default)]
+    pub visibility: Option<ManifestTaskVisibility>,
+    #[serde(default)]
+    pub group: Option<String>,
+    #[serde(default)]
     pub run: Option<String>,
     #[serde(default)]
     pub task: Option<String>,
@@ -334,6 +359,8 @@ pub struct ManifestInlineTaskDefinition {
 impl ManifestInlineTaskDefinition {
     pub fn into_manifest_task(self) -> ManifestTask {
         ManifestTask {
+            visibility: self.visibility,
+            group: self.group,
             run: Some(ManifestManagedRun::Sequence(vec![
                 ManifestManagedRunStep::Step(Box::new(ManifestManagedRunStepTable {
                     run: self.run,

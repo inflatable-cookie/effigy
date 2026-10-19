@@ -40,6 +40,18 @@ pub(super) fn validate_tasks_table(context: &mut SchemaContext<'_, '_>, tasks: &
             continue;
         };
 
+        validate_optional_enum_string_field(
+            context,
+            task_table.get("visibility"),
+            &format!("{task_path}.visibility"),
+            &["public", "internal"],
+            "expected `public` or `internal`",
+        );
+        validate_optional_non_empty_string_field(
+            context,
+            task_table.get("group"),
+            &format!("{task_path}.group"),
+        );
         if is_compact_inline_task_table(task_table) {
             validate_compact_inline_task_table(context, task_name, task_table);
             continue;
@@ -174,7 +186,7 @@ fn validate_compact_inline_task_table(
         context,
         &task_path,
         task_table,
-        &["run", "task", "rhai", "run_in"],
+        &["run", "task", "rhai", "run_in", "visibility", "group"],
     );
     validate_optional_non_empty_string_field(
         context,
@@ -226,6 +238,8 @@ fn validate_task_table_keys(
         &format!("tasks.{task_name}"),
         task_table,
         &[
+            "visibility",
+            "group",
             "run",
             "run_in",
             "system",

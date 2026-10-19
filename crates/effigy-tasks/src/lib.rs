@@ -7,6 +7,8 @@ mod qa_groups;
 mod reference;
 pub mod testing;
 mod view;
+mod visibility;
+pub use visibility::TaskVisibilityIndex;
 
 use std::path::PathBuf;
 

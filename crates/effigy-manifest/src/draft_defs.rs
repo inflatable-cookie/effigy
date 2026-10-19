@@ -168,6 +168,8 @@ impl ManifestDraftTable {
             expires,
             purpose,
             task: ManifestTask {
+                visibility: Some(crate::ManifestTaskVisibility::Internal),
+                group: None,
                 run: self.run,
                 run_in: self.run_in,
                 admission: self.admission,

@@ -22,9 +22,15 @@ pub(super) fn discover_completion_candidates(
     let mut manifest_stamps: Vec<ManifestStamp> = Vec::new();
     match load_effective_catalogs(repo_root) {
         Ok(catalogs) => {
-            for catalog in catalogs {
+            let visibility = effigy_tasks::TaskVisibilityIndex::new(&catalogs);
+            for catalog in &catalogs {
                 manifest_stamps.push(read_manifest_stamp(&catalog.manifest_path));
-                for task_name in catalog.manifest.tasks.keys() {
+                for (task_name, task) in &catalog.manifest.tasks {
+                    if visibility.effective(catalog, task_name, task).0
+                        != effigy_manifest::ManifestTaskVisibility::Public
+                    {
+                        continue;
+                    }
                     candidates.insert(task_name.clone());
                     candidates.insert(format!("{}/{}", catalog.alias, task_name));
                 }
@@ -78,4 +84,40 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
         hash = hash.wrapping_mul(PRIME);
     }
     hash
+}
+
+#[cfg(test)]
+mod tests {
+    use super::discover_completion_candidates;
+
+    #[test]
+    fn completion_visibility_excludes_internal_and_referenced_tasks() {
+        let root = tempfile::tempdir().expect("fresh fixture directory");
+        std::fs::write(
+            root.path().join("effigy.toml"),
+            r#"
+[catalog]
+alias = "sample"
+[tasks]
+entry = [{ task = "helper" }, { task = "kept" }]
+helper = "echo helper"
+kept = { run = "echo kept", visibility = "public" }
+hidden = { run = "echo hidden", visibility = "internal" }
+"#,
+        )
+        .expect("fixture manifest");
+        let (candidates, _) = discover_completion_candidates(root.path()).expect("completion");
+        for public in ["entry", "sample/entry", "kept", "sample/kept"] {
+            assert!(
+                candidates.iter().any(|candidate| candidate == public),
+                "{public}"
+            );
+        }
+        for internal in ["helper", "sample/helper", "hidden", "sample/hidden"] {
+            assert!(
+                !candidates.iter().any(|candidate| candidate == internal),
+                "{internal}"
+            );
+        }
+    }
 }
