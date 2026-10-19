@@ -5,18 +5,24 @@ Status: source-only listener handoff candidate; live administrator activation re
 
 ## Migration boundary
 
-The supported upgrade starts from v0.14.1 identity-bearing gateway records.
-`effigy gateway up` uses fresh generation verification and the existing bounded
-interactive lifecycle path; it never substitutes a numeric PID for ownership.
-A pre-0.14 numeric-only record refuses with an administrator migration message.
-The administrator must verify and stop that old daemon, confirm absence, and
-remove only its old PID/version records before starting a new gateway. Unknown
-identity preserves state and refuses signaling, cleanup and replacement.
+The standard daemon runs as the operator under kernel custody, with its
+control socket in `~/.effigy/gateway/runtime/`. Routine up, down, status and
+route registration never elevate. `gateway setup` owns administrator changes
+and migration from a live v0.14.1 identity-bearing root daemon, preserving
+routes and allocations. Numeric PIDs alone never authorize signaling or
+replacement. Older numeric-only records require administrator diagnosis;
+the pre-0.14 recovery command is retired.
 
-The existing transition lock serializes up, down and TLS preparation. Socket
-inspection belongs to `socket_ownership`; lifecycle exclusion belongs to
-`transition_lock`. Kernel adoption of these retained mechanisms belongs to the
-gateway engine. No migration replays or mutates historical transition receipts.
+Kernel runs and gates own the standard lifecycle. The existing transition
+lock remains for private gateway operations, while JSON route/allocation
+writers retain their current locks until endpoint-store adoption. Socket
+inspection belongs to `socket_ownership`. No migration replays or mutates
+historical transition receipts.
+
+The historical design analysis below records the root dependencies that led
+to the operator route. The implemented transport and remaining machine
+qualification are described in [Operator daemon custody and privileged
+listeners](#operator-daemon-custody-and-privileged-listeners).
 
 ## Operator-selected user-owned gateway route
 
@@ -29,7 +35,7 @@ machine configuration change is authorized for an agent. The root-daemon
 attestation proposal below remains unimplemented and is not this route's
 prerequisite.
 
-Current root dependencies must be separated explicitly:
+Legacy root dependencies that required separation:
 
 - `/etc/resolver/test` and any declared route-specific resolver suffixes require
   administrator writes. The current daemon reconciles route-driven files

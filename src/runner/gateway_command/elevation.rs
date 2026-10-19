@@ -544,4 +544,3 @@ mod gateway_identity_reader_tests {
         assert!(!args.iter().any(|arg| *arg == OsStr::new("--pid")));
     }
 }
-

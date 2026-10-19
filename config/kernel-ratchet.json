@@ -436,7 +436,7 @@
       "std.process.Command.spawn": 1
     },
     "src/runner/gateway_command/elevation.rs": {
-      "std.process.Command.new": 6,
+      "std.process.Command.new": 2,
       "std.process.Command.spawn": 2
     },
     "src/runner/gateway_command/mod.rs": {

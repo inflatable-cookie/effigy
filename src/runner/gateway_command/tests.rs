@@ -546,7 +546,7 @@ fn gateway_identity_legacy_active_record_refused_by_status_up_down_and_managed_s
     let status = run_gateway_status(false).expect("bounded migration diagnosis");
     let status_json = run_gateway_status(true).expect("JSON migration diagnosis");
     assert!(status_json.contains("setup_required"));
-    let up = run_gateway_up(false)
+    let up = run_gateway_up_with_config(&gateway_config().expect("gateway config"), false)
         .expect_err("up must refuse to replace the unauthenticated process")
         .to_string();
     let down = run_gateway_down(false)
