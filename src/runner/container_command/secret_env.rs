@@ -668,6 +668,7 @@ catalog = "php-fpm"
 
     fn test_runtime_files_policy() -> EffectiveContainerPolicy {
         EffectiveContainerPolicy {
+            render: None,
             repo_root: std::path::PathBuf::from("/tmp"),
             name: "web".to_owned(),
             driver: effigy_manifest::ManifestContainerDriver::Colima,

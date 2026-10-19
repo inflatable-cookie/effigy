@@ -10,6 +10,7 @@ description = "Container policy contracts for Effigy"
 test-support = []
 
 [dependencies]
+effigy-kernel = { path = "../effigy-kernel" }
 effigy-catalog = { path = "../effigy-catalog" }
 effigy-core = { path = "../effigy-core" }
 effigy-gateway = { path = "../effigy-gateway" }

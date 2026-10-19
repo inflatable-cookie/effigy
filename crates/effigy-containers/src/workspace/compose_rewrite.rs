@@ -2,7 +2,6 @@ use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 use crate::ContainerPolicyError;
-use effigy_core::runtime_dir::{ensure_effigy_ignored_in_git_root, git_local_exclude_path};
 
 use super::{
     build_workspace_runtime_environment, build_workspace_runtime_mounts, RenderedWorkspaceMount,
@@ -13,7 +12,7 @@ pub(super) fn rewrite_workspace_mounts_for_direct_compose(
     request: WorkspaceComposeRewrite<'_>,
     source_compose: &Path,
     record_optional_extra_mount_decisions: bool,
-    admission: Option<&mut crate::policy::admission::PolicyAdmission>,
+    draft: &mut crate::policy::render::Draft,
 ) -> Result<(PathBuf, Vec<WorkspaceExtraMountDecision>), ContainerPolicyError> {
     let WorkspaceComposeRewrite {
         repo_root,
@@ -36,11 +35,7 @@ pub(super) fn rewrite_workspace_mounts_for_direct_compose(
             path: source_compose.to_path_buf(),
             error: std::io::Error::other("compose file has no parent directory"),
         })?;
-    let content =
-        std::fs::read_to_string(source_compose).map_err(|error| ContainerPolicyError::Read {
-            path: source_compose.to_path_buf(),
-            error,
-        })?;
+    let content = draft.read(source_compose)?;
     let mut parsed: serde_yaml::Value = serde_yaml::from_str(&content).map_err(|error| {
         ContainerPolicyError::TaskInvocation(format!(
             "failed to parse compose file {} for workspace mount rewrite: {error}",
@@ -96,34 +91,13 @@ pub(super) fn rewrite_workspace_mounts_for_direct_compose(
     normalize_runtime_rewrite_paths(&mut parsed, compose_dir);
 
     let rewrite_dir = repo_root.join(".effigy").join("runtime").join("compose");
-    ensure_effigy_ignored_in_git_root(repo_root).map_err(|error| ContainerPolicyError::Read {
-        path: git_local_exclude_path(repo_root),
-        error,
-    })?;
-    std::fs::create_dir_all(&rewrite_dir).map_err(|error| ContainerPolicyError::Read {
-        path: rewrite_dir.clone(),
-        error,
-    })?;
     let rewrite_path = rewrite_dir.join(format!("{container_name}.workspace.compose.yml"));
     let rendered = serde_yaml::to_string(&parsed).map_err(|error| {
         ContainerPolicyError::TaskInvocation(format!(
             "failed to serialize workspace mount rewrite for `{container_name}`: {error}"
         ))
     })?;
-    if let Some(guard) = &admission {
-        guard.before_render_write(&rewrite_path, rendered.as_bytes())?;
-    }
-    // Atomic replacement: every policy resolution rewrites this admitted
-    // Compose input while strict publication verifies read it concurrently.
-    effigy_catalog::atomic_write::write_atomic(&rewrite_path, rendered.as_bytes()).map_err(
-        |error| ContainerPolicyError::Read {
-            path: rewrite_path.clone(),
-            error,
-        },
-    )?;
-    if let Some(guard) = admission {
-        guard.record_rendered(&rewrite_path, rendered.as_bytes())?;
-    }
+    draft.insert(rewrite_path.clone(), rendered.into_bytes());
     Ok((rewrite_path, extra_mount_decisions))
 }
 
@@ -439,7 +413,7 @@ fn looks_like_bind_mount_source(source: &str) -> bool {
         || source.contains('/')
 }
 
-fn normalize_runtime_rewrite_paths(parsed: &mut serde_yaml::Value, compose_dir: &Path) {
+pub(crate) fn normalize_runtime_rewrite_paths(parsed: &mut serde_yaml::Value, compose_dir: &Path) {
     let Some(services) = parsed
         .get_mut("services")
         .and_then(serde_yaml::Value::as_mapping_mut)

@@ -171,6 +171,10 @@ esac
                 Some(effigy_core::build_info::active_version()),
             ),
             ("EFFIGY_TEST_HOST_CONTAINER_LEASE_HOME", None),
+            (
+                "EFFIGY_TEST_CONTAINERS_HOME",
+                Some(root.join("host-home/.effigy").display().to_string()),
+            ),
             ("HOME", Some(root.join("host-home").display().to_string())),
             ("EFFIGY_RECOVERY_PROJECT", None),
             ("EFFIGY_DISABLE_HOST_CONTAINER_LEASE", Some("1".to_owned())),
@@ -217,6 +221,10 @@ esac
         if retained {
             preserve_tree(&lease_root, &mut preserved);
         }
+        // A generation snapshot stays frozen; observe the edited declaration
+        // explicitly before asking whether its retained admission is stale.
+        let policy =
+            effigy_containers::load_container_policy(&root, Some("linux-release")).unwrap();
         Self {
             _temp: temp,
             root,

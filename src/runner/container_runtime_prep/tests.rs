@@ -29,6 +29,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 fn test_policy(compose_file: PathBuf) -> EffectiveContainerPolicy {
     EffectiveContainerPolicy {
+        render: None,
         repo_root: std::path::PathBuf::from("/tmp"),
         name: "web".to_owned(),
         driver: effigy_manifest::ManifestContainerDriver::Colima,

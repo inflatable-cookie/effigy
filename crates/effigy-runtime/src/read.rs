@@ -66,7 +66,7 @@ pub fn run_container_status(
     } else {
         Vec::new()
     };
-    let compose_ps = if runtime_running && services.is_empty() {
+    let compose_ps = if runtime_running && services.is_empty() && policy.render.is_none() {
         let plan = compose_invocation_plan(
             repo_root,
             &policy,

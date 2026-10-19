@@ -101,6 +101,10 @@ During v0.x, MINOR bumps may include breaking changes.
   import automatically, and failed acquisition keeps the previous selection.
   A locally known newer version produces a bounded sync notice without a remote
   probe. `EFFIGY_GIT_BUNDLE_REMOTE_CHECK_TTL_SECS` is retired with a Prepare warning.
+- `effigy container render <env>` prints the exact render, generation path and
+  digest without changing runtime state. Host renders assemble in memory and
+  Prepare publishes sealed kernel objects. Admission pins generation references;
+  reset preserves sibling environments. Existing renders migrate on Prepare.
 - Container policy reads leave loopback assignments unchanged and perform no
   loopback runtime inventory. Prepare allocates or imports existing assignments,
   including for shared services and environments with explicit host ports.

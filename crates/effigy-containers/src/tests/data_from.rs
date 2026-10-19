@@ -69,7 +69,9 @@ fn borrowing_environment_mounts_owner_data_volumes() {
             "borrowed volumes are never listed as owned"
         );
 
-        let compose = fs::read_to_string(&hybrid.compose_files[0]).expect("read compose");
+        let compose = hybrid
+            .read_compose(&hybrid.compose_files[0])
+            .expect("read compose");
         let external_block = format!("{name}:\n    external: true", name = borrowed.name);
         assert!(
             compose.contains(&external_block),
@@ -151,16 +153,18 @@ fn adding_data_from_keeps_sibling_generated_compose_byte_identical() {
         let root = temp_repo("data-from-byte-identical");
         write_manifest(&root, &pair_manifest_without_data_from());
         let dev_without = load_container_policy(&root, Some("dev")).expect("dev policy");
-        let compose_without =
-            fs::read_to_string(&dev_without.compose_files[0]).expect("read dev compose");
+        let compose_without = dev_without
+            .read_compose(&dev_without.compose_files[0])
+            .expect("read dev compose");
         let names_without = managed_volume_names(&dev_without);
 
         // Declare the same environments again with `data_from` added to the
         // sibling, in the same checkout, so every path-derived byte matches.
         write_manifest(&root, PAIR_MANIFEST);
         let dev_with = load_container_policy(&root, Some("dev")).expect("dev policy");
-        let compose_with =
-            fs::read_to_string(&dev_with.compose_files[0]).expect("read dev compose");
+        let compose_with = dev_with
+            .read_compose(&dev_with.compose_files[0])
+            .expect("read dev compose");
 
         assert_eq!(
             compose_with, compose_without,

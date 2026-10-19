@@ -37,7 +37,8 @@ pub use policy::inline_workspace::{
 pub use policy::load::{
     effective_attach_mode, load_all_container_policies, load_container_exec_target,
     load_container_exec_working_dir, load_container_policy, load_container_policy_for_creation,
-    load_container_policy_with_workspace, register_container_runtime_scope, ContainerExecTarget,
+    load_container_policy_with_workspace, prepare_container_policy,
+    register_container_runtime_scope, ContainerExecTarget,
 };
 pub use policy::model::{
     ContainerEjectResult, ContainerPolicyError, EffectiveAttachMode, EffectiveComposeSource,

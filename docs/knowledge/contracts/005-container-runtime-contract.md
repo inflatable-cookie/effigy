@@ -87,8 +87,9 @@ way that could recreate the running service just to apply an optional mount.
 No creation-time mount decision is reported for that existing service.
 
 Direct `compose_file` containers get the same checkout identity as generated
-ones. Effigy renders a Compose override next to the repo-owned file, at
-`.effigy/runtime/compose/<container>.ownership.compose.yml`. It labels each
+ones. Effigy includes an ownership override in the immutable closure, at
+`checkout/.effigy/runtime/compose/<container>.ownership.compose.yml` relative to
+the generation root. It labels each
 service the file declares with `com.effigy.checkout` (the canonical checkout)
 and, when the checkout has a runtime scope token, `com.effigy.scope`. The repo
 file is not edited, and the override adds labels to no service the file does not
@@ -258,16 +259,47 @@ start after that listener is ready. A dependent process receives
 restarts or loses readiness, Effigy stops the dependent generation and starts
 it with the current endpoint values.
 
-Detached activation records admitted context after a successful Compose launch.
-Detached policy loading now seals the original declaration sources and selected
-checkout/scope/backend/profile/project/primary identity before generation's
-inventory probes, warning/runtime preparation or workspace refresh. Generated,
-workspace and DNS renderers contribute expected-byte receipts to that same
-snapshot: original inputs and existing artifacts must still match before a
-write, and the resulting file must match its renderer bytes afterward. Creation
-refresh verifies the retained declaration rather than capturing a new baseline.
-Marked reconciliation also verifies its original marker inputs before any
-materialization. Attached and unrelated data preparation retain legacy behavior.
+Host policy resolution builds one in-memory kernel `objects::Closure` containing
+Original and effective declarations, Compose inputs, generated Dockerfiles/configs,
+shared-service Compose, workspace
+and DNS rewrites, and inline workspaces. It writes no files, Git exclusions,
+scope tokens, ports or loopback assignments. The render's digest determines its
+prospective `~/.effigy/state/objects/<digest>` path. An unprepared scoped checkout
+uses an explicit `-wt-unprepared` or `-ec-unprepared` project suffix and never
+queries its primary checkout's project. Prepare establishes its persistent token
+and resolves the final isolated identity.
+
+The Prepare stage of `up` and other Mutate commands publishes through kernel
+Objects under the environment owner gate. Files are sealed 0400 and directories
+0500. Compose receives `EFFIGY_RENDER_ROOT` for references to generated assets;
+this adapter-owned value overrides a caller's environment without changing the
+process-global environment. Relative user build contexts and Dockerfiles keep
+their Compose meaning. `compose.override.yml` and direct `compose_file` inputs
+are copied into the closure. Existing mutable generated files are not imported
+or rewritten; the next Prepare renders their replacement automatically.
+
+`effigy container render [<env>]` is read-only and prints every closure file,
+its generation path and digest. The path may not exist before Prepare. JSON
+uses `effigy.container.render.v1` with `environment`, `path`, `digest`,
+`compose_files`, `environment_variables`, and `files` (`name`, `path`, `content`).
+Missing allocated ports remain explicit placeholders until Prepare.
+
+Detached admission records a v3 generation reference. Verification reads the
+kernel's desired object reference and verifies its complete immutable closure;
+it no longer fingerprints mutable declarations and renderer outputs. Source
+edits leave an admitted snapshot intact; a later Prepare publishes a new desired
+generation and supersedes that admission. One-release v2 receipt import checks
+its original identity and fingerprints once, then writes a v3 reference in
+Prepare. Retained admission is validated before moving the desired reference;
+a refusal leaves the prior reference intact. Attached workflows use the same
+immutable render path. Execution-only workspace builder recovery compares fresh
+source render references while retaining its original stack admission.
+
+Reset drops only the selected environment's object references through kernel
+`Objects::reset`; physical reclamation is kernel retention's responsibility.
+Sibling environment references survive. Eject exports the resolved closure to
+`infra/dev` and does not require a previous `up` or remove admitted objects.
+
 A recorded *partial* activation reconciles only against its original admission;
 changed inputs refuse until `effigy container down`. With unchanged admitted
 inputs, a missing or stopped primary does not require operator intervention:

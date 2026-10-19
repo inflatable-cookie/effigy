@@ -10,6 +10,7 @@ pub(crate) fn render_container_help<R: HelpRenderer + ?Sized>(renderer: &mut R) 
 const CONTAINER_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
     topic: "container",
     notices: text_lines![
+        "`container render <NAME>` prints the exact immutable render, generation path and digest without writing files or contacting the container engine.",
         "Operate a manifest-defined local container environment by name, or the manifest default when no name is given.",
         "Host ports and repo-relative mounts are declared in `[containers.*.host]`. Leaving an interactive workspace or shell asks whether to bring the environment down (default yes).",
         "Generated compose supports `shared = true` backing services for shared databases and caches.",
@@ -23,6 +24,7 @@ const CONTAINER_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         "`container retire` removes this checkout's containers, caches, networks, routes and ports. It takes no container name; after the checkout is gone, retry with `--scope <TOKEN>`. Use it from `paseo.json` worktree teardown.",
     ],
     usage: text_lines![
+        "effigy container render [<NAME>] [--repo <PATH>] [--json]",
         "effigy container up [--repo <PATH>] [--attach|--detach] [--json]",
         "effigy container <NAME> up [--repo <PATH>] [--attach|--detach] [--json]",
         "effigy container down [--repo <PATH>] [--json]",

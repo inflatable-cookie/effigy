@@ -802,6 +802,10 @@ working_dir = "/var/www/html"
 
 #[test]
 fn resolve_default_exec_surface_ignores_unbound_extra_containers() {
+    let _env = crate::contract_test_support::EnvGuard::set_many(&[(
+        "EFFIGY_COMPOSE_BACKEND",
+        Some("docker".to_owned()),
+    )]);
     let root = temp_repo("extra-default-containers");
     fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
     fs::write(
@@ -888,6 +892,10 @@ working_dir = "/var/www/html"
 
 #[test]
 fn activate_exec_surface_uses_repo_root_as_repo_override() {
+    let _env = crate::contract_test_support::EnvGuard::set_many(&[(
+        "EFFIGY_COMPOSE_BACKEND",
+        Some("docker".to_owned()),
+    )]);
     let repo_root = PathBuf::from("/tmp/repo");
     let root = temp_repo("activate-surface");
     write_container_manifest(&root, "/workspace");
@@ -932,6 +940,10 @@ fn activate_exec_surface_uses_repo_root_as_repo_override() {
 
 #[test]
 fn activate_exec_surface_preserves_skip_lease_policy_for_handoff_sessions() {
+    let _env = crate::contract_test_support::EnvGuard::set_many(&[(
+        "EFFIGY_COMPOSE_BACKEND",
+        Some("docker".to_owned()),
+    )]);
     let repo_root = PathBuf::from("/tmp/repo");
     let root = temp_repo("activate-surface-skip-lease");
     write_container_manifest(&root, "/workspace");
@@ -970,19 +982,4 @@ fn activate_exec_surface_preserves_skip_lease_policy_for_handoff_sessions() {
             effigy_runtime_plan::RuntimeLeasePolicy::Skip,
         ))
     );
-}
-
-#[test]
-fn runtime_backend_identity_preserves_partial_activation_keys() {
-    let fixture = tempfile::tempdir().expect("private backend identity fixture");
-    for (backend, expected) in [("docker", "docker"), ("colima-nerdctl", "colima-nerdctl")] {
-        let _env = crate::contract_test_support::EnvGuard::set_many(&[(
-            "EFFIGY_COMPOSE_BACKEND",
-            Some(backend.to_owned()),
-        )]);
-        assert_eq!(
-            super::runtime_backend_identity_for_policy(fixture.path(), &test_policy()),
-            expected,
-        );
-    }
 }

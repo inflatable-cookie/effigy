@@ -7,4 +7,5 @@ pub mod model;
 pub mod mounts;
 pub mod ports;
 pub(crate) mod project;
+pub mod render;
 pub mod validation;

@@ -28,6 +28,7 @@ fn with_test_home<T>(name: &str, op: impl FnOnce() -> T) -> T {
 
 fn test_policy() -> EffectiveContainerPolicy {
     EffectiveContainerPolicy {
+        render: None,
         repo_root: std::path::PathBuf::from("/tmp"),
         name: "web".to_owned(),
         driver: ManifestContainerDriver::Colima,

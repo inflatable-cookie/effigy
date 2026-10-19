@@ -289,15 +289,13 @@ fn prepare_container_up(
                 }));
     operation.active = declared_detached;
     // Allocation is a Prepare effect, before admission captures the render.
-    let preparation_policy = load_container_policy(repo_root, name)?;
-    effigy_containers::policy::ports::prepare_container_policy_ports(&preparation_policy)?;
+    let prepared = effigy_containers::policy::render::prepare_inputs(&load_container_policy(
+        repo_root, name,
+    )?)?;
     let (mut policy, mut preparation_admission) = if declared_detached {
         // A record of an earlier admission whose inputs have changed since is
         // retired here, before admission compares against it.
-        crate::runner::host_container_lease::retire_stale_detached_admission(
-            repo_root,
-            &load_container_policy(repo_root, name)?,
-        )?;
+        crate::runner::host_container_lease::retire_stale_detached_admission(repo_root, &prepared)?;
         let (policy, admission) = effigy_containers::policy::load::load_admitted_container_policy(
             repo_root,
             name,
@@ -305,7 +303,8 @@ fn prepare_container_up(
         )?;
         (policy, Some(admission))
     } else {
-        (load_container_policy(repo_root, name)?, None)
+        effigy_containers::policy::render::prepare(&prepared)?;
+        (prepared, None)
     };
     let mut admitted_context = if let Some(admission) = &preparation_admission {
         Some(
@@ -392,7 +391,7 @@ fn prepare_container_up(
                 &policy.name,
                 admission,
             )?;
-        policy.compose_files = creation.compose_files;
+        policy = creation;
         admitted_context = Some(
             crate::runner::host_container_lease::DetachedActivationContext::from_materialization(
                 &policy, admission,
@@ -450,7 +449,7 @@ fn refresh_workspace_mounts_for_creation(
 ) -> Result<Vec<WorkspaceExtraMountDecision>, RunnerError> {
     let (creation_policy, decisions) =
         load_container_policy_for_creation(repo_root, Some(policy.name.as_str()))?;
-    policy.compose_files = creation_policy.compose_files;
+    *policy = creation_policy;
     Ok(decisions)
 }
 
@@ -1509,6 +1508,7 @@ mod tests {
 
     fn test_policy(shared_services: Vec<SharedServiceBinding>) -> EffectiveContainerPolicy {
         EffectiveContainerPolicy {
+            render: None,
             repo_root: std::path::PathBuf::from("/tmp"),
             name: "web".to_owned(),
             driver: ManifestContainerDriver::Colima,
@@ -1890,8 +1890,9 @@ mounts = ["prepared:/workspace-root/prepared:ro"]
         .expect("write compose");
 
         let mut policy = load_container_policy(&root, Some("web")).expect("initial policy");
-        let initially_rendered =
-            fs::read_to_string(&policy.compose_files[0]).expect("read initial workspace compose");
+        let initially_rendered = policy
+            .read_compose(&policy.compose_files[0])
+            .expect("read initial workspace compose");
         assert!(!initially_rendered.contains("/workspace-root/prepared"));
 
         let source = root.join("prepared");
@@ -1918,8 +1919,9 @@ mounts = ["prepared:/workspace-root/prepared:ro"]
             .find(|args| args[0] == "-f")
             .map(|args| PathBuf::from(&args[1]))
             .expect("backend plan captures compose file");
-        let captured_compose =
-            fs::read_to_string(compose_path).expect("read backend compose input");
+        let captured_compose = policy
+            .read_compose(&compose_path)
+            .expect("read backend compose input");
         let canonical_source = source.canonicalize().expect("canonical source");
 
         assert_eq!(decisions.len(), 1);
@@ -1996,7 +1998,8 @@ mounts = ["prepared:/workspace-root/prepared:ro"]
             .expect("running direct service does not refresh mounts");
         assert!(decisions.is_empty());
         assert_eq!(policy.compose_files[0], original_compose);
-        assert!(fs::read_to_string(original_compose)
+        assert!(policy
+            .read_compose(&original_compose)
             .expect("read original compose")
             .contains("/workspace-root/prepared"));
         assert!(
@@ -2091,6 +2094,16 @@ primary_service = "app"
         (temp, guard)
     }
 
+    fn prepared_marker_policy(root: &Path) -> EffectiveContainerPolicy {
+        fs::write(root.join("effigy.toml"),"[containers]\ndefault='web'\n[containers.web]\ncompose_file='docker-compose.yml'\nproject_name='demo-web-dev'\nprimary_service='app'\n").unwrap();
+        fs::write(
+            root.join("docker-compose.yml"),
+            "services:\n  app:\n    image: example\n",
+        )
+        .unwrap();
+        effigy_containers::prepare_container_policy(root, None).unwrap()
+    }
+
     fn running_row(
         service: &str,
         oneoff: bool,
@@ -2109,7 +2122,7 @@ primary_service = "app"
     #[test]
     fn detached_gateway_registration_failure_keeps_started_scope() {
         let (temp, _lease_home) = isolated_lease_home();
-        let policy = test_policy(Vec::new());
+        let policy = prepared_marker_policy(temp.path());
         record_partial_activation(temp.path(), &policy).expect("admit before publication");
         let admitted = crate::runner::host_container_lease::retained_detached_activation_context(
             temp.path(),
@@ -2150,7 +2163,7 @@ primary_service = "app"
     #[test]
     fn attached_gateway_registration_failure_still_tears_scope_down() {
         let (temp, _lease_home) = isolated_lease_home();
-        let policy = test_policy(Vec::new());
+        let policy = prepared_marker_policy(temp.path());
         let cleaned = std::cell::Cell::new(false);
         let error = gateway_registration_failure(
             EffectiveAttachMode::Attached,
@@ -2172,7 +2185,7 @@ primary_service = "app"
     #[test]
     fn attached_gateway_registration_failure_reports_cleanup_failure() {
         let (temp, _lease_home) = isolated_lease_home();
-        let policy = test_policy(Vec::new());
+        let policy = prepared_marker_policy(temp.path());
         let error = gateway_registration_failure(
             EffectiveAttachMode::Attached,
             temp.path(),
@@ -2191,7 +2204,7 @@ primary_service = "app"
     #[test]
     fn partial_activation_mark_round_trips_and_clears() {
         let (temp, _lease_home) = isolated_lease_home();
-        let policy = test_policy(Vec::new());
+        let policy = prepared_marker_policy(temp.path());
 
         assert!(!partial_activation_recorded(temp.path(), &policy).expect("read mark"));
         record_partial_activation(temp.path(), &policy).expect("record mark");
@@ -2254,7 +2267,7 @@ primary_service = "app"
     #[test]
     fn reconcile_restarts_an_environment_a_handover_stopped() {
         let (temp, _lease_home) = isolated_lease_home();
-        let policy = test_policy(Vec::new());
+        let policy = prepared_marker_policy(temp.path());
         let stopped = [running_row("db", false), running_row("app", false)]
             .into_iter()
             .map(|mut row| {
@@ -2287,7 +2300,7 @@ primary_service = "app"
     #[test]
     fn a_healthy_reconcile_resolves_a_recorded_handover_stop() {
         let (temp, _lease_home) = isolated_lease_home();
-        let policy = test_policy(Vec::new());
+        let policy = prepared_marker_policy(temp.path());
         record_partial_activation(temp.path(), &policy).expect("record partial activation");
         crate::runner::host_container_lease::record_environment_handover(
             temp.path(),

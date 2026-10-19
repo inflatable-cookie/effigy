@@ -1259,6 +1259,7 @@ run = "printf reverse-ok"
         domain: Option<&str>,
     ) -> EffectiveContainerPolicy {
         EffectiveContainerPolicy {
+            render: None,
             repo_root: repo_root.to_path_buf(),
             name: "web".to_owned(),
             driver: ManifestContainerDriver::Colima,

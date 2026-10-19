@@ -16,7 +16,7 @@ pub(super) fn run_container_hosts(
     let repo_root = context.resolved.resolved_root;
     let policy = load_container_policy(&repo_root, name)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    let token = worktree_scope::load_or_create(&repo_root)
+    let token = worktree_scope::load(&repo_root)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let host_map = scoped_host_map(&repo_root, &policy, token.as_deref())?;
     Ok(render_container_report(

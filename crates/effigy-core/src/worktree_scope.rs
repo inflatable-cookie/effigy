@@ -114,6 +114,59 @@ pub fn is_runtime_scoped(repo_root: &Path) -> io::Result<bool> {
     Ok(resolve(repo_root)?.is_some())
 }
 
+/// Read an existing scope without allocating identity or writing Git state.
+/// A scoped checkout without a token has no runtime state yet.
+pub fn load(repo_root: &Path) -> io::Result<Option<String>> {
+    Ok(load_scoped(repo_root)?.map(|(_, token)| token))
+}
+
+pub fn load_scoped(repo_root: &Path) -> io::Result<Option<(ScopeKind, String)>> {
+    let Some(scope) = resolve(repo_root)? else {
+        return Ok(None);
+    };
+    read_token(&scope.token_dir).map(|token| token.map(|token| (scope.kind, token)))
+}
+
+fn read_token(dir: &Path) -> io::Result<Option<String>> {
+    let path = dir.join(SCOPE_FILE);
+    match fs::read_to_string(&path) {
+        Ok(raw) => valid_token(&raw).map(Some).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("invalid checkout identity at {}", path.display()),
+            )
+        }),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+/// All checkout shapes need an identity for kernel resources. Primary Git
+/// checkouts keep their token beside Git metadata; non-Git manifests keep it
+/// in their private Effigy directory. Scope naming still uses only `resolve`.
+fn identity_dir(repo_root: &Path) -> io::Result<std::path::PathBuf> {
+    if let Some(scope) = resolve(repo_root)? {
+        return Ok(scope.token_dir);
+    }
+    let git = repo_root.join(".git");
+    Ok(if git.is_dir() {
+        git
+    } else {
+        repo_root.join(".effigy")
+    })
+}
+
+pub fn checkout_token(repo_root: &Path) -> io::Result<Option<String>> {
+    read_token(&identity_dir(repo_root)?)
+}
+
+/// Prepare-only identity allocation; callers must resolve again afterward.
+pub fn prepare_checkout_token(repo_root: &Path) -> io::Result<String> {
+    let dir = identity_dir(repo_root)?;
+    fs::create_dir_all(&dir)?;
+    load_or_create_token(&dir)
+}
+
 /// Return the scoped checkout's persistent token, creating it once if needed.
 pub fn load_or_create(repo_root: &Path) -> io::Result<Option<String>> {
     Ok(load_or_create_scoped(repo_root)?.map(|(_kind, token)| token))
@@ -488,5 +541,37 @@ mod tests {
             ScopeKind::EphemeralClone.project_tag(),
             PROJECT_TAGS[1] // "ec"
         );
+    }
+}
+
+#[cfg(test)]
+mod observation_tests {
+    use super::*;
+    #[test]
+    fn scope_reads_leave_a_fresh_ephemeral_checkout_uninitialized() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path().join("checkout");
+        fs::create_dir_all(root.join(".git")).unwrap();
+        fs::write(
+            root.join(".git/config"),
+            "[effigy]\nruntimeScope=ephemeral\n",
+        )
+        .unwrap();
+        assert_eq!(load(&root).unwrap(), None);
+        assert_eq!(load_scoped(&root).unwrap(), None);
+        assert!(!root.join(".git").join(SCOPE_FILE).exists());
+        let token = prepare_checkout_token(&root).unwrap();
+        assert_eq!(load(&root).unwrap(), Some(token.clone()));
+        assert_eq!(checkout_token(&root).unwrap(), Some(token));
+    }
+    #[test]
+    fn primary_checkout_identity_never_changes_scope_naming() {
+        let fixture = tempfile::tempdir().unwrap();
+        fs::create_dir(fixture.path().join(".git")).unwrap();
+        assert_eq!(checkout_token(fixture.path()).unwrap(), None);
+        let token = prepare_checkout_token(fixture.path()).unwrap();
+        assert_eq!(prepare_checkout_token(fixture.path()).unwrap(), token);
+        assert_eq!(load(fixture.path()).unwrap(), None);
+        assert_eq!(checkout_token(fixture.path()).unwrap(), Some(token));
     }
 }

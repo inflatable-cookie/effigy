@@ -141,7 +141,7 @@ pub(in crate::runner) fn activate_routed_container_runtime(
         repo_root,
         container_name,
         |repo_root, container_name| {
-            effigy_containers::load_container_policy(repo_root, Some(container_name))
+            effigy_containers::prepare_container_policy(repo_root, Some(container_name))
                 .map_err(|error| RunnerError::task_invocation(error.to_string()))
         },
         |repo_root, policy, request, _plan| {
@@ -296,6 +296,8 @@ pub(in crate::runner) fn prepare_container_exec_runtime(
     policy: &EffectiveContainerPolicy,
     container_name: Option<&str>,
 ) -> Result<(), RunnerError> {
+    let prepared = effigy_containers::policy::render::prepare_resolved(policy)?;
+    let policy = &prepared;
     validate_policy_runtime(repo_root, policy)?;
     let _colima_started = ensure_colima_running(policy, repo_root)?;
     let working_dir = load_container_exec_working_dir(repo_root, container_name)
@@ -911,7 +913,7 @@ fn load_services_depending_on_primary(
 ) -> Result<Vec<String>, RunnerError> {
     let mut services = Vec::new();
     for compose_file in &policy.compose_files {
-        let raw = match std::fs::read_to_string(compose_file) {
+        let raw = match policy.read_compose(compose_file) {
             Ok(text) => text,
             Err(_) => continue,
         };
@@ -968,7 +970,7 @@ fn prepare_host_bind_mount_dirs(
 ) -> Result<(), RunnerError> {
     let runtime_data_root = repo_root.join(".effigy/runtime/data");
     for compose_file in &policy.compose_files {
-        let raw = match std::fs::read_to_string(compose_file) {
+        let raw = match policy.read_compose(compose_file) {
             Ok(text) => text,
             Err(_) => continue,
         };

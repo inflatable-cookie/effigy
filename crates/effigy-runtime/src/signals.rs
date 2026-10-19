@@ -104,6 +104,7 @@ fn spawn_command_inherit_os(
     for (key, value) in env {
         command.env(key, value);
     }
+    effigy_containers::policy::render::apply_environment(&mut command, args);
     #[cfg(unix)]
     // SAFETY: `pre_exec` runs this closure in the forked child before `exec`,
     // where only async-signal-safe work is allowed. `setpgid` is

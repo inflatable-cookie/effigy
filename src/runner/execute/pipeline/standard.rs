@@ -1098,6 +1098,7 @@ mod tests {
         let _env =
             crate::contract_test_support::EnvGuard::set_many(&[("EFFIGY_COMPOSE_BACKEND", None)]);
         let policy = EffectiveContainerPolicy {
+            render: None,
             repo_root: temp.path().to_path_buf(),
             name: "web".to_owned(),
             driver: effigy_manifest::ManifestContainerDriver::Colima,
@@ -1188,6 +1189,7 @@ mod tests {
             "web",
             |_repo_root, _container_name| {
                 Ok(EffectiveContainerPolicy {
+                    render: None,
                     repo_root: std::path::PathBuf::from("/tmp"),
                     name: "web".to_owned(),
                     driver: effigy_manifest::ManifestContainerDriver::Colima,
@@ -1264,6 +1266,7 @@ mod tests {
     fn inline_workspace_activation_skips_host_container_lease_refresh() {
         let repo_root = Path::new("/tmp/demo-repo");
         let policy = EffectiveContainerPolicy {
+            render: None,
             repo_root: std::path::PathBuf::from("/tmp"),
             name: "dev__app".to_owned(),
             driver: effigy_manifest::ManifestContainerDriver::Colima,

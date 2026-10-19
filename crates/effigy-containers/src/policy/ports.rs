@@ -35,19 +35,19 @@ pub fn prepare_container_policy_ports(
     let mut requests = Vec::new();
     // Preserve the old shared-before-local allocation order.
     for shared in &policy.shared_services {
-        let root = shared.compose_file.parent().ok_or_else(|| {
-            ContainerPolicyError::TaskInvocation("shared Compose file has no parent".into())
-        })?;
+        let root = crate::policy_support::shared_service_output_dir(&shared.project_name)?;
         collect_requests(
+            policy,
             &shared.compose_file,
             &shared.project_name,
-            root,
+            &root,
             &registry,
             &mut requests,
         )?;
     }
     for compose_file in &policy.compose_files {
         collect_requests(
+            policy,
             compose_file,
             &policy.project_name,
             &policy.repo_root,
@@ -61,17 +61,15 @@ pub fn prepare_container_policy_ports(
 }
 
 fn collect_requests(
+    policy: &EffectiveContainerPolicy,
     compose_file: &Path,
     project: &str,
     repo_root: &Path,
     registry: &PortRegistry,
     requests: &mut Vec<PortRequest>,
 ) -> Result<(), ContainerPolicyError> {
-    let bytes = std::fs::read(compose_file).map_err(|error| ContainerPolicyError::Read {
-        path: compose_file.to_owned(),
-        error,
-    })?;
-    let document: serde_yaml::Value = serde_yaml::from_slice(&bytes).map_err(|error| {
+    let content = policy.read_compose(compose_file)?;
+    let document: serde_yaml::Value = serde_yaml::from_str(&content).map_err(|error| {
         ContainerPolicyError::TaskInvocation(format!("invalid Compose port input: {error}"))
     })?;
     let Some(services) = document
