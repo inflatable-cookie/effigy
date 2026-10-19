@@ -12,14 +12,11 @@ use super::provider_context::{
     build_provider_context, provider_package_policy_blockers, DeployProviderContextRequest,
 };
 use super::provider_package::{
-    resolve_provider_package, run_provider_apply, run_provider_preflight, run_provider_status,
+    resolve_provider_package, run_provider_preflight, run_provider_status,
     DeployProviderCheckStatus, DeployProviderPackage, ManifestDeployProviderConfig,
 };
 use super::report::*;
-use super::text::{
-    render_deploy_apply_text, render_deploy_history_text, render_deploy_plan_text,
-    render_deploy_status_text,
-};
+use super::text::{render_deploy_history_text, render_deploy_plan_text, render_deploy_status_text};
 use crate::runner::error::RunnerError;
 use crate::runner::manifest::load_task_manifest_with_inspection;
 use crate::runner::render::render_command_result;
@@ -46,112 +43,45 @@ pub(super) fn run_deploy_plan(
     render_command_result(output_json, ok, json_value(&report)?, text)
 }
 
-pub(super) fn run_deploy_apply(
-    repo_root: &Path,
+// Refuse before manifest/provider resolution: even preflight can acquire packages
+// or execute scripts. No deployment effect or success record is permitted here.
+pub(super) fn refuse_deploy_execution(
+    operation: &str,
     env: &str,
-    yes: bool,
     output_json: bool,
 ) -> Result<String, RunnerError> {
-    if !yes {
-        return Err(RunnerError::task_invocation(
-            "`deploy apply` is plan-only unless `--yes` is supplied; run `effigy deploy plan <ENV>` first".to_owned(),
-        ));
-    }
-    let plan = build_deploy_plan(repo_root, env)?;
-    if !plan.blockers.is_empty() {
-        let text = render_deploy_plan_text(&plan);
-        return render_command_result(output_json, false, json_value(&plan)?, text);
-    }
-
-    let started_at = iso_timestamp(SystemTime::now());
-    let active_path = deploy_active_path(repo_root, env);
-    if let Some(parent) = active_path.parent() {
-        fs::create_dir_all(parent).map_err(|error| {
-            RunnerError::task_invocation(format!(
-                "failed to create deploy active directory {}: {error}",
-                parent.display()
-            ))
-        })?;
-    }
-    write_json_report(repo_root, &[&active_path], &plan)?;
-
-    let (env_config, model, provider_package) = deploy_execution_inputs(repo_root, env)?;
-    let provider = env_config.provider.adapter().to_owned();
-    let provider_package = provider_package.ok_or_else(|| {
-        RunnerError::task_invocation(format!(
-            "deploy provider `{}` must be configured under `[deploy.providers.{}`]",
-            provider, provider
-        ))
-    })?;
-    let provider_phase = run_provider_apply(
-        repo_root,
-        &provider,
-        &provider_package,
-        deploy_provider_context("apply", env, &env_config, &model, &provider_package),
-    )?;
-    let provider_operation = provider_apply_report(&plan, provider_phase);
-    let status = if provider_operation.status == "succeeded" {
-        "succeeded"
+    let message = format!(
+        "`deploy {operation}` is not yet supported in v0.15; no deployment was executed. Full execution design is tracked in the deploy lane (Q-003). Use `effigy deploy model --json` or `effigy deploy export <PROVIDER> --path <DIR> --plan`."
+    );
+    let obligations = [
+        "state: state stacks and migrations are not executed",
+        "hooks: before_state, after_state and after_deploy hooks are not executed",
+        "health: service health checks are not executed",
+        "release gates: required release evidence is not verified",
+        "digest pins: immutable artifact and code identities are not enforced",
+        "provider: deployment and rollback are not executed",
+    ];
+    if output_json {
+        Err(RunnerError::CommandJsonFailure {
+            rendered: json!({
+                "schema": APPLY_SCHEMA,
+                "schema_version": 1,
+                "ok": false,
+                "status": "blocked",
+                "reason": "not_supported",
+                "operation": operation,
+                "env": env,
+                "message": message,
+                "blockers": obligations,
+            })
+            .to_string(),
+        })
     } else {
-        "failed"
-    };
-    let report = DeployApplyReport {
-        schema: APPLY_SCHEMA.to_owned(),
-        schema_version: 1,
-        deployment_id: plan.deployment_id.clone(),
-        env: env.to_owned(),
-        provider: plan.provider.clone(),
-        status: status.to_owned(),
-        started_at,
-        finished_at: iso_timestamp(SystemTime::now()),
-        code: plan.code.clone(),
-        release_policy: plan.release_policy.clone(),
-        state: DeployApplyStateReport {
-            status: if plan.state.is_some() {
-                "planned".to_owned()
-            } else {
-                "skipped".to_owned()
-            },
-            lineage_id: plan.state.as_ref().map(|state| state.lineage_id.clone()),
-            apply_report_path: None,
-        },
-        provider_operation,
-        hooks: plan
-            .hooks
-            .iter()
-            .map(|hook| DeployHookResult {
-                stage: hook.stage.clone(),
-                task: hook.task.clone(),
-                status: "planned".to_owned(),
-            })
-            .collect(),
-        health_checks: plan
-            .health_checks
-            .iter()
-            .map(|check| DeployHealthResult {
-                service: check.service.clone(),
-                status: "planned".to_owned(),
-                path: check.path.clone(),
-            })
-            .collect(),
-        written_report_path: None,
-        written_history_path: None,
-    };
-
-    let mut report = report;
-    let paths = deploy_report_paths(repo_root, env, &report.deployment_id);
-    report.written_report_path = Some(path_display(&paths.latest_path, repo_root));
-    report.written_history_path = Some(path_display(&paths.history_path, repo_root));
-    write_json_report(
-        repo_root,
-        &[&paths.latest_path, &paths.history_path],
-        &report,
-    )?;
-    let _ = fs::remove_file(active_path);
-
-    let ok = report.status == "succeeded";
-    let text = render_deploy_apply_text(&report);
-    render_command_result(output_json, ok, json_value(&report)?, text)
+        Err(RunnerError::task_invocation(format!(
+            "{message}\n{}",
+            obligations.join("\n")
+        )))
+    }
 }
 
 pub(super) fn run_deploy_status(
@@ -246,71 +176,6 @@ pub(super) fn run_deploy_history(
         warnings,
     };
     let text = render_deploy_history_text(&report);
-    render_command_result(output_json, true, json_value(&report)?, text)
-}
-
-pub(super) fn run_deploy_redeploy(
-    repo_root: &Path,
-    env: &str,
-    deployment: &str,
-    yes: bool,
-    output_json: bool,
-) -> Result<String, RunnerError> {
-    if !yes {
-        return Err(RunnerError::task_invocation(
-            "`deploy redeploy` requires `--yes` after reviewing deployment history".to_owned(),
-        ));
-    }
-    let path = deploy_history_dir(repo_root, env).join(format!("{deployment}.json"));
-    if !path.exists() {
-        return Err(RunnerError::task_invocation(format!(
-            "deployment `{deployment}` was not found in deploy history for `{env}`"
-        )));
-    }
-    let source = read_optional_json(&path)?.ok_or_else(|| {
-        RunnerError::task_invocation(format!(
-            "failed to read deployment report {}",
-            path.display()
-        ))
-    })?;
-    let started_at = iso_timestamp(SystemTime::now());
-    let report = DeployRedeployReport {
-        schema: APPLY_SCHEMA.to_owned(),
-        schema_version: 1,
-        deployment_id: format!("{}-redeploy-{}", utc_basic_timestamp(SystemTime::now()), deployment),
-        env: env.to_owned(),
-        provider: source
-            .get("provider")
-            .and_then(Value::as_str)
-            .unwrap_or("unknown")
-            .to_owned(),
-        status: "succeeded".to_owned(),
-        source_deployment: deployment.to_owned(),
-        started_at,
-        finished_at: iso_timestamp(SystemTime::now()),
-        source_report_path: path_display(&path, repo_root),
-        warnings: vec![
-            "redeploy replay recorded immutable deployment evidence; provider rollback and database rollback remain out of scope".to_owned(),
-        ],
-        written_report_path: None,
-        written_history_path: None,
-    };
-    let mut report = report;
-    let paths = deploy_report_paths(repo_root, env, &report.deployment_id);
-    report.written_report_path = Some(path_display(&paths.latest_path, repo_root));
-    report.written_history_path = Some(path_display(&paths.history_path, repo_root));
-    write_json_report(
-        repo_root,
-        &[&paths.latest_path, &paths.history_path],
-        &report,
-    )?;
-    let text = format!(
-        "[deploy] redeployed {env}\nsource: {deployment}\nreport: {}",
-        report
-            .written_report_path
-            .as_deref()
-            .unwrap_or("<not written>")
-    );
     render_command_result(output_json, true, json_value(&report)?, text)
 }
 
@@ -635,28 +500,6 @@ fn deploy_status_provider_report(
     }
 }
 
-fn provider_apply_report(
-    plan: &DeployPlanReport,
-    provider_phase: super::provider_package::DeployProviderPhaseReport,
-) -> DeployProviderOperationReport {
-    DeployProviderOperationReport {
-        status: if provider_phase.blockers.is_empty()
-            && provider_phase.status.allows_apply_success()
-        {
-            "succeeded".to_owned()
-        } else {
-            "failed".to_owned()
-        },
-        provider_deployment_id: Some(format!("{}-{}", plan.provider, plan.deployment_id)),
-        services: Vec::new(),
-        warnings: provider_phase
-            .warnings
-            .into_iter()
-            .chain(provider_phase.blockers)
-            .collect(),
-    }
-}
-
 fn resolve_code_ref(repo_root: &Path, requested: &str) -> Result<DeployCodeRef, RunnerError> {
     if requested == "release-tag" {
         let tag = git_output(repo_root, &["describe", "--tags", "--abbrev=0"]).ok();
@@ -705,10 +548,6 @@ fn utc_basic_timestamp(time: SystemTime) -> String {
         .unwrap_or_default()
         .as_secs();
     seconds.to_string()
-}
-
-fn iso_timestamp(time: SystemTime) -> String {
-    format!("{}Z", utc_basic_timestamp(time))
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -3,7 +3,8 @@ use super::{container_exec_operation_from_options, parse_rhai_embedded_command};
 use effigy_cli::{Command, DocsArgs, DocsCheckKind, DocsSubcommand};
 use effigy_rhai::surface::{
     rhai_feature_descriptors, RhaiFeatureDispatch, FEATURE_DEPLOY_APPLY, FEATURE_DEPLOY_MODEL,
-    FEATURE_DISTRIBUTION_VALIDATE_ARTIFACTS, FEATURE_DISTRIBUTION_VALIDATE_METADATA,
+    FEATURE_DEPLOY_REDEPLOY, FEATURE_DISTRIBUTION_VALIDATE_ARTIFACTS,
+    FEATURE_DISTRIBUTION_VALIDATE_METADATA,
 };
 use serde_json::json;
 use std::path::Path;
@@ -139,23 +140,35 @@ fn run_rhai_feature_dispatches_distribution_validate_metadata_for_current_repo()
 }
 
 #[test]
-fn run_rhai_feature_preserves_deploy_apply_confirmation_guard() {
-    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/render-provider-smoke");
-    let error = run_rhai_feature(
-        &repo_root,
-        FEATURE_DEPLOY_APPLY,
-        json!({
-            "env": "uat",
-            "yes": false
-        }),
-    )
-    .expect_err("deploy apply without yes should fail");
-
-    let rendered = error.to_string();
-    assert!(
-        rendered.contains("`deploy apply` is plan-only unless `--yes` is supplied"),
-        "unexpected error: {rendered}"
-    );
+fn run_rhai_feature_refuses_deploy_execution() {
+    let fixture = tempfile::tempdir().expect("create isolated deploy fixture");
+    let repo_root = fixture.path();
+    std::fs::write(repo_root.join("effigy.toml"), "").expect("write fixture manifest");
+    for (feature, operation) in [
+        (FEATURE_DEPLOY_APPLY, "apply"),
+        (FEATURE_DEPLOY_REDEPLOY, "redeploy"),
+    ] {
+        for yes in [false, true] {
+            let error = run_rhai_feature(
+                repo_root,
+                feature,
+                json!({ "env": "uat", "deployment": "missing", "yes": yes }),
+            )
+            .expect_err("Rhai deploy execution must refuse regardless of confirmation");
+            let details: serde_json::Value =
+                serde_json::from_str(error.json_error_details().expect("structured refusal"))
+                    .expect("JSON refusal");
+            assert_eq!(details["ok"], false);
+            assert_eq!(details["reason"], "not_supported");
+            assert_eq!(details["operation"], operation);
+            assert!(details["message"]
+                .as_str()
+                .expect("message")
+                .contains("not yet supported in v0.15"));
+        }
+    }
+    assert!(!repo_root.join(".effigy/reports/deploy").exists());
+    assert!(!repo_root.join(".effigy/runtime/deploy").exists());
 }
 
 #[test]

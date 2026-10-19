@@ -1,4 +1,4 @@
-use super::report::{DeployApplyReport, DeployHistoryReport, DeployPlanReport, DeployStatusReport};
+use super::report::{DeployHistoryReport, DeployPlanReport, DeployStatusReport};
 
 pub(super) fn render_deploy_plan_text(report: &DeployPlanReport) -> String {
     let mut lines = vec![
@@ -24,20 +24,6 @@ pub(super) fn render_deploy_plan_text(report: &DeployPlanReport) -> String {
         lines.extend(report.warnings.iter().map(|warning| format!("- {warning}")));
     }
     lines.join("\n")
-}
-
-pub(super) fn render_deploy_apply_text(report: &DeployApplyReport) -> String {
-    format!(
-        "[deploy] {} {} deployment to {}\ndeployment: {}\nreport: {}",
-        report.status,
-        report.provider,
-        report.env,
-        report.deployment_id,
-        report
-            .written_report_path
-            .as_deref()
-            .unwrap_or("<not written>")
-    )
 }
 
 pub(super) fn render_deploy_status_text(report: &DeployStatusReport) -> String {

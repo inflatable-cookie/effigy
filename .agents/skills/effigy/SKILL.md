@@ -289,8 +289,10 @@ Details: `references/config-shapes.md`.
 **State stacks** — `effigy state plan`, `apply`, `capture`.
 Guide: `docs/guides/073-state-stack-guide.md`.
 
-**Deployment** — `effigy deploy plan`, `apply`, `status` (human-gated apply).
-Guide: `docs/guides/074-deployment-guide.md`.
+**Deployment** — `effigy deploy model --json` and `deploy export` remain supported.
+`deploy apply` and `deploy redeploy` are not yet supported in v0.15, even with
+`--yes`; plan/status/history remain available. Full execution design is in the
+Queue deploy lane (Q-003). Guide: `docs/guides/074-deployment-guide.md`.
 
 **Local dependencies** — use `effigy deps link <cargo|bun> <PATH>` for
 ephemeral machine-local state. Use `effigy deps pin bun <PATH>` for a committed
