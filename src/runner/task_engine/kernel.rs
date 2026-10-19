@@ -304,9 +304,11 @@ pub fn run_internal_kernel_entry(entry: &str) -> Option<i32> {
         return Some(i32::from(result.is_err()));
     }
     // One helper serves every engine's runs: a task run records its selector,
-    // source preparation records `bundle sync`.
+    // source preparation records `bundle sync`, the gateway records `gateway up`.
     let mut adapter = TaskSettlement;
-    let validate = |argv: &[OsString]| valid_next(argv) || argv == ["bundle", "sync"];
+    let validate = |argv: &[OsString]| {
+        valid_next(argv) || argv == ["bundle", "sync"] || argv == ["gateway", "up"]
+    };
     match effigy_kernel::supervise::internal_entry(entry, &mut router, &mut adapter, validate) {
         Some(Ok(())) => Some(0),
         Some(Err(_)) => Some(1),

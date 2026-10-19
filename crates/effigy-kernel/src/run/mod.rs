@@ -12,6 +12,7 @@ pub use lifecycle::{metadata, RunMetadata, SentinelStatus};
 mod objects;
 mod settle;
 mod socket;
+pub use socket::control_socket_path;
 
 pub use attachments::{
     AttachMode, AttachmentTicket, Attachments, Holder, Liveness, TransitionPermit,
@@ -798,3 +799,50 @@ pub(crate) fn journal_effects(
 
 #[cfg(test)]
 pub(crate) mod tests;
+
+impl Run<'_> {
+    /// Persistent setup output: intent precedes replace, and settle retains the
+    /// exact result. The caller owns a Store gate and verifies adapter ownership.
+    pub fn replace_file(
+        &mut self,
+        dir: &crate::fs::DirFd,
+        name: &crate::fs::FileName,
+        bytes: &[u8],
+        opts: crate::record::ReplaceOpts,
+    ) -> Result<(), crate::run::RunError> {
+        let ticket = self.intend(crate::run::EffectSpec {
+            target: self.fence().clone(), kind: "setup-file".into(),
+            payload: serde_json::json!({"path": dir.path().join(name.as_str()), "sha256": crate::id::Digest::of(bytes)}),
+            settlement: crate::run::Settlement::Retain, required: false,
+        })?;
+        crate::record::atomic_replace(&self.cx, &self.guard, dir, name, bytes, opts)?;
+        self.applied(&ticket, serde_json::json!({"retained": true}))
+    }
+}
+
+impl Run<'_> {
+    /// Bootstrap adapters may prepare a root-owned helper before enabling
+    /// custody. No process may spawn until this registration commits.
+    pub fn enable_custody(
+        &mut self,
+        plan: &crate::supervise::LifecyclePlan,
+    ) -> Result<(), RunError> {
+        self.can_effect()?;
+        let lease = crate::supervise::spawn_sentinel(self, self.root, plan, &self.next)?;
+        self.register_lifecycle(lease, plan)
+    }
+}
+
+/// Pure journal projection for engine status; custody receipts contain no
+/// argv, environment or raw output. No missing row proves process absence.
+pub fn effects(
+    reader: &crate::store::StoreReader,
+    id: RunId,
+) -> crate::observe::Observed<Vec<Effect>> {
+    match journal::effects(reader.conn(), id) {
+        Ok(effects) => crate::observe::Observed::Verified(effects, settle::evidence()),
+        Err(error) => {
+            crate::observe::Observed::Unknown(UnknownReason::StoreUnreadable(error.to_string()))
+        }
+    }
+}

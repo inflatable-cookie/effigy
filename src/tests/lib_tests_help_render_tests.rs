@@ -315,7 +315,9 @@ fn render_gateway_help_shows_lifecycle_examples() {
     assert!(rendered.contains("effigy gateway status"));
     assert!(!rendered.contains("effigy gateway recover"));
     assert!(rendered.contains("effigy gateway setup-tls"));
-    assert!(rendered.contains("/etc/resolver/test"));
+    assert!(rendered.contains("effigy gateway setup [--suffix <DOMAIN>] [--remove]"));
+    assert!(rendered.contains("daemon runs as your user"));
+    assert!(rendered.contains("never request administrator access"));
 }
 
 #[test]

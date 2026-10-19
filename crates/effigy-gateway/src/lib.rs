@@ -30,12 +30,15 @@ mod locks;
 #[cfg(target_os = "macos")]
 mod macos_socket;
 
+#[cfg(any(target_os = "macos", test))]
+pub mod bind_broker;
 pub mod dns;
 pub mod error;
 pub mod identity;
 pub mod listener_handoff;
 pub mod loopback;
 pub mod managed_listener;
+pub mod operator;
 pub mod ports;
 pub mod private_state;
 pub mod proxy;
@@ -43,6 +46,7 @@ pub mod registration;
 pub mod resolver_setup;
 pub mod routes;
 pub mod server;
+pub mod setup;
 pub mod socket_ownership;
 pub mod stats;
 pub mod tcp_alias;

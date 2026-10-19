@@ -819,7 +819,7 @@ async fn run_gateway_propagates_proxy_bind_failure() {
         format!("127.0.0.1:{occupied_port}").parse().unwrap(),
     );
 
-    let error = run_gateway(config)
+    let error = run_operator_gateway(config, effigy_kernel::ctx::CancelToken::default())
         .await
         .expect_err("proxy bind should fail");
     assert!(matches!(error, GatewayError::ProxyBindError { .. }));

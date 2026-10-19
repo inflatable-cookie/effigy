@@ -31,8 +31,6 @@ use crate::proxy::{
     run_proxy_server, run_proxy_server_on, run_tls_proxy_server, run_tls_proxy_server_on,
     ProxyConfig,
 };
-#[cfg(target_os = "macos")]
-use crate::resolver_setup;
 use crate::routes::{LiveRouteTable, RouteTable};
 use crate::stats::GatewayStats;
 use crate::tcp_alias::run_tcp_alias_manager;
@@ -957,27 +955,33 @@ async fn bind_private_gateway_listeners(
             addr: config.dns.bind_addr.to_string(),
             reason: error.to_string(),
         })?;
-    let proxy = TcpListener::bind(config.proxy.bind_addr)
-        .await
-        .map_err(|error| GatewayError::ProxyBindError {
-            addr: config.proxy.bind_addr.to_string(),
-            reason: error.to_string(),
-        })?;
-    let https_bind_addr =
-        config
-            .proxy
-            .tls_bind_addr
-            .ok_or_else(|| GatewayError::ProxyBindError {
-                addr: "<missing>".to_owned(),
-                reason: "private gateway requires an HTTPS listener".to_owned(),
-            })?;
-    let https =
-        TcpListener::bind(https_bind_addr)
-            .await
-            .map_err(|error| GatewayError::ProxyBindError {
-                addr: https_bind_addr.to_string(),
-                reason: format!("HTTPS bind failed: {error}"),
-            })?;
+    let https_bind_addr = config.proxy.tls_bind_addr.ok_or_else(|| {
+        GatewayError::Io(std::io::Error::other("gateway requires an HTTPS listener"))
+    })?;
+    let direct = async {
+        let proxy = TcpListener::bind(config.proxy.bind_addr).await?;
+        let https = TcpListener::bind(https_bind_addr).await?;
+        Ok::<_, std::io::Error>((proxy, https))
+    }
+    .await;
+    #[cfg(target_os = "macos")]
+    let direct = match direct {
+        Err(error)
+            if !config.is_private() && error.kind() == std::io::ErrorKind::PermissionDenied =>
+        {
+            let endpoints = [config.proxy.bind_addr, https_bind_addr];
+            let handed =
+                tokio::task::spawn_blocking(move || crate::bind_broker::request(endpoints))
+                    .await
+                    .map_err(std::io::Error::other)??;
+            Ok(handed.into_tokio()?)
+        }
+        other => other,
+    };
+    let (proxy, https) = direct.map_err(|error| GatewayError::ProxyBindError {
+        addr: config.proxy.bind_addr.to_string(),
+        reason: format!("listener acquisition failed: {error}"),
+    })?;
     let listeners = PrivateGatewayListeners {
         dns_addr: dns.local_addr().map_err(GatewayError::Io)?,
         proxy_addr: proxy.local_addr().map_err(GatewayError::Io)?,
@@ -992,7 +996,7 @@ async fn bind_private_gateway_listeners(
         listeners.https_addr,
     ]
     .into_iter()
-    .any(|address| !address.ip().is_loopback() || address.port() < 1024)
+    .any(|address| !address.ip().is_loopback() || (config.is_private() && address.port() < 1024))
     {
         return Err(GatewayError::Io(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
@@ -1133,6 +1137,28 @@ fn clear_private_addresses_for_snapshot(
 /// It starts the DNS resolver, HTTP proxy, and route table file watcher
 /// concurrently.
 pub async fn run_gateway(config: GatewayConfig) -> Result<(), GatewayError> {
+    run_gateway_with_cancel(config, None).await
+}
+
+pub async fn run_operator_gateway(
+    config: GatewayConfig,
+    cancel: effigy_kernel::ctx::CancelToken,
+) -> Result<(), GatewayError> {
+    run_gateway_with_cancel(config, Some(cancel)).await
+}
+
+async fn run_gateway_with_cancel(
+    config: GatewayConfig,
+    cancel: Option<effigy_kernel::ctx::CancelToken>,
+) -> Result<(), GatewayError> {
+    if !config.is_private() {
+        crate::operator::require_operator()?;
+        if cancel.is_none() {
+            return Err(GatewayError::Io(std::io::Error::other(
+                "operator gateway requires the binary signal router",
+            )));
+        }
+    }
     config.validate_private_mode()?;
     if let Some(root) = config.private_state_root() {
         crate::private_state::prepare_root(root)?;
@@ -1201,7 +1227,7 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<(), GatewayError> {
             )));
         }
     }
-    let private_listeners = if config.is_private() {
+    let private_listeners = if config.is_private() || !config.listener_handoff {
         let listeners = bind_private_gateway_listeners(&config).await?;
         runtime_config.dns.bind_addr = listeners.dns_addr;
         runtime_config.proxy.bind_addr = listeners.proxy_addr;
@@ -1240,13 +1266,15 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<(), GatewayError> {
     // A setup failure must not leave a record for a daemon that cannot shut
     // down through the signals promised by this service.
     #[cfg(unix)]
-    let (mut terminate_signal, mut interrupt_signal) = {
+    let private_signals = if config.is_private() {
         use tokio::signal::unix::SignalKind;
 
-        (
+        Some((
             tokio::signal::unix::signal(SignalKind::terminate())?,
             tokio::signal::unix::signal(SignalKind::interrupt())?,
-        )
+        ))
+    } else {
+        None
     };
 
     // Publish the sidecar and decimal compatibility PID as one generation.
@@ -1261,23 +1289,42 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<(), GatewayError> {
         Err(std::env::VarError::NotPresent) => nix::unistd::Uid::effective().as_raw(),
         Err(error) => return Err(GatewayError::Io(std::io::Error::other(error))),
     };
-    let published_snapshot =
-        identity::publish_current_gateway(&config.pid_file_path, operator_uid)?;
+    let mut published_snapshot = if config.is_private() {
+        Some(identity::publish_current_gateway(
+            &config.pid_file_path,
+            operator_uid,
+        )?)
+    } else {
+        None
+    };
     let mut private_record_guard = config.private_state_root().map(|root| {
         PrivateStartupRecordGuard::new(
-            published_snapshot.clone(),
+            published_snapshot
+                .as_ref()
+                .expect("private record was published")
+                .clone(),
             crate::private_state::private_endpoint_path(root),
         )
     });
-    write_gateway_version_file(&config.pid_file_path)?;
+    if config.is_private() {
+        write_gateway_version_file(&config.pid_file_path)?;
+    }
     if let (Some(listeners), Some(guard)) = (&private_listeners, &mut private_record_guard) {
         let record = PrivateGatewayAddressRecord {
-            pid: published_snapshot.pid(),
-            identity_digest: published_snapshot.digest().ok_or_else(|| {
-                GatewayError::ProcessStateUnknown {
-                    pid: published_snapshot.pid(),
-                }
-            })?,
+            pid: published_snapshot
+                .as_ref()
+                .expect("private record was published")
+                .pid(),
+            identity_digest: published_snapshot
+                .as_ref()
+                .expect("private record was published")
+                .digest()
+                .ok_or_else(|| GatewayError::ProcessStateUnknown {
+                    pid: published_snapshot
+                        .as_ref()
+                        .expect("private record was published")
+                        .pid(),
+                })?,
             dns_addr: listeners.dns_addr,
             proxy_addr: listeners.proxy_addr,
             https_addr: listeners.https_addr,
@@ -1295,17 +1342,8 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<(), GatewayError> {
     // Create shutdown channel.
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
-    // Reconcile route-driven `/etc/resolver/` files against the
-    // initial route table. Best-effort — we run as root here, but
-    // surfacing fs errors aborts the daemon, which is wrong for a
-    // resolver-side concern. Just log and continue.
-    reconcile_route_resolver_files_from_table(&shared_table, &runtime_config);
-
-    // Set up file watcher for route table.
-    // When routes change, the watcher reloads the table, clears the
-    // DNS cache so new routes are picked up immediately, and
-    // re-reconciles `/etc/resolver/` so non-managed-TLD route domains
-    // get system resolver files written/removed in lockstep.
+    // Resolver and alias installation belongs exclusively to gateway setup.
+    // Route reloads update the table and clear the DNS cache without host mutations.
     let watcher_table = Arc::clone(&shared_table);
     let watcher_cache = Arc::clone(&dns_cache);
     let watcher_path = runtime_config.route_table_path.clone();
@@ -1335,6 +1373,7 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<(), GatewayError> {
     // Handoff mode serves HTTP/HTTPS on the adopted launchd sockets and keeps
     // DNS, its route watcher, and the TCP alias services on their ordinary
     // unprivileged startup paths.
+    let (publication_tx, publication_rx) = watch::channel(config.is_private());
     let mut server_tasks = tokio::task::JoinSet::new();
     let prebound_https_listener = match private_listeners {
         Some(listeners) => {
@@ -1346,18 +1385,27 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<(), GatewayError> {
             let proxy_stats = Arc::clone(&stats);
             let dns_cache = Arc::clone(&dns_cache);
             let dns_shutdown = shutdown_rx.clone();
+            let mut publication_rx = publication_rx.clone();
             let proxy_shutdown = shutdown_rx.clone();
             server_tasks.spawn(async move {
                 (
                     "DNS server",
-                    run_dns_server_on(
-                        listeners.dns,
-                        dns_config,
-                        dns_table,
-                        dns_stats,
-                        dns_cache,
-                        dns_shutdown,
-                    )
+                    async {
+                        while !*publication_rx.borrow() {
+                            if publication_rx.changed().await.is_err() {
+                                return Ok(());
+                            }
+                        }
+                        run_dns_server_on(
+                            listeners.dns,
+                            dns_config,
+                            dns_table,
+                            dns_stats,
+                            dns_cache,
+                            dns_shutdown,
+                        )
+                        .await
+                    }
                     .await,
                 )
             });
@@ -1429,11 +1477,21 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<(), GatewayError> {
 
     let alias_table = Arc::clone(&shared_table);
     let alias_shutdown = shutdown_rx.clone();
+    let (alias_ready_tx, alias_ready_rx) = tokio::sync::oneshot::channel();
+    let private = config.is_private();
     server_tasks.spawn(async move {
-        (
-            "TCP alias manager",
-            run_tcp_alias_manager(alias_table, alias_shutdown).await,
-        )
+        let result = if private {
+            let _ = alias_ready_tx.send(Ok(()));
+            run_tcp_alias_manager(alias_table, alias_shutdown).await
+        } else {
+            crate::tcp_alias::run_tcp_alias_manager_ready(
+                alias_table,
+                alias_shutdown,
+                alias_ready_tx,
+            )
+            .await
+        };
+        ("TCP alias manager", result)
     });
 
     // Optionally start the HTTPS proxy.
@@ -1518,13 +1576,46 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<(), GatewayError> {
     // instead of being sent before later receivers can observe it.
     let signal_tx = shutdown_tx.clone();
     #[cfg(unix)]
-    tokio::spawn(async move {
-        tokio::select! {
-            _ = terminate_signal.recv() => info!("received SIGTERM"),
-            _ = interrupt_signal.recv() => info!("received SIGINT"),
+    let signal_task = tokio::spawn(async move {
+        if let Some((mut terminate_signal, mut interrupt_signal)) = private_signals {
+            tokio::select! {
+                _ = terminate_signal.recv() => {},
+                _ = interrupt_signal.recv() => {},
+            }
+        } else if let Some(cancel) = cancel {
+            while cancel.cause().is_none() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
         }
         let _ = signal_tx.send(true);
     });
+    if !config.is_private() {
+        let ready = match tokio::time::timeout(Duration::from_secs(2), alias_ready_rx).await {
+            Ok(Ok(Ok(()))) => crate::operator::http_test(&runtime_config, Duration::from_secs(2)),
+            other => Err(std::io::Error::other(format!(
+                "TCP alias startup failed: {other:?}"
+            ))),
+        };
+        if let Err(error) = ready {
+            let _ = shutdown_tx.send(true);
+            drop(publication_tx);
+            while server_tasks.join_next().await.is_some() {}
+            signal_task.abort();
+            return Err(GatewayError::Io(error));
+        }
+        let _ = publication_tx.send(true);
+        if let Err(error) = crate::operator::self_test(&runtime_config, Duration::from_secs(2)) {
+            let _ = shutdown_tx.send(true);
+            while server_tasks.join_next().await.is_some() {}
+            signal_task.abort();
+            return Err(GatewayError::Io(error));
+        }
+        published_snapshot = Some(identity::publish_current_gateway(
+            &config.pid_file_path,
+            operator_uid,
+        )?);
+        write_gateway_version_file(&config.pid_file_path)?;
+    }
     #[cfg(not(unix))]
     tokio::spawn(async move {
         match tokio::signal::ctrl_c().await {
@@ -1557,7 +1648,11 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<(), GatewayError> {
     if let Some(guard) = &mut private_record_guard {
         guard.finish()?;
     } else {
-        identity::remove_if_unchanged(&published_snapshot)?;
+        identity::remove_if_unchanged(
+            published_snapshot
+                .as_ref()
+                .expect("standard ready record was published"),
+        )?;
     }
 
     info!("gateway stopped");
@@ -1601,7 +1696,7 @@ fn setup_file_watcher(
                         ) {
                             error!(error = %error, "failed to reload route table");
                         }
-                        reconcile_route_resolver_files_from_table(&table, &gateway_config);
+                        // Route reload never elevates or changes platform setup.
                     }
                     _ => {}
                 }
@@ -1756,55 +1851,6 @@ fn setup_tls_watcher(
         .map_err(|e| GatewayError::WatcherError(e.to_string()))?;
 
     Ok(watcher)
-}
-
-/// Reconcile macOS `/etc/resolver/<suffix>` files against the current
-/// set of route domains that fall outside the managed TLD.
-///
-/// Runs inside the gateway daemon (which runs as root via the
-/// elevation flow), so writes go directly without sudo. Best-effort:
-/// resolver hygiene must never crash the gateway, so any error is
-/// logged and swallowed.
-#[cfg(target_os = "macos")]
-fn reconcile_route_resolver_files_from_table(
-    table: &Arc<RwLock<RouteTable>>,
-    config: &GatewayConfig,
-) {
-    if config.is_private() {
-        return;
-    }
-    let domains: Vec<String> = {
-        let guard = crate::locks::read_tolerant(table);
-        guard
-            .all_routes()
-            .into_iter()
-            .map(|route| route.domain.clone())
-            .collect()
-    };
-    let suffixes = resolver_setup::route_driven_resolver_suffixes(domains, &config.dns.tld);
-    let port = config.dns.bind_addr.port();
-    match resolver_setup::reconcile_route_resolver_files(&suffixes, &config.dns.tld, port) {
-        Ok(outcome) => {
-            if !outcome.added.is_empty() || !outcome.removed.is_empty() {
-                info!(
-                    added = outcome.added.len(),
-                    removed = outcome.removed.len(),
-                    "reconciled route-driven /etc/resolver files",
-                );
-            }
-        }
-        Err(error) => {
-            error!(error = %error, "failed to reconcile route-driven /etc/resolver files");
-        }
-    }
-}
-
-#[cfg(not(target_os = "macos"))]
-fn reconcile_route_resolver_files_from_table(
-    _table: &Arc<RwLock<RouteTable>>,
-    _config: &GatewayConfig,
-) {
-    // No /etc/resolver/ equivalent off macOS — nothing to do.
 }
 
 fn handle_server_task_result(

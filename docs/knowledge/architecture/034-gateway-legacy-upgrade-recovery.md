@@ -5,18 +5,24 @@ Status: source-only listener handoff candidate; live administrator activation re
 
 ## Migration boundary
 
-The supported upgrade starts from v0.14.1 identity-bearing gateway records.
-`effigy gateway up` uses fresh generation verification and the existing bounded
-interactive lifecycle path; it never substitutes a numeric PID for ownership.
-A pre-0.14 numeric-only record refuses with an administrator migration message.
-The administrator must verify and stop that old daemon, confirm absence, and
-remove only its old PID/version records before starting a new gateway. Unknown
-identity preserves state and refuses signaling, cleanup and replacement.
+The standard daemon runs as the operator under kernel custody, with its
+control socket in `~/.effigy/gateway/runtime/`. Routine up, down, status and
+route registration never elevate. `gateway setup` owns administrator changes
+and migration from a live v0.14.1 identity-bearing root daemon, preserving
+routes and allocations. Numeric PIDs alone never authorize signaling or
+replacement. Older numeric-only records require administrator diagnosis;
+the pre-0.14 recovery command is retired.
 
-The existing transition lock serializes up, down and TLS preparation. Socket
-inspection belongs to `socket_ownership`; lifecycle exclusion belongs to
-`transition_lock`. Kernel adoption of these retained mechanisms belongs to the
-gateway engine. No migration replays or mutates historical transition receipts.
+Kernel runs and gates own the standard lifecycle. The existing transition
+lock remains for private gateway operations, while JSON route/allocation
+writers retain their current locks until endpoint-store adoption. Socket
+inspection belongs to `socket_ownership`. No migration replays or mutates
+historical transition receipts.
+
+The historical design analysis below records the root dependencies that led
+to the operator route. The implemented transport and remaining machine
+qualification are described in [Operator daemon custody and privileged
+listeners](#operator-daemon-custody-and-privileged-listeners).
 
 ## Operator-selected user-owned gateway route
 
@@ -29,7 +35,7 @@ machine configuration change is authorized for an agent. The root-daemon
 attestation proposal below remains unimplemented and is not this route's
 prerequisite.
 
-Current root dependencies must be separated explicitly:
+Legacy root dependencies that required separation:
 
 - `/etc/resolver/test` and any declared route-specific resolver suffixes require
   administrator writes. The current daemon reconciles route-driven files
@@ -250,3 +256,52 @@ require their existing generation checks and administrator lifecycle path.
   immediate generation recheck. Endpoint installation, socket permissions,
   runtime-directory lifecycle and the cross-platform peer APIs need an explicit
   operator ruling before implementation.
+
+## Operator daemon custody and privileged listeners
+
+The operator daemon lifecycle uses the kernel gateway run and its control
+socket in `~/.effigy/gateway/runtime/`. Routine control must not elevate.
+Platform mutations belong to `gateway setup`; the three existing JSON
+registries remain the route/allocation input until endpoint-store adoption.
+
+Direct low-port binding is not a qualified macOS transport. An unprivileged
+bind to `127.1.0.1:80` returned `EACCES` on the operator host. The selected
+fallback (planner ruling, 2026-10-19) is a minimal root bind broker. Setup
+installs a root-owned helper image and a per-operator LaunchDaemon whose Unix
+socket is root-owned, group-connectable (0660), and under the root-owned run
+directory. Its arguments pin the operator UID. `getpeereid` must match that UID
+before the broker reads a fixed-size request. Only TCP 80 and 443 at
+127.0.0.1 or the setup-installed 127.1.0.1–50 range are accepted. No wildcard
+bind, route/state reads, client accepts, TLS or HTTP processing run as root.
+The broker sends two listening descriptors using SCM_RIGHTS and retains its
+copies until the operator validates and adopts them, then acknowledges that
+ownership. The acknowledgement uses the same bounded socket I/O. Exact
+endpoints, listening state, identity and close-on-exec are checked before
+adoption. Refused/partial exchanges publish nothing.
+
+The daemon starts normally under kernel custody, then requests its listeners
+after exec. No listener crosses the custody spawn barrier and no inherited-FD
+kernel API is added. Dropping a daemon's listeners releases them; its next
+Run can acquire a new pair through the same broker. Status and ordinary
+lifecycle remain unprivileged. Linux uses the executable-local
+CAP_NET_BIND_SERVICE adapter; setup never changes the host port threshold.
+Both adapters refuse foreign setup output before changing it.
+
+The accepted prerequisite kernel APIs remain Run replace_file/enable_custody,
+pure latest-run/effects projections, gateway control-socket placement and
+setup-only descriptor-relative ownership transfer. They require independent
+review with this engine change. The executable fingerprint size limit is
+owned by task #220, not this task.
+
+Reboot, actual launchd activation and CBS/Acowtancy URL qualification remain
+operator-run actions on the exact candidate. The guide records the steps.
+
+The shared binary dispatches task, source and gateway helpers through the
+task engine's kernel entry point. It accepts the gateway's fixed recovery
+invocation alongside task selectors and bundle sync. Kernel-owned gateway
+effects settle in the kernel; unrecognized engine effects remain unknown.
+Operator startup and setup share the binary's one signal router. Status uses the
+kernel's native boot observation rather than a PATH-selected sysctl process.
+Legacy UUID spelling is compared without case sensitivity; legacy timeval
+records retain their existing conservative comparison. The DNS self-test uses
+a valid hostname label accepted by the kernel read-only transport.

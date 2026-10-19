@@ -696,9 +696,11 @@ impl SupervisorClient {
                 action,
             },
         )?;
-        if let Ok(mut socket) =
-            UnixStream::connect(root.path().join("sock").join(format!("{}.sock", self.run)))
-        {
+        if let Ok(mut socket) = UnixStream::connect(run::control_socket_path(
+            &root,
+            &self.fence.resource,
+            self.run,
+        )) {
             let _ = socket.write_all(&[1]);
         }
         Ok(())

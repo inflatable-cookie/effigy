@@ -537,7 +537,7 @@ mod launchd {
     ///
     /// On success the caller owns every returned descriptor exactly once and
     /// must close or adopt each one. On failure no descriptor is returned.
-    pub(super) fn activate_launchd_socket(
+    pub(crate) fn activate_launchd_socket(
         name: &str,
     ) -> Result<Vec<RawFd>, (ActivationFailure, i32)> {
         let c_name = CString::new(name).map_err(|_| (ActivationFailure::Other, 0))?;
@@ -572,7 +572,7 @@ mod launchd {
 }
 
 #[cfg(target_os = "macos")]
-use launchd::activate_launchd_socket;
+pub(crate) use launchd::activate_launchd_socket;
 
 /// Why generating or validating the setup definition failed.
 #[derive(Debug, thiserror::Error)]

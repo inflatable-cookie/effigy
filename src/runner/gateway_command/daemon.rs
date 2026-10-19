@@ -116,19 +116,6 @@ fn create_gateway_log(path: PathBuf) -> std::io::Result<File> {
     }
 }
 
-pub(super) fn wait_for_pid_file(config: &GatewayConfig) -> Result<(), RunnerError> {
-    for _ in 0..20 {
-        if config.pid_file_path.exists() {
-            return Ok(());
-        }
-        thread::sleep(Duration::from_millis(25));
-    }
-    Err(RunnerError::task_invocation(format!(
-        "gateway did not create pid file at {}",
-        config.pid_file_path.display()
-    )))
-}
-
 pub(super) fn wait_for_private_gateway_ready(config: &GatewayConfig) -> Result<(), RunnerError> {
     for _ in 0..40 {
         match server::get_verified_gateway_status(config) {
