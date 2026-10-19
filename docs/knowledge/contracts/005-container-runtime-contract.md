@@ -1369,6 +1369,14 @@ The marker name and meaning are product contract, not incidental plumbing.
 `EffigyRuntimeContext` captures marker presence at process entry; downstream
 runtime code should consume that captured state when a context is available.
 
+Guest-local shell and exec resolve only manifest execution coordinates: the
+container name, selected service and working directory. They never load host
+container policy, resolve host catalogs or mounts, render Compose, allocate
+ports, mint checkout scope tokens or probe a host backend. A missing host-side
+Compose file or catalog does not prevent an already-running guest from
+executing locally. Bounded guest commands preserve the same deadline, output
+budgets and JSON schema as host-routed commands.
+
 ## Container manager contract
 
 Runner-facing container operations must route through `ContainerManager`.

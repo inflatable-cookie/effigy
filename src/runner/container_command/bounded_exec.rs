@@ -115,7 +115,7 @@ fn run_container_shell_bounded_with_deadline(
         let execution = resolved?;
         if Instant::now() >= deadline {
             return Err(deadline_refusal(
-                Some((&execution.policy, execution.service.as_str())),
+                Some((execution.container.as_str(), execution.service.as_str())),
                 &limits,
                 &budget,
                 BoundedCommandPhase::RuntimeDiscovery,
@@ -134,7 +134,7 @@ fn run_container_shell_bounded_with_deadline(
     let (policy, service, working_dir) = (&session.policy, &session.service, &session.working_dir);
     if Instant::now() >= deadline {
         return Err(deadline_refusal(
-            Some((policy, service.as_str())),
+            Some((policy.name.as_str(), service.as_str())),
             &limits,
             &budget,
             BoundedCommandPhase::RuntimeDiscovery,
@@ -149,7 +149,7 @@ fn run_container_shell_bounded_with_deadline(
     )?;
     if Instant::now() >= deadline {
         return Err(deadline_refusal(
-            Some((policy, service.as_str())),
+            Some((policy.name.as_str(), service.as_str())),
             &limits,
             &budget,
             BoundedCommandPhase::WorkspacePreparation,
@@ -259,7 +259,7 @@ fn run_bounded_command_with_budget(
         emit_captured_output(&capture)?;
     }
     let render = BoundedRenderContext {
-        policy,
+        container: &policy.name,
         service,
         limits,
         budget: &budget,
@@ -287,7 +287,7 @@ fn run_handoff_local_bounded_command(
     output_json: bool,
     mut budget: BoundedCommandBudget,
 ) -> Result<String, RunnerError> {
-    let policy = &execution.policy;
+    let container = execution.container.as_str();
     let service = execution.service.as_str();
     let capture = budget
         .run_command(
@@ -298,12 +298,14 @@ fn run_handoff_local_bounded_command(
             &[],
             BoundedCommandPhase::CommandExecution,
         )
-        .map_err(|failure| bounded_failure_error(policy, service, &budget, failure))?;
+        .map_err(|failure| {
+            bounded_failure_error_for_container(container, service, &budget, failure)
+        })?;
     if !output_json && capture.status.success() {
         emit_captured_output(&capture)?;
     }
     let render = BoundedRenderContext {
-        policy,
+        container,
         service,
         limits,
         budget: &budget,
@@ -409,7 +411,7 @@ fn emit_captured_output(capture: &BoundedCapture) -> Result<(), RunnerError> {
 }
 
 struct BoundedRenderContext<'a> {
-    policy: &'a EffectiveContainerPolicy,
+    container: &'a str,
     service: &'a str,
     limits: &'a BoundedExecLimits,
     budget: &'a BoundedCommandBudget,
@@ -423,7 +425,7 @@ impl BoundedRenderContext<'_> {
         if !capture.status.success() {
             let message = format!(
                 "bounded container command for container `{}` service `{}` exited with status {}",
-                self.policy.name, self.service, capture.status
+                self.container, self.service, capture.status
             );
             // An inner failure is a complete in-budget capture, but its
             // diagnostics stay limited to the reason, safe counts and the
@@ -441,7 +443,7 @@ impl BoundedRenderContext<'_> {
         }
         Ok(format!(
             "bounded container command finished for container `{}` service `{}`",
-            self.policy.name, self.service
+            self.container, self.service
         ))
     }
 
@@ -458,7 +460,7 @@ impl BoundedRenderContext<'_> {
             "schema": BOUNDED_EXEC_SCHEMA,
             "schema_version": 1,
             "ok": failure == "complete",
-            "container": self.policy.name,
+            "container": self.container,
             "service": self.service,
             "failure": failure,
             "code": inner_code,
@@ -512,18 +514,13 @@ impl BoundedRenderContext<'_> {
 }
 
 fn deadline_refusal(
-    identity: Option<(&EffectiveContainerPolicy, &str)>,
+    identity: Option<(&str, &str)>,
     limits: &BoundedExecLimits,
     budget: &BoundedCommandBudget,
     phase: BoundedCommandPhase,
 ) -> RunnerError {
     let (container, service) = identity
-        .map(|(policy, service)| {
-            (
-                serde_json::Value::from(policy.name.clone()),
-                service.to_owned(),
-            )
-        })
+        .map(|(container, service)| (serde_json::Value::from(container), service.to_owned()))
         .unwrap_or((serde_json::Value::Null, String::new()));
     RunnerError::BoundedExecFailure {
         code: 1,
@@ -574,6 +571,15 @@ pub(in crate::runner) fn bounded_failure_error(
     budget: &BoundedCommandBudget,
     failure: BoundedScopedCaptureFailure,
 ) -> RunnerError {
+    bounded_failure_error_for_container(&policy.name, service, budget, failure)
+}
+
+fn bounded_failure_error_for_container(
+    container: &str,
+    service: &str,
+    budget: &BoundedCommandBudget,
+    failure: BoundedScopedCaptureFailure,
+) -> RunnerError {
     let BoundedScopedCaptureFailure {
         phase,
         failure,
@@ -610,15 +616,15 @@ pub(in crate::runner) fn bounded_failure_error(
         ),
         BoundedCaptureFailure::Overflow { stream, .. } => format!(
             "bounded container command exceeded its {} budget during {} for container `{}` service `{service}`",
-            stream.label(), phase.label(), policy.name
+            stream.label(), phase.label(), container
         ),
         BoundedCaptureFailure::ReadFailure { stream } => format!(
             "bounded container command could not read {} during {} for container `{}` service `{service}`",
-            stream.label(), phase.label(), policy.name
+            stream.label(), phase.label(), container
         ),
         BoundedCaptureFailure::IncompleteOutput { stream } => format!(
             "bounded container command produced incomplete {} during {} for container `{}` service `{service}`",
-            stream.label(), phase.label(), policy.name
+            stream.label(), phase.label(), container
         ),
         BoundedCaptureFailure::Launch => format!(
             "bounded container command could not launch a host client during {}",
@@ -629,7 +635,7 @@ pub(in crate::runner) fn bounded_failure_error(
         "schema": BOUNDED_EXEC_SCHEMA,
         "schema_version": 1,
         "ok": false,
-        "container": policy.name,
+        "container": container,
         "service": service,
         "failure": failure_kind,
         "phase": phase.label(),

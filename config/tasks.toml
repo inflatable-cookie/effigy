@@ -20,6 +20,12 @@
 "check:graph" = "cargo check -p effigy-codegraph -p effigy-cli -p effigy-manifest -p effigy-routing -p effigy-builtin -p effigy --all-targets --profile test"
 "lint:graph" = "cargo clippy -p effigy-codegraph -p effigy-cli -p effigy-manifest -p effigy-routing -p effigy-builtin -p effigy --all-targets -- -D warnings"
 
+# Guest execution must never enter host-policy rendering (#218).
+"test:containers:guest-execution" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-containers --lib -E 'test(bounded_exec::) | test(container_exec_working_dir)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 }
+"check:containers:render" = "cargo check -p effigy-containers -p effigy --all-targets --profile test"
+"lint:containers:render" = "cargo clippy -p effigy-containers -p effigy --all-targets -- -D warnings"
+"qa:containers:render-static" = [{ task = "fmt:check" }, { task = "qa:kernel-ratchet" }]
+
 # Kernel foundation: bounded, disjoint proof families; no engine adoption.
 "test:kernel:remote" = [
   { run = "cargo build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 },

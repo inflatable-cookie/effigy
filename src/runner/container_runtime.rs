@@ -1,8 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Output, Stdio};
 
 use super::error::RunnerError;
-use effigy_containers::EffectiveContainerPolicy;
 
 pub(in crate::runner) const CONTAINER_HANDOFF_ENV_NAME: &str = "EFFIGY_INTERNAL_CONTAINER_HANDOFF";
 pub(in crate::runner) const CONTAINER_HANDOFF_ENV_ASSIGNMENT: &str =
@@ -12,22 +11,14 @@ pub(in crate::runner) fn inside_container_handoff() -> bool {
     std::env::var_os(CONTAINER_HANDOFF_ENV_NAME).is_some()
 }
 
-/// A container exec resolved to run where the caller already is: inside the
-/// workspace container. Carries only filesystem-resolved state so resolving
-/// it never spawns a host runtime probe.
-pub(in crate::runner) struct HandoffLocalExecution {
-    pub policy: EffectiveContainerPolicy,
-    pub container: String,
-    pub service: String,
-    pub working_dir: PathBuf,
-}
+pub(in crate::runner) use effigy_containers::ContainerExecTarget as HandoffLocalExecution;
 
 /// Resolve handoff-local execution when this process already runs inside its
 /// own workspace container (`EFFIGY_INTERNAL_CONTAINER_HANDOFF=1`).
 ///
 /// Returns `None` on the host so host flows keep their runtime checks.
-/// Resolution is pure manifest/filesystem reads (policy load, validation,
-/// working-dir lookup): it never spawns `colima`, `nerdctl`, `docker` or
+/// Resolution reads only manifest execution coordinates (container, service and
+/// working directory): it never spawns `colima`, `nerdctl`, `docker` or
 /// `compose`, and never refreshes the workspace effigy install (the running
 /// binary proves it is present).
 ///
@@ -42,44 +33,10 @@ pub(in crate::runner) fn resolve_handoff_local_execution(
     if !inside_container_handoff() {
         return None;
     }
-    Some(resolve_handoff_local_execution_inner(
-        repo_root,
-        container_name,
-        service,
-    ))
-}
-
-fn resolve_handoff_local_execution_inner(
-    repo_root: &Path,
-    container_name: Option<&str>,
-    service: Option<&str>,
-) -> Result<HandoffLocalExecution, RunnerError> {
-    let policy = effigy_containers::load_container_policy(repo_root, container_name)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    effigy_containers::validate_container_policy(repo_root, &policy)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    let service = service
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or(policy.primary_service.as_str())
-        .to_owned();
-    let working_dir = if service == policy.primary_service {
-        effigy_containers::load_container_exec_working_dir(repo_root, container_name)
-            .map_err(|error| RunnerError::task_invocation(error.to_string()))?
-    } else {
-        repo_root.to_path_buf()
-    };
-    let container = container_name
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or(policy.name.as_str())
-        .to_owned();
-    Ok(HandoffLocalExecution {
-        policy,
-        container,
-        service,
-        working_dir,
-    })
+    Some(
+        effigy_containers::load_container_exec_target(repo_root, container_name, service)
+            .map_err(|error| RunnerError::task_invocation(error.to_string())),
+    )
 }
 
 fn check_handoff_working_dir(execution: &HandoffLocalExecution) -> Result<(), RunnerError> {
