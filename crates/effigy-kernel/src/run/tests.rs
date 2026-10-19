@@ -1197,6 +1197,7 @@ fn run_log_write_failure_is_reported_as_truncation() {
     };
     assert_eq!(read.bytes, b"kept");
     assert!(read.truncated, "a failed write is never a silent end");
+}
 
 #[test]
 fn gateway_control_socket_lives_in_trusted_runtime_and_settles_exact_inode() {

@@ -76,17 +76,6 @@ pub fn recent(
     )
 }
 
-/// A run's journalled effects in sequence order, for status and log reads.
-pub fn effects(reader: &StoreReader, id: RunId) -> Observed<Vec<Effect>> {
-    match journal::effects(reader.conn(), id) {
-        Ok(effects) => Observed::Verified(
-            effects,
-            Evidence::new("kernel run journal".into(), None).expect("fixed evidence"),
-        ),
-        Err(error) => Observed::Unknown(UnknownReason::StoreUnreadable(error.to_string())),
-    }
-}
-
 /// Every non-closed run whose owner lives in `scope`, oldest first. A free
 /// owner gate makes such a run `Interrupted`, never absent.
 pub fn unclosed(reader: &StoreReader, scope: Scope) -> Observed<Vec<RunSummary>> {
