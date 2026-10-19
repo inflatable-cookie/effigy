@@ -10527,9 +10527,21 @@ detach_timeout_secs = 1
     let stop_deadline = Instant::now() + Duration::from_secs(120);
     assert!(
         stop.status.success(),
-        "stop failed: stdout={} stderr={}",
+        "stop failed: stdout={} stderr={}\nhold state: {:?}\nprocesses:\n{}\nrecorded pgid {pgid}\nruntime calls:\n{}",
         String::from_utf8_lossy(&stop.stdout),
-        String::from_utf8_lossy(&stop.stderr)
+        String::from_utf8_lossy(&stop.stderr),
+        hold_state(),
+        Command::new("ps")
+            .args(["-eo", "pid,ppid,pgid,sid,stat,command"])
+            .output()
+            .map(|output| String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .filter(|line| line.contains("effigy") || line.contains("sleep") || line.contains("hold"))
+                .collect::<Vec<_>>()
+                .join("\n"))
+            .unwrap_or_default(),
+        fs::read_to_string(&colima_args).unwrap_or_default()
+            + &fs::read_to_string(&docker_args).unwrap_or_default()
     );
     let stop_output = String::from_utf8_lossy(&stop.stdout);
     assert!(
