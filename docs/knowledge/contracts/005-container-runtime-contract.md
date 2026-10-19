@@ -312,7 +312,13 @@ a refusal leaves the prior reference intact. Attached workflows use the same
 immutable render path. Execution-only workspace builder recovery compares fresh
 source render references while retaining its original stack admission.
 
-Reset drops only the selected environment's object references through kernel
+Reset and bootstrap fresh-session teardown resolve Prepare inputs and publish
+the selected generation before planning Compose or removing generated images,
+including on fresh checkouts and after declaration changes. A scoped checkout without a runtime identity performs
+no reset effects and does not mint an identity. Every Compose spawn, including
+shared-service startup, supplies its immutable generation root to the child.
+
+Reset then drops only the selected environment's object references through kernel
 `Objects::reset`; physical reclamation is kernel retention's responsibility.
 Sibling environment references survive. Eject exports the resolved closure to
 `infra/dev` and does not require a previous `up` or remove admitted objects.

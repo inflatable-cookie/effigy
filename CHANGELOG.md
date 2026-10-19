@@ -104,7 +104,9 @@ During v0.x, MINOR bumps may include breaking changes.
 - `effigy container render <env>` prints the exact render, generation path and
   digest without changing runtime state. Host renders assemble in memory and
   Prepare publishes sealed kernel objects. Admission pins generation references;
-  reset preserves sibling environments. Existing renders migrate on Prepare.
+  reset preserves sibling environments. Reset and bootstrap teardown prepare
+  their Compose generation before stopping or cleaning images, including fresh
+  and changed environments. Existing renders migrate on Prepare.
 - Container policy reads leave loopback assignments unchanged and perform no
   loopback runtime inventory. Prepare allocates or imports existing assignments,
   including for shared services and environments with explicit host ports.

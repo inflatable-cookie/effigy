@@ -550,9 +550,10 @@ fn run_shared_compose_capture(
             label,
         )
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    std::process::Command::new(&plan.program)
-        .current_dir(repo_root)
-        .args(&plan.args)
+    let mut command = std::process::Command::new(&plan.program);
+    command.current_dir(repo_root).args(&plan.args);
+    effigy_containers::policy::render::apply_environment(&mut command, &plan.args);
+    command
         .output()
         .map_err(|error| RunnerError::TaskCommandLaunch {
             command: format!(
@@ -880,6 +881,61 @@ mod tests {
         EffectiveComposeSource, EffectiveContainerPolicy,
     };
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn shared_compose_receives_its_immutable_generation_root() {
+        use crate::contract_test_support::EnvGuard;
+        use std::os::unix::fs::PermissionsExt;
+        let fixture = tempfile::Builder::new()
+            .prefix("effigy-parent-fixtures-shared-render-")
+            .tempdir_in(crate::contract_test_support::test_fixture_parent())
+            .unwrap();
+        let root = fixture.path().canonicalize().unwrap();
+        let generation = root.join("objects").join("a".repeat(64));
+        let directory = generation.join("shared");
+        std::fs::create_dir_all(&directory).unwrap();
+        let compose = directory.join("compose.yml");
+        std::fs::write(&compose, "services: {}\n").unwrap();
+        std::fs::write(directory.join("config.txt"), "shared asset").unwrap();
+        let bin = root.join("bin");
+        std::fs::create_dir(&bin).unwrap();
+        for name in ["docker", "colima"] {
+            let executable = bin.join(name);
+            std::fs::write(&executable, "#!/bin/sh\n[ \"$EFFIGY_RENDER_ROOT\" = \"$EFFIGY_TEST_SHARED_GENERATION\" ] && [ -r \"$EFFIGY_RENDER_ROOT/shared/config.txt\" ] || exit 76\nprintf 'shared asset available\\n'\n").unwrap();
+            std::fs::set_permissions(executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let _env = EnvGuard::set_many(&[
+            (
+                "PATH",
+                Some(format!(
+                    "{}:{}",
+                    bin.display(),
+                    std::env::var("PATH").unwrap()
+                )),
+            ),
+            ("HOME", Some(root.display().to_string())),
+            ("EFFIGY_COMPOSE_BACKEND", Some("docker".into())),
+            ("EFFIGY_RENDER_ROOT", Some("incorrect-caller-root".into())),
+            (
+                "EFFIGY_TEST_SHARED_GENERATION",
+                Some(generation.display().to_string()),
+            ),
+        ]);
+        let args = vec![
+            "compose".into(),
+            "-f".into(),
+            compose.into_os_string(),
+            "up".into(),
+            "-d".into(),
+        ];
+        let output =
+            super::run_shared_compose_capture(&root, "effigy", &args, "shared render proof")
+                .unwrap();
+        assert_eq!(
+            String::from_utf8(output.stdout).unwrap().trim(),
+            "shared asset available"
+        );
+    }
 
     fn test_policy() -> EffectiveContainerPolicy {
         EffectiveContainerPolicy {

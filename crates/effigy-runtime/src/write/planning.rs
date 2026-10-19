@@ -11,19 +11,31 @@ use crate::container_manager::{compose_invocation_plan_from_args, runtime_invoca
 use crate::signals::{run_compose_plan_capture, run_runtime_plan_capture};
 use crate::EffigyRuntimeError;
 
+/// An uninitialized scoped checkout has nothing it may stop or reset.
+pub(super) fn can_prepare_shutdown(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<bool, EffigyRuntimeError> {
+    if policy.render.is_some()
+        && effigy_core::worktree_scope::is_runtime_scoped(repo_root)
+            .map_err(|e| EffigyRuntimeError::task_invocation(e.to_string()))?
+        && effigy_core::worktree_scope::load(repo_root)
+            .map_err(|e| EffigyRuntimeError::task_invocation(e.to_string()))?
+            .is_none()
+    {
+        return Ok(false);
+    }
+    Ok(true)
+}
+
 pub(super) fn shutdown_container_with_manager_plan(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> Result<(), EffigyRuntimeError> {
+    if !can_prepare_shutdown(repo_root, policy)? {
+        return Ok(());
+    }
     if policy.render.is_some() {
-        if effigy_core::worktree_scope::is_runtime_scoped(repo_root)
-            .map_err(|e| EffigyRuntimeError::task_invocation(e.to_string()))?
-            && effigy_core::worktree_scope::load(repo_root)
-                .map_err(|e| EffigyRuntimeError::task_invocation(e.to_string()))?
-                .is_none()
-        {
-            return Ok(());
-        }
         effigy_core::worktree_scope::prepare_checkout_token(repo_root)
             .map_err(|e| EffigyRuntimeError::task_invocation(e.to_string()))?;
         effigy_containers::policy::render::prepare(policy)
