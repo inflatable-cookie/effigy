@@ -19,7 +19,9 @@ During v0.x, MINOR bumps may include breaking changes.
   Steps are child kernel runs; custody settles descendants on timeout, stop,
   INT, TERM, HUP and owner loss. JSON adds per-step outcomes and preserves the
   same exit code as text. Nested task cycles fail before gate acquisition;
-  shared locks held by an ancestor are inherited.
+  shared locks held by an ancestor are inherited. Nested steps inherit the
+  top-level admission decision, so a direct sequence reaching `qa`, `ci`,
+  `ci:fresh` or an explicitly heavy step does not queue again.
 - Sequence `depends_on`, `retry`, `retry_delay_ms` and `fail_fast` are removed.
   Delete these keys and order steps explicitly; sequences stop on the first
   failure. Container task steps retain legacy execution and journal child
