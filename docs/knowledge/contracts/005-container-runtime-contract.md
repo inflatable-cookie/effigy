@@ -259,7 +259,8 @@ start after that listener is ready. A dependent process receives
 restarts or loses readiness, Effigy stops the dependent generation and starts
 it with the current endpoint values.
 
-Host policy resolution builds one in-memory kernel `objects::Closure` containing
+After manifest resolution, host policy rendering builds one in-memory kernel
+`objects::Closure` containing
 Original and effective declarations, Compose inputs, generated Dockerfiles/configs,
 shared-service Compose, workspace
 and DNS rewrites, and inline workspaces. It writes no files, Git exclusions,
@@ -268,6 +269,12 @@ prospective `~/.effigy/state/objects/<digest>` path. An unprepared scoped checko
 uses an explicit `-wt-unprepared` or `-ec-unprepared` project suffix and never
 queries its primary checkout's project. Prepare establishes its persistent token
 and resolves the final isolated identity.
+
+The current manifest Git/OCI bundle resolver remains an effectful prerequisite:
+Git resolution acquires a writable cache lock, and ordinary loads can clone or
+refresh the cached checkout. Pure Observe on bundle consumers requires the
+bundle owner's read-only resolution and explicit-sync cutover first; the render
+boundary does not grant that loader mutation authority.
 
 The Prepare stage of `up` and other Mutate commands publishes through kernel
 Objects under the environment owner gate. Files are sealed 0400 and directories
@@ -282,7 +289,11 @@ or rewritten; the next Prepare renders their replacement automatically.
 its generation path and digest. The path may not exist before Prepare. JSON
 uses `effigy.container.render.v1` with `environment`, `path`, `digest`,
 `compose_files`, `environment_variables`, and `files` (`name`, `path`, `content`).
-Missing allocated ports remain explicit placeholders until Prepare.
+Missing allocated ports remain explicit placeholders until Prepare. Scope
+queries also leave an unprepared checkout's identity absent. Logs discover the
+selected backend's service container directly, including stopped containers,
+without opening an unpublished render. Activation stages share one prepared
+policy snapshot so later probes and leases use its final identity and paths.
 
 Detached admission records a v3 generation reference. Verification reads the
 kernel's desired object reference and verifies its complete immutable closure;

@@ -18,14 +18,17 @@ pub(super) fn run_container_scope(
             checkout.display()
         ))
     })?;
-    let resolved = worktree_scope::load_or_create_scoped(&checkout)
+    let resolved = worktree_scope::load_scoped(&checkout)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
 
-    let (kind, token) = match resolved {
-        Some((ScopeKind::LinkedWorktree, token)) => ("worktree", Some(token)),
-        Some((ScopeKind::EphemeralClone, token)) => ("ephemeral-clone", Some(token)),
-        None => ("none", None),
+    let kind = match worktree_scope::scope_kind(&checkout)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?
+    {
+        Some(ScopeKind::LinkedWorktree) => "worktree",
+        Some(ScopeKind::EphemeralClone) => "ephemeral-clone",
+        None => "none",
     };
+    let token = resolved.map(|(_, token)| token);
     let report = scope_report(&checkout, kind, token.as_deref());
 
     if output_json {
@@ -97,6 +100,11 @@ mod tests {
         .expect("git pointer");
         fs::write(token_dir.join("commondir"), "../..\n").expect("commondir");
 
+        let empty = json_report(&checkout);
+        assert_eq!(empty["scope"]["kind"], "worktree");
+        assert!(empty["scope"]["token"].is_null());
+        assert!(!token_dir.join("effigy-runtime-scope").exists());
+        effigy_core::worktree_scope::prepare_checkout_token(&checkout).unwrap();
         let report = json_report(&checkout);
         assert_eq!(report["schema"], "effigy.container.scope.v1");
         assert_eq!(report["schema_version"], 1);
@@ -118,6 +126,10 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let checkout = clone_checkout(temp.path(), "marked", Some(MARKED_CONFIG));
 
+        let unprepared = json_report(&checkout);
+        assert!(unprepared["scope"]["token"].is_null());
+        assert!(!checkout.join(".git/effigy-runtime-scope").exists());
+        effigy_core::worktree_scope::prepare_checkout_token(&checkout).unwrap();
         let first = json_report(&checkout);
         let second = json_report(&checkout);
         assert!(!checkout.join("effigy.toml").exists());

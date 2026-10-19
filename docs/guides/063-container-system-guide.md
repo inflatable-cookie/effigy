@@ -684,8 +684,9 @@ a foreign owner stays.
 Archive callers that need the identity before the checkout disappears should
 run `effigy container scope --json`. It reports the absolute checkout path,
 scope kind and full generation token without loading a container policy or
-contacting a backend. A scoped checkout with no token yet creates it in the
-private Git directory; a primary checkout or unmarked clone returns kind
+contacting a backend or writing state. A scoped checkout with no prepared
+runtime returns its scope kind and a null token; Prepare establishes the token
+in its private Git directory. A primary checkout or unmarked clone returns kind
 `none` and a null token. Persist the token before archive, then pass it to
 `effigy container retire --scope <token> --yes` if cleanup must be retried
 after the checkout is gone.

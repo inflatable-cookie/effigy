@@ -116,6 +116,8 @@ pub(in crate::runner) fn activate_container_runtime_for_task(
     policy: &EffectiveContainerPolicy,
     request: ActivationRequest<'_>,
 ) -> Result<ContainerTaskActivation, RunnerError> {
+    let prepared = effigy_containers::policy::render::prepare_resolved(policy)?;
+    let policy = &prepared;
     let plan = runtime_activation_plan_from_request(repo_root, policy, request);
     activate_container_runtime_plan_for_task_using(
         &plan,
@@ -141,7 +143,7 @@ pub(in crate::runner) fn activate_routed_container_runtime(
         repo_root,
         container_name,
         |repo_root, container_name| {
-            effigy_containers::prepare_container_policy(repo_root, Some(container_name))
+            effigy_containers::load_container_policy(repo_root, Some(container_name))
                 .map_err(|error| RunnerError::task_invocation(error.to_string()))
         },
         |repo_root, policy, request, _plan| {
@@ -296,8 +298,6 @@ pub(in crate::runner) fn prepare_container_exec_runtime(
     policy: &EffectiveContainerPolicy,
     container_name: Option<&str>,
 ) -> Result<(), RunnerError> {
-    let prepared = effigy_containers::policy::render::prepare_resolved(policy)?;
-    let policy = &prepared;
     validate_policy_runtime(repo_root, policy)?;
     let _colima_started = ensure_colima_running(policy, repo_root)?;
     let working_dir = load_container_exec_working_dir(repo_root, container_name)

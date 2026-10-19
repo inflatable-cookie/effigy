@@ -50,7 +50,18 @@ run_in="container"
         executable = programs / name
         executable.write_text('''#!/bin/sh
 case "$1" in
-  ps|inspect|info|version|context) exit 0 ;;
+  ps)
+    if [ "$EFFIGY_SENTINEL_LOGS" = 1 ]; then
+      for arg in "$@"; do
+        case "$arg" in label=com.docker.compose.project=*) project=${arg#label=com.docker.compose.project=} ;; esac
+      done
+      printf 'sentinel-app\tUp 1 second\t\t%s\t%s\tapp\tfalse\n' "$project" "$PWD"
+    fi
+    exit 0 ;;
+  logs)
+    case "$*" in 'logs --tail 100 sentinel-app'|'logs --follow sentinel-app') echo sentinel-log; exit 0 ;; esac
+    exit 20 ;;
+  inspect|info|version|context) exit 0 ;;
   *) echo "forbidden runtime probe: $*" >&2; exit 19 ;;
 esac
 ''')
@@ -60,7 +71,7 @@ esac
                EFFIGY_COMPOSE_BACKEND="docker", EFFIGY_TEST_CONTAINERS_HOME=str(home / ".effigy"),
                COLIMA_HOME=str(home / ".colima"))
     before = snapshot(root)
-    for args in [["container", "status", "--json"], ["container", "hosts", "--json"],
+    for args in [["container", "status", "--json"], ["container", "hosts", "--json"], ["container", "scope", "--json"],
                  ["probe", "--plan", "--json"], ["container", "render", "one", "--json"],
                  ["container", "one", "render"]]:
         result = subprocess.run([str(binary), *args], cwd=checkout, env=env,
@@ -75,4 +86,10 @@ esac
             assert payload["schema"] == "effigy.container.render.v1", payload
             assert len(payload["digest"]) == 64 and payload["files"], payload
             assert not Path(payload["path"]).exists(), "render must not publish"
-    print("O10 passed: status, hosts, container task --plan, JSON render and text render; empty filesystem diff")
+    env["EFFIGY_SENTINEL_LOGS"] = "1"
+    for args in [["container", "one", "logs", "--json"], ["container", "one", "logs", "--follow"]]:
+        result = subprocess.run([str(binary), *args], cwd=checkout, env=env,
+                                capture_output=True, text=True, timeout=30)
+        assert result.returncode == 0 and "sentinel-log" in result.stdout, (args, result.stdout, result.stderr)
+        assert snapshot(root) == before, (args, "logs must not publish a prospective render")
+    print("O10 passed: status, hosts, scope, task --plan, JSON/text render and JSON/follow logs; empty filesystem diff")

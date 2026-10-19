@@ -68,6 +68,18 @@ pub fn run_runtime_plan_capture(
         })
 }
 
+pub fn spawn_runtime_plan_inherit(
+    plan: &ContainerRuntimeInvocationPlan,
+) -> Result<std::process::Child, EffigyRuntimeError> {
+    spawn_command_inherit_os(
+        &plan.repo_root,
+        &plan.program.to_string_lossy(),
+        &plan.args,
+        &plan.label,
+        &[],
+    )
+}
+
 pub fn spawn_compose_plan_inherit(
     plan: &ContainerComposeInvocationPlan,
 ) -> Result<std::process::Child, EffigyRuntimeError> {
