@@ -1380,14 +1380,19 @@ fn shared_services_json(policy: &EffectiveContainerPolicy) -> Vec<JsonValue> {
         .shared_services
         .iter()
         .map(|service| {
-            json!({
+            let mut value = json!({
                 "service_name": service.service_name,
                 "catalog": service.catalog,
                 "project_name": service.project_name,
                 "target_host": service.host,
                 "target_port": service.host_port,
                 "container_port": service.container_port,
-            })
+            });
+            if service.host_port == 0 {
+                value["target_port"] = JsonValue::Null;
+                value["allocation"] = json!(crate::policy::ports::UNASSIGNED_PORT_LABEL);
+            }
+            value
         })
         .collect()
 }
@@ -1403,7 +1408,11 @@ fn append_shared_service_lines(lines: &mut Vec<String>, policy: &EffectiveContai
             service.service_name,
             service.catalog,
             service.host,
-            service.host_port,
+            if service.host_port == 0 {
+                crate::policy::ports::UNASSIGNED_PORT_LABEL.to_owned()
+            } else {
+                service.host_port.to_string()
+            },
             service.project_name
         ));
     }

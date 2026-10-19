@@ -950,49 +950,38 @@ fn store_retention_keeps_referenced_objects_and_three_superseded() {
     let cx = mutate();
     let root = root(home.path());
     let mut store = Store::open(&cx, &root).unwrap();
-    let env = ResourceId::environment(checkout(), "dev").unwrap();
-    ensure(&mut store, &cx, &env);
-    let objects = home.path().join(".effigy/state/objects");
-    let add = |digest: &str, role: Option<(&str, i64)>| {
-        store
-            .conn()
-            .execute(
-                "INSERT INTO objects(digest, kind, path, size, created_at) VALUES (?1, 'render', ?1, 1, 0)",
-                [digest],
-            )
-            .unwrap();
-        if let Some((role, seq)) = role {
-            store
-                .conn()
-                .execute(
-                    "INSERT INTO object_refs(digest, resource, role, seq) VALUES (?1, ?2, ?3, ?4)",
-                    params![digest, env.name().to_string(), role, seq],
-                )
-                .unwrap();
-        }
-        let dir = objects.join(digest);
-        private_dir(&dir);
-        std::fs::write(dir.join("compose.yaml"), b"x").unwrap();
-        std::fs::set_permissions(
-            dir.join("compose.yaml"),
-            std::fs::Permissions::from_mode(0o400),
-        )
-        .unwrap();
-        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+    use crate::objects::{
+        tests::{closure, with_run},
+        Objects,
     };
-    add("desired", Some(("desired", 9)));
-    add("applied", Some(("last_applied", 8)));
-    for seq in 1..=5 {
-        add(&format!("old{seq}"), Some(("superseded", seq)));
+    let objects = home.path().join(".effigy/state/objects");
+    for seq in 1..=6u8 {
+        let value = closure(&format!("old{seq}"));
+        with_run(home.path(), "dev", seq, |run| {
+            Objects::publish_desired(run, &value).unwrap();
+            Objects::promote(run, value.digest()).unwrap();
+        });
     }
-    add("orphan", None);
+    with_run(home.path(), "dev", 7, |run| {
+        Objects::publish_desired(run, &closure("desired")).unwrap();
+    });
+    with_run(home.path(), "orphan", 8, |run| {
+        Objects::publish_desired(run, &closure("orphan")).unwrap();
+    });
+    with_run(home.path(), "orphan", 9, |run| Objects::reset(run).unwrap());
     let report = retain(&cx, &root, &mut store, budget(100)).unwrap();
     assert_eq!(report.objects, 3);
     for gone in ["old1", "old2", "orphan"] {
-        assert!(!objects.join(gone).exists(), "{gone}");
+        assert!(!objects.join(closure(gone).digest()).exists(), "{gone}");
     }
-    for kept in ["desired", "applied", "old3", "old4", "old5"] {
-        assert!(objects.join(kept).join("compose.yaml").exists(), "{kept}");
+    for kept in ["desired", "old3", "old4", "old5", "old6"] {
+        assert!(
+            objects
+                .join(closure(kept).digest())
+                .join("compose.yaml")
+                .exists(),
+            "{kept}"
+        );
     }
     store.check_integrity().unwrap();
 }

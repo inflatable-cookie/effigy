@@ -1797,6 +1797,109 @@ mod handoff_local_tests {
         }
     }
 
+    fn guest_tree(
+        root: &std::path::Path,
+    ) -> std::collections::BTreeMap<std::path::PathBuf, Vec<u8>> {
+        fn walk(
+            dir: &std::path::Path,
+            files: &mut std::collections::BTreeMap<std::path::PathBuf, Vec<u8>>,
+        ) {
+            for entry in fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    files.insert(path.clone(), Vec::new());
+                    walk(&path, files);
+                } else {
+                    files.insert(path.clone(), fs::read(path).unwrap());
+                }
+            }
+        }
+        let mut files = std::collections::BTreeMap::new();
+        walk(root, &mut files);
+        files
+    }
+
+    // Neither a missing legacy Compose file nor an unavailable host catalog
+    // prevents local execution. Both would fail a host policy resolution.
+    #[test]
+    fn guest_resolves_execution_without_rendering_host_policy() {
+        let (dir, bin_dir, repo_root) = handoff_repo("guest-no-host-policy");
+        let home = dir.path().join("home");
+        fs::create_dir_all(&home).expect("mkdir isolated home");
+        let _lock = lock_test();
+        let _env = handoff_env(&bin_dir, &home);
+        fs::remove_file(repo_root.join("docker-compose.yml")).unwrap();
+        // An ephemeral checkout used to mint a scope token during policy load.
+        fs::create_dir(repo_root.join(".git")).unwrap();
+        fs::write(
+            repo_root.join(".git/config"),
+            "[effigy]\nruntimeScope = ephemeral\n",
+        )
+        .unwrap();
+        let resolve = || {
+            crate::runner::container_runtime::resolve_handoff_local_execution(
+                &repo_root, None, None,
+            )
+            .expect("guest route")
+            .expect("manifest coordinates require no host policy")
+        };
+        let before = guest_tree(dir.path());
+        let target = resolve();
+        assert_eq!(
+            guest_tree(dir.path()),
+            before,
+            "guest resolution must write nothing"
+        );
+        assert_eq!(target.container, "web");
+        assert_eq!(target.service, "app");
+        assert_eq!(target.working_dir, repo_root.join("workspace"));
+        assert!(!repo_root.join(".effigy").exists());
+        assert!(!repo_root.join(".git/effigy-runtime-scope").exists());
+        assert_eq!(fs::read_dir(&home).unwrap().count(), 0);
+        assert_no_host_runtime_probes(&repo_root);
+
+        fs::write(
+            repo_root.join("effigy.toml"),
+            format!(
+                "[containers]\ndefault = 'web'\n[containers.web]\nprimary_service = 'app'\nworking_dir = '{}'\n[containers.web.services.app]\ncatalog = 'host-only-unavailable-catalog'\n",
+                repo_root.join("workspace").display(),
+            ),
+        ).unwrap();
+        let before = guest_tree(dir.path());
+        let target = resolve();
+        assert_eq!(
+            guest_tree(dir.path()),
+            before,
+            "guest resolution must write nothing"
+        );
+        assert_eq!(target.service, "app");
+        assert!(!repo_root.join(".effigy").exists());
+        assert!(!repo_root.join(".git/effigy-runtime-scope").exists());
+        assert_eq!(fs::read_dir(&home).unwrap().count(), 0);
+        assert_no_host_runtime_probes(&repo_root);
+    }
+
+    #[test]
+    fn guest_non_primary_service_keeps_checkout_working_directory() {
+        let (dir, bin_dir, repo_root) = handoff_repo("guest-sidecar");
+        let home = dir.path().join("home");
+        fs::create_dir_all(&home).unwrap();
+        let _lock = lock_test();
+        let _env = handoff_env(&bin_dir, &home);
+        let target = crate::runner::container_runtime::resolve_handoff_local_execution(
+            &repo_root,
+            Some("web"),
+            Some("sidecar"),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(target.service, "sidecar");
+        assert_eq!(target.working_dir, repo_root);
+        assert!(!repo_root.join(".effigy").exists());
+        assert_eq!(fs::read_dir(&home).unwrap().count(), 0);
+        assert_no_host_runtime_probes(&repo_root);
+    }
+
     #[test]
     fn bounded_shell_command_runs_handoff_local_without_host_probes() {
         let (dir, bin_dir, repo_root) = handoff_repo("bounded-shell-local");

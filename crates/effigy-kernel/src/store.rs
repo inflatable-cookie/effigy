@@ -13,7 +13,7 @@ use crate::ident::BootInstant;
 use crate::observe::{AbsenceProof, Evidence, Observed, UnknownReason};
 use crate::root::StateRoot;
 use rusqlite::{params, Connection, ErrorCode, OpenFlags, OptionalExtension, TransactionBehavior};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::cell::Cell;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -354,6 +354,12 @@ impl Store {
             if found != SCHEMA_VERSION {
                 return Err(StoreError::UnknownSchema { found });
             }
+            // Schema 1 additive column: old readers select explicit columns;
+            // Observe reads an older store without migrating it.
+            if !has_backend(txn.conn)? {
+                txn.conn
+                    .execute_batch("ALTER TABLE resources ADD COLUMN backend TEXT")?;
+            }
             txn.conn.execute(
                 "UPDATE meta SET value=?1 WHERE key='last_written_by' AND value<>?1",
                 params![BUILD],
@@ -381,6 +387,15 @@ pub struct ResourceRecord {
     pub authority: String,
     pub generation: Generation,
     pub state: Option<String>,
+    pub backend: Option<BackendMetadata>,
+}
+/// Exact engine/context identity and the policy source that selected it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BackendMetadata {
+    pub engine: String,
+    pub context: String,
+    pub source: String,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum CheckoutState {
@@ -436,11 +451,9 @@ impl Txn<'_> {
                 )?;
             }
         }
-        Ok(self.conn.query_row(
-            "SELECT name, label, authority, generation, state FROM resources WHERE name=?1",
-            [&name],
-            resource_row,
-        )?)
+        Ok(self
+            .conn
+            .query_row(&resource_sql(self.conn)?, [&name], resource_row)?)
     }
     /// `generation += 1` (K7). Overflow is refused, never wrapped.
     pub fn next_generation(&mut self, id: &ResourceId) -> Result<Generation, StoreError> {
@@ -540,12 +553,11 @@ impl StoreReader {
             Observed::Absent(proof) => return Observed::Absent(proof),
             Observed::Unknown(reason) => return Observed::Unknown(reason),
         }
-        self.row(
-            "resources",
-            "SELECT name, label, authority, generation, state FROM resources WHERE name=?1",
-            [id.name().to_string()],
-            resource_row,
-        )
+        let sql = match resource_sql(&self.conn) {
+            Ok(sql) => sql,
+            Err(error) => return Observed::Unknown(read_unknown(&error.into())),
+        };
+        self.row("resources", &sql, [id.name().to_string()], resource_row)
     }
     pub fn checkout(&self, checkout: &CheckoutId) -> Observed<CheckoutRecord> {
         self.row(
@@ -723,6 +735,23 @@ fn read_unknown(error: &StoreError) -> UnknownReason {
         other => UnknownReason::StoreUnreadable(format!("{other:?}")),
     }
 }
+fn has_backend(conn: &Connection) -> rusqlite::Result<bool> {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('resources') WHERE name='backend')",
+        [],
+        |r| r.get(0),
+    )
+}
+fn resource_sql(conn: &Connection) -> rusqlite::Result<String> {
+    let backend = if has_backend(conn)? {
+        "backend"
+    } else {
+        "NULL"
+    };
+    Ok(format!(
+        "SELECT name,label,authority,generation,state,{backend} FROM resources WHERE name=?1"
+    ))
+}
 fn resource_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ResourceRecord> {
     Ok(ResourceRecord {
         name: row.get(0)?,
@@ -730,6 +759,18 @@ fn resource_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ResourceRecord> {
         authority: row.get(2)?,
         generation: Generation::new(row.get::<_, i64>(3)? as u64),
         state: row.get(4)?,
+        backend: row
+            .get::<_, Option<String>>(5)?
+            .map(|value| {
+                serde_json::from_str(&value).map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        5,
+                        rusqlite::types::Type::Text,
+                        Box::new(error),
+                    )
+                })
+            })
+            .transpose()?,
     })
 }
 
@@ -759,6 +800,7 @@ CREATE TABLE resources (
   generation INTEGER NOT NULL CHECK (generation >= 0),
   desired TEXT,
   last_applied TEXT,
+  backend TEXT,
   state TEXT,
   updated_at INTEGER NOT NULL
 ) STRICT;

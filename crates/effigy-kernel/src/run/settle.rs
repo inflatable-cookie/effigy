@@ -64,7 +64,9 @@ impl Run<'_> {
         {
             cleanup.operation().check("settle effect")?;
             crate::fault_point!(SettleEffectBefore)?;
-            if effect.spec.kind == socket::KIND {
+            if effect.spec.kind == crate::objects::KIND {
+                self.settle_staging(effect, &cx)?;
+            } else if effect.spec.kind == socket::KIND {
                 self.settle_socket(effect, &cx)?;
             } else if effect.spec.kind == crate::custody::KIND {
                 let live = self.processes.remove(&effect.sequence);

@@ -1369,6 +1369,50 @@ The marker name and meaning are product contract, not incidental plumbing.
 `EffigyRuntimeContext` captures marker presence at process entry; downstream
 runtime code should consume that captured state when a context is available.
 
+Guest-local shell and exec resolve only manifest execution coordinates: the
+container name, selected service and working directory. They never load host
+container policy, resolve host catalogs or mounts, render Compose, allocate
+ports, mint checkout scope tokens or probe a host backend. A missing host-side
+Compose file or catalog does not prevent an already-running guest from
+executing locally. Bounded guest commands preserve the same deadline, output
+budgets and JSON schema as host-routed commands.
+
+### Generated host-port preparation
+
+Host-port resolution reads existing `ports.json` assignments without allocating,
+locking or migrating them. Missing bindings report `unassigned (assigned on
+first prepare)` and render a Compose placeholder that refuses execution until
+prepared. Shared-service JSON reports `target_port: null` with that label in
+`allocation` until assigned. Explicit fixed host ports remain usable without
+an allocation.
+
+Prepare calls the existing gateway-domain `ports::prepare_ports` allocator,
+then resolves again before admission and publication. The allocator loads,
+assigns and atomically saves all requested bindings under its existing short
+registry lock; it performs no runtime inventory under that lock. Existing
+assignments, including legacy container-port keys, retain their port numbers.
+This remains the legacy single writer until the gateway endpoint-store
+migration (#224) imports `ports.json` and owns persistent reservations. Kernel
+run-scoped Claims do not implement this temporary persistent allocation seam.
+
+### Bind-source preparation
+
+Policy assembly and validation resolve declared media paths and the shared
+Composer cache mount without creating their directories. Activation calls
+`policy::mounts::prepare_container_mount_sources` before Compose uses them,
+including detached admission and task preparation. Media sources are revalidated
+against the checkout at Prepare; other host mounts remain user-owned.
+
+### Loopback inventory and registry exclusion
+
+Runtime inventory for loopback reclamation runs before the global registry
+lock is acquired (K14). Allocation reloads the registry under that lock and
+only reclaims entries identical to its pre-inventory snapshot. Assignments
+added or changed during inventory are preserved. Missing or incomplete
+inventory permits no reclamation. Existing uncontested assignments require
+no runtime probe. The registry remains the legacy allocation owner until
+the gateway endpoint-store migration.
+
 ## Container manager contract
 
 Runner-facing container operations must route through `ContainerManager`.

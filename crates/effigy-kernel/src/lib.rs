@@ -14,6 +14,7 @@ pub mod fs;
 pub mod gate;
 pub mod id;
 pub mod ident;
+pub mod objects;
 pub mod observe;
 pub mod outcome;
 pub mod probe;
