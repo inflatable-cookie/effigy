@@ -166,7 +166,10 @@ pub(super) fn admit(
     timeout: Duration,
 ) -> Result<Admission, RunnerError> {
     let run_id = run.id().to_string();
-    let cwd = std::env::current_dir().unwrap_or_else(|_| target.root.clone());
+    // The invocation directory the CLI captured; never a fresh process read.
+    let cwd = crate::runner::command_context::active_runtime_context()
+        .map(|context| context.invocation_cwd().to_path_buf())
+        .unwrap_or_else(|| target.root.clone());
     let request = serde_json::json!({
         "schema": REQUEST_SCHEMA,
         "run_id": run_id,

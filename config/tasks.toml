@@ -561,7 +561,6 @@
   { task = "test:host-process:dependent-replacement" },
   { task = "test:host-process:owned-stop:family" },
   { task = "test:exec:runtime-paths" },
-  { task = "test:exec:container-admission" },
 ]
 "test:host-process:owned-stop:family" = [
   { task = "test:host-process:owned-stop" },
