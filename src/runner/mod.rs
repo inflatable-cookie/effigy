@@ -2,7 +2,7 @@ mod artifact_command;
 mod artifact_transport;
 mod bootstrap_command;
 mod builtin_ports;
-mod bundle_command;
+pub(crate) mod bundle_command;
 mod cache;
 mod changelog_command;
 mod command_context;

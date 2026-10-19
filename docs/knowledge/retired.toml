@@ -1,4 +1,24 @@
 [[retired]]
+id = "effigy-graph-read-refresh"
+retired = "2026-10-19"
+replacement = "Graph reads never refresh; run effigy graph index explicitly. The old status --refresh flag warns and returns report-only status for one release."
+owner = "docs/knowledge/contracts/045-catalog-scoped-code-graph-contract.md"
+terms = ["effigy graph status --refresh"]
+paths = []
+config_keys = []
+allow = ["CHANGELOG.md", "docs/guides/076-code-graph-and-agent-workflows.md", "crates/effigy-codegraph/src/index.rs", "src/tests/runner_tests/runner_core_tests/graph_tests.rs"]
+
+[[retired]]
+id = "effigy-bundle-read-refresh-ttl"
+retired = "2026-10-19"
+replacement = "Checkout source pins move only through explicit effigy bundle sync; Prepare warns for one release when the old variable is present."
+owner = "docs/knowledge/contracts/020-remote-bundle-sources-git-and-oci-delivery-contract.md"
+terms = ["EFFIGY_GIT_BUNDLE_REMOTE_CHECK_TTL_SECS"]
+paths = []
+config_keys = []
+allow = ["CHANGELOG.md", "crates/effigy-manifest/src/bundles/source/prepare.rs"]
+
+[[retired]]
 id = "effigy-resolution-owned-port-and-mount-preparation"
 retired = "2026-10-19"
 replacement = "Host-port reads preserve existing ports.json assignments or report unassigned; Prepare uses gateway::ports::prepare_ports. Declared media and shared Composer cache directories are created only in Prepare. Existing port assignments and directory contents are retained automatically; no consumer configuration change is required. Host render purity and compose_file migration remain separate work."
@@ -11,7 +31,7 @@ allow = ["CHANGELOG.md"]
 [[retired]]
 id = "effigy-graph-watch"
 retired = "2026-10-18"
-replacement = "Queries refresh automatically; use graph index to pre-warm. Removed spellings return replacement errors for one release."
+replacement = "Use graph index to refresh explicitly. Removed spellings return replacement errors for one release."
 owner = "docs/knowledge/contracts/045-catalog-scoped-code-graph-contract.md"
 terms = ["effigy graph watch", "effigy.graph.watch.event.v1"]
 paths = ["crates/effigy-codegraph/src/watch.rs", "src/cli/graph_watch_dispatch.rs"]

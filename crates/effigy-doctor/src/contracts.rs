@@ -100,7 +100,7 @@ pub mod remediation {
     pub const INSTALL_JS_PM_OR_CONFIGURE: &str =
         "Install one of bun/pnpm/npm or define `[package_manager].js` to match your toolchain.";
     pub const GRAPH_INDEX_REFRESH: &str =
-        "Run `effigy graph status --refresh` to rebuild a stale or missing graph index on demand.";
+        "Run `effigy graph index` to rebuild a stale or missing graph index.";
 }
 
 pub fn install_tool(tool: &str) -> String {

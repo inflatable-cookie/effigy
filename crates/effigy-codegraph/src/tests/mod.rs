@@ -24,6 +24,7 @@ mod git_gate;
 mod index_lifecycle;
 mod language_indexers;
 mod manifest_semantics;
+mod read_purity;
 mod refresh_lazy;
 mod storage_contracts;
 

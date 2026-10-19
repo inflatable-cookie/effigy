@@ -7,6 +7,20 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- Keep CLI presentation local and bounded: banner sizing never launches `tput`, and version metadata reads environment or installed stamps without running Git. Unstamped development binaries report the package version.
+- Graph reads, documentation context and doctor never refresh or create graph
+  files. Explicit `graph index` uses a kernel store gate and migrates existing
+  WAL databases to rollback journaling. Until migration, reads report stale
+  with an index hint. The legacy status `--refresh` flag warns and remains
+  report-only for one release.
+- Checkout bundle and declared catalog source pins in `.effigy/sources.lock.json`.
+  Help, version, completion, inventory, plans, status, config views, doctor and
+  graph read paths no longer acquire or refresh bundle sources or append Git
+  excludes. Only `effigy bundle sync` updates selected path, Git and OCI bytes;
+  bootstrap and first dev prepare missing pins. Existing v0.14.1 cache bytes
+  import automatically, and failed acquisition keeps the previous selection.
+  A locally known newer version produces a bounded sync notice without a remote
+  probe. `EFFIGY_GIT_BUNDLE_REMOTE_CHECK_TTL_SECS` is retired with a Prepare warning.
 - The runtime kernel exposes immutable file closures with journalled publication,
   fenced desired/applied references, per-owner reset, retention protection and
   backend metadata. Host container rendering adopts these APIs separately.

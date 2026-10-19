@@ -158,16 +158,15 @@ fn graph_status_reports_changed_paths_as_stale() {
     assert!(payload.freshness.usable);
     assert_eq!(payload.freshness.stale_path_count, 1);
 
-    // Queries refresh a stale index on demand instead of returning stale data;
-    // `status` stays report-only.
+    // A query returns committed data with the same stale verdict.
     let search_payload = query_search(temp.path(), "release", Some(10)).expect("search");
-    assert!(!search_payload.freshness.stale);
-    assert_eq!(search_payload.freshness.state, "ready");
-    assert!(search_payload.freshness.stale_paths.is_empty());
+    assert!(search_payload.freshness.stale);
+    assert_eq!(search_payload.freshness.state, "refresh-recommended");
+    assert_eq!(search_payload.freshness.stale_paths, payload.stale_paths);
     assert!(search_payload
         .freshness
         .summary
-        .contains("graph auto-refreshed"));
+        .contains("effigy graph index"));
 }
 
 #[test]

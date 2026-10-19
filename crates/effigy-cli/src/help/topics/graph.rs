@@ -9,11 +9,11 @@ const GRAPH_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
     topic: "graph",
     notices: &[
         "Build and query one local code graph for the whole checkout under `.effigy/graph/`.",
-        "Data queries refresh stale or missing files on demand; start code understanding with `graph explore` directly.",
-        "Use `graph status` only for a report-only freshness check; `--refresh` also updates stale or missing files.",
+        "Data queries read committed files without writes or refreshes; run `graph index` when a packet reports stale or missing data.",
+        "Status always reports without writing; the legacy `--refresh` flag warns and stays read-only.",
         "Queries have a 120000ms cooperative deadline by default; `EFFIGY_GRAPH_TIMEOUT_MS=<MS>` overrides it and `0` disables it. Explicit index is unbounded.",
         "Each file commits graph rows, search data and freshness together. Concurrent reads report `refreshing (n/N)` and read committed files immediately.",
-        "Pass `--stale-index` to skip refresh and read committed files. A timeout stops at a safe boundary and preserves progress for the next refresh.",
+        "Pass `--stale-index` to label committed data explicitly stale. A timeout stops at a safe boundary and preserves progress for the next refresh.",
         "Use `graph affected` after edits to narrow likely validation targets; confirm exact tokens with `rg`.",
     ],
     usage: &[
@@ -26,8 +26,8 @@ const GRAPH_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
     ],
     leading_common_options: &[CommonOption::Repo],
     options: &[
-        ("--refresh", "Update stale or missing files before the status report"),
-        ("--stale-index", "Skip refresh and read committed files; report stale-index or refreshing trust"),
+        ("--refresh", "Deprecated compatibility flag; warns and returns read-only status"),
+        ("--stale-index", "Read committed files with stale-index or refreshing trust"),
         ("EFFIGY_GRAPH_TIMEOUT_MS=<MS>", "Set the cooperative query deadline; 0 disables it"),
         ("--in", "Show incoming relationships and callers for node"),
         ("--out", "Show outgoing relationships and callees for node; omit both flags for both directions"),

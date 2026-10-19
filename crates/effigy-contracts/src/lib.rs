@@ -845,6 +845,15 @@ fn expand_contract_fixture_tokens(
         .any(|arg| arg.contains("<fixture_docs_context>"))
     {
         let fixture = create_docs_context_fixture(fixtures)?;
+        // Retrieval is a pure read. Prepare this fixture explicitly, keeping
+        // the graph's host gate inside its owned temporary home.
+        let executable = resolve_effigy_executable()?;
+        run_fixture_command(
+            &fixture,
+            executable.as_os_str(),
+            &["graph", "index"],
+            Some(&fixture),
+        )?;
         replace_contract_token(
             &mut args,
             "<fixture_docs_context>",
@@ -1126,15 +1135,21 @@ fn create_deps_contract_fixtures(
     .map_err(|error| error.to_string())?;
     std::fs::write(library.join("src/lib.rs"), "pub fn value() {}\n")
         .map_err(|error| error.to_string())?;
-    run_fixture_command(&library, "git", &["init", "-q"])?;
+    run_fixture_command(&library, "git", &["init", "-q"], None)?;
     run_fixture_command(
         &library,
         "git",
         &["config", "user.email", "effigy-fixture@example.test"],
+        None,
     )?;
-    run_fixture_command(&library, "git", &["config", "user.name", "Effigy Fixture"])?;
-    run_fixture_command(&library, "git", &["add", "."])?;
-    run_fixture_command(&library, "git", &["commit", "-qm", "fixture"])?;
+    run_fixture_command(
+        &library,
+        "git",
+        &["config", "user.name", "Effigy Fixture"],
+        None,
+    )?;
+    run_fixture_command(&library, "git", &["add", "."], None)?;
+    run_fixture_command(&library, "git", &["commit", "-qm", "fixture"], None)?;
 
     std::fs::create_dir_all(consumer.join("src")).map_err(|error| error.to_string())?;
     std::fs::write(
@@ -1152,7 +1167,7 @@ fn create_deps_contract_fixtures(
     .map_err(|error| error.to_string())?;
     std::fs::write(consumer.join("src/lib.rs"), "pub fn consumer() {}\n")
         .map_err(|error| error.to_string())?;
-    run_fixture_command(&consumer, "cargo", &["generate-lockfile"])?;
+    run_fixture_command(&consumer, "cargo", &["generate-lockfile"], None)?;
     std::fs::write(
         consumer.join("bun.lock"),
         concat!(
@@ -1173,14 +1188,24 @@ fn create_deps_contract_fixtures(
         ),
     )
     .map_err(|error| error.to_string())?;
-    run_fixture_command(&consumer, "git", &["init", "-q"])?;
+    run_fixture_command(&consumer, "git", &["init", "-q"], None)?;
     Ok((consumer, library))
 }
 
-fn run_fixture_command(cwd: &Path, program: &str, args: &[&str]) -> Result<(), String> {
-    let output = Command::new(program)
-        .args(args)
-        .current_dir(cwd)
+fn run_fixture_command(
+    cwd: &Path,
+    program: impl AsRef<std::ffi::OsStr>,
+    args: &[&str],
+    home: Option<&Path>,
+) -> Result<(), String> {
+    let program = program.as_ref();
+    let mut command = Command::new(program);
+    command.args(args).current_dir(cwd);
+    if let Some(home) = home {
+        command.env("HOME", home);
+    }
+    let program = program.to_string_lossy();
+    let output = command
         .output()
         .map_err(|error| format!("failed to run {program} fixture command: {error}"))?;
     if output.status.success() {

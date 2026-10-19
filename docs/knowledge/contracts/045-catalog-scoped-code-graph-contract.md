@@ -6,7 +6,7 @@ Guide: [076](../../guides/076-code-graph-and-agent-workflows.md).
 ## Authority and surface
 
 The graph owns one derived corpus per checkout, under `.effigy/graph/graph.db`,
-with one refresh lock. Catalog membership does not partition that corpus.
+with one kernel store gate. Catalog membership does not partition that corpus.
 The six CLI subcommands are `index`, `status`, `search`, `node`, `affected` and
 `explore`. The guide owns command examples and migration replacements.
 
@@ -35,15 +35,25 @@ certify unprocessed files. The git stamp is cleared before mutation.
 
 ## Reads and freshness
 
-Plain status opens read-only and creates no state. Queries may refresh the
-lazy derived cache. A query reads one SQLite transaction over committed rows;
+Contract 052 R2 applies to every graph read, including doctor, status, queries
+and documentation context. Reads open SQLite read-only, create no files, take
+no exclusive gate and never refresh. Missing or stale data names
+`effigy graph index` as the next action. The legacy status `--refresh` flag
+warns and remains report-only for one release.
+
+The database uses rollback journaling (`journal_mode=DELETE`). Queries use
+`SQLITE_OPEN_READONLY`, a 100ms busy timeout and memory-only temporary storage.
+They never open a database with a WAL sidecar or WAL-mode header: that state
+reports stale (refresh interrupted or in progress). The next explicit index
+converts existing WAL databases to DELETE mode, retaining their committed data.
+A query reads one SQLite transaction over committed rows;
 it may observe different generations for different files. A held refresh lock
 means `refreshing (n/N)`, with holder identity, even if some files are already
 current. A packet before any files have committed is unusable and empty.
 An interrupted writer leaves committed files intact; remaining stale files
 are reported by status after reopening.
 
-`--stale-index` skips refresh and lock wait, reporting `stale-index` or
+`--stale-index` retains its explicit stale trust label, reporting `stale-index` or
 `refreshing`. A cold stale read returns `missing-index` with recovery guidance.
 A complete-database snapshot is never produced. Refresh removes the obsolete
 complete database; orphaned catalog stores are ignored and left untouched,
@@ -51,8 +61,15 @@ with one stderr warning per graph invocation.
 
 ## Deadline
 
-Query refresh runs synchronously on the caller's thread. The cooperative
-deadline covers walk steps, freshness scans, lock polls and file transaction
+Explicit indexing holds a kernel `Gate(Store graph:<cache-location digest>)`
+in machine scope; canonical checkout paths share a derived-cache gate across
+path aliases. The gate lives in the host kernel state root. Observe probes use
+only the kernel's nonblocking shared-lock probe, never the old exclusive
+refresh-lock probe. A copied or moved cache gets its own store location; this
+derived-cache exclusion is separate from managed-run checkout identity.
+
+Indexing runs synchronously on the caller's thread. The cooperative
+deadline covers walk steps, freshness scans, gate waits and file transaction
 boundaries. The current transaction finishes or rolls back before work returns;
 there is no detached worker or unbounded spawn-failure fallback. Timeout JSON
 identifies the last phase, progress and `committed: true`. Retries resume
@@ -86,3 +103,7 @@ cross-file records survive target refresh, no snapshot is produced, all catalog
 members share the checkout corpus, direction/limit behavior is bounded, removed
 spellings name replacements, and orphan warnings do not mutate old stores.
 Subcommand/help and distributed/project-local skill parity remain required.
+
+R2 proofs cover missing, stale and WAL reads, and command-level filesystem
+sentinels for status, search and doctor during and after an actual per-file
+refresh. They also prove committed progress remains queryable during refresh.

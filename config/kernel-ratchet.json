@@ -42,9 +42,6 @@
       "std.process.Command.new": 4,
       "std.process.Command.output": 4
     },
-    "crates/effigy-codegraph/src/refresh.rs": {
-      "fs2.FileExt.lock": 4
-    },
     "crates/effigy-containers/src/colima.rs": {
       "std.process.Command.new": 1,
       "std.process.Command.output": 1,
@@ -207,10 +204,8 @@
       "std::fs::rename": 1,
       "std::fs::write": 2
     },
-    "crates/effigy-manifest/src/bundles/source.rs": {
-      "fs2.FileExt.lock": 3,
-      "std.fs.OpenOptions.write": 2,
-      "std::fs::write": 2
+    "crates/effigy-manifest/src/bundles/source/prepare.rs": {
+      "std.fs.OpenOptions.write": 2
     },
     "crates/effigy-manifest/src/config_sections/docs_policy.rs": {
       "std.process.Command.new": 2,
@@ -767,9 +762,10 @@
       "std::fs::write": 4
     },
     "crates/effigy-manifest/src/bundles/source.rs": {
-      "std.process.Command.new": 1,
-      "std.process.Command.status": 1,
-      "std::fs::write": 15
+      "std::fs::write": 1
+    },
+    "crates/effigy-manifest/src/bundles/source/prepare.rs": {
+      "std::fs::write": 7
     },
     "crates/effigy-manifest/src/composition.rs": {
       "std::env::remove_var": 4,

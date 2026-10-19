@@ -71,3 +71,39 @@ mod tests;
 #[cfg(test)]
 #[path = "tests/testing_tests.rs"]
 mod testing_tests;
+
+/// Main-only kernel helper and signal dispatch, before command discovery.
+pub fn run_main(raw_args: Vec<String>) -> std::io::Result<()> {
+    use effigy_kernel::signal::{RouterPolicy, SignalRouter};
+    let entry = raw_args.first().map(String::as_str).unwrap_or("");
+    // Only source-capable commands and kernel helpers own this router. Legacy
+    // commands retain their existing signal policy until their owner adopts it.
+    let uses_kernel = entry.starts_with("__kernel-")
+        || effigy_cli::parse_command(raw_args.clone())
+            .as_ref()
+            .is_ok_and(runner::bundle_command::is_source_prepare_command);
+    if !uses_kernel {
+        run_cli(raw_args);
+        return Ok(());
+    }
+    let policy = match entry {
+        "__kernel-sentinel" => RouterPolicy::Sentinel,
+        "__kernel-supervise" => RouterPolicy::Supervisor,
+        _ => RouterPolicy::Inline,
+    };
+    let mut router = SignalRouter::install(policy)?;
+    runner::bundle_command::set_source_cancel(router.root_cancel());
+    if let Some(result) = effigy_kernel::probe::internal_entry(entry, router.root_cancel()) {
+        return result.map_err(std::io::Error::other);
+    }
+    if let Some(result) = effigy_kernel::supervise::internal_entry(
+        entry,
+        &mut router,
+        &mut effigy_manifest::SourceSettlement,
+        |args| args == ["bundle", "sync"],
+    ) {
+        return result.map_err(std::io::Error::other);
+    }
+    run_cli(raw_args);
+    Ok(())
+}

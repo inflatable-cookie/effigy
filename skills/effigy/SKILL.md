@@ -87,10 +87,10 @@ Pick the first Effigy command that matches the job.
 | Narrow validation | You changed code and want likely tests/files first | `git diff --name-only | effigy graph affected --stdin --json` |
 | Parse results | Another tool/agent will consume the output | `effigy --json <command>` |
 
-Graph data queries refresh stale or missing indexes on demand, so start with
-`explore` or `affected` directly. Use `graph status` only when you need the
-report-only pre-refresh state; use explicit `graph index` for pre-warming or
-cache recovery. Use `rg` for exact tokens and final pre-edit proof.
+Graph data queries read existing indexes without writing or refreshing. Start
+with `explore` or `affected`; a missing or stale packet names `graph index` as
+the explicit next action. Use `graph status` for freshness diagnostics and `rg`
+for exact tokens and final pre-edit proof.
 
 The graph indexes the whole checkout, including catalog members. Use
 `graph node <ID|PATH> --in` or `--out` for relationships, and

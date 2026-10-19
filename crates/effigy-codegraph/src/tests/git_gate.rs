@@ -3,12 +3,7 @@ use super::*;
 use std::path::Path;
 use std::process::Command;
 
-use crate::git::{git_gate_says_fresh, GIT_INDEXED_HEAD_KEY};
-use crate::scope::GraphScope;
-
-fn repo_scope(root: &Path) -> GraphScope {
-    GraphScope::repo_root(root).expect("repo root scope")
-}
+use crate::git::GIT_INDEXED_HEAD_KEY;
 
 fn git(repo_root: &Path, args: &[&str]) {
     let status = Command::new("git")
@@ -70,7 +65,6 @@ fn run_index_stamps_clean_git_head_and_gate_fires() {
         stamped_head,
         String::from_utf8(head.stdout).expect("utf8").trim()
     );
-    assert!(git_gate_says_fresh(&repo_scope(root), &store).expect("gate"));
 
     let search_payload = query_search(root, "run_release", Some(10)).expect("search");
     assert_eq!(search_payload.freshness.state, "ready");
@@ -102,9 +96,9 @@ fn gate_turns_off_when_head_moves() {
         ],
     );
 
-    let store = GraphStore::open(root).expect("open store");
-    assert!(!git_gate_says_fresh(&repo_scope(root), &store).expect("gate"));
-
+    let stale = query_search(root, "committed_later", Some(10)).expect("observe stale");
+    assert!(stale.freshness.stale);
+    run_index(root).expect("explicit refresh");
     let search_payload = query_search(root, "committed_later", Some(10)).expect("search");
     assert_eq!(search_payload.freshness.state, "ready");
     assert!(search_payload
@@ -122,18 +116,20 @@ fn run_index_clears_stamp_on_dirty_tree() {
     git_init_and_commit(root);
     run_index(root).expect("index");
 
-    let store = GraphStore::open(root).expect("open store");
-    assert!(git_gate_says_fresh(&repo_scope(root), &store).expect("gate initially"));
-
     write_rust_with_extra_symbol(root, "pub fn dirty_symbol() {}");
     run_index(root).expect("index over dirty tree");
-
-    let store = GraphStore::open(root).expect("reopen store");
-    assert!(!git_gate_says_fresh(&repo_scope(root), &store).expect("gate off on dirty index"));
+    assert!(GraphStore::open(root)
+        .unwrap()
+        .metadata_value(GIT_INDEXED_HEAD_KEY)
+        .unwrap()
+        .is_none());
 
     // Revert the edit: the tree is clean again at the original HEAD, but the
     // indexed content was dirty — the walk must still catch it.
     git(root, &["checkout", "-q", "--", "src/lib.rs"]);
+    let stale = query_search(root, "dirty_symbol", Some(10)).expect("observe stale");
+    assert!(stale.freshness.stale);
+    run_index(root).expect("explicit refresh");
     let search_payload = query_search(root, "dirty_symbol", Some(10)).expect("search");
     assert_eq!(search_payload.freshness.state, "ready");
     assert!(!search_payload
@@ -153,9 +149,9 @@ fn gate_detects_dirty_tree_after_stamp() {
 
     write_rust_with_extra_symbol(root, "pub fn uncommitted_symbol() {}");
 
-    let store = GraphStore::open(root).expect("open store");
-    assert!(!git_gate_says_fresh(&repo_scope(root), &store).expect("gate off on dirty tree"));
-
+    let stale = query_search(root, "uncommitted_symbol", Some(10)).expect("observe stale");
+    assert!(stale.freshness.stale);
+    run_index(root).expect("explicit refresh");
     let search_payload = query_search(root, "uncommitted_symbol", Some(10)).expect("search");
     assert_eq!(search_payload.freshness.state, "ready");
     assert!(search_payload
@@ -165,7 +161,7 @@ fn gate_detects_dirty_tree_after_stamp() {
 }
 
 #[test]
-fn non_git_repo_has_no_stamp_and_queries_still_refresh() {
+fn non_git_repo_has_no_stamp_and_queries_report_stale() {
     let temp = tempfile::tempdir().expect("tempdir");
     let root = temp.path();
     fs::create_dir_all(root.join("src")).expect("mkdir src");
@@ -177,9 +173,11 @@ fn non_git_repo_has_no_stamp_and_queries_still_refresh() {
         .metadata_value(GIT_INDEXED_HEAD_KEY)
         .expect("stamp")
         .is_none());
-    assert!(!git_gate_says_fresh(&repo_scope(root), &store).expect("gate off without git"));
 
     write_rust_with_extra_symbol(root, "pub fn late_symbol() {}");
+    let stale = query_search(root, "late_symbol", Some(10)).expect("observe stale");
+    assert!(stale.freshness.stale);
+    run_index(root).expect("explicit refresh");
     let search_payload = query_search(root, "late_symbol", Some(10)).expect("search");
     assert_eq!(search_payload.freshness.state, "ready");
     assert!(search_payload

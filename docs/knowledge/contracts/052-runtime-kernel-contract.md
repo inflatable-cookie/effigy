@@ -22,7 +22,8 @@ matrix are implemented (`test:kernel:faults`, `test:kernel:matrix`);
 engine-specific §12.1 scenarios are placeholders owned by their engine lanes.
 Fault points inside helper processes (sentinel settle, guard acknowledgement,
 detached supervisor) are not yet armed; architecture 032 records the limit.
-Engines have not adopted the kernel; the
+Bundle-source preparation uses Prepare runs, source custody, store gating and
+atomic lock publication. Other engines have not adopted the kernel; their
 mechanisms in the adoption map (§10) remain current behavior. QA-group `stop` and `hard_timeout_ms` stay unavailable: contract
 [051](051-bounded-qa-groups-contract.md) keeps refusing them until this
 kernel's run journal, custody and deadlines exist.
@@ -729,9 +730,15 @@ pub struct ProcessSpec {
     label: String,
 }
 
+// Store runs publish engine-journalled file effects through
+// Run::replace_record(dir, name, bytes, ReplaceOpts), retaining their owner gate.
+// DirFd::prepare_child(cx, name) creates source directories no-follow and syncs
+// their parent; SourceDirOpen/SourceDirSync are its fault boundaries.
 impl Custody {
     pub fn spawn(run: &mut Run, spec: ProcessSpec, cx: &EffectContext)
         -> Result<OwnedProcess, SpawnError>;
+    pub fn spawn_source(run: &mut Run, spec: ProcessSpec, cx: &EffectContext)
+        -> Result<OwnedProcess, SpawnError>;               // Prepare: AcquireSource
     pub fn spawn_all(run: &mut Run, specs: Vec<ProcessSpec>, cx: &EffectContext)
         -> Result<Vec<OwnedProcess>, PartialSpawn>;          // rolls back on failure
 }
@@ -852,6 +859,11 @@ kernel restores it on exit.
 
 #### Proof
 
+- `custody_prepare_source_requires_its_class_and_settles_with_a_sentinel`
+  qualifies Prepare acquisition through `Custody::spawn_source`: successful,
+  failed and deadline-expired children settle through the registered sentinel.
+  Prepare cannot use ordinary `spawn`, and Mutate cannot use `spawn_source`.
+  Both entry points share the custody fault points and recovery machinery.
 - SIGINT, SIGTERM, SIGHUP and SIGKILL to the client, crossed with plain,
   sequence, managed and container runs: settle reports `Complete` and no
   fixture-tagged process survives (O1a).
@@ -1470,7 +1482,7 @@ for the rest.
 | 6 | Run logs | `state/runs/` | owner run | `OwnedProcess` capture | 8 MiB per stream, 2 rotations; 2 GiB total, oldest settled first | no |
 | 7 | Leaf certificates | `~/.effigy/gateway/certs/` | gateway | `atomic_replace` | reissued on expiry or CA change | no |
 | 8 | Preserved CA | mkcert `CAROOT` | external | read only | never touched | no |
-| 9 | Pinned sources | config lane decides | config | `Gate(Store bundles)` + `atomic_replace` | while pinned | no |
+| 9 | Pinned sources | `<checkout>/.effigy/sources.lock.json`; `.effigy/cache/sources/` | config | `Gate(Store bundles)` + `atomic_replace` | while pinned | no |
 | 10 | Private vault | `<checkout>/.effigy/secrets/local.vault` (+ `.prev`) | secrets | `Gate(Store vault)` + pointer commit | previous generation kept | no: masked from the workspace mount (§8.2) |
 | 11 | Key wraps | secrets lane decides | secrets | pointer commit with the vault | with the vault generation | no: masked from the workspace mount when beside the vault (§8.2) |
 | 12 | Machine preferences | `~/.effigy/config.toml` | config | `atomic_replace` | user-owned | no |
@@ -1823,10 +1835,17 @@ Current mechanisms and their kernel replacements. Evidence is at main
 | Env-schema commands before the lock; unbounded pipe drain | `crates/effigy-env/src/exec.rs:25-77` | after `Admitted`; bounded capture (K3, K8) |
 | `unsafe set_var` with threads alive | `src/runner/secret_session.rs:33`, `:52`, `:70`; `src/runner/execute/pipeline/managed.rs:229`; `src/runner/execute/sequence_run.rs:1034`, `:1044`; `crates/effigy-context/src/lib.rs:29`, `:45` | explicit context; spawn-spec env (K12) |
 | Task cache rewritten in place | `src/runner/cache/store.rs:58` | `atomic_replace`, or the cut-list removal |
-| Git exclude appended on reads | `crates/effigy-manifest/src/composition.rs:316` | Prepare and Mutate only (R2) |
-| Bundle refresh during reads; blocking cache lock | `crates/effigy-manifest/src/bundles/source.rs:483`, `:520-540` | Prepare class; `Gate(Store bundles)` with deadline |
+| Git exclude registration | Manifest composition reads only; source Prepare records registration before acting | Prepare and Mutate only (R2) |
+| Read-command presentation | Local window-size query and recorded version stamps only; no `tput` fallback or Git identity inference | Static (R2) |
+| Git provenance and identity diagnostics | Child Git probes disable optional index writes (`GIT_OPTIONAL_LOCKS=0`) | Observe (R2) |
+| Bundle and catalog source preparation | Checkout pins and immutable source generations; no read-time refresh or cache lock | Prepare run; `Gate(Store bundles)` with deadline; atomic checkout lock publication |
 | Scheduler client signal handler | `src/runner/host_scheduler/submit.rs:205-212` | subscribes to `SignalRouter` cancel; admission shape is Q-006 |
 | QA group records: 20 s staleness, truncating writes | `crates/effigy-runtime/src/qa_group_status.rs:19`, `:275-291` | `Run` rows; `stop` and `hard_timeout_ms` become possible |
+
+Read-boundary CLI proofs use the `discovery-proof` Cargo profile: the real,
+CLI and helper dispatch with release optimization and symbols stripped so macOS's
+pre-main loading does not dominate the unchanged eight-/ten-second fixture
+bounds. Ordinary dev, test and release profiles are unchanged.
 
 ### 10.2 Run supervisor
 
@@ -1884,7 +1903,7 @@ Current mechanisms and their kernel replacements. Evidence is at main
 | Demo spawn and group signal | `src/runner/demo_command/execute.rs:48` | `OwnedProcess` |
 | Vault written in place, unlocked | `src/runner/secret_vault.rs:177-194`; `crates/effigy-rhai/src/rhai_secrets.rs:665` | `Gate(Store vault)` + pointer commit (§5.5) |
 | Deps state: try-only lock, local atomic helper | `crates/effigy-deps/src/state.rs:497`, `:573` | gate with deadline; `atomic_replace` |
-| Graph refresh: try-lock, snapshot copy, detached worker | `crates/effigy-codegraph/src/refresh.rs:107`; `crates/effigy-codegraph/src/storage.rs:116`; `src/runner/graph_time_budget.rs:77` | RefreshDerived; cooperative deadline (I-CX3); corpus semantics are graph-lane |
+| Graph reads and explicit refresh | `crates/effigy-codegraph/src/refresh.rs`; `storage.rs`; graph contract 045 | RefreshDerived owns a kernel store gate; Observe probes only. Queries never refresh; rollback-journal readers create no files. Existing WAL is migrated by explicit index. |
 | Catalog pack store lock | `crates/effigy-catalog/src/pack/store.rs:343` | `Gate`, or removal under Q-005 |
 | Pending-facts journal with file and directory `fsync` | `crates/effigy-host-run/src/secure_fs.rs:299-308` | the pattern `atomic_replace` absorbs |
 | Doctor publication marker | `crates/effigy-scan/src/execution/doctor_inventory.rs:586` | `Gate` |

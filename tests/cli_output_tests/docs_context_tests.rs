@@ -36,14 +36,11 @@ labels = ["See also"]
 "#;
 
 fn unique_repo(label: &str, manifest: Option<&str>) -> PathBuf {
-    let root = std::env::temp_dir().join(format!(
-        "effigy-docs-context-{label}-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock")
-            .as_nanos()
-    ));
+    let root = tempfile::Builder::new()
+        .prefix(label)
+        .tempdir()
+        .expect("fresh fixture")
+        .keep();
     std::fs::create_dir_all(root.join("handbook/playbooks")).expect("mkdir playbooks");
     std::fs::create_dir_all(root.join("handbook/bulletins")).expect("mkdir bulletins");
     std::fs::write(
@@ -69,11 +66,25 @@ fn unique_repo(label: &str, manifest: Option<&str>) -> PathBuf {
     root
 }
 
+// Ranking and portfolio fixtures prepare their graph explicitly. Pure/cold
+// command behavior is covered separately without this preparation helper.
+fn run_prepared_docs(cwd: &Path, args: &[&str]) -> Output {
+    let prepared = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .args(["graph", "index"])
+        .current_dir(cwd)
+        .env("HOME", cwd)
+        .output()
+        .expect("prepare fixture graph");
+    assert!(prepared.status.success(), "{prepared:?}");
+    run_docs(cwd, args)
+}
+
 fn run_docs(cwd: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_effigy"))
         .args(args)
         .current_dir(cwd)
         .env("NO_COLOR", "1")
+        .env("HOME", cwd)
         .output()
         .expect("run docs command")
 }
@@ -89,7 +100,7 @@ fn stdout(output: &Output) -> String {
 #[test]
 fn docs_context_json_uses_the_versioned_payload_inside_the_command_envelope() {
     let repo = unique_repo("envelope", Some(GENERIC_PROFILE));
-    let output = run_docs(&repo, &["--json", "docs", "context", "flux capacitor"]);
+    let output = run_prepared_docs(&repo, &["--json", "docs", "context", "flux capacitor"]);
     assert!(output.status.success(), "{output:?}");
 
     let payload = json(&output);
@@ -154,7 +165,7 @@ fn docs_context_hop_exhaustion_reaches_aggregate_truncation_state() {
     )
     .expect("give ops an onward relation");
 
-    let output = run_docs(
+    let output = run_prepared_docs(
         &repo,
         &[
             "--json",
@@ -187,7 +198,7 @@ fn docs_context_hop_exhaustion_reaches_aggregate_truncation_state() {
         .iter()
         .any(|step| step.as_str().unwrap_or_default().contains("`--max-hops`")));
 
-    let text = run_docs(
+    let text = run_prepared_docs(
         &repo,
         &["docs", "context", "flux capacitor", "--max-hops", "1"],
     );
@@ -212,7 +223,7 @@ fn docs_context_attributes_inherited_lexical_evidence_to_the_seed() {
     )
     .expect("write rotation");
 
-    let output = run_docs(
+    let output = run_prepared_docs(
         &repo,
         &[
             "--json",
@@ -300,7 +311,7 @@ fn docs_context_attributes_inherited_lexical_evidence_to_the_seed() {
     assert_eq!(two_hop["path"], "handbook/playbooks/rotation.md");
     assert_eq!(two_hop["seed_path"], "handbook/playbooks/setup.md");
 
-    let text = run_docs(
+    let text = run_prepared_docs(
         &repo,
         &["docs", "context", "flux capacitor", "--max-hops", "2"],
     );
@@ -314,7 +325,10 @@ fn docs_context_attributes_inherited_lexical_evidence_to_the_seed() {
 #[test]
 fn docs_context_keeps_a_real_match_when_another_term_has_no_hits() {
     let repo = unique_repo("fallback", Some(GENERIC_PROFILE));
-    let baseline = json(&run_docs(&repo, &["--json", "docs", "context", "state"]));
+    let baseline = json(&run_prepared_docs(
+        &repo,
+        &["--json", "docs", "context", "state"],
+    ));
     assert!(
         !baseline["result"]["results"]
             .as_array()
@@ -323,7 +337,7 @@ fn docs_context_keeps_a_real_match_when_another_term_has_no_hits() {
         "the corpus-wide term alone must retrieve evidence"
     );
 
-    let output = run_docs(
+    let output = run_prepared_docs(
         &repo,
         &["--json", "docs", "context", "state zzzqxjkvnonexistent"],
     );
@@ -344,11 +358,11 @@ fn docs_context_keeps_a_real_match_when_another_term_has_no_hits() {
 #[test]
 fn docs_context_text_and_json_expose_the_same_evidence() {
     let repo = unique_repo("parity", Some(GENERIC_PROFILE));
-    let text = run_docs(&repo, &["docs", "context", "flux capacitor"]);
+    let text = run_prepared_docs(&repo, &["docs", "context", "flux capacitor"]);
     assert!(text.status.success(), "{text:?}");
     let rendered = stdout(&text);
 
-    let structured = json(&run_docs(
+    let structured = json(&run_prepared_docs(
         &repo,
         &["--json", "docs", "context", "flux capacitor"],
     ));
@@ -384,7 +398,7 @@ fn docs_context_text_and_json_expose_the_same_evidence() {
 #[test]
 fn docs_context_baseline_repository_uses_the_same_report_shape() {
     let repo = unique_repo("baseline", None);
-    let output = run_docs(&repo, &["--json", "docs", "context", "flux capacitor"]);
+    let output = run_prepared_docs(&repo, &["--json", "docs", "context", "flux capacitor"]);
     assert!(output.status.success(), "{output:?}");
     let result = json(&output)["result"].clone();
 
@@ -409,7 +423,7 @@ fn docs_context_omits_leading_yaml_frontmatter_from_heading_results() {
     )
     .expect("rewrite setup with frontmatter");
 
-    let text = run_docs(&repo, &["docs", "context", "flux capacitor"]);
+    let text = run_prepared_docs(&repo, &["docs", "context", "flux capacitor"]);
     assert!(text.status.success(), "{text:?}");
     let rendered = stdout(&text);
     assert!(
@@ -417,7 +431,7 @@ fn docs_context_omits_leading_yaml_frontmatter_from_heading_results() {
         "text output leaked frontmatter as a heading:\n{rendered}"
     );
 
-    let structured = json(&run_docs(
+    let structured = json(&run_prepared_docs(
         &repo,
         &["--json", "docs", "context", "flux capacitor"],
     ));
@@ -452,7 +466,7 @@ fn docs_context_omits_leading_yaml_frontmatter_from_heading_results() {
 #[test]
 fn docs_context_reports_budget_truncation_without_partial_sections() {
     let repo = unique_repo("budgets", Some(GENERIC_PROFILE));
-    let output = run_docs(
+    let output = run_prepared_docs(
         &repo,
         &[
             "--json",
@@ -489,13 +503,13 @@ fn docs_context_reports_budget_truncation_without_partial_sections() {
 #[test]
 fn docs_context_no_match_is_a_successful_empty_report() {
     let repo = unique_repo("no-match", Some(GENERIC_PROFILE));
-    let output = run_docs(&repo, &["--json", "docs", "context", "quokka telemetry"]);
+    let output = run_prepared_docs(&repo, &["--json", "docs", "context", "quokka telemetry"]);
     assert!(output.status.success(), "{output:?}");
     let result = json(&output)["result"].clone();
     assert_eq!(result["results"].as_array().map(Vec::len), Some(0));
     assert_eq!(result["truncation"]["truncated"], false);
 
-    let text = run_docs(&repo, &["docs", "context", "quokka telemetry"]);
+    let text = run_prepared_docs(&repo, &["docs", "context", "quokka telemetry"]);
     assert!(text.status.success(), "{text:?}");
     assert!(stdout(&text).contains("no in-scope documentation section matched this query"));
     std::fs::remove_dir_all(&repo).ok();
@@ -504,7 +518,7 @@ fn docs_context_no_match_is_a_successful_empty_report() {
 #[test]
 fn docs_context_rejects_empty_queries_and_out_of_range_budgets() {
     let repo = unique_repo("errors", Some(GENERIC_PROFILE));
-    let empty = run_docs(&repo, &["docs", "context", "   "]);
+    let empty = run_prepared_docs(&repo, &["docs", "context", "   "]);
     assert!(!empty.status.success());
     assert!(String::from_utf8_lossy(&empty.stderr).contains("non-empty query"));
 
@@ -521,7 +535,7 @@ fn docs_context_rejects_empty_queries_and_out_of_range_budgets() {
         ),
         ("--max-hops", "4", "`--max-hops` must be at most 3"),
     ] {
-        let output = run_docs(&repo, &["docs", "context", "flux", flag, value]);
+        let output = run_prepared_docs(&repo, &["docs", "context", "flux", flag, value]);
         assert!(!output.status.success(), "{flag} {value} must fail");
         assert!(
             String::from_utf8_lossy(&output.stderr).contains(expected),
@@ -530,7 +544,7 @@ fn docs_context_rejects_empty_queries_and_out_of_range_budgets() {
         );
     }
 
-    let zero = run_docs(&repo, &["docs", "context", "flux", "--max-hops", "0"]);
+    let zero = run_prepared_docs(&repo, &["docs", "context", "flux", "--max-hops", "0"]);
     assert!(!zero.status.success());
     assert!(String::from_utf8_lossy(&zero.stderr).contains("expected a positive integer"));
     std::fs::remove_dir_all(&repo).ok();
@@ -539,11 +553,11 @@ fn docs_context_rejects_empty_queries_and_out_of_range_budgets() {
 #[test]
 fn docs_context_repeats_identical_ordering_for_unchanged_input() {
     let repo = unique_repo("stable", Some(GENERIC_PROFILE));
-    let first = json(&run_docs(
+    let first = json(&run_prepared_docs(
         &repo,
         &["--json", "docs", "context", "flux capacitor"],
     ));
-    let second = json(&run_docs(
+    let second = json(&run_prepared_docs(
         &repo,
         &["--json", "docs", "context", "flux capacitor"],
     ));
@@ -558,7 +572,7 @@ fn docs_context_repeats_identical_ordering_for_unchanged_input() {
 #[test]
 fn docs_help_documents_the_bounded_context_surface() {
     let repo = unique_repo("help", Some(GENERIC_PROFILE));
-    let output = run_docs(&repo, &["docs", "--help"]);
+    let output = run_prepared_docs(&repo, &["docs", "--help"]);
     assert!(output.status.success(), "{output:?}");
     let rendered = stdout(&output);
     assert!(rendered.contains(
@@ -774,14 +788,11 @@ fn documentation_graph_runtime_logic_carries_no_northstar_vocabulary() {
 /// gives it just enough documentation to query. Nothing else is written: the
 /// emitted `effigy.toml` is the only configuration the process may read.
 fn northstar_consumer_repo(label: &str) -> PathBuf {
-    let root = std::env::temp_dir().join(format!(
-        "effigy-northstar-consumer-{label}-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock")
-            .as_nanos()
-    ));
+    let root = tempfile::Builder::new()
+        .prefix(label)
+        .tempdir()
+        .expect("fresh fixture")
+        .keep();
     std::fs::create_dir_all(&root).expect("mkdir consumer root");
     let init = run_docs(&root, &["init", "northstar"]);
     assert!(init.status.success(), "init northstar failed: {init:?}");
@@ -795,7 +806,7 @@ fn northstar_consumer_repo(label: &str) -> PathBuf {
 }
 
 fn context_result(repo: &Path, query: &str) -> Value {
-    let output = run_docs(repo, &["--json", "docs", "context", query]);
+    let output = run_prepared_docs(repo, &["--json", "docs", "context", query]);
     assert!(output.status.success(), "docs context failed: {output:?}");
     json(&output)["result"].clone()
 }
@@ -936,4 +947,13 @@ fn installed_skill_and_template_directories_never_reach_the_query() {
     );
 
     std::fs::remove_dir_all(&repo).ok();
+}
+
+#[test]
+fn cold_docs_context_names_explicit_index_without_creating_state() {
+    let owner = tempfile::tempdir().unwrap();
+    let output = run_docs(owner.path(), &["--json", "docs", "context", "widget"]);
+    assert!(!output.status.success());
+    assert!(stdout(&output).contains("effigy graph index"));
+    assert!(!owner.path().join(".effigy").exists());
 }

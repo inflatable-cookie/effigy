@@ -775,6 +775,7 @@ dependencies = [
  "effigy-execution",
  "effigy-gateway",
  "effigy-host-run",
+ "effigy-kernel",
  "effigy-managed",
  "effigy-manifest",
  "effigy-process",
@@ -897,8 +898,9 @@ name = "effigy-codegraph"
 version = "0.14.1"
 dependencies = [
  "aho-corasick",
+ "effigy-core",
+ "effigy-kernel",
  "effigy-manifest",
- "fs2",
  "globset",
  "hex",
  "ignore",
@@ -1149,13 +1151,15 @@ name = "effigy-manifest"
 version = "0.14.1"
 dependencies = [
  "chrono",
- "effigy-artifacts",
  "effigy-core",
- "fs2",
+ "effigy-kernel",
+ "getrandom 0.4.3",
  "indexmap",
+ "libc",
  "minijinja",
  "semver",
  "serde",
+ "serde_json",
  "sha2 0.11.0",
  "tempfile",
  "toml",

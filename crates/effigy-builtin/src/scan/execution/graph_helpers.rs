@@ -3,7 +3,7 @@ use std::path::Path;
 
 use effigy_codegraph::json::GraphFreshnessPayload;
 use effigy_codegraph::model::{ExtractorCapability, ExtractorRecord, SymbolRecord};
-use effigy_codegraph::{ensure_fresh, GraphId, GraphScope, GraphStore};
+use effigy_codegraph::{open_query_store, GraphId, GraphScope, GraphStore, RefreshPolicy};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 
 use crate::BuiltinError;
@@ -162,25 +162,23 @@ pub(super) fn first_symbol_line(
 ///
 /// Correctness-gated scans (dead-code, validation-gaps, boundary-violations)
 /// used to refuse on a stale or missing index and send the operator to
-/// `effigy graph index`. Lazy refresh fixes the common case: the index is
-/// rebuilt here, under the same cross-process lock queries use. The scan only
-/// refuses when the refresh itself could not complete — for example another
-/// process is mid-refresh and the wait budget expired.
+/// `effigy graph index`. This read refuses stale data instead of rebuilding it.
 pub(super) fn open_fresh_graph_store(
     target_root: &Path,
     scan_label: &str,
 ) -> Result<(GraphStore, GraphFreshnessPayload), BuiltinError> {
     let scope = GraphScope::repo_root(target_root)
         .map_err(|error| BuiltinError::task_invocation(error.to_string()))?;
-    let store = GraphStore::open_for_scope(&scope)
+    let (store, freshness) = open_query_store(&scope, RefreshPolicy::query())
         .map_err(|error| BuiltinError::task_invocation(error.to_string()))?;
-    let outcome = ensure_fresh(&scope, &store)
-        .map_err(|error| BuiltinError::task_invocation(error.to_string()))?;
-    if !outcome.freshness.usable || outcome.freshness.stale {
+    if !freshness.usable || freshness.stale {
         return Err(BuiltinError::task_invocation(format!(
-            "`scan {scan_label}` requires a fresh graph index ({}); run `effigy graph index` if the automatic refresh did not complete",
-            outcome.freshness.summary
+            "`scan {scan_label}` requires a fresh graph index ({}); run `effigy graph index` to refresh it",
+            freshness.summary
         )));
     }
-    Ok((store, outcome.freshness))
+    let store = store.ok_or_else(|| {
+        BuiltinError::task_invocation("graph index is unavailable; run `effigy graph index`")
+    })?;
+    Ok((store, freshness))
 }

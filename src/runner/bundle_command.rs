@@ -7,6 +7,28 @@ use std::path::{Path, PathBuf};
 
 use super::error::RunnerError;
 
+/// Syntax-only classification shared by binary signal setup and dev dispatch.
+/// It does not resolve a manifest or acquire source authority.
+pub(crate) fn is_source_prepare_command(command: &effigy_cli::Command) -> bool {
+    match command {
+        effigy_cli::Command::Bundle(args) => matches!(args.subcommand, BundleSubcommand::Sync),
+        effigy_cli::Command::Bootstrap(_) => true,
+        effigy_cli::Command::Task(task) => {
+            task.name.rsplit('/').next() == Some("dev")
+                && !task
+                    .args
+                    .iter()
+                    .take_while(|arg| arg.as_str() != "--")
+                    .any(|arg| matches!(arg.as_str(), "--plan" | "--help" | "-h"))
+                && !task
+                    .args
+                    .first()
+                    .is_some_and(|arg| matches!(arg.as_str(), "status" | "logs" | "stop"))
+        }
+        _ => false,
+    }
+}
+
 pub(super) fn run_bundle(args: BundleArgs) -> Result<String, RunnerError> {
     match args.subcommand {
         BundleSubcommand::Inspect => {
@@ -71,11 +93,11 @@ fn run_active_bundle_inspect(
 fn run_bundle_sync(output_json: bool) -> Result<String, RunnerError> {
     let cwd = crate::runner::command_context::active_invocation_cwd()?;
     let manifest_path = discover_bundle_manifest_path(&cwd)?;
-    let Some(report) = sync_bundle_source(&manifest_path)
+    let Some(report) = sync_bundle_source(&manifest_path, &source_preparation()?)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?
     else {
         return Err(RunnerError::task_invocation(
-            "current repo does not declare a `[bundle]` source".to_owned(),
+            "current repo does not declare a `[bundle]` source or catalog sources".to_owned(),
         ));
     };
 
@@ -91,6 +113,7 @@ fn run_bundle_sync(output_json: bool) -> Result<String, RunnerError> {
             "changed": report.changed,
             "applicable": report.applicable,
             "manifest_path": manifest_path,
+            "sources": report.sources,
         })
         .to_string());
     }
@@ -121,6 +144,46 @@ fn run_bundle_sync(output_json: bool) -> Result<String, RunnerError> {
         }
     ));
     Ok(lines.join("\n"))
+}
+
+static SOURCE_CANCEL: std::sync::OnceLock<effigy_kernel::ctx::CancelToken> =
+    std::sync::OnceLock::new();
+
+pub(crate) fn set_source_cancel(token: effigy_kernel::ctx::CancelToken) {
+    let _ = SOURCE_CANCEL.set(token);
+}
+fn source_preparation() -> Result<effigy_manifest::SourcePreparation, RunnerError> {
+    let home = match crate::runner::command_context::active_runtime_context() {
+        Some(context) => context.paths().home.clone(),
+        None => effigy_kernel::root::StateRoot::home_from_env(),
+    }
+    .ok_or_else(|| {
+        RunnerError::task_invocation("source preparation requires an absolute HOME".to_owned())
+    })?;
+    let executable =
+        std::env::current_exe().map_err(|err| RunnerError::task_invocation(err.to_string()))?;
+    let next = effigy_kernel::outcome::Invocation::validated(
+        vec!["bundle".into(), "sync".into()],
+        |args| args == ["bundle", "sync"],
+    )
+    .map_err(|err| RunnerError::task_invocation(format!("{err:?}")))?;
+    Ok(effigy_manifest::SourcePreparation {
+        home,
+        executable,
+        cancel: SOURCE_CANCEL.get().cloned().unwrap_or_default(),
+        next,
+        budget: std::time::Duration::from_secs(120),
+    })
+}
+pub(in crate::runner) fn prepare_sources_for_manifest(manifest: &Path) -> Result<(), RunnerError> {
+    if !effigy_manifest::bundle_sources_need_preparation(manifest)
+        .map_err(|err| RunnerError::task_invocation(err.to_string()))?
+    {
+        return Ok(());
+    }
+    effigy_manifest::prepare_bundle_sources(manifest, &source_preparation()?)
+        .map_err(|err| RunnerError::task_invocation(err.to_string()))?;
+    Ok(())
 }
 
 fn discover_bundle_manifest_path(root_or_cwd: impl AsRef<Path>) -> Result<PathBuf, RunnerError> {
@@ -158,18 +221,16 @@ mod tests {
 
     #[test]
     fn bundle_sync_reports_missing_bundle_config() {
-        let tmp = std::env::temp_dir().join(format!(
-            "effigy-bundle-sync-empty-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("time")
-                .as_nanos()
-        ));
+        let directory = tempfile::tempdir().expect("fixture directory");
+        let tmp = directory.path().to_path_buf();
         std::fs::create_dir_all(&tmp).expect("mkdir");
         std::fs::write(tmp.join("effigy.toml"), "[tasks.dev]\nrun = \"echo hi\"\n").expect("write");
         let context = EffigyRuntimeContext::builder()
             .cwd_override(Some(tmp.clone()))
-            .captured_env(CapturedEnv::default())
+            .captured_env(CapturedEnv {
+                home: Some(tmp.as_os_str().into()),
+                ..CapturedEnv::default()
+            })
             .capture_lossy()
             .expect("capture context");
         let error = crate::runner::command_context::with_runtime_context(&context, || {
@@ -183,23 +244,30 @@ mod tests {
     }
 
     #[test]
-    fn bundle_sync_json_reports_not_applicable_for_path_bundle() {
-        let tmp = std::env::temp_dir().join(format!(
-            "effigy-bundle-sync-path-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("time")
-                .as_nanos()
-        ));
+    fn bundle_sync_json_prepares_path_bundle() {
+        let directory = tempfile::tempdir().expect("fixture directory");
+        let tmp = directory.path().to_path_buf();
         std::fs::create_dir_all(&tmp).expect("mkdir");
         std::fs::write(
             tmp.join("effigy.toml"),
             "[bundle]\nbase = { type = \"path\", dir = \"bundles/acme\" }\n",
         )
         .expect("write");
+        let bundle = tmp.join("bundles/acme");
+        std::fs::create_dir_all(&bundle).expect("bundle directory");
+        std::fs::write(bundle.join("bundle.toml"), "[bundle]\nname = \"test\"\n")
+            .expect("descriptor");
+        std::fs::write(
+            bundle.join("effigy.toml"),
+            "[tasks.hello]\nrun = \"echo hello\"\n",
+        )
+        .expect("defaults");
         let context = EffigyRuntimeContext::builder()
             .cwd_override(Some(tmp.clone()))
-            .captured_env(CapturedEnv::default())
+            .captured_env(CapturedEnv {
+                home: Some(tmp.as_os_str().into()),
+                ..CapturedEnv::default()
+            })
             .capture_lossy()
             .expect("capture context");
         let rendered = crate::runner::command_context::with_runtime_context(&context, || {
@@ -208,19 +276,14 @@ mod tests {
         .expect("bundle sync");
         assert!(rendered.contains("\"schema\":\"effigy.bundle.sync.v1\""));
         assert!(rendered.contains("\"source_type\":\"path\""));
-        assert!(rendered.contains("\"applicable\":false"));
+        assert!(rendered.contains("\"applicable\":true"));
         let _ = std::fs::remove_dir_all(tmp);
     }
 
     #[test]
     fn bundle_inspect_reports_active_source_metadata() {
-        let tmp = std::env::temp_dir().join(format!(
-            "effigy-bundle-inspect-active-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("time")
-                .as_nanos()
-        ));
+        let directory = tempfile::tempdir().expect("fixture directory");
+        let tmp = directory.path().to_path_buf();
         std::fs::create_dir_all(&tmp).expect("mkdir");
         std::fs::write(
             tmp.join("effigy.toml"),
@@ -229,7 +292,10 @@ mod tests {
         .expect("write");
         let context = EffigyRuntimeContext::builder()
             .cwd_override(Some(tmp.clone()))
-            .captured_env(CapturedEnv::default())
+            .captured_env(CapturedEnv {
+                home: Some(tmp.as_os_str().into()),
+                ..CapturedEnv::default()
+            })
             .capture_lossy()
             .expect("capture context");
         let rendered = crate::runner::command_context::with_runtime_context(&context, || {

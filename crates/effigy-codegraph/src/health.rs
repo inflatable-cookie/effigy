@@ -49,23 +49,20 @@ pub fn health(repo_root: &Path) -> GraphHealthPayload {
         refresh_in_progress,
         inspection.identity.as_ref(),
     ) {
-        (_, true, Some(identity)) if identity.stale_holder => {
-            format!(
-                "a graph refresh lock is held by stale pid {} (age {}ms); retry `effigy graph index --json` or pass `--stale-index`",
-                identity.pid, identity.age_ms
-            )
-        }
         (_, true, Some(identity)) => format!(
-            "a graph refresh is in progress (pid {}, age {}ms); retry once it releases the lock or pass `--stale-index`",
-            identity.pid, identity.age_ms
+            "a graph refresh is in progress (pid {}); committed files remain readable",
+            identity.pid
         ),
         (_, true, None) => {
-            "a graph refresh is in progress; retry once it releases the refresh lock".to_owned()
+            "graph refresh gate is held or unavailable; committed files remain readable".to_owned()
         }
         (true, false, _) => "a graph index exists and no refresh holds the lock".to_owned(),
-        (false, false, _) => {
-            "no graph index exists yet; the first build walks the whole repo".to_owned()
-        }
+        (false, false, _) => "no graph index exists yet; run `effigy graph index`".to_owned(),
+    };
+    let summary = if inspection.unknown {
+        "graph refresh gate is unobservable".to_owned()
+    } else {
+        summary
     };
     GraphHealthPayload {
         repo_root: repo_root.display().to_string(),

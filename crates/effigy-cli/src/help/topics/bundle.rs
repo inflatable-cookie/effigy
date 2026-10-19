@@ -8,9 +8,9 @@ pub(crate) fn render_bundle_help<R: HelpRenderer + ?Sized>(renderer: &mut R) -> 
 const BUNDLE_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
     topic: "bundle",
     notices: &[
-        "Inspect or refresh the active repo-local `[bundle]` source.",
+        "Inspect pinned bundle bytes or explicitly sync checkout sources.",
         "Bundle inspection reports the current source type, local materialized path, version hint, and stale state.",
-        "Remote git and OCI bundle sources can be refreshed with `bundle sync`; local path bundles report not-applicable.",
+        "Only `bundle sync` updates path, git and OCI pins, including declared catalog sources; inspection never fetches or writes.",
     ],
     usage: &[
         "effigy bundle inspect [--repo <PATH>] [--json]",
@@ -20,7 +20,7 @@ const BUNDLE_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
     leading_common_options: &[CommonOption::Repo],
     options: &[(
         "sync",
-        "Refresh the current repo's remote git or OCI bundle source",
+        "Acquire and atomically select the checkout's bundle and catalog source pins",
     )],
     trailing_common_options: &[
         CommonOption::Json("Render machine-readable bundle payloads"),

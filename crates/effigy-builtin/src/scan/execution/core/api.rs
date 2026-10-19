@@ -5,7 +5,7 @@ use std::path::Path;
 use crate::BuiltinError;
 use effigy_codegraph::json::GraphFreshnessPayload;
 use effigy_codegraph::model::{EdgeRecord, FileRecord, ReferenceRecord, SymbolRecord};
-use effigy_codegraph::{GraphId, GraphStore};
+use effigy_codegraph::{open_query_store, GraphId, GraphScope, RefreshPolicy};
 use effigy_scan::ScanRenderFormat;
 use effigy_scan::{
     AttentionMarkerScanResult, BoundaryViolationScanResult, CommentRatioScanResult,
@@ -162,8 +162,13 @@ pub(in crate::scan::execution) struct ScanGraphFactsIndex {
 
 impl ScanGraphFactsIndex {
     pub(in crate::scan::execution) fn load(target_root: &Path) -> Result<Self, BuiltinError> {
-        let store = GraphStore::open(target_root)
+        let scope = GraphScope::repo_root(target_root)
             .map_err(|error| BuiltinError::task_invocation_failed_read(target_root, error))?;
+        let (store, _) = open_query_store(&scope, RefreshPolicy::lookup(true))
+            .map_err(|error| BuiltinError::task_invocation_failed_read(target_root, error))?;
+        let store = store.ok_or_else(|| {
+            BuiltinError::task_invocation("graph index is unavailable; run `effigy graph index`")
+        })?;
         let files = store
             .list_files()
             .map_err(|error| BuiltinError::task_invocation_failed_read(target_root, error))?;

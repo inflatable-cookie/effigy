@@ -84,6 +84,8 @@ pub fn package_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
+/// Return the environment or installed build stamp, falling back to semver.
+/// This presentation read never infers identity by invoking Git.
 pub fn active_version() -> String {
     active_version_with_env(std::env::var(ACTIVE_VERSION_ENV).ok())
 }
@@ -97,9 +99,10 @@ fn active_version_with_env(env_override: Option<String>) -> String {
     }
     std::env::current_exe()
         .ok()
-        .and_then(|path| {
-            read_active_version_file_for(&path).or_else(|| infer_repo_local_version(&path))
-        })
+        // Discovery reads recorded identity only. Inferring a debug build's
+        // identity via `git status` can wait on hooks or locks and refresh the
+        // index, even for help, version and plans.
+        .and_then(|path| read_active_version_file_for(&path))
         .unwrap_or_else(|| package_version().to_owned())
 }
 
@@ -220,6 +223,7 @@ fn git_stdout(repo_root: &Path, args: &[&str]) -> Option<String> {
 
 fn git_repo_is_dirty(repo_root: &Path) -> Option<bool> {
     let output = Command::new("git")
+        .env("GIT_OPTIONAL_LOCKS", "0")
         .args(["status", "--short", "--untracked-files=normal"])
         .current_dir(repo_root)
         .output()
@@ -379,6 +383,61 @@ mod tests {
         std::fs::write(temp.path().join("Cargo.toml"), "[package]\nname=\"x\"\n").expect("cargo");
         std::fs::create_dir(temp.path().join(".git")).expect("git dir");
         assert!(git_repo_is_dirty(temp.path()).is_none());
+    }
+
+    #[test]
+    fn diagnostic_status_does_not_refresh_the_git_index() {
+        let temp = tempfile::tempdir().expect("owned Git fixture");
+        let root = temp.path();
+        assert!(git_ok(root, &["init", "-q"]));
+        assert!(git_ok(root, &["config", "core.fsmonitor", "false"]));
+        let tracked = root.join("clean.md");
+        std::fs::write(&tracked, "same bytes\n").unwrap();
+        assert!(git_ok(root, &["add", "clean.md"]));
+        commit_empty(root, "fixture");
+        let index = root.join(".git/index");
+        let first = std::fs::read(&index).unwrap();
+        let file = std::fs::File::open(&tracked).unwrap();
+        let now = std::time::SystemTime::now();
+        file.set_modified(now - std::time::Duration::from_secs(60))
+            .unwrap();
+        let control = std::process::Command::new("git")
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap())
+            .env("HOME", root)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .args(["status", "--porcelain"])
+            .env("GIT_OPTIONAL_LOCKS", "1")
+            .current_dir(root)
+            .output()
+            .unwrap();
+        assert!(control.status.success());
+        assert_ne!(
+            std::fs::read(&index).unwrap(),
+            first,
+            "control must refresh cached stat data"
+        );
+        file.set_modified(now - std::time::Duration::from_secs(120))
+            .unwrap();
+        let before = std::fs::read(&index).unwrap();
+        let before_time = std::fs::metadata(&index).unwrap().modified().unwrap();
+        let git_time = std::fs::metadata(root.join(".git"))
+            .unwrap()
+            .modified()
+            .unwrap();
+        assert_eq!(git_repo_is_dirty(root), Some(false));
+        assert_eq!(std::fs::read(&index).unwrap(), before);
+        assert_eq!(
+            std::fs::metadata(&index).unwrap().modified().unwrap(),
+            before_time
+        );
+        assert_eq!(
+            std::fs::metadata(root.join(".git"))
+                .unwrap()
+                .modified()
+                .unwrap(),
+            git_time
+        );
     }
 
     #[test]
@@ -664,6 +723,10 @@ mod tests {
 
     fn git_ok(repo_root: &Path, args: &[&str]) -> bool {
         std::process::Command::new("git")
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap())
+            .env("HOME", repo_root)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
             .args(args)
             .current_dir(repo_root)
             .output()
@@ -673,6 +736,10 @@ mod tests {
 
     fn git_out(repo_root: &Path, args: &[&str]) -> Option<String> {
         let output = std::process::Command::new("git")
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap())
+            .env("HOME", repo_root)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
             .args(args)
             .current_dir(repo_root)
             .output()

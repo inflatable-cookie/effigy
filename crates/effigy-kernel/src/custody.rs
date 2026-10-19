@@ -254,7 +254,17 @@ impl Custody {
         spec: ProcessSpec,
         cx: &EffectContext,
     ) -> Result<OwnedProcess, SpawnError> {
-        Self::spawn_inner(run, spec, cx, None)
+        Self::spawn_inner(run, spec, cx, None, crate::ctx::Capability::AdapterEffect)
+    }
+    /// Acquire executable source under a Prepare run. This uses the same
+    /// journal, sentinel, deadlines and settlement as ordinary process custody;
+    /// it does not grant Prepare permission to perform adapter mutations.
+    pub fn spawn_source(
+        run: &mut Run<'_>,
+        spec: ProcessSpec,
+        cx: &EffectContext,
+    ) -> Result<OwnedProcess, SpawnError> {
+        Self::spawn_inner(run, spec, cx, None, crate::ctx::Capability::AcquireSource)
     }
     pub(crate) fn spawn_remote(
         run: &mut Run<'_>,
@@ -262,16 +272,23 @@ impl Custody {
         cx: &EffectContext,
         registration: Arc<Mutex<crate::remote::stream::RegistrationStream>>,
     ) -> Result<OwnedProcess, SpawnError> {
-        Self::spawn_inner(run, spec, cx, Some(registration))
+        Self::spawn_inner(
+            run,
+            spec,
+            cx,
+            Some(registration),
+            crate::ctx::Capability::AdapterEffect,
+        )
     }
     fn spawn_inner(
         run: &mut Run<'_>,
         spec: ProcessSpec,
         cx: &EffectContext,
         registration: Option<Arc<Mutex<crate::remote::stream::RegistrationStream>>>,
+        capability: crate::ctx::Capability,
     ) -> Result<OwnedProcess, SpawnError> {
-        cx.require(crate::ctx::Capability::AdapterEffect)
-            .map_err(|_| SpawnError::Refused("spawn needs Mutate".into()))?;
+        cx.require(capability)
+            .map_err(|_| SpawnError::Refused(format!("spawn needs {capability:?}")))?;
         if crate::store::in_transaction() {
             return Err(SpawnError::Refused("spawn inside transaction".into()));
         }

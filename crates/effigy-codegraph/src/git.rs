@@ -1,8 +1,8 @@
-//! Git-backed freshness fast path for the lazy refresh gate.
+//! Git provenance and stamps recorded by explicit indexing.
 //!
 //! Every git-less fallback is graceful: any failure (no `.git`, missing `git`
-//! binary, unborn HEAD, dirty tree, non-UTF-8 output) simply disables the gate
-//! and the caller falls back to the scan-state walk.
+//! binary, unborn HEAD, dirty tree, non-UTF-8 output) yields unknown evidence;
+//! freshness reads use the scan-state walk and never refresh the index.
 
 use std::path::Path;
 use std::process::Command;
@@ -41,6 +41,7 @@ pub(crate) fn indexed_head_for_scope(
 /// has no commits, or HEAD cannot be resolved.
 pub(crate) fn current_head(repo_root: &Path) -> Option<String> {
     let output = Command::new("git")
+        .env("GIT_OPTIONAL_LOCKS", "0")
         .arg("rev-parse")
         .arg("HEAD")
         .current_dir(repo_root)
@@ -74,6 +75,7 @@ pub(crate) fn working_tree_clean_for_scope(scope: &GraphScope) -> bool {
 fn porcelain_status_paths(repo_root: &Path, pathspecs: &[String]) -> Option<Vec<String>> {
     let mut command = Command::new("git");
     command
+        .env("GIT_OPTIONAL_LOCKS", "0")
         .arg("status")
         .arg("--porcelain")
         .current_dir(repo_root);
@@ -98,28 +100,6 @@ fn porcelain_entry_is_walk_skipped(line: &str) -> bool {
         return false;
     };
     crate::walk::should_skip_path(path.trim())
-}
-
-/// Git skip-gate: true only when the stored index stamp exists, the current
-/// HEAD matches it, and the working tree is clean — the indexed tree then
-/// provably equals the current tree, so the freshness walk can be skipped.
-///
-/// Conservative by construction: every failure mode returns `false`, which
-/// just means "run the scan-state walk" (the behavior before the gate).
-pub(crate) fn git_gate_says_fresh(
-    scope: &GraphScope,
-    store: &GraphStore,
-) -> Result<bool, CodeGraphError> {
-    if !crate::index::index_configuration_matches(scope, store)? {
-        return Ok(false);
-    }
-    let Some(indexed_head) = store.metadata_value(&git_indexed_head_key(scope.key()))? else {
-        return Ok(false);
-    };
-    if !working_tree_clean_for_scope(scope) {
-        return Ok(false);
-    }
-    Ok(current_head(scope.workspace_root()).as_deref() == Some(indexed_head.as_str()))
 }
 
 pub(crate) fn clear_index_stamp(
@@ -152,6 +132,7 @@ pub(crate) fn update_index_stamp(
 pub(crate) fn dirty_paths(repo_root: &Path) -> Option<std::collections::BTreeSet<String>> {
     let mut command = Command::new("git");
     command
+        .env("GIT_OPTIONAL_LOCKS", "0")
         .arg("status")
         .args(["--porcelain=v1", "-z", "--untracked-files=all"])
         .current_dir(repo_root);
@@ -195,6 +176,7 @@ pub(crate) fn dirty_paths(repo_root: &Path) -> Option<std::collections::BTreeSet
 /// Positive evidence that an exact repository-relative file has HEAD's bytes.
 pub(crate) fn path_at_head(repo_root: &Path, path: &str) -> bool {
     let Ok(output) = Command::new("git")
+        .env("GIT_OPTIONAL_LOCKS", "0")
         .arg("show")
         .arg(format!("HEAD:{path}"))
         .current_dir(repo_root)
@@ -214,11 +196,75 @@ mod dirty_paths_tests {
 
     fn git(root: &Path, args: &[&str]) {
         let output = Command::new("git")
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap())
+            .env("HOME", root)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
             .args(args)
             .current_dir(root)
             .output()
             .expect("git");
         assert!(output.status.success(), "{output:?}");
+    }
+
+    #[test]
+    fn provenance_status_does_not_refresh_the_git_index() {
+        let temp = tempfile::tempdir().expect("owned Git fixture");
+        let root = temp.path();
+        git(root, &["init", "-q"]);
+        git(root, &["config", "user.email", "fixture@example.invalid"]);
+        git(root, &["config", "user.name", "Fixture"]);
+        git(root, &["config", "core.fsmonitor", "false"]);
+        let tracked = root.join("clean.md");
+        std::fs::write(&tracked, "same bytes\n").unwrap();
+        git(root, &["add", "clean.md"]);
+        git(root, &["commit", "-qm", "fixture"]);
+        let index = root.join(".git/index");
+        let first = std::fs::read(&index).unwrap();
+        let file = std::fs::File::open(&tracked).unwrap();
+        let now = std::time::SystemTime::now();
+        file.set_modified(now - std::time::Duration::from_secs(60))
+            .unwrap();
+        let control = Command::new("git")
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap())
+            .env("HOME", root)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .args(["status", "--porcelain"])
+            .env("GIT_OPTIONAL_LOCKS", "1")
+            .current_dir(root)
+            .output()
+            .unwrap();
+        assert!(control.status.success());
+        assert_ne!(
+            std::fs::read(&index).unwrap(),
+            first,
+            "control must refresh cached stat data"
+        );
+        file.set_modified(now - std::time::Duration::from_secs(120))
+            .unwrap();
+        let before = std::fs::read(&index).unwrap();
+        let before_time = std::fs::metadata(&index).unwrap().modified().unwrap();
+        let git_time = std::fs::metadata(root.join(".git"))
+            .unwrap()
+            .modified()
+            .unwrap();
+        assert!(dirty_paths(root).unwrap().is_empty());
+        assert!(working_tree_clean_for_scope(
+            &GraphScope::repo_root(root).unwrap()
+        ));
+        assert_eq!(std::fs::read(&index).unwrap(), before);
+        assert_eq!(
+            std::fs::metadata(&index).unwrap().modified().unwrap(),
+            before_time
+        );
+        assert_eq!(
+            std::fs::metadata(root.join(".git"))
+                .unwrap()
+                .modified()
+                .unwrap(),
+            git_time
+        );
     }
 
     #[test]

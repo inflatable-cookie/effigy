@@ -13,8 +13,9 @@ effigy graph search release --limit 20 --json
 effigy graph node src/runner/graph_command.rs --json
 ```
 
-Queries build or refresh the local index on demand. Explicit `graph index`
-pre-warms the cache or resumes a large build before you ask a question.
+Queries read the existing index without writing or fetching. A missing or stale
+packet names `effigy graph index` as the next action. Run it explicitly to build
+or refresh the checkout cache.
 
 ## Six commands
 
@@ -27,12 +28,12 @@ pre-warms the cache or resumes a large build before you ask a question.
 | `graph affected <PATH>...` | Find likely validation targets after edits |
 | `graph explore <REQUEST>` | Return an agent navigation packet |
 
-Plain `graph status` is report-only and never creates an index.
-`--refresh` is the explicit mutating exception:
+Status is always report-only and never creates an index. The old `--refresh`
+flag warns for one release; update with `graph index`:
 
 ```sh
 effigy graph status --json
-effigy graph status --refresh --json
+effigy graph index --json
 ```
 
 `node` accepts stable graph IDs or repository-relative file paths. Omit both
@@ -62,7 +63,8 @@ calls, generated files and ignored dependencies may be absent.
 
 ## One checkout, one store
 
-The graph uses `.effigy/graph/graph.db` and a colocated refresh lock. Declared
+The graph uses `.effigy/graph/graph.db` with rollback journaling. Explicit index
+holds a host kernel store gate; reads probe it without an exclusive lock. Declared
 catalog members belong to the same corpus. Narrow an explore result with
 `--path`; no catalog partition is refreshed separately. Orphaned catalog stores
 are ignored, with one stderr warning per graph invocation when found. They are
@@ -86,7 +88,7 @@ Data queries have a default 120000ms cooperative deadline. Configure
 `EFFIGY_GRAPH_TIMEOUT_MS=<MS>`; `0` disables the bound. Explicit indexing is
 unbounded. Refresh checks the deadline at safe boundaries, finishes or rolls
 back the current file transaction and stops. No detached worker continues
-writing after the command returns. Retry to resume committed progress.
+writing after the command returns. Run `graph index` to resume committed progress.
 
 Timeout details use `effigy.graph.timeout.v1`, including the last phase,
 `done`, `total` and `committed: true`. Counts can be null before a counted phase.
@@ -95,7 +97,8 @@ Timeout details use `effigy.graph.timeout.v1`, including the last phase,
 effigy graph explore "trace release orchestration" --stale-index --json
 ```
 
-`--stale-index` skips refresh and lock wait. It returns committed data marked
+All queries skip refresh and exclusive gate waits. `--stale-index` explicitly
+labels committed data
 `stale-index`, or `refreshing` while a writer holds the lock. Neither label
 means current. A cold stale read returns `missing-index` with a next action.
 Use the freshness state's `usable` flag before consuming results.
@@ -104,7 +107,7 @@ Use the freshness state's `usable` flag before consuming results.
 
 | Removed spelling | Replacement |
 | --- | --- |
-| `graph watch` | Queries refresh automatically; use `graph index` to pre-warm |
+| `graph watch` | Use `graph index` to refresh explicitly |
 | `graph files` | `graph search <QUERY>` or `graph node <PATH>` |
 | `graph callers <ID>` | `graph node <ID> --in` |
 | `graph callees <ID>` | `graph node <ID> --out` |
@@ -130,3 +133,7 @@ effigy graph index --json
 - [JSON examples](026-json-payload-examples.md)
 - [Code graph contract](../knowledge/contracts/045-catalog-scoped-code-graph-contract.md)
 - [Documentation context](079-documentation-graph-profiles-and-context.md)
+
+Existing WAL-mode databases are migrated automatically by the next `graph index`.
+Until then, reads report stale (refresh interrupted or in progress) without
+opening WAL storage or creating sidecars.

@@ -2,11 +2,33 @@ use super::*;
 use std::process::Command;
 use std::time::Duration;
 
+type Pause = (
+    String,
+    std::sync::mpsc::SyncSender<()>,
+    std::sync::mpsc::Receiver<()>,
+);
 thread_local! {
+    static PAUSE_AFTER: std::cell::RefCell<Option<Pause>> = const { std::cell::RefCell::new(None) };
     static EXPIRE_AFTER: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
 }
 
+pub(crate) fn pause_after(
+    path: &str,
+    ready: std::sync::mpsc::SyncSender<()>,
+    resume: std::sync::mpsc::Receiver<()>,
+) {
+    PAUSE_AFTER.with(|cell| *cell.borrow_mut() = Some((path.into(), ready, resume)));
+}
 pub(crate) fn boundary(path: &str, point: &str) {
+    PAUSE_AFTER.with(|cell| {
+        if point == "committed" && cell.borrow().as_ref().is_some_and(|pause| pause.0 == path) {
+            let (_, ready, resume) = cell.borrow_mut().take().unwrap();
+            ready.send(()).unwrap();
+            resume
+                .recv_timeout(Duration::from_secs(60))
+                .expect("bounded reader proof");
+        }
+    });
     EXPIRE_AFTER.with(|target| {
         if point == "committed" && target.borrow().as_deref() == Some(path) {
             crate::deadline::expire();

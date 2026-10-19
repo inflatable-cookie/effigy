@@ -1,23 +1,28 @@
-use std::fs::{File, OpenOptions};
-use std::io::{IsTerminal, Write};
-use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+//! Source resolution is local-only. The Prepare owner lives in `prepare`.
+use std::collections::BTreeMap;
+use std::io::Read;
+use std::path::{Component, Path, PathBuf};
+use std::time::{Duration, Instant};
 
-use effigy_artifacts::{
-    ArtifactSourceRef, OciArtifactAdapter, OciArtifactPullRequest, OrasCliArtifactAdapter,
-};
-use effigy_core::container_detection::process_is_inside_effigy_workspace_container;
-use effigy_core::git_exec::run_git_output;
 use effigy_core::git_source::{canonical_git_cache_identity, sanitize_cache_segment, sha256_hex};
-use fs2::FileExt;
-
-use crate::ManifestError;
+use effigy_kernel::{
+    ctx::{CancelToken, Deadline, EffectClass, Limits, OperationContext, Placement},
+    fs::{DirFd, FileName},
+    observe::Observed,
+    record::{read_record, Record},
+};
+use serde::{Deserialize, Serialize};
 
 use super::BundleSourceType;
+use crate::{ManifestBundleBase, ManifestError};
+mod prepare;
+pub use prepare::{
+    prepare_bundle_sources, sync_bundle_source, SourcePreparation, SourceSettlement,
+};
 
-// `version_hint` and `stale` are part of the locked source-materialization
-// shape but are not consumed by every call site.
-#[allow(dead_code)]
+const LOCK_FILE: &str = "sources.lock.json";
+const LOCK_MAX: u64 = 1024 * 1024;
+
 #[derive(Debug, Clone)]
 pub(super) struct ResolvedBundleSource {
     pub source_type: BundleSourceType,
@@ -27,7 +32,7 @@ pub(super) struct ResolvedBundleSource {
     pub stale: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct BundleSyncReport {
     pub source_type: BundleSourceType,
     pub source_path: PathBuf,
@@ -35,9 +40,10 @@ pub struct BundleSyncReport {
     pub version_hint: Option<String>,
     pub changed: bool,
     pub applicable: bool,
+    pub sources: BTreeMap<String, BundleSourceInspectReport>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct BundleSourceInspectReport {
     pub source_type: BundleSourceType,
     pub source_path: PathBuf,
@@ -46,6 +52,7 @@ pub struct BundleSourceInspectReport {
     pub stale: bool,
 }
 
+#[derive(Debug)]
 pub(super) enum BundleSelection {
     Path {
         path: PathBuf,
@@ -59,624 +66,359 @@ pub(super) enum BundleSelection {
     },
 }
 
-pub(super) fn resolve_bundle_selection(
-    manifest_path: &Path,
-    bundle: &crate::config_sections::ManifestBundleConfig,
-) -> Result<BundleSelection, ManifestError> {
-    match bundle.base.as_ref() {
-        Some(crate::config_sections::ManifestBundleBase::Path { dir })
-            if !dir.trim().is_empty() =>
-        {
-            let manifest_dir = manifest_path.parent().unwrap_or_else(|| Path::new("."));
-            let path = Path::new(dir.trim());
-            let resolved = if path.is_absolute() {
-                path.to_path_buf()
-            } else {
-                manifest_dir.join(path)
-            };
-            Ok(BundleSelection::Path { path: resolved })
+impl BundleSelection {
+    fn from_spec(manifest: &Path, spec: &ManifestBundleBase) -> Result<Self, ManifestError> {
+        match spec {
+            ManifestBundleBase::Path { dir } if !dir.trim().is_empty() => {
+                let path = Path::new(dir.trim());
+                Ok(Self::Path {
+                    path: if path.is_absolute() {
+                        path.into()
+                    } else {
+                        parent(manifest).join(path)
+                    },
+                })
+            }
+            ManifestBundleBase::Git { url, r#ref } if !url.trim().is_empty() => Ok(Self::Git {
+                url: url.trim().into(),
+                reference: r#ref
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_owned),
+            }),
+            ManifestBundleBase::Oci { url } if !url.trim().is_empty() => Ok(Self::Oci {
+                url: url.trim().into(),
+            }),
+            _ => Err(error(
+                manifest,
+                "source must declare a non-empty path, git URL or OCI URL",
+            )),
         }
-        Some(crate::config_sections::ManifestBundleBase::Git { url, r#ref })
-            if !url.trim().is_empty() =>
-        {
-            Ok(BundleSelection::Git {
-                url: url.trim().to_owned(),
-                reference: r#ref.clone().filter(|value| !value.trim().is_empty()),
-            })
-        }
-        Some(crate::config_sections::ManifestBundleBase::Oci { url }) if !url.trim().is_empty() => {
-            Ok(BundleSelection::Oci {
-                url: url.trim().to_owned(),
-            })
-        }
-        _ => Err(ManifestError::Compose {
-            path: manifest_path.to_path_buf(),
-            detail: "`[bundle]` must set `base` to a typed bundle source block".to_owned(),
-        }),
     }
-}
-
-pub(super) fn resolve_materialized_bundle_source(
-    manifest_path: &Path,
-    selection: &BundleSelection,
-) -> Result<ResolvedBundleSource, ManifestError> {
-    resolve_materialized_bundle_source_with_options(manifest_path, selection, false)
-}
-
-fn resolve_materialized_bundle_source_with_options(
-    manifest_path: &Path,
-    selection: &BundleSelection,
-    refresh_remote: bool,
-) -> Result<ResolvedBundleSource, ManifestError> {
-    match selection {
-        BundleSelection::Path { path } => Ok(ResolvedBundleSource {
-            source_type: BundleSourceType::Path,
-            local_path: path.clone(),
-            source_path: path.clone(),
-            version_hint: None,
-            stale: false,
-        }),
-        BundleSelection::Git { url, reference } => {
-            resolve_git_bundle_source(manifest_path, url, reference.as_deref(), refresh_remote)
+    fn spec(&self) -> ManifestBundleBase {
+        match self {
+            Self::Path { path } => ManifestBundleBase::Path {
+                dir: path.to_string_lossy().into(),
+            },
+            Self::Git { url, reference } => ManifestBundleBase::Git {
+                url: url.clone(),
+                r#ref: reference.clone(),
+            },
+            Self::Oci { url } => ManifestBundleBase::Oci { url: url.clone() },
         }
-        BundleSelection::Oci { url } => {
-            resolve_oci_bundle_source(manifest_path, url, refresh_remote)
+    }
+    pub(super) fn kind(&self) -> BundleSourceType {
+        match self {
+            Self::Path { .. } => BundleSourceType::Path,
+            Self::Git { .. } => BundleSourceType::Git,
+            Self::Oci { .. } => BundleSourceType::Oci,
+        }
+    }
+    pub(super) fn label(&self) -> PathBuf {
+        match self {
+            Self::Path { path } => path.clone(),
+            Self::Git { url, .. } => url.into(),
+            Self::Oci { url } => format!("oci://{url}").into(),
         }
     }
 }
 
-fn resolve_git_bundle_source(
-    manifest_path: &Path,
-    url: &str,
-    reference: Option<&str>,
-    refresh_remote: bool,
-) -> Result<ResolvedBundleSource, ManifestError> {
-    let local_path = git_bundle_cache_path(manifest_path, url, reference)?;
-    // Parallel manifest loads (e.g. overlapping docs/qa:* selectors) share this
-    // cache. Serialize clone/fetch/checkout/HEAD reads so one process cannot
-    // rev-parse while another is mid-checkout.
-    let _lock = GitBundleCacheLock::acquire(&local_path)?;
-    let remote_status_path = git_bundle_remote_status_path(&local_path);
-    let reference = reference
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("main");
-
-    let cache_exists = local_path.join(".git").is_dir();
-
-    if !cache_exists {
-        emit_git_bundle_status_line(&format!(
-            "cloning git bundle {}@{}",
-            render_git_bundle_source_label(url),
-            reference
-        ));
-        ensure_git_bundle_checkout(manifest_path, url, reference, &local_path)?;
-    } else if refresh_remote {
-        emit_git_bundle_status_line(&format!(
-            "refreshing git bundle {}@{}",
-            render_git_bundle_source_label(url),
-            reference
-        ));
-        ensure_git_bundle_checkout(manifest_path, url, reference, &local_path)?;
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SourceLock {
+    version: u8,
+    sources: BTreeMap<String, SourcePin>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SourcePin {
+    declaration: ManifestBundleBase,
+    object: PathBuf,
+    version: String,
+    #[serde(default)]
+    revision: Option<String>,
+}
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(transparent)]
+struct KnownVersions(BTreeMap<String, String>);
+impl Record for KnownVersions {
+    const MAX_BYTES: u64 = LOCK_MAX;
+    fn decode(bytes: &[u8]) -> Result<Self, String> {
+        let known: Self = serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
+        if known.0.len() > 4096 {
+            return Err("source hint inventory exceeds limit".into());
+        }
+        Ok(known)
     }
-    let mut version_hint = if local_path.join(".git").is_dir() {
-        Some(git_head_revision(manifest_path, &local_path)?)
-    } else {
-        None
+}
+fn source_key(selection: &BundleSelection) -> Result<String, serde_json::Error> {
+    let mut spec = selection.spec();
+    if let ManifestBundleBase::Git { url, .. } = &mut spec {
+        *url = canonical_git_cache_identity(url);
+    }
+    serde_json::to_vec(&spec).map(|bytes| sha256_hex(&bytes))
+}
+fn known_version(selection: &BundleSelection) -> Option<String> {
+    if effigy_core::container_detection::process_is_inside_effigy_workspace_container() {
+        return None;
+    }
+    let home = effigy_kernel::root::StateRoot::home_from_env()?;
+    let op = observe_context();
+    let cx = op.observe().ok()?;
+    let Observed::Verified(root, _) = effigy_kernel::root::StateRoot::observe(&cx, &home) else {
+        return None;
     };
-
-    if refresh_remote || !cache_exists {
-        write_cached_git_bundle_remote_status(&remote_status_path, version_hint.as_deref())?;
-    }
-
-    if should_probe_git_bundle_remote(
-        cache_exists,
-        refresh_remote,
-        process_is_inside_effigy_workspace_container(),
-    ) {
-        let cached_remote_commit = read_cached_git_bundle_remote_status(&remote_status_path)?
-            .filter(git_bundle_remote_status_is_fresh)
-            .map(|status| status.remote_commit);
-        let remote_commit = if let Some(remote_commit) = cached_remote_commit {
-            Some(remote_commit)
-        } else if let Ok(remote_commit) = git_ls_remote(manifest_path, url, reference, &local_path)
-        {
-            write_cached_git_bundle_remote_status(&remote_status_path, Some(&remote_commit))?;
-            Some(remote_commit)
-        } else {
-            None
-        };
-        if let Some(remote_commit) = remote_commit {
-            let local_commit = version_hint.clone().unwrap_or_default();
-            if remote_commit != local_commit {
-                emit_git_bundle_status_line(&format!(
-                    "updating git bundle {}@{} ({} -> {})",
-                    render_git_bundle_source_label(url),
-                    reference,
-                    abbreviate_revision(&local_commit),
-                    abbreviate_revision(&remote_commit)
-                ));
-                ensure_git_bundle_checkout(manifest_path, url, reference, &local_path)?;
-                version_hint = Some(git_head_revision(manifest_path, &local_path)?);
-                write_cached_git_bundle_remote_status(
-                    &remote_status_path,
-                    version_hint.as_deref(),
-                )?;
+    let dir = DirFd::open(root.path()).ok()?;
+    let Observed::Verified(known, _) =
+        read_record::<KnownVersions>(&cx, &dir, &FileName::new("sources-known.json").ok()?)
+    else {
+        return None;
+    };
+    known.0.get(&source_key(selection).ok()?).cloned()
+}
+impl Record for SourceLock {
+    const MAX_BYTES: u64 = LOCK_MAX;
+    fn decode(bytes: &[u8]) -> Result<Self, String> {
+        let lock: Self = serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
+        if lock.version != 1 {
+            return Err("unsupported source lock version".into());
+        }
+        for pin in lock.sources.values() {
+            if !pin.object.starts_with("cache/sources")
+                || !pin
+                    .object
+                    .components()
+                    .all(|part| matches!(part, Component::Normal(_)))
+            {
+                return Err("source lock object must stay inside cache/sources".into());
             }
         }
+        Ok(lock)
     }
-
-    Ok(ResolvedBundleSource {
-        source_type: BundleSourceType::Git,
-        local_path,
-        source_path: PathBuf::from(url),
-        version_hint,
-        stale: false,
-    })
 }
-
-fn resolve_oci_bundle_source(
-    manifest_path: &Path,
-    url: &str,
-    refresh_remote: bool,
-) -> Result<ResolvedBundleSource, ManifestError> {
-    #[cfg(test)]
-    if let Some(adapter) = test_oci_artifact_adapter() {
-        return resolve_oci_bundle_source_with_adapter(
-            manifest_path,
-            url,
-            adapter.as_ref(),
-            refresh_remote,
-        );
+fn parent(manifest: &Path) -> &Path {
+    manifest.parent().unwrap_or_else(|| Path::new("."))
+}
+fn error(manifest: &Path, detail: impl Into<String>) -> ManifestError {
+    ManifestError::Compose {
+        path: manifest.into(),
+        detail: detail.into(),
     }
-    let adapter = OrasCliArtifactAdapter::default();
-    resolve_oci_bundle_source_with_adapter(manifest_path, url, &adapter, refresh_remote)
 }
-
-fn resolve_oci_bundle_source_with_adapter(
-    manifest_path: &Path,
-    url: &str,
-    adapter: &dyn OciArtifactAdapter,
-    refresh_remote: bool,
-) -> Result<ResolvedBundleSource, ManifestError> {
-    let parsed = ArtifactSourceRef::parse(format!("oci://{url}")).map_err(|error| {
-        ManifestError::Compose {
-            path: manifest_path.to_path_buf(),
-            detail: format!("invalid OCI bundle source `{url}`: {error}"),
-        }
-    })?;
-    let ArtifactSourceRef::Oci(reference) = parsed else {
-        return Err(ManifestError::Compose {
-            path: manifest_path.to_path_buf(),
-            detail: format!("invalid OCI bundle source `{url}`"),
-        });
-    };
-
-    let descriptor = adapter
-        .inspect(&effigy_artifacts::OciArtifactInspectRequest {
-            reference: reference.clone(),
-        })
-        .map_err(|error| ManifestError::Compose {
-            path: manifest_path.to_path_buf(),
-            detail: error.to_string(),
-        })?;
-    let digest = descriptor.digest.clone();
-    let local_path = oci_bundle_cache_path(manifest_path, reference.reference())?;
-    let metadata_path = oci_bundle_metadata_path(&local_path);
-    let cached_digest = read_cached_oci_bundle_digest(&metadata_path)?;
-    let needs_pull = !local_path.is_dir() || cached_digest.is_none();
-    let stale = !needs_pull && cached_digest.as_ref() != digest.as_ref();
-
-    if needs_pull || (refresh_remote && stale) {
-        let report = adapter
-            .pull(&OciArtifactPullRequest {
-                reference: reference.clone(),
-                destination_root: local_path
-                    .parent()
-                    .unwrap_or_else(|| Path::new("."))
-                    .to_path_buf(),
-            })
-            .map_err(|error| ManifestError::Compose {
-                path: manifest_path.to_path_buf(),
-                detail: error.to_string(),
-            })?;
-        replace_bundle_cache_root(&report.pulled_root, &local_path, manifest_path)?;
-        write_cached_oci_bundle_digest(&metadata_path, digest.as_deref())?;
+fn io_error(path: &Path, error: std::io::Error) -> ManifestError {
+    ManifestError::Read {
+        path: path.into(),
+        error,
     }
-
-    Ok(ResolvedBundleSource {
-        source_type: BundleSourceType::Oci,
-        local_path,
-        source_path: PathBuf::from(format!("oci://{url}")),
-        version_hint: digest,
-        stale: stale && !refresh_remote,
-    })
 }
-
-fn ensure_git_bundle_checkout(
-    manifest_path: &Path,
-    url: &str,
-    reference: &str,
-    local_path: &Path,
-) -> Result<(), ManifestError> {
-    if !local_path.join(".git").is_dir() {
-        if local_path.exists() && !local_path.is_dir() {
-            return Err(ManifestError::Compose {
-                path: manifest_path.to_path_buf(),
-                detail: format!(
-                    "git bundle cache path exists but is not a directory: {}",
-                    local_path.display()
-                ),
-            });
-        }
-        if let Some(parent) = local_path.parent() {
-            std::fs::create_dir_all(parent).map_err(|error| ManifestError::Read {
-                path: parent.to_path_buf(),
-                error,
-            })?;
-        }
-        let destination = local_path.to_string_lossy().to_string();
-        run_git(
-            manifest_path,
-            None,
-            &["clone", "--no-checkout", url, &destination],
-            local_path.parent(),
-        )?;
-    }
-
-    run_git(
-        manifest_path,
-        Some(local_path),
-        &["remote", "set-url", "origin", url],
-        None,
-    )?;
-    run_git(
-        manifest_path,
-        Some(local_path),
-        &["fetch", "--depth", "1", "origin", reference],
-        None,
-    )?;
-    run_git(
-        manifest_path,
-        Some(local_path),
-        &["checkout", "--detach", "FETCH_HEAD"],
-        None,
-    )?;
-    Ok(())
-}
-
-fn git_head_revision(manifest_path: &Path, local_path: &Path) -> Result<String, ManifestError> {
-    let output = run_git(
-        manifest_path,
-        Some(local_path),
-        &["rev-parse", "HEAD"],
-        None,
-    )?;
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
-}
-
-fn git_ls_remote(
-    manifest_path: &Path,
-    url: &str,
-    reference: &str,
-    local_path: &Path,
-) -> Result<String, ManifestError> {
-    let output = run_git(
-        manifest_path,
-        Some(local_path),
-        &["ls-remote", url, reference],
-        None,
-    )?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let commit = stdout
-        .lines()
-        .next()
-        .and_then(|line| line.split_whitespace().next())
-        .unwrap_or("")
-        .to_owned();
-    if commit.is_empty() {
-        return Err(ManifestError::Compose {
-            path: manifest_path.to_path_buf(),
-            detail: format!("git ls-remote returned no commit for {url} {reference}"),
-        });
-    }
-    Ok(commit)
-}
-
-fn should_probe_git_bundle_remote(
-    cache_exists: bool,
-    refresh_remote: bool,
-    inside_effigy_workspace_container: bool,
-) -> bool {
-    cache_exists && !refresh_remote && !inside_effigy_workspace_container
-}
-
-fn run_git(
-    manifest_path: &Path,
-    cwd: Option<&Path>,
-    args: &[&str],
-    create_dir: Option<&Path>,
-) -> Result<std::process::Output, ManifestError> {
-    if let Some(dir) = create_dir {
-        std::fs::create_dir_all(dir).map_err(|error| ManifestError::Read {
-            path: dir.to_path_buf(),
-            error,
-        })?;
-    }
-    run_git_output(
-        cwd,
-        args,
-        |error| ManifestError::Read {
-            path: manifest_path.to_path_buf(),
-            error,
+fn observe_context() -> OperationContext {
+    OperationContext::new(
+        Deadline::At(Instant::now() + Duration::from_secs(5)),
+        CancelToken::default(),
+        Limits {
+            capture_tail: 1024,
+            log_rotate: 4096,
+            log_keep: 1,
+            line_max: 4096,
+            queue_bytes: 4096,
+            probe_concurrency: 1,
         },
-        |detail| ManifestError::Compose {
-            path: manifest_path.to_path_buf(),
-            detail,
-        },
+        EffectClass::Observe,
+        Placement::Host,
     )
 }
-
-fn emit_git_bundle_status_line(message: &str) {
-    if !std::io::stderr().is_terminal() || std::env::var_os("CI").is_some() {
-        return;
+fn read_lock(manifest: &Path) -> Result<Option<SourceLock>, ManifestError> {
+    let directory = parent(manifest).join(".effigy");
+    if !directory.exists() {
+        return Ok(None);
     }
-    let mut stderr = std::io::stderr().lock();
-    let _ = writeln!(stderr, "[bundle] {message}");
+    let dir = DirFd::open(&directory).map_err(|err| error(manifest, err.to_string()))?;
+    let op = observe_context();
+    let cx = op
+        .observe()
+        .map_err(|err| error(manifest, format!("{err:?}")))?;
+    let file = FileName::new(LOCK_FILE).map_err(|err| error(manifest, err.to_string()))?;
+    match read_record(&cx, &dir, &file) {
+        Observed::Verified(lock, _) => Ok(Some(lock)),
+        Observed::Absent(_) => Ok(None),
+        Observed::Unknown(reason) => Err(error(
+            manifest,
+            format!(
+                "source lock unavailable: {reason:?}; restore the lock or run `effigy bundle sync`"
+            ),
+        )),
+    }
 }
 
-fn render_git_bundle_source_label(url: &str) -> String {
-    canonical_git_cache_identity(url)
+pub(super) fn resolve_bundle_selection(
+    manifest: &Path,
+    bundle: &crate::ManifestBundleConfig,
+) -> Result<BundleSelection, ManifestError> {
+    BundleSelection::from_spec(
+        manifest,
+        bundle
+            .base
+            .as_ref()
+            .ok_or_else(|| error(manifest, "`[bundle]` must set a typed `base` source"))?,
+    )
 }
-
-fn abbreviate_revision(revision: &str) -> &str {
-    revision.get(..7).unwrap_or(revision)
+pub(super) fn resolve_materialized_bundle_source(
+    manifest: &Path,
+    selection: &BundleSelection,
+) -> Result<ResolvedBundleSource, ManifestError> {
+    resolve_source(manifest, "bundle", selection)
 }
-
-fn git_bundle_cache_path(
-    manifest_path: &Path,
-    url: &str,
-    reference: Option<&str>,
-) -> Result<PathBuf, ManifestError> {
-    let cache_root = bundle_cache_home_dir(manifest_path)?.join("cache/bundles/git");
-    let identity = canonical_git_cache_identity(url);
-    let cache_key = sha256_hex(identity.as_bytes());
-    let reference = reference
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("main");
-    Ok(cache_root
-        .join(cache_key)
-        .join(sanitize_cache_segment(reference)))
-}
-
-fn git_bundle_cache_lock_path(local_path: &Path) -> PathBuf {
-    let mut path = local_path.as_os_str().to_owned();
-    path.push(".lock");
-    PathBuf::from(path)
-}
-
-/// Cross-process exclusive lock for one git bundle cache checkout.
-struct GitBundleCacheLock {
-    file: File,
-}
-
-impl GitBundleCacheLock {
-    fn acquire(local_path: &Path) -> Result<Self, ManifestError> {
-        let lock_path = git_bundle_cache_lock_path(local_path);
-        if let Some(parent) = lock_path.parent() {
-            std::fs::create_dir_all(parent).map_err(|error| ManifestError::Read {
-                path: parent.to_path_buf(),
-                error,
-            })?;
+fn resolve_source(
+    manifest: &Path,
+    name: &str,
+    selection: &BundleSelection,
+) -> Result<ResolvedBundleSource, ManifestError> {
+    let lock = read_lock(manifest)?;
+    if let Some(pin) = lock.as_ref().and_then(|lock| lock.sources.get(name)) {
+        let root = parent(manifest).join(".effigy").join(&pin.object);
+        if !root.is_dir() {
+            return Err(error(
+                manifest,
+                format!("pinned source `{name}` is unavailable; run `effigy bundle sync`"),
+            ));
         }
-        let file = OpenOptions::new()
-            .create(true)
-            .read(true)
-            .write(true)
-            .truncate(false)
-            .open(&lock_path)
-            .map_err(|error| ManifestError::Read {
-                path: lock_path.clone(),
-                error,
-            })?;
-        file.lock_exclusive().map_err(|error| ManifestError::Read {
-            path: lock_path,
-            error,
-        })?;
-        Ok(Self { file })
+        let stale = pin.declaration != selection.spec()
+            || known_version(selection).is_some_and(|version| version != pin.version);
+        if stale {
+            notice("bundle behind: run `effigy bundle sync`");
+        }
+        let selected = BundleSelection::from_spec(manifest, &pin.declaration)?;
+        return Ok(ResolvedBundleSource {
+            source_type: selected.kind(),
+            source_path: selected.label(),
+            local_path: root,
+            version_hint: pin.revision.clone().or_else(|| Some(pin.version.clone())),
+            stale,
+        });
+    }
+    // Read-only migration view. Prepare imports these exact bytes before any
+    // first-run acquisition. Discovery never records a pin or refreshes them.
+    if let Some(root) = legacy_root(manifest, selection)
+        .filter(|root| root.is_dir() || matches!(selection, BundleSelection::Path { .. }))
+    {
+        return Ok(ResolvedBundleSource {
+            source_type: selection.kind(),
+            source_path: selection.label(),
+            version_hint: legacy_version(&root, selection),
+            local_path: root,
+            stale: false,
+        });
+    }
+    Err(error(manifest, format!("source `{name}` is not prepared; run `effigy bundle sync` (or start `effigy dev` / `effigy bootstrap`)")))
+}
+fn inspect(resolved: ResolvedBundleSource) -> BundleSourceInspectReport {
+    BundleSourceInspectReport {
+        source_type: resolved.source_type,
+        source_path: resolved.source_path,
+        local_path: resolved.local_path,
+        version_hint: resolved.version_hint,
+        stale: resolved.stale,
     }
 }
-
-impl Drop for GitBundleCacheLock {
-    fn drop(&mut self) {
-        let _ = FileExt::unlock(&self.file);
+/// Pure preflight for bootstrap/dev, before opening any preparation context.
+pub fn bundle_sources_need_preparation(manifest: &Path) -> Result<bool, ManifestError> {
+    let (bundle, catalogs) = crate::composition::load_manifest_source_declarations(manifest)?;
+    if bundle.is_none() && catalogs.is_empty() {
+        return Ok(false);
+    }
+    let lock = read_lock(manifest)?;
+    Ok(lock.is_none_or(|lock| {
+        (bundle.is_some() && !lock.sources.contains_key("bundle"))
+            || catalogs
+                .keys()
+                .any(|name| !lock.sources.contains_key(&format!("catalog:{name}")))
+    }))
+}
+pub fn inspect_bundle_source(
+    manifest: &Path,
+) -> Result<Option<BundleSourceInspectReport>, ManifestError> {
+    let (bundle, _) = crate::composition::load_manifest_source_declarations(manifest)?;
+    bundle
+        .as_ref()
+        .map(|bundle| {
+            resolve_bundle_selection(manifest, bundle)
+                .and_then(|selection| resolve_source(manifest, "bundle", &selection))
+                .map(inspect)
+        })
+        .transpose()
+}
+/// Resolve a declared catalog source from the same checkout lock as bundles.
+/// This does no acquisition and is available to the catalog fragment resolver.
+pub fn resolve_catalog_source(
+    manifest: &Path,
+    name: &str,
+    source: &ManifestBundleBase,
+) -> Result<BundleSourceInspectReport, ManifestError> {
+    let selection = BundleSelection::from_spec(manifest, source)?;
+    resolve_source(manifest, &format!("catalog:{name}"), &selection).map(inspect)
+}
+fn notice(message: &str) {
+    // A single bounded diagnostic per process; nested manifest discovery can
+    // resolve the same checkout repeatedly (completion and graph in particular).
+    static EMITTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if !EMITTED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        eprintln!("[bundle] {message}");
     }
 }
-
-fn oci_bundle_cache_path(manifest_path: &Path, reference: &str) -> Result<PathBuf, ManifestError> {
-    let locator = oci_bundle_cache_locator(reference);
-    Ok(bundle_cache_home_dir(manifest_path)?
-        .join("cache/bundles/oci")
-        .join(locator.registry)
-        .join(locator.repository_path)
-        .join(locator.version_segment))
-}
-
-fn oci_bundle_metadata_path(local_path: &Path) -> PathBuf {
-    local_path.join(".effigy-bundle-source.digest")
-}
-
-fn git_bundle_remote_status_path(local_path: &Path) -> PathBuf {
-    local_path.join(".effigy-bundle-source.git-remote")
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct GitBundleRemoteStatus {
-    checked_at_ms: u64,
-    remote_commit: String,
-}
-
-fn git_bundle_remote_check_ttl() -> Duration {
-    let ttl_secs = std::env::var("EFFIGY_GIT_BUNDLE_REMOTE_CHECK_TTL_SECS")
-        .ok()
-        .and_then(|raw| raw.trim().parse::<u64>().ok())
-        .unwrap_or(60);
-    Duration::from_secs(ttl_secs)
-}
-
-fn current_unix_timestamp_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis()
-        .try_into()
-        .unwrap_or(u64::MAX)
-}
-
-fn git_bundle_remote_status_is_fresh(status: &GitBundleRemoteStatus) -> bool {
-    let age_ms = current_unix_timestamp_ms().saturating_sub(status.checked_at_ms);
-    age_ms
-        <= git_bundle_remote_check_ttl()
-            .as_millis()
-            .try_into()
-            .unwrap_or(u64::MAX)
-}
-
-fn read_cached_git_bundle_remote_status(
-    metadata_path: &Path,
-) -> Result<Option<GitBundleRemoteStatus>, ManifestError> {
-    let Ok(raw) = std::fs::read_to_string(metadata_path) else {
-        return Ok(None);
-    };
-    let mut lines = raw.lines();
-    let checked_at_ms = lines
-        .next()
-        .and_then(|value| value.trim().parse::<u64>().ok());
-    let remote_commit = lines
-        .next()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned);
-    match (checked_at_ms, remote_commit) {
-        (Some(checked_at_ms), Some(remote_commit)) => Ok(Some(GitBundleRemoteStatus {
-            checked_at_ms,
-            remote_commit,
-        })),
-        _ => Ok(None),
-    }
-}
-
-fn write_cached_git_bundle_remote_status(
-    metadata_path: &Path,
-    remote_commit: Option<&str>,
-) -> Result<(), ManifestError> {
-    let Some(parent) = metadata_path.parent() else {
-        return Ok(());
-    };
-    std::fs::create_dir_all(parent).map_err(|error| ManifestError::Read {
-        path: parent.to_path_buf(),
-        error,
-    })?;
-    let remote_commit = remote_commit.unwrap_or_default().trim();
-    if remote_commit.is_empty() {
-        return Ok(());
-    }
-    let rendered = format!("{}\n{}\n", current_unix_timestamp_ms(), remote_commit);
-    std::fs::write(metadata_path, rendered).map_err(|error| ManifestError::Read {
-        path: metadata_path.to_path_buf(),
-        error,
+fn legacy_root(manifest: &Path, selection: &BundleSelection) -> Option<PathBuf> {
+    let cache = parent(manifest).join(".effigy/cache/bundles");
+    Some(match selection {
+        BundleSelection::Path { path } => path.clone(),
+        BundleSelection::Git { url, reference } => cache
+            .join("git")
+            .join(sha256_hex(canonical_git_cache_identity(url).as_bytes()))
+            .join(sanitize_cache_segment(
+                reference.as_deref().unwrap_or("main"),
+            )),
+        BundleSelection::Oci { url } => {
+            let locator = oci_bundle_cache_locator(url);
+            cache
+                .join("oci")
+                .join(locator.registry)
+                .join(locator.repository_path)
+                .join(locator.version_segment)
+        }
     })
 }
-
-fn read_cached_oci_bundle_digest(metadata_path: &Path) -> Result<Option<String>, ManifestError> {
-    let Ok(raw) = std::fs::read_to_string(metadata_path) else {
-        return Ok(None);
-    };
-    let digest = raw.trim().to_owned();
-    if digest.is_empty() {
-        return Ok(None);
+fn read_small(path: &Path, max: u64) -> Option<String> {
+    let mut bytes = String::new();
+    let file = std::fs::File::open(path).ok()?;
+    if !file.metadata().ok()?.is_file() {
+        return None;
     }
-    Ok(Some(digest))
+    file.take(max + 1).read_to_string(&mut bytes).ok()?;
+    (bytes.len() as u64 <= max).then_some(bytes)
 }
-
-fn write_cached_oci_bundle_digest(
-    metadata_path: &Path,
-    digest: Option<&str>,
-) -> Result<(), ManifestError> {
-    let Some(parent) = metadata_path.parent() else {
-        return Ok(());
-    };
-    std::fs::create_dir_all(parent).map_err(|error| ManifestError::Read {
-        path: parent.to_path_buf(),
-        error,
-    })?;
-    std::fs::write(metadata_path, digest.unwrap_or_default()).map_err(|error| ManifestError::Read {
-        path: metadata_path.to_path_buf(),
-        error,
-    })
-}
-
-fn replace_bundle_cache_root(
-    pulled_root: &Path,
-    local_path: &Path,
-    manifest_path: &Path,
-) -> Result<(), ManifestError> {
-    if let Some(parent) = local_path.parent() {
-        std::fs::create_dir_all(parent).map_err(|error| ManifestError::Read {
-            path: parent.to_path_buf(),
-            error,
-        })?;
-    }
-    if local_path.exists() {
-        std::fs::remove_dir_all(local_path).map_err(|error| ManifestError::Read {
-            path: local_path.to_path_buf(),
-            error,
-        })?;
-    }
-    copy_dir_all(pulled_root, local_path, manifest_path)?;
-    std::fs::remove_dir_all(pulled_root).map_err(|error| ManifestError::Read {
-        path: pulled_root.to_path_buf(),
-        error,
-    })
-}
-
-fn copy_dir_all(
-    source: &Path,
-    destination: &Path,
-    manifest_path: &Path,
-) -> Result<(), ManifestError> {
-    std::fs::create_dir_all(destination).map_err(|error| ManifestError::Read {
-        path: destination.to_path_buf(),
-        error,
-    })?;
-    for entry in std::fs::read_dir(source).map_err(|error| ManifestError::Read {
-        path: source.to_path_buf(),
-        error,
-    })? {
-        let entry = entry.map_err(|error| ManifestError::Read {
-            path: source.to_path_buf(),
-            error,
-        })?;
-        let entry_path = entry.path();
-        let destination_path = destination.join(entry.file_name());
-        if entry_path.is_dir() {
-            copy_dir_all(&entry_path, &destination_path, manifest_path)?;
-        } else if entry_path.is_file() {
-            std::fs::copy(&entry_path, &destination_path).map_err(|error| {
-                ManifestError::Compose {
-                    path: manifest_path.to_path_buf(),
-                    detail: format!(
-                        "failed to materialize OCI bundle cache file {}: {error}",
-                        destination_path.display()
-                    ),
+fn legacy_version(root: &Path, selection: &BundleSelection) -> Option<String> {
+    match selection {
+        BundleSelection::Git { .. } => {
+            let head = read_small(&root.join(".git/HEAD"), 4096)?;
+            let head = head.trim();
+            if let Some(reference) = head.strip_prefix("ref: ") {
+                if !reference.starts_with("refs/")
+                    || !Path::new(reference)
+                        .components()
+                        .all(|part| matches!(part, Component::Normal(_)))
+                {
+                    return None;
                 }
-            })?;
+                read_small(&root.join(".git").join(reference), 4096)
+                    .map(|value| value.trim().into())
+            } else {
+                Some(head.into())
+            }
         }
+        BundleSelection::Oci { .. } => read_small(&root.join(".effigy-bundle-source.digest"), 4096)
+            .map(|value| value.trim().into()),
+        BundleSelection::Path { .. } => None,
     }
-    Ok(())
 }
-
 struct OciBundleCacheLocator {
     registry: String,
     repository_path: String,
@@ -718,692 +460,50 @@ fn oci_bundle_cache_locator(reference: &str) -> OciBundleCacheLocator {
     }
 }
 
-fn bundle_cache_home_dir(manifest_path: &Path) -> Result<PathBuf, ManifestError> {
-    if let Some(path) = test_bundle_home_dir() {
-        return Ok(path.join(".effigy"));
-    }
-    // Store bundle caches inside the project's .effigy directory so they're
-    // available inside workspace containers (which mount the project root).
-    let project_root = manifest_path.parent().unwrap_or_else(|| Path::new("."));
-    Ok(project_root.join(".effigy"))
-}
-
-pub fn sync_bundle_source(manifest_path: &Path) -> Result<Option<BundleSyncReport>, ManifestError> {
-    let Some(bundle) = crate::composition::load_manifest_bundle_config(manifest_path)? else {
-        return Ok(None);
-    };
-    let selection = resolve_bundle_selection(manifest_path, &bundle)?;
-    match &selection {
-        BundleSelection::Path { path } => Ok(Some(BundleSyncReport {
-            source_type: BundleSourceType::Path,
-            source_path: path.clone(),
-            local_path: Some(path.clone()),
-            version_hint: None,
-            changed: false,
-            applicable: false,
-        })),
-        BundleSelection::Git { url, reference } => {
-            let before = read_cached_git_bundle_version(manifest_path, url, reference.as_deref())?;
-            let resolved =
-                resolve_materialized_bundle_source_with_options(manifest_path, &selection, true)?;
-            Ok(Some(BundleSyncReport {
-                source_type: BundleSourceType::Git,
-                source_path: resolved.source_path,
-                local_path: Some(resolved.local_path),
-                changed: before != resolved.version_hint,
-                version_hint: resolved.version_hint,
-                applicable: true,
-            }))
-        }
-        BundleSelection::Oci { .. } => {
-            let before = read_cached_oci_bundle_version(manifest_path, &selection)?;
-            let resolved =
-                resolve_materialized_bundle_source_with_options(manifest_path, &selection, true)?;
-            Ok(Some(BundleSyncReport {
-                source_type: BundleSourceType::Oci,
-                source_path: resolved.source_path,
-                local_path: Some(resolved.local_path),
-                changed: before != resolved.version_hint,
-                version_hint: resolved.version_hint,
-                applicable: true,
-            }))
-        }
-    }
-}
-
-pub fn inspect_bundle_source(
-    manifest_path: &Path,
-) -> Result<Option<BundleSourceInspectReport>, ManifestError> {
-    let Some(bundle) = crate::composition::load_manifest_bundle_config(manifest_path)? else {
-        return Ok(None);
-    };
-    let selection = resolve_bundle_selection(manifest_path, &bundle)?;
-    let resolved =
-        resolve_materialized_bundle_source_with_options(manifest_path, &selection, false)?;
-    Ok(Some(BundleSourceInspectReport {
-        source_type: resolved.source_type,
-        source_path: resolved.source_path,
-        local_path: resolved.local_path,
-        version_hint: resolved.version_hint,
-        stale: resolved.stale,
-    }))
-}
-
-fn read_cached_git_bundle_version(
-    manifest_path: &Path,
-    url: &str,
-    reference: Option<&str>,
-) -> Result<Option<String>, ManifestError> {
-    let local_path = git_bundle_cache_path(manifest_path, url, reference)?;
-    if !local_path.join(".git").is_dir() {
-        return Ok(None);
-    }
-    let _lock = GitBundleCacheLock::acquire(&local_path)?;
-    git_head_revision(manifest_path, &local_path).map(Some)
-}
-
-fn read_cached_oci_bundle_version(
-    manifest_path: &Path,
-    selection: &BundleSelection,
-) -> Result<Option<String>, ManifestError> {
-    let BundleSelection::Oci { url } = selection else {
-        return Ok(None);
-    };
-    let local_path = oci_bundle_cache_path(manifest_path, url)?;
-    read_cached_oci_bundle_digest(&oci_bundle_metadata_path(&local_path))
-}
-
-#[cfg(test)]
-thread_local! {
-    static TEST_BUNDLE_HOME: std::cell::RefCell<Option<PathBuf>> = const {
-        std::cell::RefCell::new(None)
-    };
-    static TEST_OCI_ARTIFACT_ADAPTER:
-        std::cell::RefCell<Option<std::rc::Rc<dyn OciArtifactAdapter>>> = const {
-            std::cell::RefCell::new(None)
-        };
-}
-
-#[cfg(test)]
-fn test_bundle_home_dir() -> Option<PathBuf> {
-    TEST_BUNDLE_HOME.with(|slot| slot.borrow().clone())
-}
-
-#[cfg(test)]
-#[allow(dead_code)]
-fn test_oci_artifact_adapter() -> Option<std::rc::Rc<dyn OciArtifactAdapter>> {
-    TEST_OCI_ARTIFACT_ADAPTER.with(|slot| slot.borrow().clone())
-}
-
-#[cfg(not(test))]
-fn test_bundle_home_dir() -> Option<PathBuf> {
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use effigy_artifacts::{
-        OciArtifactDescriptor, OciArtifactError, OciArtifactInspectRequest, OciArtifactPullReport,
-        OciArtifactPullRequest, OciArtifactPushReport, OciArtifactPushRequest,
-    };
-    use std::cell::Cell;
-    use std::process::Command;
-    use std::rc::Rc;
-    use std::sync::atomic::{AtomicU64, Ordering};
-    use std::sync::{Arc, Barrier};
-    use std::thread;
-
-    struct TestBundleHomeGuard(Option<PathBuf>);
-    struct TestOciArtifactAdapterGuard(Option<Rc<dyn OciArtifactAdapter>>);
-
-    impl Drop for TestBundleHomeGuard {
-        fn drop(&mut self) {
-            TEST_BUNDLE_HOME.with(|slot| {
-                *slot.borrow_mut() = self.0.take();
-            });
-        }
-    }
-
-    impl Drop for TestOciArtifactAdapterGuard {
-        fn drop(&mut self) {
-            TEST_OCI_ARTIFACT_ADAPTER.with(|slot| {
-                *slot.borrow_mut() = self.0.take();
-            });
-        }
-    }
-
-    fn with_test_bundle_home(path: &Path) -> TestBundleHomeGuard {
-        let previous = TEST_BUNDLE_HOME.with(|slot| slot.borrow_mut().replace(path.to_path_buf()));
-        TestBundleHomeGuard(previous)
-    }
-
-    fn with_test_oci_adapter(adapter: Rc<dyn OciArtifactAdapter>) -> TestOciArtifactAdapterGuard {
-        let previous = TEST_OCI_ARTIFACT_ADAPTER.with(|slot| slot.borrow_mut().replace(adapter));
-        TestOciArtifactAdapterGuard(previous)
-    }
-
-    fn git(args: &[&str], cwd: &Path) {
-        let status = Command::new("git")
-            .args(args)
-            .current_dir(cwd)
-            .status()
-            .expect("run git");
-        assert!(
-            status.success(),
-            "git {:?} failed in {}",
-            args,
-            cwd.display()
-        );
-    }
-
-    fn write_local_bundle_repo(repo: &Path) {
-        std::fs::create_dir_all(repo).expect("mkdir repo");
-        std::fs::write(
-            repo.join("bundle.toml"),
-            r#"
-[bundle]
-name = "acme"
-
-[[inputs]]
-name = "host"
-type = "string"
-required = true
-"#,
-        )
-        .expect("write descriptor");
-        std::fs::write(
-            repo.join("effigy.toml"),
-            r#"
-[tasks.dev]
-run = "serve {{ inputs.host }}"
-"#,
-        )
-        .expect("write defaults");
-        git(&["init"], repo);
-        git(&["config", "user.email", "effigy@example.test"], repo);
-        git(&["config", "user.name", "Effigy Tests"], repo);
-        git(&["add", "."], repo);
-        git(&["commit", "-m", "init"], repo);
-        git(&["branch", "-M", "main"], repo);
-    }
-
-    fn write_local_bundle_files(root: &Path) {
-        std::fs::create_dir_all(root).expect("mkdir bundle root");
-        std::fs::write(
-            root.join("bundle.toml"),
-            r#"
-[bundle]
-name = "acme"
-
-[[inputs]]
-name = "host"
-type = "string"
-required = true
-"#,
-        )
-        .expect("write descriptor");
-        std::fs::write(
-            root.join("effigy.toml"),
-            r#"
-[tasks.dev]
-run = "serve {{ inputs.host }}"
-"#,
-        )
-        .expect("write defaults");
-    }
-
-    struct FakeOciBundleAdapter {
-        digest: String,
-        pulls: Cell<u32>,
-    }
-
-    impl OciArtifactAdapter for FakeOciBundleAdapter {
-        fn inspect(
-            &self,
-            request: &OciArtifactInspectRequest,
-        ) -> Result<OciArtifactDescriptor, OciArtifactError> {
-            Ok(OciArtifactDescriptor::new(&request.reference).with_digest(self.digest.clone()))
-        }
-
-        fn pull(
-            &self,
-            _request: &OciArtifactPullRequest,
-        ) -> Result<OciArtifactPullReport, OciArtifactError> {
-            static COUNTER: AtomicU64 = AtomicU64::new(0);
-            self.pulls.set(self.pulls.get() + 1);
-            let pulled_root = std::env::temp_dir().join(format!(
-                "effigy-oci-bundle-pull-{}-{}-{}",
-                std::process::id(),
-                COUNTER.fetch_add(1, Ordering::Relaxed),
-                self.pulls.get()
-            ));
-            write_local_bundle_files(&pulled_root);
-            Ok(OciArtifactPullReport {
-                descriptor: OciArtifactDescriptor {
-                    reference: "oci://ghcr.io/acme/bundle:v1".to_owned(),
-                    redacted_reference: "ghcr.io/acme/bundle:v1".to_owned(),
-                    digest: Some(self.digest.clone()),
-                    media_type: None,
-                    size: None,
-                },
-                pulled_root,
-                primary_files: vec![PathBuf::from("bundle.toml"), PathBuf::from("effigy.toml")],
-            })
-        }
-
-        fn push(
-            &self,
-            _request: &OciArtifactPushRequest,
-        ) -> Result<OciArtifactPushReport, OciArtifactError> {
-            unreachable!("push not used in bundle source tests")
-        }
-    }
-
-    struct FailingPullOciBundleAdapter;
-
-    impl OciArtifactAdapter for FailingPullOciBundleAdapter {
-        fn inspect(
-            &self,
-            request: &OciArtifactInspectRequest,
-        ) -> Result<OciArtifactDescriptor, OciArtifactError> {
-            Ok(OciArtifactDescriptor::new(&request.reference).with_digest("sha256:pullfail"))
-        }
-
-        fn pull(
-            &self,
-            request: &OciArtifactPullRequest,
-        ) -> Result<OciArtifactPullReport, OciArtifactError> {
-            Err(OciArtifactError::PullFailed {
-                reference: request.reference.redacted(),
-                message: "unauthorized; authenticate first with `oras login ghcr.io` and retry"
-                    .to_owned(),
-            })
-        }
-
-        fn push(
-            &self,
-            _request: &OciArtifactPushRequest,
-        ) -> Result<OciArtifactPushReport, OciArtifactError> {
-            unreachable!("push not used in bundle source tests")
-        }
-    }
-
     #[test]
-    fn canonical_git_cache_identity_normalizes_common_remote_forms() {
-        let ssh = canonical_git_cache_identity("git@github.com:Acme/Bundle.git");
-        let https = canonical_git_cache_identity("https://github.com/acme/bundle.git");
-        assert_eq!(ssh, https);
-        assert_eq!(ssh, "github.com/acme/bundle");
-    }
-
-    #[test]
-    fn git_bundle_source_materializes_into_shared_cache_root() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let bundle_home = tmp.path().join("bundle-home");
-        let _home = with_test_bundle_home(&bundle_home);
-
-        let source_repo = tmp.path().join("bundle-source");
-        write_local_bundle_repo(&source_repo);
-
-        let consumer = tmp.path().join("consumer");
-        std::fs::create_dir_all(&consumer).expect("mkdir consumer");
-        let manifest_path = consumer.join("effigy.toml");
+    fn missing_remote_source_is_a_pure_error() {
+        let home = tempfile::tempdir().unwrap();
+        let manifest = home.path().join("effigy.toml");
         std::fs::write(
-            &manifest_path,
-            format!(
-                "[bundle]\nbase = {{ type = \"git\", url = {:?}, ref = \"main\" }}\nhost = \"acme.test\"\n",
-                source_repo.display().to_string()
-            ),
+            &manifest,
+            r#"[bundle]
+base = { type = "git", url = "https://invalid.invalid/bundle" }
+"#,
         )
-        .expect("write manifest");
-
-        let loaded =
-            crate::load_task_manifest_with_inspection(&manifest_path).expect("load manifest");
-        let task = loaded.manifest.tasks.get("dev").expect("task");
-        assert!(matches!(
-            task.run.as_ref().expect("run"),
-            crate::ManifestManagedRun::Command(command) if command == "serve acme.test"
-        ));
-        let bundle_root = loaded.bundle_root.expect("bundle root");
-        assert!(bundle_root.starts_with(bundle_home.join(".effigy/cache/bundles/git")));
-        assert!(bundle_root.join("bundle.toml").exists());
-        assert!(bundle_root.join("effigy.toml").exists());
-    }
-
-    #[test]
-    fn parallel_git_bundle_refreshes_serialize_head_reads() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let source_repo = tmp.path().join("bundle-source");
-        write_local_bundle_repo(&source_repo);
-
-        let consumer = tmp.path().join("consumer");
-        std::fs::create_dir_all(&consumer).expect("mkdir consumer");
-        let manifest_path = consumer.join("effigy.toml");
-        let url = source_repo.display().to_string();
-        std::fs::write(
-            &manifest_path,
-            format!(
-                "[bundle]\nbase = {{ type = \"git\", url = {url:?}, ref = \"main\" }}\nhost = \"acme.test\"\n"
-            ),
-        )
-        .expect("write manifest");
-
-        let selection = BundleSelection::Git {
-            url: url.clone(),
-            reference: Some("main".to_owned()),
+        .unwrap();
+        let source = BundleSelection::Git {
+            url: "https://invalid.invalid/bundle".into(),
+            reference: None,
         };
-        let warm =
-            resolve_materialized_bundle_source_with_options(&manifest_path, &selection, true)
-                .expect("warm cache");
-        let expected = warm.version_hint.expect("warm version");
-
-        let workers = 8;
-        let barrier = Arc::new(Barrier::new(workers));
-        let mut handles = Vec::with_capacity(workers);
-        for _ in 0..workers {
-            let manifest_path = manifest_path.clone();
-            let selection = BundleSelection::Git {
-                url: url.clone(),
-                reference: Some("main".to_owned()),
-            };
-            let barrier = Arc::clone(&barrier);
-            let expected = expected.clone();
-            handles.push(thread::spawn(move || {
-                barrier.wait();
-                for _ in 0..4 {
-                    let resolved = resolve_materialized_bundle_source_with_options(
-                        &manifest_path,
-                        &selection,
-                        true,
-                    )
-                    .expect("parallel resolve");
-                    assert_eq!(resolved.version_hint.as_deref(), Some(expected.as_str()));
-                }
-            }));
+        assert!(resolve_materialized_bundle_source(&manifest, &source)
+            .unwrap_err()
+            .to_string()
+            .contains("effigy bundle sync"));
+        assert!(!home.path().join(".effigy").exists());
+    }
+    #[test]
+    fn lock_rejects_escaping_objects_and_unknown_versions() {
+        for object in ["../outside", "/outside", "cache/sources/../../outside"] {
+            let bytes = serde_json::to_vec(&SourceLock {
+                version: 1,
+                sources: BTreeMap::from([(
+                    "bundle".into(),
+                    SourcePin {
+                        declaration: ManifestBundleBase::Path {
+                            dir: "bundle".into(),
+                        },
+                        object: object.into(),
+                        version: "v1".into(),
+                        revision: None,
+                    },
+                )]),
+            })
+            .unwrap();
+            assert!(SourceLock::decode(&bytes).is_err());
         }
-
-        for handle in handles {
-            handle.join().expect("worker finished");
-        }
-    }
-
-    #[test]
-    fn oci_bundle_source_materializes_into_shared_cache_root() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let bundle_home = tmp.path().join("bundle-home");
-        let _home = with_test_bundle_home(&bundle_home);
-        let _adapter = with_test_oci_adapter(Rc::new(FakeOciBundleAdapter {
-            digest: "sha256:abc123".to_owned(),
-            pulls: Cell::new(0),
-        }));
-
-        let consumer = tmp.path().join("consumer");
-        std::fs::create_dir_all(&consumer).expect("mkdir consumer");
-        let manifest_path = consumer.join("effigy.toml");
-        std::fs::write(
-            &manifest_path,
-            "[bundle]\nbase = { type = \"oci\", url = \"ghcr.io/acme/bundle:v1\" }\nhost = \"acme.test\"\n",
-        )
-        .expect("write manifest");
-
-        let loaded =
-            crate::load_task_manifest_with_inspection(&manifest_path).expect("load manifest");
-        let task = loaded.manifest.tasks.get("dev").expect("task");
-        assert!(matches!(
-            task.run.as_ref().expect("run"),
-            crate::ManifestManagedRun::Command(command) if command == "serve acme.test"
-        ));
-        let bundle_root = loaded.bundle_root.expect("bundle root");
-        assert!(bundle_root
-            .starts_with(bundle_home.join(".effigy/cache/bundles/oci/ghcr.io/acme/bundle/v1")));
-        assert!(bundle_root.join("bundle.toml").exists());
-        assert!(bundle_root.join("effigy.toml").exists());
-    }
-
-    #[test]
-    fn oci_bundle_source_marks_cached_bundle_stale_when_digest_changes() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let bundle_home = tmp.path().join("bundle-home");
-        let _home = with_test_bundle_home(&bundle_home);
-        let manifest_path = tmp.path().join("consumer.toml");
-        std::fs::write(
-            &manifest_path,
-            "[bundle]\nbase = { type = \"oci\", url = \"ghcr.io/acme/bundle:v1\" }\n",
-        )
-        .expect("write manifest");
-
-        let _adapter = with_test_oci_adapter(Rc::new(FakeOciBundleAdapter {
-            digest: "sha256:abc123".to_owned(),
-            pulls: Cell::new(0),
-        }));
-        let first = resolve_materialized_bundle_source(
-            &manifest_path,
-            &BundleSelection::Oci {
-                url: "ghcr.io/acme/bundle:v1".to_owned(),
-            },
-        )
-        .expect("first resolve");
-        assert!(!first.stale);
-
-        let _adapter = with_test_oci_adapter(Rc::new(FakeOciBundleAdapter {
-            digest: "sha256:def456".to_owned(),
-            pulls: Cell::new(0),
-        }));
-        let second = resolve_materialized_bundle_source(
-            &manifest_path,
-            &BundleSelection::Oci {
-                url: "ghcr.io/acme/bundle:v1".to_owned(),
-            },
-        )
-        .expect("second resolve");
-        assert!(second.stale);
-        assert_eq!(second.version_hint.as_deref(), Some("sha256:def456"));
-        assert_eq!(first.local_path, second.local_path);
-    }
-
-    #[test]
-    fn oci_bundle_source_surfaces_pull_failures() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let bundle_home = tmp.path().join("bundle-home");
-        let _home = with_test_bundle_home(&bundle_home);
-        let _adapter = with_test_oci_adapter(Rc::new(FailingPullOciBundleAdapter));
-        let manifest_path = tmp.path().join("consumer.toml");
-        std::fs::write(
-            &manifest_path,
-            "[bundle]\nbase = { type = \"oci\", url = \"ghcr.io/acme/bundle:v1\" }\n",
-        )
-        .expect("write manifest");
-
-        let error = resolve_materialized_bundle_source(
-            &manifest_path,
-            &BundleSelection::Oci {
-                url: "ghcr.io/acme/bundle:v1".to_owned(),
-            },
-        )
-        .expect_err("reject pull failure");
-        let rendered = error.to_string();
-        assert!(rendered.contains("unauthorized"));
-        assert!(rendered.contains("oras login ghcr.io"));
-    }
-
-    #[test]
-    fn sync_git_bundle_source_reports_ref_changes() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let bundle_home = tmp.path().join("bundle-home");
-        let _home = with_test_bundle_home(&bundle_home);
-
-        let source_repo = tmp.path().join("bundle-source");
-        write_local_bundle_repo(&source_repo);
-
-        let manifest_path = tmp.path().join("consumer.toml");
-        std::fs::write(
-            &manifest_path,
-            format!(
-                "[bundle]\nbase = {{ type = \"git\", url = {:?}, ref = \"main\" }}\n",
-                source_repo.display().to_string()
-            ),
-        )
-        .expect("write manifest");
-
-        let first = sync_bundle_source(&manifest_path)
-            .expect("sync source")
-            .expect("bundle sync report");
-        assert!(first.applicable);
-        assert!(first.changed);
-
-        std::fs::write(source_repo.join("README.md"), "next").expect("write next revision");
-        git(&["add", "."], &source_repo);
-        git(&["commit", "-m", "next"], &source_repo);
-
-        let second = sync_bundle_source(&manifest_path)
-            .expect("sync source")
-            .expect("bundle sync report");
-        assert!(second.applicable);
-        assert!(second.changed);
-        assert_ne!(first.version_hint, second.version_hint);
-
-        let third = sync_bundle_source(&manifest_path)
-            .expect("sync source")
-            .expect("bundle sync report");
-        assert!(third.applicable);
-        assert!(!third.changed);
-        assert_eq!(third.version_hint, second.version_hint);
-    }
-
-    #[test]
-    fn git_bundle_source_refreshes_stale_cache_root_on_manifest_load() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let bundle_home = tmp.path().join("bundle-home");
-        let _home = with_test_bundle_home(&bundle_home);
-
-        let source_repo = tmp.path().join("bundle-source");
-        write_local_bundle_repo(&source_repo);
-
-        let manifest_path = tmp.path().join("consumer.toml");
-        std::fs::write(
-            &manifest_path,
-            format!(
-                "[bundle]\nbase = {{ type = \"git\", url = {:?}, ref = \"main\" }}\n",
-                source_repo.display().to_string()
-            ),
-        )
-        .expect("write manifest");
-
-        let first = resolve_materialized_bundle_source(
-            &manifest_path,
-            &BundleSelection::Git {
-                url: source_repo.display().to_string(),
-                reference: Some("main".to_owned()),
-            },
-        )
-        .expect("first resolve");
-
-        std::fs::write(
-            source_repo.join("export.toml"),
-            "[manifest]\nextend = [\"bundle.meta\"]\n\n[bundle.meta]\nsource = \"next\"\n",
-        )
-        .expect("update export template");
-        git(&["add", "."], &source_repo);
-        git(&["commit", "-m", "next"], &source_repo);
-
-        let second = resolve_materialized_bundle_source(
-            &manifest_path,
-            &BundleSelection::Git {
-                url: source_repo.display().to_string(),
-                reference: Some("main".to_owned()),
-            },
-        )
-        .expect("second resolve");
-
-        assert_eq!(first.local_path, second.local_path);
-        assert_eq!(
-            first.version_hint, second.version_hint,
-            "fresh remote-check cache should skip repeated remote probes"
-        );
-        assert!(
-            !second.local_path.join("export.toml").is_file(),
-            "fresh remote-check cache should leave the cached bundle unchanged until the check window expires"
-        );
-
-        let remote_status_path = git_bundle_remote_status_path(&second.local_path);
-        std::fs::write(
-            &remote_status_path,
-            format!(
-                "0\n{}\n",
-                first.version_hint.clone().expect("first version")
-            ),
-        )
-        .expect("backdate remote status");
-
-        let third = resolve_materialized_bundle_source(
-            &manifest_path,
-            &BundleSelection::Git {
-                url: source_repo.display().to_string(),
-                reference: Some("main".to_owned()),
-            },
-        )
-        .expect("third resolve");
-
-        assert_eq!(first.local_path, second.local_path);
-        assert_eq!(first.local_path, third.local_path);
-        assert_ne!(first.version_hint, third.version_hint);
-        let cached_export =
-            std::fs::read_to_string(third.local_path.join("export.toml")).expect("read cache");
-        assert!(
-            cached_export.contains("source = \"next\""),
-            "expected refreshed git bundle cache to pick up the new commit"
-        );
-        assert!(!third.stale);
-    }
-
-    #[test]
-    fn git_bundle_remote_probe_is_skipped_inside_effigy_workspace_container() {
-        assert!(super::should_probe_git_bundle_remote(true, false, false));
-        assert!(!super::should_probe_git_bundle_remote(true, false, true));
-        assert!(!super::should_probe_git_bundle_remote(false, false, false));
-        assert!(!super::should_probe_git_bundle_remote(true, true, true));
-    }
-
-    #[test]
-    fn sync_oci_bundle_source_refreshes_stale_cache_root() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let bundle_home = tmp.path().join("bundle-home");
-        let _home = with_test_bundle_home(&bundle_home);
-        let manifest_path = tmp.path().join("consumer.toml");
-        std::fs::write(
-            &manifest_path,
-            "[bundle]\nbase = { type = \"oci\", url = \"ghcr.io/acme/bundle:v1\" }\n",
-        )
-        .expect("write manifest");
-
-        let _adapter = with_test_oci_adapter(Rc::new(FakeOciBundleAdapter {
-            digest: "sha256:abc123".to_owned(),
-            pulls: Cell::new(0),
-        }));
-        let first = sync_bundle_source(&manifest_path)
-            .expect("sync source")
-            .expect("bundle sync report");
-        assert!(first.applicable);
-        assert!(first.changed);
-        assert_eq!(first.version_hint.as_deref(), Some("sha256:abc123"));
-
-        let _adapter = with_test_oci_adapter(Rc::new(FakeOciBundleAdapter {
-            digest: "sha256:def456".to_owned(),
-            pulls: Cell::new(0),
-        }));
-        let second = sync_bundle_source(&manifest_path)
-            .expect("sync source")
-            .expect("bundle sync report");
-        assert!(second.applicable);
-        assert!(second.changed);
-        assert_eq!(second.version_hint.as_deref(), Some("sha256:def456"));
-
-        let third = sync_bundle_source(&manifest_path)
-            .expect("sync source")
-            .expect("bundle sync report");
-        assert!(third.applicable);
-        assert!(!third.changed);
-        assert_eq!(third.version_hint.as_deref(), Some("sha256:def456"));
+        assert!(SourceLock::decode(br#"{"version":2,"sources":{}}"#).is_err());
     }
 }

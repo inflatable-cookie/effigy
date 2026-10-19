@@ -81,7 +81,7 @@ fn assert_typed_graph_timeout(
 }
 
 #[test]
-fn docs_cold_refresh_fails_within_a_deliberately_tiny_bound() {
+fn docs_cold_read_is_bounded_and_never_prepares() {
     let root = docs_graph_fixture("docs-cold-tiny-bound");
     let _env = EnvGuard::set_many(&[("EFFIGY_GRAPH_TIMEOUT_MS", Some(TINY_BOUND_MS.to_owned()))]);
     let started = Instant::now();
@@ -89,15 +89,20 @@ fn docs_cold_refresh_fails_within_a_deliberately_tiny_bound() {
         .expect_err("cold refresh must fail inside the tiny bound");
     let elapsed = started.elapsed();
 
-    assert_typed_graph_timeout(error, "docs context", 1);
+    if error.rendered_output().is_some() {
+        assert_typed_graph_timeout(error, "docs context", 1);
+    } else {
+        assert!(error.to_string().contains("effigy graph index"));
+    }
     assert!(
         elapsed < Duration::from_secs(5),
-        "cold docs refresh exceeded the bound: {elapsed:?}"
+        "cold read exceeded its bound: {elapsed:?}"
     );
+    assert!(!root.join(".effigy/graph").exists());
 }
 
 #[test]
-fn docs_stale_refresh_fails_within_a_deliberately_tiny_bound() {
+fn docs_stale_read_is_bounded_and_never_refreshes() {
     let root = docs_graph_fixture("docs-stale-tiny-bound");
     run_graph_index(&root);
     fs::write(
@@ -107,20 +112,24 @@ fn docs_stale_refresh_fails_within_a_deliberately_tiny_bound() {
     .expect("stale the index");
 
     let _env = EnvGuard::set_many(&[("EFFIGY_GRAPH_TIMEOUT_MS", Some(TINY_BOUND_MS.to_owned()))]);
+    let before = fs::read(root.join(".effigy/graph/graph.db")).unwrap();
     let started = Instant::now();
-    let error = run_command(docs_context_command(&root, "contracts", false))
-        .expect_err("stale refresh must fail inside the tiny bound");
-    let elapsed = started.elapsed();
-
-    assert_typed_graph_timeout(error, "docs context", 1);
-    assert!(
-        elapsed < Duration::from_secs(5),
-        "stale docs refresh exceeded the bound: {elapsed:?}"
+    match run_command(docs_context_command(&root, "contracts", true)) {
+        Ok(output) => {
+            let payload: serde_json::Value = serde_json::from_str(&output).unwrap();
+            assert_eq!(payload["freshness"]["stale"], true);
+        }
+        Err(error) => assert_typed_graph_timeout(error, "docs context", 1),
+    }
+    assert!(started.elapsed() < Duration::from_secs(5));
+    assert_eq!(
+        fs::read(root.join(".effigy/graph/graph.db")).unwrap(),
+        before
     );
 }
 
 #[test]
-fn docs_cold_and_warm_queries_succeed_when_the_bound_is_disabled() {
+fn docs_disabled_bound_still_requires_an_explicit_index() {
     let root = docs_graph_fixture("docs-bound-disabled");
     let _env = EnvGuard::set_many(&[(
         "EFFIGY_GRAPH_TIMEOUT_MS",
@@ -128,8 +137,10 @@ fn docs_cold_and_warm_queries_succeed_when_the_bound_is_disabled() {
     )]);
 
     let cold = run_command(docs_context_command(&root, "contracts", false))
-        .expect("bound 0 must not disable the query, only the timeout");
-    assert!(cold.contains("docs context"), "text output: {cold}");
+        .expect_err("disabled timeout does not permit read-time preparation");
+    assert!(cold.to_string().contains("effigy graph index"));
+    assert!(!root.join(".effigy/graph").exists());
+    run_graph_index(&root);
 
     let warm = run_command(docs_context_command(&root, "contracts", true))
         .expect("warm query with a disabled bound must succeed");
@@ -194,10 +205,20 @@ fn invalid_budget_usage_errors_win_over_a_tiny_bound() {
 #[test]
 fn timeout_detail_names_the_phase_the_bound_expired_in() {
     let root = docs_graph_fixture("docs-timeout-phase-detail");
+    run_graph_index(&root);
     let _env = EnvGuard::set_many(&[("EFFIGY_GRAPH_TIMEOUT_MS", Some(TINY_BOUND_MS.to_owned()))]);
 
-    let error = run_command(docs_context_command(&root, "contracts", false))
-        .expect_err("cold refresh must fail inside the tiny bound");
+    let error = crate::runner::graph_time_budget::run_bounded_graph_operation(
+        &root,
+        "docs context",
+        Duration::from_millis(1),
+        || {
+            let _ = effigy_codegraph::docs_context(&root, "contracts", Default::default());
+            std::thread::sleep(Duration::from_millis(5));
+            Ok(String::new())
+        },
+    )
+    .expect_err("controlled work exceeds the configured deadline");
     let rendered = error
         .rendered_output()
         .expect("timeout must carry rendered detail")
@@ -252,10 +273,11 @@ fn timeout_detail_names_the_phase_the_bound_expired_in() {
 }
 
 #[test]
-fn graph_search_timeout_behavior_is_unchanged() {
+fn cold_graph_search_is_bounded_and_never_builds() {
     let root = docs_graph_fixture("graph-search-tiny-bound");
     let _env = EnvGuard::set_many(&[("EFFIGY_GRAPH_TIMEOUT_MS", Some(TINY_BOUND_MS.to_owned()))]);
-    let error = run_command(Command::Graph(GraphArgs {
+    let started = Instant::now();
+    let result = run_command(Command::Graph(GraphArgs {
         subcommand: GraphSubcommand::Search {
             query: "release_helper".to_owned(),
             limit: Some(10),
@@ -263,10 +285,17 @@ fn graph_search_timeout_behavior_is_unchanged() {
         repo_override: Some(root.clone()),
         output_json: true,
         stale_index: false,
-    }))
-    .expect_err("cold graph search must stay bounded");
-
-    assert_typed_graph_timeout(error, "graph search", 1);
+    }));
+    match result {
+        Ok(output) => {
+            let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
+            assert_eq!(parsed["payload"]["freshness"]["state"], "missing-index");
+            assert_eq!(parsed["payload"]["freshness"]["usable"], false);
+        }
+        Err(error) => assert_typed_graph_timeout(error, "graph search", 1),
+    }
+    assert!(started.elapsed() < Duration::from_secs(5));
+    assert!(!root.join(".effigy/graph").exists());
 }
 
 fn run_graph_index(root: &std::path::Path) {

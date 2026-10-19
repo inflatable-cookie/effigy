@@ -652,7 +652,7 @@ fn run_doctor_reports_stale_graph_index_with_refresh_remediation() {
         &[
             "graph.index",
             "graph index is not current",
-            "effigy graph status --refresh",
+            "effigy graph index",
         ],
     );
 }

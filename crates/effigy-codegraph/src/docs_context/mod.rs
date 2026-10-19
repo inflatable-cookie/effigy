@@ -83,7 +83,7 @@ pub fn validate_docs_context_request(
     resolve_budgets(request)
 }
 
-/// [`docs_context`] with a progress callback for the lazy refresh.
+/// [`docs_context`] with a callback for cold or stale read-only freshness.
 ///
 /// The callback receives the refresh verdict before any rebuild walk starts —
 /// `Cold` before a missing index is built, `Stale` after the freshness scan
@@ -224,24 +224,16 @@ fn ensure_freshness(
     repo_root: &Path,
     progress: impl FnMut(RefreshPending),
 ) -> Result<(GraphStore, GraphFreshnessPayload), CodeGraphError> {
-    // Documentation context and navigation read the same checkout corpus.
     let scope = GraphScope::workspace(repo_root)?;
-    let live = GraphStore::open(repo_root)?;
-    let outcome = crate::refresh::ensure_fresh_with_progress(&scope, &live, progress)?;
-    let mut freshness = outcome.freshness;
-    if !outcome.notes.is_empty() {
-        freshness.summary = format!("{} ({})", freshness.summary, outcome.notes.join("; "));
+    let (store, freshness) =
+        crate::refresh::open_query_store(&scope, crate::refresh::RefreshPolicy::query())?;
+    let mut progress = progress;
+    if !freshness.usable {
+        progress(RefreshPending::Cold);
+    } else if freshness.stale {
+        progress(RefreshPending::Stale);
     }
-    let store = match outcome.source {
-        crate::refresh::RefreshSource::Live => live,
-        crate::refresh::RefreshSource::Unavailable => {
-            return Err(CodeGraphError::validation(freshness.summary));
-        }
-    };
-    drop(store);
-    let store = GraphStore::open_read_only(&scope)?
-        .ok_or_else(|| CodeGraphError::validation("graph database disappeared after refresh"))?;
-    store.begin_read()?;
+    let store = store.ok_or_else(|| CodeGraphError::validation(freshness.summary.clone()))?;
     Ok((store, freshness))
 }
 

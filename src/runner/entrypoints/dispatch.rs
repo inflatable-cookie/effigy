@@ -71,6 +71,20 @@ pub(super) fn run_skill_passthrough_with_context(
 }
 
 pub(super) fn run_command_with_cwd(cmd: Command, cwd: &Path) -> Result<String, RunnerError> {
+    if let Command::Task(_) = &cmd {
+        if crate::runner::bundle_command::is_source_prepare_command(&cmd) {
+            let root = crate::runner::command_context::active_runtime_context()
+                .map(|context| context.command_root().to_path_buf())
+                .unwrap_or_else(|| cwd.into());
+            if let Some(manifest) = root
+                .ancestors()
+                .map(|root| root.join("effigy.toml"))
+                .find(|manifest| manifest.is_file())
+            {
+                crate::runner::bundle_command::prepare_sources_for_manifest(&manifest)?;
+            }
+        }
+    }
     match cmd {
         Command::Version => Ok(String::new()),
         Command::Bundle(args) => run_bundle(args),
