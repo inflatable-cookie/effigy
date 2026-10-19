@@ -40,6 +40,8 @@
   { run = "EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --test custody -E 'test(custody_signal_and_owner_kill_matrix_settles_without_survivors)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
 ]
 # §12.1 fault driver and oracles, and the §12.3 supervisor model matrix.
+# Measured 2026-10-19 on macOS (18 cores): faults 172 s wall (each drive in six
+# shard processes), matrix 16 s. Under 15 minutes, so one lane each.
 "test:kernel:faults" = [
   { run = "cargo build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 },
   { run = "EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture cargo nextest run --config-file tests/config/kernel-faults-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib -E 'test(/^faults::/) & not test(/^faults::matrix::/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 1800000 },
