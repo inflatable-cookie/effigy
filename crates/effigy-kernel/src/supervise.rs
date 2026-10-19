@@ -144,7 +144,7 @@ struct SentinelConfig {
     next: Vec<Vec<u8>>,
     executable: Executable,
 }
-fn helper(executable: &Executable, entry: &str) -> io::Result<Command> {
+pub(crate) fn helper(executable: &Executable, entry: &str) -> io::Result<Command> {
     executable.verify()?;
     let mut command = Command::new(&executable.path);
     command
