@@ -31,7 +31,7 @@ Notes:
 ## Selector plan
 
 Definition:
-- `effigy <selector> --plan` (and `effigy draft <selector> --plan`) resolves
+- `effigy --plan <selector>` resolves
   task, catalog, and command shape without starting a task process.
 - `--json` is output format only. `effigy --json <selector>` still executes.
 

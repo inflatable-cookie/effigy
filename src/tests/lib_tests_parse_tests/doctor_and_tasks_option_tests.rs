@@ -149,6 +149,7 @@ fn parse_tasks_with_filters() {
     assert_eq!(
         cmd,
         Command::Tasks(TasksArgs {
+            all: false,
             repo_override: Some(PathBuf::from("/tmp/repo")),
             task_name: Some("db:reset".to_owned()),
             resolve_selector: None,
@@ -169,6 +170,7 @@ fn parse_tasks_supports_json_flag() {
     assert_eq!(
         cmd,
         Command::Tasks(TasksArgs {
+            all: false,
             repo_override: None,
             task_name: None,
             resolve_selector: None,
@@ -194,6 +196,7 @@ fn parse_tasks_status_with_selector_and_json() {
     assert_eq!(
         cmd,
         Command::Tasks(TasksArgs {
+            all: false,
             repo_override: None,
             task_name: None,
             resolve_selector: None,
@@ -230,6 +233,7 @@ fn parse_tasks_status_all_with_json() {
     assert_eq!(
         cmd,
         Command::Tasks(TasksArgs {
+            all: false,
             repo_override: None,
             task_name: None,
             resolve_selector: None,

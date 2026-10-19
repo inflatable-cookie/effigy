@@ -60,34 +60,6 @@ pub(in crate::runner) fn run_embedded_task_with_output_mode(
     )
 }
 
-/// Run one explicitly selected draft through the canonical pipeline.
-///
-/// Nested `{ draft = "..." }` steps reuse the same request and pipeline as a
-/// top-level `effigy draft`, only changing the selection surface.
-pub(in crate::runner) fn run_embedded_draft(
-    task: &TaskInvocation,
-    cwd: &Path,
-) -> Result<String, RunnerError> {
-    crate::runner::execute::api::run_manifest_task_with_surface(
-        task,
-        cwd.to_path_buf(),
-        ExecutionSurface::Draft,
-    )
-}
-
-pub(in crate::runner) fn run_embedded_draft_with_output_mode(
-    task: &TaskInvocation,
-    cwd: &Path,
-    output_mode: ExecutionOutputMode,
-) -> Result<String, RunnerError> {
-    crate::runner::execute::api::run_manifest_task_with_output_mode(
-        task,
-        cwd.to_path_buf(),
-        ExecutionSurface::Draft,
-        output_mode,
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::parse_embedded_command;

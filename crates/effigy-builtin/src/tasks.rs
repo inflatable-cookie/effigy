@@ -38,6 +38,7 @@ pub(super) fn run_builtin_tasks(
             }
             ports
                 .run_tasks(TasksArgs {
+                    all: request.all,
                     repo_override: Some(target_root.to_path_buf()),
                     task_name: request.task_name,
                     resolve_selector: request.resolve_selector,

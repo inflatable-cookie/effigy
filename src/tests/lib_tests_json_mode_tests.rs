@@ -73,6 +73,7 @@ fn command_requests_json_checks_task_or_global_mode() {
     assert!(command_requests_json(&cmd_json_after_delimiter, true));
 
     let cmd_tasks = Command::Tasks(TasksArgs {
+        all: false,
         repo_override: None,
         task_name: None,
         resolve_selector: None,
@@ -145,6 +146,7 @@ fn command_requests_json_checks_task_or_global_mode() {
 fn apply_global_json_flag_sets_non_task_command_json_mode() {
     let version_cmd = Command::Version;
     let tasks_cmd = Command::Tasks(TasksArgs {
+        all: false,
         repo_override: None,
         task_name: None,
         resolve_selector: None,

@@ -27,6 +27,7 @@ impl PreparedTasksCommand {
             deferred_builtins_from_catalogs(&self.catalogs, &self.resolved_root);
         let listing = list_tasks(
             ListTasksRequest {
+                all: args.all,
                 filter: args.task_name.as_deref(),
                 pretty_json: args.pretty_json,
                 resolved_root: &self.resolved_root,

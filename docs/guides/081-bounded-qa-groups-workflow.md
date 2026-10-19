@@ -22,8 +22,8 @@ directly; `logs` accepts only the global form.
 Inventory maintained groups and run a selected group through the `tasks`
 dispatcher. Repositories (or environments) without groups keep the plain
 selector workflow — `effigy tasks`, `effigy <selector> --plan`,
-`effigy <selector>` — and `effigy drafts`/`effigy draft <name>` remain for
-temporary ordinary tasks and environments, not QA groups. `effigy qa`, CI,
+`effigy <selector>`. Temporary ordinary tasks and environments use
+`visibility = "internal"` under `[tasks]`, independently of QA groups. `effigy qa`, CI,
 and release gates keep their current owners and meanings: uncertain coverage
 means ask the planner, never "run the full board."
 

@@ -206,7 +206,7 @@ invocations built inside Effigy (sequence steps, deferral, built-ins) keep
 their own argument conventions.
 
 Direct CLI presentation (the framed header) is not task output. For
-`effigy <selector>` and `effigy draft <selector>` text runs, that header goes
+`effigy <selector>` text runs, that header goes
 to stderr so stdout is only the task's own bytes and the process keeps the
 task's success or failure status. JSON envelopes stay on stdout and already
 suppress the header.
@@ -231,8 +231,7 @@ policy must come from the resolved execution plan.
 is not a public CLI payload.
 
 The public non-executing selector plan is a separate schema,
-`effigy.task.plan.v1`. `effigy --plan <selector>` and
-`effigy draft <selector> --plan` resolve the task, catalog, and command shape
+`effigy.task.plan.v1`. `effigy --plan <selector>` resolves the task, catalog, and command shape
 without starting a task process, acquiring locks, activating containers,
 resolving env-schema `exec()` values, or writing task-status records. `--plan`
 is consumed by Effigy and is not passed through to the task. `--json` only

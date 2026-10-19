@@ -7,6 +7,14 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Breaking
+- Tasks now have `visibility = "public" | "internal"` and optional `group`.
+  Human inventory, general/work help and completion show public tasks; `tasks --all` and
+  `tasks --json` include everything. Unnamespaced entry points stay public;
+  referenced namespaced helpers default to internal. Internal tasks run by name.
+  Legacy `[drafts]` and draft steps translate to internal tasks for one release
+  with a warning. Move their definitions under `[tasks]`, remove lifecycle
+  metadata, and use ordinary task references. `effigy draft <name>` warns and
+  runs the normal task; `effigy drafts` names `tasks --all` as its replacement.
 - Task runs are now kernel runs. Every invocation resolves once to a task
   identity (catalog path relative to the root, task name), so `build` from
   inside a catalog, `api/build` and `./apps/api/build` share one lock and one

@@ -107,7 +107,13 @@ impl BuiltinDispatch {
             Self::Help => {
                 let deferred_builtins =
                     ports.deferred_builtins_from_catalogs(catalogs, target_root);
-                help::run_builtin_help(task, &runtime_args.passthrough, &deferred_builtins)
+                help::run_builtin_help(
+                    task,
+                    &runtime_args.passthrough,
+                    &deferred_builtins,
+                    catalogs,
+                    target_root,
+                )
             }
             Self::Init => {
                 init::run_builtin_init(ports, task, &runtime_args.passthrough, target_root)

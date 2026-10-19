@@ -33,18 +33,17 @@ fn resolve_table_task_run_step(
     let selection = select_run_or_task(
         step.run.as_deref(),
         step.task.as_deref(),
-        step.draft.as_deref(),
         step.rhai.as_deref(),
         step.env.is_some() || step.env_file.is_some(),
         || {
             ManagedError::task_invocation(format!(
-                "task `{}` run step is invalid: define exactly one of `run`, `task`, `draft`, or `rhai`",
+                "task `{}` run step is invalid: define exactly one of `run`, `task`, or `rhai`",
                 context.task_name
             ))
         },
         || {
             ManagedError::task_invocation(format!(
-                "task `{}` run step is invalid: missing `run`, `task`, `draft`, or `rhai`",
+                "task `{}` run step is invalid: missing `run`, `task`, or `rhai`",
                 context.task_name
             ))
         },
@@ -55,7 +54,6 @@ fn resolve_table_task_run_step(
 enum RunOrTaskRef<'a> {
     Run(&'a str),
     Task(&'a str),
-    Draft(&'a str),
     RhaiFile(&'a str),
     Noop,
 }
@@ -81,16 +79,7 @@ fn resolve_selected_run_or_task(
                 host_launched: true,
             },
         ),
-        RunOrTaskRef::Draft(draft_ref) => {
-            let parsed = references::parse_task_ref(draft_ref)?;
-            let args_rendered =
-                references::merge_args_rendered(&parsed.args_rendered, context.args_rendered);
-            super::render_draft_reference_invocation(
-                &parsed.selector_rendered,
-                &args_rendered,
-                context.repo_root,
-            )
-        }
+
         RunOrTaskRef::RhaiFile(path) => render_rhai_step_invocation(context, path),
         RunOrTaskRef::Noop => Ok(":".to_owned()),
     }
@@ -99,7 +88,6 @@ fn resolve_selected_run_or_task(
 fn select_run_or_task<'a, FBoth, FNone>(
     run: Option<&'a str>,
     task: Option<&'a str>,
-    draft: Option<&'a str>,
     rhai: Option<&'a str>,
     has_env_directive: bool,
     both_error: FBoth,
@@ -109,26 +97,20 @@ where
     FBoth: FnOnce() -> ManagedError,
     FNone: FnOnce() -> ManagedError,
 {
-    let selected = [
-        run.is_some(),
-        task.is_some(),
-        draft.is_some(),
-        rhai.is_some(),
-    ]
-    .into_iter()
-    .filter(|selected| *selected)
-    .count();
+    let selected = [run.is_some(), task.is_some(), rhai.is_some()]
+        .into_iter()
+        .filter(|selected| *selected)
+        .count();
     if selected > 1 {
         return Err(both_error());
     }
 
-    match (run, task, draft, rhai) {
-        (Some(run), None, None, None) => Ok(RunOrTaskRef::Run(run)),
-        (None, Some(task), None, None) => Ok(RunOrTaskRef::Task(task)),
-        (None, None, Some(draft), None) => Ok(RunOrTaskRef::Draft(draft)),
-        (None, None, None, Some(path)) => Ok(RunOrTaskRef::RhaiFile(path)),
-        (None, None, None, None) if has_env_directive => Ok(RunOrTaskRef::Noop),
-        (None, None, None, None) => Err(none_error()),
+    match (run, task, rhai) {
+        (Some(run), None, None) => Ok(RunOrTaskRef::Run(run)),
+        (None, Some(task), None) => Ok(RunOrTaskRef::Task(task)),
+        (None, None, Some(path)) => Ok(RunOrTaskRef::RhaiFile(path)),
+        (None, None, None) if has_env_directive => Ok(RunOrTaskRef::Noop),
+        (None, None, None) => Err(none_error()),
         _ => Err(both_error()),
     }
 }

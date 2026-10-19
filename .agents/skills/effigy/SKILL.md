@@ -179,7 +179,7 @@ Rules that keep group use honest:
 - `needs_planner` means stop and ask the planner with the printed token and
   reason; it never means "run the full board". A `declared_match` runs every
   member — scope never filters checks.
-- A group selector never falls through to a same-named task or draft.
+- A group selector never falls through to a same-named task.
 - `stop` and `hard_timeout_ms` are unavailable (owned-run supervision, contract 052); an
   interrupted run reconciles to `unknown`, never a pass.
 

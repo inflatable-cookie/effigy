@@ -121,6 +121,7 @@ pub(super) fn run_command_with_cwd(cmd: Command, cwd: &Path) -> Result<String, R
         },
         Command::Drafts(args) => run_drafts(args),
         Command::Draft(args) => {
+            eprintln!("[warn] `effigy draft <task>` is deprecated in v0.15; run `effigy <task>` directly. Internal tasks use the ordinary task runtime.");
             // The captured context wins (embedded dispatch); otherwise an
             // explicit repo override -- global or local -- must root the
             // draft selection instead of the process cwd.
@@ -137,7 +138,7 @@ pub(super) fn run_command_with_cwd(cmd: Command, cwd: &Path) -> Result<String, R
             let request = TaskExecutionRequestBuilder::new()
                 .runtime_context(runtime_context)
                 .task(args.selector, args.args)
-                .surface(ExecutionSurface::Draft)
+                .surface(ExecutionSurface::DirectCli)
                 .build()
                 .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
             crate::runner::execute::api::run_manifest_task_request(request)

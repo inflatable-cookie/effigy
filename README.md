@@ -418,29 +418,28 @@ include = [
 ]
 ```
 
-### Published and Draft Task Surfaces
+### Public and internal tasks
 
-Keep the default command surface small. `[tasks]` is the published interface;
-`[drafts]` holds lifecycle-labelled provisional proofs and environments that
-stay out of `effigy tasks`, help, completion, and default status queries:
+Keep human discovery short with task visibility and groups:
 
 ```toml
-[drafts.provider-smoke]
-created = "2026-09-15"
-expires = "2026-09-29"
-purpose = "Validate temporary provider integration"
-run = [{ task = "build" }, { run = "./scripts/provider-smoke {args}" }]
+[tasks.build]
+run = [{ task = "build:prepare" }, { run = "./scripts/build {args}" }]
+group = "Development"
+
+[tasks."build:prepare"]
+run = "./scripts/prepare"
+visibility = "internal"
 ```
 
-```sh
-effigy drafts                 # lifecycle, expiry, and composed source
-effigy draft provider-smoke   # ordinary routing and execution pipeline
-```
+`effigy tasks` lists public tasks by group. `tasks --all` and `tasks --json`
+include internal tasks; JSON reports effective visibility, its reason and
+group. Internal tasks still run directly by name. Unnamespaced names stay
+public entry points, while referenced namespaced helpers default to internal.
+Explicit visibility always wins. Bundles and includes use the same keys.
 
-Published tasks cannot reference drafts; drafts may reference published tasks,
-and draft-to-draft composition is explicit with `{ draft = "..." }`. Expiry is
-advisory evidence in `effigy drafts` and `effigy doctor`; it never disables,
-mutates, or deletes a draft.
+See the [manifest cookbook](docs/guides/022-manifest-cookbook.md#public-and-internal-tasks)
+for standalone proof tasks and the built-in legacy syntax migration.
 
 ---
 

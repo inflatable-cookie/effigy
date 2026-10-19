@@ -1012,54 +1012,12 @@ An unknown target keeps query metadata and returns empty collections:
 }
 ```
 
-### 3) Drafts (`effigy.drafts.v1`)
+### Task visibility metadata
 
-```json
-{
-  "schema": "effigy.drafts.v1",
-  "schema_version": 1,
-  "count": 1,
-  "drafts": [
-    {
-      "selector": "provider-smoke",
-      "name": "provider-smoke",
-      "catalog": "root",
-      "catalog_root": "/workspace/acme",
-      "manifest": "config/drafts/2026-09-15-provider-smoke.toml",
-      "purpose": "Validate temporary provider integration",
-      "created": "2026-09-15",
-      "expires": "2026-09-29",
-      "lifecycle": "active"
-    }
-  ]
-}
-```
-
-A draft run keeps the ordinary `effigy.task.run.v1` payload and adds
-`surface` plus `surface_identity`; repositories with no `[drafts]` see no new
-fields:
-
-```json
-{
-  "schema": "effigy.task.run.v1",
-  "schema_version": 1,
-  "ok": true,
-  "task": "provider-smoke",
-  "selector": "provider-smoke",
-  "command": "./scripts/provider-smoke",
-  "cwd": "/workspace/acme",
-  "exit_code": 0,
-  "stdout": "provider smoke ok\n",
-  "stderr": "",
-  "surface": "draft",
-  "surface_identity": {
-    "surface": "draft",
-    "catalog_alias": "root",
-    "catalog_root": "/workspace/acme",
-    "definition_source": "/workspace/acme/config/drafts/2026-09-15-provider-smoke.toml"
-  }
-}
-```
+`effigy.tasks.v1` catalog task rows include `visibility` (`public` or
+`internal`), `visibility_reason` (`declared`, `referenced-only` or `default`),
+and `group` (string or null). JSON includes every task; text defaults to public
+tasks. Internal tasks use the ordinary task-run and task-plan payloads.
 
 ### 3) Deploy Model (`deploy.model.v1`)
 
@@ -2376,9 +2334,7 @@ is the holder's liveness, so there is nothing to unlock.
     "system",
     "tasks",
     "test",
-    "workspace",
-    "drafts",
-    "draft"
+    "workspace"
   ]
 }
 ```

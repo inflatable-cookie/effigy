@@ -6,12 +6,10 @@ mod result;
 use effigy_cli::TaskInvocation;
 use effigy_execution::{
     ExecutionSelectionCatalogSummary, ExecutionSelectionInput, ExecutionSelectionPlan,
-    ExecutionSurface,
 };
 
 use super::planning::ExecutionPreflight;
 use crate::runner::error::RunnerError;
-use effigy_tasks::TaskSurface;
 
 pub(super) use result::SelectionResolution;
 
@@ -23,13 +21,6 @@ pub(super) fn resolve_task_selection<'a>(
 ) -> Result<SelectionResolution<'a>, RunnerError> {
     let route = super::route::resolve_route(task, preflight)?;
     fallback::run_fallback_route(task, preflight, route)
-}
-
-pub(super) fn task_surface_for_execution(surface: &ExecutionSurface) -> TaskSurface {
-    match surface {
-        ExecutionSurface::Draft => TaskSurface::Draft,
-        _ => TaskSurface::Published,
-    }
 }
 
 pub(super) fn build_execution_selection_plan(

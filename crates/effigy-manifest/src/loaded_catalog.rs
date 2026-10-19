@@ -11,13 +11,13 @@
 //! `effigy-managed` extraction can depend on them without the runner
 //! having to expose internal module paths.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use effigy_core::task_selection::{CatalogSelectionMode, TaskSelector};
 
 use crate::task_runtime::{ManifestTask, ManifestTaskRunIn};
-use crate::{ManifestDraft, TaskManifest};
+use crate::TaskManifest;
 
 /// Callback signature for resolving a `TaskSelector` against a slice
 /// of `LoadedCatalog`. The runner owns the routing implementation
@@ -44,33 +44,6 @@ pub struct LoadedCatalog {
     pub defer_run: Option<String>,
     pub deferred_builtins: BTreeSet<String>,
     pub depth: usize,
-    /// Physical manifest each draft was composed from, keyed by draft name.
-    ///
-    /// Derived from composition provenance (`drafts.<name>` value sources), so
-    /// explicitly included dated fragments report their own file rather than
-    /// the root manifest.
-    pub draft_sources: BTreeMap<String, PathBuf>,
-}
-
-impl LoadedCatalog {
-    /// Lifecycle-labelled draft declared in this catalog, if any.
-    pub fn draft(&self, name: &str) -> Option<&ManifestDraft> {
-        self.manifest.drafts.get(name)
-    }
-
-    /// Task body of a declared draft, if any.
-    pub fn draft_task(&self, name: &str) -> Option<&ManifestTask> {
-        self.manifest.drafts.get(name).map(|draft| &draft.task)
-    }
-
-    /// Physical manifest that declared `name`, falling back to this catalog's
-    /// manifest when composition provenance is unavailable.
-    pub fn draft_source(&self, name: &str) -> &Path {
-        self.draft_sources
-            .get(name)
-            .map(PathBuf::as_path)
-            .unwrap_or(self.manifest_path.as_path())
-    }
 }
 
 #[derive(Debug)]
@@ -125,7 +98,6 @@ mod tests {
             defer_run: None,
             deferred_builtins: BTreeSet::new(),
             depth,
-            draft_sources: BTreeMap::new(),
         }
     }
 

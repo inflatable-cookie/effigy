@@ -1,420 +1,160 @@
-//! End-to-end proofs for the published/draft task surface split.
-//!
-//! These tests exercise the compiled binary so routing, selection, execution,
-//! JSON schemas, and discovery exclusion are proven through the real command
-//! surface rather than unit helpers.
-
+//! Public/internal discovery and the one-release draft migration, through the CLI.
+use serde_json::Value;
 use std::fs;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Output};
 
-use serde_json::Value;
-
-use super::support::{parse_stdout_json, temp_execution_workspace, temp_workspace};
-
-fn run_effigy(root: &Path, args: &[&str]) -> std::process::Output {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_effigy"));
-    command.arg("--repo").arg(root);
-    for arg in args {
-        command.arg(arg);
-    }
-    command.env("NO_COLOR", "1").output().expect("run effigy")
+fn fixture(body: &str) -> tempfile::TempDir {
+    let root = tempfile::tempdir().expect("fresh fixture directory");
+    fs::create_dir(root.path().join("home")).expect("isolated HOME");
+    fs::write(root.path().join("effigy.toml"), body).expect("fixture manifest");
+    root
 }
 
-fn write_manifest(root: &Path, body: &str) {
-    fs::write(root.join("effigy.toml"), body).expect("write manifest");
+fn run(root: &Path, args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .current_dir(root)
+        .env("HOME", root.join("home"))
+        .env("NO_COLOR", "1")
+        .args(args)
+        .output()
+        .expect("run CLI")
 }
 
-const SURFACE_MANIFEST: &str = r#"
-[tasks.build]
-run = "printf build-ok"
+fn json(root: &Path, args: &[&str]) -> Value {
+    let output = run(root, args);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).expect("JSON envelope")
+}
 
-[drafts.provider-smoke]
+const MANIFEST: &str = r#"
+[tasks]
+build = { run = "printf build-ok", group = "Development", visibility = "public" }
+entry = [{ task = "step:helper" }]
+"step:helper" = "printf step:helper-ok > helper.marker; printf step:helper-ok"
+internal = { run = "printf internal-ok > internal.marker; printf internal-ok", visibility = "internal", group = "Proofs" }
+[drafts.proof]
 created = "2026-09-15"
 expires = "2026-09-29"
-purpose = "Validate temporary provider integration"
-run = "printf draft-ok"
+purpose = "Temporary proof"
+run = "printf migrated-ok > migrated.marker; printf migrated-ok"
+[drafts.composed]
+created = "2026-09-15"
+purpose = "Temporary sequence"
+run = [{ draft = "proof" }]
 "#;
 
 #[test]
-fn published_discovery_excludes_drafts_in_text_and_json() {
-    let root = temp_workspace("drafts-published-exclusion");
-    write_manifest(&root, SURFACE_MANIFEST);
-
-    let text = run_effigy(&root, &["tasks"]);
-    assert!(text.status.success());
-    let text = String::from_utf8_lossy(&text.stdout);
-    assert!(text.contains("build"), "{text}");
-    assert!(
-        !text.contains("provider-smoke"),
-        "draft leaked into `effigy tasks` text: {text}"
-    );
-
-    let json = run_effigy(&root, &["--json", "tasks"]);
-    let payload: Value = parse_stdout_json(&json);
-    let serialized = payload.to_string();
-    assert!(
-        !serialized.contains("provider-smoke"),
-        "draft leaked into `effigy tasks --json`: {serialized}"
-    );
-}
-
-#[test]
-fn drafts_inventory_reports_lifecycle_and_composed_source() {
-    let root = temp_workspace("drafts-inventory");
-    write_manifest(&root, SURFACE_MANIFEST);
-
-    let json = run_effigy(&root, &["--json", "drafts"]);
-    assert!(json.status.success());
-    let payload: Value = parse_stdout_json(&json);
-    let body = &payload["result"];
-    assert_eq!(body["schema"], "effigy.drafts.v1");
-    assert_eq!(body["schema_version"], 1);
-    assert_eq!(body["count"], 1);
-    let row = &body["drafts"][0];
-    assert_eq!(row["selector"], "provider-smoke");
-    assert_eq!(row["created"], "2026-09-15");
-    assert_eq!(row["expires"], "2026-09-29");
-    assert_eq!(row["purpose"], "Validate temporary provider integration");
-    assert_eq!(row["manifest"], "effigy.toml");
-    assert!(matches!(
-        row["lifecycle"].as_str(),
-        Some("active" | "expired")
-    ));
-
-    let text = run_effigy(&root, &["drafts"]);
-    assert!(text.status.success());
-    let text = String::from_utf8_lossy(&text.stdout);
-    assert!(text.contains("provider-smoke"), "{text}");
-}
-
-#[test]
-fn draft_runs_through_canonical_pipeline_and_names_surface() {
-    let root = temp_execution_workspace("drafts-execution");
-    write_manifest(&root, SURFACE_MANIFEST);
-
-    let output = run_effigy(&root, &["draft", "provider-smoke"]);
-    assert!(output.status.success(), "{output:?}");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("draft-ok"), "{stdout}");
-
-    let json = run_effigy(&root, &["draft", "provider-smoke", "--json"]);
-    assert!(json.status.success(), "{json:?}");
-    let payload: Value = parse_stdout_json(&json);
-    let body = &payload["result"];
-    assert_eq!(body["schema"], "effigy.task.run.v1");
-    assert_eq!(body["surface"], "draft");
-    assert_eq!(body["surface_identity"]["surface"], "draft");
-    assert!(
-        body["surface_identity"]["catalog_alias"]
-            .as_str()
-            .is_some_and(|alias| !alias.is_empty()),
-        "{body}"
-    );
-    assert!(
-        body["surface_identity"]["definition_source"]
-            .as_str()
-            .is_some_and(|source| source.ends_with("effigy.toml")),
-        "{body}"
-    );
-    assert_eq!(body["exit_code"], 0);
-}
-
-#[test]
-fn flat_invocation_never_falls_through_to_a_draft() {
-    let root = temp_workspace("drafts-no-fallthrough");
-    write_manifest(&root, SURFACE_MANIFEST);
-
-    let output = run_effigy(&root, &["provider-smoke"]);
-    assert!(!output.status.success(), "flat draft selection must fail");
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("provider-smoke") && stderr.contains("not defined"),
-        "{stderr}"
-    );
-}
-
-#[test]
-fn draft_reuses_canonical_lock_policy_and_refuses_the_retired_cache() {
-    let root = temp_execution_workspace("drafts-lock");
-    write_manifest(
-        &root,
-        r#"
-[drafts.locked-smoke]
-created = "2026-09-15"
-purpose = "locked draft reuses canonical policy"
-lock = "drafts-locked-smoke"
-run = "sh -lc 'printf run >> runs.log'"
-
-[drafts.cached-smoke]
-created = "2026-09-15"
-purpose = "a draft that still declares the retired cache"
-run = "printf never"
-cache = { enabled = true, inputs = ["input.txt"], outputs = ["out/result.txt"] }
-"#,
-    );
-
-    for _ in 0..2 {
-        let run = run_effigy(&root, &["draft", "locked-smoke", "--json"]);
-        assert!(run.status.success(), "{run:?}");
-    }
-    let runs = fs::read_to_string(root.join("runs.log")).expect("read runs log");
-    assert_eq!(runs, "runrun", "every run executes: there is no task cache");
-
-    let cached = run_effigy(&root, &["draft", "cached-smoke", "--json"]);
-    assert!(!cached.status.success(), "{cached:?}");
-    let payload: Value = parse_stdout_json(&cached);
-    let message = payload["error"]["message"].as_str().expect("message");
-    assert!(message.contains("which was removed in v0.15"), "{message}");
-}
-
-#[test]
-fn draft_status_does_not_leak_into_published_status_inventory() {
-    let root = temp_execution_workspace("drafts-status-isolation");
-    write_manifest(
-        &root,
-        r#"
-[tasks.build]
-run = "printf build-ok"
-
-[drafts.provider-smoke]
-created = "2026-09-15"
-purpose = "records draft status"
-run = "printf draft-ok"
-"#,
-    );
-
-    let run = run_effigy(&root, &["draft", "provider-smoke"]);
-    assert!(run.status.success(), "{run:?}");
-
-    let inventory = run_effigy(&root, &["tasks", "status", "--all", "--json"]);
-    assert!(inventory.status.success(), "{inventory:?}");
-    let payload: Value = parse_stdout_json(&inventory);
-    let rows = payload["result"]["rows"]
-        .as_array()
-        .expect("status inventory rows");
-    assert!(
-        !rows
-            .iter()
-            .any(|row| row["selector"].as_str() == Some("provider-smoke")),
-        "draft history leaked into published status inventory: {payload}"
-    );
-}
-
-#[test]
-fn published_task_cannot_reference_a_draft() {
-    let root = temp_workspace("drafts-published-ref");
-    write_manifest(
-        &root,
-        r#"
-[drafts.provider-smoke]
-created = "2026-09-15"
-purpose = "temporary"
-run = "printf draft-ok"
-
-[tasks.build]
-run = [{ draft = "provider-smoke" }]
-"#,
-    );
-
-    let output = run_effigy(&root, &["tasks"]);
-    assert!(!output.status.success(), "published->draft must fail load");
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("cannot depend on disposable drafts"),
-        "{stderr}"
-    );
-}
-
-#[test]
-fn draft_references_published_and_explicit_drafts() {
-    let root = temp_execution_workspace("drafts-composition");
-    write_manifest(
-        &root,
-        r#"
-[tasks.build]
-run = "printf build-ok"
-
-[drafts.base]
-created = "2026-09-15"
-purpose = "base draft"
-run = "printf base-ok"
-
-[drafts.provider-smoke]
-created = "2026-09-15"
-purpose = "composes published and draft steps"
-run = [{ task = "build" }, { draft = "base" }]
-"#,
-    );
-
-    let output = run_effigy(&root, &["draft", "provider-smoke"]);
-    assert!(output.status.success(), "{output:?}");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("build-ok"), "{stdout}");
-    assert!(stdout.contains("base-ok"), "{stdout}");
-}
-
-#[test]
-fn unresolved_draft_reference_fails_before_side_effects() {
-    let root = temp_execution_workspace("drafts-unresolved-ref");
-    write_manifest(
-        &root,
-        r#"
-[drafts.provider-smoke]
-created = "2026-09-15"
-purpose = "references a removed draft"
-run = [
-  { run = "touch side-effect.txt" },
-  { draft = "missing-draft" },
-]
-"#,
-    );
-
-    // Explicit resolution happens while planning the step, so the earlier
-    // shell step in the same sequence must not have run.
-    let output = run_effigy(&root, &["draft", "provider-smoke"]);
-    assert!(!output.status.success(), "unresolved draft should fail");
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("missing-draft"),
-        "the unresolved reference must remain the refusal reason: {output:?}"
-    );
-    assert!(
-        !root.join("side-effect.txt").exists(),
-        "draft reference failure ran a side effect"
-    );
-}
-
-#[test]
-fn cross_surface_name_collision_fails() {
-    let root = temp_workspace("drafts-collision");
-    write_manifest(
-        &root,
-        r#"
-[tasks.smoke]
-run = "printf published"
-
-[drafts.smoke]
-created = "2026-09-15"
-purpose = "collides with a published task"
-run = "printf draft"
-"#,
-    );
-
-    let output = run_effigy(&root, &["tasks"]);
-    assert!(!output.status.success(), "collision must fail load");
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("both `[tasks]` and `[drafts]`"), "{stderr}");
-}
-
-#[test]
-fn expired_draft_is_still_runnable() {
-    let root = temp_execution_workspace("drafts-expired-runnable");
-    write_manifest(
-        &root,
-        r#"
-[drafts.old-smoke]
-created = "2020-01-01"
-expires = "2020-01-02"
-purpose = "expired but runnable"
-run = "printf expired-ok"
-"#,
-    );
-
-    let output = run_effigy(&root, &["draft", "old-smoke"]);
-    assert!(output.status.success(), "{output:?}");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("expired-ok"), "{stdout}");
-
-    let json = run_effigy(&root, &["--json", "drafts"]);
-    let payload: Value = parse_stdout_json(&json);
-    assert_eq!(payload["result"]["drafts"][0]["lifecycle"], "expired");
-}
-
-#[test]
-fn included_dated_fragment_reports_its_own_source() {
-    let root = temp_workspace("drafts-fragment-source");
-    let draft_dir = root.join("config/drafts");
-    fs::create_dir_all(&draft_dir).expect("mkdir draft dir");
-    fs::write(
-        draft_dir.join("2026-09-15-provider-smoke.toml"),
-        r#"
-[drafts.provider-smoke]
-created = "2026-09-15"
-purpose = "included fragment"
-run = "printf fragment-ok"
-"#,
-    )
-    .expect("write fragment");
-    write_manifest(
-        &root,
-        r#"
-[manifest]
-include = ["config/drafts/2026-09-15-provider-smoke.toml"]
-
-[tasks.build]
-run = "printf build-ok"
-"#,
-    );
-
-    let json = run_effigy(&root, &["--json", "drafts"]);
-    assert!(json.status.success());
-    let payload: Value = parse_stdout_json(&json);
-    assert_eq!(
-        payload["result"]["drafts"][0]["manifest"],
-        "config/drafts/2026-09-15-provider-smoke.toml"
-    );
-}
-
-#[test]
-fn unreferenced_draft_file_is_not_discovered() {
-    let root = temp_workspace("drafts-no-implicit-discovery");
-    let draft_dir = root.join("config/drafts");
-    fs::create_dir_all(&draft_dir).expect("mkdir draft dir");
-    fs::write(
-        draft_dir.join("2026-09-15-orphan.toml"),
-        r#"
-[drafts.orphan]
-created = "2026-09-15"
-purpose = "not included"
-run = "printf orphan"
-"#,
-    )
-    .expect("write orphan fragment");
-    write_manifest(
-        &root,
-        r#"
-[tasks.build]
-run = "printf build-ok"
-"#,
-    );
-
-    let output = run_effigy(&root, &["--json", "drafts"]);
+fn visibility_default_is_grouped_and_all_matches_json_inventory() {
+    let root = fixture(MANIFEST);
+    let output = run(root.path(), &["tasks"]);
     assert!(output.status.success());
-    let payload: Value = parse_stdout_json(&output);
-    assert_eq!(payload["result"]["count"], 0);
-
-    let run = run_effigy(&root, &["draft", "orphan"]);
-    assert!(!run.status.success(), "orphan draft must not be discovered");
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(text.contains("Development"), "{text}");
+    assert!(text.contains("General"), "{text}");
+    for hidden in ["internal-ok", "step:helper-ok", "migrated-ok"] {
+        assert!(!text.contains(hidden), "{text}");
+    }
+    let payload = json(root.path(), &["tasks", "--json"]);
+    let all_json = json(root.path(), &["tasks", "--all", "--json"]);
+    assert_eq!(payload["result"], all_json["result"]);
+    let all = run(root.path(), &["tasks", "--all"]);
+    let text = String::from_utf8_lossy(&all.stdout);
+    for row in payload["result"]["catalog_tasks"].as_array().expect("rows") {
+        let name = row["task"].as_str().expect("task");
+        assert!(text.contains(name), "missing {name}: {text}");
+        assert!(row.get("visibility").is_some());
+        assert!(row.get("visibility_reason").is_some());
+        assert!(row.get("group").is_some());
+    }
+    assert!(String::from_utf8_lossy(&output.stderr).contains("one release"));
 }
 
 #[test]
-fn doctor_reports_expired_drafts_with_source() {
-    let root = temp_workspace("drafts-doctor-expired");
-    write_manifest(
-        &root,
-        r#"
-[drafts.old-smoke]
-created = "2020-01-01"
-expires = "2020-01-02"
-purpose = "expired"
-run = "printf expired"
-"#,
-    );
+fn internal_and_migrated_tasks_run_directly_and_legacy_draft_shares_identity() {
+    let root = fixture(MANIFEST);
+    for (task, stdout, marker) in [
+        ("internal", "internal-ok", "internal.marker"),
+        ("proof", "migrated-ok", "migrated.marker"),
+        ("entry", "step:helper-ok", "helper.marker"),
+        ("composed", "migrated-ok", "migrated.marker"),
+    ] {
+        let marker = root.path().join(marker);
+        if marker.exists() {
+            fs::remove_file(&marker).expect("reset this fixture's proof");
+        }
+        let output = run(root.path(), &["--json", task]);
+        assert!(
+            output.status.success(),
+            "{task}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains(stdout),
+            "{task}"
+        );
+        assert_eq!(fs::read_to_string(marker).expect("task executed"), stdout);
+    }
+    let direct = json(root.path(), &["--json", "--plan", "proof"]);
+    let legacy = json(root.path(), &["--json", "draft", "proof", "--plan"]);
+    assert_eq!(direct["result"], legacy["result"]);
+    assert!(legacy["result"].get("surface_identity").is_none());
+    let status = json(root.path(), &["tasks", "status", "proof", "--json"]);
+    let serialized = status["result"].to_string();
+    assert!(serialized.contains("succeeded"), "{serialized}");
+}
 
-    let output = run_effigy(&root, &["--json", "doctor"]);
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let combined = format!("{stdout}{stderr}");
-    assert!(combined.contains("drafts.lifecycle"), "{combined}");
-    assert!(combined.contains("old-smoke"), "{combined}");
+#[test]
+fn completion_visibility_lists_public_only_after_migration() {
+    let root = fixture(MANIFEST);
+    let output = json(
+        root.path(),
+        &["config", "completion", "candidates", "--json"],
+    );
+    let candidates = output["result"]["candidates"]
+        .as_array()
+        .expect("candidates");
+    assert!(candidates.iter().any(|name| name == "build"));
+    for hidden in [
+        "step:helper",
+        "internal",
+        "proof",
+        "composed",
+        "draft",
+        "drafts",
+    ] {
+        assert!(!candidates.iter().any(|name| name == hidden), "{hidden}");
+    }
+}
+
+#[test]
+fn drafts_inventory_names_the_replacement() {
+    let root = fixture(MANIFEST);
+    let output = run(root.path(), &["drafts"]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("effigy tasks --all"));
+}
+
+#[test]
+fn draft_collision_is_actionable_and_unreferenced_files_stay_unloaded() {
+    let root = fixture("[tasks]\nproof = 'echo public'\n[drafts.proof]\nrun = 'echo old'");
+    let output = run(root.path(), &["tasks"]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("both `[tasks]` and `[drafts]`"));
+    fs::write(
+        root.path().join("effigy.toml"),
+        "[tasks]\nentry = 'echo entry'",
+    )
+    .expect("replace fixture");
+    fs::write(
+        root.path().join("unreferenced.toml"),
+        "[drafts.orphan]\nrun = 'echo orphan'",
+    )
+    .expect("orphan fragment");
+    let payload = json(root.path(), &["tasks", "--json"]);
+    assert!(!payload["result"].to_string().contains("orphan"));
 }

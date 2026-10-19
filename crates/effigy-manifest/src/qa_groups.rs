@@ -10,7 +10,7 @@ use std::collections::BTreeSet;
 
 use chrono::NaiveDate;
 
-use super::draft_defs::ManifestDraftDate;
+use super::lifecycle_date::ManifestLifecycleDate;
 
 /// Group lifecycle surface: `maintained` in the manifest, `temporary` in an
 /// explicit file.
@@ -84,16 +84,18 @@ impl ManifestQaMemberKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ManifestQaMemberSurface {
     Published,
-    Draft,
 }
 
 impl ManifestQaMemberSurface {
     pub fn parse(raw: &str) -> Result<Self, String> {
         match raw {
             "published" => Ok(Self::Published),
-            "draft" => Ok(Self::Draft),
+            "draft" => {
+                eprintln!("[warn] QA member surface `draft` is deprecated; use `published`. Internal tasks share the ordinary task namespace.");
+                Ok(Self::Published)
+            }
             other => Err(format!(
-                "`{other}` is not a valid member `surface`; use published or draft"
+                "`{other}` is not a valid member `surface`; use published"
             )),
         }
     }
@@ -101,7 +103,6 @@ impl ManifestQaMemberSurface {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Published => "published",
-            Self::Draft => "draft",
         }
     }
 }
@@ -275,8 +276,8 @@ pub struct ManifestQaGroup {
     /// Owning catalog alias. Required for temporary groups; maintained groups
     /// belong to the catalog that declares them.
     pub catalog: Option<String>,
-    pub created: Option<ManifestDraftDate>,
-    pub expires: Option<ManifestDraftDate>,
+    pub created: Option<ManifestLifecycleDate>,
+    pub expires: Option<ManifestLifecycleDate>,
     pub purpose: String,
     pub scope_policy: ManifestQaScopePolicy,
     pub coverage_gaps: Vec<ManifestQaCoverageGap>,
@@ -479,13 +480,13 @@ impl ManifestQaGroupTable {
             ManifestQaLifecycle::Maintained => (None, None),
             ManifestQaLifecycle::Temporary => {
                 let created =
-                    ManifestDraftDate::parse(self.created.as_deref().ok_or_else(|| {
+                    ManifestLifecycleDate::parse(self.created.as_deref().ok_or_else(|| {
                         "temporary groups must declare `created` as a strict YYYY-MM-DD date"
                             .to_owned()
                     })?)
                     .map_err(|detail| format!("group `{name}` `created`: {detail}"))?;
                 let expires =
-                    ManifestDraftDate::parse(self.expires.as_deref().ok_or_else(|| {
+                    ManifestLifecycleDate::parse(self.expires.as_deref().ok_or_else(|| {
                         "temporary groups must declare `expires` as a strict YYYY-MM-DD date"
                             .to_owned()
                     })?)
@@ -608,7 +609,7 @@ fn field_is_set(table: &ManifestQaGroupTable, field: &str) -> bool {
 impl ManifestQaMemberTable {
     fn into_manifest_member(
         self,
-        lifecycle: ManifestQaLifecycle,
+        _lifecycle: ManifestQaLifecycle,
         group_name: &str,
     ) -> Result<ManifestQaGroupMember, String> {
         let label = format!("group `{group_name}` member `{}`", self.id);
@@ -616,23 +617,9 @@ impl ManifestQaMemberTable {
             .map_err(|detail| format!("{label}: {detail}"))?;
         let kind = ManifestQaMemberKind::parse(&self.kind)
             .map_err(|detail| format!("{label}: {detail}"))?;
-        let surface = match (lifecycle, self.surface.as_deref()) {
-            (ManifestQaLifecycle::Maintained, None | Some("published")) => {
-                ManifestQaMemberSurface::Published
-            }
-            (ManifestQaLifecycle::Maintained, Some(other)) => {
-                return Err(format!(
-                    "{label}: maintained groups resolve published tasks only; `{other}` members are invalid"
-                ))
-            }
-            (ManifestQaLifecycle::Temporary, None) => {
-                return Err(format!(
-                    "{label}: temporary groups must state `surface` explicitly as published or draft"
-                ))
-            }
-            (ManifestQaLifecycle::Temporary, Some(raw)) => ManifestQaMemberSurface::parse(raw)
-                .map_err(|detail| format!("{label}: {detail}"))?,
-        };
+        let surface =
+            ManifestQaMemberSurface::parse(self.surface.as_deref().unwrap_or("published"))
+                .map_err(|detail| format!("{label}: {detail}"))?;
         if let Some(catalog) = &self.catalog {
             if catalog.trim().is_empty() {
                 return Err(format!(
@@ -855,8 +842,8 @@ members = [{ id = "one", kind = "test", task = "t", targets = ["workspace:root"]
     }
 
     #[test]
-    fn maintained_members_reject_draft_surface_and_unknown_companions() {
-        let error = toml::from_str::<Groups>(
+    fn legacy_member_surface_translates_and_unknown_companions_fail() {
+        let parsed = toml::from_str::<Groups>(
             r#"
 [groups.drafty]
 lifecycle = "maintained"
@@ -866,10 +853,10 @@ proof_limits = ["No coverage claim"]
 members = [{ id = "one", kind = "test", surface = "draft", task = "t", targets = ["workspace:root"], limits = ["nothing"] }]
 "#,
         )
-        .expect_err("draft member in maintained group must fail");
-        assert!(
-            error.to_string().contains("published tasks only"),
-            "{error}"
+        .expect("legacy surface translates");
+        assert_eq!(
+            parsed.groups["drafty"].members[0].surface,
+            super::ManifestQaMemberSurface::Published
         );
 
         let error = toml::from_str::<Groups>(

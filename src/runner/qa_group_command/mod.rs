@@ -14,7 +14,7 @@ use effigy_cli::{TasksArgs, TasksQaCommand};
 use effigy_context::EffigyRuntimeContext;
 use effigy_core::task_selection::TaskSurface;
 use effigy_execution::QaGroupStatusSnapshot;
-use effigy_manifest::ManifestDraftDate;
+use effigy_manifest::ManifestLifecycleDate;
 use effigy_routing::load_effective_catalogs_allow_missing;
 use effigy_runtime::qa_group_status::{list_qa_group_run_ids, load_qa_group_run_record};
 use effigy_tasks::{
@@ -95,7 +95,7 @@ fn run_qa_groups_list(
             file_tracking: tracking,
             pretty_json,
             resolved_root: &root,
-            today: ManifestDraftDate::today_local(),
+            today: ManifestLifecycleDate::today_local(),
         },
         &catalogs,
     )
@@ -147,7 +147,7 @@ fn resolve_run_plan(
         selected: &selected,
         catalogs: &catalogs,
         scope_tokens: scopes,
-        today: ManifestDraftDate::today_local(),
+        today: ManifestLifecycleDate::today_local(),
     })
     .map_err(map_tasks_error)?;
     let head = git_head_context(&root);

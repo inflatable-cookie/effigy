@@ -1,4 +1,29 @@
 [[retired]]
+id = "effigy-draft-task-namespace"
+retired = "2026-10-19"
+replacement = "Use ordinary tasks with visibility = internal and optional group. Legacy task tables and draft step/member references translate for one release; invoke tasks by name. The old inventory command names tasks --all and tasks --json as replacements."
+owner = "docs/knowledge/contracts/046-published-and-draft-task-surface-contract.md"
+terms = ["effigy.drafts.v1", "[drafts]", "effigy drafts", "effigy draft "]
+paths = ["crates/effigy-manifest/src/draft_defs.rs", "crates/effigy-tasks/src/drafts.rs", "crates/effigy-doctor/src/draft_lifecycle.rs"]
+config_keys = ["[drafts."]
+allow = [
+  "CHANGELOG.md",
+  "docs/knowledge/contracts/046-published-and-draft-task-surface-contract.md",
+  "docs/knowledge/contracts/051-bounded-qa-groups-contract.md",
+  "docs/guides/022-manifest-cookbook.md",
+  "crates/effigy-manifest/src/task_migration.rs",
+  "crates/effigy-cli/src/command_parsing.rs",
+  "crates/effigy-cli/src/help/topics/draft.rs",
+  "crates/effigy-cli/src/help/topics/drafts.rs",
+  "src/runner/drafts_command.rs",
+  "src/runner/entrypoints/dispatch.rs",
+  "src/runner/host_scheduler/tests.rs",
+  "tests/cli_output_tests/drafts_tests.rs",
+  "tests/cli_output_tests/qa_groups_tests.rs",
+  "tests/cli_output_tests/fixture_parent_tests.rs",
+]
+
+[[retired]]
 id = "effigy-graph-read-refresh"
 retired = "2026-10-19"
 replacement = "Graph reads never refresh; run effigy graph index explicitly. The old status --refresh flag warns and returns report-only status for one release."

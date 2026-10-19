@@ -6,11 +6,11 @@
 use effigy_cli::TaskInvocation;
 use effigy_execution::ExecutionSelectionPlan;
 use effigy_manifest::{DeferredCommand, TaskSelection};
-use effigy_routing::select_catalog_and_task_on_surface;
-use effigy_tasks::{TaskSelector, TaskSurface};
+use effigy_routing::select_catalog_and_task;
+use effigy_tasks::TaskSelector;
 
 use super::planning::ExecutionPreflight;
-use super::selection::{build_execution_selection_plan, task_surface_for_execution};
+use super::selection::build_execution_selection_plan;
 use crate::runner::command_context::active_runtime_context;
 use crate::runner::deferral::{
     deferred_builtins_from_catalogs, select_deferral, should_attempt_deferral,
@@ -71,9 +71,7 @@ fn resolve_route_from<'a>(
     preflight: &'a ExecutionPreflight,
     builtins: bool,
 ) -> Result<Route<'a>, RunnerError> {
-    let surface = task_surface_for_execution(&preflight.execution_surface);
-    let error: RunnerError = match select_catalog_and_task_on_surface(
-        surface,
+    let error: RunnerError = match select_catalog_and_task(
         &preflight.selector,
         &preflight.catalogs,
         &preflight.invocation_cwd,
@@ -85,8 +83,6 @@ fn resolve_route_from<'a>(
                 plan: Box::new(plan),
             });
         }
-        // Draft selection never falls through: `effigy draft` fails closed.
-        Err(error) if surface == TaskSurface::Draft => return Err(error.into()),
         Err(error) => error.into(),
     };
     if let Some(removed) = removed_builtin_invocation_error(&preflight.selector) {

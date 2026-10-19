@@ -49,6 +49,7 @@ fn run_manifest_task_builtin_init_creates_scaffold_when_missing() {
     );
 
     let listed = run_tasks(TasksArgs {
+        all: false,
         repo_override: Some(root),
         task_name: Some("ping".to_owned()),
         resolve_selector: None,

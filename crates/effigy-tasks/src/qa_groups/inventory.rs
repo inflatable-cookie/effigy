@@ -6,7 +6,7 @@
 
 use std::path::Path;
 
-use effigy_manifest::{LoadedCatalog, ManifestDraftDate, ManifestQaLifecycle};
+use effigy_manifest::{LoadedCatalog, ManifestLifecycleDate, ManifestQaLifecycle};
 
 use super::{load_temporary_qa_group, QaFileTracking};
 use crate::EffigyTasksError;
@@ -20,7 +20,7 @@ pub struct ListQaGroupsRequest<'a> {
     pub file_tracking: QaFileTracking,
     pub pretty_json: bool,
     pub resolved_root: &'a Path,
-    pub today: ManifestDraftDate,
+    pub today: ManifestLifecycleDate,
 }
 
 /// One inventory row: a maintained group or the selected temporary
@@ -193,7 +193,7 @@ mod tests {
 
     use super::{list_qa_groups, ListQaGroupsRequest, QaFileTracking};
     use crate::qa_groups::test_support::catalog;
-    use effigy_manifest::ManifestDraftDate;
+    use effigy_manifest::ManifestLifecycleDate;
 
     const ROOT_MANIFEST: &str = r#"
 [qa.groups.alpha]
@@ -223,7 +223,7 @@ members = [{ id = "tests", kind = "compile", surface = "published", task = "c", 
                 file_tracking: QaFileTracking::Unknown,
                 pretty_json: false,
                 resolved_root: std::path::Path::new("/tmp/repo"),
-                today: ManifestDraftDate::parse("2026-10-05").expect("date"),
+                today: ManifestLifecycleDate::parse("2026-10-05").expect("date"),
             },
             &catalogs,
         )
@@ -245,7 +245,7 @@ members = [{ id = "tests", kind = "compile", surface = "published", task = "c", 
                 file_tracking: QaFileTracking::Unknown,
                 pretty_json: false,
                 resolved_root: std::path::Path::new("/tmp/repo"),
-                today: ManifestDraftDate::parse("2026-10-05").expect("date"),
+                today: ManifestLifecycleDate::parse("2026-10-05").expect("date"),
             },
             &catalogs,
         )
@@ -259,7 +259,7 @@ members = [{ id = "tests", kind = "compile", surface = "published", task = "c", 
                 file_tracking: QaFileTracking::Unknown,
                 pretty_json: false,
                 resolved_root: std::path::Path::new("/tmp/repo"),
-                today: ManifestDraftDate::parse("2026-10-05").expect("date"),
+                today: ManifestLifecycleDate::parse("2026-10-05").expect("date"),
             },
             &catalogs,
         )
@@ -298,7 +298,7 @@ members = [{ id = "one", kind = "proof", surface = "published", task = "t", targ
                 file_tracking: QaFileTracking::Untracked,
                 pretty_json: false,
                 resolved_root: &base,
-                today: ManifestDraftDate::parse("2026-10-05").expect("date"),
+                today: ManifestLifecycleDate::parse("2026-10-05").expect("date"),
             },
             &catalogs,
         )
@@ -324,7 +324,7 @@ members = [{ id = "one", kind = "proof", surface = "published", task = "t", targ
                 file_tracking: QaFileTracking::Tracked,
                 pretty_json: false,
                 resolved_root: &base,
-                today: ManifestDraftDate::parse("2026-10-05").expect("date"),
+                today: ManifestLifecycleDate::parse("2026-10-05").expect("date"),
             },
             &catalogs,
         )

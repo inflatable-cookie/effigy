@@ -1210,6 +1210,7 @@ where
     let mut status_selector: Option<String> = None;
     let mut status_mode = false;
     let mut status_all = false;
+    let mut all = false;
     let mut output_json = false;
     let mut pretty_json = true;
     let mut pretty_seen = false;
@@ -1236,7 +1237,8 @@ where
         }
         match arg.as_str() {
             "status" => {
-                if task_name.is_some()
+                if all
+                    || task_name.is_some()
                     || resolve_selector.is_some()
                     || status_selector.is_some()
                     || status_all
@@ -1292,6 +1294,7 @@ where
                 }
                 status_all = true;
             }
+            "--all" => all = true,
             "--pretty" => {
                 if status_selector.is_some() || status_all {
                     return Err(CliParseError::InvalidArguments(
@@ -1323,6 +1326,7 @@ where
     }
 
     Ok(Command::Tasks(TasksArgs {
+        all,
         repo_override,
         task_name,
         resolve_selector,

@@ -160,7 +160,6 @@ mod tests {
             defer_run: None,
             deferred_builtins: Default::default(),
             depth: 0,
-            draft_sources: Default::default(),
         };
         TaskTarget::for_catalog(root, "check", &catalog)
     }

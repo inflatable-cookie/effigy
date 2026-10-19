@@ -8,8 +8,7 @@
 
 use effigy_manifest::{
     LoadedCatalog, ManifestManagedRun, ManifestManagedRunStep, ManifestQaGroup,
-    ManifestQaGroupMember, ManifestQaLifecycle, ManifestQaMemberSurface, ManifestQaScopePolicy,
-    ManifestTask, QaScopeToken,
+    ManifestQaGroupMember, ManifestQaLifecycle, ManifestQaScopePolicy, ManifestTask, QaScopeToken,
 };
 use std::collections::BTreeSet;
 
@@ -162,7 +161,7 @@ pub struct QaGroupPlanRequest<'a> {
     /// Raw caller tokens, parsed and compared in order.
     pub scope_tokens: &'a [String],
     /// Today's date for advisory expiry evidence.
-    pub today: effigy_manifest::ManifestDraftDate,
+    pub today: effigy_manifest::ManifestLifecycleDate,
 }
 
 /// Build the full plan for a selected group. Fails closed on unresolved
@@ -327,20 +326,8 @@ fn resolve_member(
                 member.id
             ))
         })?;
-    let (task, surface) = match member.surface {
-        ManifestQaMemberSurface::Published => (
-            catalog.manifest.tasks.get(&member.task),
-            crate::TaskSurface::Published,
-        ),
-        ManifestQaMemberSurface::Draft => (
-            catalog
-                .manifest
-                .drafts
-                .get(&member.task)
-                .map(|draft| &draft.task),
-            crate::TaskSurface::Draft,
-        ),
-    };
+    let task = catalog.manifest.tasks.get(&member.task);
+    let surface = crate::TaskSurface::Published;
     let Some(task) = task else {
         return Err(EffigyTasksError::message(format!(
             "member `{}` selector `{}` does not resolve as a {} task in catalog `{alias}`; unresolved members fail before any run",
@@ -432,7 +419,7 @@ fn classify_task_admission(
                 })?,
             None => catalogs
                 .iter()
-                .find(|catalog| task_on_surface(catalog, reference_surface, name).is_some())
+                .find(|catalog| catalog.manifest.tasks.contains_key(name))
                 .ok_or_else(|| {
                     format!(
                         "nested {} reference `{name}` does not resolve in any effective catalog",
@@ -440,7 +427,7 @@ fn classify_task_admission(
                     )
                 })?,
         };
-        let nested = task_on_surface(catalog, reference_surface, name).ok_or_else(|| {
+        let nested = catalog.manifest.tasks.get(name).ok_or_else(|| {
             format!(
                 "nested {} reference `{name}` does not resolve in catalog `{}`",
                 reference_surface.as_str(),
@@ -465,17 +452,6 @@ fn classify_task_admission(
         )?;
     }
     Ok(())
-}
-
-fn task_on_surface<'a>(
-    catalog: &'a LoadedCatalog,
-    surface: crate::TaskSurface,
-    name: &str,
-) -> Option<&'a ManifestTask> {
-    match surface {
-        crate::TaskSurface::Published => catalog.manifest.tasks.get(name),
-        crate::TaskSurface::Draft => catalog.manifest.drafts.get(name).map(|draft| &draft.task),
-    }
 }
 
 fn is_admission_reserved_name(name: &str) -> bool {
@@ -550,9 +526,7 @@ fn collect_step_references(
             if let Some(reference) = table.task.as_deref() {
                 push_reference(crate::TaskSurface::Published, reference, out);
             }
-            if let Some(reference) = table.draft.as_deref() {
-                push_reference(crate::TaskSurface::Draft, reference, out);
-            }
+
             if let Some(run) = table.run.as_deref() {
                 collect_run_references(
                     &ManifestManagedRun::Command(run.to_owned()),

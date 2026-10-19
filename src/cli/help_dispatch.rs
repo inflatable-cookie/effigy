@@ -31,6 +31,9 @@ pub fn run_help_command(context: &CliExecutionContext<'_>, topic: HelpTopic) {
         let _ = render_cli_header(&mut renderer, context.command_root);
     }
     let _ = render_help_with_deferred_builtins(&mut renderer, topic, &deferred_builtins);
+    if topic == HelpTopic::General {
+        render_repository_task_help(&mut renderer, context.command_root, false);
+    }
     let _ = renderer.text("");
 }
 
@@ -55,6 +58,9 @@ pub fn run_help_group_command(context: &CliExecutionContext<'_>, group: HelpGrou
     let mut renderer = PlainRenderer::stdout(context.output_mode);
     let _ = render_cli_header(&mut renderer, context.command_root);
     let _ = render_help_group_with_deferred_builtins(&mut renderer, group, &deferred_builtins);
+    if group == HelpGroup::Work {
+        render_repository_task_help(&mut renderer, context.command_root, false);
+    }
     let _ = renderer.text("");
 }
 
@@ -65,6 +71,9 @@ pub fn build_help_group_payload_for_root(
     let mut help_renderer = PlainRenderer::new(Vec::<u8>::new(), false);
     let deferred_builtins = crate::runner::deferred_builtins_for_root(root);
     let _ = render_help_group_with_deferred_builtins(&mut help_renderer, group, &deferred_builtins);
+    if group == HelpGroup::Work {
+        render_repository_task_help(&mut help_renderer, root, true);
+    }
     let rendered = String::from_utf8(help_renderer.into_inner()).unwrap_or_default();
     json!({
         "schema": "effigy.help.v1",
@@ -85,6 +94,9 @@ pub fn build_help_payload_for_root(topic: HelpTopic, root: &std::path::Path) -> 
     let mut help_renderer = PlainRenderer::new(Vec::<u8>::new(), false);
     let deferred_builtins = crate::runner::deferred_builtins_for_root(root);
     let _ = render_help_with_deferred_builtins(&mut help_renderer, topic, &deferred_builtins);
+    if topic == HelpTopic::General {
+        render_repository_task_help(&mut help_renderer, root, true);
+    }
     let rendered = String::from_utf8(help_renderer.into_inner()).unwrap_or_default();
     json!({
         "schema": "effigy.help.v1",
@@ -94,6 +106,31 @@ pub fn build_help_payload_for_root(topic: HelpTopic, root: &std::path::Path) -> 
         "topic": topic_label,
         "text": rendered,
     })
+}
+
+fn render_repository_task_help<W: std::io::Write>(
+    renderer: &mut PlainRenderer<W>,
+    root: &std::path::Path,
+    output_json: bool,
+) {
+    let result = effigy_routing::load_effective_catalogs_allow_missing(root)
+        .map_err(|error| error.to_string())
+        .and_then(|catalogs| {
+            effigy_tasks::render_public_task_help(&catalogs, root, output_json)
+                .map_err(|error| error.to_string())
+        });
+    match result {
+        Ok(text) if !text.is_empty() => {
+            let _ = renderer.text(&text);
+        }
+        Ok(_) => {}
+        Err(error) => {
+            let _ = renderer.notice(
+                effigy_core::widgets::NoticeLevel::Warning,
+                &format!("repository tasks unavailable: {error}"),
+            );
+        }
+    }
 }
 
 #[cfg(test)]

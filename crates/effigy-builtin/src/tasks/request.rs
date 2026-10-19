@@ -4,6 +4,7 @@ use super::super::arg_parser::{BuiltinArgParser, ParseLoopAction};
 use crate::BuiltinError;
 
 pub(super) struct TasksRequest {
+    pub(super) all: bool,
     pub(super) task_name: Option<String>,
     pub(super) resolve_selector: Option<String>,
     pub(super) status_selector: Option<String>,
@@ -22,6 +23,7 @@ pub(super) fn parse_tasks_request(
     let mut status_selector: Option<String> = None;
     let mut status_mode = false;
     let mut status_all = false;
+    let mut all = false;
     let mut output_json = false;
     let mut pretty_json = true;
     let mut pretty_seen = false;
@@ -30,7 +32,8 @@ pub(super) fn parse_tasks_request(
             return Ok(ParseLoopAction::Handled);
         }
         if arg == "status" {
-            if task_name.is_some()
+            if all
+                || task_name.is_some()
                 || resolve_selector.is_some()
                 || status_selector.is_some()
                 || status_mode
@@ -51,6 +54,10 @@ pub(super) fn parse_tasks_request(
                 ));
             }
             status_all = true;
+            return Ok(ParseLoopAction::Handled);
+        }
+        if arg == "--all" {
+            all = true;
             return Ok(ParseLoopAction::Handled);
         }
         if arg == "--task" {
@@ -100,6 +107,7 @@ pub(super) fn parse_tasks_request(
     }
 
     Ok(TasksRequest {
+        all,
         task_name,
         resolve_selector,
         status_selector,
