@@ -87,6 +87,9 @@
 # CLI integration suites that run tasks, locks, status and flag placement
 # through the binary; extra arguments narrow the run.
 "test:task-engine:cli" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests --test documentation_coverage_tests --test env_schema_tests --test changelog_tests --test host_scheduler_integration --test bootstrap_cli_tests --no-fail-fast --retries 0 {args}", timeout_ms = 3600000 }
+# Runner secrets tests in one shared process, as hosted CI's shared-process
+# lane runs them: the in-process passphrase cache must not leak between tests.
+"test:task-engine:shared-secrets" = { run = "RUSTFLAGS='--cfg effigy_shared_process' cargo test -p effigy --lib secrets_tests:: -- --test-threads=8", timeout_ms = 1800000 }
 # Read-only resolver shadow diff over consumer roots: EFFIGY_SHADOW_OLD names the
 # previous binary, EFFIGY_SHADOW_ROOTS a file of roots relative to ~/Dev.
 "qa:resolver-shadow-diff" = { run = "cargo build --bin effigy && python3 tests/scripts/resolver-shadow-diff.py --old \"$EFFIGY_SHADOW_OLD\" --new target/debug/effigy --roots \"$EFFIGY_SHADOW_ROOTS\" ${EFFIGY_SHADOW_REPORT:+--report \"$EFFIGY_SHADOW_REPORT\"}", timeout_ms = 3600000 }

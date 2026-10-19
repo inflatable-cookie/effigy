@@ -65,16 +65,25 @@ pub(in crate::runner) fn stop_and_settle_headless_run(
     // exited-but-unreaped supervisor (a zombie its parent has not collected
     // yet) settles as soon as its gates are free instead of stalling the
     // budget.
+    // Runs the managed processes started (a remote Effigy task behind the
+    // exec surface) were signalled by the cascade; each releases its gate when
+    // its own owned-process grace ends, so they are awaited in the same budget.
     let deadline = std::time::Instant::now() + outcome.settle_budget;
     loop {
-        let supervisor_still_holds = live_holders(repo_root)
-            .into_iter()
+        let holders = live_holders(repo_root);
+        let supervisor_still_holds = holders
+            .iter()
             .any(|holder| holder.pid == Some(outcome.supervisor_pid));
+        let run_gates_released = run_digest.is_none()
+            || !holders
+                .iter()
+                .any(|holder| holder.managed_run == run_digest);
         let children_ended = outcome
             .surviving_processes
             .iter()
             .all(|(_, pid)| !effigy_process::process_is_running(*pid));
         if children_ended
+            && run_gates_released
             && (!effigy_process::process_is_running(outcome.supervisor_pid)
                 || !supervisor_still_holds)
         {
