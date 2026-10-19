@@ -47,6 +47,16 @@ and consumer repo setup.
   provider script reports.
 - Runtime injection must avoid shell command strings where possible.
 
+## Retirement prerequisite
+
+Tom's ruling (2026-10-19): consumer cleanup must land before removing the
+inert `[secrets.vault].identity` and `[secrets.vault].unlock` keys. Remove
+those declarations from consumer manifests and shared bundle exports first;
+a one-release translation with warnings does not replace that prerequisite.
+CBS declares both keys in `infra/secrets.toml`; the Underlay bundle declares
+both in `export.toml`, inherited by Acowtancy. Preserve their existing vault
+paths, secret values and runtime unlock behavior during that cleanup.
+
 ## Public Manifest Shape
 
 Initial target:
@@ -185,7 +195,7 @@ Injection rules:
   the child shell commands do not spell out the env names directly
 - managed host process launches receive those task secrets through the child
   process environment, outside the rendered shell command and argv; captured
-  managed stream and headless log output redacts the resolved values
+  headless log output redacts the resolved values
 - resolved `dev` tasks use the local-dev payload without prompting; after an
   explicit `secrets unlock`, other task names and direct vault commands use the
   sealed local command credential without prompting

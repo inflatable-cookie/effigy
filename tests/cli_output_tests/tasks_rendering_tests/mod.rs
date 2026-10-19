@@ -34,7 +34,6 @@ Built-in Tasks
 - system : Run system and workspace provisioning surfaces
 - tasks : List effective catalogs and available tasks
 - test : Built-in test runner detection, supports <catalog>/test fallback, optional --plan
-- watch : Watch mode phase-1 runtime with owner policy, debounce, and include/exclude globs
 - workspace : Run workspace command surfaces
 
 ";

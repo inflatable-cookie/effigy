@@ -91,7 +91,7 @@ effigy test --plan
 - **Catalog** — a directory with an `effigy.toml`. The `alias` lets you prefix
 tasks. `app/db:reset` means "run the `db:reset` task in the `app` catalog."
 - **Task** — a named command defined in `effigy.toml`. Run it with `effigy <task>`.
-- **Built-in** — commands like `test`, `watch`, and `init` that Effigy provides
+- **Built-in** — commands like `test` and `init` that Effigy provides
 automatically, even if they are not in your manifest.
 - **Selector** — what you type after `effigy`: a task name, a catalog prefix
 (`app/build`), or a built-in command.
@@ -171,7 +171,7 @@ effigy validate --verbose-root
 
 Built-ins that use Effigy's shared **passthrough** parser reject
 `--verbose-root` and `--env-schema` on the **builtin** invocation itself
-(today: `effigy doctor`, `effigy watch`, `effigy scan`). Use
+(today: `effigy doctor`, `effigy scan`). Use
 `effigy <builtin> --help` for the exact flag set.
 
 ## 4) Run tasks shipped by an installed skill
@@ -290,25 +290,24 @@ bounded to 120 seconds. `EFFIGY_DOCTOR_TIMEOUT_MS` overrides either budget and
 `0` disables it. Use the selector form when you want explain-mode output for a
 specific task and its passthrough args.
 
-### Standardize tests and watch mode
+### Standardize tests
 
 ```sh
 effigy test --plan
 effigy test vitest
-effigy watch --owner effigy --once test
 ```
 
 Use `--plan` first when you want to confirm what will run before running it.
 
-### Start or migrate a manifest
+### Start an explicit manifest
 
 ```sh
 effigy init
-effigy tasks migrate --from package.json
 effigy config --schema --minimal
 ```
 
-Use these when the repo still depends on scattered scripts and ad-hoc setup.
+Use these to scaffold the baseline, then declare task commands explicitly.
+Initialization does not import package scripts.
 
 ### Bootstrap a repo from anywhere
 
@@ -377,9 +376,9 @@ without writing plaintext to repo files. See
 - Local containers, systems, and workspaces:
   [`063-container-system-guide.md`](063-container-system-guide.md) and
   [`064-system-workspace-and-dev-contract.md`](064-system-workspace-and-dev-contract.md)
-- Task routing, tests, watch, or troubleshooting:
+- Task routing, tests, or troubleshooting:
   [`016-task-routing-precedence.md`](016-task-routing-precedence.md),
-  [`019-watch-init-migrate-foundation.md`](019-watch-init-migrate-foundation.md),
+  [`019-init-foundation.md`](019-init-foundation.md),
   [`023-troubleshooting-and-failure-recipes.md`](023-troubleshooting-and-failure-recipes.md)
 - Demos, JSON, or bootstrap:
   [`058-demo-system-guide.md`](058-demo-system-guide.md),
@@ -397,7 +396,7 @@ After this guide, you should be able to:
 ## Related Guides
 
 - [`016-task-routing-precedence.md`](016-task-routing-precedence.md)
-- [`019-watch-init-migrate-foundation.md`](019-watch-init-migrate-foundation.md)
+- [`019-init-foundation.md`](019-init-foundation.md)
 - [`012-dev-process-manager-tui.md`](012-dev-process-manager-tui.md)
 - [`022-manifest-cookbook.md`](022-manifest-cookbook.md)
 - [`023-troubleshooting-and-failure-recipes.md`](023-troubleshooting-and-failure-recipes.md)

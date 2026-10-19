@@ -46,7 +46,7 @@ These are valid docs, but they should not compete with onboarding pages:
 - `016` task routing precedence
 - `017` JSON output contracts
 - `018` doctor explain mode
-- `019` watch, init, and migrate
+- `019` initialization and setup inventory
 - `024` CI and automation recipes
 - `026` JSON payload examples
 - `028` migration quick paths

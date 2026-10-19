@@ -34,10 +34,9 @@ fn init_inventory_detects_contextual_setup_surfaces() {
     let checks = collect_agent_checks(&root, &assets, AgentInitMode::Check, None).expect("checks");
     let jobs = build_setup_inventory(&root, &checks);
 
-    assert!(jobs
+    assert!(!jobs
         .iter()
-        .any(|job| job.id == "task_migration.package_json"
-            && job.applicability == SetupApplicability::Applicable));
+        .any(|job| job.id == "task_migration.package_json"));
     assert!(jobs
         .iter()
         .any(|job| job.id == "bundle_sync.run" && job.category == SetupCategory::Bundles));
@@ -75,7 +74,7 @@ fn follow_up_renderer_surfaces_real_commands() {
     let checks = collect_agent_checks(&root, &assets, AgentInitMode::Check, None).expect("checks");
     let jobs = build_setup_inventory(&root, &checks);
     let rendered = render_follow_up_jobs_excluding(&jobs, &std::collections::BTreeSet::new());
-    assert!(rendered.contains("effigy tasks migrate"));
+    assert!(!rendered.contains("effigy tasks migrate"));
     assert!(rendered.contains("effigy bundle inspect"));
     assert!(rendered.contains("effigy graph status --json"));
 }

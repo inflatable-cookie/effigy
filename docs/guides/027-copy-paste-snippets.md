@@ -67,7 +67,6 @@ Run:
 ```sh
 effigy validate
 effigy test --plan
-effigy watch --owner effigy --once test
 ```
 
 This starter also leaves `test` on the built-in path so package-manager

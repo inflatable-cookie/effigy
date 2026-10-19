@@ -17,18 +17,9 @@ where
     match subcmd.as_str() {
         "--help" | "-h" => Ok(Command::Help(HelpTopic::Docs)),
         "check" => parse_docs_check(args),
-        "qualified" => {
-            if args.next().as_deref() != Some("resolve") || args.next().is_some() {
-                return Err(CliParseError::InvalidArguments(
-                    "expected `docs qualified resolve` with no passthrough arguments".to_owned(),
-                ));
-            }
-            Ok(Command::Docs(DocsArgs {
-                subcommand: DocsSubcommand::QualifiedResolve,
-                repo_override: None,
-                output_json: true,
-            }))
-        }
+        "qualified" => Err(CliParseError::InvalidArguments(
+            "`effigy docs qualified` is retired; run `effigy qa:docs` and `effigy skill run northstar/retired-concepts` directly".to_owned(),
+        )),
         "context" => parse_docs_context(args),
         "add-log-index" => parse_docs_add_log_index(args),
         other => Err(unknown_argument(other)),

@@ -212,8 +212,6 @@ pub fn apply_global_cli_options(
             | Command::Gateway(_)
             | Command::InternalGateway(_)
             | Command::InternalGatewayIdentity(_)
-            | Command::InternalGatewayLegacyCandidate(_)
-            | Command::InternalGatewayLegacyStop(_)
             | Command::InternalScriptRun(_)
             | Command::InternalContainerLeaseReaper(_)
             | Command::InternalHostProcessSupervise(_)
@@ -290,14 +288,16 @@ pub(super) fn apply_global_json_flag(mut cmd: Command, json_mode: bool) -> Comma
         Command::Service(args) => args.output_json = true,
         Command::Task(task) => {
             if !runtime_flag_present_before_passthrough(&task.args, "--json") {
-                let insert_at =
-                    if task.args.first().map(String::as_str).is_some_and(|arg| {
-                        matches!(arg, "migrate" | "unlock" | "cache" | "completion")
-                    }) {
-                        1
-                    } else {
-                        0
-                    };
+                let insert_at = if task
+                    .args
+                    .first()
+                    .map(String::as_str)
+                    .is_some_and(|arg| matches!(arg, "unlock" | "cache" | "completion"))
+                {
+                    1
+                } else {
+                    0
+                };
                 task.args.insert(insert_at, "--json".to_owned());
             }
         }
@@ -324,8 +324,6 @@ pub(super) fn apply_global_json_flag(mut cmd: Command, json_mode: bool) -> Comma
         Command::Doctor(args) => args.output_json = true,
         Command::InternalGateway(_) => {}
         Command::InternalGatewayIdentity(_) => {}
-        Command::InternalGatewayLegacyCandidate(_) => {}
-        Command::InternalGatewayLegacyStop(_) => {}
         Command::InternalScriptRun(_) => {}
         Command::InternalContainerLeaseReaper(_) => {}
         Command::InternalHostProcessSupervise(_) => {}
@@ -371,8 +369,6 @@ pub(super) fn command_requests_json(cmd: &Command, global_json_mode: bool) -> bo
         Command::Task(task) => runtime_flag_present_before_passthrough(&task.args, "--json"),
         Command::InternalGateway(_) => false,
         Command::InternalGatewayIdentity(_) => false,
-        Command::InternalGatewayLegacyCandidate(_) => false,
-        Command::InternalGatewayLegacyStop(_) => false,
         Command::InternalScriptRun(_) => false,
         Command::InternalContainerLeaseReaper(_) => false,
         Command::InternalHostProcessSupervise(_) => false,

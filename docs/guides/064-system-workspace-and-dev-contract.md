@@ -139,9 +139,9 @@ user, then explicitly install the intended content with
 An absent optional service fragment cannot be supplied by rebuilding an already
 matching binary or by a similarly named task catalog member.
 
-The guarantee covers the installed pack. Project overrides and guest user
-overrides retain their normal precedence; host user overrides and credentials
-are not copied. Without an active host pack, existing baseline behavior stays
+The guarantee covers the installed pack. Project overrides retain their normal
+precedence. User-global catalog directories are ignored in both host and guest
+contexts; host credentials are not copied. Without an active host pack, existing baseline behavior stays
 unchanged. Failed or uncertain transfers before verified staging cleanup retain that
 staging for inspection and never reset the guest store. See the
 [catalog pack reference](067-catalog-services-reference.md#workspace-pack-preparation)

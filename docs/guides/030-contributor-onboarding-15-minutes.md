@@ -52,7 +52,7 @@ Expected outcome:
 - the active command path is clear
 - the active build identity is clear when using a local stamped install
 - help output renders with the expected built-ins (`tasks`, `doctor`, `test`,
-  `watch`, and others)
+  `init`, and others)
 
 ## Minute 2-5: Task Discovery + Routing Probe
 

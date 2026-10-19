@@ -220,18 +220,6 @@ impl Drop for EnvGuard {
     }
 }
 
-pub(super) struct ExecutableOverrideGuard {
-    _guard: effigy_core::executable_override::ScopedExecutableOverride,
-}
-
-impl ExecutableOverrideGuard {
-    pub(super) fn set(path: impl Into<String>) -> Self {
-        Self {
-            _guard: effigy_core::executable_override::set_scoped(Some(path.into())),
-        }
-    }
-}
-
 /// Force a PATH writer to overlap the real fixture's entry. Queue membership
 /// proves exclusion without relying on a sleep or a lucky thread schedule.
 pub(super) fn assert_waits_for_path_mutator(reader: fn(Box<dyn FnOnce() + Send>)) {

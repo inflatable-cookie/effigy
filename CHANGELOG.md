@@ -6,6 +6,17 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Removed
+- Retire `effigy watch`, `effigy tasks migrate`, managed stream mode,
+  transition-evidence receipts, pre-0.14 `gateway recover`, the unused
+  user-runtime scaffold, and qualified private docs assurance. Removed command
+  spellings give replacement instructions; unset `EFFIGY_MANAGED_STREAM` and
+  use `--headless`. Existing transition files remain untouched.
+- Reject the `[manifest].root` key with removal guidance. Ignore the
+  user-global `~/.effigy/catalog/` override with a one-release warning; move
+  custom fragments to each repository's `infra/dev/catalog/`. Secrets policy
+  keys remain unchanged pending consumer cleanup.
+
 ### Added
 - Keep CLI presentation local and bounded: banner sizing never launches `tput`, and version metadata reads environment or installed stamps without running Git. Unstamped development binaries report the package version.
 - Graph reads, documentation context and doctor never refresh or create graph

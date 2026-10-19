@@ -56,7 +56,6 @@ schema artifacts live beside these files.
 | [050-rhai-fs-atomic-publish-contract.md](050-rhai-fs-atomic-publish-contract.md) | Atomic create-if-absent Rhai file publication for `write_file_if_absent` and `copy_if_missing`, collision and cleanup semantics, and `copy`/`move_path` replacement limits. |
 | [051-bounded-qa-groups-contract.md](051-bounded-qa-groups-contract.md) | Implemented bounded QA-group contract for explicit members, typed scope, lifecycle, admission, run evidence, and migration; `stop`/`hard_timeout_ms` wait on [052](052-runtime-kernel-contract.md). |
 | [052-runtime-kernel-contract.md](052-runtime-kernel-contract.md) | Runtime kernel contract, specified and not implemented: identity, gates, the store, the run journal and settle, process and remote custody, signals, deadlines, tri-state observation, effect classes, outcomes, host/guest authority, adoption map, migration and proof plan. |
-| [053-qualified-docs-execution-closure-contract.md](053-qualified-docs-execution-closure-contract.md) | Proposed exact docs-only recipe resolution, nested executable/read declarations and enforcement; Nucleus retains outcome, resource and native admission ownership. |
 | [release.md](release.md) | Human-gated release sequence, verification, failure recovery, and no-retag rule. |
 | [writing-style.md](writing-style.md) | Glue-light internal writing rule and reply shape. |
 

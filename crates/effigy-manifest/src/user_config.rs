@@ -1,8 +1,7 @@
 //! User-global per-developer Effigy configuration.
 //!
-//! Lives at `~/.effigy/config.toml`. Distinct from the user-global
-//! catalog-fragment override directory (`~/.effigy/catalog/`), which is loaded
-//! by `effigy-containers` separately. This file holds bundle-keyed
+//! Lives at `~/.effigy/config.toml`. Distinct from the retired user catalog-fragment
+//! directory, which is ignored. This file holds bundle-keyed
 //! per-developer settings that should never be checked into a project's
 //! `effigy.toml` because they reference paths only present on the local
 //! machine (e.g. parent directories of library checkouts).

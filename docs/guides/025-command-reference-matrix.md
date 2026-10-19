@@ -36,8 +36,8 @@ For narrative workflow guidance instead of lookup, start with:
 - Need to discover tasks or inspect routing: use `effigy tasks`.
 - Need health checks, workspace ownership diagnosis, or routing diagnosis for
   one selector: use `effigy doctor`.
-- Need tests, watch mode, repo init, or package-script import: use
-  `effigy test`, `watch`, `init`, or `tasks migrate`.
+- Need tests or repository setup: use
+  `effigy test` or `effigy init`.
 - Need to inspect bundled service fragments or take local ownership: use
   `effigy service`.
 - Need one ad-hoc command inside the dev container without opening a shell:
@@ -103,7 +103,7 @@ no new top-level built-in name, and leaves manifest selectors named `work`,
 
 | Topic | Primary commands |
 | --- | --- |
-| `effigy help work` | `effigy <task>`, `effigy <catalog>/<task>`, `effigy tasks`, `effigy drafts`, `effigy draft`, `effigy test`, `effigy watch`, `effigy doctor`, `effigy init` |
+| `effigy help work` | `effigy <task>`, `effigy <catalog>/<task>`, `effigy tasks`, `effigy drafts`, `effigy draft`, `effigy test`, `effigy doctor`, `effigy init` |
 | `effigy help local` | `effigy container`, `effigy system`, `effigy workspace`, `effigy gateway`, `effigy service`, `effigy exec` |
 | `effigy help repo` | `effigy graph`, `effigy scan`, `effigy docs`, `effigy contracts` |
 | `effigy help deliver` | `effigy artifact`, `effigy state`, `effigy deploy`, `effigy release`, `effigy bundle`, `effigy bootstrap`, `effigy demo` |
@@ -142,7 +142,7 @@ through the help route.
 | `effigy service` | Inspect the layered service catalog, extract bundled fragments into repo-owned overrides, and manage installed catalog packs | `list`, `extract`, `pack status`, `pack install <oci://...@sha256:...>`, `pack install --path <DIR>`, `pack update`, `pack rollback`, `pack reset`, `--repo`, `--dir`, `--path`, `--prepare-content <sha256:DIGEST>` (guarded local workspace install), `--json` | `effigy.service.list.v1`, `effigy.service.extract.v1`, `effigy.service.pack.status.v1`, `effigy.service.pack.install.v1`, `effigy.service.pack.update.v1`, `effigy.service.pack.rollback.v1`, `effigy.service.pack.reset.v1` | [`067-catalog-services-reference.md`](067-catalog-services-reference.md), `063-container-system-guide.md` |
 | `effigy exec` | Run one ad-hoc command inside the manifest's default system workspace container; primary-service commands use its declared `workspace_user` and `workspace_home`, while non-console callers run without a TTY | `--repo`, `--service`, `--json` | exec commands render command-envelope JSON with exec payloads | `063-container-system-guide.md` |
 | `effigy secrets` | Inspect declared secret metadata, store and retrieve vault values, import declared keys from a `.env`-style file, and manage the local encrypted vault without printing values | `list`, `doctor`, `init`, `set`, `get`, `unset`, `import`, `change-passphrase`, `unlock`, `lock`, `export`, `--repo`, `--json` | `effigy.secrets.v1` | `075-secrets-and-vault-guide.md`, [`../contracts/032-secret-and-local-config-management-contract.md`](../knowledge/contracts/032-secret-and-local-config-management-contract.md) |
-| `effigy gateway` | Operate the host-native local DNS and reverse-proxy gateway for container-owned routes, or select an isolated disposable instance | `up`, `down`, `status`, `recover`, `repair`, `setup-tls`, `setup-listener-handoff`, `listener-handoff-status`, `remove-listener-handoff`, `--private-state-root`, private `--dns-addr` / `--proxy-addr` / `--https-addr`, `--json`, `--yes`, `--adopt-candidate` | gateway commands render command-envelope JSON with gateway payloads, including `effigy.gateway.recover.v1`; private `up` and `status` report actual held loopback addresses and `client_ca_file`; `setup-listener-handoff` prints the SOURCE launchd definition only and installs nothing; `listener-handoff-status` is read-only and `remove-listener-handoff` emits an UNEXECUTED administrator plan, both refusing foreign, stale or uncertain definition/job association | `063-container-system-guide.md`, `083-v0.14.0-consumer-migration.md` |
+| `effigy gateway` | Operate the host-native local DNS and reverse-proxy gateway for container-owned routes, or select an isolated disposable instance | `up`, `down`, `status`, `repair`, `setup-tls`, `setup-listener-handoff`, `listener-handoff-status`, `remove-listener-handoff`, `--private-state-root`, private `--dns-addr` / `--proxy-addr` / `--https-addr`, `--json`, `--yes` | gateway commands render command-envelope JSON with gateway payloads; private `up` and `status` report actual held loopback addresses and `client_ca_file`; `setup-listener-handoff` prints the SOURCE launchd definition only and installs nothing; `listener-handoff-status` is read-only and `remove-listener-handoff` emits an UNEXECUTED administrator plan, both refusing foreign, stale or uncertain definition/job association | `063-container-system-guide.md`, `083-v0.14.0-consumer-migration.md` |
 | `effigy doctor` | Run bounded structural checks by default, including `container.workspace-ownership`; opt into catalog-scoped scans and health with `--deep`; provide optional explain-mode selection diagnostics | `--repo`, `--fix`, `--verbose`, `--json`, `--deep`, `--catalog`, `--all-catalogs`, `--refresh` | `effigy.doctor.v1`, `effigy.doctor.explain.v1` | `018-doctor-explain-mode.md`, `063-container-system-guide.md`, [`../contracts/047-bounded-doctor-and-scan-cache-contract.md`](../knowledge/contracts/047-bounded-doctor-and-scan-cache-contract.md) |
 | `effigy docs` | Run reusable docs QA checks such as path presence, link validation, heading/content/forbidden-text checks, JSON example validation, markdown index consistency checks, next-action policy validation, workflow-path validation, and log-index entry insertion, plus bounded `docs context` documentation retrieval | `check <KIND>`, `context <QUERY>`, `add-log-index`, `--repo`, `--file`, `--section`, `--min-blocks`, `--require`, `--require-heading`, `--require-block`, `--forbid`, `--policy-index`, `--policy`, `--dir`, `--index`, `--max-sections`, `--max-bytes`, `--max-hops`, `--json` | `effigy.docs.link-check.v1`, `effigy.docs.json-examples.v1`, `effigy.docs.heading-check.v1`, `effigy.docs.path-check.v1`, `effigy.docs.contains-check.v1`, `effigy.docs.forbidden-check.v1`, `effigy.docs.index-check.v1`, `effigy.docs.next-action-check.v1`, `effigy.docs.workflow-path-check.v1`, `effigy.docs.add-log-index.v1`, `effigy.docs.context.v1` | `029-docs-qa-checklist-and-validation.md`, [`079-documentation-graph-profiles-and-context.md`](079-documentation-graph-profiles-and-context.md), [`../contracts/041-documentation-graph-profile-contract.md`](../knowledge/contracts/041-documentation-graph-profile-contract.md) |
 | `effigy contracts` | Validate reusable JSON contract artifacts such as selection payloads and schema-index contract coverage | `check-json`, `validate-selection`, `--repo`, `--index`, `--fast`, `--full`, `--changed-only`, `--print-selected`, `--contract`, `--artifact`, `--json` | `effigy.contracts.check-json.v1`, `effigy.contracts.selection-validation.v1` | `017-json-output-contracts.md` |
@@ -158,9 +158,7 @@ through the help route.
 | `effigy demo` | Discover repo-owned proof demos, browse them in the demo browser, inspect active/latest state, query retained attempt history, execute new attempts, and control runner-owned lifecycle for active demos | `list`, `browser`, `inspect`, `history`, `run`, `stop`, `input`, `resize`, `rerun`, `--repo`, `--json` | `effigy.demo.list.v1`, `effigy.demo.inspect.v1`, `effigy.demo.history.v1`, `effigy.demo.run.v1`, `effigy.demo.stop.v1`, `effigy.demo.input.v1`, `effigy.demo.resize.v1`, `effigy.demo.rerun.v1` | `058-demo-system-guide.md` |
 | `effigy scan` | Run built-in repo scanners such as oversized code-file detection, graph-aware boundary drift checks, likely dead-code review, validation-gap review, duplicate-block detection, comment-ratio detection, bulky generated-asset detection, generated-in-src detection, attention-marker detection, and stale-suppression detection | `god-files`, `boundary-violations`, `dead-code`, `validation-gaps`, `duplicate-blocks`, `comment-ratio`, `generated-assets`, `generated-in-src`, `attention-markers`, `stale-suppressions`, `--graph-context`, `--path`, `--stdin`, `--threshold/--warn`, `--high`, `--critical`, `--include`, `--exclude`, `--source-root`, marker overrides (`--warning-marker/--high-marker/--critical-marker`), `--show-warnings`, `--no-gitignore`, `--fail-on-findings`, `--markdown`, `--out`, `--json` | `effigy.scan.god-files.v1`, `effigy.scan.boundary-violations.v1`, `effigy.scan.dead-code.v1`, `effigy.scan.validation-gaps.v1`, `effigy.scan.duplicate-blocks.v1`, `effigy.scan.comment-ratio.v1`, `effigy.scan.generated-assets.v1`, `effigy.scan.generated-in-src.v1`, `effigy.scan.attention-markers.v1`, `effigy.scan.stale-suppressions.v1` | `076-code-graph-and-agent-workflows.md`, `022-manifest-cookbook.md` |
 | `effigy test` | Plan or run detected and configured test suites | `--plan`, `--verbose-results`, `--tui`, `--json` | `effigy.test.plan.v1`, `effigy.test.results.v1` | `013-testing-orchestration.md` |
-| `effigy watch` | Policy-first file-triggered reruns for a target task | `--owner`, `--debounce-ms`, `--include`, `--exclude`, `--once`, `--max-runs`, `--json` | `effigy.watch.v1` (bounded JSON runs) | `019-watch-init-migrate-foundation.md` |
-| `effigy init` | Prepare repo setup through one front door: bounded TTY wizard for plain terminal use, baseline managed setup without a project skill copy, wider setup inventory via checklist mode, explicit optional skill snapshot action, or named starter emission | `--check`, `--apply`, `--repair`, `--checklist`, `--apply-actions`, `<name>`, `--list`, `--dry-run`, `--force`, `--json` | `effigy.init.v1`, `effigy.init.checklist.v1`, `effigy.init.actions.v1`, `effigy.init.list.v1` | `019-watch-init-migrate-foundation.md` |
-| `effigy tasks migrate` | Import `package.json` scripts into `[tasks]` | `--from`, `--script`, `--apply`, `--json` | `effigy.migrate.v1` | `019-watch-init-migrate-foundation.md` |
+| `effigy init` | Prepare repo setup through one front door: bounded TTY wizard for plain terminal use, baseline managed setup without a project skill copy, wider setup inventory via checklist mode, explicit optional skill snapshot action, or named starter emission | `--check`, `--apply`, `--repair`, `--checklist`, `--apply-actions`, `<name>`, `--list`, `--dry-run`, `--force`, `--json` | `effigy.init.v1`, `effigy.init.checklist.v1`, `effigy.init.actions.v1`, `effigy.init.list.v1` | `019-init-foundation.md` |
 | `effigy config` | Render config reference/schema snippets, including the optional repository-defined `[docs_policy.graph]` profile, inspect the effective composed manifest, or manage user-global container defaults | `inspect`, `schema`, `path`, `get`, `set`, `unset`, `--inspect`, `--path`, `--schema`, `--minimal`, `--target`, `--runner`, `--user-inspect`, `--json` | `effigy.config.v1` | `021-quick-start-and-command-cookbook.md`, [`../contracts/041-documentation-graph-profile-contract.md`](../knowledge/contracts/041-documentation-graph-profile-contract.md) |
 | `effigy tasks unlock` | Clear lock scopes manually | `--all`, `--yes`, `--json`; typed scopes or a task selector such as `validate:activity-routing` | `effigy.unlock.v1` | `020-dag-lock-policy-baseline.md` |
 | `effigy artifact` | Inspect, stage, capture, and push versioned data artifacts to OCI registries or local staging | `inspect`, `stage`, `capture`, `--ref`, `--kind`, `--environment`, `--push`, `--farmyard-handoff`, `--json` | `effigy.artifact.inspect.v1`, `effigy.artifact.stage.v1`, `effigy.artifact.capture.v1` | `072-artifact-commands-guide.md` |
@@ -271,7 +269,6 @@ effigy gateway setup-listener-handoff [--json]
 effigy gateway listener-handoff-status [--json]
 effigy gateway remove-listener-handoff [--json]
 effigy gateway up --private-state-root <DIR> [--dns-addr <IP:PORT>] [--proxy-addr <IP:PORT>] [--https-addr <IP:PORT>] [--json]
-effigy gateway recover [--yes] [--adopt-candidate] [--json]
 effigy gateway repair [--yes] [--json]
 effigy container up [--repo <PATH>] [--attach|--detach] [--json]
 effigy container <NAME> up [--repo <PATH>] [--attach|--detach] [--json]
@@ -373,13 +370,11 @@ effigy demo <list|browser|inspect|history|run|stop|input|resize|rerun> [ARGS...]
 
 ```sh
 effigy test [--plan] [--verbose-results] [--tui] [suite] [runner args]
-effigy watch --owner <effigy|external> [--debounce-ms <MS>] [--include <GLOB>] [--exclude <GLOB>] <task> [task args]
 effigy init [--check|--apply|--repair] [--json]
 effigy init --checklist [--json]
 effigy init --apply-actions <ID>[,<ID>...] [--json]
 effigy init <name> [--dry-run] [--force] [--json]
 effigy init --list [--json]
-effigy tasks migrate [--from <PATH>] [--script <NAME>]... [--apply] [--json]
 effigy <task> [--repo <PATH>] [--verbose-root] [--env-schema <PATH>] [--lock-wait-ms <MS>] [--plan] [--json] [task args]
 effigy <catalog>/<task> [--repo <PATH>] [--verbose-root] [--env-schema <PATH>] [--lock-wait-ms <MS>] [--plan] [--json] [task args]
 effigy --host-run-request-id <UUID> <heavy-task>
@@ -456,8 +451,6 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
   removes exact local symlinks and releases only safe registration ownership;
   `bun install` can drift a desired link, so inspect with status/doctor and
   re-run the same link command to repair it
-- `watch --owner` is required
-- `watch --json` requires bounded mode such as `--once` or `--max-runs`
 - `exec` runs inside the manifest default system workspace container and
   defaults to that container's `primary_service` unless `--service` is
   supplied; primary-service commands use the declared `workspace_user` and
@@ -530,7 +523,7 @@ environment in `session.json` so a whole-environment handover can end
   the live owner bound to the losing environment
 - `--verbose-root`, `--env-schema`, and `--lock-wait-ms` apply to manifest task
   invocations; `EFFIGY_LOCK_WAIT_MS` is the env fallback when the flag is
-  omitted. The passthrough-style built-ins `doctor`, `watch`, and `scan` reject
+  omitted. The passthrough-style built-ins `doctor` and `scan` reject
   `--verbose-root` and `--env-schema` on the built-in invocation itself (use
   `effigy <builtin> --help` and
   [`050-env-schema-integration.md`](050-env-schema-integration.md))
@@ -701,7 +694,7 @@ git diff --name-only | effigy graph affected --stdin --json
 Lock recovery:
 
 ```sh
-effigy tasks unlock task:watch:test
+effigy tasks unlock task:build
 effigy tasks unlock --all --yes
 ```
 

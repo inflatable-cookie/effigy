@@ -105,9 +105,9 @@ move the command to:
 rust = "cargo nextest run --workspace"
 ```
 
-`effigy tasks migrate` maps a package-manager `test` script to a named test
-suite instead of creating `tasks.test`. Manifest rejection and doctor output
-must name this migration directly.
+Define package-manager test commands as named test suites instead of creating
+`tasks.test`. Manifest rejection and doctor output must name this migration
+directly.
 
 ## Ownership
 

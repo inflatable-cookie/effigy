@@ -318,9 +318,6 @@ fn graph_manifest_indexer_skips_blank_unresolved_targets() {
     fs::write(
         temp.path().join("effigy.toml"),
         r#"
-[manifest]
-root = true
-
 [deploy.production]
 state = "production"
 code_ref = "branch:main"

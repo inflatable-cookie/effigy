@@ -65,7 +65,7 @@ pub(crate) fn assert_schema_v1(parsed: &serde_json::Value, schema: &str) {
 
 pub(crate) fn run_invocation_json(root: PathBuf, name: &str, args: &[&str]) -> serde_json::Value {
     let invocation = match name {
-        "migrate" | "unlock" | "cache" => TaskInvocation {
+        "unlock" | "cache" => TaskInvocation {
             name: "tasks".to_owned(),
             args: std::iter::once(name.to_owned())
                 .chain(args.iter().map(|arg| (*arg).to_owned()))

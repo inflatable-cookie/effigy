@@ -16,7 +16,7 @@ Reach for this guide when:
 
 - a task does not resolve where you expected
 - a built-in command fails and you need the shortest diagnosis path
-- watch mode, locks, env resolution, or deferral behavior feels unclear
+- locks, env resolution, or deferral behavior feels unclear
 - CI is failing and you need the human-first version of the fix path
 
 ## 1) Fast Triage Flow
@@ -345,35 +345,7 @@ Fix:
 - add the value to the selected dotenv file, or
 - correct `env_file` on the suite table
 
-## 5) Watch Mode and Lock Errors
-
-### Symptom: ``--owner <effigy|external> is required``
-
-Fix:
-
-```sh
-effigy watch --owner effigy --once test
-```
-
-### Symptom: ``--json requires a bounded watch run``
-
-Fix:
-
-```sh
-effigy watch --owner effigy --once test --json
-# or
-effigy watch --owner effigy --max-runs 2 --json test
-```
-
-### Symptom: lock conflict for `task:watch:<target>`
-
-Fix:
-
-```sh
-effigy tasks unlock task:watch:<target>
-# if needed
-effigy tasks unlock --all --yes
-```
+## 5) Lock Errors
 
 ### Symptom: `lock conflict for <scope> ...`
 
@@ -669,7 +641,7 @@ Fix:
 After this guide, you should be able to:
 
 - choose the shortest useful diagnosis command for a failure
-- separate routing issues from manifest, env, watch, and test issues
+- separate routing issues from manifest, env, and test issues
 - turn a symptom into a concrete fix or a more precise follow-up question
 
 ## Related Guides

@@ -428,7 +428,7 @@ fn fd_is_listening(fd: RawFd) -> Result<bool, DescriptorRefusal> {
     match crate::macos_socket::socket_endpoint(pid, fd) {
         Ok(Some(endpoint)) => Ok(matches!(
             endpoint.transport,
-            crate::legacy::GatewayTransport::Tcp
+            crate::socket_ownership::GatewayTransport::Tcp
         )),
         Ok(None) => Ok(false),
         Err(_) => Err(DescriptorRefusal::ProbeDenied),

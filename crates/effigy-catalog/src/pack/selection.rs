@@ -1,4 +1,4 @@
-//! Catalog layer selection: project override, user override, active installed
+//! Catalog layer selection: project override, active installed
 //! pack, compiled baseline — in that order.
 //!
 //! This is the only place layer paths are computed. Every catalog-backed
@@ -19,8 +19,8 @@ use crate::fragment::{CatalogResolver, InstalledPackLayer};
 /// Project-local override directory, relative to the repo root.
 pub const PROJECT_LOCAL_CATALOG_DIR: &str = "infra/dev/catalog";
 
-/// User-global override directory, relative to the Effigy user-state home.
-pub const USER_GLOBAL_CATALOG_DIR: &str = "catalog";
+/// Retired catalog directory, detected only for its removal warning.
+const RETIRED_USER_CATALOG_DIR: &str = "catalog";
 
 /// Why the active catalog layer below the overrides was chosen.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -85,7 +85,7 @@ impl PackSelectionReason {
     }
 }
 
-/// The resolved catalog layer below the project and user overrides.
+/// The resolved catalog layer below the project override.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackSelection {
     /// Why this layer was chosen.
@@ -131,7 +131,7 @@ pub struct CatalogLayers {
 pub fn resolve_catalog_layers(repo_root: Option<&Path>, effigy_version: &str) -> CatalogLayers {
     layered_resolver(
         project_local_catalog_dir(repo_root),
-        user_global_catalog_dir(),
+        retired_user_catalog_dir(),
         PackStore::user().as_ref(),
         effigy_version,
     )
@@ -143,17 +143,18 @@ pub fn resolve_catalog_layers(repo_root: Option<&Path>, effigy_version: &str) ->
 /// still has exactly one implementation while home discovery stays theirs.
 pub fn layered_resolver(
     project_local: Option<PathBuf>,
-    user_global: Option<PathBuf>,
+    retired_user_catalog: Option<PathBuf>,
     store: Option<&PackStore>,
     effigy_version: &str,
 ) -> CatalogLayers {
+    warn_retired_user_catalog(retired_user_catalog.as_deref());
     let selection = select_pack_in(store, effigy_version);
     let layer = selection.active.as_ref().map(|record| InstalledPackLayer {
         root: install_root(&selection, record),
         pack_id: record.pack_id.clone(),
         pack_version: record.pack_version.clone(),
     });
-    let resolver = CatalogResolver::new(project_local, user_global).with_installed_pack(layer);
+    let resolver = CatalogResolver::new(project_local).with_installed_pack(layer);
     // One boundary, one notice: every catalog-backed consumer passes through
     // here, so none of them can silently swap pack content for baseline
     // content without the operator being told.
@@ -170,9 +171,9 @@ pub fn project_local_catalog_dir(repo_root: Option<&Path>) -> Option<PathBuf> {
     path.is_dir().then_some(path)
 }
 
-/// User-global override directory, when present.
-pub fn user_global_catalog_dir() -> Option<PathBuf> {
-    let path = effigy_home_dir()?.join(USER_GLOBAL_CATALOG_DIR);
+/// Detect the retired user catalog only to report its removal.
+pub(crate) fn retired_user_catalog_dir() -> Option<PathBuf> {
+    let path = effigy_home_dir()?.join(RETIRED_USER_CATALOG_DIR);
     path.is_dir().then_some(path)
 }
 
@@ -287,5 +288,16 @@ fn baseline(
         active: None,
         detail,
         store_root,
+    }
+}
+
+/// Warn once per invocation; the retired directory is never read or changed.
+fn warn_retired_user_catalog(directory: Option<&Path>) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static EMITTED: AtomicBool = AtomicBool::new(false);
+    if let Some(directory) = directory.filter(|directory| directory.is_dir()) {
+        if !EMITTED.swap(true, Ordering::Relaxed) {
+            eprintln!("[warn] user-global catalog override `{}` is retired and ignored; move custom fragments to infra/dev/catalog/ in each consuming repository", directory.display());
+        }
     }
 }

@@ -611,18 +611,9 @@ const GOVERNED_RUNTIME_FILES: &[&str] = &[
 /// families document `docs/notes` and `docs/guides` in their help - so the
 /// directory cannot simply be walked. Its inventory is asserted instead, which
 /// forces a new file here to be classified by hand.
-/// `qualified.rs` owns the constrained docs execution closure, not generic
-/// documentation-graph context; its named recipe is governed by contract 053.
 const MIXED_RUNTIME_DIRS: &[(&str, &[&str])] = &[(
     "src/runner/docs_command",
-    &[
-        "checks.rs",
-        "context.rs",
-        "mod.rs",
-        "qualified.rs",
-        "report.rs",
-        "tests.rs",
-    ],
+    &["checks.rs", "context.rs", "mod.rs", "report.rs", "tests.rs"],
 )];
 
 /// The governed-directory inventory as it stands. Walking catches a new module

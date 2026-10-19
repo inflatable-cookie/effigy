@@ -3,10 +3,10 @@
 //!
 //! Effigy's compiled catalog is the permanent baseline. A pack is an
 //! independently versioned set of the same fragment directories that can be
-//! installed into user state and selected *below* project and user overrides:
+//! installed into user state and selected *below* project overrides:
 //!
 //! ```text
-//! project override > user override > active installed pack > compiled baseline
+//! project override > active installed pack > compiled baseline
 //! ```
 //!
 //! Nothing here runs during ordinary catalog use beyond reading local state.
@@ -52,8 +52,7 @@ pub use install::{
 pub use manifest::{PackManifest, PACK_MANIFEST_FILE, SUPPORTED_PACK_MANIFEST_SCHEMA};
 pub use selection::{
     layered_resolver, project_local_catalog_dir, resolve_catalog_layers, select_pack,
-    select_pack_in, user_global_catalog_dir, CatalogLayers, PackSelection, PackSelectionReason,
-    PROJECT_LOCAL_CATALOG_DIR,
+    select_pack_in, CatalogLayers, PackSelection, PackSelectionReason, PROJECT_LOCAL_CATALOG_DIR,
 };
 pub use store::{
     InstalledPackRecord, PackResetReport, PackSourceRecord, PackStore, PackStoreLock,

@@ -26,9 +26,9 @@ fn render_help_writes_structured_sections() {
     assert!(rendered.contains("effigy defer"));
     assert!(rendered.contains("effigy scan"));
     assert!(rendered.contains("effigy test"));
-    assert!(rendered.contains("effigy watch"));
+    assert!(!rendered.contains("effigy watch"));
     assert!(rendered.contains("effigy init"));
-    assert!(rendered.contains("effigy tasks migrate"));
+    assert!(!rendered.contains("effigy tasks migrate"));
     assert!(rendered.contains("effigy tasks cache"));
     assert!(rendered.contains("effigy config completion"));
     assert!(rendered.contains("supports <catalog>/test targeting"));
@@ -312,7 +312,7 @@ fn render_gateway_help_shows_lifecycle_examples() {
     assert!(rendered.contains("effigy gateway up"));
     assert!(rendered.contains("effigy gateway down"));
     assert!(rendered.contains("effigy gateway status"));
-    assert!(rendered.contains("effigy gateway recover --adopt-candidate"));
+    assert!(!rendered.contains("effigy gateway recover"));
     assert!(rendered.contains("effigy gateway setup-tls"));
     assert!(rendered.contains("/etc/resolver/test"));
 }
@@ -327,6 +327,9 @@ fn render_service_help_shows_extract_options() {
     assert!(rendered.contains("project-local"));
     assert!(rendered.contains("effigy service pack update"));
     assert!(rendered.contains("effigy service pack status"));
+    assert!(rendered.contains("active installed pack"));
+    assert!(rendered.contains("compiled baseline"));
+    assert!(!rendered.contains("user override"));
 }
 
 #[test]
@@ -547,17 +550,9 @@ fn render_test_help_shows_detection_and_config() {
 }
 
 #[test]
-fn render_watch_help_shows_phase_scope() {
-    let rendered = render_help_text(HelpTopic::Watch);
-    assert!(rendered.contains("watch Help"));
-    assert!(rendered.contains("--owner <effigy|external>"));
-    assert!(rendered.contains("--debounce-ms <MS>"));
-    assert!(rendered.contains("file-triggered reruns for non-watcher tasks"));
-}
-
-#[test]
 fn render_init_help_shows_phase_scope() {
     let rendered = render_help_text(HelpTopic::Init);
+    assert!(!rendered.contains("task migration"));
     assert!(rendered.contains("init Help"));
     assert!(rendered.contains("effigy init [--check|--apply|--repair] [--json]"));
     assert!(rendered.contains("effigy init --checklist [--json]"));
@@ -575,17 +570,6 @@ fn render_init_help_shows_phase_scope() {
     assert!(rendered.contains("--checklist"));
     assert!(rendered.contains("--apply-actions <ID>[,<ID>...]"));
     assert!(rendered.contains("An existing root `README.md` is never overwritten"));
-}
-
-#[test]
-fn render_migrate_help_shows_phase_scope() {
-    let rendered = render_help_text(HelpTopic::Migrate);
-    assert!(rendered.contains("tasks migrate Help"));
-    assert!(rendered
-        .contains("effigy tasks migrate [--from <PATH>] [--script <NAME>]... [--apply] [--json]"));
-    assert!(rendered.contains("import package.json scripts only"));
-    assert!(rendered.contains("--apply"));
-    assert!(rendered.contains("--script <NAME>"));
 }
 
 #[test]

@@ -15,6 +15,25 @@ fn builtin_completion_json_contract_has_versioned_shape() {
     assert_eq!(parsed["prompted_action"], false);
     assert!(parsed["script"].is_string());
     assert!(parsed["commands"].is_array());
+
+    let guide = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/docs/guides/026-json-payload-examples.md"
+    ));
+    let section = guide
+        .split_once("### 18) Completion (`effigy.completion.v2`)")
+        .expect("completion example heading")
+        .1;
+    let example = section
+        .split_once("```json\n")
+        .expect("completion JSON block")
+        .1
+        .split_once("\n```")
+        .expect("completion JSON block end")
+        .0;
+    let example: serde_json::Value =
+        serde_json::from_str(example).expect("documented completion payload");
+    assert_eq!(example["commands"], parsed["commands"]);
 }
 
 #[test]

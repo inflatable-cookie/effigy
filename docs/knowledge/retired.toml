@@ -121,6 +121,7 @@ paths = [
 ]
 config_keys = ["EFFIGY_ADMISSION_DIR", "EFFIGY_ADMISSION_LEASE_ID"]
 allow = [
+  "docs/guides/083-v0.14.0-consumer-migration.md",
   "CHANGELOG.md",
   "docs/knowledge/contracts/049-heavy-validation-admission-contract.md",
   "docs/knowledge/contracts/051-bounded-qa-groups-contract.md",
@@ -201,7 +202,7 @@ owner = "docs/knowledge/README.md"
 terms = ["roadmap card", "generation index", "lifecycle record", "northstar:lifecycle", "chatterbox handoff"]
 paths = [".northstar/lifecycle/", "docs/roadmaps/", "docs/handoffs/", "docs/logs/"]
 config_keys = ["northstar/queue:hook", "paseo.queue.control.v4"]
-allow = ["CHANGELOG.md"]
+allow = ["docs/guides/083-v0.14.0-consumer-migration.md", "CHANGELOG.md"]
 
 [[retired]]
 id = "effigy-strict-planning-lane"
@@ -231,7 +232,7 @@ owner = "docs/guides/056-northstar-effigy-consumer-repo-contract.md"
 terms = ["paseo.queue.control.v5"]
 paths = [".paseo/queue.json", "crates/effigy-catalog/starters/northstar/.paseo/"]
 config_keys = []
-allow = ["CHANGELOG.md"]
+allow = ["docs/guides/083-v0.14.0-consumer-migration.md", "CHANGELOG.md"]
 
 [[retired]]
 id = "effigy-papercuts-command"
@@ -241,7 +242,7 @@ owner = "docs/knowledge/vision.md"
 terms = ["effigy papercuts", "PAPERCUTS.md", "effigy-papercuts"]
 paths = ["docs/knowledge/contracts/036-papercuts-discovery-contract.md", "docs/guides/078-papercuts-discovery-and-capture.md", "crates/effigy-papercuts/"]
 config_keys = ["effigy.papercuts.v1", "effigy.papercuts.add.v1"]
-allow = ["CHANGELOG.md"]
+allow = ["docs/guides/083-v0.14.0-consumer-migration.md", "CHANGELOG.md"]
 
 [[retired]]
 id = "repository-planning-files"
@@ -250,3 +251,93 @@ replacement = "The plan is Queue lanes, lane documents and plan order; leads are
 owner = "docs/knowledge/README.md"
 paths = ["docs/plan.md", "docs/triage/"]
 allow = ["CHANGELOG.md"]
+
+[[retired]]
+id = "effigy-watch"
+retired = "2026-10-19"
+replacement = "See the wave-A retirements in contract 043 for replacement commands and preserved-state migration."
+owner = "docs/knowledge/contracts/043-feature-placement-and-surface-migration-contract.md"
+terms = ["effigy watch", "effigy.watch.v1", "test:shared-process:watch-isolation"]
+paths = ["crates/effigy-builtin/src/watch.rs", "crates/effigy-builtin/src/watch/", "crates/effigy-cli/src/help/topics/watch.rs", "src/tests/runner_tests/runner_core_tests/watch_tests/", "docs/guides/019-watch-init-migrate-foundation.md"]
+config_keys = []
+allow = ["CHANGELOG.md", "docs/guides/085-v0.15.0-consumer-migration.md", "crates/effigy-cli/src/command_parsing.rs", "src/tests/lib_tests_help_render_tests.rs", "crates/effigy-cli/src/lib.rs"]
+
+[[retired]]
+id = "effigy-task-script-import"
+retired = "2026-10-19"
+replacement = "See the wave-A retirements in contract 043 for replacement commands and preserved-state migration."
+owner = "docs/knowledge/contracts/043-feature-placement-and-surface-migration-contract.md"
+terms = ["tasks migrate", "effigy.migrate.v1"]
+paths = ["crates/effigy-builtin/src/migrate.rs", "crates/effigy-builtin/src/migrate/", "crates/effigy-cli/src/help/topics/migrate.rs"]
+config_keys = []
+allow = ["CHANGELOG.md", "docs/guides/085-v0.15.0-consumer-migration.md", "crates/effigy-cli/src/command_parsing.rs", "crates/effigy-builtin/src/init/inventory/tests.rs", "src/tests/lib_tests_help_render_tests.rs"]
+
+[[retired]]
+id = "effigy-managed-stream"
+retired = "2026-10-19"
+replacement = "See the wave-A retirements in contract 043 for replacement commands and preserved-state migration."
+owner = "docs/knowledge/contracts/043-feature-placement-and-surface-migration-contract.md"
+terms = ["EFFIGY_MANAGED_STREAM"]
+paths = ["crates/effigy-managed/src/runtime/stream.rs", "crates/effigy-managed/src/runtime/stream/", "src/tests/runner_tests/managed_and_locking_tests/managed_stream_tests.rs"]
+config_keys = []
+allow = ["CHANGELOG.md", "docs/guides/085-v0.15.0-consumer-migration.md", "crates/effigy-managed/src/presentation.rs", "src/tests/runner_tests/managed_and_locking_tests/managed_headless_tests.rs"]
+
+[[retired]]
+id = "effigy-transition-receipts"
+retired = "2026-10-19"
+replacement = "See the wave-A retirements in contract 043 for replacement commands and preserved-state migration."
+owner = "docs/knowledge/contracts/043-feature-placement-and-surface-migration-contract.md"
+terms = ["effigy.managed.host-transition-evidence.v1", "effigy.managed.host-transition-evidence.v2", "proof:managed:host-transitions"]
+paths = ["src/runner/host_transition_evidence.rs"]
+config_keys = []
+allow = ["CHANGELOG.md", "docs/guides/085-v0.15.0-consumer-migration.md"]
+
+[[retired]]
+id = "effigy-gateway-preidentity-recovery"
+retired = "2026-10-19"
+replacement = "See the wave-A retirements in contract 043 for replacement commands and preserved-state migration."
+owner = "docs/knowledge/contracts/043-feature-placement-and-surface-migration-contract.md"
+terms = ["effigy gateway recover", "--adopt-candidate", "adopt_candidate", "__gateway-legacy-candidate", "__gateway-legacy-stop", "effigy.gateway.recover.v1", "effigy.gateway.legacy-candidate.v1", "effigy.gateway.legacy-stop.v1", "test:gateway:legacy-recovery", "check:gateway:legacy-recovery"]
+paths = ["src/runner/gateway_command/recover.rs", "crates/effigy-gateway/src/legacy.rs"]
+config_keys = []
+allow = ["CHANGELOG.md", "docs/guides/085-v0.15.0-consumer-migration.md", "crates/effigy-cli/src/command_parsing_runtime.rs", "crates/effigy-cli/src/lib.rs", "src/tests/lib_tests_help_render_tests.rs"]
+
+[[retired]]
+id = "effigy-gateway-user-runtime-scaffold"
+retired = "2026-10-19"
+replacement = "See the wave-A retirements in contract 043 for replacement commands and preserved-state migration."
+owner = "docs/knowledge/contracts/043-feature-placement-and-surface-migration-contract.md"
+terms = ["check_user_runtime_readiness", "test:gateway:user-runtime", "check:gateway:user-runtime"]
+paths = ["crates/effigy-gateway/src/user_runtime.rs", "crates/effigy-gateway/src/user_runtime/"]
+config_keys = []
+allow = ["CHANGELOG.md", "docs/guides/085-v0.15.0-consumer-migration.md"]
+
+[[retired]]
+id = "effigy-qualified-private-docs"
+retired = "2026-10-19"
+replacement = "See the wave-A retirements in contract 043 for replacement commands and preserved-state migration."
+owner = "docs/knowledge/contracts/043-feature-placement-and-surface-migration-contract.md"
+terms = ["docs qualified", "effigy.docs.qualified.resolution.v1", "test:docs:qualified-closure", "check:docs:qualified-closure"]
+paths = ["src/runner/docs_command/qualified.rs", "scripts/qualified-docs-execution.mjs", "tests/qualified_docs_execution.test.mjs", "tests/qualified-docs-producer.mjs", "docs/knowledge/contracts/053-qualified-docs-execution-closure-contract.md", "docs/knowledge/contracts/qualified-docs-resolution-v1.schema.json", "docs/guides/084-qualified-docs-execution.md"]
+config_keys = []
+allow = ["CHANGELOG.md", "docs/guides/085-v0.15.0-consumer-migration.md", "crates/effigy-cli/src/command_parsing_docs.rs"]
+
+[[retired]]
+id = "effigy-manifest-root"
+retired = "2026-10-19"
+replacement = "See the wave-A retirements in contract 043 for replacement commands and preserved-state migration."
+owner = "docs/knowledge/contracts/043-feature-placement-and-surface-migration-contract.md"
+terms = []
+paths = []
+config_keys = ["[manifest].root"]
+allow = ["CHANGELOG.md", "docs/guides/085-v0.15.0-consumer-migration.md", "crates/effigy-manifest/src/composition.rs", "crates/effigy-core/src/resolver.rs"]
+
+[[retired]]
+id = "effigy-user-global-catalog"
+retired = "2026-10-19"
+replacement = "See the wave-A retirements in contract 043 for replacement commands and preserved-state migration."
+owner = "docs/knowledge/contracts/043-feature-placement-and-surface-migration-contract.md"
+terms = ["~/.effigy/catalog/"]
+paths = []
+config_keys = []
+allow = ["CHANGELOG.md", "docs/guides/085-v0.15.0-consumer-migration.md"]

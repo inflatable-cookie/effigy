@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use effigy_cli::{
     GatewayArgs, GatewayPrivateArgs, GatewaySubcommand, InternalGatewayArgs,
-    InternalGatewayIdentityArgs, InternalGatewayLegacyCandidateArgs, InternalGatewayLegacyStopArgs,
+    InternalGatewayIdentityArgs,
 };
 use effigy_containers::exec::list_running_compose_containers;
 use effigy_gateway::identity::{self, GatewayIdentityProbe, GatewayRecordSnapshot};
@@ -48,7 +48,6 @@ use elevation::{
 
 mod daemon;
 mod elevation;
-mod recover;
 
 pub(super) const GATEWAY_DIR_NAME: &str = ".effigy/gateway";
 pub(super) const GATEWAY_ESCALATED_ENV: &str = "EFFIGY_GATEWAY_ESCALATED";
@@ -130,15 +129,6 @@ pub(super) fn run_gateway(args: GatewayArgs) -> Result<String, RunnerError> {
         GatewaySubcommand::Repair { yes } => {
             run_gateway_repair_with_config(&config, yes, args.output_json)
         }
-        GatewaySubcommand::Recover {
-            yes,
-            adopt_candidate,
-        } => recover::run_gateway_recover_with_config(
-            &config,
-            yes,
-            adopt_candidate,
-            args.output_json,
-        ),
         GatewaySubcommand::SetupTls => run_gateway_setup_tls_with_config(&config, args.output_json),
         GatewaySubcommand::SetupListenerHandoff => {
             run_gateway_setup_listener_handoff_with_config(&config, args.output_json)
@@ -323,18 +313,6 @@ pub(super) fn run_internal_gateway_identity(
         &args.target_digest,
         result,
     ))
-}
-
-pub(super) fn run_internal_gateway_legacy_candidate(
-    args: InternalGatewayLegacyCandidateArgs,
-) -> Result<String, RunnerError> {
-    recover::run_internal_gateway_legacy_candidate(args)
-}
-
-pub(super) fn run_internal_gateway_legacy_stop(
-    args: InternalGatewayLegacyStopArgs,
-) -> Result<String, RunnerError> {
-    recover::run_internal_gateway_legacy_stop(args)
 }
 
 fn render_identity_reader_response(
@@ -526,11 +504,6 @@ fn stop_existing_gateway_with(
     Ok(())
 }
 
-fn run_gateway_up(output_json: bool) -> Result<String, RunnerError> {
-    let config = gateway_config()?;
-    run_gateway_up_with_config(&config, output_json)
-}
-
 #[cfg(test)]
 fn run_gateway_down(output_json: bool) -> Result<String, RunnerError> {
     let config = gateway_config()?;
@@ -584,7 +557,9 @@ fn run_private_gateway_up(
     config: &GatewayConfig,
     output_json: bool,
 ) -> Result<String, RunnerError> {
-    let _lock = recover::acquire_transition_lock(config)?;
+    let _lock =
+        effigy_gateway::transition_lock::GatewayTransitionLock::try_acquire(&config.pid_file_path)
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     prepare_gateway_state_for_elevated_run(config)?;
     let probe = verified_gateway_status_for_up(config);
     if probe.identity_permission_denied {
@@ -661,7 +636,9 @@ fn stage_absent_up_under_lock(
     config: &GatewayConfig,
     output_json: bool,
 ) -> Result<Option<String>, RunnerError> {
-    let _lock = recover::acquire_transition_lock(config)?;
+    let _lock =
+        effigy_gateway::transition_lock::GatewayTransitionLock::try_acquire(&config.pid_file_path)
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let probe = verified_gateway_status_for_up(config);
     match inspect_existing_gateway(config, probe.status, output_json)? {
         ExistingGateway::Rendered(rendered) => Ok(Some(rendered)),
@@ -677,7 +654,9 @@ fn run_gateway_up_after_lock(
     config: &GatewayConfig,
     output_json: bool,
 ) -> Result<String, RunnerError> {
-    let _lock = recover::acquire_transition_lock(config)?;
+    let _lock =
+        effigy_gateway::transition_lock::GatewayTransitionLock::try_acquire(&config.pid_file_path)
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let probe = verified_gateway_status_for_up(config);
     match inspect_existing_gateway(config, probe.status, output_json)? {
         ExistingGateway::Rendered(rendered) => return Ok(rendered),
@@ -745,7 +724,9 @@ fn run_gateway_down_with_config(
     {
         return run_gateway_elevated(GatewaySubcommand::Down, output_json);
     }
-    let _lock = recover::acquire_transition_lock(config)?;
+    let _lock =
+        effigy_gateway::transition_lock::GatewayTransitionLock::try_acquire(&config.pid_file_path)
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let probe = verified_gateway_status_for_up(config);
     if probe.identity_permission_denied {
         return Err(RunnerError::task_invocation(format!(
@@ -863,8 +844,7 @@ fn legacy_identity_status_error(
                     "error": "legacy_identity_required",
                     "pid": pid,
                     "recovery": {
-                        "command": "effigy gateway recover",
-                        "adopt_candidate": "effigy gateway recover --adopt-candidate",
+                        "action": "Ask the host administrator to verify and stop the pre-0.14 gateway; after confirmed absence, remove only its old PID/version records and run effigy gateway up",
                         "reason": "gateway.identity is missing"
                     }
                 })
@@ -1944,8 +1924,8 @@ pub(in crate::runner) fn ensure_gateway_tls_cert(domain: &str) -> Result<(), Run
         // certificate generation cannot consume the same serial or observe a
         // half-written CA update.
         Some(
-            effigy_gateway::legacy::GatewayTransitionLock::acquire(&config.pid_file_path)
-                .map_err(recover::map_gateway_error)?,
+            effigy_gateway::transition_lock::GatewayTransitionLock::acquire(&config.pid_file_path)
+                .map_err(|error| RunnerError::task_invocation(error.to_string()))?,
         )
     } else {
         None

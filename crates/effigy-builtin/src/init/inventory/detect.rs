@@ -5,7 +5,6 @@ use effigy_core::repo_markers::is_effigy_config_filename;
 
 #[derive(Debug, Default)]
 pub(super) struct RepoSetupContext {
-    pub(super) has_package_json: bool,
     pub(super) has_makefile: bool,
     pub(super) has_cargo_aliases: bool,
     pub(super) has_graph_index: bool,
@@ -23,7 +22,6 @@ pub(super) struct RepoSetupContext {
 pub(super) fn inspect_repo_setup_context(target_root: &Path) -> RepoSetupContext {
     let manifest_snippets = load_manifest_snippets(target_root);
     RepoSetupContext {
-        has_package_json: target_root.join("package.json").is_file(),
         has_makefile: target_root.join("Makefile").is_file(),
         has_cargo_aliases: cargo_alias_config_present(target_root),
         has_graph_index: target_root.join(".effigy/graph/graph.db").is_file(),

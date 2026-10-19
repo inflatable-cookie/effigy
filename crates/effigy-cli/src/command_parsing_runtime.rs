@@ -26,10 +26,9 @@ where
         "down" => GatewaySubcommand::Down,
         "status" => GatewaySubcommand::Status,
         "repair" => GatewaySubcommand::Repair { yes: false },
-        "recover" => GatewaySubcommand::Recover {
-            yes: false,
-            adopt_candidate: false,
-        },
+        "recover" => return Err(CliParseError::InvalidArguments(
+            "`effigy gateway recover` is retired; v0.14.1 gateways use `effigy gateway up`; for a pre-0.14 gateway ask the host administrator to verify and stop it before removing its old PID/version records".to_owned(),
+        )),
         "setup-tls" => GatewaySubcommand::SetupTls,
         "setup-listener-handoff" => GatewaySubcommand::SetupListenerHandoff,
         "listener-handoff-status" => GatewaySubcommand::ListenerHandoffStatus,
@@ -37,7 +36,6 @@ where
         other => return Err(unknown_argument(other)),
     };
 
-    let mut adopt_candidate = false;
     let mut private_state_root = None;
     let mut dns_addr = None;
     let mut proxy_addr = None;
@@ -99,17 +97,7 @@ where
                     )?,
                 )?);
             }
-            "--yes"
-                if matches!(
-                    subcommand,
-                    GatewaySubcommand::Repair { .. } | GatewaySubcommand::Recover { .. }
-                ) =>
-            {
-                yes = true
-            }
-            "--adopt-candidate" if matches!(subcommand, GatewaySubcommand::Recover { .. }) => {
-                adopt_candidate = true
-            }
+            "--yes" if matches!(subcommand, GatewaySubcommand::Repair { .. }) => yes = true,
             "--help" | "-h" => return Ok(Command::Help(HelpTopic::Gateway)),
             other => return Err(unknown_argument(other)),
         }
@@ -117,12 +105,6 @@ where
 
     if matches!(subcommand, GatewaySubcommand::Repair { .. }) {
         subcommand = GatewaySubcommand::Repair { yes };
-    }
-    if matches!(subcommand, GatewaySubcommand::Recover { .. }) {
-        subcommand = GatewaySubcommand::Recover {
-            yes,
-            adopt_candidate,
-        };
     }
 
     if private_state_root.is_none()

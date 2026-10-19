@@ -24,6 +24,7 @@ pub enum ResolveError {
     Cwd(std::io::Error),
     InvalidExplicitRoot { path: PathBuf },
     NoCandidateRoot { cwd: PathBuf },
+    RetiredManifestRoot { path: PathBuf },
 }
 
 impl std::fmt::Display for ResolveError {
@@ -37,6 +38,7 @@ impl std::fmt::Display for ResolveError {
                     path.display()
                 )
             }
+            ResolveError::RetiredManifestRoot { path } => write!(f, "`[manifest].root` in {} is retired; remove it and select the intended root explicitly with --repo <PATH>", path.display()),
             ResolveError::NoCandidateRoot { cwd } => write!(
                 f,
                 "could not resolve a project root from cwd {} (use --repo <path>)",
@@ -69,6 +71,11 @@ pub fn resolve_target_root(
     let nearest =
         find_nearest_candidate(&cwd, &mut probe).ok_or(ResolveError::NoCandidateRoot { cwd })?;
 
+    if has_retired_manifest_root(&nearest, &mut probe) {
+        return Err(ResolveError::RetiredManifestRoot {
+            path: task_manifest_path(&nearest),
+        });
+    }
     if let Some(promoted) = maybe_promote_to_parent_workspace(&nearest, &mut probe) {
         return Ok(promoted);
     }
@@ -105,18 +112,6 @@ fn maybe_promote_to_parent_workspace(
     child: &Path,
     probe: &mut PathPresenceCache,
 ) -> Option<ResolvedTarget> {
-    if has_effigy_manifest_root_marker(child, probe) {
-        return Some(ResolvedTarget {
-            resolved_root: child.to_path_buf(),
-            resolution_mode: ResolutionMode::AutoNearest,
-            evidence: vec![format!(
-                "child manifest {} declares `[manifest].root = true`; kept nearest root",
-                task_manifest_path(child).display()
-            )],
-            warnings: Vec::new(),
-        });
-    }
-
     let parent = child.parent()?;
     if !parent.is_dir() {
         return None;
@@ -188,7 +183,7 @@ fn read_to_string(path: &Path) -> String {
     std::fs::read_to_string(path).unwrap_or_default()
 }
 
-fn has_effigy_manifest_root_marker(path: &Path, probe: &mut PathPresenceCache) -> bool {
+fn has_retired_manifest_root(path: &Path, probe: &mut PathPresenceCache) -> bool {
     let Some(value) = manifest_value(path, probe) else {
         return false;
     };
@@ -198,10 +193,7 @@ fn has_effigy_manifest_root_marker(path: &Path, probe: &mut PathPresenceCache) -
     let Some(manifest) = table.get("manifest").and_then(toml::Value::as_table) else {
         return false;
     };
-    manifest
-        .get("root")
-        .and_then(toml::Value::as_bool)
-        .unwrap_or(false)
+    manifest.contains_key("root")
 }
 
 fn child_manifest_declares_catalog(path: &Path, probe: &mut PathPresenceCache) -> bool {
@@ -233,7 +225,7 @@ fn canonicalize_best_effort(path: PathBuf) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{has_effigy_manifest_root_marker, resolve_target_root, ResolutionMode};
+    use super::{has_retired_manifest_root, resolve_target_root, ResolutionMode};
     use crate::fs_probe::PathPresenceCache;
     use std::fs;
     use tempfile::TempDir;
@@ -253,24 +245,20 @@ mod tests {
     }
 
     #[test]
-    fn manifest_root_marker_prevents_parent_workspace_promotion() {
-        let (_temp, child) = workspace_with_child_manifest("[manifest]\nroot = true\n");
-        assert!(has_effigy_manifest_root_marker(
-            &child,
-            &mut PathPresenceCache::new()
-        ));
-
-        let resolved = resolve_target_root(child.clone(), None).expect("resolve");
-
-        assert_eq!(
-            fs::canonicalize(&resolved.resolved_root).expect("canonical resolved"),
-            fs::canonicalize(&child).expect("canonical child")
-        );
-        assert_eq!(resolved.resolution_mode, ResolutionMode::AutoNearest);
-        assert!(resolved
-            .evidence
-            .iter()
-            .any(|item| item.contains("root = true")));
+    fn retirement_root_marker_refuses_before_parent_promotion() {
+        for value in ["true", "false", "1"] {
+            let (_temp, child) =
+                workspace_with_child_manifest(&format!("[manifest]\nroot = {value}\n"));
+            assert!(has_retired_manifest_root(
+                &child,
+                &mut PathPresenceCache::new()
+            ));
+            let error = resolve_target_root(child, None).unwrap_err().to_string();
+            assert!(
+                error.contains("retired") && error.contains("--repo"),
+                "{error}"
+            );
+        }
     }
 
     #[test]

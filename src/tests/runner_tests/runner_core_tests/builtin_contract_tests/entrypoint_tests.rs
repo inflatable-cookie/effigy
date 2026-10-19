@@ -34,12 +34,6 @@ fn run_manifest_task_builtin_entrypoint_help_json_contract_table() {
             ],
         ),
         builtin_help_case(
-            "builtin-entrypoint-watch-help-json",
-            "watch",
-            &["--help", "--json", "--wat"],
-            &["\"schema\": \"effigy.help.v1\"", "\"topic\": \"watch\""],
-        ),
-        builtin_help_case(
             "builtin-entrypoint-scan-help-json",
             "scan",
             &["god-files", "--help", "--json", "--wat"],
@@ -70,7 +64,6 @@ fn run_manifest_task_builtin_entrypoint_unknown_argument_contract_table() {
     let cases = builtin_shared_unknown_argument_cases(
         "builtin-entrypoint-cache-unknown-arg",
         "builtin-entrypoint-completion-candidates-unknown-arg",
-        "builtin-entrypoint-watch-unknown-arg",
         "builtin-entrypoint-scan-unknown-arg",
         "builtin-entrypoint-unlock-unknown-arg",
     );

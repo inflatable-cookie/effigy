@@ -80,22 +80,8 @@ pub(super) fn task_jobs(context: &RepoSetupContext) -> Vec<SetupJob> {
             ),
             true,
             "Inspect the current task surface.".to_owned(),
-            "Effigy task helpers and migration paths depend on the repo's existing task wrappers."
-                .to_owned(),
+            "Effigy task helpers depend on the repo's existing task wrappers.".to_owned(),
             Some("effigy tasks".to_owned()),
-            true,
-        ),
-        contextual_job(
-            "task_migration.package_json",
-            JobClass::new(
-                SetupCategory::Tasks,
-                SetupExecutionKind::Apply,
-                SetupSafetyClass::ContextualApply,
-            ),
-            context.has_package_json,
-            "Import `package.json` scripts into `[tasks]`.".to_owned(),
-            "package.json detected".to_owned(),
-            Some("effigy tasks migrate".to_owned()),
             true,
         ),
         contextual_job(

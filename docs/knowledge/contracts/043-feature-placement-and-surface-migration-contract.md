@@ -62,7 +62,7 @@ Primary ownership is fixed as follows:
 
 | Topic | Primary commands and shapes |
 | --- | --- |
-| `work` (direct) | `<task>`, `<catalog>/<task>`, `tasks`, `draft`, `drafts`, `test`, `watch`, `doctor`, `init` |
+| `work` (direct) | `<task>`, `<catalog>/<task>`, `tasks`, `draft`, `drafts`, `test`, `doctor`, `init` |
 | `local` | `container`, `system`, `workspace`, `gateway`, `service`, `exec` |
 | `repo` | `graph`, `scan`, `docs`, `contracts` |
 | `deliver` | `artifact`, `state`, `deploy`, `release`, `bundle`, `bootstrap`, `demo` |
@@ -104,7 +104,7 @@ default pack only when all of these hold:
   initialization paths;
 - normal use does not depend on a surprise network fetch;
 - offline/bootstrap behavior is no worse than the embedded catalog;
-- project and user overrides retain precedence and provenance;
+- project overrides retain precedence and provenance;
 - `doctor` reports a missing, incompatible, or unhealthy pack with one direct
   repair step;
 - pack version and source are visible in text and JSON diagnostics;
@@ -114,7 +114,7 @@ The pack transport and update policy require a decision prototype before an
 implementation card can be ready. That prototype is now fixed as follows:
 
 - every supported installation permanently carries a compiled baseline pack;
-- selection order is project override, user override, active installed default
+- selection order is project override, active installed default
   pack, then compiled baseline;
 - independently installed packs live in a versioned user-state store and use a
   manifest with pack identity, pack version, schema version, and Effigy
@@ -537,3 +537,27 @@ private TLS and generation-safe teardown guarantees remain mandatory.
 Framework adapters and fixture preconditions remain bundle-owned. This
 authorization does not restart the consumer pilot, change a live runtime,
 replace the installed binary or authorize a release.
+
+## Wave-A retirements
+
+These v0.15 cuts remove unused execution paths and inert configuration. Removed
+command spellings refuse before executing effects; they are absent from help,
+completion and the active payload/schema inventory.
+
+| Removed surface | Replacement and migration |
+| --- | --- |
+| `effigy watch` | Invoke the underlying tool's native watch option, or run the task explicitly. Effigy owns no watch loop or watch lock. |
+| `effigy tasks migrate` | Define `[tasks]` and `[test.suites]` explicitly. `effigy config` supplies examples; initialization does not import package scripts. |
+| `EFFIGY_MANAGED_STREAM` | Unset it and use `--headless` or `EFFIGY_MANAGED_HEADLESS=1`. A set stream variable refuses managed execution for one release, including when `--headless` is also passed. |
+| Transition-evidence receipts | No replacement writer. Current listener state and readiness diagnostics keep their existing roles. Historical receipt files remain untouched and are no longer read or appended. |
+| `effigy gateway recover` and its hidden legacy protocols | The ≤0.13 recovery window is closed. Numeric-only records require host administrator verification and shutdown, confirmed absence, then removal of only the old PID/version pair. v0.14.1 identity-bearing gateway upgrades continue through `gateway up`/`down` with fresh-generation verification. |
+| User-runtime design scaffold | Removed unused privilege inventory, readiness gate and migration snapshot helper. The separately implemented listener handoff remains a source-only candidate; this cut performs no live migration. |
+| `docs qualified` and contract 053 | Run repository-owned docs QA and the retired-concepts checker directly. There is no qualified private docs recipe or separate build profile. |
+| `[manifest].root` | Remove it. Select the intended root explicitly with `--repo`; catalog membership stays explicit. Root and included fragments reject it with the source path. |
+| User-global catalog override (`~/.effigy/catalog/`) | Move custom fragments into `infra/dev/catalog/` in each consuming repository. The old directory is ignored and left untouched, with one warning per catalog-using process for one release. Project-local, installed-pack and compiled layers retain their order. |
+
+Secret policy keys are excluded from this cut. Their cleanup prerequisite is
+owned by [contract 032](032-secret-and-local-config-management-contract.md#retirement-prerequisite).
+The retained lifecycle lock and socket observations are separated from legacy
+recovery code, without changing their authority. Gateway engine kernel adoption
+is separate; this retirement adds no kernel API or parallel state authority.

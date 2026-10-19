@@ -232,7 +232,6 @@ The first covered execution surfaces are:
 - deferred execution
 - bootstrap delegated task execution
 - run-array and Rhai embedded task re-entry through the shared request path
-- watch-owned task runs, still keyed to the underlying selector
 
 The first implementation slice may start at the canonical execution
 request/plan boundary and does not need to hook every legacy caller-local path

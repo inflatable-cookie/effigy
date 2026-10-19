@@ -349,10 +349,8 @@ slow-but-healthy first start no longer times children out while the stack
 is still coming up. Raise the timeout when the stack legitimately needs
 longer than the default.
 
-- `EFFIGY_MANAGED_STREAM=1`
-  - bypasses TUI and runs the selected profile in stream mode
 - `EFFIGY_MANAGED_HEADLESS=1`
-  - runs the concurrent headless supervisor; takes precedence over stream mode
+  - runs the concurrent headless supervisor
 - `EFFIGY_MANAGED_TUI=0|false`
   - disables TUI auto-launch and renders managed plan output
 - `EFFIGY_MANAGED_TUI=1|true`
