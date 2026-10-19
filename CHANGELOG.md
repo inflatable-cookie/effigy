@@ -322,6 +322,10 @@ During v0.x, MINOR bumps may include breaking changes.
   1.2.0.
 
 ### Fixed
+- `deploy apply` and `deploy redeploy` now refuse as not yet supported in v0.15,
+  naming unexecuted state, hooks, health, release gates and digest pins instead
+  of reporting success. Model/export and existing deployment report readers
+  remain available. JSON refusals use the stable `not_supported` reason.
 - Vault writes from CLI commands, local-dev upgrades and Rhai now serialize
   through the runtime kernel and atomically select complete encrypted
   generations. Existing vaults migrate on their next write, retaining the

@@ -147,10 +147,6 @@ impl DeployProviderReportStatus {
     pub(super) fn allows_preflight_progress(self) -> bool {
         matches!(self, Self::Planned | Self::Ok)
     }
-
-    pub(super) fn allows_apply_success(self) -> bool {
-        matches!(self, Self::Succeeded | Self::Planned | Self::Ok)
-    }
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
@@ -232,26 +228,6 @@ pub(super) fn run_provider_preflight(
         "preflight",
         script,
         context,
-    )
-}
-
-pub(super) fn run_provider_apply(
-    repo_root: &Path,
-    provider_name: &str,
-    package: &DeployProviderPackage,
-    context: Value,
-) -> Result<DeployProviderPhaseReport, RunnerError> {
-    let Some(script) = &package.descriptor.capabilities.apply else {
-        return Err(RunnerError::task_invocation(format!(
-            "deploy provider `{provider_name}` package does not declare an apply capability"
-        )));
-    };
-    run_provider_phase(repo_root, provider_name, package, "apply", script, context)?.ok_or_else(
-        || {
-            RunnerError::task_invocation(format!(
-                "deploy provider `{provider_name}` apply capability did not produce a report"
-            ))
-        },
     )
 }
 

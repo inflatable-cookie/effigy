@@ -102,60 +102,6 @@ pub(super) struct DeployHealthPlan {
 }
 
 #[derive(Debug, Serialize)]
-pub(super) struct DeployApplyReport {
-    pub(super) schema: String,
-    pub(super) schema_version: u8,
-    pub(super) deployment_id: String,
-    pub(super) env: String,
-    pub(super) provider: String,
-    pub(super) status: String,
-    pub(super) started_at: String,
-    pub(super) finished_at: String,
-    pub(super) code: DeployCodeRef,
-    pub(super) release_policy: DeployReleasePolicyReport,
-    pub(super) state: DeployApplyStateReport,
-    pub(super) provider_operation: DeployProviderOperationReport,
-    pub(super) hooks: Vec<DeployHookResult>,
-    pub(super) health_checks: Vec<DeployHealthResult>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) written_report_path: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) written_history_path: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub(super) struct DeployApplyStateReport {
-    pub(super) status: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) lineage_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) apply_report_path: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub(super) struct DeployProviderOperationReport {
-    pub(super) status: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) provider_deployment_id: Option<String>,
-    pub(super) services: Vec<String>,
-    pub(super) warnings: Vec<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub(super) struct DeployHookResult {
-    pub(super) stage: String,
-    pub(super) task: String,
-    pub(super) status: String,
-}
-
-#[derive(Debug, Serialize)]
-pub(super) struct DeployHealthResult {
-    pub(super) service: String,
-    pub(super) status: String,
-    pub(super) path: String,
-}
-
-#[derive(Debug, Serialize)]
 pub(super) struct DeployStatusReport {
     pub(super) schema: String,
     pub(super) schema_version: u8,
@@ -188,25 +134,6 @@ pub(super) struct DeployHistoryItem {
     pub(super) deployment_id: String,
     pub(super) schema: String,
     pub(super) status: String,
-}
-
-#[derive(Debug, Serialize)]
-pub(super) struct DeployRedeployReport {
-    pub(super) schema: String,
-    pub(super) schema_version: u8,
-    pub(super) deployment_id: String,
-    pub(super) env: String,
-    pub(super) provider: String,
-    pub(super) status: String,
-    pub(super) source_deployment: String,
-    pub(super) started_at: String,
-    pub(super) finished_at: String,
-    pub(super) source_report_path: String,
-    pub(super) warnings: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) written_report_path: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) written_history_path: Option<String>,
 }
 
 pub(super) struct DeployReportPaths {

@@ -3,6 +3,34 @@
 Owner: Platform
 Created: 2026-05-10
 
+## v0.15 execution boundary (Q-003)
+
+`deploy model` and `deploy export` remain supported. `deploy apply` and
+`deploy redeploy` are not yet supported in v0.15. Both refuse before manifest
+or provider loading, regardless of `--yes`, environment policy or saved history.
+State/migrations, hooks, health, release gates, digest pins and provider
+execution/rollback cannot be skipped under a successful outcome (kernel
+contract 052 R5 and I-OC1). The old provider-only apply writer and report-only
+redeploy writer are removed.
+
+Text identifies these unexecuted obligations. JSON keeps the
+`effigy.command.v1` error envelope with `ok: false` and a nonzero exit.
+`error.details` is an `effigy.deploy.apply.v1` blocked outcome (version 1):
+`ok: false`, `status: "blocked"`, stable `reason: "not_supported"`, `operation`,
+`env`, `message` and `blockers`. No deployment identity or receipt is invented.
+No active/latest/history report is written. Existing v0.14.1 reports remain
+readable through status/history and are not imported, rewritten or replayed.
+No config key or command spelling is retired; `--yes` remains parseable for
+compatibility and cannot override this refusal.
+
+The remaining sections describe the **target transaction design**, not shipped
+execution guarantees. Existing plans describe intended work and may run provider
+preflight; they do not verify release gates, apply state, run hooks or health,
+or enforce digest pins. Full execution design is owned by Queue lane `deploy`,
+with Acowtancy on Render as the proving consumer. See
+[Q-003](../questions.md#q-003--production-deployment-ownership) and the
+[deployment guide](../../guides/074-deployment-guide.md).
+
 ## Purpose
 
 Effigy needs a deployment transaction system that can take a repo from a local
