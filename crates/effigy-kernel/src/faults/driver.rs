@@ -1,12 +1,12 @@
 //! The §12.1 driver: trace, then every (point, fault) and every observation.
 use super::oracles::Oracle;
+use super::scenarios::Fake;
 use super::world::{self, World};
 use super::*;
 use crate::fault::{self, Fault, Point};
 use crate::gate::{Gate, GateError, GateState, Wait};
 use crate::id::ResourceId;
 use crate::root::StateRoot;
-use super::scenarios::Fake;
 use crate::run;
 use crate::store::Store;
 use std::collections::{BTreeMap, BTreeSet};
@@ -40,14 +40,10 @@ pub(super) trait Scenario: Sync {
     fn warm(&self) {}
     /// The faulted operation; returns the outcome's exit code when it settles.
     fn run(&self, home: &Path) -> Option<i32>;
-    /// The recovery step beyond the generic settle of every unresolved run.
-    fn recover(&self, _home: &Path) {}
     /// Scenario facts for the oracles (foreign fixtures, replace targets).
     fn facts(&self, _home: &Path, _world: &mut World) {}
     /// Extra checks while a child is stopped at a point (Stall).
     fn stalled(&self, _home: &Path, _pid: u32) {}
-    /// Whether an unacknowledged successor is refused (O1b, K5).
-    fn successor_blocked(&self, home: &Path, owner: &str) -> bool;
 }
 
 #[derive(Debug, Default)]
@@ -159,7 +155,13 @@ pub(super) fn drive(scenario: &dyn Scenario) {
     let shards: Vec<_> = (0..SHARDS)
         .map(|shard| {
             let child = Command::new(std::env::current_exe().expect("test binary"))
-                .args([SHARD_CHILD, "--exact", "--ignored", "--nocapture", "--test-threads=1"])
+                .args([
+                    SHARD_CHILD,
+                    "--exact",
+                    "--ignored",
+                    "--nocapture",
+                    "--test-threads=1",
+                ])
                 .env(SCENARIO, scenario.name())
                 .env(PLAN, plan.path())
                 .env(SHARD, format!("{shard}/{SHARDS}"))
@@ -174,7 +176,11 @@ pub(super) fn drive(scenario: &dyn Scenario) {
     let mut tally = Tally::default();
     for (shard, mut child) in shards {
         let status = child.wait().expect("shard wait");
-        assert!(status.success(), "{}: shard {shard} failed: {status:?}", scenario.name());
+        assert!(
+            status.success(),
+            "{}: shard {shard} failed: {status:?}",
+            scenario.name()
+        );
         let encoded = std::fs::read_to_string(plan.path().join(format!("tally-{shard}")))
             .expect("shard tally");
         tally.merge(&encoded);
@@ -231,7 +237,11 @@ fn fault_shard() {
     let scenario = super::scenarios::by_name(&name);
     let text = std::fs::read_to_string(plan.join("plan")).expect("plan");
     let mut lines = text.lines();
-    let observations: usize = lines.next().expect("observations").parse().expect("observations");
+    let observations: usize = lines
+        .next()
+        .expect("observations")
+        .parse()
+        .expect("observations");
     let baseline = lines.next().expect("baseline").parse::<i32>().ok();
     let trace: Vec<Point> = lines
         .next()
@@ -245,7 +255,10 @@ fn fault_shard() {
         })
         .collect();
     let (index, count) = shard.split_once('/').expect("shard spec");
-    let (index, count): (usize, usize) = (index.parse().expect("shard"), count.parse().expect("shards"));
+    let (index, count): (usize, usize) = (
+        index.parse().expect("shard"),
+        count.parse().expect("shards"),
+    );
     let _foreign = ForeignGuard;
     let mut tally = Tally::default();
     for (_, job) in jobs(&trace, observations)
@@ -267,9 +280,11 @@ fn run_job(scenario: &dyn Scenario, job: Job, baseline: Option<i32>, tally: &mut
     scenario.prepare(&home.home());
     let started = Instant::now();
     let (fired, exit, phase) = match job {
-        Job::Point(point, n, fault @ (Fault::Kill | Fault::Stall)) => {
-            (child(scenario, &home.home(), point, n, fault), None, "child")
-        }
+        Job::Point(point, n, fault @ (Fault::Kill | Fault::Stall)) => (
+            child(scenario, &home.home(), point, n, fault),
+            None,
+            "child",
+        ),
         Job::Point(point, n, fault) => {
             scenario.warm();
             fault::arm_nth(point, n, fault);
@@ -356,17 +371,21 @@ fn helper_log(home: &Path) -> PathBuf {
 /// Waits until every helper spawned for this HOME, registered or not, and
 /// every recorded sentinel has exited: helpers are legitimate writers.
 fn quiesce(home: &Path, label: &str) {
-    wait_until(&format!("{label}: helpers exit"), Duration::from_secs(40), || {
-        let logged = std::fs::read_to_string(helper_log(home)).unwrap_or_default();
-        let helpers: Vec<_> = logged.lines().filter_map(world::identity).collect();
-        fault::uninjected(|| {
-            World::capture_runs(home)
-                .iter()
-                .filter_map(|run| run.sentinel.clone())
-                .chain(helpers)
-                .all(|helper| !world::identity_alive(&helper))
-        })
-    });
+    wait_until(
+        &format!("{label}: helpers exit"),
+        Duration::from_secs(40),
+        || {
+            let logged = std::fs::read_to_string(helper_log(home)).unwrap_or_default();
+            let helpers: Vec<_> = logged.lines().filter_map(world::identity).collect();
+            fault::uninjected(|| {
+                World::capture_runs(home)
+                    .iter()
+                    .filter_map(|run| run.sentinel.clone())
+                    .chain(helpers)
+                    .all(|helper| !world::identity_alive(&helper))
+            })
+        },
+    );
 }
 /// Status reads (O10), the generic settle of every unresolved run, the
 /// scenario's own recovery, then the captured world.
@@ -405,19 +424,41 @@ fn recover(scenario: &dyn Scenario, home: &Path, label: &str) -> World {
             }
         }
     }
-    scenario.recover(home);
+    // Rerun: every owner admits a fresh successor after recovery, unless its
+    // residue is unacknowledged, which must refuse one (O1b, K5).
+    let runs = World::capture_runs(home);
+    let mut blocked = BTreeMap::new();
+    for (n, owner) in (250u8..).zip(scenario.owners().iter()) {
+        let name = owner.name().to_string();
+        let residue: Vec<String> = runs
+            .iter()
+            .filter(|r| {
+                r.owner == name
+                    && r.phase == "closed"
+                    && r.cleanup.as_deref() != Some("complete")
+                    && !r.acknowledged
+            })
+            .map(|r| r.id.to_string())
+            .collect();
+        let refused = match super::scenarios::rerun(home, owner, n) {
+            Ok(()) => false,
+            Err(true) if !residue.is_empty() => true,
+            Err(residue_refusal) => panic!(
+                "{label}: rerun of {} refused (residue refusal: {residue_refusal}) beside {residue:?}",
+                owner.label()
+            ),
+        };
+        for run in residue {
+            blocked.insert(run, refused);
+        }
+    }
     quiesce(home, label);
     let mut world = World::capture(home);
+    world.successor_blocked = blocked;
     world.diffs.push((format!("{label} status"), status_diff));
     if let Ok(root) = StateRoot::effects(&cx, home) {
         if let Ok(store) = Store::open(&cx, &root) {
             world.integrity = Some(store.check_integrity().map_err(|e| format!("{e:?}")));
-        }
-    }
-    for run in world.runs.clone() {
-        if run.phase == "closed" && run.cleanup.as_deref() != Some("complete") && !run.acknowledged {
-            let blocked = scenario.successor_blocked(home, &run.owner);
-            world.successor_blocked.insert(run.id.to_string(), blocked);
         }
     }
     scenario.facts(home, &mut world);
@@ -445,15 +486,15 @@ fn observe_everything(home: &Path) {
 }
 
 /// Runs the scenario in a re-executed child armed with `Kill` or `Stall`.
-fn child(
-    scenario: &dyn Scenario,
-    home: &Path,
-    point: Point,
-    n: usize,
-    fault: Fault,
-) -> bool {
+fn child(scenario: &dyn Scenario, home: &Path, point: Point, n: usize, fault: Fault) -> bool {
     let child = Command::new(std::env::current_exe().expect("test binary"))
-        .args([CHILD, "--exact", "--ignored", "--nocapture", "--test-threads=1"])
+        .args([
+            CHILD,
+            "--exact",
+            "--ignored",
+            "--nocapture",
+            "--test-threads=1",
+        ])
         .env(SCENARIO, scenario.name())
         .env("HOME", home)
         .env("EFFIGY_KERNEL_TEST_FAULT", fault::env_spec(point, n, fault))
@@ -471,13 +512,8 @@ fn child(
     loop {
         let mut status = 0;
         // SAFETY: our own child; WNOHANG never blocks.
-        let reaped = unsafe {
-            libc::waitpid(
-                pid as i32,
-                &mut status,
-                libc::WNOHANG | libc::WUNTRACED,
-            )
-        };
+        let reaped =
+            unsafe { libc::waitpid(pid as i32, &mut status, libc::WNOHANG | libc::WUNTRACED) };
         assert!(reaped >= 0, "waitpid: {}", std::io::Error::last_os_error());
         if reaped == pid as i32 && libc::WIFSTOPPED(status) {
             assert_eq!(fault, Fault::Stall, "{point:?}: unexpected stop");
@@ -489,7 +525,11 @@ fn child(
         }
         if reaped == pid as i32 {
             if libc::WIFSIGNALED(status) {
-                assert_eq!(libc::WTERMSIG(status), libc::SIGKILL, "{point:?}: child died");
+                assert_eq!(
+                    libc::WTERMSIG(status),
+                    libc::SIGKILL,
+                    "{point:?}: child died"
+                );
                 assert_eq!(fault, Fault::Kill, "{point:?}: child killed unarmed");
                 return true;
             }
@@ -503,7 +543,10 @@ fn child(
         if Instant::now() >= deadline {
             // SAFETY: our own child, recorded pid, never a pattern kill.
             unsafe { libc::kill(pid as i32, libc::SIGKILL) };
-            panic!("{}: {point:?}#{n} {fault:?} child exceeded bound", scenario.name());
+            panic!(
+                "{}: {point:?}#{n} {fault:?} child exceeded bound",
+                scenario.name()
+            );
         }
         std::thread::sleep(Duration::from_millis(2));
     }
@@ -521,7 +564,12 @@ fn inspect_stalled(scenario: &dyn Scenario, home: &Path, pid: u32, point: Point)
             ) {
                 let effects = mutate();
                 let root = StateRoot::effects(&effects, home).expect("root");
-                match Gate::acquire(&effects, &root, std::slice::from_ref(&owner), Wait::FailFast) {
+                match Gate::acquire(
+                    &effects,
+                    &root,
+                    std::slice::from_ref(&owner),
+                    Wait::FailFast,
+                ) {
                     Err(GateError::Busy { .. }) => {}
                     other => panic!(
                         "{}: stalled holder at {point:?} lost {}: {other:?}",

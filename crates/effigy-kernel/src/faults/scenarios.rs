@@ -25,9 +25,15 @@ fn checkout() -> CheckoutId {
     CheckoutId::new(CheckoutKind::EphemeralClone, [7; 16])
 }
 pub(super) fn task(n: u8) -> ResourceId {
-    TaskId::new(checkout(), "", Surface::Published, &format!("task{n}"), None)
-        .expect("task id")
-        .resource()
+    TaskId::new(
+        checkout(),
+        "",
+        Surface::Published,
+        &format!("task{n}"),
+        None,
+    )
+    .expect("task id")
+    .resource()
 }
 pub(super) fn env() -> ResourceId {
     ResourceId::environment(checkout(), "stack").expect("environment id")
@@ -91,22 +97,19 @@ pub(super) fn begin<'a>(
         fake,
     )
 }
-/// An unacknowledged successor must be refused while residue remains (K5).
-pub(super) fn successor_blocked(home: &Path, owner: &str) -> bool {
-    let owner = known_owners()
-        .into_iter()
-        .find(|candidate| candidate.name().to_string() == owner)
-        .expect("known owner");
+/// The recovery step's rerun: a fresh successor of `owner`, settled at once.
+/// `Err(true)` is a refusal for unacknowledged residue (K5).
+pub(super) fn rerun(home: &Path, owner: &ResourceId, n: u8) -> Result<(), bool> {
     let cx = mutate();
     let root = StateRoot::effects(&cx, home).expect("root");
     let mut fake = Fake::new(home);
-    match begin(&cx, &root, owner, 250, None, vec![], &mut fake) {
-        Err(RunError::PredecessorUnsettled { .. }) => true,
-        Ok(run) => {
-            let _ = run.settle(&cleanup(&cx), &mut fake);
-            false
-        }
-        Err(_) => false,
+    match begin(&cx, &root, owner.clone(), n, None, vec![], &mut fake) {
+        Err(RunError::PredecessorUnsettled { .. }) => Err(true),
+        Ok(run) => run
+            .settle(&cleanup(&cx), &mut fake)
+            .map(drop)
+            .map_err(|_| false),
+        Err(_) => Err(false),
     }
 }
 
@@ -138,7 +141,10 @@ impl Fake {
         file.sync_all().expect("call log");
     }
     fn apply(&self, key: &str, fence: &Fence) {
-        assert!(!crate::store::in_transaction(), "adapter call inside a transaction");
+        assert!(
+            !crate::store::in_transaction(),
+            "adapter call inside a transaction"
+        );
         let mut file = std::fs::OpenOptions::new()
             .create_new(true)
             .write(true)
@@ -219,7 +225,11 @@ fn spec(target: Fence, key: &str, settlement: Settlement) -> EffectSpec {
 }
 /// Intent, external effect, callback, natural completion: the engine shape.
 pub(super) fn apply(run: &mut Run<'_>, fake: &Fake, key: &str) -> Result<(), RunError> {
-    let ticket = run.intend(spec(run.fence().clone(), key, Settlement::Release(Value::Null)))?;
+    let ticket = run.intend(spec(
+        run.fence().clone(),
+        key,
+        Settlement::Release(Value::Null),
+    ))?;
     fake.apply(key, run.fence());
     run.applied(&ticket, Value::Bool(true))?;
     run.completed(&ticket, RequiredObligation::Applied)
@@ -246,7 +256,11 @@ fn workload(home: &Path, body: &str, lifetime: Lifetime) -> ProcessSpec {
         argv: vec![
             "/bin/sh".into(),
             "-c".into(),
-            format!("echo $$ >> '{}'; echo out; {body}", home.join("pids").display()).into(),
+            format!(
+                "echo $$ >> '{}'; echo out; {body}",
+                home.join("pids").display()
+            )
+            .into(),
         ],
         cwd: home.into(),
         env: BTreeMap::from([(
@@ -418,7 +432,10 @@ impl Scenario for Steps {
         .ok()?;
         let mut failed = None;
         for step in self.steps {
-            let specs = step.iter().map(|body| workload(home, body, finite())).collect();
+            let specs = step
+                .iter()
+                .map(|body| workload(home, body, finite()))
+                .collect();
             let mut processes = attempt!(run, &cx, fake, Custody::spawn_all(&mut run, specs, &cx));
             // The last member of a group may linger; settle stops it.
             let waited = processes.len() - usize::from(processes.len() > 1);
@@ -445,9 +462,6 @@ impl Scenario for Steps {
     fn facts(&self, _home: &Path, world: &mut World) {
         foreign_facts(world);
     }
-    fn successor_blocked(&self, home: &Path, owner: &str) -> bool {
-        successor_blocked(home, owner)
-    }
 }
 static STEPS: [Steps; 3] = [
     Steps {
@@ -463,7 +477,11 @@ static STEPS: [Steps; 3] = [
     Steps {
         name: "multi-child",
         owner: 3,
-        steps: &[&["exit 0", "exit 3", "\"$EFFIGY_FAULT_FIXTURE\" nonce-workload & echo $! >> pids; wait"]],
+        steps: &[&[
+            "exit 0",
+            "exit 3",
+            "\"$EFFIGY_FAULT_FIXTURE\" nonce-workload & echo $! >> pids; wait",
+        ]],
     },
 ];
 #[test]
@@ -544,18 +562,23 @@ impl Scenario for ManagedAttach {
         let cx = mutate();
         let root = StateRoot::effects(&cx, home).ok()?;
         let fake = &mut Fake::new(home);
-        let mut run = begin(&cx, &root, task(4), 4, Some(Supervision::Detached), vec![], fake).ok()?;
+        let mut run = begin(
+            &cx,
+            &root,
+            task(4),
+            4,
+            Some(Supervision::Detached),
+            vec![],
+            fake,
+        )
+        .ok()?;
         attempt!(
             run,
             &cx,
             fake,
             Attachments::attach(&mut run, &env_fence(1), AttachMode::Borrow, Wait::FailFast)
         );
-        let spec = workload(
-            home,
-            LINGER,
-            Lifetime::Open(OpenReason::DevServer),
-        );
+        let spec = workload(home, LINGER, Lifetime::Open(OpenReason::DevServer));
         let _process = attempt!(run, &cx, fake, Custody::spawn(&mut run, spec, &cx));
         attempt!(run, &cx, fake, run.advance(Phase::Active));
         // A front end's stop is a durable fenced request, never a signal.
@@ -586,9 +609,6 @@ impl Scenario for ManagedAttach {
     }
     fn facts(&self, _home: &Path, world: &mut World) {
         foreign_facts(world);
-    }
-    fn successor_blocked(&self, home: &Path, owner: &str) -> bool {
-        successor_blocked(home, owner)
     }
 }
 #[test]
@@ -654,7 +674,12 @@ fn held_transition(home: &Path, holder: u8, at: &Fence, refused: u8, op: &str) -
         fake,
         Attachments::attach(&mut run, at, AttachMode::Borrow, Wait::FailFast)
     );
-    attempt!(run, &cx, fake, apply(&mut run, fake, &format!("holder-{holder}")));
+    attempt!(
+        run,
+        &cx,
+        fake,
+        apply(&mut run, fake, &format!("holder-{holder}"))
+    );
     // The concurrent transition: its permit sees the attachment.
     let _ = transition(home, refused, op, Settlement::Retain, false);
     attempt!(run, &cx, fake, run.finish(WorkloadOutcome::Succeeded));
@@ -712,11 +737,11 @@ impl Scenario for Environment {
             expected: again,
             action: RequestAction::Stop,
         };
-        assert!(request(&cx, &root, &stale).is_err(), "stale request accepted");
+        assert!(
+            request(&cx, &root, &stale).is_err(),
+            "stale request accepted"
+        );
         Some(0)
-    }
-    fn successor_blocked(&self, home: &Path, owner: &str) -> bool {
-        successor_blocked(home, owner)
     }
 }
 #[test]
@@ -767,7 +792,10 @@ impl Scenario for Residue {
         apply(&mut run, &fake, "stuck").expect("apply");
         run.finish(WorkloadOutcome::Succeeded).expect("finish");
         let outcome = run.settle(&cleanup(&cx), &mut fake).expect("settle");
-        assert_eq!(outcome.cleanup(), crate::outcome::CleanupOutcome::Incomplete);
+        assert_eq!(
+            outcome.cleanup(),
+            crate::outcome::CleanupOutcome::Incomplete
+        );
     }
     fn run(&self, home: &Path) -> Option<i32> {
         let cx = mutate();
@@ -784,20 +812,26 @@ impl Scenario for Residue {
             run,
             &cx,
             fake,
-            run.intend(spec(run.fence().clone(), "skipped", Settlement::Release(Value::Null)))
+            run.intend(spec(
+                run.fence().clone(),
+                "skipped",
+                Settlement::Release(Value::Null)
+            ))
         );
         attempt!(
             run,
             &cx,
             fake,
-            run.failed(&skipped, AbsenceProof::NoFile { name: "skipped".into() })
+            run.failed(
+                &skipped,
+                AbsenceProof::NoFile {
+                    name: "skipped".into()
+                }
+            )
         );
         attempt!(run, &cx, fake, apply(&mut run, fake, "work"));
         attempt!(run, &cx, fake, run.finish(WorkloadOutcome::Succeeded));
         settle(run, &cx, fake)
-    }
-    fn successor_blocked(&self, home: &Path, owner: &str) -> bool {
-        successor_blocked(home, owner)
     }
 }
 #[test]
@@ -925,9 +959,6 @@ impl Scenario for OwnerLoss {
     fn facts(&self, _home: &Path, world: &mut World) {
         foreign_facts(world);
     }
-    fn successor_blocked(&self, home: &Path, owner: &str) -> bool {
-        successor_blocked(home, owner)
-    }
 }
 #[test]
 fn faults_owner_loss_then_recovery_stop_over_reused_and_foreign_groups() {
@@ -982,7 +1013,13 @@ impl Scenario for ObserveProbes {
         "observe-probes"
     }
     fn oracles(&self) -> &'static [Oracle] {
-        &[Oracle::O4, Oracle::O6, Oracle::O10, Oracle::O12, Oracle::O14]
+        &[
+            Oracle::O4,
+            Oracle::O6,
+            Oracle::O10,
+            Oracle::O12,
+            Oracle::O14,
+        ]
     }
     fn required(&self) -> &'static [Point] {
         &[
@@ -1113,9 +1150,6 @@ impl Scenario for ObserveProbes {
             panic!("observe-probes stalled observer: {failure}");
         }
     }
-    fn successor_blocked(&self, home: &Path, owner: &str) -> bool {
-        successor_blocked(home, owner)
-    }
 }
 #[test]
 fn faults_observe_with_guarded_subprocess_and_http_probes() {
@@ -1204,9 +1238,6 @@ impl Scenario for Endpoint {
         let _ = second.settle(&cleanup(&cx), fake);
         exit
     }
-    fn successor_blocked(&self, home: &Path, owner: &str) -> bool {
-        successor_blocked(home, owner)
-    }
 }
 #[test]
 fn faults_endpoint_reserve_and_commit() {
@@ -1289,7 +1320,8 @@ impl Scenario for Vault {
         vault_write(home, 2).ok().map(|()| 0)
     }
     fn facts(&self, home: &Path, world: &mut World) {
-        let set = crate::record::read_generation(&observe(), &files(home), &name("local.vault"), 1024);
+        let set =
+            crate::record::read_generation(&observe(), &files(home), &name("local.vault"), 1024);
         let joined = |generation: u64| {
             PARTS
                 .iter()
@@ -1314,9 +1346,6 @@ impl Scenario for Vault {
             vec![b"settings-1".to_vec(), b"settings-2".to_vec()],
             std::fs::read(home.join("files/settings")).ok(),
         ));
-    }
-    fn successor_blocked(&self, home: &Path, owner: &str) -> bool {
-        successor_blocked(home, owner)
     }
 }
 #[test]

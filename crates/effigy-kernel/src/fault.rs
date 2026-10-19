@@ -171,8 +171,7 @@ pub(crate) fn injected<T>() -> Option<Observed<T>> {
         FIRED.with(|fired| fired.set(true));
     }
     let next = NEXT_UNKNOWN.with(|flag| flag.replace(false));
-    (armed || next || UNKNOWN.with(Cell::get))
-        .then_some(Observed::Unknown(UnknownReason::Injected))
+    (armed || next || UNKNOWN.with(Cell::get)).then_some(Observed::Unknown(UnknownReason::Injected))
 }
 pub(crate) fn point(point: Point) -> io::Result<()> {
     TRACE.with(|trace| trace.borrow_mut().push(point));

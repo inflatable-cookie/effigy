@@ -73,6 +73,8 @@ pub(super) struct Admission {
     pub unresolved: i64,
     pub open: i64,
 }
+/// An `atomic_replace` target: its name, allowed bodies and actual body.
+pub(super) type Replaced = (String, Vec<Vec<u8>>, Option<Vec<u8>>);
 #[derive(Debug, Default)]
 pub(super) struct World {
     pub runs: Vec<RunRow>,
@@ -98,8 +100,7 @@ pub(super) struct World {
     pub events: Vec<Event>,
     /// The durable strict-fake call log.
     pub calls: Vec<String>,
-    /// `atomic_replace` targets: (name, allowed bodies, actual body).
-    pub replaced: Vec<(String, Vec<Vec<u8>>, Option<Vec<u8>>)>,
+    pub replaced: Vec<Replaced>,
     /// Observability faults: (label, baseline exit, faulted exit) (O9).
     pub outcomes: Vec<(String, i32, i32)>,
     /// Static or Observe steps: (label, filesystem diff) (O10).
@@ -196,7 +197,8 @@ impl World {
                 }
             }
             world.effects.insert(run.id.to_string(), effects);
-            world.statuses.insert(run.id.to_string(),
+            world.statuses.insert(
+                run.id.to_string(),
                 crate::run::status(&cx, &root, &reader, run.id, next()),
             );
         }
@@ -231,15 +233,17 @@ impl World {
             .iter()
             .map(|r| (text(&r[0]), r[1].clone()))
             .collect();
-        world.admissions = rows("SELECT run_id,owner,cast(unresolved AS TEXT),cast(open AS TEXT) FROM audit_admissions")
-            .iter()
-            .map(|r| Admission {
-                run: text(&r[0]),
-                owner: text(&r[1]),
-                unresolved: text(&r[2]).parse().unwrap_or(-1),
-                open: text(&r[3]).parse().unwrap_or(-1),
-            })
-            .collect();
+        world.admissions = rows(
+            "SELECT run_id,owner,cast(unresolved AS TEXT),cast(open AS TEXT) FROM audit_admissions",
+        )
+        .iter()
+        .map(|r| Admission {
+            run: text(&r[0]),
+            owner: text(&r[1]),
+            unresolved: text(&r[2]).parse().unwrap_or(-1),
+            open: text(&r[3]).parse().unwrap_or(-1),
+        })
+        .collect();
         world
     }
     /// Every gate inode on disk, probed; every scope gate, tested exclusively.
@@ -336,7 +340,10 @@ pub(super) fn tree(dir: &Path) -> BTreeMap<String, String> {
     walk(dir, dir, &mut out);
     out
 }
-pub(super) fn diff(before: &BTreeMap<String, String>, after: &BTreeMap<String, String>) -> Vec<String> {
+pub(super) fn diff(
+    before: &BTreeMap<String, String>,
+    after: &BTreeMap<String, String>,
+) -> Vec<String> {
     let mut changes = vec![];
     for (key, value) in after {
         match before.get(key) {

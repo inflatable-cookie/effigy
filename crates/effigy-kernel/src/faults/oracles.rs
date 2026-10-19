@@ -97,7 +97,8 @@ fn survivors(world: &World, run: crate::id::RunId) -> Vec<(Option<i64>, String)>
                 format!("leader {} alive", receipt.pgid),
             ));
         }
-        let reused = matches!(&leader, Observed::Verified(identity, _) if *identity != receipt.identity);
+        let reused =
+            matches!(&leader, Observed::Verified(identity, _) if *identity != receipt.identity);
         if !reused {
             let members = crate::custody::platform::group_pids(receipt.pgid).unwrap_or_default();
             let members: Vec<u32> = members
@@ -138,7 +139,10 @@ fn o1a(world: &World) -> Result<usize, String> {
         judged += 1;
         let alive = survivors(world, run.id);
         if !alive.is_empty() {
-            return Err(format!("O1a: complete run {} has live owned processes: {alive:?}", run.id));
+            return Err(format!(
+                "O1a: complete run {} has live owned processes: {alive:?}",
+                run.id
+            ));
         }
     }
     Ok(judged)
@@ -148,7 +152,12 @@ fn o1b(world: &World) -> Result<usize, String> {
     for run in closed(world, false) {
         judged += 1;
         match world.statuses.get(&run.id.to_string()) {
-            Some(Observed::Verified(RunStatus::Closed { complete: false, .. }, _)) => {}
+            Some(Observed::Verified(
+                RunStatus::Closed {
+                    complete: false, ..
+                },
+                _,
+            )) => {}
             other => return Err(format!("O1b: incomplete run {} reads {other:?}", run.id)),
         }
         let effects = &world.effects[&run.id.to_string()];
@@ -159,7 +168,10 @@ fn o1b(world: &World) -> Result<usize, String> {
                     .any(|e| e.sequence == sequence && !e.state.terminal())
             });
             if !listed {
-                return Err(format!("O1b: run {} survivor not listed as residue: {what}", run.id));
+                return Err(format!(
+                    "O1b: run {} survivor not listed as residue: {what}",
+                    run.id
+                ));
             }
         }
         if !run.acknowledged && world.successor_blocked.get(&run.id.to_string()) != Some(&true) {
@@ -179,7 +191,10 @@ fn o1b(world: &World) -> Result<usize, String> {
                 .iter()
                 .any(|(e, r, state)| *e == env && *r == run_id && state != "released")
             {
-                return Err(format!("O1b/R4: residue attachment of {} lost its hold", run.id));
+                return Err(format!(
+                    "O1b/R4: residue attachment of {} lost its hold",
+                    run.id
+                ));
             }
         }
     }
@@ -255,14 +270,19 @@ fn o5(world: &World) -> Result<usize, String> {
         }
     }
     if let Some((call, count)) = seen.iter().find(|(_, count)| **count > 1) {
-        return Err(format!("O5: non-idempotent call applied {count} times: {call}"));
+        return Err(format!(
+            "O5: non-idempotent call applied {count} times: {call}"
+        ));
     }
     let mut releases = BTreeMap::<(&str, &str), usize>::new();
     for (env, run) in &world.releases {
         *releases.entry((env, run)).or_default() += 1;
     }
     for (env, run, state) in &world.attachments {
-        let count = releases.get(&(env.as_str(), run.as_str())).copied().unwrap_or(0);
+        let count = releases
+            .get(&(env.as_str(), run.as_str()))
+            .copied()
+            .unwrap_or(0);
         let expected = usize::from(state == "released");
         if count != expected {
             return Err(format!(
@@ -315,9 +335,7 @@ fn o8(world: &World) -> Result<usize, String> {
                 judged += 1;
                 match last.get(subject.as_str()) {
                     Some(false) => {}
-                    Some(true) => {
-                        return Err(format!("O8: destructive call on Unknown {subject}"))
-                    }
+                    Some(true) => return Err(format!("O8: destructive call on Unknown {subject}")),
                     None => return Err(format!("O8: destructive call on unobserved {subject}")),
                 }
             }
@@ -352,7 +370,9 @@ fn o11(world: &World) -> Result<usize, String> {
         }
         judged += 1;
         if !call.ends_with(" holders=0") {
-            return Err(format!("O11: destructive environment call with holders: {call}"));
+            return Err(format!(
+                "O11: destructive environment call with holders: {call}"
+            ));
         }
     }
     Ok(judged)
@@ -426,10 +446,16 @@ mod controls {
         std::process::id()
     }
     fn fails(oracle: Oracle, world: &World) {
-        assert!(oracle.check(world).is_err(), "{oracle:?} accepted a violating world");
+        assert!(
+            oracle.check(world).is_err(),
+            "{oracle:?} accepted a violating world"
+        );
     }
     fn passes(oracle: Oracle, world: &World) {
-        assert!(oracle.check(world).is_ok(), "{oracle:?} refused a valid world");
+        assert!(
+            oracle.check(world).is_ok(),
+            "{oracle:?} refused a valid world"
+        );
     }
     fn effect(sequence: i64, kind: &str, state: EffectState) -> Effect {
         Effect {
@@ -469,10 +495,12 @@ mod controls {
         // Incomplete: the survivor must be a listed residue effect.
         let mut world = World::default();
         world.runs.push(row(2, "closed", Some("incomplete")));
-        world
-            .effects
-            .insert(run_id(2).to_string(), vec![effect(1, "kernel:process", EffectState::Released)]);
-        world.statuses.insert(run_id(2).to_string(),
+        world.effects.insert(
+            run_id(2).to_string(),
+            vec![effect(1, "kernel:process", EffectState::Released)],
+        );
+        world.statuses.insert(
+            run_id(2).to_string(),
             Observed::Verified(
                 RunStatus::Closed {
                     workload: crate::outcome::WorkloadOutcome::Interrupted,
@@ -494,21 +522,24 @@ mod controls {
         world.successor_blocked.insert(run_id(2).to_string(), false);
         fails(Oracle::O1b, &world);
         world.successor_blocked.insert(run_id(2).to_string(), true);
-        world
-            .effects
-            .insert(run_id(2).to_string(), vec![effect(1, "kernel:attachment", EffectState::Residue)]);
+        world.effects.insert(
+            run_id(2).to_string(),
+            vec![effect(1, "kernel:attachment", EffectState::Residue)],
+        );
         fails(Oracle::O1b, &world);
     }
     #[test]
     fn oracle_controls_o2_o3_o13_reject_open_or_parallel_runs() {
         let mut world = World::default();
         world.runs.push(row(1, "active", None));
-        world.statuses.insert(run_id(1).to_string(),
+        world.statuses.insert(
+            run_id(1).to_string(),
             Observed::Verified(RunStatus::Live(Phase::Active), evidence()),
         );
         fails(Oracle::O2, &world);
         let bad = crate::outcome::Invocation::validated(vec!["other".into()], |_| true).unwrap();
-        world.statuses.insert(run_id(1).to_string(),
+        world.statuses.insert(
+            run_id(1).to_string(),
             Observed::Verified(
                 RunStatus::Interrupted {
                     phase: Phase::Active,
@@ -518,7 +549,8 @@ mod controls {
             ),
         );
         fails(Oracle::O2, &world);
-        world.statuses.insert(run_id(1).to_string(),
+        world.statuses.insert(
+            run_id(1).to_string(),
             Observed::Verified(
                 RunStatus::Interrupted {
                     phase: Phase::Active,
@@ -581,46 +613,64 @@ mod controls {
     }
     #[test]
     fn oracle_controls_o5_rejects_double_application_and_release() {
-        let mut world = World::default();
-        world.calls = vec!["apply a".into(), "release a".into()];
+        let mut world = World {
+            calls: vec!["apply a".into(), "release a".into()],
+            ..World::default()
+        };
         passes(Oracle::O5, &world);
         world.calls.push("release a".into());
         fails(Oracle::O5, &world);
         let mut world = World::default();
-        world.attachments.push(("env".into(), "run".into(), "released".into()));
+        world
+            .attachments
+            .push(("env".into(), "run".into(), "released".into()));
         fails(Oracle::O5, &world);
         world.releases.push(("env".into(), "run".into()));
         passes(Oracle::O5, &world);
         world.releases.push(("env".into(), "run".into()));
         fails(Oracle::O5, &world);
-        let mut world = World::default();
-        world.claim_releases = vec![("c".into(), Some("t".into())); 2];
+        let world = World {
+            claim_releases: vec![("c".into(), Some("t".into())); 2],
+            ..World::default()
+        };
         fails(Oracle::O5, &world);
     }
     #[test]
     fn oracle_controls_o6_o7_o9_o10_reject_damage() {
-        let mut world = World::default();
-        world.integrity = Some(Err("1 foreign-key violations".into()));
+        let mut world = World {
+            integrity: Some(Err("1 foreign-key violations".into())),
+            ..World::default()
+        };
         fails(Oracle::O6, &world);
-        world.replaced.push(("t".into(), vec![b"old".to_vec(), b"new".to_vec()], Some(b"ne".to_vec())));
+        world.replaced.push((
+            "t".into(),
+            vec![b"old".to_vec(), b"new".to_vec()],
+            Some(b"ne".to_vec()),
+        ));
         fails(Oracle::O7, &world);
         world.replaced[0].2 = None;
         fails(Oracle::O7, &world);
         world.outcomes.push(("CaptureWrite".into(), 0, 1));
         fails(Oracle::O9, &world);
-        world.diffs.push(("status".into(), vec!["created kernel.db".into()]));
+        world
+            .diffs
+            .push(("status".into(), vec!["created kernel.db".into()]));
         fails(Oracle::O10, &world);
     }
     #[test]
     fn oracle_controls_o8_rejects_undo_after_unknown_or_unobserved() {
-        let mut world = World::default();
-        world.events = vec![
-            Event::Observed {
-                subject: "a".into(),
-                unknown: false,
-            },
-            Event::Destructive { subject: "a".into() },
-        ];
+        let mut world = World {
+            events: vec![
+                Event::Observed {
+                    subject: "a".into(),
+                    unknown: false,
+                },
+                Event::Destructive {
+                    subject: "a".into(),
+                },
+            ],
+            ..World::default()
+        };
         passes(Oracle::O8, &world);
         world.events.insert(
             1,
@@ -630,13 +680,17 @@ mod controls {
             },
         );
         fails(Oracle::O8, &world);
-        world.events = vec![Event::Destructive { subject: "b".into() }];
+        world.events = vec![Event::Destructive {
+            subject: "b".into(),
+        }];
         fails(Oracle::O8, &world);
     }
     #[test]
     fn oracle_controls_o11_o12_o14_reject_unsafe_destruction() {
-        let mut world = World::default();
-        world.calls = vec!["env:down e@2 holders=0".into()];
+        let mut world = World {
+            calls: vec!["env:down e@2 holders=0".into()],
+            ..World::default()
+        };
         passes(Oracle::O11, &world);
         world.calls.push("env:handover e@3 holders=1".into());
         fails(Oracle::O11, &world);
@@ -703,7 +757,14 @@ mod controls {
             );
             world
         };
-        for oracle in [Oracle::O1a, Oracle::O3, Oracle::O4, Oracle::O5, Oracle::O6, Oracle::O13] {
+        for oracle in [
+            Oracle::O1a,
+            Oracle::O3,
+            Oracle::O4,
+            Oracle::O5,
+            Oracle::O6,
+            Oracle::O13,
+        ] {
             passes(oracle, &world());
         }
         // O1a: a live process carrying the complete run's custody nonce.
@@ -723,7 +784,8 @@ mod controls {
         stray.wait().unwrap();
         passes(Oracle::O1a, &world());
         // O4: a gate held by a process the harness never declared live.
-        let guard = Gate::acquire(&cx, &root, std::slice::from_ref(&owner), Wait::FailFast).unwrap();
+        let guard =
+            Gate::acquire(&cx, &root, std::slice::from_ref(&owner), Wait::FailFast).unwrap();
         fails(Oracle::O4, &world());
         drop(guard);
         passes(Oracle::O4, &world());

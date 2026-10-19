@@ -63,7 +63,12 @@ const ATTACHMENTS: [Option<AttachMode>; 3] = [
 ];
 const OWNER: u8 = 12;
 
-fn requested(run: &mut Run<'_>, root: &StateRoot, action: RequestAction, n: u8) -> Result<(), RunError> {
+fn requested(
+    run: &mut Run<'_>,
+    root: &StateRoot,
+    action: RequestAction,
+    n: u8,
+) -> Result<(), RunError> {
     let cx = mutate();
     request(
         &cx,
@@ -119,9 +124,14 @@ fn cell(front: Front, prior: Prior, stop: Stop, attachment: Option<AttachMode>) 
     // Prior state of the same owner.
     let mut acknowledge = vec![];
     if prior != Prior::Fresh {
-        let mut previous = begin(&cx, &root, task(OWNER), 1, None, vec![], &mut fake).expect("prior");
+        let mut previous =
+            begin(&cx, &root, task(OWNER), 1, None, vec![], &mut fake).expect("prior");
         attach(&mut previous);
-        let key = if prior == Prior::ClosedWithResidue { "stuck" } else { "prior" };
+        let key = if prior == Prior::ClosedWithResidue {
+            "stuck"
+        } else {
+            "prior"
+        };
         apply(&mut previous, &fake, key).expect("prior effect");
         match prior {
             Prior::Interrupted => drop(previous),
@@ -178,7 +188,10 @@ fn cell(front: Front, prior: Prior, stop: Stop, attachment: Option<AttachMode>) 
         Stop::OwningClientKill if front == Front::Detached => {
             // A detached run outlives its client; only an explicit stop ends it.
             assert!(
-                matches!(status(&home, id(2)), Observed::Verified(RunStatus::Live(_), _)),
+                matches!(
+                    status(&home, id(2)),
+                    Observed::Verified(RunStatus::Live(_), _)
+                ),
                 "{label}: client death stopped a detached run"
             );
             stop_by_request(&mut run, &root, 11);
@@ -193,7 +206,11 @@ fn cell(front: Front, prior: Prior, stop: Stop, attachment: Option<AttachMode>) 
             let refused = transition(&home, 20, transition_op.unwrap(), Settlement::Retain, false)
                 .expect("transition attempt")
                 .is_none();
-            assert_eq!(refused, attachment.is_some(), "{label}: transition while held");
+            assert_eq!(
+                refused,
+                attachment.is_some(),
+                "{label}: transition while held"
+            );
             stop_by_request(&mut run, &root, 11);
         }
     }
@@ -212,8 +229,16 @@ fn cell(front: Front, prior: Prior, stop: Stop, attachment: Option<AttachMode>) 
     }
     // Recovery is idempotent: the one settle, twice.
     for _ in 0..2 {
-        let outcome = settle_interrupted(&cx, &root, &task(OWNER), id(2), next(), &cleanup(&cx), &mut fake)
-            .expect("recovery settle");
+        let outcome = settle_interrupted(
+            &cx,
+            &root,
+            &task(OWNER),
+            id(2),
+            next(),
+            &cleanup(&cx),
+            &mut fake,
+        )
+        .expect("recovery settle");
         assert_eq!(outcome.cleanup(), CleanupOutcome::Complete, "{label}");
     }
     // An operator clears the residue; its holder protection ends only now.
@@ -221,8 +246,16 @@ fn cell(front: Front, prior: Prior, stop: Stop, attachment: Option<AttachMode>) 
         std::fs::write(home.join("unstick"), b"").expect("unstick");
     }
     if prior != Prior::Fresh {
-        let outcome = settle_interrupted(&cx, &root, &task(OWNER), id(1), next(), &cleanup(&cx), &mut fake)
-            .expect("prior settle");
+        let outcome = settle_interrupted(
+            &cx,
+            &root,
+            &task(OWNER),
+            id(1),
+            next(),
+            &cleanup(&cx),
+            &mut fake,
+        )
+        .expect("prior settle");
         assert_eq!(outcome.cleanup(), CleanupOutcome::Complete, "{label}");
     }
     // The transition proceeds once nothing holds; exclusive stop-on-release
@@ -230,7 +263,12 @@ fn cell(front: Front, prior: Prior, stop: Stop, attachment: Option<AttachMode>) 
     if let Some(op) = transition_op {
         let fence = transition(&home, 21, op, Settlement::Retain, false).expect("transition");
         assert!(fence.is_some(), "{label}: transition after release");
-    } else if matches!(attachment, Some(AttachMode::Exclusive { stop_on_release: true })) {
+    } else if matches!(
+        attachment,
+        Some(AttachMode::Exclusive {
+            stop_on_release: true
+        })
+    ) {
         let fence = transition(&home, 21, "down", Settlement::Irreversible, false).expect("down");
         assert!(fence.is_some(), "{label}: stop on release");
     }
@@ -242,7 +280,15 @@ fn cell(front: Front, prior: Prior, stop: Stop, attachment: Option<AttachMode>) 
             .check_integrity()
             .map_err(|e| format!("{e:?}")),
     );
-    for oracle in [Oracle::O2, Oracle::O3, Oracle::O4, Oracle::O5, Oracle::O6, Oracle::O11, Oracle::O13] {
+    for oracle in [
+        Oracle::O2,
+        Oracle::O3,
+        Oracle::O4,
+        Oracle::O5,
+        Oracle::O6,
+        Oracle::O11,
+        Oracle::O13,
+    ] {
         if let Err(failure) = oracle.check(&world) {
             panic!("{label}: {failure}");
         }
@@ -258,7 +304,10 @@ fn cell(front: Front, prior: Prior, stop: Stop, attachment: Option<AttachMode>) 
             .iter()
             .filter(|(e, r)| e == environment && r == run)
             .count();
-        assert_eq!(count, 1, "{label}: {environment}/{run} released {count} times");
+        assert_eq!(
+            count, 1,
+            "{label}: {environment}/{run} released {count} times"
+        );
     }
     assert_eq!(
         world.calls.iter().filter(|c| *c == "release work").count(),
@@ -266,7 +315,10 @@ fn cell(front: Front, prior: Prior, stop: Stop, attachment: Option<AttachMode>) 
         "{label}: workload undo"
     );
     assert!(
-        world.runs.iter().all(|r| r.phase == "closed" && r.cleanup.as_deref() == Some("complete")),
+        world
+            .runs
+            .iter()
+            .all(|r| r.phase == "closed" && r.cleanup.as_deref() == Some("complete")),
         "{label}: unresolved runs {:?}",
         world.runs
     );
@@ -287,5 +339,8 @@ fn matrix_supervisor_full_cross_product_releases_each_attachment_once() {
         }
     }
     assert_eq!(cells, 3 * 4 * 8 * 3);
-    eprintln!("supervisor matrix: {cells} cells in {:?}", started.elapsed());
+    eprintln!(
+        "supervisor matrix: {cells} cells in {:?}",
+        started.elapsed()
+    );
 }
