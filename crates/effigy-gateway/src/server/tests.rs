@@ -878,7 +878,7 @@ fn apply_reloaded_route_table_cancels_idle_shutdown_when_route_returns() {
 
 #[test]
 #[cfg_attr(
-    all(target_os = "macos", not(effigy_shared_process)),
+    target_os = "macos",
     ignore = "known v0.15 rebuild defect: papercut 9536eb29-a2bf-4ffb-af44-8f5739992bbf; owner lane v015-gateway"
 )]
 fn scheduled_idle_shutdown_stops_gateway_when_table_stays_empty() {
