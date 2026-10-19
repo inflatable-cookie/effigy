@@ -334,43 +334,27 @@ mod tests {
     }
 
     #[test]
-    fn begin_update_finalize_round_trip_and_reconcile_unknown() {
+    fn begin_update_finalize_round_trip() {
         let base = std::env::temp_dir().join(format!("effigy-qa-run-{}", std::process::id()));
         let _ = fs::remove_dir_all(&base);
         fs::create_dir_all(&base).expect("mkdir");
 
-        let mut live = record("round-trip", u32::MAX - 1);
+        // The record store reads what was written; whether its run still
+        // lives is the run journal's answer, not this file's.
+        let mut live = record("round-trip", std::process::id());
         begin_qa_group_run_record(&base, &live).expect("begin");
         let snapshot = load_qa_group_run_record(&base, "round-trip")
             .expect("load")
             .expect("live");
         assert!(snapshot.live);
-        assert!(
-            snapshot
-                .warnings
-                .iter()
-                .any(|warning| warning.contains("no longer live")),
-            "a dead owner PID must reconcile to unknown evidence: {:?}",
-            snapshot.warnings
-        );
-        assert_eq!(
-            snapshot.record.state,
-            QaGroupRunState::Unknown,
-            "a dead owner reconciles to unknown, never to a pass"
-        );
-        assert_eq!(
-            snapshot.record.outcome, None,
-            "incomplete evidence never fabricates an outcome"
-        );
+        assert!(snapshot.warnings.is_empty());
+        assert_eq!(snapshot.record.state, QaGroupRunState::Running);
 
-        // A live PID keeps the running state readable.
-        live.owner_pid = std::process::id();
         live.owner_start_identity = None;
         update_qa_group_run_record(&base, &live).expect("update");
         let snapshot = load_qa_group_run_record(&base, "round-trip")
             .expect("load")
             .expect("live");
-        assert!(snapshot.warnings.is_empty());
         assert_eq!(snapshot.record.state, QaGroupRunState::Running);
 
         // Finalization moves the record and clears the live pointer.

@@ -52,7 +52,10 @@ fn equivalent_spellings_serialize_on_one_gate_and_distinct_tasks_do_not() {
         panic!("expected a lock conflict, got {error:?}");
     };
     assert_eq!(conflict.holder_pid, Some(std::process::id()));
-    assert_eq!(conflict.holder_run.as_deref(), Some(first.id().to_string().as_str()));
+    assert_eq!(
+        conflict.holder_run.as_deref(),
+        Some(first.id().to_string().as_str())
+    );
     assert!(!error.to_string().contains("unlock"), "{error}");
 
     let root_catalog = catalog(root.path(), "", "", 0);
@@ -82,7 +85,10 @@ fn status_reports_the_live_run_then_its_outcome_without_staleness() {
         live.current.as_ref().and_then(|current| current.pid),
         Some(std::process::id())
     );
-    assert!(live.latest.is_none(), "history never stands in for the live run");
+    assert!(
+        live.latest.is_none(),
+        "history never stands in for the live run"
+    );
 
     assert!(run.close(WorkloadOutcome::Failed { code: 3 }).is_empty());
     let closed = task_status(&target, HISTORY_LIMIT);

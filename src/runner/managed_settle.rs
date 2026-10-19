@@ -226,17 +226,6 @@ fn exec_group_marker_count(runtime_dir: &Path) -> usize {
         .unwrap_or(0)
 }
 
-/// Live managed-run task holders of this checkout: runs recorded with a
-/// managed run's token whose gate is held on this host. This discovery does
-/// not need the session record, so a live owner whose record is missing is
-/// still visible.
-pub(in crate::runner) fn live_managed_lock_holders(repo_root: &Path) -> Vec<LiveHolder> {
-    live_holders(repo_root)
-        .into_iter()
-        .filter(|holder| holder.kind == HolderKind::Task && holder.managed_run.is_some())
-        .collect()
-}
-
 /// Gates establish liveness; a matching session only narrows the
 /// environment. Missing records cannot grant destructive authority, so
 /// unbound holders protect every environment in this checkout until they
@@ -304,9 +293,13 @@ pub(in crate::runner) fn refuse_recovery_while_token_live(
     repo_root: &Path,
     token: &str,
 ) -> Result<(), RunnerError> {
-    let holders = live_managed_lock_holders(repo_root)
+    // An unreadable journal is an unknown holder: it never authorises the
+    // teardown (R3).
+    let holders = live_holders(repo_root)
         .into_iter()
-        .filter(|holder| holder.carries_managed_run(token))
+        .filter(|holder| {
+            matches!(holder.kind, HolderKind::Unreadable(_)) || holder.carries_managed_run(token)
+        })
         .collect::<Vec<_>>();
     if holders.is_empty() {
         return Ok(());
@@ -570,16 +563,22 @@ mod tests {
     /// The live-owner discovery sees a live holder through its run token even
     /// when its session record is missing.
     #[test]
-    fn live_managed_lock_holders_sees_live_token_holders() {
+    fn live_holders_see_live_token_holders() {
+        let managed = |root: &Path| -> Vec<LiveHolder> {
+            live_holders(root)
+                .into_iter()
+                .filter(|holder| holder.kind == HolderKind::Task && holder.managed_run.is_some())
+                .collect()
+        };
         let private = tempfile::tempdir().expect("discovery fixture");
         let plain = hold_task(private.path(), None);
         assert!(
-            live_managed_lock_holders(private.path()).is_empty(),
+            managed(private.path()).is_empty(),
             "a holder without a managed run is not a managed holder"
         );
         plain.close(WorkloadOutcome::Succeeded);
         let held = hold_task(private.path(), Some("managedrun-live"));
-        let holders = live_managed_lock_holders(private.path());
+        let holders = managed(private.path());
         assert_eq!(holders.len(), 1);
         assert_eq!(holders[0].scope_label(), "task:dev");
         assert!(holders[0].carries_managed_run("managedrun-live"));

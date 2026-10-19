@@ -354,7 +354,10 @@ fn parse_removed_catalog_command_and_catalogue_task_fallback_are_distinct() {
         catalogue,
         Command::Task(crate::tests::prelude::TaskInvocation {
             name: "catalogue".to_owned(),
-            args: vec!["list".to_owned()],
+            args: vec![
+                effigy_core::task_args::TASK_ARGS_BOUNDARY.to_owned(),
+                "list".to_owned()
+            ],
         })
     );
 }

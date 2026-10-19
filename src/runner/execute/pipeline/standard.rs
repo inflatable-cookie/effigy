@@ -23,9 +23,6 @@ use crate::runner::container_runtime_prep::{
 };
 use crate::runner::error::RunnerError;
 use crate::runner::execute::nested;
-use crate::runner::task_engine::{
-    refuse_live_legacy_holder, resolve_lock_wait_ms, RunExec, TaskRun, TaskRunRequest, TaskTarget,
-};
 use crate::runner::execute::render;
 use crate::runner::execute::workspace_seeded::{
     inside_container_handoff, run_workspace_seeded_task_session,
@@ -35,6 +32,9 @@ use crate::runner::manifest::config_sections::ManifestEnvSchemaConfig;
 use crate::runner::manifest::{load_task_manifest, TASK_MANIFEST_FILE};
 use crate::runner::runtime_session_context::{
     current_runtime_session_context, LeaseRefreshPolicy, RuntimeSessionContext,
+};
+use crate::runner::task_engine::{
+    refuse_live_legacy_holder, resolve_lock_wait_ms, RunExec, TaskRun, TaskRunRequest, TaskTarget,
 };
 use effigy_cli::{SecretsArgs, SecretsSubcommand};
 use effigy_containers::{load_container_policy, ContainerAction, ContainerComposeInvocationPlan};
@@ -75,10 +75,10 @@ pub(in crate::runner) fn run_standard_task(
         &preflight.catalogs,
         &selection.catalog.catalog_root,
     );
-    let env_schema_root = env_schema_catalog.map_or(
-        selection.catalog.catalog_root.as_path(),
-        |catalog| catalog.catalog_root.as_path(),
-    );
+    let env_schema_root = env_schema_catalog
+        .map_or(selection.catalog.catalog_root.as_path(), |catalog| {
+            catalog.catalog_root.as_path()
+        });
     let env_schema_config =
         env_schema_catalog.and_then(|catalog| catalog.manifest.env_schema.as_ref());
     let env_schema_override = preflight.runtime_args_raw.env_schema_override.as_deref();
@@ -120,7 +120,21 @@ pub(in crate::runner) fn run_standard_task(
             &mut workload,
         )
     })();
-    let workload = workload.unwrap_or_else(|| workload_for_result(&result));
+    let mut workload = workload.unwrap_or_else(|| workload_for_result(&result));
+    // A signal consumed before the command ran (for example during an
+    // env-schema `exec()`) still cancels the run: 128 + n, recorded so.
+    let result = match crate::runner::task_engine::interrupted_by() {
+        Some(signal) if result.is_err() => {
+            workload = crate::runner::task_engine::workload_for_exit(128 + signal);
+            Err(RunnerError::TaskCommandFailure {
+                command: preflight.selector.task_name.clone(),
+                code: Some(128 + signal),
+                stdout: String::new(),
+                stderr: String::new(),
+            })
+        }
+        _ => result,
+    };
     // Observability never changes the task's outcome or exit code (K10).
     for warning in run.close(workload) {
         eprintln!("warning: {}: {warning}", target.label);
@@ -139,16 +153,10 @@ fn workload_for_result(result: &Result<String, RunnerError>) -> WorkloadOutcome 
     }
 }
 
-/// A plain `run = "<command>"` on the host gets kernel custody (K6). The
-/// decision is made before admission so the run's sentinel exists before
-/// the spawn; a route that later goes elsewhere simply never spawns.
+/// A task bound to the host may reach the plain-command route, which runs
+/// under kernel custody (K6); its run plans the sentinel before admission so
+/// it exists before any spawn. A route that goes elsewhere never spawns.
 fn runs_plain_host_command(preflight: &ExecutionPreflight, selection: &TaskSelection<'_>) -> bool {
-    let Some(ManifestManagedRun::Command(command)) = selection.task.run.as_ref() else {
-        return false;
-    };
-    if command.trim_start().starts_with("task:") {
-        return false;
-    }
     let (default_run_in, systems, containers) =
         effective_task_binding_inputs(&preflight.invocation_cwd, &preflight.catalogs, selection);
     resolve_execution_binding_resolution(

@@ -6,7 +6,6 @@ use crate::runner::tests::prelude::{
 #[test]
 fn run_manifest_task_builtin_help_precedence_contract_table() {
     let mut cases = builtin_shared_help_precedence_cases(
-        "builtin-cache-help-precedence",
         "builtin-completion-help-precedence",
         "builtin-completion-candidates-help-precedence",
     );
@@ -25,15 +24,6 @@ fn run_manifest_task_builtin_help_precedence_contract_table() {
             "config",
             &["--help", "--wat"],
             &["effigy.toml Reference", "[tasks]"],
-        ),
-        builtin_help_case(
-            "builtin-unlock-help-precedence",
-            "unlock",
-            &["--wat", "--help"],
-            &[
-                "unlock Help",
-                "effigy tasks unlock [--all | <scope>...] [--yes] [--json]",
-            ],
         ),
     ]);
     cases.extend(builtin_scan_help_precedence_cases());

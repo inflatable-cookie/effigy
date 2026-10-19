@@ -820,6 +820,7 @@ fn secret_test_env_with_new_passphrase(
 }
 
 fn secret_test_env_clear() -> EnvGuard {
+    crate::runner::secret_session::forget_session_passphrase_for_tests();
     EnvGuard::set_many(&[
         ("EFFIGY_TEST_SECRETS_PASSPHRASE", None),
         ("EFFIGY_INTERNAL_SECRET_PASSPHRASE", None),

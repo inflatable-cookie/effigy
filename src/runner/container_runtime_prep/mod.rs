@@ -599,7 +599,10 @@ fn live_managed_exec_note(repo_root: &Path, policy: &EffectiveContainerPolicy) -
                     .pid
                     .map(|pid| format!("pid {pid}"))
                     .unwrap_or_else(|| "pid unreadable".to_owned()),
-                holder.run
+                holder
+                    .run
+                    .map(|run| run.to_string())
+                    .unwrap_or_else(|| "unknown".to_owned())
             )
         })
         .collect::<Vec<_>>()

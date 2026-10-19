@@ -246,7 +246,8 @@ fn member_handle_for(root: &Path, target: &Path, probe: &mut PathPresenceCache) 
             sources.push(value);
         }
     }
-    if let Ok(value) = toml::from_str::<toml::Value>(&read_to_string(&root.join("effigy.local.toml")))
+    if let Ok(value) =
+        toml::from_str::<toml::Value>(&read_to_string(&root.join("effigy.local.toml")))
     {
         sources.push(value);
     }
@@ -257,9 +258,8 @@ fn member_handle_for(root: &Path, target: &Path, probe: &mut PathPresenceCache) 
             .and_then(toml::Value::as_table)?
             .iter()
             .find(|(_, path)| {
-                path.as_str().is_some_and(|path| {
-                    canonicalize_best_effort(root.join(path)) == target
-                })
+                path.as_str()
+                    .is_some_and(|path| canonicalize_best_effort(root.join(path)) == target)
             })
             .map(|(handle, _)| handle.clone())
     })
@@ -345,8 +345,11 @@ mod tests {
         .expect("root manifest");
         let catalog = root.join("apps/farmyard");
         fs::create_dir_all(catalog.join("src")).expect("catalog dirs");
-        fs::write(catalog.join("effigy.toml"), "[catalog]\nalias = \"farmyard\"\n")
-            .expect("catalog manifest");
+        fs::write(
+            catalog.join("effigy.toml"),
+            "[catalog]\nalias = \"farmyard\"\n",
+        )
+        .expect("catalog manifest");
 
         let resolved = resolve_target_root(catalog.join("src"), None).expect("resolve");
         assert_eq!(
@@ -364,7 +367,11 @@ mod tests {
         fs::write(root.join("effigy.toml"), "[tasks.root]\nrun = \"true\"\n").expect("root");
         let undeclared = root.join("apps/loose");
         fs::create_dir_all(&undeclared).expect("dir");
-        fs::write(undeclared.join("effigy.toml"), "[catalog]\nalias = \"loose\"\n").expect("m");
+        fs::write(
+            undeclared.join("effigy.toml"),
+            "[catalog]\nalias = \"loose\"\n",
+        )
+        .expect("m");
         let resolved = resolve_target_root(undeclared.clone(), None).expect("resolve");
         assert_eq!(
             fs::canonicalize(&resolved.resolved_root).expect("canonical"),

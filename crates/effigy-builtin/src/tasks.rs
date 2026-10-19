@@ -3,8 +3,8 @@ use std::path::Path;
 use effigy_cli::{HelpTopic, TaskInvocation, TasksArgs};
 
 use super::command_spec::run_passthrough_builtin_command;
-use super::render_builtin_help_topic;
 use super::migrate;
+use super::render_builtin_help_topic;
 use crate::BuiltinError;
 use crate::BuiltinRuntimePorts;
 use effigy_tasks::TaskRuntimeArgs;
@@ -59,7 +59,8 @@ pub(super) fn run_builtin_tasks(
 
 /// `tasks unlock` has no job: a run's gate is released by the kernel when
 /// its holder exits, and is never stolen from a live one.
-pub(crate) const RETIRED_UNLOCK: &str = "`effigy tasks unlock` was removed in v0.15. A task's lock is \
+pub(crate) const RETIRED_UNLOCK: &str =
+    "`effigy tasks unlock` was removed in v0.15. A task's lock is \
     its run's kernel gate: it is released the moment that run exits, including after a crash or \
     SIGKILL, and is never taken from a live run. Find the live holder with \
     `effigy tasks status <task>`; wait for it with `effigy --lock-wait-ms <ms> <task>`, or stop \

@@ -143,7 +143,7 @@ mod tests {
         assert!(rows.iter().any(|row| row
             == &[
                 "status --all".to_owned(),
-                "Show repo-plus-descendant task status inventory, including unknown and stale rows"
+                "Show every declared task's state, plus live runs of tasks no longer declared"
                     .to_owned()
             ]));
         assert!(rows.iter().any(|row| row

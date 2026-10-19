@@ -30,7 +30,6 @@ pub(super) fn write_lock_conflict(
     f.write_str(&details.remediation)
 }
 
-
 pub(super) fn write_defer_loop_detected(
     f: &mut std::fmt::Formatter<'_>,
     depth: u8,
@@ -41,4 +40,3 @@ pub(super) fn write_defer_loop_detected(
         depth
     )
 }
-

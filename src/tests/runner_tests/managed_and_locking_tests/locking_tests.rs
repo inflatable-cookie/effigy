@@ -4,9 +4,9 @@
 
 use crate::runner::tests::prelude::{
     assert_live_dev_lock_conflict, assert_output_equals, lock_test,
-    parse_json_output_with_schema_version, run_dev, run_task_status_from_repo,
-    run_task_with_repo, start_held_dev_owner, temp_workspace, wait_for_live_task_owner,
-    write_lock_files, write_root_manifest, OwnedThread,
+    parse_json_output_with_schema_version, run_dev, run_task_status_from_repo, run_task_with_repo,
+    start_held_dev_owner, temp_workspace, wait_for_live_task_owner, write_lock_files,
+    write_root_manifest, OwnedThread,
 };
 use crate::runner::RunnerError;
 
@@ -41,7 +41,10 @@ fn live_lock_conflict_names_the_holder_and_never_suggests_unlocking() {
     assert!(rendered.contains("already running"), "{rendered}");
     assert!(!rendered.contains("unlock"), "{rendered}");
     let state = crate::runner::task_engine::root_task_state_for_tests(&root, "dev");
-    assert_eq!(state, "running", "the refused run never touches the owner's run");
+    assert_eq!(
+        state, "running",
+        "the refused run never touches the owner's run"
+    );
 
     owner.release_and_join().expect("first run should complete");
 }
@@ -190,7 +193,10 @@ run = "sleep 1"
 
     let status = run_task_status_from_repo(&root, "validate", true);
     let parsed = parse_json_output_with_schema_version(&status, "effigy.tasks-status.v2", 2);
-    assert_eq!(parsed["state"], "running", "sequence owner missing: {parsed}");
+    assert_eq!(
+        parsed["state"], "running",
+        "sequence owner missing: {parsed}"
+    );
 
     owner.join().expect("first run should complete");
 }
@@ -255,8 +261,8 @@ fn tasks_unlock_is_retired_with_an_actionable_refusal() {
 run = "printf ok"
 "#,
     );
-    let err = run_task_with_repo(&root, "tasks", &["unlock", "--all"])
-        .expect_err("unlock is retired");
+    let err =
+        run_task_with_repo(&root, "tasks", &["unlock", "--all"]).expect_err("unlock is retired");
     let rendered = err.to_string();
     assert!(rendered.contains("was removed in v0.15"), "{rendered}");
     assert!(rendered.contains("effigy tasks status"), "{rendered}");

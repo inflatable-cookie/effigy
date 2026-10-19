@@ -27,11 +27,19 @@ const COLUMNS: &str = "runs.run_id,runs.generation,runs.phase,runs.workload_outc
     runs.cleanup_outcome,runs.invocation,runs.created_at,runs.updated_at,runs.closed_at";
 
 /// An owner's runs, newest first, at most `limit`.
-pub fn history(reader: &StoreReader, owner: &ResourceId, limit: usize) -> Observed<Vec<RunSummary>> {
+pub fn history(
+    reader: &StoreReader,
+    owner: &ResourceId,
+    limit: usize,
+) -> Observed<Vec<RunSummary>> {
     let sql = format!(
         "SELECT {COLUMNS} FROM runs WHERE owner=?1 ORDER BY created_at DESC, generation DESC LIMIT ?2"
     );
-    read(reader, &sql, params![owner.name().to_string(), limit as i64])
+    read(
+        reader,
+        &sql,
+        params![owner.name().to_string(), limit as i64],
+    )
 }
 
 /// Every non-closed run whose owner lives in `scope`, oldest first. A free
@@ -41,14 +49,14 @@ pub fn unclosed(reader: &StoreReader, scope: Scope) -> Observed<Vec<RunSummary>>
         "SELECT {COLUMNS} FROM runs JOIN resources r ON r.name=runs.owner \
          WHERE runs.phase<>'closed' AND r.scope=?1 ORDER BY runs.created_at, runs.run_id"
     );
-    read(
-        reader,
-        &sql,
-        params![crate::gate::scope_name(scope)],
-    )
+    read(reader, &sql, params![crate::gate::scope_name(scope)])
 }
 
-fn read(reader: &StoreReader, sql: &str, params: impl rusqlite::Params) -> Observed<Vec<RunSummary>> {
+fn read(
+    reader: &StoreReader,
+    sql: &str,
+    params: impl rusqlite::Params,
+) -> Observed<Vec<RunSummary>> {
     let rows = (|| -> Result<Vec<RunSummary>, RunError> {
         let mut statement = reader.conn().prepare(sql)?;
         let raw = statement
@@ -67,22 +75,34 @@ fn read(reader: &StoreReader, sql: &str, params: impl rusqlite::Params) -> Obser
             })?
             .collect::<Result<Vec<_>, _>>()?;
         raw.into_iter()
-            .map(|(id, generation, phase, workload, cleanup, invocation, created, updated, closed)| {
-                Ok(RunSummary {
-                    id: id
-                        .parse()
-                        .map_err(|e: crate::id::IdentityError| RunError::Store(e.into()))?,
-                    generation: Generation::new(generation as u64),
-                    phase: Phase::parse(&phase)?,
-                    workload: workload.map(|s| serde_json::from_str(&s)).transpose()?,
-                    cleanup_complete: cleanup.map(|value| value == "complete"),
-                    invocation: invocation
-                        .and_then(|text| ResolvedInvocation::decode(text.as_bytes()).ok()),
-                    created_at_ms: created,
-                    updated_at_ms: updated,
-                    closed_at_ms: closed,
-                })
-            })
+            .map(
+                |(
+                    id,
+                    generation,
+                    phase,
+                    workload,
+                    cleanup,
+                    invocation,
+                    created,
+                    updated,
+                    closed,
+                )| {
+                    Ok(RunSummary {
+                        id: id
+                            .parse()
+                            .map_err(|e: crate::id::IdentityError| RunError::Store(e.into()))?,
+                        generation: Generation::new(generation as u64),
+                        phase: Phase::parse(&phase)?,
+                        workload: workload.map(|s| serde_json::from_str(&s)).transpose()?,
+                        cleanup_complete: cleanup.map(|value| value == "complete"),
+                        invocation: invocation
+                            .and_then(|text| ResolvedInvocation::decode(text.as_bytes()).ok()),
+                        created_at_ms: created,
+                        updated_at_ms: updated,
+                        closed_at_ms: closed,
+                    })
+                },
+            )
             .collect()
     })();
     match rows {

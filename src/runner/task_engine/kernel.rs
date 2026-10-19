@@ -16,7 +16,7 @@ use effigy_kernel::observe::{Observed, UnknownReason};
 use effigy_kernel::outcome::Invocation;
 use effigy_kernel::root::StateRoot;
 use effigy_kernel::run::{Effect, Fence, Reconciled, SettlementAdapter};
-use effigy_kernel::signal::{RouterHandle, RouterPolicy, RoutedSignal, SignalRouter};
+use effigy_kernel::signal::{RoutedSignal, RouterHandle, RouterPolicy, SignalRouter};
 use effigy_kernel::supervise::Executable;
 
 use crate::runner::error::RunnerError;
@@ -53,6 +53,13 @@ pub(super) fn state_home() -> Option<PathBuf> {
     {
         StateRoot::home_from_env()
     }
+}
+
+/// The private home library tests share; a compiled `effigy` child a test
+/// spawns gets it as `HOME` so its runs land where the test reads them.
+#[cfg(test)]
+pub(in crate::runner) fn test_state_home() -> PathBuf {
+    state_home().expect("private test home")
 }
 
 pub(super) fn operation(class: EffectClass, deadline: Deadline) -> OperationContext {
@@ -161,7 +168,7 @@ pub(super) fn install_router() -> Result<(), RunnerError> {
 }
 
 pub(super) fn poll_router() -> Vec<RoutedSignal> {
-    ROUTER
+    let routed = ROUTER
         .get()
         .map(|router| {
             router
@@ -169,7 +176,23 @@ pub(super) fn poll_router() -> Vec<RoutedSignal> {
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .poll()
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    if let Some(first) = routed.first() {
+        let _ =
+            INTERRUPTED_BY.compare_exchange(0, first.received, Ordering::AcqRel, Ordering::Acquire);
+    }
+    routed
+}
+
+static INTERRUPTED_BY: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
+/// The first signal a custody wait consumed in this process, if any: the
+/// run it interrupted records `cancelled` and Effigy exits 128 + n.
+pub(in crate::runner) fn interrupted_by() -> Option<i32> {
+    match INTERRUPTED_BY.load(Ordering::Acquire) {
+        0 => None,
+        signal => Some(signal),
+    }
 }
 
 /// Marks a custody wait loop as the signal consumer while it lives.

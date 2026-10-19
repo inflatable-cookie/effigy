@@ -79,7 +79,6 @@ pub use entrypoints::{
     resolve_command_root, run_command, run_command_with_context, run_skill_passthrough_with_context,
 };
 pub use error::RunnerError;
-pub use task_engine::run_internal_kernel_entry;
 pub(in crate::runner) use exec_command::run_exec;
 pub(in crate::runner) use gateway_command::{
     run_gateway, run_internal_gateway, run_internal_gateway_identity,
@@ -98,6 +97,7 @@ pub(in crate::runner) use service_command::run_service;
 pub(in crate::runner) use skill_command::{run_skill, run_skill_passthrough};
 pub(in crate::runner) use state_command::run_state;
 pub(in crate::runner) use system_command::{run_system, run_workspace};
+pub use task_engine::run_internal_kernel_entry;
 pub(in crate::runner) use tasks_command::run_tasks;
 pub(in crate::runner) use uninstall_command::run_uninstall;
 
@@ -112,4 +112,3 @@ mod json_contract_tests;
 #[cfg(test)]
 #[path = "../tests/task_ref_parser_tests.rs"]
 mod task_ref_parser_tests;
-

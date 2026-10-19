@@ -81,7 +81,9 @@ fn names_target(scope: &str, target: &TaskTarget) -> bool {
     };
     selector == target.label
         || selector == target.task
-        || selector.rsplit_once('/').is_some_and(|(_, task)| task == target.task)
+        || selector
+            .rsplit_once('/')
+            .is_some_and(|(_, task)| task == target.task)
 }
 
 fn local_hostname() -> Option<String> {
@@ -198,8 +200,15 @@ mod tests {
         fs::create_dir_all(root.path().join(CACHE_DIR)).expect("cache");
         fs::write(root.path().join(CACHE_DIR).join("task-cache-v1.json"), "{}").expect("cache");
         let families = legacy_families(root.path());
-        let names = families.iter().map(|family| family.family).collect::<Vec<_>>();
+        let names = families
+            .iter()
+            .map(|family| family.family)
+            .collect::<Vec<_>>();
         assert_eq!(names, vec!["task-lease-locks", "task-cache"]);
-        assert!(root.path().join(CACHE_DIR).join("task-cache-v1.json").exists());
+        assert!(root
+            .path()
+            .join(CACHE_DIR)
+            .join("task-cache-v1.json")
+            .exists());
     }
 }

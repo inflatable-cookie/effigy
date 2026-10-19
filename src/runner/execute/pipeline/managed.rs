@@ -19,11 +19,11 @@ use super::super::planning::ExecutionPreflight;
 use crate::runner::container_runtime_prep::build_runtime_activation_plan;
 use crate::runner::error::RunnerError;
 use crate::runner::execute::sequence_run::run_in_process_sequence_steps;
-use crate::runner::task_engine::{
-    refuse_live_legacy_holder, resolve_lock_wait_ms, TaskRun, TaskRunRequest, TaskTarget,
-};
 use crate::runner::execute::workspace_seeded::{
     inside_container_handoff, run_workspace_seeded_task_session,
+};
+use crate::runner::task_engine::{
+    refuse_live_legacy_holder, resolve_lock_wait_ms, TaskRun, TaskRunRequest, TaskTarget,
 };
 use effigy_containers::compose::compose_args;
 use effigy_containers::session::{
@@ -323,6 +323,7 @@ pub(in crate::runner) fn run_managed_task(
         &selection.catalog.catalog_root,
     );
 
+    plan.run_token = managed_run_token.clone();
     for process in &mut plan.processes {
         process.secret_env.insert(
             effigy_managed::RUN_TOKEN_ENV.to_owned(),
@@ -1925,6 +1926,7 @@ mod tests {
             gateway_auto_start: false,
             readiness: effigy_managed::ManagedTaskReadiness::default(),
             container_environment: None,
+            run_token: None,
         }
     }
 

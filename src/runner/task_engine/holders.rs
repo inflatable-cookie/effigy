@@ -19,6 +19,9 @@ use super::run::MANAGED_RUN_PROVENANCE;
 pub(in crate::runner) enum HolderKind {
     Task,
     SharedLock(String),
+    /// The journal or state root could not be read: an unknown holder,
+    /// which grants nothing destructive (R3).
+    Unreadable(String),
 }
 
 /// One live (or unknown) holder of a task gate or shared lock in this
@@ -27,7 +30,7 @@ pub(in crate::runner) enum HolderKind {
 #[derive(Debug, Clone)]
 pub(in crate::runner) struct LiveHolder {
     pub(in crate::runner) kind: HolderKind,
-    pub(in crate::runner) run: RunId,
+    pub(in crate::runner) run: Option<RunId>,
     pub(in crate::runner) catalog: String,
     pub(in crate::runner) task: String,
     pub(in crate::runner) profile: Option<String>,
@@ -39,6 +42,7 @@ impl LiveHolder {
     /// `task:<task>`, `profile:<task>/<profile>` or `shared:<name>`.
     pub(in crate::runner) fn scope_label(&self) -> String {
         match (&self.kind, &self.profile) {
+            (HolderKind::Unreadable(reason), _) => format!("unreadable run journal: {reason}"),
             (HolderKind::SharedLock(name), _) => super::run::shared_scope_label(name),
             (HolderKind::Task, Some(profile)) => format!("profile:{}/{profile}", self.task),
             (HolderKind::Task, None) => format!("task:{}", self.task),
@@ -50,23 +54,42 @@ impl LiveHolder {
     }
 }
 
-/// Every live holder recorded for `repo_root`'s checkout. Pure read: no
+/// Every live holder recorded for `repo_root`'s checkout, or for the root
+/// that declares it when `repo_root` is a member catalog. Pure read: no
 /// token is minted and no gate is acquired.
 pub(in crate::runner) fn live_holders(repo_root: &Path) -> Vec<LiveHolder> {
-    let Ok(Some(checkout)) = super::checkout::read(repo_root) else {
-        return Vec::new();
-    };
+    let mut roots = vec![repo_root.to_path_buf()];
+    if let Ok(resolved) = effigy_core::resolver::resolve_target_root(repo_root.to_path_buf(), None)
+    {
+        roots.push(resolved.resolved_root);
+    }
+    let mut checkouts = Vec::new();
+    for root in roots {
+        if let Ok(Some(checkout)) = super::checkout::read(&root) {
+            if !checkouts.contains(&checkout) {
+                checkouts.push(checkout);
+            }
+        }
+    }
+    checkouts.into_iter().flat_map(checkout_holders).collect()
+}
+
+fn checkout_holders(checkout: effigy_kernel::id::CheckoutId) -> Vec<LiveHolder> {
     let cx = kernel::observe();
     let root = match kernel::observe_root(&cx) {
         Observed::Verified(root, _) => root,
-        _ => return Vec::new(),
+        Observed::Absent(_) => return Vec::new(),
+        Observed::Unknown(reason) => return vec![unreadable(format!("{reason:?}"))],
     };
     let reader = match Store::read(&cx, &root) {
         Observed::Verified(reader, _) => reader,
-        _ => return Vec::new(),
+        Observed::Absent(_) => return Vec::new(),
+        Observed::Unknown(reason) => return vec![unreadable(format!("{reason:?}"))],
     };
-    let Observed::Verified(runs, _) = unclosed(&reader, Scope::Checkout(checkout)) else {
-        return Vec::new();
+    let runs = match unclosed(&reader, Scope::Checkout(checkout)) {
+        Observed::Verified(runs, _) => runs,
+        Observed::Absent(_) => return Vec::new(),
+        Observed::Unknown(reason) => return vec![unreadable(format!("{reason:?}"))],
     };
     runs.into_iter()
         .filter_map(|summary| {
@@ -82,7 +105,7 @@ pub(in crate::runner) fn live_holders(repo_root: &Path) -> Vec<LiveHolder> {
             };
             Some(LiveHolder {
                 kind: holder_kind(&spec.owner),
-                run: summary.id,
+                run: Some(summary.id),
                 catalog: spec.task.catalog().to_owned(),
                 task: spec.task.task().to_owned(),
                 profile: spec.task.profile().map(str::to_owned),
@@ -91,6 +114,18 @@ pub(in crate::runner) fn live_holders(repo_root: &Path) -> Vec<LiveHolder> {
             })
         })
         .collect()
+}
+
+fn unreadable(reason: String) -> LiveHolder {
+    LiveHolder {
+        kind: HolderKind::Unreadable(reason),
+        run: None,
+        catalog: String::new(),
+        task: String::new(),
+        profile: None,
+        pid: None,
+        managed_run: None,
+    }
 }
 
 fn holder_kind(owner: &ResourceId) -> HolderKind {

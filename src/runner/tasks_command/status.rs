@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use effigy_cli::TasksArgs;
-use effigy_execution::{TaskStatusTargetIdentity, TaskStatusState};
+use effigy_execution::{TaskStatusState, TaskStatusTargetIdentity};
 use effigy_manifest::LoadedCatalog;
 use effigy_runtime::task_status::{reconcile_task_status_records, TaskStatusReadSnapshot};
 use effigy_tasks::{parse_task_selector, CatalogSelectionMode};
@@ -33,7 +33,14 @@ pub(super) fn run_task_status(args: &TasksArgs, raw_selector: &str) -> Result<St
     let target = TaskTarget::for_selection(&repo_root, &selector.task_name, &selection);
     let view = task_status(&target, HISTORY_LIMIT);
     let legacy = (!view.has_runs())
-        .then(|| legacy_view(&repo_root, &selection.catalog.catalog_root, raw_selector, &selector))
+        .then(|| {
+            legacy_view(
+                &repo_root,
+                &selection.catalog.catalog_root,
+                raw_selector,
+                &selector,
+            )
+        })
         .flatten();
 
     if args.output_json {
@@ -135,6 +142,19 @@ fn build_status_inventory_rows(
     }
     // A live run of a task no longer declared still holds its gate.
     for holder in live_holders(repo_root) {
+        if let HolderKind::Unreadable(reason) = &holder.kind {
+            rows.push(TaskStatusInventoryRow {
+                selector: "*".to_owned(),
+                selected_catalog_root: "root".to_owned(),
+                state: "unknown".to_owned(),
+                currently_declared: false,
+                current: None,
+                latest: None,
+                next: None,
+                warnings: vec![format!("run journal is unreadable: {reason}")],
+            });
+            continue;
+        }
         if holder.kind != HolderKind::Task
             || declared.contains(&(holder.catalog.clone(), holder.task.clone()))
         {
@@ -159,7 +179,7 @@ fn build_status_inventory_rows(
             next: None,
             warnings: vec![format!(
                 "run {} of an undeclared task still holds its gate (pid {})",
-                holder.run,
+                holder.run.map(|run| run.to_string()).unwrap_or_default(),
                 holder
                     .pid
                     .map(|pid| pid.to_string())
@@ -379,7 +399,8 @@ fn epoch_text(epoch_ms: i64) -> String {
 }
 
 fn relative_or_absolute(repo_root: &Path, path: &Path) -> String {
-    let canonical = |path: &Path| std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let canonical =
+        |path: &Path| std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let root: PathBuf = canonical(repo_root);
     let path = canonical(path);
     path.strip_prefix(&root)

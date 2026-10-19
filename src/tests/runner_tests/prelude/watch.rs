@@ -1,7 +1,7 @@
 use super::builtin_help::run_task;
 use super::cases::assert_case_table;
 use super::errors::assert_task_lock_conflict;
-use super::harness::{lock_test, temp_workspace, wait_for_path_exists, write_root_manifest};
+use super::harness::{lock_test, temp_workspace, write_root_manifest};
 use super::output::{assert_output_contains_all, assert_path_exists};
 use super::runtime::{thread, Duration, Path, PathBuf, RunnerError};
 
@@ -16,7 +16,8 @@ pub(in crate::runner::tests) struct WatchOutputCase {
 pub(in crate::runner::tests) struct WatchLockConflictCase {
     pub(in crate::runner::tests) workspace: &'static str,
     pub(in crate::runner::tests) args: &'static [&'static str],
-    pub(in crate::runner::tests) lock_rel: &'static str,
+    /// The live run that holds the watch scope names it in its task.
+    pub(in crate::runner::tests) holder_scope: &'static str,
     pub(in crate::runner::tests) lock_label: &'static str,
     pub(in crate::runner::tests) expected_scope: &'static str,
     pub(in crate::runner::tests) expected_remediation: &'static str,
@@ -90,8 +91,18 @@ pub(in crate::runner::tests) fn assert_watch_lock_conflict_case_table(
         let _guard = lock_test();
         let join = spawn_watch_owner(&root, case.args);
 
-        let watch_lock = root.join(case.lock_rel);
-        wait_for_path_exists(&watch_lock, Duration::from_secs(5), case.lock_label);
+        let started = std::time::Instant::now();
+        while !crate::runner::task_engine::live_holders(&root)
+            .iter()
+            .any(|holder| holder.task.contains(case.holder_scope))
+        {
+            assert!(
+                started.elapsed() < Duration::from_secs(5),
+                "{} was not held in time",
+                case.lock_label
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
 
         let err = run_watch(&root, case.args)
             .expect_err("second watch owner should conflict on watch scope lock");

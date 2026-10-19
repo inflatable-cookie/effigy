@@ -35,10 +35,10 @@ fn run_manifest_task_builtin_watch_rejects_concurrent_watch_owner_for_same_targe
     let cases = [WatchLockConflictCase {
         workspace: "builtin-watch-lock-conflict",
         args: &["--owner", "effigy", "--once", "build"],
-        lock_rel: ".effigy/locks/task-watch-build.lock",
+        holder_scope: "watch:build",
         lock_label: "watch lock for owner=effigy target=build",
         expected_scope: "task:watch:build",
-        expected_remediation: "effigy tasks unlock task:watch:build",
+        expected_remediation: "--lock-wait-ms",
         setup: setup_watch_lock_conflict_target,
     }];
 

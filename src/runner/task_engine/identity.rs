@@ -123,7 +123,10 @@ fn catalog_path(root: &Path, catalog_root: &Path) -> String {
         // A catalog outside its root (an external task source) keeps a
         // stable, distinct identity derived from its absolute path.
         let digest = effigy_kernel::id::Digest::of(catalog_root.as_os_str().as_encoded_bytes());
-        let hex: String = digest.0[..8].iter().map(|byte| format!("{byte:02x}")).collect();
+        let hex: String = digest.0[..8]
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
         format!("@external-{hex}")
     })
 }
@@ -185,7 +188,10 @@ mod tests {
         let checkout = CheckoutId::new(CheckoutKind::Primary, [9; 16]);
         let base = TaskTarget::for_catalog(root.path(), "dev", &catalog(root.path(), "", "", 0));
         let profiled = base.clone().with_profile("api");
-        assert_eq!(base.owner(checkout).unwrap(), profiled.owner(checkout).unwrap());
+        assert_eq!(
+            base.owner(checkout).unwrap(),
+            profiled.owner(checkout).unwrap()
+        );
         assert_ne!(
             base.task_id(checkout).unwrap(),
             profiled.task_id(checkout).unwrap()

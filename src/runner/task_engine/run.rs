@@ -204,7 +204,13 @@ impl TaskRun {
                     &mut TaskSettlement,
                 )
                 .map_err(|error| {
-                    begin_error(error, request.target, &lock_owner, request.lock_wait_ms, started)
+                    begin_error(
+                        error,
+                        request.target,
+                        &lock_owner,
+                        request.lock_wait_ms,
+                        started,
+                    )
                 })?;
                 Some(run)
             }
@@ -352,7 +358,10 @@ fn close_run(mut run: Run<'static>, workload: WorkloadOutcome) -> Vec<String> {
         other => run.finish(other),
     };
     if let Err(error) = recorded {
-        warnings.push(format!("run outcome was not recorded: {}", run_error(&error)));
+        warnings.push(format!(
+            "run outcome was not recorded: {}",
+            run_error(&error)
+        ));
     }
     match run.settle(&cleanup, &mut TaskSettlement) {
         Ok(outcome) => {
@@ -504,11 +513,12 @@ fn conflict(
         }
         None => "a live process on this host; its diagnostics are unreadable".to_owned(),
     };
-    let what = if target.shared_lock.is_some() && owner.kind() == effigy_kernel::id::ResourceKind::Store {
-        format!("lock `{scope}` is held")
-    } else {
-        format!("`{}` is already running", target.label)
-    };
+    let what =
+        if target.shared_lock.is_some() && owner.kind() == effigy_kernel::id::ResourceKind::Store {
+            format!("lock `{scope}` is held")
+        } else {
+            format!("`{}` is already running", target.label)
+        };
     let wait_flag = format!("effigy --lock-wait-ms 600000 {}", target.label);
     let remediation = match wait {
         Some((timeout, waited)) => format!(

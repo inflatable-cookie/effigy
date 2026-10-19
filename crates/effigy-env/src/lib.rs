@@ -73,7 +73,13 @@ pub fn load_and_resolve(
     exec_timeout: std::time::Duration,
     project_root: &Path,
 ) -> Result<ResolvedEnv, EnvSchemaError> {
-    load_and_resolve_with(schema_path, dotenv_overrides, exec_timeout, project_root, None)
+    load_and_resolve_with(
+        schema_path,
+        dotenv_overrides,
+        exec_timeout,
+        project_root,
+        None,
+    )
 }
 
 /// [`load_and_resolve`] with the owning run's `exec()` runner.

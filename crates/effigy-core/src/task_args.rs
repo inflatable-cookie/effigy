@@ -15,7 +15,8 @@ pub const COMPAT_TRAILING_FLAGS: [&str; 2] = ["--plan", "--json"];
 
 /// Effigy flags that, after the selector, now reach the task. A use prints
 /// a note so a caller learns to move it before the selector.
-pub const LEADING_ONLY_FLAGS: [&str; 4] = ["--repo", "--lock-wait-ms", "--env-schema", "--verbose-root"];
+pub const LEADING_ONLY_FLAGS: [&str; 4] =
+    ["--repo", "--lock-wait-ms", "--env-schema", "--verbose-root"];
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct SplitTaskArgs {
@@ -82,7 +83,10 @@ mod tests {
         );
         let split = split_task_args(&args).expect("boundary");
         assert_eq!(split.effigy, strings(&["--repo", "/r"]));
-        assert_eq!(split.task, strings(&["--fix", "--json", "--repo", "owner/x"]));
+        assert_eq!(
+            split.task,
+            strings(&["--fix", "--json", "--repo", "owner/x"])
+        );
         assert!(split.compat.is_empty());
         assert_eq!(split.passed_through, strings(&["--repo"]));
     }

@@ -58,7 +58,9 @@ pub enum Terminal {
     /// the operator's terminal or pipe, never an Effigy sink. The child's
     /// group takes the terminal only when the owner is that terminal's
     /// foreground group. Captured streams are bounded and redacted as usual.
-    Inherit { capture: bool },
+    Inherit {
+        capture: bool,
+    },
 }
 #[derive(Clone)]
 pub struct ProcessSpec {
@@ -348,7 +350,10 @@ impl Custody {
                 log: log.ok(),
                 output: VecDeque::new(),
                 streams: [VecDeque::new(), VecDeque::new()],
-                stream_redactors: [Redactor::new(secrets.clone()), Redactor::new(secrets.clone())],
+                stream_redactors: [
+                    Redactor::new(secrets.clone()),
+                    Redactor::new(secrets.clone()),
+                ],
                 queue_max: cx.operation().limits().queue_bytes,
                 stdout: Some(stdout),
                 stderr: Some(stderr),

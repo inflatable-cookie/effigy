@@ -138,9 +138,7 @@ pub fn run_managed_task_headless(
         status: "running".to_owned(),
         started_at_unix_ms: unix_time_ms(),
         container_environment: plan.container_environment.clone(),
-        run_token: std::env::var(crate::RUN_TOKEN_ENV)
-            .ok()
-            .filter(|token| !token.is_empty()),
+        run_token: plan.run_token.clone(),
         processes: supervised
             .iter()
             .enumerate()
@@ -274,9 +272,7 @@ impl TuiSessionControl {
             status: "running".to_owned(),
             started_at_unix_ms: unix_time_ms(),
             container_environment: plan.container_environment.clone(),
-            run_token: std::env::var(crate::RUN_TOKEN_ENV)
-                .ok()
-                .filter(|token| !token.is_empty()),
+            run_token: plan.run_token.clone(),
             processes: plan
                 .processes
                 .iter()
@@ -1319,6 +1315,7 @@ mod tests {
             gateway_auto_start: false,
             readiness: crate::ManagedTaskReadiness::default(),
             container_environment: Some("stack".to_owned()),
+            run_token: None,
         };
         let session =
             super::TuiSessionControl::new("dev", private.path(), &plan).expect("register TUI");
@@ -1382,6 +1379,7 @@ mod tests {
             gateway_auto_start: false,
             readiness: crate::ManagedTaskReadiness::default(),
             container_environment: Some("stack".to_owned()),
+            run_token: None,
         };
         super::run_managed_task_headless("dev", temp.path(), plan, None)
             .expect("quick headless run");

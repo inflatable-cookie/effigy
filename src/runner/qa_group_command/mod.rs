@@ -253,7 +253,13 @@ fn reconcile_live_snapshot(snapshot: &mut effigy_execution::QaGroupStatusSnapsho
     if !snapshot.live {
         return;
     }
-    let next = ["effigy", "tasks", "qa-group", "status", snapshot.run_id.as_str()];
+    let next = [
+        "effigy",
+        "tasks",
+        "qa-group",
+        "status",
+        snapshot.run_id.as_str(),
+    ];
     let gone = match crate::runner::task_engine::run_liveness(&snapshot.run_id, &next) {
         crate::runner::task_engine::RunLiveness::Live => return,
         crate::runner::task_engine::RunLiveness::Interrupted => {

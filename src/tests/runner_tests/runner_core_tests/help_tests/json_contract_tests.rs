@@ -6,13 +6,6 @@ use crate::runner::tests::prelude::{
 fn run_manifest_task_builtin_help_json_contract_table_has_stable_schema_topic_and_precedence() {
     let cases = [
         builtin_help_json_case(
-            "builtin-cache-help-json-contract",
-            "cache",
-            &["--help", "--json", "--wat"],
-            "tasks-cache",
-            "effigy tasks cache inspect [<selector>] [--json]",
-        ),
-        builtin_help_json_case(
             "builtin-completion-help-json-contract",
             "completion",
             &["--help", "--json", "--wat"],
@@ -67,13 +60,6 @@ fn run_manifest_task_builtin_help_json_contract_table_has_stable_schema_topic_an
             &["--help", "--json", "--wat"],
             "tasks",
             "effigy tasks [--repo <PATH>] [--task <TASK_NAME>]",
-        ),
-        builtin_help_json_case(
-            "builtin-unlock-help-json-contract",
-            "unlock",
-            &["--help", "--json", "--wat"],
-            "tasks-unlock",
-            "effigy tasks unlock [--all | <scope>...] [--yes] [--json]",
         ),
     ];
 

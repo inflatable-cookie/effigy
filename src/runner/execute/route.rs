@@ -12,7 +12,9 @@ use effigy_tasks::{TaskSelector, TaskSurface};
 use super::planning::ExecutionPreflight;
 use super::selection::{build_execution_selection_plan, task_surface_for_execution};
 use crate::runner::command_context::active_runtime_context;
-use crate::runner::deferral::{deferred_builtins_from_catalogs, select_deferral, should_attempt_deferral};
+use crate::runner::deferral::{
+    deferred_builtins_from_catalogs, select_deferral, should_attempt_deferral,
+};
 use crate::runner::error::RunnerError;
 
 pub(in crate::runner) enum Route<'a> {
@@ -52,6 +54,23 @@ pub(in crate::runner) fn resolve_route<'a>(
     task: &TaskInvocation,
     preflight: &'a ExecutionPreflight,
 ) -> Result<Route<'a>, RunnerError> {
+    resolve_route_from(task, preflight, true)
+}
+
+/// The route after a built-in that declined the request at run time (for
+/// example `test` with no detected suite): the same order, without built-ins.
+pub(in crate::runner) fn resolve_route_past_builtin<'a>(
+    task: &TaskInvocation,
+    preflight: &'a ExecutionPreflight,
+) -> Result<Route<'a>, RunnerError> {
+    resolve_route_from(task, preflight, false)
+}
+
+fn resolve_route_from<'a>(
+    task: &TaskInvocation,
+    preflight: &'a ExecutionPreflight,
+    builtins: bool,
+) -> Result<Route<'a>, RunnerError> {
     let surface = task_surface_for_execution(&preflight.execution_surface);
     let error: RunnerError = match select_catalog_and_task_on_surface(
         surface,
@@ -75,7 +94,7 @@ pub(in crate::runner) fn resolve_route<'a>(
     }
     if preflight.plan {
         // `effigy test --plan` is the test built-in's own plan.
-        if preflight.selector.task_name == "test" && builtin_handles(preflight) {
+        if builtins && preflight.selector.task_name == "test" && builtin_handles(preflight) {
             return Ok(Route::Builtin);
         }
         // A remapped built-in (`[defer].builtins = ["release"]`) keeps
@@ -87,11 +106,11 @@ pub(in crate::runner) fn resolve_route<'a>(
         }
         return Err(error);
     }
-    if builtin_handles(preflight) {
+    if builtins && builtin_handles(preflight) {
         return Ok(Route::Builtin);
     }
-    let prefer_deferral =
-        active_runtime_context().is_some_and(|context| context.container().inside_container_handoff);
+    let prefer_deferral = active_runtime_context()
+        .is_some_and(|context| context.container().inside_container_handoff);
     if prefer_deferral && should_attempt_deferral(&error) {
         if let Some(deferral) = select_deferral(
             &preflight.selector,

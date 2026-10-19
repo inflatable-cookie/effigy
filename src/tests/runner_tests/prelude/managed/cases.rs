@@ -65,4 +65,3 @@ pub(in crate::runner::tests) struct ManagedNonZeroExitCase {
     pub(in crate::runner::tests) expected_profile: &'static str,
     pub(in crate::runner::tests) expected_processes: &'static [(&'static str, &'static str)],
 }
-

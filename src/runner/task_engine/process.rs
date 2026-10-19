@@ -27,6 +27,8 @@ const GRACE: Duration = Duration::from_secs(3);
 const SIGNAL_EXIT_BUDGET: Duration = Duration::from_secs(10);
 /// JSON output keeps this much of each stream, newest bytes last.
 const CAPTURE_TAIL: usize = 8 << 20;
+/// Exit, signal and capture polling interval for a waiting owner.
+const POLL: Duration = Duration::from_millis(20);
 
 pub(in crate::runner) struct PlainCommand<'a> {
     pub(in crate::runner) command: &'a str,
@@ -102,7 +104,7 @@ pub(in crate::runner) fn run_plain(
             stdout.push(&out);
             stderr.push(&err);
         }
-        std::thread::sleep(Duration::from_millis(5));
+        std::thread::sleep(POLL);
     };
     if command.capture {
         let (out, err) = process.take_stream_output();
@@ -116,7 +118,13 @@ pub(in crate::runner) fn run_plain(
     }
     let workload = workload(code, signalled.map(|(signal, _)| signal));
     let code = match (&workload, code) {
-        (WorkloadOutcome::Cancelled { signal: Some(signal), .. }, _) => 128 + signal,
+        (
+            WorkloadOutcome::Cancelled {
+                signal: Some(signal),
+                ..
+            },
+            _,
+        ) => 128 + signal,
         (_, Some(code)) => code,
         (_, None) => 1,
     };
@@ -210,7 +218,10 @@ impl effigy_env::ExecRunner for RunExec<'_> {
         };
         let _ = process.complete(run.run_mut(), exit);
         if exit.code != 0 {
-            let tail = &stderr.bytes[stderr.bytes.len().saturating_sub(effigy_env::STDERR_TAIL_BYTES)..];
+            let tail = &stderr.bytes[stderr
+                .bytes
+                .len()
+                .saturating_sub(effigy_env::STDERR_TAIL_BYTES)..];
             return Err(effigy_env::EnvSchemaError::ExecFailed {
                 command: command.to_owned(),
                 code: Some(exit.code),
@@ -260,7 +271,10 @@ fn environment(
             }
             _ => local_bin.display().to_string(),
         };
-        env.insert(OsString::from("PATH"), EnvValue::Plain(OsString::from(path)));
+        env.insert(
+            OsString::from("PATH"),
+            EnvValue::Plain(OsString::from(path)),
+        );
     }
     for (key, value) in overrides {
         let value = match value {

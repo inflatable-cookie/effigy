@@ -116,7 +116,12 @@ fn wait_exit(child: &mut Child, timeout: Duration) -> Option<std::process::ExitS
     None
 }
 
-fn wait_state(fixture: &Fixture, task: &str, wanted: &[&str], timeout: Duration) -> serde_json::Value {
+fn wait_state(
+    fixture: &Fixture,
+    task: &str,
+    wanted: &[&str],
+    timeout: Duration,
+) -> serde_json::Value {
     let started = Instant::now();
     loop {
         let status = fixture.status(task);
@@ -211,7 +216,10 @@ fn task_engine_reclaim_race_after_holder_kill_never_overlaps_runs() {
     let log = fixture.repo.join("runs.log");
     let started = Instant::now();
     while !fs::read_to_string(&log).is_ok_and(|text| text.contains("start")) {
-        assert!(started.elapsed() < Duration::from_secs(15), "holder never started");
+        assert!(
+            started.elapsed() < Duration::from_secs(15),
+            "holder never started"
+        );
         std::thread::sleep(Duration::from_millis(10));
     }
     let mut waiters = (0..2)
@@ -253,7 +261,10 @@ fn task_engine_reclaim_race_after_holder_kill_never_overlaps_runs() {
     assert_eq!(states.len(), 3, "{status}");
     assert_eq!(states[0], "succeeded");
     assert_eq!(states[1], "succeeded");
-    assert_eq!(states[2], "interrupted", "the killed run is settled, not lost");
+    assert_eq!(
+        states[2], "interrupted",
+        "the killed run is settled, not lost"
+    );
 }
 
 /// Equivalent spellings from two processes share one gate.
@@ -281,7 +292,10 @@ fn task_engine_equivalent_spellings_from_two_processes_serialize() {
         if String::from_utf8_lossy(&output.stdout).contains("\"running\"") {
             break;
         }
-        assert!(started.elapsed() < Duration::from_secs(15), "first never ran");
+        assert!(
+            started.elapsed() < Duration::from_secs(15),
+            "first never ran"
+        );
         std::thread::sleep(Duration::from_millis(50));
     }
     let second = fixture

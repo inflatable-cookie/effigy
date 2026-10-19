@@ -44,6 +44,14 @@ pub(in crate::runner) fn session_passphrase() -> Option<SecretValue> {
     })
 }
 
+/// Forgets the passphrase this test process read, as a new invocation would.
+#[cfg(test)]
+pub(in crate::runner) fn forget_session_passphrase_for_tests() {
+    if let Ok(mut guard) = secret_passphrase_cache().lock() {
+        *guard = None;
+    }
+}
+
 pub(in crate::runner) const fn internal_secret_passphrase_env() -> &'static str {
     INTERNAL_SECRET_PASSPHRASE_ENV
 }

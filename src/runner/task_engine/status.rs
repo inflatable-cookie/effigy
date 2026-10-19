@@ -142,10 +142,7 @@ pub(in crate::runner) fn task_status(target: &TaskTarget, limit: usize) -> TaskS
     view
 }
 
-fn project(
-    summary: &RunSummary,
-    gate: Option<&Observed<GateState>>,
-) -> RunView {
+fn project(summary: &RunSummary, gate: Option<&Observed<GateState>>) -> RunView {
     let profile = summary
         .invocation
         .as_ref()
@@ -180,7 +177,9 @@ fn project(
         state,
         phase: phase_name(summary.phase),
         profile,
-        exit_code: (summary.phase == Phase::Closed).then_some(exit_code).flatten(),
+        exit_code: (summary.phase == Phase::Closed)
+            .then_some(exit_code)
+            .flatten(),
         signal,
         cleanup: summary
             .cleanup_complete
@@ -226,7 +225,9 @@ pub(in crate::runner) enum RunLiveness {
     Live,
     /// Its owner exited without closing it.
     Interrupted,
-    Closed { succeeded: bool },
+    Closed {
+        succeeded: bool,
+    },
     NotFound,
     Unknown(String),
 }

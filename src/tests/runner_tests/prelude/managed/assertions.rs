@@ -152,4 +152,3 @@ pub(in crate::runner::tests) fn assert_lock_conflict(
 ) {
     assert_task_lock_conflict(err, expected_scope, expected_remediation);
 }
-

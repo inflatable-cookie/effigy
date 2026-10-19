@@ -1,7 +1,7 @@
 use effigy_cli::TaskInvocation;
 
 use super::super::planning::ExecutionPreflight;
-use super::super::route::Route;
+use super::super::route::{resolve_route_past_builtin, Route};
 use super::super::selection::result;
 use super::super::selection::SelectionResolution;
 use crate::runner::builtin_ports::RunnerBuiltinPorts;
@@ -21,7 +21,7 @@ pub(super) fn run_fallback_route<'a>(
         Route::Task { selection, plan } => Ok(SelectionResolution::Selected { selection, plan }),
         Route::Builtin => {
             let ports = RunnerBuiltinPorts::new();
-            try_run_builtin_task(
+            match try_run_builtin_task(
                 &ports,
                 &preflight.selector,
                 task,
@@ -31,8 +31,15 @@ pub(super) fn run_fallback_route<'a>(
                 &preflight.invocation_cwd,
             )
             .map_err(RunnerError::from)?
-            .map(result::output)
-            .ok_or_else(|| route_vanished(preflight, "built-in"))
+            {
+                Some(output) => Ok(result::output(output)),
+                // The built-in declined at run time; the same order continues.
+                None => run_fallback_route(
+                    task,
+                    preflight,
+                    resolve_route_past_builtin(task, preflight)?,
+                ),
+            }
         }
         Route::ExecAlias => try_run_exec_alias(
             &preflight.resolved.resolved_root,

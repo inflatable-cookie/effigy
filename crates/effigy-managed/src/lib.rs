@@ -127,6 +127,9 @@ pub struct ManagedTaskPlan {
     /// session state so a whole-environment handover can find and end
     /// the live owner bound to the environment coming down.
     pub container_environment: Option<String>,
+    /// The owning managed run's settle token, passed explicitly so it never
+    /// travels through the process's global environment (contract 052 K12).
+    pub run_token: Option<String>,
 }
 
 #[derive(Debug, Clone)]

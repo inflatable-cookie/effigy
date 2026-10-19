@@ -132,4 +132,3 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
     }
     Ok(())
 }
-

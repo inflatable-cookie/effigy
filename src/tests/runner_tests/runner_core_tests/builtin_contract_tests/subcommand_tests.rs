@@ -8,18 +8,6 @@ use crate::runner::tests::prelude::{
 fn run_manifest_task_builtin_subcommand_error_contracts_are_stable() {
     let cases = [
         builtin_contract_error_case(
-            "builtin-subcommand-cache-missing-subcommand",
-            "cache",
-            &[],
-            &["`tasks cache` requires a subcommand: `inspect` or `invalidate`"],
-        ),
-        builtin_contract_error_case(
-            "builtin-subcommand-cache-unknown-subcommand",
-            "cache",
-            &["drop"],
-            &["unknown tasks cache subcommand `drop` (expected `inspect` or `invalidate`)"],
-        ),
-        builtin_contract_error_case(
             "builtin-subcommand-completion-unknown-shell",
             "completion",
             &["drop"],
@@ -47,7 +35,6 @@ fn run_manifest_task_builtin_subcommand_error_contracts_are_stable() {
 #[test]
 fn run_manifest_task_builtin_subcommand_help_precedence_contracts_are_stable() {
     let mut cases = builtin_shared_help_precedence_cases(
-        "builtin-subcommand-help-cache",
         "builtin-subcommand-help-completion",
         "builtin-subcommand-help-completion-candidates",
     );

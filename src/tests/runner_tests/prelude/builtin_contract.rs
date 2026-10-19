@@ -36,19 +36,11 @@ pub(in crate::runner::tests) fn assert_builtin_error_contract_case_table(
 }
 
 pub(in crate::runner::tests) fn builtin_shared_unknown_argument_cases(
-    cache_workspace: &'static str,
     completion_workspace: &'static str,
     watch_workspace: &'static str,
     scan_workspace: &'static str,
-    unlock_workspace: &'static str,
 ) -> Vec<BuiltinContractErrorCase> {
     vec![
-        builtin_contract_error_case(
-            cache_workspace,
-            "cache",
-            &["inspect", "--wat"],
-            &["unknown argument(s) for built-in `tasks cache`: --wat"],
-        ),
         builtin_contract_error_case(
             completion_workspace,
             "completion",
@@ -66,12 +58,6 @@ pub(in crate::runner::tests) fn builtin_shared_unknown_argument_cases(
             "scan",
             &["god-files", "--wat"],
             &["unknown argument(s) for built-in `scan`: --wat"],
-        ),
-        builtin_contract_error_case(
-            unlock_workspace,
-            "unlock",
-            &["--wat"],
-            &["unknown argument(s) for built-in `tasks unlock`: --wat"],
         ),
     ]
 }

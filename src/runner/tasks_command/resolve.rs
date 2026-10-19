@@ -17,11 +17,11 @@ pub(super) fn resolve_probe(
     repo_override: Option<PathBuf>,
     deferred_builtins: &std::collections::BTreeSet<String>,
 ) -> Value {
-    let (selector, selector_args) = match effigy_tasks::parse_task_reference_invocation(raw_selector)
-    {
-        Ok(parsed) => parsed,
-        Err(error) => return error_probe(raw_selector, raw_selector, error),
-    };
+    let (selector, selector_args) =
+        match effigy_tasks::parse_task_reference_invocation(raw_selector) {
+            Ok(parsed) => parsed,
+            Err(error) => return error_probe(raw_selector, raw_selector, error),
+        };
     let task_name = selector.task_name.clone();
     if selector.prefix.is_none() && is_typed_command(&task_name, deferred_builtins) {
         return json!({

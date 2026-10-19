@@ -7,15 +7,6 @@ use crate::runner::tests::prelude::{
 fn run_manifest_task_builtin_entrypoint_help_json_contract_table() {
     let cases = [
         builtin_help_case(
-            "builtin-entrypoint-cache-help-json",
-            "cache",
-            &["--wat", "--help", "--json"],
-            &[
-                "\"schema\": \"effigy.help.v1\"",
-                "\"topic\": \"tasks-cache\"",
-            ],
-        ),
-        builtin_help_case(
             "builtin-entrypoint-completion-help-json",
             "completion",
             &["--help", "--json", "--wat"],
@@ -51,15 +42,6 @@ fn run_manifest_task_builtin_entrypoint_help_json_contract_table() {
             &["--json"],
             &["\"schema\": \"effigy.help.v1\"", "\"topic\": \"scan\""],
         ),
-        builtin_help_case(
-            "builtin-entrypoint-unlock-help-json",
-            "unlock",
-            &["--help", "--json", "--wat"],
-            &[
-                "\"schema\": \"effigy.help.v1\"",
-                "\"topic\": \"tasks-unlock\"",
-            ],
-        ),
     ];
 
     assert_builtin_help_case_table(&cases);
@@ -68,11 +50,9 @@ fn run_manifest_task_builtin_entrypoint_help_json_contract_table() {
 #[test]
 fn run_manifest_task_builtin_entrypoint_unknown_argument_contract_table() {
     let cases = builtin_shared_unknown_argument_cases(
-        "builtin-entrypoint-cache-unknown-arg",
         "builtin-entrypoint-completion-candidates-unknown-arg",
         "builtin-entrypoint-watch-unknown-arg",
         "builtin-entrypoint-scan-unknown-arg",
-        "builtin-entrypoint-unlock-unknown-arg",
     );
 
     assert_builtin_error_contract_case_table(&cases);
