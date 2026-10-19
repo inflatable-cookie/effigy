@@ -3,6 +3,7 @@
 //! Engines supply effect observations and idempotent undo. A `Run` is the only
 //! writer of its journal; dropping it releases liveness, never claims cleanup.
 mod attachments;
+mod children;
 mod claims;
 mod history;
 mod journal;
@@ -18,7 +19,7 @@ pub use attachments::{
     AttachMode, AttachmentTicket, Attachments, Holder, Liveness, TransitionPermit,
 };
 pub use claims::{Claims, ReservationToken};
-pub use history::{history, unclosed, RunSummary};
+pub use history::{children, history, unclosed, RunSummary};
 pub(crate) use settle::settle_interrupted_wait;
 pub use settle::{settle_interrupted, Reconciled, Settled, SettlementAdapter};
 
@@ -223,6 +224,18 @@ impl<'a> Run<'a> {
         cleanup: &CleanupContext,
         adapter: &mut impl SettlementAdapter,
     ) -> Result<Self, RunError> {
+        Self::begin_under(cx, root, inv, opts, cleanup, adapter, None)
+    }
+
+    fn begin_under(
+        cx: &EffectContext,
+        root: &'a StateRoot,
+        inv: &ResolvedInvocation,
+        opts: BeginOpts,
+        cleanup: &CleanupContext,
+        adapter: &mut impl SettlementAdapter,
+        parent: Option<RunId>,
+    ) -> Result<Self, RunError> {
         crate::fault_point!(BeginBefore)?;
         if cx.operation().placement() != crate::ctx::Placement::Host
             || inv.spec().placement != crate::ctx::Placement::Host
@@ -290,10 +303,10 @@ impl<'a> Run<'a> {
         let generation = store.transaction(&cx.child(std::time::Duration::from_secs(30)), |txn| {
             txn.resource(&inv.spec().owner, "run")?;
             let generation = txn.next_generation(&inv.spec().owner)?;
-            txn.conn().execute("INSERT INTO runs(run_id,owner,generation,kind,placement,phase,invocation,digest,created_at,updated_at,workload_outcome) \
-                VALUES (?1,?2,?3,?4,'host','admitted',?5,?6,?7,?7,?8)", params![opts.id.to_string(),
+            txn.conn().execute("INSERT INTO runs(run_id,owner,generation,kind,placement,phase,invocation,digest,created_at,updated_at,workload_outcome,parent_run) \
+                VALUES (?1,?2,?3,?4,'host','admitted',?5,?6,?7,?7,?8,?9)", params![opts.id.to_string(),
                 inv.spec().owner.name().to_string(), generation.get() as i64,
-                if opts.custody.is_some() {"custody"}else{"operation"}, serde_json::to_string(inv)?, inv.digest().0.as_slice(), txn.now(), if opts.custody.is_some() {Some(serde_json::to_string(&WorkloadOutcome::NotStarted)?)}else{None}])?;
+                if opts.custody.is_some() {"custody"}else{"operation"}, serde_json::to_string(inv)?, inv.digest().0.as_slice(), txn.now(), if opts.custody.is_some() {Some(serde_json::to_string(&WorkloadOutcome::NotStarted)?)}else{None}, parent.map(|id| id.to_string())])?;
             Ok::<_, RunError>(generation)
         })?;
         crate::fault_point!(BeginAdmitted)?;
@@ -583,7 +596,9 @@ impl<'a> Run<'a> {
             .iter()
             .filter(|e| e.spec.required)
             .map(|e| {
-                if e.state == EffectState::Applied
+                if e.spec.kind == children::KIND {
+                    self.child_obligation(e)
+                } else if e.state == EffectState::Applied
                     && e.spec.kind.starts_with("kernel:")
                     && e.spec.kind != crate::custody::KIND
                     && e.spec.kind != crate::remote::KIND

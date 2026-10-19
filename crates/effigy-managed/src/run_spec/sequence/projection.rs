@@ -5,12 +5,10 @@ use super::super::command::wrap_command_with_task_env;
 use super::super::run_step::resolve_task_run_step;
 use super::super::RunSpecContext;
 use super::env_resolution::StepEnvAccumulator;
-use crate::scheduler;
 
 pub struct ProjectedRunSequence {
     pub commands: Vec<String>,
-    pub policies: Vec<scheduler::RunStepPolicy>,
-    pub has_non_default_policy: bool,
+    pub timeouts: Vec<Option<u64>>,
 }
 
 pub fn project_run_sequence(
@@ -18,8 +16,7 @@ pub fn project_run_sequence(
     context: RunSpecContext<'_>,
 ) -> Result<ProjectedRunSequence, ManagedError> {
     let mut commands = Vec::<String>::with_capacity(steps.len());
-    let mut policies = Vec::<scheduler::RunStepPolicy>::with_capacity(steps.len());
-    let mut has_non_default_policy = false;
+    let mut timeouts = Vec::with_capacity(steps.len());
     let mut env_state =
         StepEnvAccumulator::new(context.task_env_file, context.runtime_env_schema_override)?;
 
@@ -37,14 +34,11 @@ pub fn project_run_sequence(
             env_state.chained_env(),
             context.repo_root,
         ));
-        let policy = scheduler::step_policy_for(step);
-        has_non_default_policy |= !policy.is_default();
-        policies.push(policy);
+        timeouts.push(match step {
+            ManifestManagedRunStep::Command(_) => None,
+            ManifestManagedRunStep::Step(table) => table.timeout_ms,
+        });
     }
 
-    Ok(ProjectedRunSequence {
-        commands,
-        policies,
-        has_non_default_policy,
-    })
+    Ok(ProjectedRunSequence { commands, timeouts })
 }

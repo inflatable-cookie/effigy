@@ -1851,10 +1851,10 @@ Task engine adoption (effigy#217, 2026-10-19):
 | Lock key, lease lock, `tasks unlock`, hostname as namespace | Done. `TaskId` from the one resolver; `Gate(Task)` per run; shared locks are `Store(task-lock:<name>)` runs; holders are host gates only. `tasks unlock` refuses for one minor. |
 | Status rows | Done. `effigy.tasks-status.v2` projects run rows plus a gate probe ([018](018-task-status-query-surface-and-read-model-contract.md)). |
 | Status write failure | Done. Journal failures are warnings; the task's exit code stands (K10). |
-| Process group always; owned-children stop | Done for plain host commands: `Custody::spawn` with `Terminal::Inherit`, a per-run sentinel, the router installed before the first custody spawn. Sequence steps, container exec and managed processes keep their current spawners until the sequence engine and supervisor adopt custody. |
-| Generated sequence script | Not done: the sequence engine follow-up. |
+| Process group always; owned-children stop | Done for plain host commands: `Custody::spawn` with `Terminal::Inherit`, a per-run sentinel, the router installed before the first custody spawn. Host sequence steps also use child-run custody (effigy#226). Container exec and managed processes keep their current spawners until remote custody and the supervisor adopt custody. |
+| Generated sequence script | Host sequences use one typed engine and child Runs in text and JSON (effigy#226). Container task steps remain behind `legacy_container_step` until #236 after #232. Container setup embedded in lifecycle-managed commands still uses its existing renderer and has no per-step journal. |
 | Env-schema commands | Done. Resolved after `Admitted`; each `exec()` is a custody effect of the run with bounded capture. |
-| `set_var` | Done for the vault passphrase, the local-dev marker and the managed run token. Not done: the external task source isolation marker and sequence step environments, which need every spawner on spawn-spec env (sequence engine follow-up). |
+| `set_var` | Done for the vault passphrase, the local-dev marker and the managed run token. Sequence environments use lexical spawn inputs, never process-global mutation (effigy#226). The external task source isolation marker remains. |
 | Task cache | Done: removed. |
 | Git exclude on reads; bundle refresh during reads; scheduler signal handler | Not this task. Read paths no longer refresh bundles or append Git excludes (source pins, effigy#220); the scheduler signal handler is the admission (Q-006) follow-up. |
 | QA group records | Done for liveness: a group run is a kernel run, and status reads its gate, not a PID or heartbeat. The member report files remain reports. |
@@ -2117,3 +2117,17 @@ adding a second guest-to-host channel or a guest outside container mode;
 supporting network filesystems; adopting cgroup custody; adding a resource
 kind or encoding version; bumping the store's major schema; supporting Apple
 Containers; or relaxing any of R1–R5.
+
+
+## Child run admission API
+
+`Run::begin_child` commits a required child intent before admission and writes
+`runs.parent_run` with the child's Admitted row. Child IDs cannot be reused;
+children hold independent owner gates. The engine rejects ancestor owner cycles
+before admission. Parent success requires the child's positively recorded success;
+parent settlement uses the same settle writer recursively under the child's gate,
+including after owner death. An unknown or incomplete child remains parent residue.
+`run::children` and `RunSummary::parent` expose the relation as pure reads.
+Existing begin, intent, applied and settle fault points cover both sides of child
+admission (`run_children_admission_faults_recover_both_sides`). No store migration
+is needed: `parent_run` is part of store schema v1.

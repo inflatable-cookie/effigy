@@ -91,11 +91,7 @@ fn profile_step(profile_name: &str) -> ManifestManagedRunStep {
         env: Some(ManifestRunStepEnv::Profile(profile_name.to_owned())),
         env_file: None,
         id: None,
-        depends_on: Vec::new(),
         timeout_ms: None,
-        retry: None,
-        retry_delay_ms: None,
-        fail_fast: None,
     }))
 }
 

@@ -10,6 +10,7 @@
 #![cfg(unix)]
 
 use std::fs;
+use std::io::Read;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -71,6 +72,42 @@ impl Fixture {
         let value: serde_json::Value = serde_json::from_str(&text)
             .unwrap_or_else(|error| panic!("status json ({error}): {text}"));
         value.get("result").cloned().unwrap_or(value)
+    }
+
+    fn read_sequence_pid(&self, name: &str, owner: &mut Child, cell: &str) -> i32 {
+        let started = Instant::now();
+        loop {
+            if let Some(pid) = fs::read_to_string(self.repo.join(name))
+                .ok()
+                .and_then(|text| text.trim().parse().ok())
+            {
+                return pid;
+            }
+            let exit = owner.try_wait().expect("fixture owner status");
+            if exit.is_some() || started.elapsed() >= Duration::from_secs(20) {
+                if exit.is_none() {
+                    // Our recorded direct child; its sentinel settles its effects.
+                    owner.kill().expect("stop stalled fixture owner");
+                    owner.wait().expect("reap stalled fixture owner");
+                }
+                let mut stdout = String::new();
+                let mut stderr = String::new();
+                owner
+                    .stdout
+                    .take()
+                    .unwrap()
+                    .read_to_string(&mut stdout)
+                    .unwrap();
+                owner
+                    .stderr
+                    .take()
+                    .unwrap()
+                    .read_to_string(&mut stderr)
+                    .unwrap();
+                panic!("{cell}: {name} missing, exit={exit:?}, stdout={stdout}, stderr={stderr}");
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
     }
 
     fn read_pid(&self, name: &str, timeout: Duration) -> i32 {
@@ -359,4 +396,194 @@ run = "echo after >> runs.log"
         .filter(|entry| entry.file_name().to_string_lossy().starts_with("exe-"))
         .count();
     assert_eq!(leftovers, 0, "private images are removed after use");
+}
+
+#[test]
+fn sequence_signal_matrix_each_step_text_and_json_settles_the_entire_tree() {
+    for json in [false, true] {
+        for step in 0..3 {
+            for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP, libc::SIGKILL] {
+                let fixture = Fixture::new();
+                let steps = (0..3)
+                    .map(|index| {
+                        let command = if index == step {
+                            "sleep 300 & echo $! > grandchild.pid; echo $$ > leader.pid; wait"
+                                .to_owned()
+                        } else {
+                            format!("echo {index} >> effects")
+                        };
+                        format!(
+                            "{{ id = 'step-{index}', run = {} }}",
+                            toml::Value::String(command)
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(",");
+                fs::write(
+                    fixture.repo.join("effigy.toml"),
+                    format!("[tasks.hold]\nrun = [{steps}]\n"),
+                )
+                .unwrap();
+                let args = if json {
+                    vec!["--json", "hold"]
+                } else {
+                    vec!["hold"]
+                };
+                let mut owner = fixture.effigy(&args).spawn().unwrap();
+                let cell = format!("step={step}, signal={signal}, json={json}");
+                eprintln!("sequence matrix {cell}");
+                let grandchild = fixture.read_sequence_pid("grandchild.pid", &mut owner, &cell);
+                let leader = fixture.read_sequence_pid("leader.pid", &mut owner, &cell);
+                // SAFETY: our direct fixture child, never a pattern or foreign PID.
+                assert_eq!(unsafe { libc::kill(owner.id() as i32, signal) }, 0);
+                let exit = wait_exit(&mut owner, Duration::from_secs(40)).expect("sequence exits");
+                if signal != libc::SIGKILL {
+                    assert_eq!(exit.code(), Some(128 + signal));
+                }
+                let output = owner.wait_with_output().expect("drain owner output");
+                if json && signal != libc::SIGKILL {
+                    let envelope: serde_json::Value =
+                        serde_json::from_slice(&output.stdout).expect("one cancellation envelope");
+                    assert_eq!(
+                        envelope["error"]["details"]["steps"]
+                            .as_array()
+                            .unwrap()
+                            .len(),
+                        3
+                    );
+                    assert_eq!(
+                        envelope["error"]["details"]["failed_step"],
+                        format!("step-{step}")
+                    );
+                }
+                assert!(
+                    wait_gone(grandchild, Duration::from_secs(30)),
+                    "grandchild survived step {step}, signal {signal}, json={json}"
+                );
+                assert!(
+                    wait_gone(leader, Duration::from_secs(30)),
+                    "leader survived"
+                );
+                let status = wait_state(
+                    &fixture,
+                    "hold",
+                    &["cancelled", "interrupted"],
+                    Duration::from_secs(30),
+                );
+                let latest = &status["latest"];
+                assert_eq!(latest["cleanup"], "complete", "{status}");
+                let children = latest["steps"].as_array().expect("step status");
+                assert_eq!(children.len(), step + 1, "remaining steps must not start");
+                assert!(
+                    children.iter().all(|child| child["cleanup"] == "complete"),
+                    "{children:?}"
+                );
+                let effects = fs::read_to_string(fixture.repo.join("effects")).unwrap_or_default();
+                assert_eq!(effects.lines().count(), step);
+            }
+        }
+    }
+}
+
+#[test]
+fn sequence_text_json_exit_effects_env_and_nested_gate_parity() {
+    for json in [false, true] {
+        let fixture = Fixture::new();
+        fs::write(
+            fixture.repo.join("effigy.toml"),
+            r#"
+[tasks.hold]
+lock = "shared"
+run = [
+  { env = { SEQUENCE_VALUE = "from-step" } },
+  { task = "child" },
+  { id = "failed", run = "exit 7" },
+  "touch should-not-exist",
+]
+[tasks.child]
+lock = "shared"
+run = "printf '%s' \"$SEQUENCE_VALUE\" > effects"
+"#,
+        )
+        .unwrap();
+        let args = if json {
+            vec!["--json", "hold"]
+        } else {
+            vec!["hold"]
+        };
+        let output = fixture.effigy(&args).output().unwrap();
+        assert_eq!(output.status.code(), Some(7), "{output:?}");
+        assert_eq!(
+            fs::read_to_string(fixture.repo.join("effects")).unwrap(),
+            "from-step"
+        );
+        assert!(!fixture.repo.join("should-not-exist").exists());
+        if json {
+            let envelope: serde_json::Value =
+                serde_json::from_slice(&output.stdout).expect("one JSON envelope");
+            let result = envelope
+                .get("error")
+                .and_then(|error| error.get("details"))
+                .unwrap_or(&envelope);
+            assert_eq!(result["exit_code"], 7);
+            assert_eq!(result["failed_step"], "failed");
+            assert_eq!(result["steps"][3]["state"], "not_started");
+        }
+        let status = fixture.status("hold");
+        assert_eq!(
+            status["latest"]["steps"][1]["steps"][0]["state"], "succeeded",
+            "{status}"
+        );
+    }
+}
+
+#[test]
+fn sequence_reference_cycles_fail_before_waiting_on_ancestor_gate() {
+    let fixture = Fixture::new();
+    fs::write(
+        fixture.repo.join("effigy.toml"),
+        "[tasks.hold]\nrun = [{task='child'}]\n[tasks.child]\nrun = [{task='hold'}]\n",
+    )
+    .unwrap();
+    let mut child = fixture
+        .effigy(&["--lock-wait-ms", "600000", "hold"])
+        .spawn()
+        .unwrap();
+    assert!(
+        wait_exit(&mut child, Duration::from_secs(20)).is_some(),
+        "recursive reference deadlocked"
+    );
+    let output = child.wait_with_output().unwrap();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("cycle"),
+        "{output:?}"
+    );
+}
+
+#[test]
+fn sequence_timeout_settles_descendants_before_skipping_remaining_steps() {
+    for json in [false, true] {
+        let fixture = Fixture::new();
+        fs::write(
+            fixture.repo.join("effigy.toml"),
+            r#"[tasks.hold]
+run = [{ task = "child", timeout_ms = 2000 }, "touch should-not-exist"]
+[tasks.child]
+run = "sleep 300 & echo $! > grandchild.pid; echo $$ > leader.pid; wait"
+"#,
+        )
+        .unwrap();
+        let args = if json {
+            vec!["--json", "hold"]
+        } else {
+            vec!["hold"]
+        };
+        let mut owner = fixture.effigy(&args).spawn().unwrap();
+        let grandchild = fixture.read_pid("grandchild.pid", Duration::from_secs(20));
+        let exit = wait_exit(&mut owner, Duration::from_secs(30)).unwrap();
+        assert_eq!(exit.code(), Some(124));
+        assert!(wait_gone(grandchild, Duration::from_secs(20)));
+        assert!(!fixture.repo.join("should-not-exist").exists());
+    }
 }

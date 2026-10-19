@@ -418,13 +418,6 @@
       "std.process.Command.new": 1,
       "std.process.Command.spawn": 1
     },
-    "src/runner/execute/sequence_run.rs": {
-      "std.process.Command.new": 2,
-      "std.process.Command.spawn": 2,
-      "std.process.Command.status": 1,
-      "std::env::remove_var": 1,
-      "std::env::set_var": 2
-    },
     "src/runner/gateway_command/daemon.rs": {
       "nix::sys::signal::kill": 1,
       "std.fs.OpenOptions.write": 6,

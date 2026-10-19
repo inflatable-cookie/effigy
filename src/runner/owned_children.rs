@@ -380,6 +380,7 @@ pub(super) fn wait_for_owned_child(
 
 /// Wait until the owned child exits. Drop still terminates the tree if this
 /// wait is abandoned. Acquires the signal scope the same way as the timed wait.
+#[cfg(test)]
 pub(super) fn wait_for_owned_child_unbounded(child: Child) -> io::Result<std::process::ExitStatus> {
     let session = OwnedChildSession::new(child);
     let _scope = OwnedChildrenScope::enter()?;
@@ -409,6 +410,7 @@ impl OwnedChildSession {
         register_process_group(self.pid);
     }
 
+    #[cfg(test)]
     fn wait(mut self) -> io::Result<std::process::ExitStatus> {
         let status = {
             let child = self
@@ -453,6 +455,7 @@ impl OwnedChildSession {
         Ok(outcome)
     }
 
+    #[cfg(test)]
     fn reap_group_after_cancellation(&mut self) {
         if !cancellation_observed() {
             return;

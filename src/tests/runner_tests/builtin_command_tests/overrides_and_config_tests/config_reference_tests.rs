@@ -25,7 +25,7 @@ fn run_manifest_task_builtin_config_prints_reference() {
             "[test.runners]",
             "[tasks]",
             "task = \"test vitest \\\"user service\\\"\"",
-            "run = [{ id = \"tests\", task = \"test vitest \\\"user service\\\"\" }, { id = \"report\", run = \"printf validate-ok\", depends_on = [\"tests\"] }]",
+            "run = [{ id = \"tests\", task = \"test vitest \\\"user service\\\"\" }, { id = \"report\", run = \"printf validate-ok\" }]",
         ],
     );
 }

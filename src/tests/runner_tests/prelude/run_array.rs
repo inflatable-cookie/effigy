@@ -6,27 +6,13 @@ use super::harness::{
     create_workspace_dir, run_builtin_err, run_builtin_ok, temp_workspace, write_manifest,
 };
 use super::output::{
-    assert_file_text_equals, assert_output_contains_all, assert_output_contains_any,
-    assert_output_equals, assert_path_exists,
+    assert_file_text_equals, assert_output_contains_all, assert_output_equals, assert_path_exists,
 };
 use super::runtime::{Path, PathBuf, RunnerError};
 
 // ---------------------------------------------------------------------------
 // Cases
 // ---------------------------------------------------------------------------
-
-pub(in crate::runner::tests) struct RunArrayInvocationErrorCase {
-    pub(in crate::runner::tests) workspace: &'static str,
-    pub(in crate::runner::tests) manifest: &'static str,
-    pub(in crate::runner::tests) expected: &'static [&'static str],
-}
-
-pub(in crate::runner::tests) struct RunArrayValidateOutputCase {
-    pub(in crate::runner::tests) workspace: &'static str,
-    pub(in crate::runner::tests) manifest: &'static str,
-    pub(in crate::runner::tests) args: &'static [&'static str],
-    pub(in crate::runner::tests) expected: &'static [&'static str],
-}
 
 pub(in crate::runner::tests) struct RunArrayTaskOutputCase {
     pub(in crate::runner::tests) workspace: &'static str,
@@ -55,15 +41,6 @@ pub(in crate::runner::tests) struct RunArrayTaskRefParseErrorCase {
     pub(in crate::runner::tests) workspace: &'static str,
     pub(in crate::runner::tests) manifest: &'static str,
     pub(in crate::runner::tests) expected_tail: &'static str,
-}
-
-pub(in crate::runner::tests) struct RunArrayInvocationMessageCase {
-    pub(in crate::runner::tests) workspace: &'static str,
-    pub(in crate::runner::tests) manifest: &'static str,
-    pub(in crate::runner::tests) args: &'static [&'static str],
-    pub(in crate::runner::tests) expected_all: &'static [&'static str],
-    pub(in crate::runner::tests) expected_any: &'static [&'static str],
-    pub(in crate::runner::tests) expected_exact: Option<&'static str>,
 }
 
 pub(in crate::runner::tests) struct BuiltinTestTaskRefCase {
@@ -180,16 +157,6 @@ fn workspace_with_marker(
     (root, marker)
 }
 
-pub(in crate::runner::tests) fn run_validate_err_invocation_message(
-    root: &Path,
-    args: &[&str],
-) -> String {
-    match run_validate_err(root, args) {
-        RunnerError::TaskInvocation(message) => message,
-        other => panic!("unexpected error: {other}"),
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Assertions / case-table runners
 // ---------------------------------------------------------------------------
@@ -229,20 +196,6 @@ fn for_each_marker_case<T>(
             workspace_with_marker(workspace_of(case), marker_rel_of(case), setup_of(case));
         assert_case(case, root, marker);
     });
-}
-
-pub(in crate::runner::tests) fn assert_run_array_validate_output_case_table(
-    cases: &[RunArrayValidateOutputCase],
-) {
-    for_each_manifest_case(
-        cases,
-        |case| case.workspace,
-        |case| case.manifest,
-        |case, root| {
-            let out = run_validate_ok(&root, case.args);
-            assert_output_contains_all(&out, case.expected);
-        },
-    );
 }
 
 pub(in crate::runner::tests) fn assert_run_array_task_output_case_table(
@@ -285,20 +238,6 @@ pub(in crate::runner::tests) fn assert_run_array_task_invocation_error_case_tabl
     });
 }
 
-pub(in crate::runner::tests) fn assert_run_array_validate_invocation_error_case_table(
-    cases: &[RunArrayInvocationErrorCase],
-) {
-    for_each_manifest_case(
-        cases,
-        |case| case.workspace,
-        |case| case.manifest,
-        |case, root| {
-            let err = run_validate_err(&root, &[]);
-            assert_invocation_error_contains(err, case.expected);
-        },
-    );
-}
-
 pub(in crate::runner::tests) fn assert_run_array_validate_task_ref_parse_error_case_table(
     cases: &[RunArrayTaskRefParseErrorCase],
 ) {
@@ -309,27 +248,6 @@ pub(in crate::runner::tests) fn assert_run_array_validate_task_ref_parse_error_c
         |case, root| {
             let err = run_validate_err(&root, &[]);
             assert_run_step_task_ref_parse_error_contains(err, case.expected_tail);
-        },
-    );
-}
-
-pub(in crate::runner::tests) fn assert_run_array_validate_invocation_message_case_table(
-    cases: &[RunArrayInvocationMessageCase],
-) {
-    for_each_manifest_case(
-        cases,
-        |case| case.workspace,
-        |case| case.manifest,
-        |case, root| {
-            let message = run_validate_err_invocation_message(&root, case.args);
-            if let Some(expected_exact) = case.expected_exact {
-                assert_output_equals(&message, expected_exact);
-            } else {
-                assert_output_contains_all(&message, case.expected_all);
-                if !case.expected_any.is_empty() {
-                    assert_output_contains_any(&message, case.expected_any);
-                }
-            }
         },
     );
 }

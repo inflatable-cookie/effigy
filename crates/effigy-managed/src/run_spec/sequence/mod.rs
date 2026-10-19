@@ -8,14 +8,12 @@ use effigy_manifest::{
 
 use super::RunSpecContext;
 use projection::project_run_sequence;
-use rendering::render_projected_run_sequence;
 
 mod dotenv;
 mod env_files;
 mod env_resolution;
 mod pathing;
 mod projection;
-mod rendering;
 
 pub use env_resolution::StepEnvAccumulator;
 
@@ -31,7 +29,13 @@ pub fn render_run_sequence(
     }
 
     let projected = project_run_sequence(steps, context)?;
-    render_projected_run_sequence(context.task_name, steps, &projected)
+    Ok(projected
+        .commands
+        .iter()
+        .zip(&projected.timeouts)
+        .map(|(command, timeout)| crate::scheduler::render_legacy_step(command, *timeout))
+        .collect::<Vec<_>>()
+        .join(" && "))
 }
 
 pub fn resolve_standalone_env(

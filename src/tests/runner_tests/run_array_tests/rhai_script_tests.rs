@@ -471,7 +471,18 @@ fn run_manifest_task_run_array_rhai_steps_support_container_helpers() {
         bin_dir.display(),
         std::env::var("PATH").expect("PATH")
     );
+    fs::create_dir_all(root.join("home")).expect("private subprocess HOME");
     let _env = EnvGuard::set_many(&[
+        ("HOME", Some(root.join("home").display().to_string())),
+        (
+            "EFFIGY_EXECUTABLE",
+            Some(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("target/debug/effigy")
+                    .display()
+                    .to_string(),
+            ),
+        ),
         ("PATH", Some(path)),
         ("EFFIGY_COMPOSE_BACKEND", Some("docker".to_owned())),
         (

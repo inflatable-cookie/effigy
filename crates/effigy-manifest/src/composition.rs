@@ -145,6 +145,7 @@ pub fn load_task_manifest_with_inspection(
             &mut composed.source_map,
         );
     }
+    reject_retired_sequence_keys(&composed.value, manifest_path, "manifest")?;
     let manifest: TaskManifest =
         composed
             .value
@@ -1597,4 +1598,38 @@ minimum_effigy_version = "latest"
         .expect_err("invalid active version should fail");
         assert!(err.contains("current Effigy version is invalid"), "{err}");
     }
+}
+
+fn reject_retired_sequence_keys(
+    value: &Value,
+    path: &Path,
+    location: &str,
+) -> Result<(), ManifestError> {
+    match value {
+        Value::Array(steps) => {
+            for (index, step) in steps.iter().enumerate() {
+                reject_retired_sequence_keys(step, path, &format!("{location}[{index}]"))?;
+            }
+        }
+        Value::Table(table) => {
+            // A run/setup step has an action (or an env-only directive). Do not
+            // confuse container host-process dependencies with sequence policy.
+            let last = location.rsplit('.').next().unwrap_or_default();
+            if last == "run"
+                || ((last.starts_with("run[") || last.starts_with("setup[")) && last.ends_with(']'))
+            {
+                for key in ["depends_on", "retry", "retry_delay_ms", "fail_fast"] {
+                    if table.contains_key(key) {
+                        return Err(ManifestError::Compose { path: path.to_path_buf(), detail: format!(
+                            "`{location}.{key}` was removed in v0.15: sequences run in declaration order and stop on the first failed step. Delete `{key}`; use separate tasks or the tool's own retry policy when needed") });
+                    }
+                }
+            }
+            for (key, child) in table {
+                reject_retired_sequence_keys(child, path, &format!("{location}.{key}"))?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
 }
