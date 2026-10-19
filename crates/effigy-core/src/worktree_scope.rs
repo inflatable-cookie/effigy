@@ -120,13 +120,6 @@ pub fn load(repo_root: &Path) -> io::Result<Option<String>> {
     Ok(load_scoped(repo_root)?.map(|(_, token)| token))
 }
 
-pub fn load_scoped(repo_root: &Path) -> io::Result<Option<(ScopeKind, String)>> {
-    let Some(scope) = resolve(repo_root)? else {
-        return Ok(None);
-    };
-    read_token(&scope.token_dir).map(|token| token.map(|token| (scope.kind, token)))
-}
-
 fn read_token(dir: &Path) -> io::Result<Option<String>> {
     let path = dir.join(SCOPE_FILE);
     match fs::read_to_string(&path) {
