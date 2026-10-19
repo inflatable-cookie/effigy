@@ -283,19 +283,24 @@ mod tests {
         // Ephemeral listeners qualify transport/adoption without installing a
         // privileged job. The production binder is TcpListener::bind and the
         // authorization above always checks the requested low-port endpoints.
-        let reserved = [
-            TcpListener::bind("127.0.0.1:0").unwrap(),
-            TcpListener::bind("127.0.0.1:0").unwrap(),
-        ];
-        let expected = reserved
-            .each_ref()
-            .map(|listener| listener.local_addr().unwrap());
-        drop(reserved);
         for _ in 0..2 {
+            // Retain each ephemeral reservation until the broker transfers
+            // it, rather than reopening a port another fixture could claim.
+            let reserved = [
+                TcpListener::bind("127.0.0.1:0").unwrap(),
+                TcpListener::bind("127.0.0.1:0").unwrap(),
+            ];
+            let expected = reserved
+                .each_ref()
+                .map(|listener| listener.local_addr().unwrap());
             let (mut client, mut broker) = UnixStream::pair().unwrap();
             let thread = std::thread::spawn(move || {
+                let reserved = reserved.map(|listener| std::cell::RefCell::new(Some(listener)));
                 serve_one(&mut broker, uid, |address| {
-                    TcpListener::bind(expected[usize::from(address.port() == 443)])
+                    Ok(reserved[usize::from(address.port() == 443)]
+                        .borrow_mut()
+                        .take()
+                        .expect("each endpoint requested once"))
                 })
                 .unwrap()
             });
@@ -311,11 +316,41 @@ mod tests {
             let listeners = receive_reply(&mut client, expected).unwrap();
             thread.join().unwrap();
             for listener in [&listeners.http, &listeners.https] {
-                let client = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
-                let (mut accepted, _) = listener.accept().unwrap();
+                listener.set_nonblocking(true).unwrap();
+                let mut client =
+                    std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+                let peer = client.local_addr().unwrap();
+                client.write_all(b"1").unwrap();
+                let deadline = std::time::Instant::now() + Duration::from_secs(3);
+                // Concurrent listener probes can leave aborted connections in
+                // the accept queue on macOS. Prove our own stream, with a
+                // bounded wait for transient accept errors or unrelated peers.
+                let mut accepted = loop {
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "fixture accept timed out"
+                    );
+                    match listener.accept() {
+                        Ok((stream, address)) if address == peer => break stream,
+                        Ok(_) => {}
+                        Err(error)
+                            if matches!(
+                                error.kind(),
+                                io::ErrorKind::WouldBlock
+                                    | io::ErrorKind::Interrupted
+                                    | io::ErrorKind::ConnectionAborted
+                            ) => {}
+                        Err(error) => panic!("fixture accept failed: {error}"),
+                    }
+                    std::thread::sleep(Duration::from_millis(1));
+                };
+                accepted
+                    .set_read_timeout(Some(Duration::from_secs(3)))
+                    .unwrap();
+                let mut byte = [0];
+                accepted.read_exact(&mut byte).unwrap();
+                assert_eq!(byte, *b"1");
                 drop(client);
-                assert_eq!(accepted.read(&mut [0]).unwrap(), 0);
-                drop(accepted);
             }
         }
     }
