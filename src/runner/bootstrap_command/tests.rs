@@ -28,20 +28,23 @@ use support::{
 };
 
 /// RAII guard that prepends `bin_dir` to `PATH` for the duration of a test
-/// and restores the prior value on drop. Always pair with the shared
-/// `crate::contract_test_support::lock_test()` mutex so no other test
-/// in the binary mutates `PATH` (or `cwd`) while this guard is live.
+/// and restores the prior value on drop while holding the shared test lock.
 struct PathPrepend {
     original: String,
+    _lock: crate::contract_test_support::ReentrantTestLockGuard,
 }
 
 impl PathPrepend {
     fn new(bin_dir: &Path) -> Self {
+        let lock = crate::contract_test_support::lock_test();
         let original = std::env::var("PATH").unwrap_or_default();
         unsafe {
             std::env::set_var("PATH", format!("{}:{original}", bin_dir.display()));
         }
-        Self { original }
+        Self {
+            original,
+            _lock: lock,
+        }
     }
 }
 

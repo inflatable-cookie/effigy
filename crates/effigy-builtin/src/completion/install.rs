@@ -241,8 +241,10 @@ mod tests {
 
     #[test]
     fn plan_completion_install_uses_shell_specific_user_local_paths() {
-        std::env::set_var("HOME", "/tmp/effigy-home");
-        std::env::remove_var("ZDOTDIR");
+        let _env = crate::env_test_support::EnvGuard::set_many(&[
+            ("HOME", Some(std::ffi::OsStr::new("/tmp/effigy-home"))),
+            ("ZDOTDIR", None),
+        ]);
         let bash =
             plan_completion_install(CompletionShell::Bash, "bash".to_owned()).expect("bash plan");
         assert_eq!(

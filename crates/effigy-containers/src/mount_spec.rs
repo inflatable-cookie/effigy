@@ -250,11 +250,6 @@ pub(crate) fn resolve_host_mounts(
 mod tests {
     use super::*;
     use effigy_manifest::ManifestContainerHostMountTable;
-    use std::sync::Mutex;
-
-    // Serialise tests that mutate process env so they don't trample
-    // each other under `cargo test --jobs`.
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn make_table(
         host: &str,
@@ -309,7 +304,7 @@ mod tests {
 
     #[test]
     fn structured_form_without_external_rejects_absolute_after_expansion() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = crate::test_env_lock();
         let repo = temp_repo();
         std::env::set_var("EFFIGY_TEST_MOUNT_ABS", "/etc/passwd");
         let table = make_table("${EFFIGY_TEST_MOUNT_ABS}", "/etc/foo", false, Vec::new());
@@ -324,7 +319,7 @@ mod tests {
 
     #[test]
     fn structured_form_with_external_resolves_absolute_path() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = crate::test_env_lock();
         let repo = temp_repo();
         let outside = tempfile::NamedTempFile::new().unwrap();
         let outside_path = outside.path().to_path_buf();
@@ -349,7 +344,7 @@ mod tests {
 
     #[test]
     fn structured_form_options_render_comma_separated() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = crate::test_env_lock();
         let repo = temp_repo();
         let outside = tempfile::NamedTempFile::new().unwrap();
         std::env::set_var(
@@ -369,7 +364,7 @@ mod tests {
 
     #[test]
     fn structured_form_missing_env_var_errors_with_var_name() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = crate::test_env_lock();
         std::env::remove_var("EFFIGY_TEST_MOUNT_ABSENT");
         let repo = temp_repo();
         let table = make_table("${EFFIGY_TEST_MOUNT_ABSENT}", "/etc/foo", true, Vec::new());

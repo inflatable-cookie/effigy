@@ -1544,7 +1544,10 @@ mod vault_generate_hook_tests {
     fn generation_flag_is_cleared_after_the_hook_succeeds_or_fails() {
         let root = tempfile::tempdir().expect("repo root");
         fs::write(root.path().join("effigy.toml"), "[tasks]\n").expect("project manifest");
-        std::env::remove_var(TASK_SECRET_GENERATION_ACTIVE_ENV);
+        let _env = crate::contract_test_support::EnvGuard::set_many(&[(
+            TASK_SECRET_GENERATION_ACTIVE_ENV,
+            None,
+        )]);
 
         let ok = secrets_with_generate(r#"{ run = "true" }"#);
         assert!(run_configured_vault_generate_task(root.path(), Some(&ok)).expect("hook runs"));

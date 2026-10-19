@@ -1045,10 +1045,8 @@ mod tests {
     #[test]
     fn inline_workspace_started_and_removed_facts_share_compose_plan_backend() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let previous_backend = std::env::var_os("EFFIGY_COMPOSE_BACKEND");
-        unsafe {
-            std::env::remove_var("EFFIGY_COMPOSE_BACKEND");
-        }
+        let _env =
+            crate::contract_test_support::EnvGuard::set_many(&[("EFFIGY_COMPOSE_BACKEND", None)]);
         let policy = EffectiveContainerPolicy {
             repo_root: temp.path().to_path_buf(),
             name: "web".to_owned(),
@@ -1098,14 +1096,6 @@ mod tests {
             None,
         )
         .expect("report");
-        match previous_backend {
-            Some(value) => unsafe {
-                std::env::set_var("EFFIGY_COMPOSE_BACKEND", value);
-            },
-            None => unsafe {
-                std::env::remove_var("EFFIGY_COMPOSE_BACKEND");
-            },
-        }
         assert_eq!(plan.backend_id.as_str(), "colima-nerdctl");
         assert_eq!(started, "colima-nerdctl");
         assert_eq!(started, plan.backend_id.to_string());
