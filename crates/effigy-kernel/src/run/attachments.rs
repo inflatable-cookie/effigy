@@ -89,9 +89,10 @@ impl Attachments {
         {
             return Err(RunError::Invalid("environment is not ready".into()));
         }
-        run.store.transaction(&run.cx, |txn| {
-            journal::check_fence(txn.conn(), &run.owner)?;
-            txn.conn().execute(
+        run.store
+            .transaction(&run.cx.child(std::time::Duration::from_secs(30)), |txn| {
+                journal::check_fence(txn.conn(), &run.owner)?;
+                txn.conn().execute(
                 "UPDATE resources SET state='active',last_applied=?2,updated_at=?3 WHERE name=?1",
                 params![
                     run.owner.resource.name().to_string(),
@@ -99,8 +100,8 @@ impl Attachments {
                     txn.now()
                 ],
             )?;
-            Ok::<_, RunError>(())
-        })
+                Ok::<_, RunError>(())
+            })
     }
     pub fn attach(
         run: &mut Run<'_>,
@@ -122,7 +123,7 @@ impl Attachments {
         let _gate = Gate::acquire(&run.cx, run.root, std::slice::from_ref(&env.resource), wait)?;
         let result = (|| {
             crate::fault_point!(AttachBefore)?;
-            let sequence = run.store.transaction(&run.cx, |txn| {
+            let sequence = run.store.transaction(&run.cx.child(std::time::Duration::from_secs(30)), |txn| {
                 journal::check_fence(txn.conn(),&run.owner)?;
                 journal::check_fence(txn.conn(),env)?;
                 let active: bool = txn.conn().query_row("SELECT state='active' AND last_applied=cast(generation AS TEXT) FROM resources WHERE name=?1",

@@ -483,3 +483,105 @@ fn context_guest_checkout_token_minting_requires_host_authority() {
             .is_ok());
     }
 }
+
+#[test]
+fn identity_wire_roundtrip_preserves_non_utf8_and_rejects_invalid_frames() {
+    let inv = ResolvedInvocation::new(invocation()).unwrap();
+    let encoded = serde_json::to_vec(&inv).unwrap();
+    let decoded = ResolvedInvocation::decode(&encoded).unwrap();
+    assert_eq!(decoded.digest(), inv.digest());
+    assert_eq!(decoded.spec().argv, inv.spec().argv);
+    assert_eq!(serde_json::to_vec(&decoded).unwrap(), encoded);
+    for bytes in [
+        vec![],
+        b"{}".to_vec(),
+        vec![b' '; ResolvedInvocation::MAX_WIRE_BYTES + 1],
+    ] {
+        assert!(ResolvedInvocation::decode(&bytes).is_err());
+    }
+    // Tamper the canonical bytes in place. Reordering through Value would
+    // independently invalidate the frame and could mask a missing digest check.
+    let canonical = String::from_utf8(encoded.clone()).unwrap();
+    for (old, new) in [
+        ("\"schema\":1", "\"schema\":2"),
+        ("\"cwd\":\"apps/api\"", "\"cwd\":\"./apps/api/\""),
+        ("\"catalog\":\"apps/api\"", "\"catalog\":\"./apps/api\""),
+        ("\"argv\":[[97,255]]", "\"argv\":[[98,255]]"),
+        ("\"argv\":[[97,255]]", "\"argv\":[[256,255]]"),
+        ("\"class\":\"Mutate\"", "\"class\":\"Unknown\""),
+        ("\"placement\":\"Host\"", "\"placement\":\"Detached\""),
+    ] {
+        assert!(canonical.contains(old), "missing fixture token {old}");
+        let tampered = canonical.replacen(old, new, 1);
+        assert!(
+            ResolvedInvocation::decode(tampered.as_bytes()).is_err(),
+            "{old}"
+        );
+    }
+    let digest_at = canonical.rfind("\"digest\":[").unwrap() + "\"digest\":[".len();
+    let digest_end = digest_at + canonical[digest_at..].find(',').unwrap();
+    let first = canonical[digest_at..digest_end].parse::<u8>().unwrap();
+    let mut changed_digest = canonical.clone();
+    changed_digest.replace_range(digest_at..digest_end, &first.wrapping_add(1).to_string());
+    assert!(ResolvedInvocation::decode(changed_digest.as_bytes()).is_err());
+    let mut padded = encoded.clone();
+    padded.push(b' ');
+    assert!(ResolvedInvocation::decode(&padded).is_err());
+    let unknown = format!("{},\"extra\":true}}", canonical.strip_suffix('}').unwrap());
+    assert!(ResolvedInvocation::decode(unknown.as_bytes()).is_err());
+    let duplicate = canonical.replacen("\"schema\":1", "\"schema\":1,\"schema\":1", 1);
+    assert!(ResolvedInvocation::decode(duplicate.as_bytes()).is_err());
+}
+
+#[test]
+fn identity_wire_checks_nested_resources_task_fields_and_constituents() {
+    let mut spec = invocation();
+    spec.target = ExecutionTarget::Container {
+        env: ResourceId::environment(checkout(), "dev").unwrap(),
+        service: "app".into(),
+        user: "fixture".into(),
+        workdir: "/workspace".into(),
+    };
+    spec.attachments.push(AttachmentRequest {
+        environment: ResourceId::environment(checkout(), "dev").unwrap(),
+        mode: AttachmentMode::Exclusive {
+            stop_on_release: false,
+        },
+    });
+    spec.env.insert(
+        "TOKEN".into(),
+        EnvBinding {
+            provenance: "fixture".into(),
+            secret_reference: Some("vault/key".into()),
+        },
+    );
+    spec.provenance
+        .insert("catalog".into(), Digest::of(b"fixture"));
+    let inv = ResolvedInvocation::new(spec).unwrap();
+    let encoded = serde_json::to_vec(&inv).unwrap();
+    assert_eq!(
+        ResolvedInvocation::decode(&encoded).unwrap().digest(),
+        inv.digest()
+    );
+    let mut task = serde_json::to_value(&inv.spec().task).unwrap();
+    task["catalog"] = "./apps/api".into();
+    assert!(serde_json::from_value::<TaskId>(task).is_err());
+    let mut resource = serde_json::to_value(&inv.spec().owner).unwrap();
+    resource["key"][2] = "".into();
+    assert!(serde_json::from_value::<ResourceId>(resource).is_err());
+}
+
+#[test]
+fn context_effect_child_bounds_store_phases_without_extending_parent() {
+    let cx = context(EffectClass::Mutate, Placement::Host)
+        .effects()
+        .unwrap();
+    let child = cx.child(Duration::from_secs(30));
+    assert!(
+        child.operation().remaining().unwrap()
+            <= cx.operation().remaining().unwrap() + Duration::from_millis(1)
+    );
+    assert_eq!(child.operation().class(), cx.operation().class());
+    cx.operation().cancel_token().cancel(StopCause::Requested);
+    assert!(child.operation().check("phase").is_err());
+}

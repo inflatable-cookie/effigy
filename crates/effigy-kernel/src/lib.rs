@@ -1,11 +1,12 @@
 //! Runtime mechanisms shared by Effigy engines. No engine policy lives here.
 //!
-//! Gates, the store and `atomic_replace` open the host state root. Nothing
-//! here installs signal handlers, mints checkout tokens, spawns processes or
-//! performs network probes.
+//! Host state, journalled process custody, placement and read-only probes
+//! share one authority. A binary installs `signal::SignalRouter` once before
+//! any spawn; library callers pass its cancellation token.
 #![deny(missing_debug_implementations, unsafe_op_in_unsafe_fn)]
 
 pub mod ctx;
+pub mod custody;
 pub mod fs;
 pub mod gate;
 pub mod id;
@@ -17,7 +18,9 @@ pub mod record;
 pub mod retention;
 pub mod root;
 pub mod run;
+pub mod signal;
 pub mod store;
+pub mod supervise;
 
 #[cfg(all(test, feature = "fault-injection"))]
 mod fault;

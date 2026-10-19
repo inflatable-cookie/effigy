@@ -19,6 +19,8 @@ sha2 = "0.11"
 unicode-normalization = "0.1"
 
 [dev-dependencies]
+# Interpreter conformance only: product engines still own script integration.
+rhai = "1"
 syn = { version = "2", features = ["full", "visit", "extra-traits"] }
 proc-macro2 = "1"
 tempfile = "3"
@@ -29,3 +31,15 @@ workspace = true
 [[example]]
 name = "kernel-ratchet"
 path = "examples/kernel-ratchet.rs"
+
+# Disposable same-binary re-exec harness, never part of a product install.
+[[bin]]
+name = "kernel-custody-fixture"
+path = "tests/support/custody-fixture.rs"
+required-features = ["fault-injection"]
+test = false
+bench = false
+
+[[test]]
+name = "custody"
+required-features = ["fault-injection"]

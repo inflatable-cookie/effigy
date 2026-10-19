@@ -8,7 +8,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-fn context() -> EffectContext {
+pub(super) fn context() -> EffectContext {
     OperationContext::new(
         Deadline::At(Instant::now() + Duration::from_secs(30)),
         CancelToken::default(),
@@ -26,16 +26,16 @@ fn context() -> EffectContext {
     .effects()
     .unwrap()
 }
-fn cleanup(cx: &EffectContext) -> CleanupContext {
+pub(super) fn cleanup(cx: &EffectContext) -> CleanupContext {
     cx.operation().cleanup(Duration::from_secs(10)).unwrap()
 }
-fn next() -> Invocation {
+pub(super) fn next() -> Invocation {
     Invocation::validated(vec!["recover".into()], |args| args == ["recover"]).unwrap()
 }
-fn id(n: u8) -> RunId {
+pub(super) fn id(n: u8) -> RunId {
     RunId::new(1, [n; 10]).unwrap()
 }
-fn owner() -> ResourceId {
+pub(super) fn owner() -> ResourceId {
     TaskId::new(checkout(), "", Surface::Published, "task", None)
         .unwrap()
         .resource()
@@ -46,7 +46,7 @@ fn checkout() -> CheckoutId {
 fn env() -> ResourceId {
     ResourceId::environment(checkout(), "stack").unwrap()
 }
-fn inv(owner: ResourceId) -> ResolvedInvocation {
+pub(super) fn inv(owner: ResourceId) -> ResolvedInvocation {
     ResolvedInvocation::new(InvocationSpec {
         task: TaskId::new(checkout(), "", Surface::Published, "task", None).unwrap(),
         route: Route::Task,
@@ -63,12 +63,13 @@ fn inv(owner: ResourceId) -> ResolvedInvocation {
     })
     .unwrap()
 }
-fn opts(n: u8) -> BeginOpts {
+pub(super) fn opts(n: u8) -> BeginOpts {
     BeginOpts {
         id: id(n),
         wait: Wait::FailFast,
         acknowledge: vec![],
         next: next(),
+        custody: None,
     }
 }
 fn begin<'a>(
@@ -80,7 +81,7 @@ fn begin<'a>(
 ) -> Run<'a> {
     Run::begin(cx, root, &inv(owner), opts(n), &cleanup(cx), fake).unwrap()
 }
-fn home() -> tempfile::TempDir {
+pub(super) fn home() -> tempfile::TempDir {
     tempfile::Builder::new()
         .prefix("effigy-run-")
         .tempdir()
@@ -91,13 +92,13 @@ fn home() -> tempfile::TempDir {
 /// permissive fallback. A second application or release panics. Recovery must
 /// observe absence and skip undo after a crash at AdapterAfter.
 #[derive(Debug)]
-struct Fake {
+pub(super) struct Fake {
     home: PathBuf,
     unknown: bool,
     fail_release: bool,
 }
 impl Fake {
-    fn new(home: &Path) -> Self {
+    pub(super) fn new(home: &Path) -> Self {
         Self {
             home: home.into(),
             unknown: false,
@@ -910,5 +911,129 @@ fn claims_prepare_and_refresh_classes_cannot_reserve_resources() {
             .unwrap();
         assert_eq!(claims, 0);
         run.settle(&cleanup(&cx), &mut fake).unwrap();
+    }
+}
+
+#[test]
+fn run_supervision_matrix_recovery_stop_and_attachment_release_are_idempotent() {
+    for front in ["tui", "attached", "detached"] {
+        for prior in ["fresh", "interrupted", "residue", "stopped"] {
+            for stop in [
+                "request",
+                "INT",
+                "TERM",
+                "HUP",
+                "client-kill",
+                "owner-kill",
+                "handover",
+                "down",
+            ] {
+                for attachment in [
+                    None,
+                    Some(AttachMode::Borrow),
+                    Some(AttachMode::Exclusive {
+                        stop_on_release: true,
+                    }),
+                ] {
+                    let home = home();
+                    let cx = context();
+                    let root = StateRoot::effects(&cx, home.path()).unwrap();
+                    let mut fake = Fake::new(home.path());
+                    if prior != "fresh" {
+                        let mut previous = begin(&cx, &root, owner(), 1, &mut fake);
+                        apply(&mut previous, &fake, "previous");
+                        if prior == "interrupted" {
+                            drop(previous);
+                        } else {
+                            fake.fail_release = prior == "residue";
+                            previous.settle(&cleanup(&cx), &mut fake).unwrap();
+                            if prior == "residue" {
+                                assert!(
+                                    matches!(
+                                        Run::begin(
+                                            &cx,
+                                            &root,
+                                            &inv(owner()),
+                                            opts(2),
+                                            &cleanup(&cx),
+                                            &mut fake
+                                        ),
+                                        Err(RunError::PredecessorUnsettled { .. })
+                                    ),
+                                    "{front}/{prior}/{stop}"
+                                );
+                            }
+                            fake.fail_release = false;
+                        }
+                    }
+                    let environment = active_environment(&cx, &root, &mut fake);
+                    let mut run = begin(&cx, &root, owner(), 2, &mut fake);
+                    if let Some(mode) = attachment {
+                        Attachments::attach(&mut run, &environment, mode, Wait::FailFast).unwrap();
+                    }
+                    apply(&mut run, &fake, "current");
+                    match stop {
+                        "owner-kill" => drop(run),
+                        _ => {
+                            let cause = match stop {
+                                "INT" => StopCause::Signal(libc::SIGINT),
+                                "TERM" => StopCause::Signal(libc::SIGTERM),
+                                "HUP" => StopCause::Signal(libc::SIGHUP),
+                                "client-kill" => StopCause::OwnerLost,
+                                _ => StopCause::Requested,
+                            };
+                            let signal = match cause {
+                                StopCause::Signal(s) => Some(s),
+                                _ => None,
+                            };
+                            run.interrupt(
+                                &cleanup(&cx),
+                                WorkloadOutcome::Cancelled { cause, signal },
+                            )
+                            .unwrap();
+                            run.settle(&cleanup(&cx), &mut fake).unwrap();
+                        }
+                    }
+                    for _ in 0..2 {
+                        assert_eq!(
+                            settle_interrupted(
+                                &cx,
+                                &root,
+                                &owner(),
+                                id(2),
+                                next(),
+                                &cleanup(&cx),
+                                &mut fake
+                            )
+                            .unwrap()
+                            .cleanup(),
+                            CleanupOutcome::Complete,
+                            "{front}/{prior}/{stop}"
+                        );
+                    }
+                    assert_eq!(
+                        fake.calls()
+                            .iter()
+                            .filter(|s| s.as_str() == "release current")
+                            .count(),
+                        1
+                    );
+                    let released: i64 = Store::open(&cx, &root)
+                        .unwrap()
+                        .conn()
+                        .query_row(
+                            "SELECT count(*) FROM attachments WHERE run_id=?1 AND state='released'",
+                            [id(2).to_string()],
+                            |r| r.get(0),
+                        )
+                        .unwrap();
+                    assert_eq!(
+                        released,
+                        i64::from(attachment.is_some()),
+                        "{front}/{prior}/{stop}"
+                    );
+                }
+            }
+        }
     }
 }
