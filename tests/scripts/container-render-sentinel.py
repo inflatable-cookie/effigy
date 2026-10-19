@@ -93,7 +93,7 @@ esac
             git.chmod(0o700)
         before = snapshot(root)
         for args in [["container", "status", "--json"], ["container", "hosts", "--json"], ["container", "scope", "--json"],
-                     ["probe", "--plan", "--json"], ["container", "render", "one", "--json"],
+                     ["--plan", "--json", "probe"], ["container", "render", "one", "--json"],
                      ["container", "one", "render"]]:
             result = subprocess.run([str(binary), *args], cwd=checkout, env=env,
                                     capture_output=True, text=True, timeout=30)
