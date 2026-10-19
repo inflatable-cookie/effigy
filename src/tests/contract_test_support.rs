@@ -231,3 +231,38 @@ impl ExecutableOverrideGuard {
         }
     }
 }
+
+/// Force a PATH writer to overlap the real fixture's entry. Queue membership
+/// proves exclusion without relying on a sleep or a lucky thread schedule.
+pub(super) fn assert_waits_for_path_mutator(reader: fn(Box<dyn FnOnce() + Send>)) {
+    let temp = tempfile::tempdir().expect("private empty PATH");
+    let (serial_tx, serial_rx) = std::sync::mpsc::channel();
+    let (mutating_tx, mutating_rx) = std::sync::mpsc::channel();
+    let reader = thread::spawn(move || {
+        reader(Box::new(move || {
+            serial_tx
+                .send(())
+                .expect("reader acquired signal-proof lock");
+            mutating_rx
+                .recv_timeout(Duration::from_secs(30))
+                .expect("writer installed hostile PATH");
+        }));
+    });
+    // Let the fixture acquire the group lock first: holding env while another
+    // signal proof owns group would invert the established lock order.
+    serial_rx
+        .recv_timeout(Duration::from_secs(30))
+        .expect("reader reached environment boundary");
+    let env = EnvGuard::set_many(&[("PATH", Some(temp.path().display().to_string()))]);
+    mutating_tx.send(()).expect("release reader to acquire env");
+    let queued = test_lock_waiter_position(reader.thread().id(), Duration::from_secs(30));
+    // Release before asserting/joining so the unlocked negative control also
+    // settles, and an assertion cannot strand a reader behind our own guard.
+    drop(env);
+    let result = reader.join();
+    assert!(
+        queued.is_some(),
+        "fixture must wait for the active PATH mutator"
+    );
+    result.expect("fixture succeeds after PATH restoration");
+}
