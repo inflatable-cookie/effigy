@@ -179,9 +179,9 @@ fn cli_tasks_help_is_command_specific() {
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
     assert!(stdout.contains("tasks Help"));
-    assert!(
-        stdout.contains("effigy tasks [--repo <PATH>] [--task <TASK_NAME>] [--resolve <SELECTOR>]")
-    );
+    assert!(stdout.contains(
+        "effigy tasks [--all] [--repo <PATH>] [--task <TASK_NAME>] [--resolve <SELECTOR>]"
+    ));
     assert!(!stdout.contains("doctor Help"));
 }
 
@@ -884,4 +884,79 @@ fn cli_help_for_builtin_owned_help_refuses_to_run_a_shadowing_selector() {
             "got: {stderr}"
         );
     }
+}
+
+#[test]
+fn cli_general_and_work_help_show_grouped_public_tasks_only() {
+    let fixture = tempfile::tempdir().expect("help visibility fixture");
+    let root = fixture.path();
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[tasks.launch]
+run = "printf public-marker"
+group = "Development"
+[tasks.hidden]
+run = "printf secret-marker"
+visibility = "internal"
+"#,
+    )
+    .expect("write manifest");
+    for args in [
+        &["--help"][..],
+        &["help"],
+        &["help", "work"],
+        &["--json", "help"],
+    ] {
+        let output = run_help_cli(root, args);
+        assert!(output.status.success(), "help failed: {output:?}");
+        let stdout = String::from_utf8(output.stdout).expect("utf8");
+        let text = if args.contains(&"--json") {
+            serde_json::from_str::<Value>(&stdout).expect("json")["result"]["text"]
+                .as_str()
+                .expect("help text")
+                .to_owned()
+        } else {
+            stdout
+        };
+        assert!(text.contains("Repository Tasks"), "{text}");
+        assert!(text.contains("Development"), "{text}");
+        assert!(text.contains("launch"), "{text}");
+        assert!(!text.contains("secret-marker"), "{text}");
+    }
+}
+
+#[test]
+fn cli_help_remains_available_when_repository_task_discovery_fails() {
+    let fixture = tempfile::tempdir().expect("invalid help fixture");
+    fs::write(fixture.path().join("effigy.toml"), "[tasks.invalid\n")
+        .expect("write invalid manifest");
+    let output = run_help_cli(fixture.path(), &["--help"]);
+    assert!(output.status.success());
+    let text = String::from_utf8(output.stdout).expect("utf8");
+    assert!(text.contains("Work Commands"));
+    assert!(text.contains("repository tasks unavailable"), "{text}");
+}
+
+#[test]
+fn cli_public_task_help_json_disables_forced_color() {
+    let fixture = tempfile::tempdir().expect("JSON color fixture");
+    fs::write(
+        fixture.path().join("effigy.toml"),
+        "[tasks.launch]\nrun = 'printf launch'\ngroup = 'Development'\n",
+    )
+    .expect("manifest");
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .current_dir(fixture.path())
+        .args(["--json", "help"])
+        .env("EFFIGY_COLOR", "always")
+        .env_remove("NO_COLOR")
+        .output()
+        .expect("run help");
+    assert!(output.status.success());
+    let payload: Value = serde_json::from_slice(&output.stdout).expect("JSON help");
+    let text = payload["result"]["text"].as_str().expect("text");
+    assert!(text.contains("Development"), "{text}");
+    assert!(text.contains("launch"), "{text}");
+    assert!(!text.contains('\u{1b}'), "{text}");
 }

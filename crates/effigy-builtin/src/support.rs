@@ -99,9 +99,16 @@ pub(crate) fn render_builtin_help_text(
 pub(crate) fn render_builtin_general_help(
     deferred_builtins: &BTreeSet<String>,
     output_json: bool,
+    catalogs: &[effigy_manifest::LoadedCatalog],
+    root: &std::path::Path,
 ) -> Result<String, BuiltinError> {
     let mut renderer = standard_renderer(output_json);
     render_help_with_deferred_builtins(&mut renderer, HelpTopic::General, deferred_builtins)?;
+    let tasks = effigy_tasks::render_public_task_help(catalogs, root, output_json)
+        .map_err(|error| BuiltinError::task_invocation(error.to_string()))?;
+    if !tasks.is_empty() {
+        effigy_ui::Renderer::text(&mut renderer, &tasks)?;
+    }
     let rendered = render_utf8(renderer.into_inner())?;
     render_builtin_help_text("general", rendered, output_json)
 }

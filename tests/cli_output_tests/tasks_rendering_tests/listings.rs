@@ -73,3 +73,37 @@ fn cli_tasks_hides_explicitly_deferred_builtins() {
     assert!(!stdout.contains("- release :"), "got: {stdout}");
     assert!(stdout.contains("- doctor :"), "got: {stdout}");
 }
+
+#[test]
+fn cli_tasks_coalesces_default_and_declared_general_groups() {
+    let fixture = tempfile::tempdir().expect("group fixture");
+    fs::write(
+        fixture.path().join("effigy.toml"),
+        r#"
+[tasks.one]
+run = "printf one"
+[tasks.two]
+run = "printf two"
+group = "General"
+"#,
+    )
+    .expect("write manifest");
+    let text = run_effigy(&["tasks"], Some(fixture.path()), false);
+    assert_eq!(text.matches("\nGeneral\n").count(), 1, "{text}");
+    assert!(text.contains("- one :"), "{text}");
+    assert!(text.contains("- two :"), "{text}");
+}
+
+#[test]
+fn cli_tasks_explains_internal_only_inventory() {
+    let fixture = tempfile::tempdir().expect("internal inventory fixture");
+    fs::write(
+        fixture.path().join("effigy.toml"),
+        "[tasks.hidden]\nrun = 'printf hidden'\nvisibility = 'internal'\n",
+    )
+    .expect("write manifest");
+    let text = run_effigy(&["tasks"], Some(fixture.path()), false);
+    assert!(text.contains("no public tasks"), "{text}");
+    assert!(text.contains("effigy tasks --all"), "{text}");
+    assert!(!text.contains("- hidden :"), "{text}");
+}

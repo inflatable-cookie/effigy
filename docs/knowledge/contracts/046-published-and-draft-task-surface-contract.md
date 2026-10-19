@@ -68,7 +68,9 @@ are public and grouped. Consumers need no manifest migration to keep running.
   `--resolve` and direct invocation resolve internal tasks normally.
 - Shell completion offers public tasks only. Its cache observes composed task
   fragments and bundle source files so metadata edits invalidate candidates.
-- Help directs users to the grouped public inventory and the full agent view.
+- General help (`--help`, `help`) and `help work` include the same grouped public
+  task inventory. Other help topics remain scoped to their command. Invalid
+  manifests leave built-in help available with a task discovery warning.
 
 `tasks status --all` is a separate status query and retains its existing scope;
 the listing `--all` flag never changes execution or status identity.

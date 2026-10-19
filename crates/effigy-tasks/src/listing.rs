@@ -250,6 +250,31 @@ pub fn render_task_listing_text(result: &ListTasksResult) -> Result<String, Effi
     render_utf8(renderer.into_inner()).map_err(EffigyTasksError::from)
 }
 
+/// Render repository task discovery for general and work help using the inventory policy.
+pub fn render_public_task_help(
+    catalogs: &[LoadedCatalog],
+    root: &Path,
+    output_json: bool,
+) -> Result<String, EffigyTasksError> {
+    if catalogs.is_empty() {
+        return Ok(String::new());
+    }
+    let visibility = crate::TaskVisibilityIndex::new(catalogs);
+    let catalog_task_rows =
+        project_all_catalog_task_rows(&ordered_catalogs(catalogs), root, &visibility);
+    let color_enabled = effigy_ui::color_enabled_for_text_output(output_json);
+    let mut renderer = plain_renderer(color_enabled);
+    renderer.section("Repository Tasks")?;
+    render_catalog_task_rows(
+        &mut renderer,
+        color_enabled,
+        &Theme::default(),
+        &catalog_task_rows,
+        false,
+    )?;
+    render_utf8(renderer.into_inner()).map_err(EffigyTasksError::from)
+}
+
 pub fn render_task_listing_json(
     result: &ListTasksResult,
     pretty_json: bool,
@@ -348,7 +373,22 @@ fn prepare_catalog_listing(
             manifest: relative_display_path(resolved_root, &catalog.manifest_path),
         })
         .collect();
-    let catalog_task_rows = ordered_catalogs
+    let catalog_task_rows =
+        project_all_catalog_task_rows(ordered_catalogs, resolved_root, visibility);
+    let builtin_rows = builtin_task_rows_filtered(deferred_builtins);
+    ListingSelectionResult::Catalog {
+        catalog_alias_rows,
+        catalog_task_rows,
+        builtin_rows,
+    }
+}
+
+fn project_all_catalog_task_rows(
+    ordered_catalogs: &[&LoadedCatalog],
+    resolved_root: &Path,
+    visibility: &crate::TaskVisibilityIndex,
+) -> Vec<CatalogTaskProjection> {
+    ordered_catalogs
         .iter()
         .flat_map(|catalog| {
             let manifest = relative_display_path(resolved_root, &catalog.manifest_path);
@@ -377,13 +417,7 @@ fn prepare_catalog_listing(
                     .collect::<Vec<_>>()
             }
         })
-        .collect();
-    let builtin_rows = builtin_task_rows_filtered(deferred_builtins);
-    ListingSelectionResult::Catalog {
-        catalog_alias_rows,
-        catalog_task_rows,
-        builtin_rows,
-    }
+        .collect()
 }
 
 fn prepare_filtered_listing(
@@ -663,15 +697,26 @@ fn render_catalog_task_rows(
     rows: &[CatalogTaskProjection],
     all: bool,
 ) -> Result<(), EffigyTasksError> {
-    let mut groups = std::collections::BTreeMap::<Option<&str>, Vec<&CatalogTaskProjection>>::new();
+    let mut groups = std::collections::BTreeMap::<&str, Vec<&CatalogTaskProjection>>::new();
     for row in rows {
-        if !all && row.visibility == Some(ManifestTaskVisibility::Internal) {
+        if row.task_row.is_none()
+            || (!all && row.visibility == Some(ManifestTaskVisibility::Internal))
+        {
             continue;
         }
-        groups.entry(row.group.as_deref()).or_default().push(row);
+        groups
+            .entry(row.group.as_deref().unwrap_or("General"))
+            .or_default()
+            .push(row);
+    }
+    if groups.is_empty() {
+        renderer.notice(
+            NoticeLevel::Info,
+            "no public tasks; use `effigy tasks --all` to include internal tasks",
+        )?;
     }
     for (group, rows) in groups {
-        renderer.section(group.unwrap_or("General"))?;
+        renderer.section(group)?;
         for row in rows {
             if let Some(signature) = row.task_row.as_ref() {
                 render_task_text_row(
