@@ -534,9 +534,8 @@ with an environment attachment, environment up, down and handover with a
 concurrent attach, a closed predecessor with residue followed by `begin`, owner
 loss followed by recovery stop over reused and foreign groups, Observe with a
 guarded subprocess and an HTTP probe, endpoint reserve and commit, and a vault
-write. Real backend handover, legacy import, gateway endpoint commit, vault
-rotation and fault points inside the out-of-process supervisor are ignored
-placeholders that name their engine lanes.
+write. Real backend handover, legacy import, gateway endpoint commit and fault points inside the out-of-process supervisor
+are ignored placeholders that name their engine lanes.
 
 `matrix` runs the §12.3 cross product (3 front ends × 4 prior states × 8 stops
 × 3 attachments) as model tests over `Run` and `Attachments` with the strict
@@ -547,3 +546,9 @@ text own the run, detached survives client death.
 `test:kernel:faults` runs the oracle controls and every scenario;
 `test:kernel:matrix` runs the matrix. Runtime is recorded in the selectors'
 comment in `config/tasks.toml`.
+
+Vault engine persistence is owned by `effigy-secrets::storage`; see
+[the secrets contract](../contracts/032-secret-and-local-config-management-contract.md#vault-persistence).
+`test:secrets:vault` supplies the engine rotation proof through the kernel's
+feature-gated, thread-local `fault_injection::with_hook` API. The hook has no
+environment activation and is absent without `fault-injection`.

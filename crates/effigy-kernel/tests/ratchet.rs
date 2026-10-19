@@ -191,3 +191,32 @@ fn ratchet_child_file_inherits_parent_state_path_without_gating_ordinary_files()
     assert!(!found.production.contains_key("src/ordinary/store.rs"));
     assert!(counts("/// pkill and .effigy are documentation, not code.\nfn f(){std::fs::write(\"user.txt\",\"data\");}").is_empty());
 }
+
+#[test]
+fn ratchet_vault_parameter_paths_cannot_hide_raw_writes() {
+    let root = tempfile::tempdir().expect("fresh checkout");
+    for relative in [
+        "src/runner/secret_vault.rs",
+        "crates/effigy-rhai/src/rhai_secrets.rs",
+        "crates/effigy-secrets/src/storage.rs",
+    ] {
+        let path = root.path().join(relative);
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("directory");
+        std::fs::write(
+            path,
+            "fn write(vault_path: &std::path::Path) { std::fs::write(vault_path, b\"torn\"); }",
+        )
+        .expect("source");
+    }
+    let found = inventory(root.path()).expect("inventory");
+    assert_eq!(found.production.len(), 3);
+    for counts in found.production.values() {
+        assert_eq!(counts["std::fs::write"], 1);
+    }
+    assert!(found
+        .compare(&Inventory {
+            schema: 1,
+            ..Default::default()
+        })
+        .is_err());
+}

@@ -601,9 +601,10 @@ pub(in crate::runner::execute) fn resolve_task_secret_env(
                 else {
                     return Ok(Vec::new());
                 };
+                let write = crate::runner::secret_vault::begin_vault_write(&vault_path)?;
                 let payload = read_task_secret_vault_payload(&vault_path, passphrase.expose())?;
                 crate::runner::secret_vault::write_effigy_vault_payload(
-                    &vault_path,
+                    &write,
                     &payload,
                     passphrase.expose(),
                 )?;

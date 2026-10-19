@@ -6,7 +6,11 @@ license.workspace = true
 publish = false
 description = "Secret vault domain models for Effigy"
 
+[features]
+fault-injection = ["effigy-kernel/fault-injection"]
+
 [dependencies]
+effigy-kernel = { path = "../effigy-kernel" }
 argon2 = "0.6"
 chacha20poly1305 = "0.11"
 getrandom = "0.4"

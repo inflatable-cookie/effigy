@@ -89,7 +89,9 @@ pub fn inventory(root: &Path) -> Result<Inventory, String> {
         // Rust's ordinary external modules inherit constants and state paths
         // from their declaring module, even when the write lives in a child
         // file (for example cache.rs -> cache/store.rs).
-        let mut inherited_state = false;
+        // Vault paths are caller supplied, so string-based state inference
+        // cannot see their writers. Keep these adopted boundaries explicit.
+        let mut inherited_state = vault_storage_path(&relative);
         let mut directory = file.parent();
         while let Some(dir) = directory {
             let mut candidates = vec![dir.with_extension("rs"), dir.join("mod.rs")];
@@ -104,11 +106,20 @@ pub fn inventory(root: &Path) -> Result<Inventory, String> {
             }
             directory = dir.parent();
         }
-        let found = scan_in_state(
+        let mut found = scan_in_state(
             source,
             relative.split('/').any(|part| part == "tests") || relative.ends_with("/tests.rs"),
             inherited_state,
         )?;
+        if vault_storage_path(&relative) && !relative.ends_with("/tests.rs") {
+            // Keep explicit zero ceilings for the adopted writers. Before the
+            // cutover these boundaries contained four raw write constructs.
+            found.0.entry("std::fs::write".into()).or_insert(0);
+            found
+                .0
+                .entry("std.fs.OpenOptions.write".into())
+                .or_insert(0);
+        }
         if !found.0.is_empty() {
             result.production.insert(relative.clone(), found.0);
         }
@@ -118,6 +129,13 @@ pub fn inventory(root: &Path) -> Result<Inventory, String> {
     }
     Ok(result)
 }
+fn vault_storage_path(relative: &str) -> bool {
+    matches!(
+        relative,
+        "src/runner/secret_vault.rs" | "crates/effigy-rhai/src/rhai_secrets.rs"
+    ) || relative.starts_with("crates/effigy-secrets/src/storage")
+}
+
 fn collect(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
     if !dir.exists() {
         return Ok(());
