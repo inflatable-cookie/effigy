@@ -345,35 +345,7 @@ Fix:
 - add the value to the selected dotenv file, or
 - correct `env_file` on the suite table
 
-## 5) Watch Mode and Lock Errors
-
-### Symptom: ``--owner <effigy|external> is required``
-
-Fix:
-
-```sh
-effigy watch --owner effigy --once test
-```
-
-### Symptom: ``--json requires a bounded watch run``
-
-Fix:
-
-```sh
-effigy watch --owner effigy --once test --json
-# or
-effigy watch --owner effigy --max-runs 2 --json test
-```
-
-### Symptom: lock conflict for `task:watch:<target>`
-
-Fix:
-
-```sh
-effigy tasks unlock task:watch:<target>
-# if needed
-effigy tasks unlock --all --yes
-```
+## 5) Lock Errors
 
 ### Symptom: `lock conflict for <scope> ...`
 

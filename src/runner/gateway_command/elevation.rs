@@ -1,6 +1,5 @@
-use effigy_cli::{GatewayLegacyStopPhase, GatewaySubcommand};
+use effigy_cli::GatewaySubcommand;
 use effigy_gateway::identity::{self, GatewayIdentityProbe};
-use effigy_gateway::legacy::LegacyCandidate;
 use effigy_gateway::loopback::LoopbackRegistry;
 #[cfg(target_os = "macos")]
 use effigy_gateway::loopback::{DEFAULT_LOOPBACK_END, DEFAULT_LOOPBACK_START};
@@ -412,68 +411,6 @@ pub(super) fn read_gateway_identity_elevated(
     parse_gateway_identity_reader_response(&output, digest, target_digest)
 }
 
-/// Bounded read-only elevated inspection of a captured legacy candidate.
-pub(super) fn read_legacy_candidate_elevated(
-    target_digest: &str,
-    record_digest: &str,
-    owner_uid: u32,
-    directory_owner_uid: u32,
-    interactive: bool,
-) -> Option<LegacyCandidate> {
-    if !interactive
-        || ![target_digest, record_digest]
-            .into_iter()
-            .all(effigy_gateway::legacy::is_hex64)
-    {
-        return None;
-    }
-    let executable = std::env::current_exe().ok()?;
-    let mut command = build_legacy_candidate_command(
-        &executable,
-        target_digest,
-        record_digest,
-        owner_uid,
-        directory_owner_uid,
-    )?;
-    let output = bounded_reader_output_with_timeout(&mut command, Duration::from_secs(15), 8192)?;
-    super::recover::parse_legacy_candidate_response(&output, target_digest, record_digest)
-}
-
-/// Bounded generation-bound elevated stop of an adopted legacy candidate.
-pub(super) fn stop_legacy_generation_elevated(
-    target_digest: &str,
-    record_digest: &str,
-    owner_uid: u32,
-    candidate_digest: &str,
-    phase: GatewayLegacyStopPhase,
-    interactive: bool,
-) -> Option<super::recover::LegacyStopResult> {
-    if !interactive
-        || ![target_digest, record_digest, candidate_digest]
-            .into_iter()
-            .all(effigy_gateway::legacy::is_hex64)
-    {
-        return None;
-    }
-    let executable = std::env::current_exe().ok()?;
-    let mut command = build_legacy_stop_command(
-        &executable,
-        target_digest,
-        record_digest,
-        owner_uid,
-        candidate_digest,
-        phase,
-    )?;
-    let output = bounded_reader_output_with_timeout(&mut command, Duration::from_secs(15), 8192)?;
-    super::recover::parse_legacy_stop_response(
-        &output,
-        target_digest,
-        record_digest,
-        candidate_digest,
-        phase,
-    )
-}
-
 fn identity_reader_invocation_allowed(
     interactive: bool,
     digest: &str,
@@ -593,141 +530,6 @@ fn bounded_reader_output_with_timeout(
             .read_to_end(&mut output)
             .ok()?;
         (output.len() <= max_bytes).then_some(output)
-    }
-}
-
-fn build_legacy_candidate_command(
-    executable: &std::path::Path,
-    target_digest: &str,
-    record_digest: &str,
-    owner_uid: u32,
-    directory_owner_uid: u32,
-) -> Option<ProcessCommand> {
-    #[cfg(target_os = "macos")]
-    {
-        let home = std::env::var_os("HOME")?;
-        let home = shell_quote(home.to_str()?);
-        let body = format!(
-            "HOME={home} EFFIGY_GATEWAY_ESCALATED=1 EFFIGY_GATEWAY_OPERATOR_UID={owner_uid} EFFIGY_INTERNAL_SUPPRESS_HEADER=1 {} __gateway-legacy-candidate --target-digest {target_digest} --record-digest {record_digest} --owner-uid {owner_uid} --directory-owner-uid {directory_owner_uid}",
-            shell_quote(executable.to_str()?)
-        );
-        let script = format!(
-            "do shell script \"{}\" with administrator privileges",
-            apple_script_escape(&body)
-        );
-        let mut command = ProcessCommand::new("/usr/bin/osascript");
-        command.arg("-e").arg(script);
-        Some(command)
-    }
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        let mut command = ProcessCommand::new("/usr/bin/sudo");
-        command.args([
-            "--",
-            "env",
-            "EFFIGY_GATEWAY_ESCALATED=1",
-            &format!("EFFIGY_GATEWAY_OPERATOR_UID={owner_uid}"),
-            "EFFIGY_INTERNAL_SUPPRESS_HEADER=1",
-        ]);
-        if let Some(home) = std::env::var_os("HOME") {
-            let mut value = std::ffi::OsString::from("HOME=");
-            value.push(home);
-            command.arg(value);
-        }
-        command.arg(executable).args([
-            "__gateway-legacy-candidate",
-            "--target-digest",
-            target_digest,
-            "--record-digest",
-            record_digest,
-            "--owner-uid",
-        ]);
-        command.arg(owner_uid.to_string());
-        command.arg("--directory-owner-uid");
-        command.arg(directory_owner_uid.to_string());
-        Some(command)
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = (
-            executable,
-            target_digest,
-            record_digest,
-            owner_uid,
-            directory_owner_uid,
-        );
-        None
-    }
-}
-
-fn build_legacy_stop_command(
-    executable: &std::path::Path,
-    target_digest: &str,
-    record_digest: &str,
-    owner_uid: u32,
-    candidate_digest: &str,
-    phase: GatewayLegacyStopPhase,
-) -> Option<ProcessCommand> {
-    #[cfg(target_os = "macos")]
-    {
-        let home = std::env::var_os("HOME")?;
-        let home = shell_quote(home.to_str()?);
-        let body = format!(
-            "HOME={home} EFFIGY_GATEWAY_ESCALATED=1 EFFIGY_GATEWAY_OPERATOR_UID={owner_uid} EFFIGY_INTERNAL_SUPPRESS_HEADER=1 {} __gateway-legacy-stop --target-digest {target_digest} --record-digest {record_digest} --owner-uid {owner_uid} --candidate-digest {candidate_digest} --phase {}",
-            shell_quote(executable.to_str()?),
-            phase.as_str()
-        );
-        let script = format!(
-            "do shell script \"{}\" with administrator privileges",
-            apple_script_escape(&body)
-        );
-        let mut command = ProcessCommand::new("/usr/bin/osascript");
-        command.arg("-e").arg(script);
-        Some(command)
-    }
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        let mut command = ProcessCommand::new("/usr/bin/sudo");
-        command.args([
-            "--",
-            "env",
-            "EFFIGY_GATEWAY_ESCALATED=1",
-            &format!("EFFIGY_GATEWAY_OPERATOR_UID={owner_uid}"),
-            "EFFIGY_INTERNAL_SUPPRESS_HEADER=1",
-        ]);
-        if let Some(home) = std::env::var_os("HOME") {
-            let mut value = std::ffi::OsString::from("HOME=");
-            value.push(home);
-            command.arg(value);
-        }
-        command.arg(executable).args([
-            "__gateway-legacy-stop",
-            "--target-digest",
-            target_digest,
-            "--record-digest",
-            record_digest,
-            "--owner-uid",
-        ]);
-        command.arg(owner_uid.to_string());
-        command.args([
-            "--candidate-digest",
-            candidate_digest,
-            "--phase",
-            phase.as_str(),
-        ]);
-        Some(command)
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = (
-            executable,
-            target_digest,
-            record_digest,
-            owner_uid,
-            candidate_digest,
-            phase,
-        );
-        None
     }
 }
 
@@ -1106,7 +908,6 @@ fn gateway_subcommand_name(subcommand: GatewaySubcommand) -> &'static str {
         GatewaySubcommand::Down => "down",
         GatewaySubcommand::Status => "status",
         GatewaySubcommand::Repair { .. } => "repair",
-        GatewaySubcommand::Recover { .. } => "recover",
         GatewaySubcommand::SetupTls => "setup-tls",
         GatewaySubcommand::SetupListenerHandoff => "setup-listener-handoff",
         GatewaySubcommand::ListenerHandoffStatus => "listener-handoff-status",
@@ -1394,47 +1195,6 @@ mod gateway_identity_reader_tests {
         assert!(args.iter().any(|arg| *arg == OsStr::new(&target_digest)));
         assert!(!args.iter().any(|arg| *arg == OsStr::new("--pid")));
     }
-
-    #[cfg(all(unix, not(target_os = "macos")))]
-    #[test]
-    fn gateway_legacy_recovery_commands_have_no_arbitrary_pid_or_signal() {
-        use std::ffi::OsStr;
-
-        let digest = "a".repeat(64);
-        let candidate = build_legacy_candidate_command(
-            std::path::Path::new("/usr/bin/effigy"),
-            &digest,
-            &digest,
-            501,
-            501,
-        )
-        .expect("candidate command");
-        let stop = build_legacy_stop_command(
-            std::path::Path::new("/usr/bin/effigy"),
-            &digest,
-            &digest,
-            501,
-            &digest,
-            GatewayLegacyStopPhase::Term,
-        )
-        .expect("stop command");
-        for command in [&candidate, &stop] {
-            let args = command.get_args().collect::<Vec<_>>();
-            assert_eq!(command.get_program(), OsStr::new("/usr/bin/sudo"));
-            assert!(!args.iter().any(|arg| *arg == OsStr::new("--pid")));
-            assert!(!args.iter().any(|arg| *arg == OsStr::new("--signal")));
-            assert!(!args.iter().any(|arg| *arg == OsStr::new("effigy.previous")));
-        }
-        let candidate_args = candidate.get_args().collect::<Vec<_>>();
-        assert!(candidate_args
-            .iter()
-            .any(|arg| *arg == OsStr::new("__gateway-legacy-candidate")));
-        let stop_args = stop.get_args().collect::<Vec<_>>();
-        assert!(stop_args
-            .iter()
-            .any(|arg| *arg == OsStr::new("__gateway-legacy-stop")));
-        assert!(stop_args.iter().any(|arg| *arg == OsStr::new("term")));
-    }
 }
 
 #[cfg(all(test, target_os = "macos"))]
@@ -1472,53 +1232,5 @@ lo0: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST> mtu 16384
             output,
             Ipv4Addr::new(127, 1, 0, 1)
         ));
-    }
-
-    #[test]
-    fn gateway_legacy_recovery_commands_have_no_arbitrary_pid_or_signal() {
-        use std::ffi::OsStr;
-
-        let digest = "a".repeat(64);
-        let candidate = build_legacy_candidate_command(
-            std::path::Path::new("/usr/bin/effigy"),
-            &digest,
-            &digest,
-            501,
-            501,
-        )
-        .expect("candidate command");
-        let stop = build_legacy_stop_command(
-            std::path::Path::new("/usr/bin/effigy"),
-            &digest,
-            &digest,
-            501,
-            &digest,
-            GatewayLegacyStopPhase::Term,
-        )
-        .expect("stop command");
-        for command in [&candidate, &stop] {
-            assert_eq!(command.get_program(), OsStr::new("/usr/bin/osascript"));
-            let joined = command
-                .get_args()
-                .map(|arg| arg.to_string_lossy().into_owned())
-                .collect::<Vec<_>>()
-                .join(" ");
-            assert!(!joined.contains("--pid"));
-            assert!(!joined.contains("--signal"));
-            assert!(!joined.contains("effigy.previous"));
-        }
-        let candidate_args = candidate
-            .get_args()
-            .map(|arg| arg.to_string_lossy().into_owned())
-            .collect::<Vec<_>>()
-            .join(" ");
-        assert!(candidate_args.contains("__gateway-legacy-candidate"));
-        let stop_args = stop
-            .get_args()
-            .map(|arg| arg.to_string_lossy().into_owned())
-            .collect::<Vec<_>>()
-            .join(" ");
-        assert!(stop_args.contains("__gateway-legacy-stop"));
-        assert!(stop_args.contains("term"));
     }
 }

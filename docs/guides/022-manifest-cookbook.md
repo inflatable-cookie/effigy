@@ -703,8 +703,7 @@ draft file implicitly, and an unreferenced file under `config/drafts/` is
 ignored.
 
 Promotion is deliberate: move the definition into `[tasks]` and delete the
-draft entry. There is no boolean that publishes a draft, and `tasks migrate`
-never reclassifies a package script as a draft.
+draft entry. There is no boolean that publishes a draft.
 
 ## Testing and Legacy Interop
 
@@ -1348,7 +1347,7 @@ api = "services/api"
 - [`048-built-in-test-suite-lifecycle-and-env.md`](048-built-in-test-suite-lifecycle-and-env.md)
 - [`015-deferral-fallback-migration.md`](015-deferral-fallback-migration.md)
 - [`016-task-routing-precedence.md`](016-task-routing-precedence.md)
-- [`019-watch-init-migrate-foundation.md`](019-watch-init-migrate-foundation.md)
+- [`019-init-foundation.md`](019-init-foundation.md)
 - [`020-dag-lock-policy-baseline.md`](020-dag-lock-policy-baseline.md)
 - [`021-quick-start-and-command-cookbook.md`](021-quick-start-and-command-cookbook.md)
 - [`025-command-reference-matrix.md`](025-command-reference-matrix.md)

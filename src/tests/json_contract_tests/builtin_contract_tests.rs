@@ -251,7 +251,7 @@ fn builtin_init_checklist_json_contract_has_versioned_shape() {
     assert_eq!(parsed["ok"], true);
     assert_eq!(parsed["mode"], "checklist");
     assert!(parsed["jobs"].is_array());
-    assert!(parsed["jobs"]
+    assert!(!parsed["jobs"]
         .as_array()
         .expect("jobs array")
         .iter()
@@ -281,34 +281,6 @@ fn builtin_init_actions_json_contract_has_versioned_shape() {
 }
 
 #[test]
-fn builtin_migrate_json_contract_has_versioned_shape() {
-    let root = temp_workspace("migrate-json-contract");
-    fs::write(
-        root.join("package.json"),
-        r#"{
-  "scripts": {
-    "build": "npm run compile",
-    "test": "vitest run"
-  }
-}
-"#,
-    )
-    .expect("write package scripts");
-    write_manifest(
-        &root.join("effigy.toml"),
-        "[tasks]\nbuild = \"printf old\"\n",
-    );
-
-    let parsed = run_invocation_json(root, "migrate", &["--json"]);
-    assert_schema_v1(&parsed, "effigy.migrate.v1");
-    assert_eq!(parsed["ok"], true);
-    assert_eq!(parsed["apply"], false);
-    assert_eq!(parsed["written"], false);
-    assert!(parsed["added"].is_array());
-    assert!(parsed["conflicts"].is_array());
-}
-
-#[test]
 fn builtin_unlock_json_contract_has_versioned_shape() {
     let root = temp_workspace("unlock-json-contract");
     fs::create_dir_all(root.join(".effigy/locks")).expect("mkdir locks");
@@ -325,35 +297,4 @@ fn builtin_unlock_json_contract_has_versioned_shape() {
     assert_eq!(parsed["all"], false);
     assert!(parsed["removed"].is_array());
     assert!(parsed["missing"].is_array());
-}
-
-#[test]
-fn builtin_watch_bounded_json_contract_has_versioned_shape() {
-    builtin_watch_bounded_json_contract_using(|| {});
-}
-
-fn builtin_watch_bounded_json_contract_using(after_serial: impl FnOnce()) {
-    let _locks =
-        crate::runner::owned_children::hold_signal_proof_test_locks_after_serial(after_serial);
-    let root = temp_workspace("watch-json-contract");
-    write_manifest(
-        &root.join("effigy.toml"),
-        "[tasks.build]\nrun = \"printf ok\"\n",
-    );
-
-    let parsed = run_invocation_json(
-        root,
-        "watch",
-        &["--owner", "effigy", "--once", "--json", "build"],
-    );
-    assert_schema_v1(&parsed, "effigy.watch.v1");
-    assert_eq!(parsed["ok"], true);
-    assert_eq!(parsed["runs"], 1);
-}
-
-#[test]
-fn shared_process_watch_contract_waits_for_path_mutator() {
-    crate::contract_test_support::assert_waits_for_path_mutator(|after_serial| {
-        builtin_watch_bounded_json_contract_using(after_serial)
-    });
 }

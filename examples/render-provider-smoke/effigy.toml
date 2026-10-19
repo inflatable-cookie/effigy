@@ -8,7 +8,6 @@ front = "acme-front"
 
 [manifest]
 minimum_effigy_version = "0.10.0"
-root = true
 
 [bundle]
 base = { type = "path", dir = "../../crates/effigy-manifest/tests/fixtures/workspace-app-bundle" }

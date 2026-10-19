@@ -1,5 +1,5 @@
 //! Integration proof that an installed catalog pack behaves as a real catalog
-//! layer: below both overrides, above the compiled baseline, and usable by
+//! layer: below the project override, above the compiled baseline, and usable by
 //! deterministic compose assembly without changing assembly rules.
 
 use std::collections::HashMap;
@@ -35,7 +35,7 @@ fn pack_layer(root: &std::path::Path, image: &str) -> InstalledPackLayer {
 fn installed_pack_outranks_the_compiled_baseline() {
     let dir = tempfile::tempdir().unwrap();
     let layer = pack_layer(&dir.path().join("pack"), "pack-redis");
-    let resolver = CatalogResolver::new(None, None).with_installed_pack(Some(layer));
+    let resolver = CatalogResolver::new(None).with_installed_pack(Some(layer));
 
     let fragment = resolver.resolve("redis").unwrap();
     assert!(
@@ -51,49 +51,41 @@ fn installed_pack_outranks_the_compiled_baseline() {
 }
 
 #[test]
-fn project_and_user_overrides_still_outrank_an_installed_pack() {
+fn project_override_still_outranks_an_installed_pack() {
     let dir = tempfile::tempdir().unwrap();
     let layer = pack_layer(&dir.path().join("pack"), "pack-redis");
 
-    for (label, project, user) in [
-        ("user-redis", None, Some(dir.path().join("global"))),
-        (
-            "local-redis",
-            Some(dir.path().join("local")),
-            Some(dir.path().join("global")),
-        ),
-    ] {
-        let override_root = project.clone().unwrap_or_else(|| user.clone().unwrap());
-        let redis = override_root.join("redis");
-        std::fs::create_dir_all(&redis).unwrap();
-        std::fs::write(
-            redis.join("service.toml"),
-            "[service]\nname = \"redis\"\ndescription = \"override redis\"\n\n\
-             [params.version]\ntype = \"string\"\ndefault = \"7\"\n",
-        )
-        .unwrap();
-        std::fs::write(
-            redis.join("compose.fragment.yml"),
-            format!("services:\n  {{{{ service_name }}}}:\n    image: {label}\n"),
-        )
-        .unwrap();
+    let label = "local-redis";
+    let local = dir.path().join("local");
+    let override_root = local.clone();
+    let redis = override_root.join("redis");
+    std::fs::create_dir_all(&redis).unwrap();
+    std::fs::write(
+        redis.join("service.toml"),
+        "[service]\nname = \"redis\"\ndescription = \"override redis\"\n\n\
+         [params.version]\ntype = \"string\"\ndefault = \"7\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        redis.join("compose.fragment.yml"),
+        format!("services:\n  {{{{ service_name }}}}:\n    image: {label}\n"),
+    )
+    .unwrap();
 
-        let resolver = CatalogResolver::new(project.clone(), user.clone())
-            .with_installed_pack(Some(layer.clone()));
-        let fragment = resolver.resolve("redis").unwrap();
-        assert!(
-            fragment.compose_template.contains(label),
-            "expected `{label}` to win over the installed pack, got {}",
-            fragment.compose_template
-        );
-    }
+    let resolver = CatalogResolver::new(Some(local)).with_installed_pack(Some(layer));
+    let fragment = resolver.resolve("redis").unwrap();
+    assert!(
+        fragment.compose_template.contains(label),
+        "expected `{label}` to win over the installed pack, got {}",
+        fragment.compose_template
+    );
 }
 
 #[test]
 fn list_reports_the_pack_layer_for_pack_owned_fragments() {
     let dir = tempfile::tempdir().unwrap();
     let layer = pack_layer(&dir.path().join("pack"), "pack-redis");
-    let resolver = CatalogResolver::new(None, None).with_installed_pack(Some(layer));
+    let resolver = CatalogResolver::new(None).with_installed_pack(Some(layer));
 
     let listed = resolver.list();
     let redis = listed.iter().find(|f| f.name == "redis").unwrap();
@@ -138,7 +130,7 @@ fn compose_assembly_through_a_pack_layer_matches_baseline_assembly_shape() {
     };
 
     let baseline = assemble(bundled_resolver());
-    let through_pack = assemble(CatalogResolver::new(None, None).with_installed_pack(Some(layer)));
+    let through_pack = assemble(CatalogResolver::new(None).with_installed_pack(Some(layer)));
 
     let baseline_doc = validate_compose_structure(&baseline.compose_yaml);
     let pack_doc = validate_compose_structure(&through_pack.compose_yaml);

@@ -9,7 +9,7 @@
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
-use super::legacy::{GatewayEndpoint, GatewayTransport};
+use super::socket_ownership::{GatewayEndpoint, GatewayTransport};
 
 /// `PROC_PIDFDSOCKETINFO` from public `sys/proc_info.h`.
 const PROC_PIDFDSOCKETINFO: i32 = 3;
@@ -372,8 +372,10 @@ mod macos_socket_layout_tests {
             transport: super::GatewayTransport::Tcp,
             addr: listener.local_addr().expect("private listener address"),
         };
-        let exclusive =
-            crate::legacy::verify_process_listener_exclusive(std::process::id(), &endpoint);
+        let exclusive = crate::socket_ownership::verify_process_listener_exclusive(
+            std::process::id(),
+            &endpoint,
+        );
         drop(child);
         assert!(result
             .expect("live zero-FD process is inspectable")

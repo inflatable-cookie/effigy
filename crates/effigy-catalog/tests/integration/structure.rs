@@ -38,7 +38,7 @@ default = "7"
     )
     .unwrap();
 
-    let resolver = CatalogResolver::new(Some(local_catalog), None);
+    let resolver = CatalogResolver::new(Some(local_catalog));
 
     // Redis should resolve from project-local.
     let fragment = resolver.resolve("redis").unwrap();
@@ -51,72 +51,6 @@ default = "7"
 }
 
 #[test]
-fn user_global_override_takes_precedence_over_bundled() {
-    let dir = tempfile::tempdir().unwrap();
-    let global_catalog = dir.path().join("global");
-
-    // Create a user-global nginx override.
-    let nginx_dir = global_catalog.join("nginx");
-    let configs_dir = nginx_dir.join("configs");
-    std::fs::create_dir_all(&configs_dir).unwrap();
-    std::fs::write(
-        nginx_dir.join("service.toml"),
-        r#"
-[service]
-name = "nginx"
-description = "Custom global nginx"
-
-[params.document_root]
-type = "string"
-default = "public"
-"#,
-    )
-    .unwrap();
-    std::fs::write(
-        nginx_dir.join("compose.fragment.yml"),
-        "services:\n  {{ service_name }}:\n    image: custom-nginx\n",
-    )
-    .unwrap();
-    std::fs::write(configs_dir.join("default.conf"), "# custom default").unwrap();
-
-    let resolver = CatalogResolver::new(None, Some(global_catalog));
-    let fragment = resolver.resolve("nginx").unwrap();
-    assert!(matches!(fragment.source, FragmentSource::UserGlobal(_)));
-    assert!(fragment.compose_template.contains("custom-nginx"));
-}
-
-#[test]
-fn project_local_wins_over_user_global() {
-    let dir = tempfile::tempdir().unwrap();
-    let local = dir.path().join("local");
-    let global = dir.path().join("global");
-
-    // Both have redis overrides.
-    for (path, label) in [(&local, "local"), (&global, "global")] {
-        let redis_dir = path.join("redis");
-        std::fs::create_dir_all(&redis_dir).unwrap();
-        std::fs::write(
-            redis_dir.join("service.toml"),
-            format!(
-                "[service]\nname = \"redis\"\ndescription = \"{label} redis\"\n\n\
-                 [params.version]\ntype = \"string\"\ndefault = \"7\"\n"
-            ),
-        )
-        .unwrap();
-        std::fs::write(
-            redis_dir.join("compose.fragment.yml"),
-            format!("services:\n  {{{{ service_name }}}}:\n    image: {label}-redis\n"),
-        )
-        .unwrap();
-    }
-
-    let resolver = CatalogResolver::new(Some(local), Some(global));
-    let fragment = resolver.resolve("redis").unwrap();
-    assert!(matches!(fragment.source, FragmentSource::ProjectLocal(_)));
-    assert!(fragment.compose_template.contains("local-redis"));
-}
-
-#[test]
 fn list_shows_overrides_at_correct_layer() {
     let dir = tempfile::tempdir().unwrap();
     let local = dir.path().join("local");
@@ -125,7 +59,7 @@ fn list_shows_overrides_at_correct_layer() {
     let custom_dir = local.join("my-custom-service");
     std::fs::create_dir_all(&custom_dir).unwrap();
 
-    let resolver = CatalogResolver::new(Some(local.clone()), None);
+    let resolver = CatalogResolver::new(Some(local.clone()));
     let list = resolver.list();
 
     // Should include both bundled fragments and the custom one.

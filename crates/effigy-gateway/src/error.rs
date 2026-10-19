@@ -143,7 +143,7 @@ pub enum GatewayError {
 
     /// A numeric-only gateway record cannot authenticate its process.
     #[error(
-        "legacy gateway identity migration required for PID {pid}: `gateway.identity` is missing. Effigy cannot verify or signal this process, remove its records, or start a replacement from `up`/`down` or managed auto-start. Run `effigy gateway recover` from an interactive terminal (add `--adopt-candidate` to inspect a live daemon and confirm its generation). The previous executable may already have been replaced and is not used as signal authority. If you cannot verify and stop it safely, leave the records untouched and ask the host administrator."
+        "legacy gateway identity migration required for PID {pid}: `gateway.identity` is missing. Effigy cannot verify or signal this process, remove its records, or start a replacement from `up`/`down` or managed auto-start. The pre-0.14 recovery command is retired. Ask the host administrator to verify and stop the old daemon; after confirmed absence, remove only its PID/version records and run `effigy gateway up`."
     )]
     LegacyIdentityRequired { pid: u32 },
 

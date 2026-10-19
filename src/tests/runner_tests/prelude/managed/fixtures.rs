@@ -9,10 +9,6 @@ pub(in crate::runner::tests) fn managed_tui_env() -> EnvGuard {
     EnvGuard::set_many(&[("EFFIGY_MANAGED_TUI", Some("0".to_owned()))])
 }
 
-pub(in crate::runner::tests) fn managed_stream_env() -> EnvGuard {
-    EnvGuard::set_many(&[("EFFIGY_MANAGED_STREAM", Some("1".to_owned()))])
-}
-
 pub(in crate::runner::tests) fn install_fake_container_runtime(root: &Path) -> EnvGuard {
     let bin_dir = root.join("bin");
     fs::create_dir_all(&bin_dir).expect("mkdir fake runtime bin");
@@ -210,68 +206,6 @@ concurrent = [
     );
 }
 
-pub(in crate::runner::tests) fn write_managed_stream_builtin_test_manifest(
-    root: &Path,
-    suite: &str,
-    test_task_ref: &str,
-    marker: &Path,
-) {
-    write_root_manifest(
-        root,
-        &format!(
-            r#"[test.suites]
-{} = "sh -lc 'printf called > \"{}\"'"
-
-[tasks.dev]
-mode = "tui"
-concurrent = [{{ name = "tests", task = "{}" }}]
-"#,
-            suite,
-            marker.display(),
-            test_task_ref
-        ),
-    );
-}
-
-pub(in crate::runner::tests) fn write_managed_stream_profile_manifest(root: &Path) {
-    write_root_manifest(
-        root,
-        r#"[tasks.dev]
-mode = "tui"
-concurrent = [{ name = "default-only", run = "printf default-ok" }]
-
-[tasks.dev.profiles.front]
-concurrent = [{ name = "front-only", run = "printf front-ok" }]
-"#,
-    );
-}
-
-pub(in crate::runner::tests) fn write_managed_stream_builtin_test_profile_manifest(
-    root: &Path,
-    suite: &str,
-    test_task_ref: &str,
-    marker: &Path,
-) {
-    write_root_manifest(
-        root,
-        &format!(
-            r#"[test.suites]
-{} = "sh -lc 'printf called > \"{}\"'"
-
-[tasks.dev]
-mode = "tui"
-concurrent = [{{ name = "default-only", run = "printf default-ok" }}]
-
-[tasks.dev.profiles.default]
-concurrent = [{{ name = "tests", task = "{}" }}]
-"#,
-            suite,
-            marker.display(),
-            test_task_ref
-        ),
-    );
-}
-
 pub(in crate::runner::tests) fn write_managed_tui_dev_manifest(root: &Path, concurrent: &str) {
     write_root_manifest(
         root,
@@ -334,68 +268,6 @@ compose_file = "docker-compose.yml"
 project_name = "demo-web-dev"
 primary_service = "app"
 working_dir = "/workspace"{extra_container_sections}
-"#
-        ),
-    );
-    fs::write(
-        root.join("docker-compose.yml"),
-        "services:\n  app:\n    image: alpine:latest\n",
-    )
-    .expect("write docker compose");
-}
-
-pub(in crate::runner::tests) fn write_managed_stream_container_lifecycle_manifest(
-    root: &Path,
-    concurrent: &str,
-    extra_task_fields: &str,
-    workspace_binding_fields: &str,
-    project_name: &str,
-    container_fields: &str,
-    extra_container_sections: &str,
-) {
-    let extra_task_fields = if extra_task_fields.is_empty() {
-        String::new()
-    } else {
-        format!("{extra_task_fields}\n")
-    };
-    let container_fields = if container_fields.is_empty() {
-        String::new()
-    } else {
-        format!("{container_fields}\n")
-    };
-    let extra_container_sections = if extra_container_sections.is_empty() {
-        String::new()
-    } else {
-        format!("\n{extra_container_sections}")
-    };
-    write_root_manifest(
-        root,
-        &format!(
-            r#"[tasks.dev]
-mode = "tui"
-workspace = "app"
-container_lifecycle = true
-{extra_task_fields}concurrent = {concurrent}
-
-[systems]
-default = "dev"
-
-[systems.dev]
-default_workspace = "app"
-
-[systems.dev.workspaces.app]
-{workspace_binding_fields}
-
-[containers]
-default = "web"
-
-[containers.web]
-driver = "colima"
-startup = "detached"
-compose_file = "docker-compose.yml"
-project_name = "{project_name}"
-primary_service = "app"
-{container_fields}{extra_container_sections}
 "#
         ),
     );

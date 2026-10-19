@@ -42,14 +42,6 @@ impl<'a> BuiltinArgParser<'a> {
         ))
     }
 
-    pub(crate) fn flag_string_value(
-        &mut self,
-        flag: &str,
-        expected: &str,
-    ) -> Result<String, BuiltinError> {
-        self.string_flag_value(&Self::flag_requires_value_message(flag, expected))
-    }
-
     pub(crate) fn required_subcommand(
         &mut self,
         builtin: &str,

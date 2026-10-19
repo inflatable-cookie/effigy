@@ -32,9 +32,7 @@ fn help_topic_label_maps_all_topics() {
     assert_eq!(help_topic_label(HelpTopic::Doctor), "doctor");
     assert_eq!(help_topic_label(HelpTopic::Tasks), "tasks");
     assert_eq!(help_topic_label(HelpTopic::Test), "test");
-    assert_eq!(help_topic_label(HelpTopic::Watch), "watch");
     assert_eq!(help_topic_label(HelpTopic::Init), "init");
-    assert_eq!(help_topic_label(HelpTopic::Migrate), "migrate");
 }
 
 #[test]

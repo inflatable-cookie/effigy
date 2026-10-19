@@ -51,11 +51,6 @@ license = "MIT"
 [workspace.lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(effigy_shared_process)"] }
 
-# Size-bounded private docs proof artifact; ordinary dev/release profiles stay unchanged.
-[profile.qualified-docs]
-inherits = "release"
-strip = "symbols"
-
 # Custody fingerprints the real CLI in development proofs. Keep the cryptographic
 # compressor optimized, as in release builds, even for large debug executables.
 [profile.dev.package."sha2:0.11.0"]

@@ -11,4 +11,3 @@ mod proof_matrix_tests;
 mod rhai_surface_tests;
 mod secrets_tests;
 mod task_env_tests;
-mod watch_tests;

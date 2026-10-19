@@ -3,7 +3,7 @@
 //! This crate provides:
 //!
 //! - Loading and parsing of service catalog fragments (bundled, installed
-//!   pack, user-global, project-local).
+//!   pack, project-local).
 //! - Parameter schema validation against `service.toml` declarations.
 //! - Template rendering via Jinja2-style syntax (minijinja).
 //! - Compose assembly from rendered fragments into a complete

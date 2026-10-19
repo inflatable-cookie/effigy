@@ -159,12 +159,12 @@ Use when:
 Older narrow runbooks for CI pinning, Homebrew-tap wiring, and first-publish
 execution are now deprecated and kept only for historical detail.
 
-### Health, testing, watch mode, and troubleshooting
+### Health, testing, and troubleshooting
 
 Read:
 - [`013-testing-orchestration.md`](013-testing-orchestration.md)
 - [`018-doctor-explain-mode.md`](018-doctor-explain-mode.md)
-- [`019-watch-init-migrate-foundation.md`](019-watch-init-migrate-foundation.md)
+- [`019-init-foundation.md`](019-init-foundation.md)
 - [`023-troubleshooting-and-failure-recipes.md`](023-troubleshooting-and-failure-recipes.md)
 - [`048-built-in-test-suite-lifecycle-and-env.md`](048-built-in-test-suite-lifecycle-and-env.md)
 - [`080-host-wide-validation-admission.md`](080-host-wide-validation-admission.md)
@@ -206,7 +206,7 @@ This section is inventory, not a recommended reading order.
 - [`016-task-routing-precedence.md`](016-task-routing-precedence.md)
 - [`017-json-output-contracts.md`](017-json-output-contracts.md)
 - [`018-doctor-explain-mode.md`](018-doctor-explain-mode.md)
-- [`019-watch-init-migrate-foundation.md`](019-watch-init-migrate-foundation.md)
+- [`019-init-foundation.md`](019-init-foundation.md)
 - [`020-dag-lock-policy-baseline.md`](020-dag-lock-policy-baseline.md)
 
 ### Workflow and Feature Guides
@@ -244,7 +244,6 @@ This section is inventory, not a recommended reading order.
 - [`079-documentation-graph-profiles-and-context.md`](079-documentation-graph-profiles-and-context.md)
 - [`080-host-wide-validation-admission.md`](080-host-wide-validation-admission.md)
 - [`081-bounded-qa-groups-workflow.md`](081-bounded-qa-groups-workflow.md)
-- [`084-qualified-docs-execution.md`](084-qualified-docs-execution.md)
 - [`068-rhai-host-surface-audit.md`](068-rhai-host-surface-audit.md)
 - [`069-workspace-host-integration.md`](069-workspace-host-integration.md)
 - [`070-per-machine-overlays-and-external-mounts.md`](070-per-machine-overlays-and-external-mounts.md)

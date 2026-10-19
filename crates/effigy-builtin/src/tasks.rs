@@ -4,7 +4,7 @@ use effigy_cli::{HelpTopic, TaskInvocation, TasksArgs};
 
 use super::command_spec::run_passthrough_builtin_command;
 use super::render_builtin_help_topic;
-use super::{cache, migrate, unlock};
+use super::{cache, unlock};
 use crate::BuiltinError;
 use crate::BuiltinRuntimePorts;
 use effigy_tasks::TaskRuntimeArgs;
@@ -21,9 +21,6 @@ pub(super) fn run_builtin_tasks(
 ) -> Result<Option<String>, BuiltinError> {
     if let Some(nested) = nested_tasks_builtin(task, runtime_args) {
         return match nested {
-            NestedTasksBuiltin::Migrate { task, args } => {
-                migrate::run_builtin_migrate(&task, &args, target_root)
-            }
             NestedTasksBuiltin::Unlock { task, args } => {
                 unlock::run_builtin_unlock(ports, &task, &args, target_root)
             }
@@ -68,10 +65,6 @@ pub(super) fn run_builtin_tasks(
 }
 
 enum NestedTasksBuiltin {
-    Migrate {
-        task: TaskInvocation,
-        args: Vec<String>,
-    },
     Unlock {
         task: TaskInvocation,
         args: Vec<String>,
@@ -88,10 +81,7 @@ fn nested_tasks_builtin(
 ) -> Option<NestedTasksBuiltin> {
     let (subcommand, tail) = runtime_args.passthrough.split_first()?;
     match subcommand.as_str() {
-        "migrate" => Some(NestedTasksBuiltin::Migrate {
-            task: nested_task(task, "migrate"),
-            args: tail.to_vec(),
-        }),
+        "migrate" => None,
         "unlock" => Some(NestedTasksBuiltin::Unlock {
             task: nested_task(task, "unlock"),
             args: tail.to_vec(),

@@ -1864,7 +1864,7 @@ bounds. Ordinary dev, test and release profiles are unchanged.
 | Progressive spawn without rollback | `crates/effigy-process/src/lib.rs:211-238` | `spawn_all` with barrier and rollback |
 | Supervisor shutdown grace | `crates/effigy-process/src/supervisor_shutdown.rs:7-11` | `OwnedProcess::stop` |
 | Host sidecar supervisors: setsid, PID and spec files, blocking lifecycle lock, best-effort stop | `src/runner/host_process.rs:104-128`, `:430-458`, `:745`; `src/runner/container_command/closeout.rs:33-36` | environment-owned detached run; `StopReport` |
-| Transition evidence receipts | `src/runner/host_transition_evidence.rs` | `events` table, or the cut-list removal |
+| Listener transition history | Removed; existing historical files are left untouched | No replacement writer or store |
 | Remote stop of a bare PGID in the current primary | `crates/effigy-containers/src/exec/managed_stop.rs:36` | `signal_session` on the registration (I-RC2) |
 
 ### 10.3 Environment reconciler
@@ -1889,7 +1889,7 @@ bounds. Ordinary dev, test and release profiles are unchanged.
 | Current mechanism | Evidence | Kernel replacement |
 | --- | --- | --- |
 | PID, identity and version files published before standard binds | `crates/effigy-gateway/src/identity.rs:299`, `:436`; `crates/effigy-gateway/src/server.rs:1264-1265` before `:1388` | gateway lifecycle run: bind is `Applied` before publish (K3); liveness design is gateway-lane |
-| Record and transition locks | `crates/effigy-gateway/src/identity.rs:870`; `crates/effigy-gateway/src/legacy.rs:730-732` | `Gate(Gateway)` |
+| Record and transition locks | `crates/effigy-gateway/src/identity.rs:870`; `crates/effigy-gateway/src/transition_lock.rs` | `Gate(Gateway)` |
 | Routes, ports and loopback files under `RouteTableLock` | `crates/effigy-gateway/src/routes.rs:188`, `:262`; `crates/effigy-gateway/src/ports.rs:137-155`; `crates/effigy-gateway/src/ports/reclaim.rs:109-113`; `crates/effigy-gateway/src/loopback.rs:81` | endpoint claims with revisions (I-A3, I-A4) |
 | Listener claim check turns unknown into false | `crates/effigy-gateway/src/registration.rs:81` | `Observed` (R3) |
 | Reuse of an unverified gateway | `src/runner/gateway_command/mod.rs:168` | R3 |

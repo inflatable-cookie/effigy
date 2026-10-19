@@ -1,12 +1,3 @@
-pub(super) fn redact_managed_output(value: &str, secrets: &[String]) -> String {
-    secrets
-        .iter()
-        .filter(|secret| !secret.is_empty())
-        .fold(value.to_owned(), |output, secret| {
-            output.replace(secret, "[REDACTED]")
-        })
-}
-
 pub(super) struct SecretStreamRedactor {
     secrets: Vec<Vec<u8>>,
     max_secret_len: usize,
@@ -65,16 +56,7 @@ impl SecretStreamRedactor {
 
 #[cfg(test)]
 mod tests {
-    use super::{redact_managed_output, SecretStreamRedactor};
-
-    #[test]
-    fn managed_output_redacts_all_secret_values() {
-        let secrets = vec!["first-secret".to_owned(), "second-secret".to_owned()];
-        assert_eq!(
-            redact_managed_output("first-secret and second-secret", &secrets),
-            "[REDACTED] and [REDACTED]"
-        );
-    }
+    use super::SecretStreamRedactor;
 
     #[test]
     fn stream_redactor_hides_values_split_across_chunks() {

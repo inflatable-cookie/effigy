@@ -146,7 +146,7 @@ for generic repo orientation.
 | Repo health scan | `effigy doctor --verbose` |
 | Local dependency link health | `effigy --json deps status` |
 | Run an installed skill task | `effigy skill run [--path <SKILL>] <SKILL>/<TASK>` |
-| Scaffold manifest | `effigy init` then `effigy tasks migrate` |
+| Scaffold manifest | `effigy init`, then define explicit manifest tasks |
 | Check repo setup | `effigy init --check --json` or `effigy init --checklist --json` |
 | Apply repo setup | `effigy init` or `effigy init --apply --json` |
 | Read-only release check | `effigy release gates` |

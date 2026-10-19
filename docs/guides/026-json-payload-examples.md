@@ -1695,17 +1695,6 @@ re-entries keep their own routing.
 }
 ```
 
-### 7) Watch (`effigy.watch.v1`)
-
-```json
-{
-  "schema": "effigy.watch.v1",
-  "schema_version": 1,
-  "ok": true,
-  "runs": 1
-}
-```
-
 ## Setup, Bootstrap, and Config
 
 ### 8) Bootstrap (`effigy.bootstrap.v1`)
@@ -2362,33 +2351,6 @@ Starter list / starter emission still use the starter-oriented init contracts.
   "starters": [
     { "name": "minimal", "description": "Minimal Effigy scaffold" },
     { "name": "northstar", "description": "Northstar-profile starter" }
-  ]
-}
-```
-
-### 15) Migrate (`effigy.migrate.v1`)
-
-```json
-{
-  "schema": "effigy.migrate.v1",
-  "schema_version": 1,
-  "ok": true,
-  "source": "/workspace/app/package.json",
-  "manifest": "/workspace/app/effigy.toml",
-  "apply": false,
-  "written": false,
-  "added": [
-    {
-      "name": "test",
-      "run": "vitest run"
-    }
-  ],
-  "conflicts": [
-    {
-      "name": "build",
-      "run": "npm run compile",
-      "reason": "task already exists"
-    }
   ]
 }
 ```

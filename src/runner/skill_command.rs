@@ -224,32 +224,6 @@ fn candidate_has_named_skill_files(candidate: &Path) -> bool {
         && candidate.join(TASK_MANIFEST_FILE).is_file()
 }
 
-/// Complete bounded discovery read namespace for a frozen named selection.
-/// The normal resolver above remains authoritative for precedence and ambiguity.
-pub(in crate::runner) fn named_skill_discovery_reads(
-    selector: &str,
-) -> Result<Vec<PathBuf>, RunnerError> {
-    let name = named_skill_segment(selector)?;
-    let mut roots = vec![active_invocation_cwd()?.join(PROJECT_SKILL_ROOT).join(name)];
-    let home = home_dir()
-        .ok_or_else(|| RunnerError::task_invocation("named source home unavailable".to_owned()))?;
-    roots.extend(
-        GLOBAL_SKILL_ROOTS
-            .iter()
-            .map(|root| home.join(root).join(name)),
-    );
-    Ok(roots
-        .into_iter()
-        .flat_map(|root| {
-            [
-                root.clone(),
-                root.join(SKILL_MARKER_FILE),
-                root.join(TASK_MANIFEST_FILE),
-            ]
-        })
-        .collect())
-}
-
 fn home_dir() -> Option<PathBuf> {
     std::env::var_os("HOME")
         .filter(|value| !value.is_empty())

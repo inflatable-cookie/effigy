@@ -35,7 +35,6 @@ also supports `--headless` / `EFFIGY_MANAGED_HEADLESS=1` plus task-local
 | `doctor` | Health checks; `doctor <selector>` explain mode; running-workspace ownership diagnosis |
 | `test` | Built-in test orchestration (`--plan`, `--tui`) |
 | `defer` | Run `[defer]` fallback explicitly |
-| `watch` | File-triggered task reruns (`--owner` required) |
 | `scan` | Repo scanners (`god-files`, `attention-markers`, …) |
 | `config` | Inspect merged manifest; schema snippets; `config get/set` |
 | `config completion` | Shell completion + selector candidates |
@@ -103,7 +102,6 @@ Guide: `docs/guides/079-documentation-graph-profiles-and-context.md`
 | `docs` | Link/JSON/index/workflow-path QA checks, plus bounded `docs context` documentation retrieval |
 | `contracts` | JSON contract validation |
 | `init` | Repo setup wizard; `--check`, `--checklist`, `--apply` |
-| `tasks migrate` | Import `package.json` scripts |
 | `tasks unlock` / `tasks cache` | Lock recovery; task cache |
 
 ## Distribution note

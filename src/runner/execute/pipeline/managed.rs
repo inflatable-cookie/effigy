@@ -136,9 +136,10 @@ pub(in crate::runner) fn run_managed_task(
             return Ok(Some(output));
         }
     }
+    let default_execution_mode = managed_execution_mode()?;
     let execution_mode = match managed_invocation.as_ref().map(|value| &value.action) {
         Some(ManagedInvocation::Run { headless: true }) => ManagedExecutionMode::Headless,
-        _ => managed_execution_mode(),
+        _ => default_execution_mode,
     };
     let binding_resolution = resolve_execution_binding_resolution(
         selection

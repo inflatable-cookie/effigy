@@ -138,7 +138,7 @@ catalog = "memcached"
 ### Assembly flow
 
 1. Read service declarations from manifest.
-2. Load matching catalog fragments (project-local > user-global > active pack > bundled baseline).
+2. Load matching catalog fragments (project-local > active pack > bundled baseline).
 3. Substitute parameters into fragment templates.
 4. Assemble into a complete compose file.
 5. Write to `.effigy/runtime/compose/<container>.generated.compose.yml`
@@ -159,9 +159,8 @@ does not need a separate catalog checkout or network access for the baseline.
 User customization layers on top:
 
 1. **Project-local:** `infra/dev/catalog/` in the repo
-2. **User-global:** `~/.effigy/catalog/`
-3. **Active catalog pack:** an explicitly installed, versioned pack
-4. **Bundled baseline:** embedded in the binary (lowest priority)
+2. **Active catalog pack:** an explicitly installed, versioned pack
+3. **Bundled baseline:** embedded in the binary (lowest priority)
 
 `effigy service list` shows available services. `effigy service extract
 <service>` extracts a bundled fragment to the override directory for
@@ -565,8 +564,7 @@ binary may have been overwritten, and using an older CLI for development may
 fail to parse newer linked manifests; a general CLI downgrade is not a recovery
 strategy. The supported upgrade/recovery design is
 [034](034-gateway-legacy-upgrade-recovery.md). Published v0.14.0 cannot complete
-a legacy upgrade; corrected main provides `effigy gateway recover` on the
-task-112/113 base.
+a pre-0.14 upgrade. Such numeric-only records now require administrator migration; see [architecture 034](034-gateway-legacy-upgrade-recovery.md).
 
 The decimal `gateway.pid` remains compatible. `gateway.identity` is a
 version-1 JSON sidecar containing `format_version`, the same `pid`,
@@ -706,7 +704,7 @@ mandatory for every match, so a reused PID never matches. No old sidecar is
 reclassified as absent or rewritten. `probe_live_identity` uses this
 comparison for both the ordinary and elevated readers; `Unknown` means the
 record is preserved and `status`/`up`/`down`/managed start refuse. A live
-pre-identity daemon still has the explicit `effigy gateway recover` consent
+pre-identity daemon requires the host administrator migration
 path. An ambiguous identity-bearing record is honestly refused, not guessed at:
 the approved `recover` route currently rejects sidecar-bearing records, so no
 automatic supported transition exists for that case. A bounded, implementable
@@ -1124,14 +1122,6 @@ The [runtime operation contract](../contracts/015-runtime-operation-pipeline-con
 defines request, plan, adapter, and report responsibilities. Pure decisions
 belong below the runner; host side effects and human prompts remain at its
 edge.
-
-Managed listener transition receipts live in
-`src/runner/host_transition_evidence.rs`. The listener supervisor in
-`src/runner/host_process.rs` writes them at the decisions it already makes:
-launch, child exit, shutdown, dependency unavailability, and dependency tuple
-change. The module owns the bounded, versioned file format and its reader.
-Receipts are observation only. They are not gateway registration, route
-authority or process ownership.
 
 ## Example Manifest Boundary
 

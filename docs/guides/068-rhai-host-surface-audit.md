@@ -91,7 +91,6 @@ None currently tracked.
 | Attached/following logs | Long-running terminal ownership |
 | Init | Interactive scaffolding with TTY prompts |
 | Watch | Long-running file-watching loops |
-| Tasks migrate | One-shot import utility |
 
 ## Removed Storage Surface
 

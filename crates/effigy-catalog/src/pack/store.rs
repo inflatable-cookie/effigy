@@ -211,8 +211,7 @@ impl PackStore {
     /// Build a store handle under an explicit Effigy user-state home.
     ///
     /// Callers that already own a `~/.effigy` resolution (including a test
-    /// override) thread it through here so the pack store and the user-global
-    /// override directory never disagree about which home they mean.
+    /// override) thread it through here so the pack store and retired-catalog warning never disagree about which home they mean.
     pub fn under_home(home: &Path) -> Self {
         Self::at(home.join(STORE_DIR).join(STORE_LAYOUT_VERSION))
     }

@@ -168,10 +168,9 @@ fn execute_delegated_job(
         )));
     };
     let status = match id {
-        "graph_index.build"
-        | "secrets_vault.init"
-        | "bundle_sync.run"
-        | "task_migration.package_json" => SetupActionStatus::Applied,
+        "graph_index.build" | "secrets_vault.init" | "bundle_sync.run" => {
+            SetupActionStatus::Applied
+        }
         _ => SetupActionStatus::Inspected,
     };
     Ok((status, Some(output), "command executed".to_owned()))
@@ -180,7 +179,6 @@ fn execute_delegated_job(
 fn task_invocation_for_job(id: &str) -> Option<TaskInvocation> {
     let (name, args): (&str, &[&str]) = match id {
         "task_surface.scan" => ("tasks", &[]),
-        "task_migration.package_json" => ("tasks", &["migrate", "--apply"]),
         "doctor.run" => ("doctor", &[]),
         "tasks.inspect" => ("tasks", &[]),
         "test_plan.inspect" => ("test", &["--plan"]),

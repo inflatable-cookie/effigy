@@ -73,22 +73,6 @@ impl BuiltinArgParser<'_> {
         )
     }
 
-    pub(crate) fn quoted_choice_flag_value<T, M>(
-        &mut self,
-        flag: &str,
-        quoted_choices: &str,
-        map: M,
-    ) -> Result<T, BuiltinError>
-    where
-        M: FnOnce(&str) -> Option<T>,
-    {
-        self.mapped_flag_value(
-            &format!("`{flag}` requires a value ({quoted_choices})"),
-            map,
-            |value| format!("invalid `{flag}` value `{value}` (expected {quoted_choices})"),
-        )
-    }
-
     pub(crate) fn builtin_choice_flag_value<T, M>(
         &mut self,
         builtin: &str,

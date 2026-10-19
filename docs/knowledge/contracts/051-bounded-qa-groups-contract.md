@@ -577,7 +577,7 @@ full board, or omit an uncertain member.
 | Existing temporary QA draft | Convert only by an explicit owner edit to a temporary group file; preserve the old draft until the replacement is reviewed and run. |
 | Maintained QA tasks | Leave as published tasks. A group may select a task, but a task cannot depend on a temporary group. Group adoption does not create duplicate shell runners. |
 | Saved task status and references | Keep existing task keys and records. Groups use a new `qa_group` surface identity containing catalog, lifecycle, name, source path, and definition digest. Never rewrite old records or join them to group records. |
-| `tasks migrate` and config composition | Do not infer, scan, or rewrite groups. Only explicit `[qa.groups]` entries or explicit `--file` selection create group discovery. |
+| Config composition | Do not infer, scan, or rewrite groups. Only explicit `[qa.groups]` entries or explicit `--file` selection create group discovery. |
 | JSON consumers | Add group schemas; do not change existing task/draft schema IDs or silently reshape their payloads. |
 
 Implementation sequence:

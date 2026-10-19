@@ -65,7 +65,6 @@ Good shape:
 For the current helper-command cleanup, the release-note section should read
 roughly like this:
 
-- `effigy migrate` -> `effigy tasks migrate`
 - `effigy unlock` -> `effigy tasks unlock`
 - `effigy cache ...` -> `effigy tasks cache ...`
 - `effigy completion ...` -> `effigy config completion ...`

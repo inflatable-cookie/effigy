@@ -478,21 +478,6 @@ ownership, HTTP probe status and route. Unobserved phases show `not_reached` or
 and the top-level `status` remains the current state. The field list is in
 the managed host listener section of the container runtime contract.
 
-Each listener generation's selected transition is also recorded in
-`<name>.transitions.jsonl`, beside `<name>.listener.json`. New records use the
-version 2 schema; existing version 1 records remain readable without tuple
-availability details. Sequence checks start at 1 and expose missing, repeated
-or regressed records. Use `successor_launched` to see which reserved
-`EFFIGY_MANAGED_HOST_<NAME>_*` values a generation received. Use `child_exited`,
-`shutdown`, `dependency_unavailable`, `dependency_tuple_changed` or
-`inspection_error` to see the supervisor's selected observation. A dependency
-inspection error names the dependency and bounded predicate. Missing or
-unreadable tuples are marked explicitly; no error text or secrets are recorded.
-A `retention_limit` line means later transitions were not kept. A missing or
-incomplete receipt does not show that nothing changed. The receipt never
-authorizes a signal, route or cleanup. The format and bounds are in the managed
-host listener section of the container runtime contract.
-
 - prefer catalog-driven generated compose for normal use
 - use a repo-owned `compose_file` only when the repo genuinely needs direct
   compose ownership
@@ -1456,7 +1441,7 @@ Install and start (administrator; you run each step yourself):
 ```sh
 # 1. Follow the task-155 migration order first: confirm the old root-owned
 #    gateway generation with `effigy gateway status`, stop it through the
-#    bounded interactive path (`effigy gateway recover --adopt-candidate`),
+#    bounded interactive `effigy gateway down` path for v0.14.1 records,
 #    and verify absence with `effigy gateway status`.
 # 2. Install the reviewed definition root-owned and not world-writable;
 #    launchd refuses other modes.

@@ -641,7 +641,7 @@ pub fn render_gateway_diagnosis(diagnosis: &GatewayStatusDiagnosis) -> String {
         );
     }
     if diagnosis.record == GatewayRecordKind::LegacyPidOnly {
-        rendered.push_str("; legacy numeric-only record needs `effigy gateway recover`");
+        rendered.push_str("; pre-0.14 numeric-only record requires host administrator migration");
     }
     rendered
 }

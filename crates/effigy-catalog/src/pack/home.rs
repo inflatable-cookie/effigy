@@ -1,6 +1,6 @@
 //! Effigy user-state home resolution for catalog layers and the pack store.
 //!
-//! One resolver so the user-global override directory and the installed-pack
+//! One resolver so retired-catalog detection and the installed-pack
 //! store always agree about which `~/.effigy` they are talking about, and so a
 //! test can point both at an isolated root.
 

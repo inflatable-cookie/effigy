@@ -32,7 +32,6 @@ mod graph_time_budget;
 mod host_container_lease;
 mod host_process;
 mod host_scheduler;
-mod host_transition_evidence;
 mod interactive_session;
 mod locking;
 mod managed_listener_readiness;
@@ -83,7 +82,6 @@ pub use error::RunnerError;
 pub(in crate::runner) use exec_command::run_exec;
 pub(in crate::runner) use gateway_command::{
     run_gateway, run_internal_gateway, run_internal_gateway_identity,
-    run_internal_gateway_legacy_candidate, run_internal_gateway_legacy_stop,
 };
 pub(in crate::runner) use graph_command::run_graph;
 pub(in crate::runner) use host_container_lease::run_internal_container_lease_reaper;

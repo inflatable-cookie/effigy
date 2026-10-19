@@ -369,6 +369,12 @@ fn take_include_specs(
     let Some(section) = table.remove("manifest") else {
         return Ok((Vec::new(), Vec::new()));
     };
+    if section.get("root").is_some() {
+        return Err(ManifestError::Compose {
+            path: manifest_path.to_path_buf(),
+            detail: "`[manifest].root` is retired; remove it and use --repo <PATH> to select an explicit root".to_owned(),
+        });
+    }
     let config: ManifestSectionConfig =
         section.try_into().map_err(|error| ManifestError::Compose {
             path: manifest_path.to_path_buf(),
@@ -824,6 +830,35 @@ alias = "{alias}"
 run = "printf bundle"
 "#
             ),
+        );
+    }
+
+    #[test]
+    fn retirement_manifest_root_refuses_root_and_included_declarations() {
+        let dir = tempfile::tempdir().expect("private fixture");
+        let root = dir.path().join("effigy.toml");
+        for value in ["true", "false", "1"] {
+            std::fs::write(&root, format!("[manifest]\nroot = {value}\n")).unwrap();
+            let error = load_task_manifest_with_inspection(&root)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                error.contains("[manifest].root") && error.contains("remove it"),
+                "{error}"
+            );
+        }
+        std::fs::write(&root, "[manifest]\ninclude = [\"fragment.toml\"]\n").unwrap();
+        std::fs::write(
+            dir.path().join("fragment.toml"),
+            "[manifest]\nroot = false\n",
+        )
+        .unwrap();
+        let error = load_task_manifest_with_inspection(&root)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("fragment.toml") && error.contains("retired"),
+            "{error}"
         );
     }
 

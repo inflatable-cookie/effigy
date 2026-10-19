@@ -2,9 +2,7 @@ use super::builtin_registry_entry;
 
 #[test]
 fn builtin_registry_contract_is_stable() {
-    let names = [
-        "doctor", "tasks", "config", "help", "watch", "init", "scan", "test",
-    ];
+    let names = ["doctor", "tasks", "config", "help", "init", "scan", "test"];
 
     for name in names {
         let entry = builtin_registry_entry(name).expect("registry entry should exist");

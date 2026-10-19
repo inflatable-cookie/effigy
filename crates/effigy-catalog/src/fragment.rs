@@ -1,11 +1,10 @@
 //! Catalog fragment loading and resolution.
 //!
-//! Fragments are loaded from four layers (highest priority first):
+//! Fragments are loaded from three layers (highest priority first):
 //!
 //! 1. Project-local: `infra/dev/catalog/` in the repo
-//! 2. User-global: `~/.effigy/catalog/`
-//! 3. Active installed catalog pack (see [`crate::pack`])
-//! 4. Bundled: embedded in the binary via `rust-embed`
+//! 2. Active installed catalog pack (see [`crate::pack`])
+//! 3. Bundled: embedded in the binary via `rust-embed`
 //!
 //! The bundled layer is the permanent compiled baseline. It is always present,
 //! needs no store, no `oras`, and no network, so a machine that has never
@@ -57,8 +56,6 @@ pub enum FragmentSource {
         /// Fragment directory inside the installed pack.
         path: PathBuf,
     },
-    /// User-global override directory.
-    UserGlobal(PathBuf),
     /// Project-local override directory.
     ProjectLocal(PathBuf),
 }
@@ -72,7 +69,6 @@ impl std::fmt::Display for FragmentSource {
                 pack_version,
                 ..
             } => write!(f, "installed-pack ({pack_id} {pack_version})"),
-            Self::UserGlobal(p) => write!(f, "user-global ({})", p.display()),
             Self::ProjectLocal(p) => write!(f, "project-local ({})", p.display()),
         }
     }
@@ -99,21 +95,17 @@ pub struct CatalogResolver {
     /// Project-local catalog path (e.g., `<repo>/infra/dev/catalog/`).
     project_local: Option<PathBuf>,
 
-    /// User-global catalog path (e.g., `~/.effigy/catalog/`).
-    user_global: Option<PathBuf>,
-
-    /// Active installed catalog pack, below both override layers.
+    /// Active installed catalog pack, below the project override layer.
     installed_pack: Option<InstalledPackLayer>,
 }
 
 impl CatalogResolver {
     /// Create a new resolver with the given override directories.
     ///
-    /// Either or both paths can be `None` if the directory doesn't exist.
-    pub fn new(project_local: Option<PathBuf>, user_global: Option<PathBuf>) -> Self {
+    /// The path can be `None` if the directory does not exist.
+    pub fn new(project_local: Option<PathBuf>) -> Self {
         Self {
             project_local,
-            user_global,
             installed_pack: None,
         }
     }
@@ -143,19 +135,7 @@ impl CatalogResolver {
             }
         }
 
-        // 2. User-global
-        if let Some(ref dir) = self.user_global {
-            let fragment_dir = dir.join(name);
-            if fragment_dir.is_dir() {
-                return Self::load_from_dir(
-                    name,
-                    &fragment_dir,
-                    FragmentSource::UserGlobal(fragment_dir.clone()),
-                );
-            }
-        }
-
-        // 3. Active installed pack
+        // 2. Active installed pack
         if let Some(ref pack) = self.installed_pack {
             let fragment_dir = pack.root.join(name);
             if fragment_dir.is_dir() {
@@ -171,7 +151,7 @@ impl CatalogResolver {
             }
         }
 
-        // 4. Compiled baseline
+        // 3. Compiled baseline
         Self::load_from_embedded(name)
     }
 
@@ -182,11 +162,6 @@ impl CatalogResolver {
         // Project-local (highest priority)
         if let Some(ref dir) = self.project_local {
             Self::list_dir_fragments(dir, FragmentSource::ProjectLocal(dir.clone()), &mut seen);
-        }
-
-        // User-global
-        if let Some(ref dir) = self.user_global {
-            Self::list_dir_fragments(dir, FragmentSource::UserGlobal(dir.clone()), &mut seen);
         }
 
         // Active installed pack

@@ -10,4 +10,3 @@ fn parser_task() -> TaskInvocation {
 mod completion;
 mod config;
 mod unlock;
-mod watch;

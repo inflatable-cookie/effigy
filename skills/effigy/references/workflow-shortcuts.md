@@ -89,10 +89,8 @@ proof.
 ```bash
 effigy init                        # idempotent baseline repo setup
 effigy init --check --json         # no-write setup report for agents/tools
-effigy tasks migrate --apply       # import package.json scripts into [tasks]
 ```
 
-Preview without writing: `effigy tasks migrate` (omit `--apply`).
 
 ## Repo scanners
 
