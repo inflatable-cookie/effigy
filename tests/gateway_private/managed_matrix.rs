@@ -124,6 +124,15 @@ impl<'a> Case<'a> {
     ) -> Self {
         fs::create_dir_all(base).expect("case root");
         let root = base.canonicalize().expect("canonical case");
+        // A down retains persistent domain ownership. Different checkout
+        // cases sharing one private gateway need distinct domains; each
+        // case still reuses its domain across restart and handover.
+        let domain = format!(
+            "{}.matrix.test",
+            root.file_name()
+                .expect("case directory name")
+                .to_string_lossy()
+        );
         let proxy = MatrixProxy::bind(&root);
         let port = proxy.address.port();
         let state = root.join("engine");
@@ -177,7 +186,7 @@ impl<'a> Case<'a> {
         }
         manifest.push_str("[systems]\ndefault = \"dev\"\n[systems.dev]\ndefault_workspace = \"app\"\n[systems.dev.workspaces.app]\ncontainer = \"stack\"\n[containers]\ndefault = \"stack\"\n");
         for environment in ["stack", "other"] {
-            manifest.push_str(&format!("[containers.{environment}]\ndriver = \"colima\"\nstartup = \"detached\"\nprofile = \"matrix\"\ncompose_file = \"compose.yml\"\nproject_name = \"matrix-{environment}\"\nprimary_service = \"app\"\nworking_dir = {}\n[containers.{environment}.host]\nports = [\"{port}:8080\"]\n[containers.{environment}.dns]\nroutes = [{{ domain = \"matrix.test\", tls = false, service = \"app\", port = {port} }}]\n[containers.{environment}.lifecycle]\non_task_exit = \"stop\"\ndetach_timeout_secs = 1\n", toml_quote(&root.display().to_string())));
+            manifest.push_str(&format!("[containers.{environment}]\ndriver = \"colima\"\nstartup = \"detached\"\nprofile = \"matrix\"\ncompose_file = \"compose.yml\"\nproject_name = \"matrix-{environment}\"\nprimary_service = \"app\"\nworking_dir = {}\n[containers.{environment}.host]\nports = [\"{port}:8080\"]\n[containers.{environment}.dns]\nroutes = [{{ domain = \"{domain}\", tls = false, service = \"app\", port = {port} }}]\n[containers.{environment}.lifecycle]\non_task_exit = \"stop\"\ndetach_timeout_secs = 1\n", toml_quote(&root.display().to_string())));
             let project = format!("matrix-{environment}");
             let mut rows = String::new();
             for (service, id) in [("app", "a".repeat(64)), ("db", "b".repeat(64))] {
