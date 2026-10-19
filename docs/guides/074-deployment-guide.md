@@ -1,294 +1,129 @@
-# Deployment Transaction Guide
+# Deployment Guide
 
-This guide explains how to deploy Effigy-managed applications to UAT and
-production environments using the deployment transaction system.
+Effigy v0.15 supports provider-neutral model inspection and provider file export.
+`deploy apply` and `deploy redeploy` are **not yet supported**. They exit nonzero,
+including with `--yes`, before resolving provider packages or running scripts.
+No deployment, rollback, active record or success report is produced.
 
-## What It Is
+The full execution design lives in Queue's `deploy` lane. The settled v0.15
+boundary and remaining design question are recorded in
+[Q-003](../knowledge/questions.md#q-003--production-deployment-ownership).
+The [transaction contract](../knowledge/contracts/019-deployment-transaction-system-contract.md)
+owns this boundary; its later sections describe the target design.
 
-The deployment transaction system takes a repo from a local operator checkout to
-a provider deployment in a predictable, repeatable way. It answers:
+## Model and export
 
-- which code ref is being deployed
-- which state stack built the database baseline
-- which OCI artifacts were applied
-- which release evidence gates the deploy
-- which provider services are targeted
-- whether health checks passed
+```sh
+# Inspect the provider-neutral model
+effigy deploy model --json
 
-It is provider-neutral at the plan level. Core Effigy owns the transaction
-frame. Render, Railway, and other provider-specific behavior lives in
-configured external deploy-provider packages.
+# Preview provider file generation
+effigy deploy export render --path infra/render --plan
 
-## When To Use It
-
-Use deployment transactions when you need:
-
-- repeatable UAT deploys from `main` or a feature branch
-- production deploys gated by release evidence
-- history of what was deployed and when
-- redeploy of a previous immutable deployment
-
-Do not use it for:
-
-- provider account bootstrap (create projects, services, databases)
-- secret value creation
-- automatic rollback of database or media state
-
-## Config
-
-Declare environments in `effigy.toml` under `[deploy.<env>]`:
-
-```toml
-[deploy.uat]
-state = "uat"
-code_ref = "branch:main"
-release_policy = "optional"
-provider_project = "acme-uat"
-artifact_policy = "digest-preferred"
-
-[deploy.uat.provider]
-adapter = "railway"
-
-[deploy.providers.railway]
-source = { type = "git", url = "git@github.com:inflatable-cookie/effigy-provider-railway.git", ref = "main" }
-
-[deploy.uat.preflight]
-require_clean_worktree = false
-require_provider_resources = true
-require_provider_variables = true
-require_domains = true
-
-[deploy.uat.hooks]
-before_state = "hooks:pre-deploy"
-after_deploy = "hooks:smoke-test"
+# Generate provider files
+effigy deploy export render --path infra/render
 ```
 
-Production example:
+Model emits `deploy.model.v1` with services, backing services, domains, secrets
+and warnings, derived from the effective manifest and bundle. Export uses that
+model and a configured external provider package. It generates files; it does
+not deploy them. Preview behavior belongs to the provider's export capability.
+
+```toml
+[deploy.providers.render]
+source = { type = "git", url = "git@github.com:inflatable-cookie/effigy-provider-render.git", ref = "main" }
+```
+
+The external Render package supplies `render.yaml`. Export requires a package
+configured under `[deploy.providers.<provider>]`; provider-specific behavior
+stays outside core Effigy.
+
+## Environment configuration
+
+Existing `[deploy.<env>]` configuration remains readable, including Acowtancy's
+`infra/deploy.toml`. No manifest migration is required for model/export.
+Environment declarations describe intended work; they do not enable execution.
 
 ```toml
 [deploy.production]
 state = "production"
 code_ref = "release-tag"
 release_policy = "required"
-provider_project = "acme-production"
+provider_project = "example-production"
 artifact_policy = "digest-pinned"
 
 [deploy.production.provider]
-adapter = "railway"
-
-[deploy.providers.railway]
-source = { type = "git", url = "git@github.com:inflatable-cookie/effigy-provider-railway.git", ref = "main" }
+adapter = "render"
 
 [deploy.production.preflight]
-require_clean_worktree = true
-require_provider_resources = true
-require_provider_variables = true
-require_domains = true
 require_release_gates = true
+
+[deploy.production.hooks]
+before_state = "hooks:pre-deploy"
+after_state = "hooks:post-state"
+after_deploy = "hooks:smoke-test"
 ```
 
-### Config fields
+`preflight.require_release_gates` is the supported core preflight option.
+Provider resource checks belong to the external package.
 
-| Field | Required | Description |
-|---|---|---|
-| `adapter` | yes | provider id matching `[deploy.providers.<id>]` |
-| `state` | no | named state stack to apply before deploy |
-| `code_ref` | no | `branch:<name>`, `tag:<name>`, `sha:<hash>`, `release-tag` |
-| `release_policy` | no | `none`, `optional`, `required` |
-| `provider_project` | no | provider-side project or service identifier |
-| `artifact_policy` | no | `mutable-ok`, `digest-preferred`, `digest-pinned` |
-| `[preflight]` | no | safety requirements for this environment |
-| `[hooks]` | no | repo tasks to run at transaction stages |
-
-## Commands
-
-### Model (read-only)
+## Plan
 
 ```sh
-# Derive the provider-neutral deployment model
-effigy deploy model --json
-```
-
-This emits `deploy.model.v1` with services, backing services, domains, secrets,
-and warnings. It is the same model used by `deploy export`.
-
-### Export (read-only)
-
-```sh
-# Export provider files through a configured provider package
-effigy deploy export railway --path infra/railway --plan
-effigy deploy export render --path infra/render --plan
-```
-
-`deploy export <PROVIDER>` requires `[deploy.providers.<provider>]`. The
-external Render package currently emits `render.yaml`. The external Railway
-package currently emits service-local `railway.toml` files plus `report.json`.
-
-### Plan (read-only)
-
-```sh
-# Plan a UAT deploy
-effigy deploy plan uat
-
-# Plan and write a durable report
-effigy deploy plan uat --write-report
-
-# Machine-readable plan
 effigy deploy plan uat --json
+effigy deploy plan uat --write-report
 ```
 
-Plan resolves the full transaction without mutating anything:
+Plan inspects environment configuration, resolves code references and provider
+packages, runs provider preflight, and lists intended state, hooks and health
+checks. It emits `effigy.deploy.plan.v1`. It does not execute those obligations,
+verify release gates or enforce immutable artifact pins. A plan with no blockers
+is not evidence that a deployment can execute. Provider resolution can acquire
+packages and preflight runs provider code. `--write-report` persists the plan.
 
-1. load manifest and select `[deploy.uat]`
-2. derive `deploy.model.v1`
-3. resolve the code ref to a commit or tag
-4. evaluate release evidence when required
-5. resolve and plan the state stack when configured
-6. enforce artifact digest policy
-7. run provider preflight checks
-8. plan hooks and health checks
-9. emit `effigy.deploy.plan.v1`
-
-### Apply (mutating)
+## Unsupported execution
 
 ```sh
-# Deploy to UAT
+# Both refuse in v0.15, with or without --yes
 effigy deploy apply uat --yes
-
-# Deploy to production
-effigy deploy apply production --yes
-```
-
-Apply re-runs planning, then executes:
-
-1. write active deployment record
-2. run `before_state` hook
-3. apply state stack when configured
-4. run `after_state` hook
-5. trigger provider deploy from the resolved code ref
-6. poll provider deployment status
-7. run health checks
-8. run `after_deploy` smoke hook
-9. write final deployment report
-10. clear active deployment record
-
-Failures stop later stages. `--yes` is required.
-
-### Status
-
-```sh
-effigy deploy status uat
-effigy deploy status uat --json
-```
-
-Reports the latest deployment for the environment, or the active one if a
-deploy is in flight.
-
-### History
-
-```sh
-effigy deploy history uat
-effigy deploy history uat --limit 10
-effigy deploy history uat --json
-```
-
-Lists prior deployments with ids, timestamps, code refs, and outcomes.
-
-### Redeploy
-
-```sh
 effigy deploy redeploy uat --deployment <ID> --yes
 ```
 
-Replays a previous deployment using its recorded immutable inputs. This is
-evidence-backed replay, not rollback. Database and media rollback are not
-promised.
+The refusal names all unimplemented obligations: state and migrations;
+`before_state`, `after_state` and `after_deploy` hooks; health checks; release
+gates; digest pins; and provider deployment/rollback. Neither a provider success
+response nor a historical success report can make these commands succeed.
+Removing optional obligations from configuration does not enable execution.
+Use model/export to inspect or generate provider configuration while the full
+kernel-backed execution design remains in the deploy lane.
 
-## Safety Defaults
+## Status, history and existing reports
 
-- `deploy apply` requires `--yes`.
-- `release_policy = "required"` blocks production deploys without release
-  evidence.
-- `artifact_policy = "digest-pinned"` blocks mutable OCI tags.
-- `require_clean_worktree = true` blocks deploys with uncommitted changes.
-- Provider packages should not create projects, services, databases, secrets,
-or domains unless their descriptor policy explicitly allows it. The current
-external Render and Railway packages validate existing setup and surface
-missing setup as explicit blockers.
+```sh
+effigy deploy status uat --json
+effigy deploy history uat --limit 10 --json
+```
 
-## Provider Packages
-
-| Provider | Status | Notes |
-|---|---|---|
-| Railway | external package-backed | export proof; transaction phases depend on the configured provider package |
-| Render | external package-backed | export proof plus guarded preflight/status/apply for existing services |
-
-Deploy-provider packages provide `export.rhai`, `preflight.rhai`, `apply.rhai`,
-and `status.rhai` scripts as declared in `provider.toml`. Core Effigy keeps the
-transaction frame, report persistence, and safety gates.
-
-## Integration With State Stacks
-
-When `state = "<stack>"` is configured:
-
-- `deploy plan` embeds a state apply summary.
-- `deploy apply` calls `effigy state apply` before provider deploy.
-- state reports remain canonical for state lineage.
-- deploy reports store state report paths and lineage ids.
-
-## Report Layout
-
-Deployment reports live under `.effigy/reports/deploy/`:
+Status and history can still read v0.14.1 deployment records. Status may invoke
+the configured provider's status capability. Old `succeeded` values describe
+what the old version recorded; they do not prove state, hooks, health or gates
+ran. The unsupported commands leave these files untouched:
 
 ```text
 .effigy/runtime/deploy/active/<env>.json
-effigy/reports/deploy/<env>/latest.json
-effigy/reports/deploy/<env>/history/<timestamp>-<deployment-id>.json
+.effigy/reports/deploy/<env>/latest.json
+.effigy/reports/deploy/<env>/history/<deployment-id>.json
 ```
 
-Schema ids:
+## JSON output
 
-- `effigy.deploy.plan.v1`
-- `effigy.deploy.apply.v1`
-- `effigy.deploy.status.v1`
-- `effigy.deploy.history.v1`
+The existing `effigy.command.v1` envelope has `ok: false` and a nonzero process
+exit for both unsupported commands. `error.details` uses
+`effigy.deploy.apply.v1` (schema version 1) with `ok: false`, `status: "blocked"`,
+`reason: "not_supported"`, `operation` (`apply` or `redeploy`), `env`, `message`
+and `blockers`. There is no deployment id or execution receipt because no run
+started. The reason is stable across environments, output modes and `--yes`.
 
-## Common Workflow
-
-### UAT loop
-
-```sh
-# 1. plan
-effigy deploy plan uat
-
-# 2. apply
-effigy deploy apply uat --yes
-
-# 3. capture UAT changes through state
-effigy state capture uat new-content --yes --push
-
-# 4. verify status
-effigy deploy status uat
-```
-
-### Production release
-
-```sh
-# 1. ensure release is ready
-effigy release status --check-gates
-
-# 2. plan production
-effigy deploy plan production
-
-# 3. apply production
-effigy deploy apply production --yes
-
-# 4. verify
-effigy deploy status production
-```
-
-## JSON Output
-
-All deploy commands support `--json` for machine-readable reports. See
-[`017-json-output-contracts.md`](017-json-output-contracts.md) for schema
-details.
+Other report schemas remain `deploy.model.v1`, `effigy.deploy.export.v1`,
+`effigy.deploy.plan.v1`, `effigy.deploy.status.v1` and `effigy.deploy.history.v1`.
+See [JSON output contracts](017-json-output-contracts.md).

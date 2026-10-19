@@ -71,8 +71,9 @@ For narrative workflow guidance instead of lookup, start with:
   `effigy bundle`.
 - Need a provider-neutral production model derived from the effective manifest
   and bundle: use `effigy deploy model --json`.
-- Need the v0.6.0 UAT/production deployment transaction surface: use
-  `effigy deploy plan <env>` before `effigy deploy apply <env> --yes`.
+- Need deployment configuration: use `effigy deploy model --json` or
+  `effigy deploy export <PROVIDER> --path <DIR> --plan`. Apply/redeploy are not
+  yet supported in v0.15; see [guide 074](074-deployment-guide.md) and Q-003.
 - Need a bounded machine-readable repo map before broad source scanning: use
   `effigy graph` (`explore` first, `affected` after edits, `context`/`search`
   for follow-up).
@@ -150,7 +151,7 @@ through the help route.
 | `effigy system` | Operate the manifest's declared default system substrate (VM + compose + gateway) with lifecycle, log streaming, and recovery surfaces | `up`, `down`, `status`, `logs`, `repair`, `reset-runtime`, `--system`, `--repo`, `--follow`, `--json` | `effigy.system.recover.v1` | `064-system-workspace-and-dev-contract.md` |
 | `effigy workspace` | Ensure the selected system is up and then open the resolved workspace shell for the repo's declared developer surface | `<WORKSPACE>`, `--system`, `--repo` | (interactive; no JSON payload) | `064-system-workspace-and-dev-contract.md` |
 | `effigy bundle` | Inspect the active repo bundle source and refresh repo-local git/OCI bundle sources | `inspect`, `sync`, `--repo`, `--json` | `effigy.bundle.inspect.v1`, `effigy.bundle.sync.v1` | `065-external-bundle-adoption.md` |
-| `effigy deploy` | Derive a provider-neutral production deployment model, export bounded provider files through configured provider packages, and run provider-neutral deployment transactions with state, artifact, release, hook, health, and report evidence | `model`, `export <PROVIDER>`, `plan`, `apply`, `status`, `history`, `redeploy`, `--repo`, `--path`, `--write-report`, `--deployment`, `--yes`, `--json` | `deploy.model.v1`, `effigy.deploy.export.v1`, `effigy.deploy.plan.v1`, `effigy.deploy.apply.v1`, `effigy.deploy.status.v1`, `effigy.deploy.history.v1` | `074-deployment-guide.md`, [`../contracts/002-production-deployment-model.md`](../knowledge/contracts/002-production-deployment-model.md), [`../contracts/019-deployment-transaction-system-contract.md`](../knowledge/contracts/019-deployment-transaction-system-contract.md) |
+| `effigy deploy` | Derive a provider-neutral deployment model, export provider files, inspect plans/status/history; apply and redeploy refuse as unsupported in v0.15 (Q-003) | `model`, `export <PROVIDER>`, `plan`, `apply`, `status`, `history`, `redeploy`, `--repo`, `--path`, `--write-report`, `--deployment`, `--yes`, `--json` | `deploy.model.v1`, `effigy.deploy.export.v1`, `effigy.deploy.plan.v1`, `effigy.deploy.apply.v1`, `effigy.deploy.status.v1`, `effigy.deploy.history.v1` | `074-deployment-guide.md`, [`../contracts/002-production-deployment-model.md`](../knowledge/contracts/002-production-deployment-model.md), [`../contracts/019-deployment-transaction-system-contract.md`](../knowledge/contracts/019-deployment-transaction-system-contract.md) |
 | `effigy graph` | Whole-checkout navigation with atomic per-file refresh | `index`, `status`, `search`, `node`, `affected`, `explore`, `--in`, `--out`, `--excerpts-only`, `--stale-index`, `--refresh`, `--repo`, `--json`, `--limit`, `--depth`, `--stdin`, `--max-files`, `--max-bytes`, `--language`, `--path`, `EFFIGY_GRAPH_TIMEOUT_MS` | `effigy.graph.index.v1`, `effigy.graph.status.v1`, `effigy.graph.search.v1`, `effigy.graph.node.v1`, `effigy.graph.affected.v1`, `effigy.graph.explore.v1` | `076-code-graph-and-agent-workflows.md` |
 | `effigy rhai` | Inspect the registered Rhai host API surface available to scripts, including module/function names and side-effect posture | `surface`, `--json` | `effigy.rhai.surface.v1` | `061-rhai-script-steps-guide.md`, `068-rhai-host-surface-audit.md` |
 | `effigy bootstrap` | Clone or update a repo from a git URL, apply its root bootstrap contract, sync optional submodules, bring along child repos, run setup, optionally stage DB seed dumps and run the standard `bootstrap:db-seed` task, optionally prompt for missing bundle DB dumps on a real TTY, optionally isolate generated-compose runtime state with `--fresh`, optionally pin this bootstrap session to `containerd` or `docker` with `--backend`, run `[bootstrap].start` after setup by default (`--no-start` to skip), and expose `bootstrap deps sync`, `bootstrap children status/sync`, and `bootstrap teardown` for typed dependency hydration, child checkout inspection/refresh, and fresh-session cleanup | `<git-url>`, `teardown`, `deps sync`, `children status`, `children sync`, `--path`, `--branch`, `--backend <containerd|docker>`, `--db-seed <FILE|OCI>|<TARGET>=<FILE|OCI>`, `--fresh`, `--no-prompt`, `--reuse-path`, `--no-start`, `--start`, `--plan`, `--yes`, `--js-only`, `--rust-only`, `--refresh-lock`, `--fetch-only`, `--checkout`, `--json` | `effigy.bootstrap.v1`, `effigy.bootstrap.deps.v1`, `effigy.bootstrap.children-status.v1`, `effigy.bootstrap.children-sync.v1`, `effigy.bootstrap-teardown.v1` | `057-bootstrap-repo-bringup.md` |
@@ -348,9 +349,11 @@ effigy bundle sync [--json]
 effigy deploy model [--repo <PATH>] --json
 effigy deploy export <PROVIDER> [--repo <PATH>] --path <DIR> [--plan] [--json]
 effigy deploy plan <ENV> [--repo <PATH>] [--write-report] [--json]
+# Unsupported in v0.15; retained spelling always refuses:
 effigy deploy apply <ENV> [--repo <PATH>] --yes [--json]
 effigy deploy status <ENV> [--repo <PATH>] [--json]
 effigy deploy history <ENV> [--repo <PATH>] [--limit <N>] [--json]
+# Unsupported in v0.15; retained spelling always refuses:
 effigy deploy redeploy <ENV> [--repo <PATH>] --deployment <ID> --yes [--json]
 effigy graph index [--repo <PATH>] [--json]
 effigy graph status [--repo <PATH>] [--refresh] [--json]
@@ -492,22 +495,15 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
 - the external Render provider package currently writes `render.yaml`
 - the external Railway provider package currently writes service-local
   `railway.toml` files plus `report.json`
-- v0.6.0 deployment transactions are separate from `deploy export`:
-  `deploy plan/apply/status/history/redeploy` compose code refs, provider
-  targets, state stacks, OCI artifact policy, release evidence, hooks, health
-  checks, and reports; provider-specific planning, apply, and status behavior
-  comes from configured deploy-provider packages rather than built-in core
-  provider logic
-- `[deploy.providers.<name>]` can resolve path and git deploy-provider packages
-  with `provider.toml` descriptors during deploy export and deployment
-  transactions; declared `export.rhai`, `preflight.rhai`, `apply.rhai`, and
-  `status.rhai` scripts run through `deploy::provider_context()` and report
-  through `deploy::provider_report(...)`
-- `deploy apply` must validate provider setup and block with
-  remediation instead of creating provider projects, services, resources,
-  domains, variables, or secrets
-- `deploy redeploy` is evidence-backed replay of recorded immutable inputs, not
-  automatic database or media rollback
+- `deploy plan` lists intended obligations and runs configured provider preflight;
+  a plan is not proof of execution
+- `[deploy.providers.<name>]` resolves path/git provider packages for export,
+  preflight and status. These scripts use `deploy::provider_context()` and
+  `deploy::provider_report(...)`; a declared `apply.rhai` is not invoked in v0.15
+- `deploy apply` and `deploy redeploy` are not yet supported in v0.15, regardless
+  of `--yes`, provider setup or saved history. Both exit nonzero and name the
+  unexecuted obligations; see [guide 074](074-deployment-guide.md). The full
+  execution design is in Queue's deploy lane (Q-003)
 - `bootstrap` runs `[bootstrap].start` after setup by default; pass `--no-start`
   to skip that phase; it fails fast on dirty existing checkouts or remote
   mismatches

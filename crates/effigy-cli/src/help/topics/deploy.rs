@@ -7,7 +7,7 @@ pub(crate) fn render_deploy_help<R: HelpRenderer + ?Sized>(renderer: &mut R) -> 
         "deploy",
         &[
             "Inspect the provider-neutral production deployment model derived from the effective manifest and bundle state.",
-            "Export is provider-package driven and file-oriented. Deployment transactions compose code refs, state stacks, artifact policy, release evidence, provider adapters, hooks, health checks, and reports.",
+            "Export is provider-package driven and file-oriented. Apply and redeploy are not yet supported in v0.15: state, hooks, health, release gates and digest pins are not executed or enforced. Full execution design is tracked in the deploy lane (Q-003).",
         ],
         &[
             "effigy deploy model [--repo <PATH>] --json",
@@ -27,7 +27,7 @@ pub(crate) fn render_deploy_help<R: HelpRenderer + ?Sized>(renderer: &mut R) -> 
             ("--write-report", "Persist deploy plan output under .effigy/reports/deploy/<env>/"),
             ("--deployment <ID>", "Select a deployment history entry for redeploy"),
             ("--limit <N>", "Limit deployment history results"),
-            ("--yes", "Execute an apply or redeploy transaction after review"),
+            ("--yes", "Accepted for compatibility; apply and redeploy still refuse in v0.15"),
             ("--json", "Render machine-facing deploy payloads"),
             ("-h, --help", "Print command help"),
         ],
@@ -35,7 +35,6 @@ pub(crate) fn render_deploy_help<R: HelpRenderer + ?Sized>(renderer: &mut R) -> 
             "effigy deploy model --json",
             "effigy deploy export acme-cloud --path infra/deploy --plan",
             "effigy deploy plan uat --write-report",
-            "effigy deploy apply uat --yes",
             "effigy deploy history production --limit 5",
             "effigy --json deploy model --repo /path/to/repo",
         ],

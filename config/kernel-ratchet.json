@@ -400,8 +400,7 @@
     },
     "src/runner/deploy_command/transaction.rs": {
       "std.process.Command.new": 1,
-      "std.process.Command.output": 1,
-      "std::fs::remove_file": 1
+      "std.process.Command.output": 1
     },
     "src/runner/doctor_ports.rs": {
       "std.process.Command.new": 1,

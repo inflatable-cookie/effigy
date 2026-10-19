@@ -1,0 +1,52 @@
+[deploy.providers.render]
+source = { type = "git", url = "git@github.com:inflatable-cookie/effigy-provider-render.git", ref = "main" }
+
+[deploy.uat]
+state = "uat"
+code_ref = "branch:main"
+release_policy = "optional"
+provider_project = "acowtancy-uat"
+artifact_policy = "digest-preferred"
+
+[deploy.uat.provider]
+adapter = "render"
+project_id = ""
+environment_id = ""
+services = { front = "", admin = "", api = "", jobs = "" }
+# Private UAT target shape once the Render provider/export is updated:
+# services = { gateway = "", api = "", jobs = "", mailpit = "" }
+# Until then, keep the real Render resource mapping in the docs UAT runway and
+# provider-side setup notes rather than pretending the current public
+# front/admin/api export is client-safe.
+
+[deploy.uat.preflight]
+require_release_gates = false
+
+[deploy.production]
+state = "production"
+code_ref = "release-tag"
+release_policy = "required"
+provider_project = "acowtancy-production"
+artifact_policy = "digest-pinned"
+
+[deploy.production.provider]
+adapter = "render"
+# PROVIDER IDENTITY (g05.116, build.production-provider-identity): the
+# operator supplies the real Render production identifiers; nothing here
+# is invented. Required values, exactly as this file expects them:
+# - project_id: the Render production project (workspace) id, e.g. the
+#   `projectId`/`ownerId` shown in the production workspace settings.
+# - environment_id: the Render production environment id the blueprint
+#   (infra/render/production.render.yaml) is attached to.
+# - services.front/admin/api/jobs: the Render service ids for each key.
+#   NOTE the key names do not match the blueprint 1:1 — the blueprint
+#   defines acowtancy-prod-cream (Node gateway) and acowtancy-prod-dairy
+#   (static) and no api/jobs services, so the operator must confirm the
+#   intended mapping (e.g. front -> cream gateway, admin -> dairy) or
+#   extend the key set before these can be filled. Leave empty until then.
+project_id = ""
+environment_id = ""
+services = { front = "", admin = "", api = "", jobs = "" }
+
+[deploy.production.preflight]
+require_release_gates = true

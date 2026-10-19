@@ -23,6 +23,15 @@
 "check:bundles:compile" = { run = "cargo check -p effigy -p effigy-manifest -p effigy-kernel -p effigy-cli -p effigy-builtin -p effigy-core --all-targets --profile test", timeout_ms = 600000 }
 "check:bundles:clippy" = { run = "cargo clippy -p effigy -p effigy-manifest -p effigy-kernel -p effigy-cli -p effigy-builtin -p effigy-core --all-targets -- -D warnings", timeout_ms = 600000 }
 
+# Deploy execution refusal plus unchanged model/export and legacy readers.
+"test:deploy" = [
+  { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(deploy_tests::) | test(deploy_contract_tests::) | test(run_rhai_feature_refuses_deploy_execution)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests --filterset 'test(cli_json_mode_deploy_)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { task = "test:graph:parity" },
+]
+"check:deploy" = { run = "cargo check -p effigy -p effigy-cli --all-targets --profile test", timeout_ms = 600000 }
+"lint:deploy" = { run = "cargo clippy -p effigy -p effigy-cli --all-targets -- -D warnings", timeout_ms = 600000 }
+
 # Graph storage and CLI refresh contract; nextest bounds each case and leaks.
 "test:graph:purity" = [
   { run = "cargo build --profile discovery-proof --bin effigy", timeout_ms = 600000 },
