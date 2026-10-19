@@ -1,8 +1,14 @@
 #!/bin/sh
-# Run only through test:kernel:custody:linux (host admission). Every host
+# Run only through test:kernel:custody:linux or test:kernel:gate:shared:linux
+# (host admission). Every host
 # write, VM, image and fixture belongs to this fresh directory. No existing
 # Colima profile, Docker context or checkout is mounted or changed.
 set -eu
+proof_mode=${1:-custody}
+case "$proof_mode" in
+    custody|gate-shared) ;;
+    *) printf 'Unknown Linux proof mode: %s\n' "$proof_mode" >&2; exit 2 ;;
+esac
 proof_dir=$(mktemp -d /tmp/k208.XXXXXX)
 printf 'Linux qualification artifacts: %s\n' "$proof_dir"
 export COLIMA_HOME="$proof_dir/c"
@@ -23,11 +29,27 @@ colima start --runtime docker --activate=false --ssh-config=false --template=fal
     --binfmt=false --cpus 2 --memory 3 --disk 10 --root-disk 10 --mount "$proof_dir:w" --mount-type virtiofs
 mkdir -p "$proof_dir/cargo" "$proof_dir/target"
 export DOCKER_HOST="unix://$COLIMA_HOME/default/docker.sock"
-docker run --rm --init --cpus 2 --memory 2g \
+set --
+if [ "$proof_mode" = gate-shared ]; then
+    # Hosted CI is unprivileged: root bypasses the permission-denied proof.
+    # Match the disposable bind mounts' owner and use a writable Cargo home.
+    # The image already contains this toolchain; avoid root-only rustup updates.
+    set -- --user "$(id -u):$(id -g)" --env CARGO_HOME=/proof-cargo \
+        --env RUSTUP_TOOLCHAIN=1.97.1 \
+        --mount "type=bind,source=$proof_dir/cargo,target=/proof-cargo"
+fi
+docker run --rm --init --cpus 2 --memory 2g "$@" \
+    --env "KERNEL_PROOF_MODE=$proof_mode" \
     --mount "type=bind,source=$source_dir,target=/proof" --workdir /proof \
     --mount "type=bind,source=$proof_dir/cargo,target=/usr/local/cargo/registry" \
     --mount "type=bind,source=$proof_dir/target,target=/proof/target" \
     rust:1.97.1-slim-bookworm sh -ec '
+        if [ "$KERNEL_PROOF_MODE" = gate-shared ]; then
+            # Same default-feature, concurrent libtest model as hosted CI.
+            # libtest has no timeout flag; bound and force-exit its owned tree.
+            RUSTFLAGS="--cfg effigy_shared_process" timeout --kill-after=5s 600s cargo test -p effigy-kernel --test gate -- --test-threads=8
+            exit
+        fi
         apt-get update -qq
         apt-get install -y -qq curl procps > /dev/null
         curl --fail --location --proto "=https" --tlsv1.2 https://get.nexte.st/latest/linux-arm | tar xz -C /usr/local/cargo/bin
