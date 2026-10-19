@@ -1841,6 +1841,11 @@ Current mechanisms and their kernel replacements. Evidence is at main
 | Scheduler client signal handler | `src/runner/host_scheduler/submit.rs:205-212` | subscribes to `SignalRouter` cancel; admission shape is Q-006 |
 | QA group records: 20 s staleness, truncating writes | `crates/effigy-runtime/src/qa_group_status.rs:19`, `:275-291` | `Run` rows; `stop` and `hard_timeout_ms` become possible |
 
+Read-boundary CLI proofs use the `discovery-proof` Cargo profile: the real,
+CLI and helper dispatch with release optimization and symbols stripped so macOS's
+pre-main loading does not dominate the unchanged eight-/ten-second fixture
+bounds. Ordinary dev, test and release profiles are unchanged.
+
 ### 10.2 Run supervisor
 
 | Current mechanism | Evidence | Kernel replacement |

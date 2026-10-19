@@ -64,6 +64,12 @@ opt-level = 3
 [profile.test.package."sha2:0.11.0"]
 opt-level = 3
 
+# Read-boundary proofs exercise the shipping CLI configuration without symbols,
+# keeping macOS pre-main loading inside the unchanged fixture deadlines.
+[profile.discovery-proof]
+inherits = "release"
+strip = "symbols"
+
 [package]
 name = "effigy"
 version.workspace = true

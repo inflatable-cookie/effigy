@@ -10,13 +10,13 @@
 
 # Pure discovery and pinned executable-source acquisition (contract 052 R2).
 "test:bundles:pins" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-manifest --lib -E 'test(bundles::) | test(composition::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
-"test:bundles:cli" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test bundle_pins --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
-"test:bundles:discovery-helpers" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test bundle_pins -E 'test(discovery_never_waits_for_presentation_helpers)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
+"test:bundles:cli" = { run = "cargo nextest run --cargo-profile discovery-proof --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test bundle_pins --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
+"test:bundles:discovery-helpers" = { run = "cargo nextest run --cargo-profile discovery-proof --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test bundle_pins -E 'test(discovery_never_waits_for_presentation_helpers)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
 "test:bundles:presentation-cli" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests -E 'test(help_and_flags_tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
 "test:bundles:header" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-cli -p effigy-core -p effigy --lib -E 'test(header::) | test(help_render_tests::) | test(build_info::tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
 "test:bundles:consumers" = [
-  { run = "cargo build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 },
-  { run = "EFFIGY_BUNDLE_CONSUMERS=$HOME/Dev/legacy/sites/cbs:$HOME/Dev/legacy/libraries/decodelabs/archetype:$HOME/Dev/projects/acowtancy EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test bundle_pins --run-ignored only -E 'test(consumer_effective_)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { run = "cargo build --profile discovery-proof -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 },
+  { run = "EFFIGY_BUNDLE_CONSUMERS=$HOME/Dev/legacy/sites/cbs:$HOME/Dev/legacy/libraries/decodelabs/archetype:$HOME/Dev/projects/acowtancy EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/discovery-proof/kernel-custody-fixture cargo nextest run --cargo-profile discovery-proof --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test bundle_pins --run-ignored only -E 'test(consumer_effective_)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
 ]
 "test:bundles:surface" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(bundle_command::tests::) | test(config_builtin_tests::) | test(bootstrap_command::tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
 "test:kernel:source-store" = { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib -E 'test(source_directory_) | test(run_store_record_)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
@@ -25,8 +25,8 @@
 
 # Graph storage and CLI refresh contract; nextest bounds each case and leaks.
 "test:graph:purity" = [
-  { run = "cargo build --bin effigy", timeout_ms = 600000 },
-  { run = "EFFIGY_TEST_EFFIGY_EXECUTABLE=$PWD/target/debug/effigy cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-codegraph --lib --run-ignored only -E 'test(read_purity::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { run = "cargo build --profile discovery-proof --bin effigy", timeout_ms = 600000 },
+  { run = "EFFIGY_TEST_EFFIGY_EXECUTABLE=$PWD/target/discovery-proof/effigy cargo nextest run --cargo-profile discovery-proof --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-codegraph --lib --run-ignored only -E 'test(read_purity::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
 ]
 "test:graph:docs" = [
   { run = "sh tests/scripts/graph-test-home.sh cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests -E 'test(docs_context_tests::) | test(docs_context_sources_tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
