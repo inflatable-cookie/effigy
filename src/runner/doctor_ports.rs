@@ -383,10 +383,8 @@ fn workspace_ownership_finding(
     }
 }
 
-/// Surface installed catalog-pack health. A pack that has become unreadable or
-/// incompatible resolves to the compiled baseline silently as far as compose
-/// output is concerned, so doctor is where an operator finds out — with one
-/// direct repair command.
+/// Lists each v0.14 task-state family still on disk, with what is safe to do
+/// with it. Informational: nothing reads it for exclusion.
 fn append_legacy_task_state_diagnostics(
     resolved_root: &Path,
     diagnostics: &mut DoctorRuntimeDiagnostics,
@@ -410,6 +408,10 @@ fn append_legacy_task_state_diagnostics(
     }
 }
 
+/// Surface installed catalog-pack health. A pack that has become unreadable or
+/// incompatible resolves to the compiled baseline silently as far as compose
+/// output is concerned, so doctor is where an operator finds out — with one
+/// direct repair command.
 fn append_catalog_pack_diagnostics(diagnostics: &mut DoctorRuntimeDiagnostics) {
     let selection =
         effigy_catalog::pack::select_pack(crate::runner::service_command::effigy_version());

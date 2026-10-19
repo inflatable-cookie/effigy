@@ -896,6 +896,48 @@ fn cli_text_mode_failing_rhai_task_streams_output_without_envelope() {
     );
 }
 
+/// v0.14 task state is never read or deleted; `doctor` lists what remains so
+/// the operator knows it is safe to remove (contract 052 §11).
+#[test]
+fn cli_doctor_lists_v014_task_state_families_in_json_and_text() {
+    let root = temp_workspace("cli-doctor-legacy-task-state");
+    fs::write(
+        root.join("effigy.toml"),
+        "[tasks.build]\nrun = \"printf build\"\n",
+    )
+    .expect("write manifest");
+    fs::create_dir_all(root.join(".effigy/locks")).expect("mkdir locks");
+    fs::write(root.join(".effigy/locks/task-build.lock"), "{}").expect("write v0.14 lock");
+    fs::create_dir_all(root.join(".effigy/cache")).expect("mkdir cache");
+    fs::write(root.join(".effigy/cache/task-cache-v1.json"), "{}").expect("write v0.14 cache");
+
+    let output = run_json_cli_command(&root, &["doctor"]);
+    let parsed = parse_stdout_json(&output);
+    let rendered = parsed.to_string();
+    for family in [
+        "tasks.legacy-state.task-lease-locks",
+        "tasks.legacy-state.task-cache",
+    ] {
+        assert!(
+            rendered.contains(family),
+            "json doctor misses {family}: {rendered}"
+        );
+    }
+
+    let text = run_cli_command(&root, &["doctor"]);
+    let stdout = String::from_utf8_lossy(&text.stdout);
+    assert!(
+        stdout.contains("tasks.legacy-state.task-lease-locks")
+            && stdout.contains("tasks.legacy-state.task-cache"),
+        "text doctor misses the legacy families: {stdout}"
+    );
+    assert!(
+        root.join(".effigy/locks/task-build.lock").exists()
+            && root.join(".effigy/cache/task-cache-v1.json").exists(),
+        "doctor lists, never deletes"
+    );
+}
+
 #[test]
 fn cli_json_mode_tasks_unlock_refuses_with_the_explanation() {
     let root = temp_workspace("cli-json-retired-unlock");

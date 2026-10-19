@@ -17,10 +17,7 @@ pub(super) fn render_text(report: &DoctorReport, verbose: bool) -> Result<String
     let sections = crate::doctor_finding_sections(report);
     let actionable_sections = sections
         .iter()
-        .filter(|section| {
-            section.severity != DoctorSeverity::Info
-                || section.check_id == crate::check_id::DEPENDENCY_LINK_HEALTH
-        })
+        .filter(|section| super::renders_section(section))
         .collect::<Vec<&DoctorFindingSection>>();
     let scan_report_paths =
         super::scan_reports::sync_scan_detail_reports(&report.resolved_root, &sections)?;

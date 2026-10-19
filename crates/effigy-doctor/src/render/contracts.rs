@@ -1,7 +1,7 @@
 use serde_json::json;
 
 pub(super) use crate::DoctorFindingSection;
-use crate::{DoctorReport, DoctorSeverity};
+use crate::DoctorReport;
 
 pub(super) fn doctor_json_payload(
     report: &DoctorReport,
@@ -66,10 +66,7 @@ pub(super) fn doctor_json_payload(
 fn renderable_sections(sections: &[DoctorFindingSection]) -> Vec<&DoctorFindingSection> {
     sections
         .iter()
-        .filter(|section| {
-            section.severity != DoctorSeverity::Info
-                || section.check_id == crate::check_id::DEPENDENCY_LINK_HEALTH
-        })
+        .filter(|section| super::renders_section(section))
         .collect::<Vec<&DoctorFindingSection>>()
 }
 
