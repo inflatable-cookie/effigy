@@ -148,24 +148,30 @@ fn linked_worktree_borrows_owner_worktree_scoped_volumes() {
 
 #[test]
 fn adding_data_from_keeps_sibling_generated_compose_byte_identical() {
-    with_temp_effigy_home("data-from-byte-identical", |_| {
+    let owner = tempfile::tempdir().expect("private sibling render fixture");
+    let root = owner.path().join("checkout");
+    fs::create_dir(&root).unwrap();
+    crate::with_test_effigy_home(&owner.path().join("home/.effigy"), || {
         let _lock = crate::test_env_lock();
-        let root = temp_repo("data-from-byte-identical");
+        let generated_bytes = |policy: &EffectiveContainerPolicy| {
+            let render = policy.render.as_ref().expect("immutable host render");
+            let name = policy.compose_files[0].strip_prefix(&render.path).unwrap();
+            render.closure.files()[name.to_string_lossy().as_ref()].clone()
+        };
         write_manifest(&root, &pair_manifest_without_data_from());
         let dev_without = load_container_policy(&root, Some("dev")).expect("dev policy");
-        let compose_without = dev_without
-            .read_compose(&dev_without.compose_files[0])
-            .expect("read dev compose");
+        let compose_without = generated_bytes(&dev_without);
         let names_without = managed_volume_names(&dev_without);
 
-        // Declare the same environments again with `data_from` added to the
-        // sibling, in the same checkout, so every path-derived byte matches.
+        // The changed declaration creates a new generation. Compare the exact
+        // immutable bytes, before internal readers expand its absolute root.
         write_manifest(&root, PAIR_MANIFEST);
         let dev_with = load_container_policy(&root, Some("dev")).expect("dev policy");
-        let compose_with = dev_with
-            .read_compose(&dev_with.compose_files[0])
-            .expect("read dev compose");
-
+        let compose_with = generated_bytes(&dev_with);
+        assert_ne!(
+            dev_with.render.as_ref().unwrap().closure.digest(),
+            dev_without.render.as_ref().unwrap().closure.digest()
+        );
         assert_eq!(
             compose_with, compose_without,
             "adding data_from on a sibling must not change this environment's generated compose"
