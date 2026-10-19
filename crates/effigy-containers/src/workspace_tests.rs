@@ -792,9 +792,7 @@ mod host_git_mount_tests {
         fs::write(&pem, "host CA sentinel").expect("write host CA sentinel");
         let config = make_config("php-fpm", enabled_params());
         let variable = effigy_gateway::private_state::PRIVATE_STATE_ROOT_ENV;
-        let previous = std::env::var_os(variable);
-        std::env::set_var(variable, &dir);
-        let _restore = RestoreEnvironmentVariable { variable, previous };
+        let _restore = RestoreEnvironmentVariable::set(variable, dir.as_os_str());
 
         let mount = with_test_host_mkcert_root_ca(Some(&pem), || {
             build_host_mkcert_ca_mount(&config, "workspace")
@@ -802,9 +800,47 @@ mod host_git_mount_tests {
         assert!(mount.is_none());
     }
 
+    #[test]
+    fn environment_guard_serializes_a_forced_concurrent_mutator() {
+        const KEY: &str = "EFFIGY_TEST_ENV_GUARD_REGRESSION";
+        let original = std::env::var_os(KEY);
+        let first = RestoreEnvironmentVariable::set(KEY, std::ffi::OsStr::new("first"));
+        let (attempted_tx, attempted_rx) = std::sync::mpsc::channel();
+        let second = std::thread::spawn(move || {
+            assert!(matches!(
+                crate::TEST_ENV_LOCK.try_lock(),
+                Err(std::sync::TryLockError::WouldBlock)
+            ));
+            attempted_tx.send(()).unwrap();
+            let _second = RestoreEnvironmentVariable::set(KEY, std::ffi::OsStr::new("second"));
+            assert_eq!(std::env::var(KEY).unwrap(), "second");
+        });
+        attempted_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        assert_eq!(std::env::var(KEY).unwrap(), "first");
+        drop(first);
+        second.join().unwrap();
+        assert_eq!(std::env::var_os(KEY), original);
+    }
+
     struct RestoreEnvironmentVariable {
         variable: &'static str,
         previous: Option<std::ffi::OsString>,
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl RestoreEnvironmentVariable {
+        fn set(variable: &'static str, value: &std::ffi::OsStr) -> Self {
+            let lock = crate::test_env_lock();
+            let previous = std::env::var_os(variable);
+            std::env::set_var(variable, value);
+            Self {
+                variable,
+                previous,
+                _lock: lock,
+            }
+        }
     }
 
     impl Drop for RestoreEnvironmentVariable {

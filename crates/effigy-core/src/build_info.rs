@@ -555,22 +555,51 @@ mod tests {
         );
     }
 
-    /// Restores one process-environment key on drop. Only the env-isolation
-    /// sentinel regression writes the process environment in this crate, and
-    /// no other test in this binary reads `EFFIGY_ACTIVE_VERSION`, so no
-    /// shared boundary is required.
+    static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn environment_guard_serializes_a_forced_concurrent_mutator() {
+        const KEY: &str = "EFFIGY_TEST_ENV_GUARD_REGRESSION";
+        let original = std::env::var_os(KEY);
+        let first = ProcessEnvRestore::set(KEY, "first");
+        let (attempted_tx, attempted_rx) = std::sync::mpsc::channel();
+        let second = std::thread::spawn(move || {
+            assert!(matches!(
+                TEST_ENV_LOCK.try_lock(),
+                Err(std::sync::TryLockError::WouldBlock)
+            ));
+            attempted_tx.send(()).unwrap();
+            let _second = ProcessEnvRestore::set(KEY, "second");
+            assert_eq!(std::env::var(KEY).unwrap(), "second");
+        });
+        attempted_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        assert_eq!(std::env::var(KEY).unwrap(), "first");
+        drop(first);
+        second.join().unwrap();
+        assert_eq!(std::env::var_os(KEY), original);
+    }
+
+    /// Restores one process-environment key while holding the crate env lock.
     struct ProcessEnvRestore {
         key: &'static str,
         previous: Option<String>,
+        _lock: std::sync::MutexGuard<'static, ()>,
     }
 
     impl ProcessEnvRestore {
         fn set(key: &'static str, value: &str) -> Self {
+            let lock = TEST_ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
             let previous = std::env::var(key).ok();
             unsafe {
                 std::env::set_var(key, value);
             }
-            Self { key, previous }
+            Self {
+                key,
+                previous,
+                _lock: lock,
+            }
         }
     }
 

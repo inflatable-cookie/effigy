@@ -53,3 +53,7 @@ pub mod user_runtime;
 pub use error::GatewayError;
 pub use routes::{Route, RouteTable};
 pub use server::{GatewayConfig, GatewayMode, PrivateGatewayPolicy};
+
+#[cfg(test)]
+#[path = "../../../tests/support/scoped_env.rs"]
+mod env_test_support;

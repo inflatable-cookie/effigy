@@ -1278,7 +1278,10 @@ fn shell_gate(name: &str, command: &str) -> ResolvedGate {
 #[test]
 fn failing_and_passing_gates_persist_logs_and_redacted_environment() {
     let root = temp_repo("gate-persist");
-    std::env::set_var("CARGO_REGISTRY_TOKEN", "super-secret-token");
+    let _env = crate::env_test_support::EnvGuard::set_many(&[(
+        "CARGO_REGISTRY_TOKEN",
+        Some(std::ffi::OsStr::new("super-secret-token")),
+    )]);
     let fail = shell_gate(
         "floor",
         "printf 'stdout-line\\n'; printf 'stderr-line\\n' >&2; exit 3",

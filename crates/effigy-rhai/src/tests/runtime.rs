@@ -74,15 +74,14 @@ fn execute_rhai_script_resolves_imports_from_catalog_root() {
         invocation_root.display(),
     );
 
-    unsafe {
-        std::env::set_var(EFFIGY_RHAI_CATALOG_ROOT, &catalog_root);
-        std::env::set_var(EFFIGY_RHAI_INVOCATION_CWD, &invocation_root);
-    }
+    let _env = ScopedTestEnv::set_many(&[
+        (EFFIGY_RHAI_CATALOG_ROOT, catalog_root.display().to_string()),
+        (
+            EFFIGY_RHAI_INVOCATION_CWD,
+            invocation_root.display().to_string(),
+        ),
+    ]);
     let result = execute_rhai_script(&context, &script, &[], &callbacks());
-    unsafe {
-        std::env::remove_var(EFFIGY_RHAI_CATALOG_ROOT);
-        std::env::remove_var(EFFIGY_RHAI_INVOCATION_CWD);
-    }
     result.expect("execute");
 }
 

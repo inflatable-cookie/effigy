@@ -200,17 +200,12 @@ fn append_demo_terminal_resize_appends_jsonl_events() {
 
 #[test]
 fn browser_terminal_size_override_reads_valid_env_values() {
-    unsafe {
-        std::env::set_var(DEMO_BROWSER_TERMINAL_COLS_ENV, "96");
-        std::env::set_var(DEMO_BROWSER_TERMINAL_ROWS_ENV, "28");
-    }
+    let _env = crate::contract_test_support::EnvGuard::set_many(&[
+        (DEMO_BROWSER_TERMINAL_COLS_ENV, Some("96".to_owned())),
+        (DEMO_BROWSER_TERMINAL_ROWS_ENV, Some("28".to_owned())),
+    ]);
 
     let size = browser_terminal_size_override();
-
-    unsafe {
-        std::env::remove_var(DEMO_BROWSER_TERMINAL_COLS_ENV);
-        std::env::remove_var(DEMO_BROWSER_TERMINAL_ROWS_ENV);
-    }
 
     assert_eq!(size, Some((96, 28)));
 }

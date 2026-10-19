@@ -128,22 +128,53 @@ fn script_context(root: &Path) -> ScriptContext {
     }
 }
 
+static TEST_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+#[test]
+fn environment_guard_serializes_a_forced_concurrent_mutator() {
+    const KEY: &str = "EFFIGY_TEST_ENV_GUARD_REGRESSION";
+    let original = std::env::var_os(KEY);
+    let first = ScopedTestEnv::set_many(&[(KEY, "first".to_owned())]);
+    let (attempted_tx, attempted_rx) = std::sync::mpsc::channel();
+    let second = std::thread::spawn(move || {
+        assert!(matches!(
+            TEST_ENV_LOCK.try_lock(),
+            Err(std::sync::TryLockError::WouldBlock)
+        ));
+        attempted_tx.send(()).unwrap();
+        let _second = ScopedTestEnv::set_many(&[(KEY, "second".to_owned())]);
+        assert_eq!(std::env::var(KEY).unwrap(), "second");
+    });
+    attempted_rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .unwrap();
+    assert_eq!(std::env::var(KEY).unwrap(), "first");
+    drop(first);
+    second.join().unwrap();
+    assert_eq!(std::env::var_os(KEY), original);
+}
+
 struct ScopedTestEnv {
-    previous: Vec<(String, Option<String>)>,
+    previous: Vec<(String, Option<std::ffi::OsString>)>,
+    _lock: std::sync::MutexGuard<'static, ()>,
 }
 
 impl ScopedTestEnv {
     fn set_many(values: &[(&str, String)]) -> Self {
+        let lock = TEST_ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         let previous = values
             .iter()
             .map(|(key, value)| {
                 let key = (*key).to_owned();
-                let previous = std::env::var(&key).ok();
+                let previous = std::env::var_os(&key);
                 std::env::set_var(&key, value);
                 (key, previous)
             })
             .collect();
-        Self { previous }
+        Self {
+            previous,
+            _lock: lock,
+        }
     }
 }
 
@@ -369,14 +400,9 @@ fn load_script_reads_relative_path_from_cwd() {
 
 #[test]
 fn load_script_args_from_env_decodes_json_array() {
-    unsafe {
-        std::env::set_var(EFFIGY_RHAI_ARGS_JSON, "[\"one\",\"two\"]");
-    }
+    let _env = ScopedTestEnv::set_many(&[(EFFIGY_RHAI_ARGS_JSON, "[\"one\",\"two\"]".to_owned())]);
     let args = load_script_args_from_env().expect("args");
     assert_eq!(args, vec!["one".to_owned(), "two".to_owned()]);
-    unsafe {
-        std::env::remove_var(EFFIGY_RHAI_ARGS_JSON);
-    }
 }
 
 #[test]

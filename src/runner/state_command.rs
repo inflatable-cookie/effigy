@@ -1038,10 +1038,12 @@ mod tests {
     struct ScopedEnvVar {
         key: String,
         previous: Option<String>,
+        _lock: crate::contract_test_support::ReentrantTestLockGuard,
     }
 
     impl ScopedEnvVar {
         fn set(key: &str, value: &str) -> Self {
+            let lock = crate::contract_test_support::lock_test();
             let previous = std::env::var(key).ok();
             unsafe {
                 std::env::set_var(key, value);
@@ -1049,6 +1051,7 @@ mod tests {
             Self {
                 key: key.to_owned(),
                 previous,
+                _lock: lock,
             }
         }
     }
