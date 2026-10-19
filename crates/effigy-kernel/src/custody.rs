@@ -169,13 +169,13 @@ pub struct OwnedProcess {
 #[derive(Debug)]
 pub(crate) struct ProcessCore {
     receipt: ProcessReceipt,
-    /// stdout and stderr logs, each fed by its own stream's redactor.
+    /// stdout and stderr logs, fed from the one merged redaction.
     logs: [Option<capture::Log>; 2],
     output: VecDeque<u8>,
     /// stdout and stderr kept apart for engines that report them separately.
-    /// Each has its own redactor and is never joined with the other.
+    /// Each byte comes from the merged redaction, attributed to the stream
+    /// that produced it, so joining the two never reconstructs a secret.
     streams: [VecDeque<u8>; 2],
-    stream_redactors: [Redactor; 2],
     queue_max: usize,
     stdout: Option<OwnedFd>,
     stderr: Option<OwnedFd>,
@@ -211,13 +211,23 @@ impl Redactor {
         }
     }
     pub(crate) fn push(&mut self, bytes: &[u8], eof: bool) -> Vec<u8> {
+        let tagged: Vec<(u8, u8)> = bytes.iter().map(|byte| (0, *byte)).collect();
+        self.push_tagged(&tagged, eof)
+            .into_iter()
+            .map(|(_, byte)| byte)
+            .collect()
+    }
+    /// Redacts `(stream, byte)` pairs in arrival order. A replacement takes
+    /// the stream of the secret's first byte, so a secret split across
+    /// stdout and stderr is redacted whole and attributed to one stream.
+    pub(crate) fn push_tagged(&mut self, bytes: &[(u8, u8)], eof: bool) -> Vec<(u8, u8)> {
         let display = self.display.push(bytes, eof);
         self.final_check.push(&display, eof)
     }
 }
 struct RedactionPass {
     secrets: Vec<Vec<u8>>,
-    pending: Vec<u8>,
+    pending: Vec<(u8, u8)>,
     replacement: &'static [u8],
 }
 impl RedactionPass {
@@ -229,21 +239,21 @@ impl RedactionPass {
             replacement,
         }
     }
-    fn push(&mut self, bytes: &[u8], eof: bool) -> Vec<u8> {
+    fn push(&mut self, bytes: &[(u8, u8)], eof: bool) -> Vec<(u8, u8)> {
         self.pending.extend_from_slice(bytes);
         let keep = self.secrets.iter().map(Vec::len).max().unwrap_or(1);
         let mut out = Vec::new();
         let mut pos = 0;
         while pos < self.pending.len() && (eof || self.pending.len() - pos >= keep) {
-            if let Some(secret) = self
-                .secrets
-                .iter()
-                .find(|s| self.pending[pos..].starts_with(s))
-            {
-                out.extend_from_slice(self.replacement);
+            let rest = &self.pending[pos..];
+            if let Some(secret) = self.secrets.iter().find(|s| {
+                rest.len() >= s.len() && rest.iter().zip(s.iter()).all(|((_, b), c)| b == c)
+            }) {
+                let stream = rest[0].0;
+                out.extend(self.replacement.iter().map(|byte| (stream, *byte)));
                 pos += secret.len();
             } else {
-                out.push(self.pending[pos]);
+                out.push(rest[0]);
                 pos += 1;
             }
         }
@@ -404,10 +414,6 @@ impl Custody {
                 logs: [stdout_log.ok(), stderr_log.ok()],
                 output: VecDeque::new(),
                 streams: [VecDeque::new(), VecDeque::new()],
-                stream_redactors: [
-                    Redactor::new(secrets.clone()),
-                    Redactor::new(secrets.clone()),
-                ],
                 queue_max: cx.operation().limits().queue_bytes,
                 stdout: Some(stdout),
                 stderr: Some(stderr),
@@ -519,36 +525,44 @@ impl OwnedProcess {
     }
 }
 impl ProcessCore {
-    fn sink(&mut self, bytes: &[u8], eof: bool) {
-        // Merge before redaction. Per-stream redaction could reconstruct a
-        // secret when stdout and stderr are joined by the tail sink. The
-        // per-stream logs are never joined; each has its stream's redactor.
-        let clean = self.redactor.push(bytes, eof);
+    /// One redaction over both streams in arrival order, before any sink:
+    /// per-stream redaction could reconstruct a secret split across them
+    /// wherever they are joined (a log reader, a tail, a terminal).
+    fn sink(&mut self, index: usize, bytes: &[u8], eof: bool) {
+        let tagged: Vec<(u8, u8)> = bytes.iter().map(|byte| (index as u8, *byte)).collect();
+        let clean = self.redactor.push_tagged(&tagged, eof);
         if clean.is_empty() {
             return;
         }
-        self.output.extend(clean.iter().copied());
+        for stream in 0..2 {
+            let part: Vec<u8> = clean
+                .iter()
+                .filter(|(tag, _)| usize::from(*tag) == stream)
+                .map(|(_, byte)| *byte)
+                .collect();
+            if part.is_empty() {
+                continue;
+            }
+            if let Some(log) = self.logs[stream].as_mut() {
+                if log.append(&part).is_err() {
+                    log.mark_truncated();
+                    self.capture = CaptureState::Truncated("log write failed".into());
+                    self.logs[stream] = None;
+                }
+            }
+            let queue = &mut self.streams[stream];
+            queue.extend(part);
+            while queue.len() > self.queue_max {
+                queue.pop_front();
+            }
+        }
+        self.output.extend(clean.iter().map(|(_, byte)| *byte));
         while self.output.len() > self.queue_max {
             self.output.pop_front();
         }
-        self.tail.extend(clean);
+        self.tail.extend(clean.into_iter().map(|(_, byte)| byte));
         while self.tail.len() > self.tail_max {
             self.tail.pop_front();
-        }
-    }
-    fn stream_sink(&mut self, index: usize, bytes: &[u8], eof: bool) {
-        let clean = self.stream_redactors[index].push(bytes, eof);
-        if let Some(log) = self.logs[index].as_mut() {
-            if !clean.is_empty() && log.append(&clean).is_err() {
-                log.mark_truncated();
-                self.capture = CaptureState::Truncated("log write failed".into());
-                self.logs[index] = None;
-            }
-        }
-        let queue = &mut self.streams[index];
-        queue.extend(clean);
-        while queue.len() > self.queue_max {
-            queue.pop_front();
         }
     }
     fn drain(&mut self) {
@@ -594,11 +608,9 @@ impl ProcessCore {
                     } else {
                         buf[..count as usize].to_vec()
                     };
-                    self.stream_sink(index, &bytes, false);
-                    self.sink(&bytes, false);
+                    self.sink(index, &bytes, false);
                 } else {
-                    self.stream_sink(index, &buf[..count as usize], false);
-                    self.sink(&buf[..count as usize], false);
+                    self.sink(index, &buf[..count as usize], false);
                 }
             }
             if eof && index == 1 {
@@ -607,12 +619,8 @@ impl ProcessCore {
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner)
                         .push(&[], true);
-                    self.stream_sink(index, &bytes, false);
-                    self.sink(&bytes, false);
+                    self.sink(index, &bytes, false);
                 }
-            }
-            if eof {
-                self.stream_sink(index, &[], true);
             }
             if !eof {
                 if index == 0 {
@@ -625,7 +633,7 @@ impl ProcessCore {
         // One stream closing cannot flush a prefix that the other stream may
         // finish. Only the merged stream's EOF flushes the bounded redactor.
         if self.stdout.is_none() && self.stderr.is_none() {
-            self.sink(&[], true);
+            self.sink(0, &[], true);
         }
     }
     fn poll(&mut self) -> Observed<Exit> {

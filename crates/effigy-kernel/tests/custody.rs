@@ -951,6 +951,10 @@ fn custody_merged_streams_cannot_reconstruct_a_secret_before_any_sink() {
     assert_eq!(result.cleanup(), CleanupOutcome::Complete);
     assert_eq!(child.tail(), b"[REDACTED]");
     assert_eq!(child.take_output(), b"[REDACTED]");
+    // The per-stream queues and logs come from the same merged pass: joined
+    // in any order they never rebuild the secret.
+    let (stdout, stderr) = child.take_stream_output();
+    assert_eq!([stdout, stderr].concat(), b"[REDACTED]");
     let logs = std::fs::read_dir(root.path().join("runs").join(id(1).to_string()))
         .unwrap()
         .flat_map(|e| std::fs::read(e.unwrap().path()).unwrap())
