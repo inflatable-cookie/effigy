@@ -498,8 +498,21 @@ fn run_container_up_compose(
     if !crate::runner::managed_settle::environment_lock_holders(repo_root, &plan.policy.name)
         .is_empty()
     {
-        up_plan.args.retain(|arg| arg != "--force-recreate");
-        up_plan.args.push(OsString::from("--no-recreate"));
+        if effigy_containers::exec::probe_mount_drift(
+            repo_root,
+            &plan.policy,
+            std::time::Instant::now() + std::time::Duration::from_secs(15),
+        )
+        .is_ok_and(|drift| !drift.is_empty())
+        {
+            crate::runner::managed_settle::refuse_pre_spawn_mount_reconcile(
+                repo_root,
+                &plan.policy.name,
+            )?;
+        } else {
+            up_plan.args.retain(|arg| arg != "--force-recreate");
+            up_plan.args.push(OsString::from("--no-recreate"));
+        }
     }
     if plan.attach_mode == EffectiveAttachMode::Attached {
         match run_compose_plan_inherit_with_stop_flag_and_env(
@@ -817,6 +830,16 @@ fn partial_activation_reconcile_pending(
     let running = effigy_containers::exec::verify_owned_running_compose_rows(repo_root, &plan.policy, &running, deadline)
         .map_err(|_| RunnerError::task_invocation("partial activation reconciliation unavailable: current full-ID ownership/bindings could not be verified. No services were recreated"))?;
     if !effigy_containers::exec::compose_stack_is_running(&plan.policy, &running)? {
+        return Ok(false);
+    }
+    // Unknown mounts cannot authorize recreation of this running stack.
+    if effigy_containers::exec::probe_mount_drift(repo_root, &plan.policy, deadline)
+        .is_ok_and(|drift| !drift.is_empty())
+    {
+        crate::runner::managed_settle::refuse_pre_spawn_mount_reconcile(
+            repo_root,
+            &plan.policy.name,
+        )?;
         return Ok(false);
     }
     reconcile_partial_activation(repo_root, &plan.policy, &running)

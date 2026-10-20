@@ -30,7 +30,9 @@ pub(super) fn run_runtime_compose_up_stage(
     let _ = run_compose(
         repo_root,
         policy,
-        &compose_args(policy, ["up", "-d"]),
+        // Reuse prep has no recreation authority, including when its mount
+        // observation was unavailable. Guarded lifecycle up owns reconcile.
+        &compose_args(policy, ["up", "-d", "--no-recreate"]),
         "docker compose up (idempotent)",
     );
     let backend_id = match resolve_compose_backend_for_repo(repo_root, policy) {

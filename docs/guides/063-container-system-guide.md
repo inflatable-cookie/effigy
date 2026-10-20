@@ -26,6 +26,20 @@ and publishes that immutable generation. Unassigned ports stay explicit in the
 render. Existing generated files migrate automatically on the next Prepare.
 Reset removes only that environment's references; sibling renders are preserved.
 
+Each catalog `isolated_dirs` path is a separate named volume over the source
+bind, including root `node_modules`, nested dependencies and Rust targets in
+worktree stacks. `container status --json` reports `mount_drift.state`
+(`clean`, `drift`, `unavailable` or `stopped`) and `details`; text status and
+doctor also report mismatches. Running alone does not establish mount readiness.
+The next routed-task preparation or `container up --detach` applies the current
+render when verified live mounts differ. Live task holders still prevent
+recreation. Finish those runs before reconciling. An unavailable observation
+preserves reuse and checks permissions without ownership or mode repair; an
+actual access failure still blocks readiness. It does not authorize recreation,
+and permission preparation refuses mismatched
+named mounts before any ownership repair. Effigy never repairs a host bind by
+recursively changing its ownership.
+
 
 ## Start Here
 

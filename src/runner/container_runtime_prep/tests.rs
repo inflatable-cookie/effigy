@@ -463,6 +463,7 @@ fn runtime_compose_up_stage_uses_stable_detached_up_args() {
                 OsString::from("demo-web"),
                 OsString::from("up"),
                 OsString::from("-d"),
+                OsString::from("--no-recreate"),
             ],
             "docker compose up (idempotent)".to_owned(),
         )]
