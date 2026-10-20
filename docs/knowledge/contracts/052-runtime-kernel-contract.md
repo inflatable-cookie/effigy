@@ -2133,7 +2133,8 @@ admission (`run_children_admission_faults_recover_both_sides`). No store migrati
 is needed: `parent_run` is part of store schema v1.
 
 Host-run admission is decided once at the top-level invocation. In-process
-sequence, draft, setup and Rhai task calls inherit that decision, including
+sequence (including legacy draft aliases), setup and Rhai task calls inherit
+that decision, including
 direct execution without a scheduler. Canonical child resolution and kernel
 task gates still apply; a nested heavy step never queues or validates host-run
 admission again (Q-006). The legacy heavy task name rule remains top-level

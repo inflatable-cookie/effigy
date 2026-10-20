@@ -1,9 +1,7 @@
 //! One typed, ordered sequence engine. Output mode chooses sinks only.
 use super::{context::ExecutionTaskContext, preflight::ExecutionPreflight};
 use crate::runner::command_context::EmbeddedRepoOverrideMode;
-use crate::runner::embedded_runner::{
-    parse_embedded_command, run_embedded_task_with_output_mode,
-};
+use crate::runner::embedded_runner::{parse_embedded_command, run_embedded_task_with_output_mode};
 use crate::runner::error::RunnerError;
 use crate::runner::task_engine::{run_plain, CustodyWait, PlainCommand, SpawnScope, TaskRun};
 use effigy_cli::{Command, TaskInvocation};
@@ -49,7 +47,6 @@ pub(super) fn maybe_run_in_process_sequence(
                 Some(report.code),
                 &report.stdout,
                 &report.stderr,
-                selection,
             )?)
             .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
         payload["steps"] = serde_json::Value::Array(report.steps);
@@ -299,7 +296,8 @@ fn execute_step(
     let (task_name, passthrough) = owner;
     match action {
         StepAction::Task { invocation, cwd } => {
-            let output = run_embedded_task_with_output_mode(invocation, cwd, preflight.output_mode)?;
+            let output =
+                run_embedded_task_with_output_mode(invocation, cwd, preflight.output_mode)?;
             nested_exit(output, preflight.output_json)
         }
         StepAction::Rhai { path }
@@ -522,9 +520,7 @@ fn resolve_step_action(
                     );
                     Ok(StepAction::Command(render_skill_token(rendered, preflight)))
                 }
-                (None, Some(task_ref), None) => {
-                    resolve_task_step(task_ref, preflight, selection)
-                }
+                (None, Some(task_ref), None) => resolve_task_step(task_ref, preflight, selection),
                 (None, None, Some(path)) => Ok(StepAction::Rhai {
                     path: PathBuf::from(render_script_path(
                         path,
@@ -595,14 +591,9 @@ fn resolve_task_step(
     } else {
         selector.prefix = Some(selection.catalog.alias.clone());
     }
-    select_catalog_and_task(
-        &selector,
-        &preflight.catalogs,
-        &preflight.invocation_cwd,
-    )
-    .map_err(|error| {
-        RunnerError::task_invocation(format!("run step task ref `{task_ref}`: {error}"))
-    })?;
+    select_catalog_and_task(&selector, &preflight.catalogs, &preflight.invocation_cwd).map_err(
+        |error| RunnerError::task_invocation(format!("run step task ref `{task_ref}`: {error}")),
+    )?;
     let invocation = TaskInvocation {
         name: render_task_selector(&selector),
         args,
@@ -660,7 +651,7 @@ mod tests {
     use crate::runner::execute::preflight::ExecutionPreflight;
     use effigy_cli::Command;
     use effigy_core::resolver::{ResolutionMode, ResolvedTarget};
-    use effigy_execution::{ExecutionDiscoveryPlan, ExecutionSurface};
+    use effigy_execution::ExecutionDiscoveryPlan;
     use effigy_manifest::{LoadedCatalog, TaskManifest, TaskSelection};
     use effigy_tasks::{CatalogSelectionMode, TaskRuntimeArgs, TaskSelector};
     use std::collections::BTreeSet;
@@ -702,7 +693,6 @@ mod tests {
             defer_run: None,
             deferred_builtins: BTreeSet::new(),
             depth,
-            draft_sources: Default::default(),
         }
     }
 
@@ -729,7 +719,6 @@ run = [{ task = "db:migrate" }]
         );
         let preflight = ExecutionPreflight {
             invocation_cwd: PathBuf::from("/workspace-root/acowtancy"),
-            execution_surface: ExecutionSurface::RunArray,
             runtime_args_raw: TaskRuntimeArgs {
                 repo_override: None,
                 verbose_root: false,
