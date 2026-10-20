@@ -201,6 +201,9 @@ pub(in crate::runner) fn marker_pgid(group: &ExecGroupEffect) -> Observed<u32> {
         (Some(pgid), Some(nonce)) if pgid > 1 && nonce == group.nonce => {
             Observed::Verified(pgid, evidence())
         }
+        (Some(_), Some(nonce)) if nonce == group.nonce => Observed::Unknown(
+            UnknownReason::Unparsable("exec group marker names no process group".to_owned()),
+        ),
         // An earlier run's marker: this effect's leader never wrote one.
         (Some(_), Some(_)) => Observed::Absent(AbsenceProof::NoFile {
             name: group.marker.display().to_string(),

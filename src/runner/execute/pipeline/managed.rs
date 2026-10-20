@@ -66,10 +66,15 @@ pub(in crate::runner) fn run_managed_task(
     // The detached supervisor re-resolves its client's invocation and owns
     // the run it admits (§5.8 step 3).
     let owner = managed_run::take_owner();
+    // Retired selectors refuse before any effect, whatever the flags.
+    let default_mode = if owner.is_some() {
+        ManagedExecutionMode::Headless
+    } else {
+        managed_execution_mode()?
+    };
     let execution_mode = match managed_invocation.as_ref().map(|value| &value.action) {
-        _ if owner.is_some() => ManagedExecutionMode::Headless,
         Some(ManagedInvocation::Run { headless: true, .. }) => ManagedExecutionMode::Headless,
-        _ => managed_execution_mode()?,
+        _ => default_mode,
     };
     let detach = matches!(
         managed_invocation.as_ref().map(|value| &value.action),
@@ -148,7 +153,14 @@ pub(in crate::runner) fn run_managed_task(
         )?;
         return Ok(None);
     };
+    let context = ManagedContext {
+        preflight,
+        selection,
+        binding_resolution: &binding_resolution,
+        container_handoff,
+    };
     if owner.is_none() && execution_mode == ManagedExecutionMode::RenderPlan {
+        let plan = displayed_plan(&context, plan)?;
         return render_managed_plan(
             &preflight.selector.task_name,
             &selection.catalog.catalog_root,
@@ -158,12 +170,6 @@ pub(in crate::runner) fn run_managed_task(
         .map(Some)
         .map_err(Into::into);
     }
-    let context = ManagedContext {
-        preflight,
-        selection,
-        binding_resolution: &binding_resolution,
-        container_handoff,
-    };
     if run_key.is_some() {
         return Err(RunnerError::task_invocation(format!(
             "`--run-id` names one-shot runs; managed task `{}` is addressed by its task and \
@@ -324,6 +330,42 @@ fn start_managed_run(
             )
         }
     }
+}
+
+/// The plan as its supervisor would run it: the environment's `up`, each
+/// workload's command and each shell tab's attach. A pure read (R2): no
+/// secret is resolved, so none can reach the rendered plan.
+fn displayed_plan(
+    context: &ManagedContext<'_, '_>,
+    mut plan: effigy_managed::ManagedTaskPlan,
+) -> Result<effigy_managed::ManagedTaskPlan, RunnerError> {
+    let environment = environment_plan(context, &plan, "<run token>", &BTreeMap::new())?;
+    let container_repo_root = context
+        .binding_resolution
+        .exec_working_dir(context.repo())?;
+    let workloads = managed_workloads(
+        context,
+        &plan,
+        &[],
+        "<run token>",
+        container_repo_root.as_deref(),
+    )?;
+    for process in &mut plan.processes {
+        match process.role {
+            ManagedProcessRole::Lifecycle => {
+                if let Some(environment) = &environment {
+                    process.run = environment.up.clone();
+                }
+            }
+            ManagedProcessRole::Shell => process.run = shell_command(context, process)?,
+            ManagedProcessRole::Standard => {
+                if let Some(workload) = workloads.iter().find(|w| w.name == process.name) {
+                    process.run = workload.command.clone();
+                }
+            }
+        }
+    }
+    Ok(plan)
 }
 
 /// The TUI's tabs: the lifecycle tab shows the run's own output, workloads

@@ -57,10 +57,12 @@ pub(super) fn state_home() -> Option<PathBuf> {
     #[cfg(test)]
     {
         static TEST_HOME: OnceLock<tempfile::TempDir> = OnceLock::new();
+        // Short: a detached run's control socket lives under this home, and
+        // a Unix socket path is bounded (SUN_LEN).
         let home = TEST_HOME.get_or_init(|| {
             tempfile::Builder::new()
-                .prefix("effigy-task-engine-home-")
-                .tempdir()
+                .prefix("effigy-te-")
+                .tempdir_in("/tmp")
                 .expect("private test home")
         });
         Some(home.path().to_path_buf())
