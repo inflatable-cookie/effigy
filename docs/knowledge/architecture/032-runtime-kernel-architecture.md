@@ -183,6 +183,24 @@ Engine migrations belong to the engine lanes and start only after cut 7.
 
 ## Foundation API and QA
 
+Persistent endpoint publication uses `Claims::publish_retained`: the complete
+conflict set, each claim's revision and details, and the engine's opaque
+`resources.state` payload commit in one fenced transaction. New endpoints
+must first be reserved with `Claims::reserve`; previously retained endpoints
+must belong to the same resource owner. The claim revision is the publishing
+run's generation. `Run::resource_state` reads the payload under that owner's
+gate; observers use `StoreReader::resource`.
+
+Publication records retention intent. Settle transfers committed reservations
+from the run to its resource owner and marks the effect `Retained`, allowing
+later operations without releasing the endpoints or retaining the old run row.
+An unpublished reservation still releases on settle. Omitted retained claims
+enter boot-clock quarantine using the engine's DNS TTL plus drain budget;
+foreign claims cannot be adopted from an empty or missing engine payload.
+`test:kernel:claims` covers persistence, refusal and faults at publication and
+ownership transfer. These APIs do not themselves cut over the gateway's JSON
+registries; the gateway engine owns that migration.
+
 Identity constructors consume resolved coordinates; selector grammar stays in
 engines. Catalog coordinates normalize separators and dot components without
 escaping the checkout. Unicode fields normalize to NFC with

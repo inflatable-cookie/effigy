@@ -2,6 +2,17 @@
 
 Owner: Platform maintainers
 
+## Current applicability
+
+The v0.15 user-owned gateway uses the transactional endpoint Store described
+in [architecture 035](../architecture/035-gateway-endpoint-store.md) and
+[runtime kernel contract 052](052-runtime-kernel-contract.md). The JSON trust
+checks below apply to legacy route input before import. Once imported, the
+kernel's owner-checked Store is authoritative; the retained JSON backup cannot
+steer route reload. Unknown Store observations preserve the applied table and
+refuse fallback. The following sections record the v0.14 trust boundary that
+migration preserves for its legacy input.
+
 ## Purpose
 
 Define the trust boundary for the local gateway's route table. The gateway

@@ -158,15 +158,6 @@
       "std.process.Command.new": 1,
       "std.process.Command.spawn": 1
     },
-    "crates/effigy-gateway/src/ports.rs": {
-      "std::fs::rename": 1,
-      "std::fs::write": 1
-    },
-    "crates/effigy-gateway/src/ports/reclaim.rs": {
-      "std::fs::remove_file": 1,
-      "std::fs::rename": 1,
-      "std::fs::write": 2
-    },
     "crates/effigy-gateway/src/resolver_setup.rs": {
       "std.process.Command.new": 3,
       "std.process.Command.output": 2,
@@ -583,7 +574,6 @@
       "std::fs::write": 3
     },
     "crates/effigy-containers/src/policy_support/generated_compose.rs": {
-      "std.fs.OpenOptions.write": 2,
       "std::fs::write": 3
     },
     "crates/effigy-containers/src/runtime/port_recovery/tests.rs": {
@@ -674,6 +664,10 @@
     },
     "crates/effigy-execution/src/lib.rs": {
       "std::fs::write": 1
+    },
+    "crates/effigy-gateway/src/endpoint_store/tests.rs": {
+      "std::fs::remove_file": 1,
+      "std::fs::write": 4
     },
     "crates/effigy-gateway/src/identity.rs": {
       "std::fs::remove_file": 1,

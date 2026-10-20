@@ -90,6 +90,26 @@ fn validate_root_entries(path: &Path) -> Result<(), GatewayError> {
             return Err(unsafe_child(&child, "symlinks are not supported"));
         }
         if metadata.is_dir() {
+            if entry.file_name() == ".effigy" {
+                validate_private_metadata(&child, &metadata, true)?;
+                let op = crate::operator::context(
+                    std::time::Duration::from_secs(3),
+                    effigy_kernel::ctx::EffectClass::Observe,
+                );
+                match effigy_kernel::root::StateRoot::observe(
+                    &op.observe().expect("Observe context"),
+                    path,
+                ) {
+                    effigy_kernel::observe::Observed::Verified(_, _)
+                    | effigy_kernel::observe::Observed::Absent(_) => continue,
+                    effigy_kernel::observe::Observed::Unknown(reason) => {
+                        return Err(unsafe_child(
+                            &child,
+                            &format!("kernel state root unknown: {reason:?}"),
+                        ))
+                    }
+                }
+            }
             if !matches!(entry.file_name().to_str(), Some("certs" | "ca")) {
                 return Err(unsafe_child(&child, "unexpected private state directory"));
             }

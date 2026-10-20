@@ -1,3 +1,5 @@
+#[cfg(test)]
+use crate::gateway_legacy_fixture::LegacyRegistryFixture;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -433,10 +435,18 @@ fn locked_removal_keeps_other_entries_and_unknown_fields() {
     let backup = outcome.backup.expect("backup of pre-edit registry");
     assert_eq!(
         std::fs::read_to_string(&backup).unwrap(),
-        serde_json::to_string_pretty(&document).unwrap()
+        format!("{}\n", serde_json::to_string_pretty(&document).unwrap())
     );
-    let after: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let after = effigy_gateway::endpoint_store::EndpointStore::for_ports(&path)
+        .read_compatible()
+        .unwrap()
+        .document("ports")
+        .unwrap()
+        .clone();
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&std::fs::read(&path).unwrap()).unwrap(),
+        document
+    );
     assert!(after["allocations"].get("gone").is_none());
     assert_eq!(
         after["allocations"]["live"],
@@ -445,7 +455,12 @@ fn locked_removal_keeps_other_entries_and_unknown_fields() {
     assert_eq!(after["future_field"], document["future_field"]);
     assert_eq!(
         outcome.sha256_after.as_deref(),
-        Some(effigy_gateway::ports::sha256_hex(std::fs::read(&path).unwrap().as_slice()).as_str())
+        Some(
+            effigy_gateway::ports::sha256_hex(
+                format!("{}\n", serde_json::to_string_pretty(&after).unwrap()).as_bytes()
+            )
+            .as_str()
+        )
     );
 }
 
@@ -543,7 +558,15 @@ fn exhausted_private_registry_recovers_after_reviewed_apply() {
     assert_eq!(applied.capacity_now.next_base, Some(8100 + 100));
     assert_eq!(applied.capacity_now.allocations, 1);
     let backup = applied.backup.expect("backup of the pre-apply registry");
-    assert_eq!(std::fs::read(&backup).unwrap(), untouched);
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&std::fs::read(&backup).unwrap()).unwrap(),
+        serde_json::from_slice::<serde_json::Value>(&untouched).unwrap()
+    );
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        untouched,
+        "import backup is unchanged"
+    );
 
     let after = PortRegistry::load(&path).expect("registry after apply");
     assert!(
@@ -552,7 +575,23 @@ fn exhausted_private_registry_recovers_after_reviewed_apply() {
     );
     assert_eq!(
         applied.registry_sha256_after.as_deref(),
-        Some(effigy_gateway::ports::sha256_hex(&std::fs::read(&path).unwrap()).as_str())
+        Some(
+            effigy_gateway::ports::sha256_hex(
+                format!(
+                    "{}\n",
+                    serde_json::to_string_pretty(
+                        effigy_gateway::endpoint_store::EndpointStore::for_ports(&path)
+                            .read_compatible()
+                            .unwrap()
+                            .document("ports")
+                            .unwrap()
+                    )
+                    .unwrap()
+                )
+                .as_bytes()
+            )
+            .as_str()
+        )
     );
 }
 

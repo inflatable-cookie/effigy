@@ -25,9 +25,9 @@ use effigy_containers::{
     borrowed_volume_ensure_commands, load_container_policy, plan_volume_data_handover,
     ContainerAction, EffectiveContainerPolicy,
 };
-use effigy_gateway::managed_listener::verify_managed_listener_owner;
+use effigy_gateway::managed_listener::observe_managed_listener_owner;
 use effigy_gateway::registration::{owned_by, project_scope};
-use effigy_gateway::routes::{RouteTable, RouteTableLock};
+use effigy_gateway::routes::RouteTable;
 
 use super::closeout::stop_host_processes_best_effort;
 use super::gateway_registration::{
@@ -259,11 +259,6 @@ impl SameCheckoutRoutes {
             return Ok(None);
         };
         let path = super::gateway_registration::gateway_route_table_path()?;
-        if !path.exists() {
-            return Ok(None);
-        }
-        let _lock = RouteTableLock::acquire(&path)
-            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
         let table = RouteTable::load(&path)
             .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
         Ok(Some(Self {
@@ -275,7 +270,7 @@ impl SameCheckoutRoutes {
 
     /// Whether any of the environment's claimed domains is held by a live
     /// managed listener owned by that same environment.
-    fn holds_live_listener(&self, policy: &EffectiveContainerPolicy) -> bool {
+    fn holds_live_listener(&self, policy: &EffectiveContainerPolicy) -> Result<bool, RunnerError> {
         for claim in declared_route_claims(policy) {
             let Some(route) = self.table.lookup(&claim.domain) else {
                 continue;
@@ -288,12 +283,20 @@ impl SameCheckoutRoutes {
             };
             if managed_listener_owner_environment(&owner.owner).as_deref()
                 == Some(policy.name.as_str())
-                && verify_managed_listener_owner(owner).is_ok()
             {
-                return true;
+                match observe_managed_listener_owner(owner) {
+                    effigy_kernel::observe::Observed::Verified(true, _) => return Ok(true),
+                    effigy_kernel::observe::Observed::Verified(false, _)
+                    | effigy_kernel::observe::Observed::Absent(_) => {}
+                    effigy_kernel::observe::Observed::Unknown(reason) => {
+                        return Err(RunnerError::task_invocation(format!(
+                            "listener observation unknown before handover: {reason:?}"
+                        )))
+                    }
+                }
             }
         }
-        false
+        Ok(false)
     }
 }
 
@@ -320,7 +323,7 @@ fn environment_is_live(
     {
         return Ok(true);
     }
-    Ok(routes.is_some_and(|routes| routes.holds_live_listener(policy)))
+    routes.map_or(Ok(false), |routes| routes.holds_live_listener(policy))
 }
 
 /// Ensure every borrowed `data_from` volume exists before Compose resolves
@@ -687,6 +690,7 @@ domain = "switch.test"
                     Some(parent.join("docker.log").display().to_string()),
                 ),
             ]);
+            fs::create_dir_all(parent.join("gateway-home")).expect("private gateway home");
             let gateway_home = set_test_gateway_home(&parent.join("gateway-home"));
             RouteFixture {
                 _temp: temp,

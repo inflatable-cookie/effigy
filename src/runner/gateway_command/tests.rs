@@ -4,14 +4,59 @@ use effigy_gateway::loopback::LoopbackRegistry;
 use effigy_gateway::routes::{Route, RouteSource};
 
 #[test]
+fn private_gateway_publication_can_finish_after_the_old_one_second_window() {
+    let operation = effigy_gateway::operator::context(
+        std::time::Duration::from_secs(15),
+        effigy_kernel::ctx::EffectClass::Observe,
+    );
+    let started = std::time::Instant::now();
+    daemon::wait_for_private_gateway_ready_with_probe(&operation, || {
+        if started.elapsed() < std::time::Duration::from_millis(1100) {
+            Err(effigy_gateway::GatewayError::NotRunning)
+        } else {
+            Ok(())
+        }
+    })
+    .expect("durable initialization may exceed one second before verified publication");
+}
+
+#[test]
+fn private_gateway_publication_obeys_its_finite_kernel_budget() {
+    let operation = effigy_gateway::operator::context(
+        std::time::Duration::from_millis(20),
+        effigy_kernel::ctx::EffectClass::Observe,
+    );
+    let error = daemon::wait_for_private_gateway_ready_with_probe(&operation, || {
+        Err(effigy_gateway::GatewayError::NotRunning)
+    })
+    .unwrap_err();
+    assert!(error.to_string().contains("TimedOut"), "{error}");
+}
+
+#[test]
+fn private_gateway_publication_never_retries_an_unverified_permission_refusal() {
+    let operation = effigy_gateway::operator::context(
+        std::time::Duration::from_secs(15),
+        effigy_kernel::ctx::EffectClass::Observe,
+    );
+    let mut probes = 0;
+    let result = daemon::wait_for_private_gateway_ready_with_probe(&operation, || {
+        probes += 1;
+        Err(effigy_gateway::GatewayError::Io(
+            std::io::ErrorKind::PermissionDenied.into(),
+        ))
+    });
+    assert!(result.is_err());
+    assert_eq!(probes, 1);
+}
+
+#[test]
 fn gateway_dir_uses_an_isolated_default_during_unit_tests() {
     let path = gateway_dir().expect("gateway dir");
-    assert!(
-        path.to_string_lossy()
-            .contains("effigy-runner-test-gateway-home-"),
-        "unit-test gateway state must not use the real home: {}",
-        path.display()
-    );
+    assert_eq!(path.file_name().unwrap(), "gateway");
+    assert!(path.parent().unwrap().parent().unwrap().is_dir());
+    let real = PathBuf::from(std::env::var_os("HOME").unwrap()).join(".effigy/gateway");
+    assert_ne!(path, real);
 }
 
 fn tls_summary() -> GatewayTlsSummary {
@@ -28,6 +73,7 @@ fn tls_summary() -> GatewayTlsSummary {
 #[test]
 fn render_gateway_status_json_includes_routes_when_stopped() {
     let table = RouteTable {
+        revision: 0,
         routes: [(
             "demo.test".to_owned(),
             Route {
@@ -136,25 +182,21 @@ fn render_gateway_up_text_includes_warning_lines() {
 }
 
 #[test]
-fn prepare_gateway_state_creates_loopback_registry_file() {
-    let root = std::env::temp_dir().join(format!(
-        "effigy-gateway-state-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("time")
-            .as_nanos()
-    ));
-    std::fs::create_dir_all(&root).expect("create temp root");
-
-    let config = GatewayConfig::standard(root.join("gateway"));
+fn prepare_gateway_state_leaves_endpoint_import_to_the_writer() {
+    let root = tempfile::tempdir().expect("fresh private root");
+    let config = GatewayConfig::standard(root.path().join("gateway"));
     prepare_gateway_state_for_elevated_run(&config).expect("prepare");
 
+    assert!(config.tls.as_ref().expect("TLS config").certs_dir.is_dir());
     let registry = LoopbackRegistry::load(&config.loopback_registry_path).expect("registry");
     assert!(registry.is_empty());
-    assert!(config.loopback_registry_path.exists());
-
-    let _ = std::fs::remove_dir_all(&root);
+    assert!(
+        !effigy_gateway::endpoint_store::EndpointStore::for_routes(&config.route_table_path)
+            .database_path()
+            .exists()
+    );
+    assert!(!config.route_table_path.exists());
+    assert!(!config.loopback_registry_path.exists());
 }
 
 #[test]
@@ -166,6 +208,7 @@ fn gateway_repair_plan_marks_inactive_and_missing_target_routes_repairable() {
     std::fs::create_dir_all(&stale_project).expect("mkdir stale");
 
     let table = RouteTable {
+        revision: 0,
         routes: [
             (
                 "postgres.live.test".to_owned(),
@@ -238,6 +281,7 @@ fn gateway_repair_plan_marks_inactive_and_missing_target_routes_repairable() {
 #[test]
 fn gateway_repair_plan_ignores_duplicate_bind_when_upstream_matches() {
     let table = RouteTable {
+        revision: 0,
         routes: [
             (
                 "postgres.app1.test".to_owned(),
@@ -303,6 +347,7 @@ fn tcp_alias_route(domain: &str, tcp_target: Option<&str>) -> (String, Route) {
 #[test]
 fn gateway_tcp_alias_unbound_routes_flags_missing_and_invalid_fallbacks() {
     let table = RouteTable {
+        revision: 0,
         routes: [
             tcp_alias_route("healthy.test", Some("127.0.0.1:15432")),
             tcp_alias_route("missing.test", None),
@@ -340,6 +385,7 @@ fn gateway_tcp_alias_unbound_routes_flags_missing_and_invalid_fallbacks() {
 #[test]
 fn gateway_tcp_alias_unbound_lines_name_alias_and_fallback() {
     let table = RouteTable {
+        revision: 0,
         routes: [tcp_alias_route("missing.test", None)]
             .into_iter()
             .collect(),

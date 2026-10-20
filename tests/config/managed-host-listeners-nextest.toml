@@ -8,3 +8,8 @@ global-timeout = "600s"
 [[profile.default.overrides]]
 filter = "test(managed_host_transitions_)"
 slow-timeout = { period = "120s", terminate-after = 1 }
+
+# These proofs drive several public CLI transitions and real listener processes.
+[[profile.default.overrides]]
+filter = "test(managed_host_dependent_replacement_) | test(container_hybrid_environment_switch_)"
+slow-timeout = { period = "120s", terminate-after = 1, grace-period = "2s" }

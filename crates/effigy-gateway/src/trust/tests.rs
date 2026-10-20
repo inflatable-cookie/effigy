@@ -1,3 +1,5 @@
+#[cfg(test)]
+use crate::gateway_legacy_fixture::LegacyRegistryFixture;
 use std::fs;
 use std::path::PathBuf;
 

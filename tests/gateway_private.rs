@@ -1,3 +1,6 @@
+#[path = "support/gateway_legacy.rs"]
+mod gateway_legacy_fixture;
+use gateway_legacy_fixture::LegacyRegistryFixture;
 #[path = "support/scoped_env.rs"]
 mod env_test_support;
 #[path = "support/sealed_fixture.rs"]
@@ -18,7 +21,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
-use effigy_gateway::routes::{Route, RouteSource, RouteTable, RouteTableLock};
+use effigy_gateway::routes::{Route, RouteSource, RouteTable};
 use serde_json::Value;
 
 const EFFIGY: &str = env!("CARGO_BIN_EXE_effigy");
@@ -707,6 +710,20 @@ fn private_gateway_cli_serves_verified_https_and_isolates_concurrent_instances()
 
 #[test]
 fn managed_host_dependent_replacement_preserves_routes_and_scope_teardown() {
+    managed_host_dependent_replacement_proof(true);
+}
+
+#[test]
+fn managed_host_dependent_replacement_cold_prepare_control() {
+    // Fresh cold starts exercise shared Store bootstrap and concurrent Prepare.
+    // Text failures retain the original error, which detached JSON deliberately
+    // reduces to structural state. Verify each committed claim over HTTPS.
+    for _ in 0..3 {
+        managed_host_dependent_replacement_proof(false);
+    }
+}
+
+fn managed_host_dependent_replacement_proof(startup_json: bool) {
     let fixture = managed_host_fixture();
     let effects = HostEffectSentinels::new(fixture.path());
     let docker_dir = std::env::split_paths(&effects.env_path)
@@ -870,7 +887,12 @@ fn managed_host_dependent_replacement_preserves_routes_and_scope_teardown() {
     let mut children = checkouts
         .iter()
         .map(|(checkout, ..)| {
-            spawn_container_cli(checkout, &container_cleanup, &["up", "--detach", "--json"])
+            let args: &[&str] = if startup_json {
+                &["up", "--detach", "--json"]
+            } else {
+                &["up", "--detach"]
+            };
+            spawn_container_cli(checkout, &container_cleanup, args)
         })
         .collect::<Vec<_>>();
     let startup_results = children
@@ -897,6 +919,41 @@ fn managed_host_dependent_replacement_preserves_routes_and_scope_teardown() {
                 );
             }
         }
+    }
+    if !startup_json {
+        for result in &startup_results {
+            assert!(
+                result.status.success(),
+                "cold text startup failed: {result:?}"
+            );
+        }
+        let table = effigy_gateway::routes::RouteTable::load(&private_gateway.join("routes.json"))
+            .expect("committed endpoint routes");
+        for (checkout, _, _, body) in &checkouts {
+            let route = table
+                .routes
+                .values()
+                .find(|route| {
+                    route.project == checkout.display().to_string()
+                        && route
+                            .managed_listener
+                            .as_ref()
+                            .is_some_and(|owner| owner.owner.ends_with("|app"))
+                })
+                .expect("each cold scope committed its app endpoint");
+            let owner = route.managed_listener.as_ref().unwrap();
+            let response = curl_https_response(https_address, &ca_path, &route.domain, "/");
+            assert!(
+                response.contains("200 OK")
+                    && response.contains(&format!("{body}@{}", owner.generation)),
+                "cold endpoint did not reach its proven listener: {response}"
+            );
+        }
+        assert!(
+            !effects.log.exists() || fs::read(&effects.log).unwrap_or_default().is_empty(),
+            "cold startup invoked a host-global effect"
+        );
+        return;
     }
     let reports = startup_results
         .into_iter()
@@ -1122,10 +1179,11 @@ fn managed_host_dependent_replacement_preserves_routes_and_scope_teardown() {
     assert_eq!(dependent_successor["status"], "ready");
     println!("published dependent replacement: predecessor={} old_child={} successor={} new_child={} dependency_generation={} selected_phase=published native_exit_and_group_settlement=true",
         old_dependent["generation"], old_dependent["child_pid"], dependent_successor["generation"], dependent_successor["child_pid"], new_state["generation"]);
+    let websocket = curl_websocket_for_hostname(https_address, &ca_path, primary_domain);
     assert!(
-        curl_websocket_for_hostname(https_address, &ca_path, primary_domain)
-            .contains("101 Switching Protocols"),
-        "managed listener WebSocket upgrade did not pass through verified private HTTPS"
+        websocket.contains("101 Switching Protocols"),
+        "managed listener WebSocket upgrade did not pass through verified private HTTPS: {websocket}; gateway={}",
+        fs::read_to_string(private_gateway.join("gateway.stderr.log")).unwrap_or_default()
     );
 
     let sibling_domain = checkouts[2].2.as_str();
@@ -1491,16 +1549,14 @@ fn managed_host_dependent_replacement_preserves_routes_and_scope_teardown() {
     );
 }
 
-// A forged route can trigger dependent lifecycle writes. Participate in the
-// same transaction lock so a stale lifecycle snapshot cannot undo restoration,
-// and a fixture edit cannot discard an unrelated lifecycle update.
+// Fixture mutations use the same fenced Store transaction as lifecycle writers.
 fn edit_live_fixture_routes(path: &Path, edit: impl FnOnce(&mut RouteTable)) {
-    let _lock = RouteTableLock::acquire(path).expect("lock private fixture routes");
-    let mut routes = RouteTable::load(path).expect("load private fixture routes");
-    edit(&mut routes);
-    routes
-        .save(path)
-        .expect("save private fixture route transaction");
+    effigy_gateway::endpoint_store::EndpointStore::for_routes(path)
+        .routes::<_, effigy_gateway::GatewayError>(|routes| {
+            edit(routes);
+            Ok(())
+        })
+        .expect("private fixture endpoint transaction");
 }
 
 #[test]
@@ -1523,26 +1579,23 @@ fn managed_host_dependent_replacement_route_edits_exclude_lifecycle_writers() {
     register_route(&route_path, &registration("original.test")).unwrap();
     let sibling = registration("sibling.test");
     let (attempt_tx, attempt_rx) = mpsc::channel();
+    let (finished_tx, finished_rx) = mpsc::channel();
     thread::scope(|scope| {
         let mut writer = None;
         let mut excluded = false;
         edit_live_fixture_routes(&route_path, |routes| {
-            // A second native open must not acquire the transaction lock.
-            // This fails deterministically if the fixture helper is unlocked.
-            let probe = fs::OpenOptions::new()
-                .read(true)
-                .write(true)
-                .open(route_path.with_extension("lock"))
-                .expect("open independent lock handle");
-            excluded = matches!(probe.try_lock(), Err(fs::TryLockError::WouldBlock));
-            drop(probe);
             writer = Some(scope.spawn(|| {
                 attempt_tx.send(()).unwrap();
                 register_route(&route_path, &sibling).expect("concurrent lifecycle registration");
+                finished_tx.send(()).unwrap();
             }));
             attempt_rx
                 .recv_timeout(Duration::from_secs(5))
                 .expect("lifecycle writer reached registration");
+            excluded = matches!(
+                finished_rx.recv_timeout(Duration::from_millis(100)),
+                Err(mpsc::RecvTimeoutError::Timeout)
+            );
             let mut original = routes.lookup("original.test").unwrap().clone();
             original.target = Some("127.0.0.1:48082".to_owned());
             routes.upsert(original);
@@ -1573,8 +1626,7 @@ fn container_hybrid_container_switch_hands_over_routes_and_refuses_a_live_listen
     use effigy_gateway::identity::{read_live_process_identity, GatewayStartIdentity};
     use effigy_gateway::registration::{
         check_managed_listener_route_claim, deregister_managed_listener_route, deregister_route,
-        register_managed_listener_route, register_route, ManagedListenerRoutePublication,
-        RouteRegistration,
+        register_managed_listener_route, register_route, RouteRegistration,
     };
     use effigy_gateway::routes::ManagedListenerRouteOwner;
 
@@ -1624,19 +1676,28 @@ fn container_hybrid_container_switch_hands_over_routes_and_refuses_a_live_listen
         "main|web|test|app",
     )
     .expect("a same-checkout container route must not refuse the hybrid claim");
-    assert_eq!(
-        register_managed_listener_route(
-            &route_path,
-            &project,
-            "switch.example.test",
-            "127.0.0.1:48082",
-            false,
-            dead_owner("child-1", "127.0.0.1:48082"),
-            None,
-        )
-        .unwrap(),
-        ManagedListenerRoutePublication::HandedOverFromContainer
-    );
+    // A pre-existing dead generation is imported as durable state; a new
+    // publication of this dead owner must now fail at the engine boundary.
+    assert!(register_managed_listener_route(
+        &route_path,
+        &project,
+        "switch.example.test",
+        "127.0.0.1:48082",
+        false,
+        dead_owner("child-1", "127.0.0.1:48082"),
+        None
+    )
+    .is_err());
+    effigy_gateway::endpoint_store::EndpointStore::for_routes(&route_path)
+        .routes::<_, effigy_gateway::GatewayError>(|table| {
+            let mut route = table.lookup("switch.example.test").unwrap().clone();
+            route.target = Some("127.0.0.1:48082".into());
+            route.source = RouteSource::Task;
+            route.managed_listener = Some(dead_owner("child-1", "127.0.0.1:48082"));
+            table.upsert(route);
+            Ok(())
+        })
+        .unwrap();
     assert!(
         !deregister_route(&route_path, "switch.example.test", &project).unwrap(),
         "container teardown must not remove the successor route"
@@ -2964,8 +3025,12 @@ fn curl_https_response(address: SocketAddr, ca: &Path, hostname: &str, path: &st
         .expect("run HTTPS response probe");
     assert!(
         output.status.success() || !output.stdout.is_empty(),
-        "HTTPS response probe failed: {}",
-        String::from_utf8_lossy(&output.stderr)
+        "HTTPS response probe failed: {}; gateway={}",
+        String::from_utf8_lossy(&output.stderr),
+        ca.parent()
+            .and_then(Path::parent)
+            .and_then(|root| fs::read_to_string(root.join("gateway.stderr.log")).ok())
+            .unwrap_or_default()
     );
     String::from_utf8_lossy(&output.stdout).into_owned()
 }
@@ -3761,7 +3826,8 @@ fn container_hybrid_environment_switch_hands_the_whole_environment_over() {
     };
 
     // Round trips: stack (container) live -> hybrid up -> stack up, three times.
-    for _round in 1..=3 {
+    for round in 1..=3 {
+        eprintln!("gateway switch round {round}: stack up");
         let stack_up = switch_up("stack");
         assert!(
             !stack_up.contains("[handover]"),
@@ -3776,6 +3842,7 @@ fn container_hybrid_environment_switch_hands_the_whole_environment_over() {
 
         // Hybrid up hands the whole stack environment over: containers stopped,
         // container route taken by the listener, data kept.
+        eprintln!("gateway switch round {round}: hybrid up");
         let hybrid_up = switch_up("hybrid");
         assert_eq!(
             hybrid_up.matches("[handover]").count(),
@@ -3805,6 +3872,7 @@ fn container_hybrid_environment_switch_hands_the_whole_environment_over() {
 
         // Stack up takes the domain back from the live listener without
         // refusing: the whole hybrid environment is handed over first.
+        eprintln!("gateway switch round {round}: stack return");
         let back = switch_up("stack");
         assert_eq!(
             back.matches("[handover]").count(),
@@ -3847,16 +3915,18 @@ fn container_hybrid_environment_switch_hands_the_whole_environment_over() {
         .expect("foreign scope")
         .unwrap_or_else(|| "main".to_owned());
     let _keep_foreign_scope = foreign_scope;
-    effigy_gateway::registration::deregister_route(
-        &routes_path,
-        "switch.test",
-        &checkout.display().to_string(),
+    // A routine down retains switch.test's persistent owner. Use a fresh
+    // foreign claim and point the requested hybrid configuration at it.
+    let manifest = fs::read_to_string(checkout.join("effigy.toml")).unwrap();
+    fs::write(
+        checkout.join("effigy.toml"),
+        manifest.replace("switch.test", "foreign-switch.test"),
     )
-    .expect("drop stack's route for the foreign fixture");
+    .unwrap();
     effigy_gateway::registration::register_route(
         &routes_path,
         &effigy_gateway::registration::RouteRegistration {
-            domain: "switch.test".to_owned(),
+            domain: "foreign-switch.test".to_owned(),
             target: Some("127.0.0.1:49999".to_owned()),
             dns_ip: None,
             tcp_port: None,

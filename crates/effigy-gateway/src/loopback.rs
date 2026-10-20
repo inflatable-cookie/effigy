@@ -12,7 +12,6 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::atomic_write;
 use crate::error::GatewayError;
 use crate::routes::{RouteSource, RouteTable};
 
@@ -61,56 +60,9 @@ impl LoopbackRegistry {
     ///
     /// Returns an empty registry if the file does not exist yet.
     pub fn load(path: &Path) -> Result<Self, GatewayError> {
-        if !path.exists() {
-            return Ok(Self::new());
-        }
-
-        let content =
-            std::fs::read_to_string(path).map_err(|error| GatewayError::LoopbackRegistryRead {
-                path: path.to_path_buf(),
-                reason: error.to_string(),
-            })?;
-
-        serde_json::from_str(&content).map_err(|error| GatewayError::LoopbackRegistryParse {
-            path: path.to_path_buf(),
-            reason: error.to_string(),
-        })
-    }
-
-    /// Save the registry to a JSON file atomically.
-    pub fn save(&self, path: &Path) -> Result<(), GatewayError> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|error| {
-                GatewayError::LoopbackRegistryWrite {
-                    path: path.to_path_buf(),
-                    reason: format!("failed to create directory: {error}"),
-                }
-            })?;
-        }
-
-        let content = serde_json::to_string_pretty(self).map_err(|error| {
-            GatewayError::LoopbackRegistryWrite {
-                path: path.to_path_buf(),
-                reason: format!("failed to serialize: {error}"),
-            }
-        })?;
-
-        let temp_path = atomic_write::temp_path(path, "loopback");
-        std::fs::write(&temp_path, content).map_err(|error| {
-            GatewayError::LoopbackRegistryWrite {
-                path: temp_path.clone(),
-                reason: error.to_string(),
-            }
-        })?;
-
-        set_owner_only_permissions(&temp_path)?;
-
-        std::fs::rename(&temp_path, path).map_err(|error| GatewayError::LoopbackRegistryWrite {
-            path: path.to_path_buf(),
-            reason: format!("atomic rename failed: {error}"),
-        })?;
-
-        Ok(())
+        crate::endpoint_store::EndpointStore::for_routes(&path.with_file_name("routes.json"))
+            .read_compatible()?
+            .loopback()
     }
 
     /// Get the assignment for an identity.
@@ -202,17 +154,6 @@ impl LoopbackRegistry {
     }
 }
 
-#[cfg(unix)]
-fn set_owner_only_permissions(path: &Path) -> Result<(), GatewayError> {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).map_err(|error| {
-        GatewayError::LoopbackRegistryWrite {
-            path: path.to_path_buf(),
-            reason: format!("failed to set owner-only permissions: {error}"),
-        }
-    })
-}
-
 /// Loopback IPs held by other projects' container routes that a new
 /// allocation for `project_path` must avoid.
 ///
@@ -247,11 +188,6 @@ pub fn reserved_loopback_ips_for_other_projects(
         .filter(|route| route.project != project_path)
         .filter_map(|route| route.dns_ip)
         .collect()
-}
-
-#[cfg(not(unix))]
-fn set_owner_only_permissions(_path: &Path) -> Result<(), GatewayError> {
-    Ok(())
 }
 
 #[cfg(test)]

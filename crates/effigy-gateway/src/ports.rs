@@ -2,9 +2,8 @@
 //!
 //! When multiple projects use effigy containers simultaneously, port
 //! conflicts are a common problem (every project wants port 8080 and 3306).
-//! This module maintains a persistent port allocation registry at
-//! `~/.effigy/ports.json` that assigns non-conflicting port ranges to
-//! projects.
+//! The gateway endpoint Store persists these typed allocations and imports
+//! existing `~/.effigy/ports.json` assignments without changing their ports.
 //!
 //! ## Port ranges
 //!
@@ -29,7 +28,6 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::atomic_write;
 use crate::error::GatewayError;
 
 mod reclaim;
@@ -47,28 +45,10 @@ pub struct PortRequest {
     pub container_port: u16,
 }
 
-/// The existing gateway-domain allocator, invoked only by Prepare. Resolution
-/// uses `assigned_port` and never takes this lock. This legacy single writer
-/// remains until the gateway endpoint store imports `ports.json` (#224).
-/// No runtime inventory or subprocess runs inside the critical section.
+/// Prepare reserves or retains host bindings through the gateway Store.
+/// Resolution remains read-only and legacy JSON becomes an import backup.
 pub fn prepare_ports(path: &Path, requests: &[PortRequest]) -> Result<(), GatewayError> {
-    if requests.is_empty() {
-        return Ok(());
-    }
-    let _guard = crate::routes::RouteTableLock::acquire(path)?;
-    let mut registry = PortRegistry::load(path)?;
-    let before = registry.allocations.clone();
-    for request in requests {
-        registry.assign_port(
-            &request.project_name,
-            &request.project_path,
-            &request.service_name,
-            request.container_port,
-        )?;
-    }
-    if registry.allocations != before {
-        registry.save(path)?;
-    }
+    crate::endpoint_store::EndpointStore::for_ports(path).reserve_ports(requests)?;
     Ok(())
 }
 
@@ -169,49 +149,9 @@ impl PortRegistry {
     ///
     /// Returns an empty registry if the file doesn't exist.
     pub fn load(path: &Path) -> Result<Self, GatewayError> {
-        if !path.exists() {
-            return Ok(Self::new());
-        }
-
-        let content =
-            std::fs::read_to_string(path).map_err(|e| GatewayError::RouteTableReadError {
-                path: path.to_path_buf(),
-                reason: format!("port registry: {e}"),
-            })?;
-
-        serde_json::from_str(&content).map_err(|e| GatewayError::RouteTableParseError {
-            path: path.to_path_buf(),
-            reason: format!("port registry: {e}"),
-        })
-    }
-
-    /// Save the registry to a JSON file atomically.
-    pub fn save(&self, path: &Path) -> Result<(), GatewayError> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| GatewayError::RouteTableWriteError {
-                path: path.to_path_buf(),
-                reason: format!("port registry: {e}"),
-            })?;
-        }
-
-        let content =
-            serde_json::to_string_pretty(self).map_err(|e| GatewayError::RouteTableWriteError {
-                path: path.to_path_buf(),
-                reason: format!("port registry serialize: {e}"),
-            })?;
-
-        let temp_path = atomic_write::temp_path(path, "ports");
-        std::fs::write(&temp_path, &content).map_err(|e| GatewayError::RouteTableWriteError {
-            path: temp_path.clone(),
-            reason: e.to_string(),
-        })?;
-
-        std::fs::rename(&temp_path, path).map_err(|e| GatewayError::RouteTableWriteError {
-            path: path.to_path_buf(),
-            reason: format!("atomic rename: {e}"),
-        })?;
-
-        Ok(())
+        crate::endpoint_store::EndpointStore::for_ports(path)
+            .read_compatible()?
+            .ports()
     }
 
     /// Get the allocation for a project, if registered.
@@ -245,6 +185,41 @@ impl PortRegistry {
         };
         self.allocations.insert(project_name.to_string(), alloc);
         Ok(&self.allocations[project_name])
+    }
+
+    /// Allocate a generated range while respecting released endpoint claims.
+    pub fn allocate_avoiding(
+        &mut self,
+        project_name: &str,
+        project_path: &str,
+        reserved: &std::collections::HashSet<u16>,
+    ) -> Result<&PortAllocation, GatewayError> {
+        if reserved.is_empty() || self.allocations.contains_key(project_name) {
+            return self.allocate(project_name, project_path);
+        }
+        let mut spans = self
+            .allocations
+            .values()
+            .map(|a| (u32::from(a.base), a.end_u32()))
+            .collect::<Vec<_>>();
+        spans.extend(reserved.iter().map(|p| (u32::from(*p), u32::from(*p) + 1)));
+        spans.sort_unstable();
+        let mut base = u32::from(DEFAULT_BASE);
+        for (start, end) in spans {
+            if end <= base {
+                continue;
+            }
+            if start.saturating_sub(base) >= u32::from(DEFAULT_RANGE) {
+                break;
+            }
+            base = base.max(end);
+        }
+        if base + u32::from(DEFAULT_RANGE) > MAX_PORT_EXCLUSIVE {
+            return Err(GatewayError::PortRegistryExhausted {
+                range: DEFAULT_RANGE,
+            });
+        }
+        self.allocate_at(project_name, project_path, base as u16, DEFAULT_RANGE)
     }
 
     /// Allocate with a specific base port.
