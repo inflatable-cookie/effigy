@@ -1300,7 +1300,7 @@ mod tests {
                     policy: policy.clone(),
                     system_was_running: false,
                     started_held: true,
-                    _hold: None,
+                    hold: None,
                 })
             },
         )
@@ -1384,7 +1384,7 @@ mod tests {
                     policy: policy.clone(),
                     system_was_running: false,
                     started_held: false,
-                    _hold: None,
+                    hold: None,
                 })
             },
         )

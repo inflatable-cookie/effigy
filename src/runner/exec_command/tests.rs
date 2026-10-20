@@ -919,7 +919,7 @@ fn activate_exec_surface_uses_repo_root_as_repo_override() {
                 policy: surface.policy.clone(),
                 system_was_running: false,
                 started_held: true,
-                _hold: None,
+                hold: None,
             })
         })
         .expect("activation");
@@ -970,7 +970,7 @@ fn activate_exec_surface_preserves_skip_lease_policy_for_handoff_sessions() {
                     policy: surface.policy.clone(),
                     system_was_running: true,
                     started_held: false,
-                    _hold: None,
+                    hold: None,
                 })
             })
             .expect("activation");

@@ -205,14 +205,17 @@ impl std::fmt::Display for EnvError {
                 let runs = holders
                     .iter()
                     .map(|holder| {
-                        let liveness = match &holder.liveness {
-                            Observed::Verified(effigy_kernel::run::Liveness::Live, _) => "live",
-                            Observed::Verified(effigy_kernel::run::Liveness::Interrupted, _) => {
-                                "interrupted"
+                        // A permit refuses on the attachment alone; it does
+                        // not probe liveness, so none is shown unless known.
+                        match &holder.liveness {
+                            Observed::Verified(effigy_kernel::run::Liveness::Live, _) => {
+                                format!("run {} (live)", holder.run)
                             }
-                            _ => "unknown",
-                        };
-                        format!("run {} ({liveness})", holder.run)
+                            Observed::Verified(effigy_kernel::run::Liveness::Interrupted, _) => {
+                                format!("run {} (interrupted)", holder.run)
+                            }
+                            _ => format!("run {}", holder.run),
+                        }
                     })
                     .collect::<Vec<_>>()
                     .join(", ");

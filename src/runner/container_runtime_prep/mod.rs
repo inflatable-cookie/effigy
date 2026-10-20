@@ -63,8 +63,9 @@ pub(in crate::runner) struct ContainerTaskActivation {
     /// run using it ends.
     pub(in crate::runner) started_held: bool,
     /// The command's hold on its environment, released when the activation
-    /// drops at the end of the command.
-    pub(in crate::runner) _hold: Option<Held>,
+    /// drops at the end of the command, or earlier by a command whose own
+    /// closeout stops the environment.
+    pub(in crate::runner) hold: Option<Held>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -330,7 +331,7 @@ fn activate_container_runtime_plan_for_task_using(
         started_held: !system_was_running
             && retention == Retention::Held
             && plan.route != RuntimeActivationRoute::Exec,
-        _hold: hold,
+        hold,
     })
 }
 
