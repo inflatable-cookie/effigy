@@ -135,30 +135,21 @@ fn render_gateway_up_text_includes_warning_lines() {
 }
 
 #[test]
-fn prepare_gateway_state_imports_into_endpoint_store() {
-    let root = std::env::temp_dir().join(format!(
-        "effigy-gateway-state-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("time")
-            .as_nanos()
-    ));
-    std::fs::create_dir_all(&root).expect("create temp root");
-
-    let config = GatewayConfig::standard(root.join("gateway"));
+fn prepare_gateway_state_leaves_endpoint_import_to_the_writer() {
+    let root = tempfile::tempdir().expect("fresh private root");
+    let config = GatewayConfig::standard(root.path().join("gateway"));
     prepare_gateway_state_for_elevated_run(&config).expect("prepare");
 
+    assert!(config.tls.as_ref().expect("TLS config").certs_dir.is_dir());
     let registry = LoopbackRegistry::load(&config.loopback_registry_path).expect("registry");
     assert!(registry.is_empty());
     assert!(
-        effigy_gateway::endpoint_store::EndpointStore::for_routes(&config.route_table_path)
+        !effigy_gateway::endpoint_store::EndpointStore::for_routes(&config.route_table_path)
             .database_path()
             .exists()
     );
+    assert!(!config.route_table_path.exists());
     assert!(!config.loopback_registry_path.exists());
-
-    let _ = std::fs::remove_dir_all(&root);
 }
 
 #[test]
