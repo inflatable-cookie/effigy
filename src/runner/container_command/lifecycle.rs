@@ -215,9 +215,10 @@ fn run_container_up_inner(
     operation.stage = Some("compose_activation");
     let attached_end = std::cell::RefCell::new(None);
     let detached_failure = std::cell::RefCell::new(None);
+    let composed = std::cell::Cell::new(false);
     let reconciled = environment::reconcile(repo_root, &plan.policy, retention, || {
         match run_container_up_compose(&plan) {
-            Ok(None) => {}
+            Ok(None) => composed.set(true),
             Ok(Some(end)) => {
                 let message = match &end {
                     AttachedComposeEnd::Interrupted => "compose up interrupted".to_owned(),
@@ -243,6 +244,13 @@ fn run_container_up_inner(
     let bring_up = match reconciled {
         Ok(bring_up) => bring_up,
         Err(error) => {
+            // Compose started the services; the record keeps that partial
+            // generation, so the failure is partial, not unavailable.
+            if composed.get() {
+                operation.admitted = true;
+                operation.partial = plan.attach_mode == EffectiveAttachMode::Detached;
+                operation.stage = Some("stopped_service_recovery");
+            }
             return match attached_end.into_inner() {
                 Some(AttachedComposeEnd::Interrupted) => {
                     render_container_up_interrupted(repo_root, &plan)

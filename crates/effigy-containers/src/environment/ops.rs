@@ -130,9 +130,11 @@ fn reconcile_in(
         // ready; a crash before its `active` publication leaves it current.
         && (last_applied == digest || record.applying == digest || request.adopt);
     let applied = if running && current {
-        if request.adopt && record.applying != digest && last_applied != digest {
-            // An imported stack whose v0.14.1 admission matches the current
-            // inputs is this generation: promote it without a backend call.
+        // Until activation completes the generation is partial, also when the
+        // running stack is reused: a bring-up that stops short (readiness,
+        // routes) leaves it partial, as v0.14.1 did. An adopted import is
+        // promoted the same way, without a backend call.
+        if record.applying != digest {
             record.applying = digest.clone();
             run.write_record(&record)?;
         }

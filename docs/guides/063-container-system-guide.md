@@ -870,8 +870,9 @@ mutable data and is not restart recovery.
 JSON failure details expose `state` (`partial` or `unavailable`),
 `phase = "detached_activation"`, unverified readiness/exposure and supported
 recovery/stop commands. `activation_stage` uses the closed vocabulary
-`preparation`, `environment_handover`, `compose_activation`, `readiness`,
-`runtime_integrations`, or `persistent_owner`. Manifest-declared detached mode
+`preparation`, `environment_handover`, `compose_activation`,
+`stopped_service_recovery`, `readiness`, `runtime_integrations`, or
+`persistent_owner`. Manifest-declared detached mode
 also reports preparation failures as unavailable with no recovery authority.
 These stages identify caller boundaries, not causes or readiness proof. Details
 contain no raw backend output, argv or environment.
