@@ -194,7 +194,7 @@ fn run_managed_control(
         return Ok(None);
     };
     let profile = match &invocation.action {
-        ManagedInvocation::Status { profile }
+        ManagedInvocation::Status { profile, .. }
         | ManagedInvocation::Logs { profile, .. }
         | ManagedInvocation::Stop { profile } => profile,
         ManagedInvocation::Run { .. } => return Ok(None),
@@ -219,7 +219,9 @@ fn run_managed_control(
         profile,
     };
     let output = match &invocation.action {
-        ManagedInvocation::Status { .. } => managed_run::status(&addressed, preflight.output_json),
+        ManagedInvocation::Status { json, .. } => {
+            managed_run::status(&addressed, preflight.output_json || *json)
+        }
         ManagedInvocation::Logs {
             process, follow, ..
         } => managed_run::logs(&addressed, process.as_deref(), *follow),

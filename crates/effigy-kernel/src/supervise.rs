@@ -446,7 +446,15 @@ fn sentinel_attempt(
 ) -> Result<SentinelLease, RunError> {
     let executable = pin.map_or(&plan.executable, |pin| &pin.executable);
     let log = helper_log(root)?;
-    let mut child = spawn_helper(executable, SENTINEL, &log, None)?;
+    // A detached owner runs in the environment its client handed over; its
+    // sentinel settles the same effects, so it gets that environment too.
+    // An inline owner's sentinel keeps a cleared environment.
+    let inherited = (plan.placement == Placement::Detached).then(|| EngineLaunch {
+        payload: Vec::new(),
+        cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")),
+        env: std::env::vars_os().collect(),
+    });
+    let mut child = spawn_helper(executable, SENTINEL, &log, inherited.as_ref())?;
     // The fault driver waits for every helper, registered or not (§12.1).
     #[cfg(all(test, feature = "fault-injection"))]
     crate::fault::note_helper(child.id());

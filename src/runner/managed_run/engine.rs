@@ -194,6 +194,7 @@ pub(in crate::runner) fn own(
     let mut owner = Owner {
         session,
         workloads: Vec::new(),
+        holds_environment: plan.environment.is_some(),
         terminal: payload.terminal,
         lost_while_blocked: false,
     };
@@ -208,6 +209,7 @@ pub(in crate::runner) fn own(
 struct Owner {
     session: EngineSession,
     workloads: Vec<Workload>,
+    holds_environment: bool,
     terminal: Option<(u16, u16)>,
     /// The owning client went away inside a blocking phase.
     lost_while_blocked: bool,
@@ -349,7 +351,10 @@ impl Owner {
                     return end;
                 }
             }
-            if next == self.workloads.len()
+            // A run that holds an environment keeps it until it is stopped,
+            // as its lifecycle tab did: workload exits alone never end it.
+            if !self.holds_environment
+                && next == self.workloads.len()
                 && !self.workloads.is_empty()
                 && self.workloads.iter().all(|workload| workload.exit.is_some())
             {

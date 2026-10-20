@@ -575,6 +575,10 @@
   "cargo check -p effigy -p effigy-managed -p effigy-containers -p effigy-tui -p effigy-process --all-targets --profile test",
   "cargo clippy -p effigy -p effigy-managed -p effigy-containers -p effigy-tui -p effigy-process --all-targets -- -D warnings",
 ] }
+# Run supervisor (effigy#235): the 108-cell strict-fake lifecycle matrix
+# (front end × prior × stop × failed children), each cell a real-binary run
+# against the fake Compose backend with an immediate restart.
+"test:supervisor:matrix" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/managed-matrix-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_matrix_)' --success-output immediate --no-fail-fast --retries 0 --no-tests fail -j 4 {args}", timeout_ms = 3600000 }] }
 "test:managed:matrix" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/managed-matrix-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_matrix_) & !test(managed_matrix_failed_stop_)' --success-output immediate --no-fail-fast --retries 0 --no-tests fail -j 2", timeout_ms = 2500000 }] }
 # The matrix cases own their fake Docker proxy socket from bind through teardown.
 "test:managed:matrix:unsettled" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/managed-matrix-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_matrix_unsettled_previous_record_under_live_startup)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 }] }

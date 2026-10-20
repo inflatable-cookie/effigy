@@ -88,11 +88,16 @@ impl Addressed<'_> {
 /// The newest run of this task and profile, projected from the journal.
 pub(in crate::runner) fn status_view(addressed: &Addressed<'_>) -> ManagedStatus {
     let view = task_status(addressed.target, HISTORY_LIMIT);
+    // A managed run is long-lived: a stop it was asked for is its normal end.
+    let state = match view.state.as_str() {
+        "cancelled" => "stopped".to_owned(),
+        other => other.to_owned(),
+    };
     let mut status = ManagedStatus {
         schema: STATUS_SCHEMA,
         task: addressed.task.to_owned(),
         profile: addressed.profile.to_owned(),
-        state: view.state.clone(),
+        state,
         run: view.current.clone().or_else(|| view.history.first().cloned()),
         environment: None,
         processes: Vec::new(),

@@ -12,6 +12,7 @@ pub enum ManagedInvocation {
     },
     Status {
         profile: String,
+        json: bool,
     },
     Logs {
         profile: String,
@@ -40,8 +41,10 @@ pub fn parse_managed_invocation(
     let action = match args.first().map(String::as_str) {
         Some("status") => {
             args.remove(0);
+            let json = remove_flag(&mut args, "--json");
             ManagedInvocation::Status {
                 profile: parse_profile_only(&args, "status")?,
+                json,
             }
         }
         Some("stop") => {
