@@ -11,7 +11,7 @@ use serde_json::{json, Value as JsonValue};
 use std::collections::BTreeMap;
 
 use crate::compose::shutdown_label;
-use crate::{driver_label, ContainerEjectResult, EffectiveContainerPolicy};
+use crate::{driver_label, EffectiveContainerPolicy};
 use crate::{WorkspaceExtraMountDecision, WorkspaceExtraMountDecisionKind};
 
 /// Shape returned by each container-command report builder.
@@ -367,28 +367,6 @@ pub fn reset_report(
         json,
         success_text: lines.join("\n"),
     }
-}
-
-/// Build the `container eject` report.
-pub fn eject_report(
-    policy: &EffectiveContainerPolicy,
-    result: &ContainerEjectResult,
-) -> ContainerCommandReport {
-    let compose_path = result.compose_path.display().to_string();
-    let json = json!({
-        "schema": "effigy.container.eject.v1",
-        "schema_version": 1,
-        "ok": true,
-        "container": policy.name,
-        "compose_path": compose_path,
-        "dockerfile_count": result.dockerfile_count,
-        "config_count": result.config_count,
-    });
-    let success_text = format!(
-        "[ok] ejected catalog-backed compose ownership for `{}` to {}",
-        policy.name, compose_path
-    );
-    ContainerCommandReport { json, success_text }
 }
 
 /// Build the `container data pull-production` report.

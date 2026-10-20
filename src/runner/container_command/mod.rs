@@ -10,9 +10,9 @@ use super::error::RunnerError;
 use cache::run_container_cache_command;
 use data::run_container_data_command;
 use lifecycle::{
-    run_container_down_command, run_container_eject, run_container_logs_command,
-    run_container_reset_command, run_container_shell, run_container_stats_command,
-    run_container_status_command, run_container_up,
+    run_container_down_command, run_container_logs_command, run_container_reset_command,
+    run_container_shell, run_container_stats_command, run_container_status_command,
+    run_container_up,
 };
 use profile::run_container_profile_command;
 use volume::run_container_volume_command;
@@ -38,6 +38,7 @@ mod gateway_registration;
 mod handover;
 mod hosts;
 mod lifecycle;
+mod migrate;
 mod ports;
 mod profile;
 mod render;
@@ -217,14 +218,11 @@ pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, Ru
             name.as_deref(),
             args.output_json,
         ),
-        ContainerSubcommand::Eject { name } => {
-            let context = resolve_active_command_context(args.repo_override.clone())?;
-            run_container_eject(
-                &context.resolved.resolved_root,
-                name.as_deref(),
-                args.output_json,
-            )
-        }
+        ContainerSubcommand::Migrate { name } => migrate::run(
+            args.repo_override.clone(),
+            name.as_deref(),
+            args.output_json,
+        ),
         ContainerSubcommand::Hosts { name } => hosts::run_container_hosts(
             args.repo_override.clone(),
             name.as_deref(),

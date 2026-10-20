@@ -53,7 +53,8 @@ Policy:
 | Container inspection | `container::status`, `container::logs`, `container::stats` | Exposed |
 | Container cleanup | `container::cache_list`, `container::cache_prune`, `container::volume_list`, `container::volume_prune` | Exposed |
 | Container data | `container::data`, `container::data_dump`, `container::data_seed`, `container::data_pull_production` | Exposed |
-| Container reset/eject | `container::reset`, `container::eject` | Exposed |
+| Container reset | `container::reset` | Exposed |
+| Retired container eject | `container::eject` | Errors with the `effigy container render` replacement |
 | State stack orchestration | `state::plan`, `state::apply`, `state::capture`, `state::capture_set`, `state::history` | Exposed |
 | State capture context | `state::capture_context`, `state::capture_context_path`, `state::capture_source`, `state::capture_destination_ref` | Exposed |
 | Artifacts | `artifact::inspect`, `artifact::stage`, `artifact::capture` | Exposed |

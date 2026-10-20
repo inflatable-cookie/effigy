@@ -18,6 +18,30 @@ During v0.x, MINOR bumps may include breaking changes.
   command starts (`effigy.admission.v1` details). Nested heavy runs inherit
   `EFFIGY_ADMITTED` and never queue twice. `qa`, `ci` and `ci:fresh` are no
   longer heavy by name. Exit 75 now means only a held task lock; 77 is gone.
+- `[containers.<name>].compose_file` is deprecated. For one release each
+  Compose service is read as a project catalog fragment, with a warning.
+  `effigy container migrate [<name>]` writes the fragments to
+  `infra/dev/catalog/<container>-<service>/` and replaces the key with
+  `[containers.<name>.services]`; it checks the render is unchanged. Translated
+  environments behave like catalog environments: services carry checkout and
+  scope labels (the first `up` recreates them once), named volumes become
+  `<project>-<volume>` (old `<project>_<volume>` volumes are left alone),
+  published ports get Prepare-assigned host ports on the publish address unless
+  `[host].ports` fixes them, and `data`, `cache` and `reset` commands apply. Compose features a fragment cannot
+  express refuse with the key to move. Effigy's own `linux-release` builder is
+  migrated.
+- `effigy container eject` and `container::eject` are retired: generated
+  Compose stays internal. Use `effigy container render <name>`.
+- Each environment's backend is recorded in the kernel store when its
+  generation is prepared, and every Compose, volume and data action uses it.
+  Volume actions no longer infer Docker or Colima from the profile name, and
+  shared services start on their environment's backend. The v0.14
+  `.effigy-runtime.json` record is imported and left untouched; an unreadable
+  one refuses volume and data actions until `EFFIGY_COMPOSE_BACKEND` names the
+  backend. `container status` reports `backend_source`.
+- Reset, cache prune and data import/export act only on volumes whose Effigy
+  labels name the environment's project; a same-named lookalike is reported and
+  left alone.
 - Tasks now have `visibility = "public" | "internal"` and optional `group`.
   Human inventory, general/work help and completion show public tasks; `tasks --all` and
   `tasks --json` include everything. Unnamespaced entry points stay public;

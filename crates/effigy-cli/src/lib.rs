@@ -957,7 +957,7 @@ pub enum ContainerSubcommand {
     Render {
         name: Option<String>,
     },
-    Eject {
+    Migrate {
         name: Option<String>,
     },
     Scope,

@@ -2,7 +2,10 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Output;
 
-use effigy_catalog::volumes::{reset_commands, DockerCommand, VolumeClassification};
+use effigy_catalog::volumes::{
+    remove_volume_command, DockerCommand, VolumeClassification, VolumeIdentity,
+};
+use effigy_containers::backend::endpoint_backend;
 use effigy_containers::{
     exec::{
         list_running_compose_containers_for_policy,
@@ -16,7 +19,7 @@ use effigy_containers::{
     BackendId, ContainerAction, ContainerBackendDetection, ContainerInterruptPolicy,
     ContainerManager, ContainerManagerRequest,
 };
-use effigy_core::repo_markers::{has_task_manifest, TASK_MANIFEST_FILE};
+use effigy_core::repo_markers::has_task_manifest;
 use effigy_core::shell::shell_quote;
 use serde_json::json;
 
@@ -150,44 +153,6 @@ pub(super) fn running_container_runtime_mismatch(
         "container `{}` expects Compose project `{}`, but this repo still has running `{}` service container(s) under {}. `project_name` changed while the old runtime was still up; stop the stale project first, then start the current one again.",
         policy.name, policy.project_name, policy.primary_service, stale
     ))
-}
-
-pub(super) fn rewrite_manifest_for_ejected_compose(
-    repo_root: &Path,
-    container_name: &str,
-    compose_path: &Path,
-) -> Result<(), RunnerError> {
-    let manifest_path = repo_root.join(TASK_MANIFEST_FILE);
-    let raw = std::fs::read_to_string(&manifest_path)
-        .map_err(|error| RunnerError::task_invocation_failed_read(&manifest_path, error))?;
-    let mut document = raw.parse::<toml_edit::DocumentMut>().map_err(|error| {
-        RunnerError::task_invocation(format!(
-            "failed to parse {} while finalizing eject: {error}",
-            manifest_path.display()
-        ))
-    })?;
-
-    let containers = document["containers"].as_table_like_mut().ok_or_else(|| {
-        RunnerError::task_invocation("manifest missing `[containers]` while finalizing eject")
-    })?;
-    let container = containers
-        .get_mut(container_name)
-        .and_then(|item| item.as_table_like_mut())
-        .ok_or_else(|| {
-            RunnerError::task_invocation(format!(
-                "manifest missing `[containers.{container_name}]` while finalizing eject"
-            ))
-        })?;
-    container.remove("services");
-    let relative = compose_path
-        .strip_prefix(repo_root)
-        .unwrap_or(compose_path)
-        .display()
-        .to_string();
-    container.insert("compose_file", toml_edit::value(relative));
-
-    std::fs::write(&manifest_path, document.to_string())
-        .map_err(|error| RunnerError::task_invocation_failed_write(&manifest_path, error))
 }
 
 pub(super) fn annotate_registered_gateway_routes(
@@ -361,7 +326,7 @@ pub(super) fn ensure_shared_services_running(
         })?;
         run_shared_compose_capture(
             workdir,
-            &policy.profile,
+            policy,
             &shared_compose_args(service, ["up", "-d"]),
             &format!("docker compose up (shared {})", service.service_name),
         )?;
@@ -384,13 +349,38 @@ pub(super) fn ensure_shared_services_running(
     Ok(notes)
 }
 
+/// Remove only volumes whose labels prove this environment owns them, on its
+/// exact backend. A same-named lookalike is reported and left alone (R3).
 pub(super) fn remove_reset_volumes(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     classification: &VolumeClassification,
 ) -> Result<(), RunnerError> {
-    for command in reset_commands(classification) {
-        run_runtime_volume_capture(repo_root, &policy.profile, &command)?;
+    let endpoint = effigy_containers::backend::runtime_endpoint(repo_root, policy)?;
+    let identities = effigy_runtime::data::volume_identities(
+        repo_root,
+        &endpoint,
+        &policy.project_name,
+        &classification.remove,
+        &|cwd: &Path, endpoint: &str, command: &DockerCommand| {
+            run_runtime_volume_capture(cwd, endpoint, command)
+                .map_err(super::runtime_error_from_runner)
+        },
+    )
+    .map_err(RunnerError::from)?;
+    for name in &classification.remove {
+        match identities.get(name) {
+            Some(VolumeIdentity::Owned) => {
+                run_runtime_volume_capture(repo_root, &endpoint, &remove_volume_command(name))?;
+            }
+            Some(VolumeIdentity::Lookalike(reason)) => {
+                eprintln!(
+                    "[warn] reset left {reason}; it was not created for `{}`",
+                    policy.name
+                );
+            }
+            Some(VolumeIdentity::Absent) | None => {}
+        }
     }
     Ok(())
 }
@@ -527,19 +517,23 @@ fn shared_compose_args<'a>(
     args
 }
 
+/// Shared services start on the dependent environment's exact backend, never
+/// a hard-coded engine.
 fn run_shared_compose_capture(
     repo_root: &Path,
-    profile: &str,
+    policy: &EffectiveContainerPolicy,
     args: &[OsString],
     label: &str,
 ) -> Result<std::process::Output, RunnerError> {
+    let backend =
+        effigy_containers::backend::exact_backend(&policy.repo_root, &policy.name, policy.driver)
+            .id;
+    let profile = policy.profile.as_str();
     let request = ContainerManagerRequest::new(repo_root)
-        .backend_override(BackendId::colima_nerdctl())
+        .backend_override(backend.clone())
         .interrupt_policy(ContainerInterruptPolicy::Forward);
     let mut detection = ContainerBackendDetection::from_env_and_path();
-    if detection.backend_override.is_none() {
-        detection.backend_override = Some(BackendId::colima_nerdctl());
-    }
+    detection.backend_override = Some(backend);
     let plan = ContainerManager::defaults()
         .compose_invocation_plan(
             &request,
@@ -594,10 +588,9 @@ pub(super) fn run_runtime_volume_capture(
     let docker_args = runtime_args(&command.args);
     let request =
         ContainerManagerRequest::new(repo_root).interrupt_policy(ContainerInterruptPolicy::Forward);
+    // The endpoint carries the exact backend; see `endpoint_backend`.
     let mut detection = ContainerBackendDetection::from_env_and_path();
-    if detection.backend_override.is_none() {
-        detection.backend_override = Some(detect_profile_backend(profile)?);
-    }
+    detection.backend_override = Some(endpoint_backend(profile));
     let plan = ContainerManager::defaults()
         .runtime_invocation_plan(
             &request,
@@ -649,7 +642,7 @@ fn run_runtime_volume_usage_capture(
             "runtime volume usage command requires one mount-point argument",
         ));
     };
-    let backend_id = detect_profile_backend(profile)?;
+    let backend_id = endpoint_backend(profile);
     let (program, args) = if backend_id == BackendId::docker_compose() {
         (
             OsString::from("du"),
@@ -710,7 +703,7 @@ fn run_runtime_volume_usage_batch_capture(
             "runtime volume usage batch command requires one or more mount-point arguments",
         ));
     }
-    let backend_id = detect_profile_backend(profile)?;
+    let backend_id = endpoint_backend(profile);
     let (program, args) = if backend_id == BackendId::docker_compose() {
         let mut args = vec![OsString::from("-sk")];
         args.extend(command.args.iter().map(OsString::from));
@@ -772,7 +765,7 @@ fn run_runtime_volume_cache_kind_batch_capture(
         ));
     }
     let script = render_volume_cache_kind_script(&command.args);
-    let backend_id = detect_profile_backend(profile)?;
+    let backend_id = endpoint_backend(profile);
     let (program, args) = if backend_id == BackendId::docker_compose() {
         (
             OsString::from("sh"),
@@ -846,13 +839,6 @@ classify_cache_volume() {
     script
 }
 
-fn detect_profile_backend(profile: &str) -> Result<BackendId, RunnerError> {
-    if profile == "docker" {
-        return Ok(BackendId::docker_compose());
-    }
-    Ok(BackendId::colima_nerdctl())
-}
-
 fn runtime_args(args: &[String]) -> Vec<OsString> {
     args.iter().map(OsString::from).collect()
 }
@@ -922,12 +908,81 @@ mod tests {
             "up".into(),
             "-d".into(),
         ];
+        let mut policy = test_policy();
+        policy.repo_root = root.clone();
         let output =
-            super::run_shared_compose_capture(&root, "effigy", &args, "shared render proof")
+            super::run_shared_compose_capture(&root, &policy, &args, "shared render proof")
                 .unwrap();
         assert_eq!(
             String::from_utf8(output.stdout).unwrap().trim(),
             "shared asset available"
+        );
+    }
+
+    #[test]
+    fn reset_removes_only_labelled_volumes_on_the_exact_backend() {
+        use crate::contract_test_support::EnvGuard;
+        use std::os::unix::fs::PermissionsExt;
+        let _lock = crate::contract_test_support::lock_test();
+        let fixture = tempfile::Builder::new()
+            .prefix("effigy-parent-fixtures-reset-adoption-")
+            .tempdir_in(crate::contract_test_support::test_fixture_parent())
+            .unwrap();
+        let root = fixture.path().canonicalize().unwrap();
+        let bin = root.join("bin");
+        std::fs::create_dir(&bin).unwrap();
+        let log = root.join("calls");
+        let owned = r#"{"Name":"demo-web-renamed-data","Labels":{"com.effigy.managed":"true","com.effigy.project":"demo-web-renamed","com.effigy.volume-name":"demo-web-renamed-data"}}"#;
+        // Same name pattern, created outside Effigy: a lookalike.
+        let lookalike = r#"{"Name":"demo-web-renamed-cache","Labels":{"com.docker.compose.project":"demo-web-renamed"}}"#;
+        let docker = format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> {log}\ncase \"$1 $2\" in\n'volume ls') printf 'demo-web-renamed-data\\tlocal\\t\\ndemo-web-renamed-cache\\tlocal\\t\\n' ;;\n'volume inspect') printf '[{owned},{lookalike}]' ;;\n'volume rm') ;;\n*) exit 70 ;;\nesac\n",
+            log = log.display(),
+        );
+        for (name, script) in [
+            ("docker", docker.as_str()),
+            ("colima", "#!/bin/sh\nexit 99\n"),
+        ] {
+            let executable = bin.join(name);
+            std::fs::write(&executable, script).unwrap();
+            std::fs::set_permissions(executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let _env = EnvGuard::set_many(&[
+            (
+                "PATH",
+                Some(format!(
+                    "{}:{}",
+                    bin.display(),
+                    std::env::var("PATH").unwrap()
+                )),
+            ),
+            ("HOME", Some(root.display().to_string())),
+            ("EFFIGY_COMPOSE_BACKEND", Some("docker".into())),
+        ]);
+        let mut policy = test_policy();
+        policy.repo_root = root.clone();
+        let classification = effigy_catalog::volumes::VolumeClassification {
+            remove: vec![
+                "demo-web-renamed-data".to_owned(),
+                "demo-web-renamed-cache".to_owned(),
+                "demo-web-renamed-missing".to_owned(),
+            ],
+            keep: vec![],
+        };
+        super::remove_reset_volumes(&root, &policy, &classification).unwrap();
+        let calls = std::fs::read_to_string(&log).unwrap();
+        assert!(calls.contains("volume rm demo-web-renamed-data"), "{calls}");
+        assert!(
+            !calls.contains("volume rm demo-web-renamed-cache"),
+            "{calls}"
+        );
+        assert!(
+            !calls.contains("volume rm demo-web-renamed-missing"),
+            "{calls}"
+        );
+        assert!(
+            calls.contains("volume inspect demo-web-renamed-data demo-web-renamed-cache"),
+            "{calls}"
         );
     }
 

@@ -26,7 +26,7 @@ use super::support::{
     annotate_registered_gateway_routes, annotate_shared_service_notes,
     annotate_tcp_alias_host_notes, annotate_warning_lines, ensure_shared_services_running,
     reconcile_primary_service_tcp_alias_hosts, resolve_repo_root_or_invocation_cwd_scope,
-    rewrite_manifest_for_ejected_compose, wait_for_container_ready, ContainerRepoScope,
+    wait_for_container_ready, ContainerRepoScope,
 };
 use super::{render_container_report, RunnerError};
 use crate::runner::command_context::resolve_active_command_context;
@@ -42,7 +42,7 @@ use crate::runner::host_process::start_host_processes_for_container;
 use effigy_containers::{
     annotate_workspace_extra_mount_decisions,
     compose::{resolve_compose_backend_for_repo, ComposeBackend},
-    effective_attach_mode, eject_generated_compose, eject_report,
+    effective_attach_mode,
     exec::{
         colima_profile_warnings, ensure_runtime_backend_running, inspect_colima_ssh_agent_socket,
         recover_exited_owned_compose_services, shutdown_container as shutdown_container_via_exec,
@@ -50,8 +50,8 @@ use effigy_containers::{
     },
     load_container_exec_working_dir, load_container_policy, load_container_policy_for_creation,
     up_detached_report, validate_compose_backend_runtime, validate_container_policy,
-    workspace_extra_mount_decision_lines, write_runtime_backend_override, EffectiveAttachMode,
-    EffectiveContainerPolicy, WorkspaceExtraMountDecision,
+    workspace_extra_mount_decision_lines, EffectiveAttachMode, EffectiveContainerPolicy,
+    WorkspaceExtraMountDecision,
 };
 use effigy_containers::{ContainerAction, ContainerRuntimeState};
 use effigy_containers::{
@@ -223,7 +223,6 @@ fn run_container_up_inner(
         }
     }
     operation.partial = plan.attach_mode == EffectiveAttachMode::Detached;
-    write_container_up_backend_override(repo_root, &plan.policy);
 
     if container_up_stop_requested(&plan) {
         return render_container_up_interrupted(repo_root, &plan);
@@ -383,21 +382,6 @@ fn prepare_container_up(
     effigy_containers::policy::mounts::prepare_container_mount_sources(&policy)?;
     let shared_service_notes =
         ensure_shared_services_running(&policy, preparation_admission.as_ref())?;
-    operation.preparation_step = Some("inventory");
-    let primary_service_running = if reconcile_pending {
-        true
-    } else if policy.compose_source == effigy_containers::EffectiveComposeSource::Direct {
-        let running =
-            effigy_containers::exec::list_running_compose_containers_for_policy_with_deadline(
-                repo_root,
-                &policy,
-                Some(std::time::Instant::now() + std::time::Duration::from_secs(15)),
-            )
-            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-        primary_service_is_running(&policy, &running)
-    } else {
-        false
-    };
     if let Some(context) = &admitted_context {
         context.verify(repo_root, &policy, context.marker_required)?;
     }
@@ -419,7 +403,7 @@ fn prepare_container_up(
         );
         decisions
     } else {
-        resolve_workspace_mounts_for_creation(repo_root, &mut policy, primary_service_running)?
+        refresh_workspace_mounts_for_creation(repo_root, &mut policy)?
     };
     operation.preparation_step = Some("dispatch");
     validate_container_policy(repo_root, &policy)?;
@@ -472,28 +456,6 @@ fn refresh_workspace_mounts_for_creation(
         load_container_policy_for_creation(repo_root, Some(policy.name.as_str()))?;
     *policy = creation_policy;
     Ok(decisions)
-}
-
-fn resolve_workspace_mounts_for_creation(
-    repo_root: &Path,
-    policy: &mut EffectiveContainerPolicy,
-    primary_service_running: bool,
-) -> Result<Vec<WorkspaceExtraMountDecision>, RunnerError> {
-    if policy.compose_source == effigy_containers::EffectiveComposeSource::Direct
-        && primary_service_running
-    {
-        return Ok(Vec::new());
-    }
-    refresh_workspace_mounts_for_creation(repo_root, policy)
-}
-
-fn primary_service_is_running(
-    policy: &EffectiveContainerPolicy,
-    running: &[RunningComposeContainer],
-) -> bool {
-    running.iter().any(|container| {
-        container.service.as_deref() == Some(policy.primary_service.as_str()) && !container.oneoff
-    })
 }
 
 fn start_runtime_after_scope_registration<T>(
@@ -563,14 +525,6 @@ fn run_container_up_compose(
         )?;
     }
     Ok(None)
-}
-
-fn write_container_up_backend_override(repo_root: &Path, policy: &EffectiveContainerPolicy) {
-    let backend_id = match resolve_compose_backend_for_repo(repo_root, policy) {
-        ComposeBackend::Docker => effigy_containers::BackendId::docker_compose(),
-        ComposeBackend::ColimaNerdctl => effigy_containers::BackendId::colima_nerdctl(),
-    };
-    let _ = write_runtime_backend_override(repo_root, Some(policy.name.as_str()), &backend_id);
 }
 
 fn container_up_stop_requested(plan: &ContainerUpPlan) -> bool {
@@ -1224,21 +1178,6 @@ pub(in crate::runner) fn run_container_reset_adapter(
     .map_err(Into::into)
 }
 
-pub(super) fn run_container_eject(
-    repo_root: &Path,
-    name: Option<&str>,
-    output_json: bool,
-) -> Result<String, RunnerError> {
-    let policy = load_container_policy(repo_root, name)?;
-    validate_container_policy(repo_root, &policy)?;
-    let result = eject_generated_compose(repo_root, &policy)?;
-    rewrite_manifest_for_ejected_compose(repo_root, &policy.name, &result.compose_path)?;
-    Ok(render_container_report(
-        eject_report(&policy, &result),
-        output_json,
-    ))
-}
-
 pub(in crate::runner) fn run_container_reset_command(
     repo_override: Option<std::path::PathBuf>,
     name: Option<&str>,
@@ -1520,9 +1459,8 @@ mod tests {
         annotate_workspace_extra_mount_decisions, clear_partial_activation,
         detached_partial_activation_error, ensure_up_workspace_permissions, exec_operation_plan,
         gateway_registration_failure, lifecycle_operation_plan, partial_activation_recorded,
-        partial_reconcile_skips_compose_up, primary_service_is_running,
-        reconcile_partial_activation, refresh_workspace_mounts_for_creation,
-        resolve_workspace_mounts_for_creation, run_container_down_command, run_container_eject,
+        partial_reconcile_skips_compose_up, reconcile_partial_activation,
+        refresh_workspace_mounts_for_creation, run_container_down_command,
         start_runtime_after_scope_registration, RunnerError,
     };
     use crate::runner::container_command::handover::hand_over_conflicting_environments;
@@ -1808,43 +1746,6 @@ mod tests {
     }
 
     #[test]
-    fn run_container_eject_promotes_generated_compose() {
-        let root = temp_repo("container-eject", "generated");
-        fs::write(
-            root.join("effigy.toml"),
-            r#"
-[containers]
-default = "web"
-
-[containers.web]
-primary_service = "app"
-
-[containers.web.host]
-ports = ["18080:80"]
-
-[containers.web.services.app]
-catalog = "php-fpm"
-version = "8.3"
-
-[containers.web.services.web]
-catalog = "nginx"
-variant = "default"
-"#,
-        )
-        .expect("write manifest");
-
-        let rendered = run_container_eject(&root, None, false).expect("eject");
-        assert!(rendered.contains("ejected catalog-backed compose ownership"));
-        assert!(root.join("infra/dev/docker-compose.yml").exists());
-        assert!(!root
-            .join(".effigy/runtime/compose/web.generated.compose.yml")
-            .exists());
-        let manifest = fs::read_to_string(root.join("effigy.toml")).expect("read manifest");
-        assert!(manifest.contains("compose_file = \"infra/dev/docker-compose.yml\""));
-        assert!(!manifest.contains("[containers.web.services.app]"));
-    }
-
-    #[test]
     fn select_generated_service_image_refs_returns_built_service_images_only() {
         let parsed: serde_yaml::Value = serde_yaml::from_str(
             r#"
@@ -1993,74 +1894,6 @@ mounts = ["prepared:/workspace-root/prepared:ro"]
     }
 
     #[test]
-    fn running_direct_primary_keeps_loaded_mount_spec_without_applied_claim() {
-        let root = temp_repo("workspace-mount-running-direct", "direct");
-        let source = root.join("prepared");
-        fs::create_dir(&source).expect("create initial optional source");
-        fs::write(
-            root.join("effigy.toml"),
-            r#"
-[containers]
-default = "web"
-
-[containers.web]
-compose_file = "compose.yml"
-primary_service = "app"
-
-[systems.dev]
-default_workspace = "app"
-
-[systems.dev.workspaces.app]
-container = "web"
-working_dir = "/workspace-root/app"
-mounts = ["prepared:/workspace-root/prepared:ro"]
-"#,
-        )
-        .expect("write manifest");
-        fs::write(
-            root.join("compose.yml"),
-            "services:\n  app:\n    image: alpine:latest\n",
-        )
-        .expect("write compose");
-
-        let mut policy = load_container_policy(&root, Some("web")).expect("initial policy");
-        let original_compose = policy.compose_files[0].clone();
-        fs::remove_dir(&source).expect("preparation removes optional source");
-        let running = vec![effigy_containers::exec::RunningComposeContainer {
-            container_name: "demo-web-app".to_owned(),
-            status: "Up 1 minute".to_owned(),
-            ports: vec![],
-            project_name: Some(policy.project_name.clone()),
-            working_dir: Some(root.display().to_string()),
-            service: Some(policy.primary_service.clone()),
-            oneoff: false,
-        }];
-
-        assert!(primary_service_is_running(&policy, &running));
-        let decisions = resolve_workspace_mounts_for_creation(&root, &mut policy, true)
-            .expect("running direct service does not refresh mounts");
-        assert!(decisions.is_empty());
-        assert_eq!(policy.compose_files[0], original_compose);
-        assert!(policy
-            .read_compose(&original_compose)
-            .expect("read original compose")
-            .contains("/workspace-root/prepared"));
-        assert!(
-            !source.exists(),
-            "creation resolution must not recreate the host path"
-        );
-        assert!(!effigy_containers::compose::compose_up_args(&policy)
-            .iter()
-            .any(|arg| arg == "--force-recreate"));
-
-        let mut report = up_detached_report(&policy, false, None);
-        annotate_workspace_extra_mount_decisions(&mut report, &decisions);
-        assert!(report.json.get("workspace_extra_mounts").is_none());
-        assert!(!report.success_text.contains("applied"));
-        assert!(!report.success_text.contains("recreated"));
-    }
-
-    #[test]
     fn annotate_left_running_shared_services_adds_text_and_json() {
         let policy = test_policy(vec![
             shared_service("db", "mariadb", 8106),
@@ -2104,7 +1937,11 @@ primary_service = "app"
         )
         .expect("write manifest");
         fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
-        fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
+        fs::write(
+            root.join("infra/dev/docker-compose.yml"),
+            "services:\n  app:\n    image: example\n",
+        )
+        .expect("compose");
 
         let error = run_container_reset(
             &root,

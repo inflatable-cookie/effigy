@@ -8,7 +8,7 @@ use effigy_kernel::id::{
     Route, RunId, Surface, TaskId,
 };
 use effigy_kernel::objects::Objects;
-use effigy_kernel::observe::{Observed, UnknownReason};
+use effigy_kernel::observe::{AbsenceProof, Observed, UnknownReason};
 use effigy_kernel::outcome::{CleanupOutcome, Invocation};
 use effigy_kernel::root::StateRoot;
 use effigy_kernel::run::{BeginOpts, Effect, Fence, Reconciled, Run, SettlementAdapter};
@@ -43,9 +43,70 @@ pub fn prepare(policy: &EffectiveContainerPolicy) -> Result<(), ContainerPolicyE
     };
     // This is the Prepare stage of a Mutate command. Gate(Env) deliberately
     // requires that command class; Observe render never enters this path.
+    // The backend is recorded under the same owner gate, before any engine
+    // effect (K3); a v0.14 runtime file is imported here, never rewritten.
+    let backend = crate::backend::metadata_to_record(policy);
     with_owner(policy, EffectClass::Mutate, |run| {
-        Objects::publish_desired(run, &render.closure).map(|_| ())
+        Objects::publish_desired(run, &render.closure)?;
+        match &backend {
+            Some(backend) => run.set_backend(backend),
+            None => Ok(()),
+        }
     })
+}
+
+/// The environment's recorded backend. Observe only: an unprepared checkout
+/// or missing store is `Absent`, an unreadable one `Unknown`.
+pub(crate) fn recorded_backend(
+    repo_root: &Path,
+    name: &str,
+) -> Observed<Option<effigy_kernel::store::BackendMetadata>> {
+    let Ok(Some(_)) = effigy_core::worktree_scope::checkout_token(repo_root) else {
+        return Observed::Absent(AbsenceProof::NoFile {
+            name: "checkout token".into(),
+        });
+    };
+    let Ok(checkout) = checkout_at(repo_root) else {
+        return Observed::Unknown(UnknownReason::Inconsistent("checkout identity".into()));
+    };
+    let Ok(id) = ResourceId::environment(checkout, name) else {
+        return Observed::Unknown(UnknownReason::Inconsistent("environment identity".into()));
+    };
+    let context = OperationContext::new(
+        Deadline::At(Instant::now() + Duration::from_secs(10)),
+        CancelToken::default(),
+        Limits {
+            capture_tail: 1024,
+            log_rotate: 4096,
+            log_keep: 2,
+            line_max: 512,
+            queue_bytes: 2048,
+            probe_concurrency: 2,
+        },
+        EffectClass::Observe,
+        Placement::Host,
+    );
+    let Ok(cx) = context.observe() else {
+        return Observed::Unknown(UnknownReason::Inconsistent("observe capability".into()));
+    };
+    let Ok(home) = state_home() else {
+        return Observed::Absent(AbsenceProof::NoStateRoot);
+    };
+    let root = match StateRoot::observe(&cx, &home) {
+        Observed::Verified(root, _) => root,
+        Observed::Absent(proof) => return Observed::Absent(proof),
+        Observed::Unknown(reason) => return Observed::Unknown(reason),
+    };
+    let reader = match effigy_kernel::store::Store::read(&cx, &root) {
+        Observed::Verified(reader, _) => reader,
+        Observed::Absent(proof) => return Observed::Absent(proof),
+        Observed::Unknown(reason) => return Observed::Unknown(reason),
+    };
+    match reader.resource(&id) {
+        Observed::Verified(record, evidence) => Observed::Verified(record.backend, evidence),
+        Observed::Absent(proof) => Observed::Absent(proof),
+        Observed::Unknown(reason) => Observed::Unknown(reason),
+    }
 }
 
 pub fn reset(policy: &EffectiveContainerPolicy) -> Result<(), ContainerPolicyError> {
@@ -168,14 +229,18 @@ fn with_owner(
 }
 
 fn checkout(policy: &EffectiveContainerPolicy) -> Result<CheckoutId, ContainerPolicyError> {
-    let token = effigy_core::worktree_scope::checkout_token(&policy.repo_root)
+    checkout_at(&policy.repo_root)
+}
+
+fn checkout_at(repo_root: &Path) -> Result<CheckoutId, ContainerPolicyError> {
+    let token = effigy_core::worktree_scope::checkout_token(repo_root)
         .map_err(error)?
         .ok_or_else(|| error("no checkout runtime state; Prepare must establish identity first"))?;
     let mut bytes = [0; 16];
     for (index, byte) in bytes.iter_mut().enumerate() {
         *byte = u8::from_str_radix(&token[index * 2..index * 2 + 2], 16).map_err(error)?;
     }
-    let kind = match effigy_core::worktree_scope::scope_kind(&policy.repo_root).map_err(error)? {
+    let kind = match effigy_core::worktree_scope::scope_kind(repo_root).map_err(error)? {
         Some(effigy_core::worktree_scope::ScopeKind::LinkedWorktree) => {
             CheckoutKind::LinkedWorktree
         }

@@ -324,12 +324,9 @@ pub(super) fn run_rhai_feature(
                 },
             },
         ),
-        FEATURE_CONTAINER_EJECT => run_container_json(
-            repo_root,
-            ContainerSubcommand::Eject {
-                name: Some(required_string(&options, "name")?),
-            },
-        ),
+        FEATURE_CONTAINER_EJECT => Err(RunnerError::task_invocation(
+            "`container::eject` is retired in v0.15 with `compose_file`: generated Compose stays internal. Use `effigy container render <NAME>` to read the exact render",
+        )),
         FEATURE_CONTAINER_STATS => run_typed_command(
             repo_root,
             effigy_cli::Command::Container(ContainerArgs {

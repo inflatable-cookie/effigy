@@ -11,6 +11,7 @@ const CONTAINER_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
     topic: "container",
     notices: text_lines![
         "`container render <NAME>` prints the exact immutable render, generation path and digest without writing files or contacting the container engine.",
+        "`compose_file` is deprecated: it is read as project catalog fragments for one release. `container migrate <NAME>` writes those fragments under `infra/dev/catalog/` and replaces the key with `[containers.<NAME>.services]`; the render is unchanged.",
         "Operate a manifest-defined local container environment by name, or the manifest default when no name is given.",
         "Host ports and repo-relative mounts are declared in `[containers.*.host]`. Leaving an interactive workspace or shell asks whether to bring the environment down (default yes).",
         "Generated compose supports `shared = true` backing services for shared databases and caches.",
@@ -25,6 +26,7 @@ const CONTAINER_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
     ],
     usage: text_lines![
         "effigy container render [<NAME>] [--repo <PATH>] [--json]",
+        "effigy container migrate [<NAME>] [--repo <PATH>] [--json]",
         "effigy container up [--repo <PATH>] [--attach|--detach] [--json]",
         "effigy container <NAME> up [--repo <PATH>] [--attach|--detach] [--json]",
         "effigy container down [--repo <PATH>] [--json]",
@@ -59,7 +61,6 @@ const CONTAINER_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         "effigy container <NAME> logs [--repo <PATH>] [--service <NAME>] [--follow] [--json]",
         "effigy container <NAME> shell [--repo <PATH>] [--service <NAME>] [--command <CMD>] [--bounded --deadline-ms <MS> --stdout-limit-bytes <N> --stderr-limit-bytes <N>] [--json]",
         "effigy container <NAME> reset [--repo <PATH>] [--keep-data] [--json]",
-        "effigy container <NAME> eject [--repo <PATH>] [--json]",
         "effigy container hosts [--repo <PATH>] [--json]",
         "effigy container <NAME> hosts [--repo <PATH>] [--json]",
         "effigy container scope [--repo <PATH>] [--json]",
@@ -120,7 +121,7 @@ const CONTAINER_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         "effigy container web shell --command \"php artisan tinker\" --bounded --deadline-ms 30000 --stdout-limit-bytes 1048576 --stderr-limit-bytes 262144 --json",
         "effigy container web reset --keep-data",
         "effigy container web reset",
-        "effigy container web eject",
+        "effigy container migrate linux-release",
         "effigy container hosts --json",
         "effigy container scope --json",
         "effigy container retire --yes",

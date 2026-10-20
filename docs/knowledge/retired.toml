@@ -536,3 +536,33 @@ terms = ["sequence fail_fast"]
 paths = []
 config_keys = ["tasks.*.run[].fail_fast", "tasks.*.concurrent[].setup[].fail_fast"]
 allow = ["CHANGELOG.md", "docs/guides/020-dag-lock-policy-baseline.md", "crates/effigy-manifest/src/composition.rs", "src/tests/runner_tests/run_array_tests/dag_validation_tests.rs"]
+
+[[retired]]
+id = "direct-compose-file-ownership"
+retired = "2026-10-20"
+replacement = "A compose_file environment is read as project catalog fragments for one release, with a warning. Run `effigy container migrate <NAME>` to write infra/dev/catalog/<container>-<service>/ and replace the key with [containers.<NAME>.services]; the render is unchanged. After that release the key errors with the command."
+owner = "docs/knowledge/contracts/005-container-runtime-contract.md"
+terms = ["ownership.compose.yml", "render_direct_compose_ownership_override", "validate_scoped_direct_compose", "infer_direct_compose_host_ports"]
+paths = ["infra/release/linux/docker-compose.yml"]
+config_keys = []
+allow = ["CHANGELOG.md", "infra/dev/catalog/linux-release-builder/service.toml", "tests/fixtures/compose-file-migration/linux-release/config/containers.toml", "crates/effigy-manifest/src/execution_binding.rs", "src/tests/runner_tests/run_array_tests/direct_builder_activation_tests.rs"]
+
+[[retired]]
+id = "container-eject"
+retired = "2026-10-20"
+replacement = "Generated Compose stays internal. `effigy container render <NAME>` prints the exact render; customise a service with a project catalog fragment under infra/dev/catalog/. The command and container::eject return this replacement."
+owner = "docs/knowledge/contracts/005-container-runtime-contract.md"
+terms = ["eject_generated_compose", "effigy.container.eject.v1", "ContainerEjectResult", "effigy container <NAME> eject"]
+paths = ["crates/effigy-containers/src/runtime/eject.rs"]
+config_keys = []
+allow = ["CHANGELOG.md", "src/tests/lib_tests_help_render_tests.rs"]
+
+[[retired]]
+id = "runtime-backend-metadata-file"
+retired = "2026-10-20"
+replacement = "Prepare records each environment's backend in its kernel resources row. The v0.14 .effigy/runtime/compose/.effigy-runtime.json entry is read until imported and never written."
+owner = "docs/knowledge/contracts/005-container-runtime-contract.md"
+terms = ["write_runtime_backend_override", "load_runtime_backend_override", "RUNTIME_BACKEND_METADATA_FILE", "detect_profile_backend"]
+paths = []
+config_keys = []
+allow = ["CHANGELOG.md", "docs/knowledge/contracts/052-runtime-kernel-contract.md"]

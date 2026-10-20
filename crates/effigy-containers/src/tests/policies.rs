@@ -38,13 +38,20 @@ primary_service = "app"
     )
     .expect("write manifest");
     fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
-    fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
+    fs::write(
+        root.join("infra/dev/docker-compose.yml"),
+        "services:\n  app:\n    image: example\n",
+    )
+    .expect("compose");
 
     let policy = load_container_policy(&root, None).expect("policy");
 
     assert_eq!(policy.name, "web");
-    assert_eq!(policy.compose_source, EffectiveComposeSource::Direct);
-    assert_eq!(policy.compose_file_display, "infra/dev/docker-compose.yml");
+    assert_eq!(policy.compose_source, EffectiveComposeSource::Generated);
+    assert_eq!(
+        policy.compose_file_display,
+        ".effigy/runtime/compose/web.generated.compose.yml"
+    );
     assert_eq!(policy.dns_domain, None);
     assert!(!policy.dns_tls);
     assert_eq!(policy.dns_port, None);
@@ -52,10 +59,12 @@ primary_service = "app"
     assert_eq!(
         policy.compose_files,
         vec![
-            render.path.join("checkout/infra/dev/docker-compose.yml"),
             render
                 .path
-                .join("checkout/.effigy/runtime/compose/web.ownership.compose.yml"),
+                .join("checkout/.effigy/runtime/compose/web.generated.compose.yml"),
+            render
+                .path
+                .join("checkout/.effigy/runtime/dns/web.compose.override.yml"),
         ]
     );
 }
@@ -379,7 +388,11 @@ primary_service = "app"
     )
     .expect("write manifest");
     fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
-    fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
+    fs::write(
+        root.join("infra/dev/docker-compose.yml"),
+        "services:\n  app:\n    image: example\n",
+    )
+    .expect("compose");
 
     let error = load_container_policy(&root, None).expect_err("should fail");
 
@@ -482,7 +495,11 @@ primary_service = "app"
     )
     .expect("write manifest");
     fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
-    fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
+    fs::write(
+        root.join("infra/dev/docker-compose.yml"),
+        "services:\n  app:\n    image: example\n",
+    )
+    .expect("compose");
 
     let policy = load_container_policy(&root, Some("web")).expect("policy");
 
@@ -508,7 +525,11 @@ primary_service = "app"
     )
     .expect("write manifest");
     fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
-    fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
+    fs::write(
+        root.join("infra/dev/docker-compose.yml"),
+        "services:\n  app:\n    image: example\n",
+    )
+    .expect("compose");
 
     let policy = load_container_policy(&root, None).expect("policy");
 
@@ -534,7 +555,11 @@ primary_service = "app"
     )
     .expect("write manifest");
     fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
-    fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
+    fs::write(
+        root.join("infra/dev/docker-compose.yml"),
+        "services:\n  app:\n    image: example\n",
+    )
+    .expect("compose");
 
     let policy = load_container_policy(&root, None).expect("policy");
 
@@ -558,7 +583,11 @@ project_name = "r7-webCore-decodelabs-library"
     )
     .expect("write manifest");
     fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
-    fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
+    fs::write(
+        root.join("infra/dev/docker-compose.yml"),
+        "services:\n  app:\n    image: example\n",
+    )
+    .expect("compose");
 
     let policy = load_container_policy(&root, None).expect("policy");
 
@@ -606,7 +635,11 @@ primary_service = "app"
     )
     .expect("write manifest");
     fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
-    fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
+    fs::write(
+        root.join("infra/dev/docker-compose.yml"),
+        "services:\n  app:\n    image: example\n",
+    )
+    .expect("compose");
 
     let policy = {
         let _lock = crate::test_env_lock();
@@ -645,7 +678,11 @@ project_name = "workspace-app-reference-dev"
     )
     .expect("write manifest");
     fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
-    fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
+    fs::write(
+        root.join("infra/dev/docker-compose.yml"),
+        "services:\n  app:\n    image: example\n",
+    )
+    .expect("compose");
 
     let error = load_container_policy(&root, None).expect_err("should fail");
 
@@ -678,7 +715,11 @@ primary_service = "jobs"
     )
     .expect("write manifest");
     fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
-    fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
+    fs::write(
+        root.join("infra/dev/docker-compose.yml"),
+        "services:\n  app:\n    image: example\n",
+    )
+    .expect("compose");
 
     let policies = load_all_container_policies(&root).expect("policies");
 
@@ -723,7 +764,11 @@ primary_service = "app"
     )
     .expect("write session record");
     fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
-    fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
+    fs::write(
+        root.join("infra/dev/docker-compose.yml"),
+        "services:\n  app:\n    image: example\n",
+    )
+    .expect("compose");
 
     let policy = load_container_policy(&root, None).expect("policy");
 
@@ -731,7 +776,7 @@ primary_service = "app"
 }
 
 #[test]
-fn load_container_policy_infers_direct_compose_ports_when_manifest_ports_are_omitted() {
+fn translated_compose_ports_follow_catalog_port_policy() {
     let _lock = crate::test_env_lock();
     let root = temp_repo("direct-compose-inferred-ports");
     fs::write(
@@ -767,19 +812,19 @@ services:
 
     let policy = load_container_policy(&root, None).expect("policy");
 
+    // Translated ports follow catalog port policy: every published container
+    // port is kept, and Prepare assigns the host side.
     assert!(!policy.ports_declared_explicitly);
-    assert!(policy
-        .declared_ports
-        .iter()
-        .any(|value| value == "41001:41001"));
-    assert!(policy
-        .declared_ports
-        .iter()
-        .any(|value| value == "41002:41002"));
-    assert!(policy
-        .declared_ports
-        .iter()
-        .any(|value| value == "8025:8025"));
+    for container in ["41001", "41002", "8025"] {
+        assert!(
+            policy
+                .declared_ports
+                .iter()
+                .any(|value| value.ends_with(&format!(":{container}"))),
+            "{:?}",
+            policy.declared_ports
+        );
+    }
 }
 
 #[test]
@@ -861,7 +906,11 @@ mounts = ["../outside:/workspace/outside"]
     )
     .expect("write manifest");
     fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
-    fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
+    fs::write(
+        root.join("infra/dev/docker-compose.yml"),
+        "services:\n  app:\n    image: example\n",
+    )
+    .expect("compose");
 
     // Host-mount resolution moved to intake (see `mount_spec`), so the
     // repo-escape check now fires at policy-load time, not at later
@@ -889,7 +938,11 @@ primary_service = "app"
     )
     .expect("write manifest");
     fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
-    fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
+    fs::write(
+        root.join("infra/dev/docker-compose.yml"),
+        "services:\n  app:\n    image: example\n",
+    )
+    .expect("compose");
 
     let policy = load_container_policy(&root, None).expect("policy");
     let error = with_test_compose_backend(ComposeBackend::ColimaNerdctl, || {
@@ -914,6 +967,9 @@ fn validate_compose_backend_runtime_rejects_colima_mount_payload_over_budget() {
             )
         })
         .collect::<String>();
+    let declared = (0..72)
+        .map(|index| format!("  workspace-volume-{index:02}: {{}}\n"))
+        .collect::<String>();
     fs::write(
         root.join("effigy.toml"),
         r#"
@@ -930,7 +986,7 @@ primary_service = "app"
     fs::write(
         root.join("infra/dev/docker-compose.yml"),
         format!(
-            "services:\n  app:\n    image: alpine\n    volumes:\n{volumes}volumes:\n  workspace-volume-00: {{}}\n"
+            "services:\n  app:\n    image: alpine\n    volumes:\n{volumes}volumes:\n{declared}"
         ),
     )
     .expect("compose");
@@ -977,7 +1033,11 @@ primary_service = "app"
     )
     .expect("write manifest");
     fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
-    fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
+    fs::write(
+        root.join("infra/dev/docker-compose.yml"),
+        "services:\n  app:\n    image: example\n",
+    )
+    .expect("compose");
 
     let policy = load_container_policy(&root, None).expect("policy");
     assert_eq!(

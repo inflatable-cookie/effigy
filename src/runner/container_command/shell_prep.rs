@@ -462,7 +462,11 @@ catalog = "postgres"
     #[test]
     fn explicit_exec_working_dir_overrides_service_default() {
         let root = temp_repo("container-shell-prep", "explicit-exec-working-dir");
-        fs::write(root.join("docker-compose.yml"), "services: {}\n").expect("write compose");
+        fs::write(
+            root.join("docker-compose.yml"),
+            "services:\n  app:\n    image: example\n",
+        )
+        .expect("write compose");
         fs::write(
             root.join("effigy.toml"),
             r#"
@@ -497,7 +501,11 @@ working_dir = "/var/www/contact-patch"
             "container-shell-prep",
             "explicit-exec-working-dir-nonexistent",
         );
-        fs::write(root.join("docker-compose.yml"), "services: {}\n").expect("write compose");
+        fs::write(
+            root.join("docker-compose.yml"),
+            "services:\n  app:\n    image: example\n",
+        )
+        .expect("write compose");
         fs::write(
             root.join("effigy.toml"),
             r#"
@@ -531,7 +539,11 @@ working_dir = "/var/www/contact-patch"
             "container-shell-prep",
             "explicit-exec-working-dir-container-native",
         );
-        fs::write(root.join("docker-compose.yml"), "services: {}\n").expect("write compose");
+        fs::write(
+            root.join("docker-compose.yml"),
+            "services:\n  app:\n    image: example\n",
+        )
+        .expect("write compose");
         fs::write(
             root.join("effigy.toml"),
             r#"

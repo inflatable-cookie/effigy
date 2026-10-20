@@ -8833,13 +8833,13 @@ case "$*" in
             done
             case "$last_arg" in
               fixture-web-dev-db-data)
-                printf '[{"Name":"fixture-web-dev-db-data","Mountpoint":"/var/lib/docker/volumes/fixture-web-dev-db-data/_data","UsageData":{"Size":4096}}]\n'
+                printf '[{"Name":"fixture-web-dev-db-data","Labels":{"com.effigy.managed":"true","com.effigy.project":"fixture-web-dev","com.effigy.volume-name":"fixture-web-dev-db-data"},"Mountpoint":"/var/lib/docker/volumes/fixture-web-dev-db-data/_data","UsageData":{"Size":4096}}]\n'
                 ;;
               fixture-web-dev-app-node-modules)
-                printf '[{"Name":"fixture-web-dev-app-node-modules","Mountpoint":"/var/lib/docker/volumes/fixture-web-dev-app-node-modules/_data","UsageData":{"Size":1024}}]\n'
+                printf '[{"Name":"fixture-web-dev-app-node-modules","Labels":{"com.effigy.managed":"true","com.effigy.project":"fixture-web-dev","com.effigy.volume-name":"fixture-web-dev-app-node-modules"},"Mountpoint":"/var/lib/docker/volumes/fixture-web-dev-app-node-modules/_data","UsageData":{"Size":1024}}]\n'
                 ;;
               fixture-web-dev-app-pnpm-store)
-                printf '[{"Name":"fixture-web-dev-app-pnpm-store","Mountpoint":"/var/lib/docker/volumes/fixture-web-dev-app-pnpm-store/_data","UsageData":{"Size":2048}}]\n'
+                printf '[{"Name":"fixture-web-dev-app-pnpm-store","Labels":{"com.effigy.managed":"true","com.effigy.project":"fixture-web-dev","com.effigy.volume-name":"fixture-web-dev-app-pnpm-store"},"Mountpoint":"/var/lib/docker/volumes/fixture-web-dev-app-pnpm-store/_data","UsageData":{"Size":2048}}]\n'
                 ;;
               *)
                 printf "[]\n"
@@ -8887,10 +8887,10 @@ fi
 if [ "${1:-}" = "volume" ] && [ "${2:-}" = "inspect" ]; then
   case "${3:-}" in
     fixture-web-dev-db-data)
-      printf '[{"Name":"fixture-web-dev-db-data","Mountpoint":"/var/lib/docker/volumes/fixture-web-dev-db-data/_data","UsageData":{"Size":4096}}]\n'
+      printf '[{"Name":"fixture-web-dev-db-data","Labels":{"com.effigy.managed":"true","com.effigy.project":"fixture-web-dev","com.effigy.volume-name":"fixture-web-dev-db-data"},"Mountpoint":"/var/lib/docker/volumes/fixture-web-dev-db-data/_data","UsageData":{"Size":4096}}]\n'
       ;;
     fixture-web-dev-app-node-modules)
-      printf '[{"Name":"fixture-web-dev-app-node-modules","Mountpoint":"/var/lib/docker/volumes/fixture-web-dev-app-node-modules/_data","UsageData":{"Size":1024}}]\n'
+      printf '[{"Name":"fixture-web-dev-app-node-modules","Labels":{"com.effigy.managed":"true","com.effigy.project":"fixture-web-dev","com.effigy.volume-name":"fixture-web-dev-app-node-modules"},"Mountpoint":"/var/lib/docker/volumes/fixture-web-dev-app-node-modules/_data","UsageData":{"Size":1024}}]\n'
       ;;
     *)
       printf "[]\n"

@@ -1,24 +1,9 @@
 use std::path::Path;
 
 use effigy_catalog::volumes::ManagedVolume;
-use effigy_containers::{
-    ContainerDataTransferAction, EffectiveComposeSource, EffectiveContainerPolicy,
-};
+use effigy_containers::{ContainerDataTransferAction, EffectiveContainerPolicy};
 
 use crate::EffigyRuntimeError;
-
-pub(super) fn ensure_generated_data_path(
-    policy: &EffectiveContainerPolicy,
-    action: &str,
-) -> Result<(), EffigyRuntimeError> {
-    if policy.compose_source != EffectiveComposeSource::Generated {
-        return Err(EffigyRuntimeError::task_invocation(format!(
-            "container `{}` uses direct `compose_file` ownership; `data {action}` is supported only on the generated-compose path",
-            policy.name
-        )));
-    }
-    Ok(())
-}
 
 pub(super) fn resolve_managed_volume(
     policy: &EffectiveContainerPolicy,

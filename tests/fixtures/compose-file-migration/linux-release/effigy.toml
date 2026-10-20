@@ -1,0 +1,3 @@
+# Pre-migration copy of Effigy's linux-release declaration (config/containers.toml).
+[manifest]
+include = ["config/containers.toml"]
