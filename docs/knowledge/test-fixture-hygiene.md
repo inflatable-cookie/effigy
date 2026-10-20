@@ -169,3 +169,17 @@ OS exposes a live descendant's arguments without its environment. Even the
 launcher's known nonce cannot be verified from that observation. Recovery must
 remain `Unknown` and retain the ledger; the detached-leader negative control
 exposes this boundary rather than granting numeric group-kill authority.
+
+The reaped-leader descendant control is retained under a tracked Unix ignore
+for papercut `aedb6038-fe8c-4b02-ab6f-a0a7ce8aab50`, owned by
+`v015-task-engine`. The planner's 2026-10-20 ruling defers that kernel custody
+case from fixture-hygiene acceptance. Ordinary process leaks, forced exits and
+runner timeouts remain active controls; no fixture group-kill authority is added.
+
+Builder recovery additionally uses a fresh owned directory under the host HOME
+on Linux: the real Colima shared-path preflight rejects OS temp paths there too.
+macOS continues to use `/Users/Shared`. The constructor selects this parent
+before isolating its fixture HOME, and all writes remain inside the new directory.
+The placement proof requires the shared fixture to pass and an OS-temp control
+to remain rejected, adapting the saved #233 fixture-isolation patch without
+restoring its replaced sealed-tree guard or changing production validation.

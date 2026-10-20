@@ -124,14 +124,66 @@ fn private_builder_fixture_removes_sealed_object_directories() {
     assert!(!root.exists());
 }
 
+// The real Colima preflight rejects OS temp paths on Linux as well as macOS.
+fn builder_fixture() -> effigy_test_support::Fixture {
+    #[cfg(target_os = "macos")]
+    return effigy_test_support::Fixture::workspace("effigy-parent-fixtures-recovery-").unwrap();
+    #[cfg(not(target_os = "macos"))]
+    {
+        let home = std::env::var_os("HOME").expect("host HOME for shared Colima fixture");
+        effigy_test_support::Fixture::in_parent(
+            "effigy-parent-fixtures-recovery-",
+            Path::new(&home),
+        )
+        .unwrap()
+    }
+}
+
+#[test]
+fn builder_fixture_passes_colima_guard_while_os_temp_still_refuses() {
+    let _lock = crate::contract_test_support::lock_test();
+    let shared = builder_fixture();
+    let unshared = effigy_test_support::Fixture::new("effigy-unshared-recovery-").unwrap();
+    let _env = EnvGuard::set_many(&[
+        ("EFFIGY_COMPOSE_BACKEND", Some("colima".to_owned())),
+        ("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", None),
+        ("EFFIGY_TEST_COLIMA_ARGS_FILE", None),
+    ]);
+    for (dir, allowed) in [(&shared, true), (&unshared, false)] {
+        let _cache = EnvGuard::set_many(&[(
+            "EFFIGY_TEST_CONTAINERS_HOME",
+            Some(dir.path().join(".effigy").display().to_string()),
+        )]);
+        std::fs::write(
+            dir.path().join("effigy.toml"),
+            "[containers.web]\ncompose_file = 'compose.yml'\nprimary_service = 'app'\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("compose.yml"),
+            "services:\n  app:\n    image: example\n",
+        )
+        .unwrap();
+        let policy = effigy_containers::load_container_policy(dir.path(), Some("web")).unwrap();
+        let result = effigy_containers::validate_compose_backend_runtime(dir.path(), &policy);
+        if allowed {
+            result.expect("shared fixture must satisfy the real Colima path guard");
+        } else {
+            assert!(result
+                .expect_err("OS temp control must still be refused")
+                .to_string()
+                .contains("under a temp directory that Colima may not share"));
+        }
+    }
+}
+
 impl Fixture {
     fn new(retained: bool, changed: bool, backend: &str) -> Self {
         Self::with_declaration(retained, changed, backend, true)
     }
 
     fn with_declaration(retained: bool, changed: bool, backend: &str, scoped: bool) -> Self {
-        let temp =
-            effigy_test_support::Fixture::workspace("effigy-parent-fixtures-recovery-").unwrap();
+        let temp = builder_fixture();
         let root = temp.path().canonicalize().unwrap();
         std::fs::create_dir_all(root.join(".git")).unwrap();
         std::fs::write(
