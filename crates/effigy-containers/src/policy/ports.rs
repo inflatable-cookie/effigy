@@ -10,6 +10,29 @@ pub const UNASSIGNED_PORT_LABEL: &str = "unassigned (assigned on first prepare)"
 pub const UNASSIGNED_PORT_EXPRESSION: &str =
     "${EFFIGY_UNASSIGNED_PORT:?unassigned (assigned on first prepare)}";
 
+/// Initialize/import endpoint authority before an effectful Prepare observes
+/// policy. Other engines may have created the shared SQLite file but not yet
+/// committed its schema; the gateway's admitted writer waits for that bootstrap.
+/// Pure policy readers never call this seam. A verified payload needs no write.
+/// With no configured home, the caller's existing storage validation applies.
+/// Import/refusal errors are preserved; unreadable state is never replaced.
+pub fn prepare_endpoint_store() -> Result<(), ContainerPolicyError> {
+    let Some(home) = crate::policy_support::effigy_home_dir() else {
+        return Ok(());
+    };
+    let store = effigy_gateway::endpoint_store::EndpointStore::for_effigy_home(&home);
+    match store.read() {
+        effigy_kernel::observe::Observed::Verified(_, _) => Ok(()),
+        effigy_kernel::observe::Observed::Absent(_)
+        | effigy_kernel::observe::Observed::Unknown(_) => {
+            // Admission verifies/reconciles state; Unknown never becomes an
+            // empty registry or permission to replace an existing assignment.
+            store.import()?;
+            Ok(())
+        }
+    }
+}
+
 /// Effectful Prepare seam. Returns whether the caller must resolve again to
 /// include newly assigned ports before admitting or publishing the render.
 pub fn prepare_container_policy_ports(

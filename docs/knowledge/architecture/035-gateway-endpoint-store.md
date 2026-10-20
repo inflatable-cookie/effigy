@@ -72,7 +72,13 @@ files does not import or allocate anything.
 ## Callers and reload
 
 Container Prepare reserves or retains generated host-port ranges through this
-API, including an already assigned legacy range.
+API, including an already assigned legacy range. Before an effectful Prepare
+reads policy, it admits endpoint import/initialization if the payload is not yet
+verified. This serializes first use with shared kernel-store schema bootstrap;
+a SQLite file alone is not proof that its schema is ready. Existing verified
+payloads need no import run, and pure policy observation remains effect-free.
+Unknown state enters the admitted writer's verification/recovery path and never
+falls back to an empty registry.
 Policy reads observe routes and loopback assignments from one snapshot without
 admitting writer runs; before import, the same pure read accepts the original
 legacy mapping. Generated Compose allocates only during Prepare. Certificate preparation creates only its directories and

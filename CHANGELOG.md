@@ -378,6 +378,10 @@ During v0.x, MINOR bumps may include breaking changes.
 - Gateway HTTP requests reuse upstream connections with low-latency TCP settings.
   Managed listener ownership is verified at publication and off the request path;
   stopped or replaced generations still refuse traffic, including reused connections.
+- Concurrent cold container startup initializes endpoint authority before
+  Prepare reads policy, avoiding a transient uninitialized kernel-store error.
+- Detached container startup JSON identifies the preparation step and safe
+  failure family without exposing backend output, argv or environment.
 - Gateway routes, loopback addresses and generated host-port ranges now share
   one transactional endpoint store. Existing JSON registries import automatically
   and remain as backups, preserving URLs, IPs and pinned ports. Stopped stacks

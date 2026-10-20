@@ -162,6 +162,7 @@ pub fn load_container_policy_for_creation(
     repo_root: &Path,
     requested_name: Option<&str>,
 ) -> Result<(EffectiveContainerPolicy, Vec<WorkspaceExtraMountDecision>), ContainerPolicyError> {
+    super::ports::prepare_endpoint_store()?;
     super::render::prepare_inputs(&load_container_policy(repo_root, requested_name)?)?;
     let resolved =
         load_container_policy_with_workspace_decisions(repo_root, requested_name, None, true)?;
@@ -174,6 +175,7 @@ pub fn prepare_container_policy(
     repo_root: &Path,
     requested_name: Option<&str>,
 ) -> Result<EffectiveContainerPolicy, ContainerPolicyError> {
+    super::ports::prepare_endpoint_store()?;
     let policy = load_container_policy(repo_root, requested_name)?;
     super::render::prepare_resolved(&policy)
 }
@@ -183,6 +185,7 @@ pub fn load_admitted_container_policy(
     requested_name: Option<&str>,
     marker_root: &Path,
 ) -> Result<(EffectiveContainerPolicy, super::admission::PolicyAdmission), ContainerPolicyError> {
+    super::ports::prepare_endpoint_store()?;
     let policy = super::render::prepare_inputs(&load_container_policy(repo_root, requested_name)?)?;
     let admission = super::admission::PolicyAdmission::capture(&policy, marker_root)?;
     Ok((policy, admission))

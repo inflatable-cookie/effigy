@@ -710,6 +710,20 @@ fn private_gateway_cli_serves_verified_https_and_isolates_concurrent_instances()
 
 #[test]
 fn managed_host_dependent_replacement_preserves_routes_and_scope_teardown() {
+    managed_host_dependent_replacement_proof(true);
+}
+
+#[test]
+fn managed_host_dependent_replacement_cold_prepare_control() {
+    // Fresh cold starts exercise shared Store bootstrap and concurrent Prepare.
+    // Text failures retain the original error, which detached JSON deliberately
+    // reduces to structural state. Verify each committed claim over HTTPS.
+    for _ in 0..3 {
+        managed_host_dependent_replacement_proof(false);
+    }
+}
+
+fn managed_host_dependent_replacement_proof(startup_json: bool) {
     let fixture = managed_host_fixture();
     let effects = HostEffectSentinels::new(fixture.path());
     let docker_dir = std::env::split_paths(&effects.env_path)
@@ -873,7 +887,12 @@ fn managed_host_dependent_replacement_preserves_routes_and_scope_teardown() {
     let mut children = checkouts
         .iter()
         .map(|(checkout, ..)| {
-            spawn_container_cli(checkout, &container_cleanup, &["up", "--detach", "--json"])
+            let args: &[&str] = if startup_json {
+                &["up", "--detach", "--json"]
+            } else {
+                &["up", "--detach"]
+            };
+            spawn_container_cli(checkout, &container_cleanup, args)
         })
         .collect::<Vec<_>>();
     let startup_results = children
@@ -900,6 +919,41 @@ fn managed_host_dependent_replacement_preserves_routes_and_scope_teardown() {
                 );
             }
         }
+    }
+    if !startup_json {
+        for result in &startup_results {
+            assert!(
+                result.status.success(),
+                "cold text startup failed: {result:?}"
+            );
+        }
+        let table = effigy_gateway::routes::RouteTable::load(&private_gateway.join("routes.json"))
+            .expect("committed endpoint routes");
+        for (checkout, _, _, body) in &checkouts {
+            let route = table
+                .routes
+                .values()
+                .find(|route| {
+                    route.project == checkout.display().to_string()
+                        && route
+                            .managed_listener
+                            .as_ref()
+                            .is_some_and(|owner| owner.owner.ends_with("|app"))
+                })
+                .expect("each cold scope committed its app endpoint");
+            let owner = route.managed_listener.as_ref().unwrap();
+            let response = curl_https_response(https_address, &ca_path, &route.domain, "/");
+            assert!(
+                response.contains("200 OK")
+                    && response.contains(&format!("{body}@{}", owner.generation)),
+                "cold endpoint did not reach its proven listener: {response}"
+            );
+        }
+        assert!(
+            !effects.log.exists() || fs::read(&effects.log).unwrap_or_default().is_empty(),
+            "cold startup invoked a host-global effect"
+        );
+        return;
     }
     let reports = startup_results
         .into_iter()
