@@ -866,10 +866,11 @@ mod tests {
     fn shared_compose_receives_its_immutable_generation_root() {
         use crate::contract_test_support::EnvGuard;
         use std::os::unix::fs::PermissionsExt;
-        let fixture = tempfile::Builder::new()
-            .prefix("effigy-parent-fixtures-shared-render-")
-            .tempdir_in(crate::contract_test_support::test_fixture_parent())
-            .unwrap();
+        let fixture = effigy_test_support::Fixture::authenticated(
+            "effigy-parent-fixtures-shared-render-",
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+        )
+        .unwrap();
         let root = fixture.path().canonicalize().unwrap();
         let generation = root.join("objects").join("a".repeat(64));
         let directory = generation.join("shared");

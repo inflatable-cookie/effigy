@@ -165,17 +165,18 @@ fs::write_file("shell.txt", shell);
 "#;
 
 struct BuilderOutcome {
-    _temp: tempfile::TempDir,
+    _temp: effigy_test_support::Fixture,
     result: Result<(), String>,
     docker_args: String,
     root: std::path::PathBuf,
 }
 
 fn run_direct_builder_activation(label: &str, mode: &str) -> BuilderOutcome {
-    let temp = tempfile::Builder::new()
-        .prefix(&format!("effigy-parent-fixtures-builder-{label}-"))
-        .tempdir_in(crate::contract_test_support::test_fixture_parent())
-        .expect("fresh private root");
+    let temp = effigy_test_support::Fixture::authenticated(
+        &format!("effigy-parent-fixtures-builder-{label}-"),
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    )
+    .expect("fresh private root");
     let root = fs::canonicalize(temp.path()).expect("canonical private root");
     fs::create_dir_all(root.join("infra/release")).expect("mkdir compose dir");
     fs::write(

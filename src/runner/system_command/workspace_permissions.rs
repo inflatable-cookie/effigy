@@ -3952,10 +3952,7 @@ services:
     #[cfg(unix)]
     fn run_swap_race(argv: &[String]) -> (bool, String) {
         use std::os::unix::fs::PermissionsExt;
-        let temp = tempfile::Builder::new()
-            .prefix("effigy-bulk-swap-")
-            .tempdir()
-            .expect("tempdir");
+        let temp = effigy_test_support::Fixture::new("effigy-bulk-swap-").expect("tempdir");
         let root = std::fs::canonicalize(temp.path()).expect("canon");
         let vol = root.join("vol");
         let outside = root.join("outside");
@@ -4028,10 +4025,7 @@ services:
     #[test]
     fn bulk_real_find_reaches_all_44339_entries_in_batches_and_preserves_contents() {
         use std::os::unix::fs::PermissionsExt;
-        let temp = tempfile::Builder::new()
-            .prefix("effigy-bulk-real-")
-            .tempdir()
-            .expect("tempdir");
+        let temp = effigy_test_support::Fixture::new("effigy-bulk-real-").expect("tempdir");
         let root = std::fs::canonicalize(temp.path()).expect("canon");
         let bin = root.join("bin");
         std::fs::create_dir_all(&bin).expect("bin");
@@ -4323,10 +4317,7 @@ exit 0
     fn bulk_production_constructor_bounds_and_reaps_a_hung_bulk_child() {
         use crate::contract_test_support::lock_test;
         let _lock = lock_test();
-        let temp = tempfile::Builder::new()
-            .prefix("effigy-bulk-deadline-")
-            .tempdir()
-            .expect("tempdir");
+        let temp = effigy_test_support::Fixture::new("effigy-bulk-deadline-").expect("tempdir");
         let root = std::fs::canonicalize(temp.path()).expect("canon");
         let process_file = root.join("bulk-process-group");
         let (bin, _) = install_fake_hung_bulk_docker(&root, &process_file);
@@ -4370,10 +4361,8 @@ exit 0
     fn bulk_production_constructor_expired_caller_deadline_does_not_spawn() {
         use crate::contract_test_support::lock_test;
         let _lock = lock_test();
-        let temp = tempfile::Builder::new()
-            .prefix("effigy-bulk-expired-deadline-")
-            .tempdir()
-            .expect("tempdir");
+        let temp =
+            effigy_test_support::Fixture::new("effigy-bulk-expired-deadline-").expect("tempdir");
         let root = std::fs::canonicalize(temp.path()).expect("canon");
         let process_file = root.join("bulk-process-group");
         let (bin, _) = install_fake_hung_bulk_docker(&root, &process_file);
@@ -4405,9 +4394,7 @@ exit 0
         use std::process::Command;
 
         let _lock = lock_test();
-        let temp = tempfile::Builder::new()
-            .prefix("effigy-bulk-reap-negative-control-")
-            .tempdir()
+        let temp = effigy_test_support::Fixture::new("effigy-bulk-reap-negative-control-")
             .expect("tempdir");
         let root = std::fs::canonicalize(temp.path()).expect("canon");
         let process_file = root.join("bulk-process-group");

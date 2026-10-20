@@ -40,14 +40,15 @@ pub(super) const OBSERVE_BUDGET: Duration = Duration::from_secs(10);
 pub(super) fn state_home() -> Option<PathBuf> {
     #[cfg(test)]
     {
-        static TEST_HOME: OnceLock<tempfile::TempDir> = OnceLock::new();
-        let home = TEST_HOME.get_or_init(|| {
-            tempfile::Builder::new()
-                .prefix("effigy-task-engine-home-")
-                .tempdir()
-                .expect("private test home")
-        });
-        Some(home.path().to_path_buf())
+        static TEST_HOME: OnceLock<PathBuf> = OnceLock::new();
+        Some(
+            TEST_HOME
+                .get_or_init(|| {
+                    effigy_test_support::Fixture::process_lifetime("effigy-task-engine-home-")
+                        .expect("private test home")
+                })
+                .clone(),
+        )
     }
     #[cfg(not(test))]
     {

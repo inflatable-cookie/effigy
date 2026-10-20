@@ -88,7 +88,7 @@ raise SystemExit('unauthorized backend operation: ' + repr(args))
 "#;
 
 struct Fixture {
-    _temp: tempfile::TempDir,
+    _temp: effigy_test_support::Fixture,
     root: PathBuf,
     policy: effigy_containers::EffectiveContainerPolicy,
     _env: EnvGuard,
@@ -104,21 +104,6 @@ impl Drop for Fixture {
                     std::fs::read_to_string(self.root.join("state").join(name)).unwrap_or_default()
                 );
             }
-        }
-        // Only our private temporary tree: never follow a fixture symlink.
-        fn unlock(path: &Path) -> std::io::Result<()> {
-            use std::os::unix::fs::PermissionsExt;
-            if !std::fs::symlink_metadata(path)?.is_dir() {
-                return Ok(());
-            }
-            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))?;
-            for entry in std::fs::read_dir(path)? {
-                unlock(&entry?.path())?;
-            }
-            Ok(())
-        }
-        if let Err(error) = unlock(&self.root) {
-            eprintln!("private builder fixture cleanup failed: {error}");
         }
     }
 }
@@ -140,15 +125,10 @@ impl Fixture {
     }
 
     fn with_declaration(retained: bool, changed: bool, backend: &str, scoped: bool) -> Self {
-        let mut builder = tempfile::Builder::new();
-        builder.prefix("effigy-builder-recovery-");
-        // No retired parent-token authority requires fixtures in a checkout.
-        // Colima's macOS path contract still requires a host-shared directory.
-        let temp = if cfg!(target_os = "macos") {
-            builder.tempdir_in("/Users/Shared")
-        } else {
-            builder.tempdir()
-        }
+        let temp = effigy_test_support::Fixture::authenticated(
+            "effigy-parent-fixtures-recovery-",
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+        )
         .unwrap();
         let root = temp.path().canonicalize().unwrap();
         std::fs::create_dir_all(root.join(".git")).unwrap();

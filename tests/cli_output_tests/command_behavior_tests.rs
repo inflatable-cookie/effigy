@@ -9042,10 +9042,11 @@ esac
 
 #[test]
 fn cli_container_status_json_reports_default_container_contract() {
-    let private = tempfile::Builder::new()
-        .prefix("effigy-158-private-")
-        .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
-        .expect("exclusive fake runtime fixture");
+    let private = effigy_test_support::Fixture::authenticated(
+        "effigy-158-private-",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    )
+    .expect("exclusive fake runtime fixture");
     let root = fs::canonicalize(private.path()).expect("canonical fixture root");
     fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
     write_container_fixture(&root, None, "./app:/workspace");
@@ -9098,10 +9099,11 @@ fn cli_container_status_json_reports_default_container_contract() {
 
 #[test]
 fn cli_container_status_succeeds_with_unrelated_required_container_secrets() {
-    let private = tempfile::Builder::new()
-        .prefix("effigy-158-private-")
-        .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
-        .expect("exclusive fake runtime fixture");
+    let private = effigy_test_support::Fixture::authenticated(
+        "effigy-158-private-",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    )
+    .expect("exclusive fake runtime fixture");
     let root = fs::canonicalize(private.path()).expect("canonical fixture root");
     fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
     write_container_fixture(&root, None, "./app:/workspace");
@@ -9185,10 +9187,11 @@ fn cli_container_retire_named_environment_refuses_before_effects() {
 
 #[test]
 fn cli_container_reset_succeeds_with_unrelated_required_container_secrets() {
-    let private = tempfile::Builder::new()
-        .prefix("effigy-158-private-")
-        .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
-        .expect("exclusive fake runtime fixture");
+    let private = effigy_test_support::Fixture::authenticated(
+        "effigy-158-private-",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    )
+    .expect("exclusive fake runtime fixture");
     let root = fs::canonicalize(private.path()).expect("canonical fixture root");
     fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
     write_container_fixture(&root, None, "./app:/workspace");
@@ -9234,10 +9237,11 @@ fn cli_container_reset_succeeds_with_unrelated_required_container_secrets() {
 
 #[test]
 fn cli_container_data_list_json_reports_managed_volumes() {
-    let private = tempfile::Builder::new()
-        .prefix("effigy-158-private-")
-        .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
-        .expect("exclusive fake runtime fixture");
+    let private = effigy_test_support::Fixture::authenticated(
+        "effigy-158-private-",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    )
+    .expect("exclusive fake runtime fixture");
     let root = fs::canonicalize(private.path()).expect("canonical fixture root");
     fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
     write_generated_container_volume_fixture(&root);
@@ -9291,10 +9295,11 @@ fn cli_container_data_list_json_reports_managed_volumes() {
 
 #[test]
 fn cli_container_cache_list_json_reports_purge_safe_isolated_volumes() {
-    let private = tempfile::Builder::new()
-        .prefix("effigy-158-private-")
-        .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
-        .expect("exclusive fake runtime fixture");
+    let private = effigy_test_support::Fixture::authenticated(
+        "effigy-158-private-",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    )
+    .expect("exclusive fake runtime fixture");
     let root = fs::canonicalize(private.path()).expect("canonical fixture root");
     fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
     write_generated_container_volume_fixture(&root);
@@ -9343,10 +9348,11 @@ fn cli_container_cache_list_json_reports_purge_safe_isolated_volumes() {
 
 #[test]
 fn cli_generated_container_status_json_reports_media_mounts() {
-    let private = tempfile::Builder::new()
-        .prefix("effigy-158-private-")
-        .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
-        .expect("exclusive fake runtime fixture");
+    let private = effigy_test_support::Fixture::authenticated(
+        "effigy-158-private-",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    )
+    .expect("exclusive fake runtime fixture");
     let root = fs::canonicalize(private.path()).expect("canonical fixture root");
     fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
     write_generated_container_media_fixture(&root);
@@ -9411,10 +9417,11 @@ fn cli_generated_container_status_json_reports_media_mounts() {
 
 #[test]
 fn cli_container_data_export_json_reports_transfer_contract() {
-    let private = tempfile::Builder::new()
-        .prefix("effigy-158-private-")
-        .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
-        .expect("exclusive fake runtime fixture");
+    let private = effigy_test_support::Fixture::authenticated(
+        "effigy-158-private-",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    )
+    .expect("exclusive fake runtime fixture");
     let root = fs::canonicalize(private.path()).expect("canonical fixture root");
     fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
     write_generated_container_volume_fixture(&root);
@@ -9473,10 +9480,11 @@ fn cli_container_data_export_json_reports_transfer_contract() {
 
 #[test]
 fn cli_container_data_import_json_reports_transfer_contract() {
-    let private = tempfile::Builder::new()
-        .prefix("effigy-158-private-")
-        .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
-        .expect("exclusive fake runtime fixture");
+    let private = effigy_test_support::Fixture::authenticated(
+        "effigy-158-private-",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    )
+    .expect("exclusive fake runtime fixture");
     let root = fs::canonicalize(private.path()).expect("canonical fixture root");
     fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
     write_generated_container_volume_fixture(&root);
@@ -9536,10 +9544,11 @@ fn cli_container_data_import_json_reports_transfer_contract() {
 
 #[test]
 fn cli_container_data_pull_production_json_reports_hook_contract() {
-    let private = tempfile::Builder::new()
-        .prefix("effigy-158-private-")
-        .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
-        .expect("exclusive fake runtime fixture");
+    let private = effigy_test_support::Fixture::authenticated(
+        "effigy-158-private-",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    )
+    .expect("exclusive fake runtime fixture");
     let root = fs::canonicalize(private.path()).expect("canonical fixture root");
     fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
     write_generated_container_pull_production_fixture(&root);
@@ -9867,10 +9876,11 @@ fn command_matches_reaper_root(command: &str, root: &std::path::Path) -> bool {
 
 #[test]
 fn cli_container_up_detached_starts_colima_and_reports_ready() {
-    let private = tempfile::Builder::new()
-        .prefix("effigy-158-private-")
-        .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
-        .expect("exclusive fake runtime fixture");
+    let private = effigy_test_support::Fixture::authenticated(
+        "effigy-158-private-",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    )
+    .expect("exclusive fake runtime fixture");
     let root = fs::canonicalize(private.path()).expect("canonical fixture root");
     fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind health");
@@ -9963,15 +9973,12 @@ fn cli_managed_headless_lifecycle_reaches_running_on_healthy_stack() {
     let _guard = CLI_PROCESS_TEST_LOCK
         .lock()
         .unwrap_or_else(|p| p.into_inner());
-    let private = tempfile::Builder::new()
-        .prefix("effigy-headless-lifecycle-")
-        .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
-        .expect("exclusive fake runtime fixture");
+    let private = effigy_test_support::Fixture::authenticated(
+        "effigy-headless-lifecycle-",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    )
+    .expect("exclusive fake runtime fixture");
     let root = fs::canonicalize(private.path()).expect("canonical fixture root");
-    // Keep the fixture for post-mortem when the operator asks for it.
-    if std::env::var_os("EFFIGY_TEST_KEEP_FIXTURE").is_some() {
-        eprintln!("kept headless fixture at {}", private.keep().display());
-    }
     fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
     fs::create_dir_all(root.join("app")).expect("mkdir app dir");
     fs::write(
@@ -10201,17 +10208,12 @@ fn cli_managed_headless_stop_settles_remote_exec_children_and_locks() {
     let _guard = CLI_PROCESS_TEST_LOCK
         .lock()
         .unwrap_or_else(|p| p.into_inner());
-    let private = tempfile::Builder::new()
-        .prefix("effigy-headless-settle-")
-        .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
-        .expect("exclusive fake runtime fixture");
+    let private = effigy_test_support::Fixture::authenticated(
+        "effigy-headless-settle-",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    )
+    .expect("exclusive fake runtime fixture");
     let root = fs::canonicalize(private.path()).expect("canonical fixture root");
-    if std::env::var_os("EFFIGY_TEST_KEEP_FIXTURE").is_some() {
-        eprintln!(
-            "kept headless settle fixture at {}",
-            private.keep().display()
-        );
-    }
     fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
     fs::write(
         root.join("infra/dev/docker-compose.yml"),
@@ -10600,17 +10602,12 @@ fn cli_forward_handover_waits_for_owner_whose_stop_cascade_is_slow() {
     let _guard = CLI_PROCESS_TEST_LOCK
         .lock()
         .unwrap_or_else(|p| p.into_inner());
-    let private = tempfile::Builder::new()
-        .prefix("effigy-handover-slow-down-")
-        .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
-        .expect("exclusive fake runtime fixture");
+    let private = effigy_test_support::Fixture::authenticated(
+        "effigy-handover-slow-down-",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    )
+    .expect("exclusive fake runtime fixture");
     let root = fs::canonicalize(private.path()).expect("canonical fixture root");
-    if std::env::var_os("EFFIGY_TEST_KEEP_FIXTURE").is_some() {
-        eprintln!(
-            "kept slow-down handover fixture at {}",
-            private.keep().display()
-        );
-    }
     fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
     fs::write(
         root.join("infra/dev/docker-compose.yml"),
@@ -10921,9 +10918,7 @@ fn cli_container_attached_session_stops_environment_on_sigint() {
     let _guard = CLI_PROCESS_TEST_LOCK
         .lock()
         .unwrap_or_else(|p| p.into_inner());
-    let private = tempfile::Builder::new()
-        .prefix("effigy-158-attached-")
-        .tempdir()
+    let private = effigy_test_support::Fixture::new("effigy-158-attached-")
         .expect("exclusive private fixture");
     let root = fs::canonicalize(private.path()).expect("canonical private fixture");
     write_container_fixture(&root, None, "./app:/workspace");
@@ -10979,9 +10974,7 @@ fn cli_container_attached_stream_session_reports_operator_overview() {
     let _guard = CLI_PROCESS_TEST_LOCK
         .lock()
         .unwrap_or_else(|p| p.into_inner());
-    let private = tempfile::Builder::new()
-        .prefix("effigy-158-attached-")
-        .tempdir()
+    let private = effigy_test_support::Fixture::new("effigy-158-attached-")
         .expect("exclusive private fixture");
     let root = fs::canonicalize(private.path()).expect("canonical private fixture");
     write_container_fixture(&root, None, "./app:/workspace");
@@ -11043,10 +11036,11 @@ fn cli_container_attached_session_handles_sigint_during_startup() {
     let _guard = CLI_PROCESS_TEST_LOCK
         .lock()
         .unwrap_or_else(|p| p.into_inner());
-    let private = tempfile::Builder::new()
-        .prefix("effigy-158-private-")
-        .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
-        .expect("exclusive fake runtime fixture");
+    let private = effigy_test_support::Fixture::authenticated(
+        "effigy-158-private-",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    )
+    .expect("exclusive fake runtime fixture");
     let root = fs::canonicalize(private.path()).expect("canonical fixture root");
     fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
     write_container_fixture(&root, None, "./app:/workspace");
@@ -11164,9 +11158,7 @@ fn cli_container_attached_session_terminates_log_process_group() {
     let _guard = CLI_PROCESS_TEST_LOCK
         .lock()
         .unwrap_or_else(|p| p.into_inner());
-    let private = tempfile::Builder::new()
-        .prefix("effigy-158-attached-")
-        .tempdir()
+    let private = effigy_test_support::Fixture::new("effigy-158-attached-")
         .expect("exclusive private fixture");
     let root = fs::canonicalize(private.path()).expect("canonical private fixture");
     write_container_fixture(&root, None, "./app:/workspace");
@@ -11254,10 +11246,11 @@ fn cli_container_attached_session_terminates_log_process_group() {
 
 #[test]
 fn cli_container_falls_back_to_colima_nerdctl_when_docker_is_missing() {
-    let private = tempfile::Builder::new()
-        .prefix("effigy-158-private-")
-        .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
-        .expect("exclusive fake runtime fixture");
+    let private = effigy_test_support::Fixture::authenticated(
+        "effigy-158-private-",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    )
+    .expect("exclusive fake runtime fixture");
     let root = fs::canonicalize(private.path()).expect("canonical fixture root");
     fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind health");
@@ -11302,10 +11295,11 @@ fn cli_container_falls_back_to_colima_nerdctl_when_docker_is_missing() {
 
 #[test]
 fn cli_container_shell_command_runs_via_sh_lc() {
-    let private = tempfile::Builder::new()
-        .prefix("effigy-158-private-")
-        .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
-        .expect("exclusive fake runtime fixture");
+    let private = effigy_test_support::Fixture::authenticated(
+        "effigy-158-private-",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    )
+    .expect("exclusive fake runtime fixture");
     let root = fs::canonicalize(private.path()).expect("canonical fixture root");
     fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
     write_container_fixture(&root, None, "./:/workspace");
@@ -11357,10 +11351,11 @@ fn cli_container_shell_command_runs_via_sh_lc() {
 
 #[test]
 fn cli_container_rejects_mounts_that_escape_repo_root() {
-    let private = tempfile::Builder::new()
-        .prefix("effigy-158-private-")
-        .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
-        .expect("exclusive fake runtime fixture");
+    let private = effigy_test_support::Fixture::authenticated(
+        "effigy-158-private-",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    )
+    .expect("exclusive fake runtime fixture");
     let root = private.path().join("repo");
     fs::create_dir(&root).expect("owned checkout");
     let root = fs::canonicalize(root).expect("canonical fixture root");

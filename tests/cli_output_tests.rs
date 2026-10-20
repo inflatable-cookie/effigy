@@ -30,8 +30,6 @@ mod released_surface_v0_2_13_tests;
 #[cfg(unix)]
 #[path = "cli_output_tests/reset_generation_tests.rs"]
 mod reset_generation_tests;
-#[path = "support/sealed_fixture.rs"]
-mod sealed_fixture;
 #[path = "cli_output_tests/selector_plan_tests.rs"]
 mod selector_plan_tests;
 #[path = "cli_output_tests/skill_command_tests.rs"]

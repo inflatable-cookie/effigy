@@ -1480,3 +1480,10 @@ qa = { visibility = "public", group = "Validation", run = [{ task = "test" }, { 
 "test:tasks:visibility:completion" = { visibility = "internal", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-builtin --lib -E 'test(completion_visibility)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 }] }
 
 "test:tasks:visibility:ci-fixes" = { visibility = "internal", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(run_manifest_task_run_array_rejects_conflicting_rhai_step_keys) | test(run_manifest_task_builtin_help_json_contract_table_has_stable_schema_topic_and_precedence) | test(render_tasks_help_shows_resolve_and_json_options)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 }] }
+
+# Shared fixture ownership; the wrapper asserts cleanup after ordinary and
+# shared-process test binaries, including nextest timeout/forced exits.
+"check:fixtures:hygiene" = { visibility = "internal", run = [{ run = "cargo check -p effigy -p effigy-bootstrap -p effigy-containers -p effigy-kernel -p effigy-test-support --all-targets --features effigy-kernel/fault-injection --profile test", timeout_ms = 900000 }] }
+"lint:fixtures:hygiene" = { visibility = "internal", run = [{ run = "cargo clippy -p effigy -p effigy-bootstrap -p effigy-containers -p effigy-kernel -p effigy-test-support --lib --tests --bins --features effigy-kernel/fault-injection -- -D warnings", timeout_ms = 900000 }] }
+"test:fixtures:hygiene:guards" = { visibility = "internal", run = [{ run = "python3 tests/scripts/fixture_hygiene.py -- cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-test-support --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 }] }
+"test:fixtures:hygiene:guards:shared" = { visibility = "internal", run = [{ run = "RUSTFLAGS='--cfg effigy_shared_process' python3 tests/scripts/fixture_hygiene.py -- cargo test -p effigy-test-support -- --test-threads=8", timeout_ms = 900000 }] }

@@ -685,10 +685,8 @@ mod tests {
 
     /// Create a fresh fixture root with a manifest marker so a compose working
     /// directory resolves back to this repository root.
-    fn fresh_root(label: &str) -> (tempfile::TempDir, PathBuf) {
-        let temp = tempfile::Builder::new()
-            .prefix(&format!("effigy-doctor-liveness-{label}-"))
-            .tempdir()
+    fn fresh_root(label: &str) -> (effigy_test_support::Fixture, PathBuf) {
+        let temp = effigy_test_support::Fixture::new(&format!("effigy-doctor-liveness-{label}-"))
             .expect("tempdir");
         let root = fs::canonicalize(temp.path()).expect("canonicalize fixture root");
         fs::write(

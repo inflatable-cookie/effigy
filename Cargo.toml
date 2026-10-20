@@ -2,6 +2,7 @@
 default-members = [".", "crates/effigy-kernel"]
 exclude = ["crates/effigy-parent-fixtures-*"]
 members = [
+    "crates/effigy-test-support",
     "crates/effigy-kernel",
     "crates/effigy-bootstrap",
     "crates/effigy-artifacts",
@@ -145,6 +146,7 @@ rpassword = "7"
 tempfile = "3"
 
 [dev-dependencies]
+effigy-test-support = { path = "crates/effigy-test-support" }
 base64 = "0.22"
 # Ordinary HTTP/1 server fixture for the managed listener readiness probe.
 bytes = "1"

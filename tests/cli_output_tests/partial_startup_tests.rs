@@ -4,7 +4,7 @@ use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Child, Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
@@ -25,7 +25,7 @@ struct Stack {
     port: u16,
 }
 struct Fixture {
-    root: super::sealed_fixture::SealedFixture,
+    root: effigy_test_support::Fixture,
     stacks: Vec<Stack>,
 }
 impl Drop for Fixture {
@@ -35,10 +35,11 @@ impl Drop for Fixture {
 }
 impl Fixture {
     fn new() -> Self {
-        let root = tempfile::Builder::new()
-            .prefix("effigy-158-private-")
-            .tempdir_in(Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
-            .expect("fresh private root");
+        let root = effigy_test_support::Fixture::authenticated(
+            "effigy-158-private-",
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+        )
+        .expect("fresh private root");
         fs::create_dir(root.path().join("bin")).expect("bin");
         fs::create_dir(root.path().join("home")).expect("home");
         for name in ["docker", "colima"] {
@@ -65,7 +66,7 @@ impl Fixture {
         )
         .expect("mode");
         let mut fixture = Self {
-            root: super::sealed_fixture::SealedFixture(root),
+            root,
             stacks: Vec::new(),
         };
         for i in 0..3 {

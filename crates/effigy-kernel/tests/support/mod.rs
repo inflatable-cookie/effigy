@@ -46,11 +46,8 @@ pub fn observe() -> ObserveContext {
     .unwrap()
 }
 /// A fresh `mktemp -d`-style HOME; every fixture write stays inside it.
-pub fn home() -> tempfile::TempDir {
-    tempfile::Builder::new()
-        .prefix("effigy-kernel-")
-        .tempdir()
-        .unwrap()
+pub fn home() -> effigy_test_support::Fixture {
+    effigy_test_support::Fixture::new("effigy-kernel-").unwrap()
 }
 
 #[derive(Debug, PartialEq, Eq)]

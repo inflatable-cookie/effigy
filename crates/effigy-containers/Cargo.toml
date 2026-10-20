@@ -27,6 +27,7 @@ toml = "1"
 toml_edit = "0.25.11"
 
 [dev-dependencies]
+effigy-test-support = { path = "../effigy-test-support" }
 tempfile = "3"
 
 [lints]

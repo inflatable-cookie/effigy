@@ -3,8 +3,6 @@ mod gateway_legacy_fixture;
 use gateway_legacy_fixture::LegacyRegistryFixture;
 #[path = "support/scoped_env.rs"]
 mod env_test_support;
-#[path = "support/sealed_fixture.rs"]
-mod sealed_fixture;
 
 #[path = "gateway_private/managed_matrix.rs"]
 mod managed_matrix;
@@ -27,19 +25,12 @@ use serde_json::Value;
 const EFFIGY: &str = env!("CARGO_BIN_EXE_effigy");
 
 // Managed CLI entrypoints inherit the authenticated checkout parent.
-fn managed_host_fixture() -> sealed_fixture::SealedFixture {
-    let checkout = fs::canonicalize(env!("CARGO_MANIFEST_DIR")).expect("checkout root");
-    let parent = fs::canonicalize(checkout.join("crates")).expect("fixture parent");
-    assert!(
-        parent.starts_with(&checkout),
-        "fixture parent escaped checkout"
-    );
-    sealed_fixture::SealedFixture(
-        tempfile::Builder::new()
-            .prefix("effigy-parent-fixtures-gateway-")
-            .tempdir_in(parent)
-            .expect("owned contained managed host fixture"),
+fn managed_host_fixture() -> effigy_test_support::Fixture {
+    effigy_test_support::Fixture::authenticated(
+        "effigy-parent-fixtures-gateway-",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
     )
+    .expect("owned contained managed host fixture")
 }
 
 fn copy_dir_all(src: &Path, dst: &Path) {

@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 std::thread_local! {
-    static FIXTURE_ROOT: RefCell<Option<tempfile::TempDir>> = const { RefCell::new(None) };
+    static FIXTURE_ROOT: RefCell<Option<effigy_test_support::Fixture>> = const { RefCell::new(None) };
 }
 
 static TEMP_WORKSPACE_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -16,23 +16,17 @@ pub(crate) fn temp_workspace(prefix: &str, name: &str) -> PathBuf {
         .expect("time")
         .as_nanos();
     let seq = TEMP_WORKSPACE_COUNTER.fetch_add(1, Ordering::Relaxed);
-    // Match the reviewed unit fixture arrangement: inside the checkout's
-    // authenticated parent, Cargo-excluded, but visible to graph/scan walks.
-    // One exact TempDir owner per test thread also owns clones and Git remotes.
+    // The thread owns all nested workspaces, clones and remotes. Authenticated
+    // nested selectors use the central in-repository exception (contract 049).
     let fixture_root = FIXTURE_ROOT.with(|owner| {
         let mut owner = owner.borrow_mut();
         if owner.is_none() {
-            let checkout = fs::canonicalize(env!("CARGO_MANIFEST_DIR")).expect("checkout root");
-            let parent = fs::canonicalize(checkout.join("crates")).expect("fixture parent");
-            assert!(
-                parent.starts_with(&checkout),
-                "fixture parent escaped checkout"
-            );
             *owner = Some(
-                tempfile::Builder::new()
-                    .prefix("effigy-parent-fixtures-cli-")
-                    .tempdir_in(parent)
-                    .expect("owned contained CLI fixture root"),
+                effigy_test_support::Fixture::authenticated(
+                    "effigy-parent-fixtures-cli-",
+                    std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+                )
+                .expect("owned CLI fixture root"),
             );
         }
         owner

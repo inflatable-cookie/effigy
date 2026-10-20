@@ -28,45 +28,35 @@ run = "echo start >> runs.log; sleep 1; echo end >> runs.log"
 /// image so ordinary cases exercise custody, not repeated image replacement.
 /// The explicit replacement test below still replaces its own executable.
 fn matrix_binary() -> &'static Path {
-    static IMAGE: OnceLock<(tempfile::TempDir, PathBuf)> = OnceLock::new();
-    &IMAGE
-        .get_or_init(|| {
-            let dir = tempfile::Builder::new()
-                .prefix("effigy-kill-matrix-image-")
-                .tempdir()
-                .expect("private candidate image");
-            let path = dir.path().join("effigy");
-            fs::copy(env!("CARGO_BIN_EXE_effigy"), &path).expect("snapshot candidate binary");
-            // Let the platform load this fresh image before starting a workload's
-            // readiness deadline. No task or state mutation happens here.
-            let version = Command::new(&path)
-                .arg("--version")
-                .env("HOME", dir.path())
-                .output()
-                .expect("load candidate image");
-            assert!(version.status.success(), "candidate load: {version:?}");
-            (dir, path)
-        })
-        .1
+    static IMAGE: OnceLock<PathBuf> = OnceLock::new();
+    IMAGE.get_or_init(|| {
+        let dir = effigy_test_support::Fixture::process_lifetime("effigy-kill-matrix-image-")
+            .expect("private candidate image");
+        let path = dir.as_path().join("effigy");
+        fs::copy(env!("CARGO_BIN_EXE_effigy"), &path).expect("snapshot candidate binary");
+        // Let the platform load this fresh image before starting a workload's
+        // readiness deadline. No task or state mutation happens here.
+        let version = Command::new(&path)
+            .arg("--version")
+            .env("HOME", dir.as_path())
+            .output()
+            .expect("load candidate image");
+        assert!(version.status.success(), "candidate load: {version:?}");
+        path
+    })
 }
 
 struct Fixture {
-    _home: tempfile::TempDir,
+    _home: effigy_test_support::Fixture,
     home: PathBuf,
-    _repo: tempfile::TempDir,
+    _repo: effigy_test_support::Fixture,
     repo: PathBuf,
 }
 
 impl Fixture {
     fn new() -> Self {
-        let home = tempfile::Builder::new()
-            .prefix("effigy-kill-matrix-home-")
-            .tempdir()
-            .expect("home");
-        let repo = tempfile::Builder::new()
-            .prefix("effigy-kill-matrix-repo-")
-            .tempdir()
-            .expect("repo");
+        let home = effigy_test_support::Fixture::new("effigy-kill-matrix-home-").expect("home");
+        let repo = effigy_test_support::Fixture::new("effigy-kill-matrix-repo-").expect("repo");
         fs::write(repo.path().join("effigy.toml"), TASK).expect("manifest");
         Self {
             home: fs::canonicalize(home.path()).expect("home path"),

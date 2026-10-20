@@ -19,6 +19,7 @@ sha2 = "0.11"
 unicode-normalization = "0.1"
 
 [dev-dependencies]
+effigy-test-support = { path = "../effigy-test-support" }
 # Interpreter conformance only: product engines still own script integration.
 rhai = "1"
 syn = { version = "2", features = ["full", "visit", "extra-traits"] }

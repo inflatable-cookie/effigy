@@ -1,0 +1,15 @@
+[package]
+name = "effigy-test-support"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Owned temporary fixtures for Effigy tests"
+
+[dependencies]
+libc = "0.2"
+serde_json = "1"
+tempfile = "3"
+
+[lints]
+workspace = true

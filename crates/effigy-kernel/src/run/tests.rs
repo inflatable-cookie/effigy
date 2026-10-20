@@ -81,11 +81,8 @@ fn begin<'a>(
 ) -> Run<'a> {
     Run::begin(cx, root, &inv(owner), opts(n), &cleanup(cx), fake).unwrap()
 }
-pub(super) fn home() -> tempfile::TempDir {
-    tempfile::Builder::new()
-        .prefix("effigy-run-")
-        .tempdir()
-        .unwrap()
+pub(super) fn home() -> effigy_test_support::Fixture {
+    effigy_test_support::Fixture::new("effigy-run-").unwrap()
 }
 
 /// A strict external-effect adapter: durable objects and a call log, no
