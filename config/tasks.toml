@@ -832,19 +832,6 @@
   "cargo clippy -p effigy-gateway -p effigy-rhai --all-targets -- -D warnings",
   "cargo clippy -p effigy-containers --all-targets -- -D warnings",
 ] }
-# Release preparation atomically synchronizes the opt-in catalog support policy
-# before prepared-tree gates and restores all mutations when a gate fails.
-"test:release:catalog-preparation" = { visibility = "internal", group = "Maintenance", run = [
-  { id = "prepare-policy", run = "CARGO_NET_OFFLINE=true cargo test -p effigy-release --lib catalog_pack_support_preparation -- --nocapture", timeout_ms = 600000 },
-  { id = "catalog-current-policy", run = "CARGO_NET_OFFLINE=true cargo test -p effigy-catalog --lib committed_file_matches_this_crate_release_with_oldest_field -- --nocapture", timeout_ms = 600000 },
-  { id = "catalog-prepared-policy", run = "CARGO_NET_OFFLINE=true cargo test -p effigy-catalog --lib prepared_release_policy_preserves_catalog_update_capability_and_support_floor -- --nocapture", timeout_ms = 600000 },
-  { id = "release-manifest-schema", run = "CARGO_NET_OFFLINE=true cargo test -p effigy-doctor --lib validate_manifest_schema_accepts_docs_policy_bootstrap_container_distribution_and_release_sections -- --nocapture", timeout_ms = 600000 },
-] }
-"check:release:catalog-preparation" = { visibility = "internal", group = "Maintenance", run = [
-  "cargo build --bin effigy",
-  "cargo check -p effigy -p effigy-release -p effigy-manifest -p effigy-doctor -p effigy-catalog --all-targets --profile test",
-  "cargo clippy -p effigy -p effigy-release -p effigy-manifest -p effigy-doctor -p effigy-catalog --all-targets -- -D warnings",
-] }
 # Remaining post-fork pre_exec conversions and the named containers
 # changed-test lint sites (task 100). Private errno/allocation/process
 # proofs live in effigy-process; containers all-target lint covers the
@@ -1001,7 +988,7 @@
   { id = "workspace-artifact-provisioning", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(runner::system_command::workspace::tests::) - test(builder_recovery::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
 ] }
 "test:workspace:artifact-admission" = { visibility = "internal", group = "Maintenance", run = [
-  { id = "direct-compose-ownership-admission", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib --filterset 'test(tests::compose::) | test(tests::policies::) | test(tests::volumes_reports::) | test(tests::catalog_pack_fallback::) | test(policy_support::generated_compose::tests::) | test(policy::admission::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
+  { id = "direct-compose-ownership-admission", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib --filterset 'test(tests::compose::) | test(tests::policies::) | test(tests::volumes_reports::) | test(policy_support::generated_compose::tests::) | test(policy::admission::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
 ] }
 "test:workspace:artifact-readiness" = { visibility = "internal", group = "Maintenance", run = [
   { id = "readiness-and-affected-callers", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(nested_container_target_tests::) | test(container_runtime_prep::tests::) | test(exec_command::tests::) | test(exec_command::transport::colima::tests::) | test(exec_command::transport::capture_deadline_tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },

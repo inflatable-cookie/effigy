@@ -375,7 +375,7 @@ and only through `ObserveContext::probe_process` and `ObserveContext::connect`
   engine lane assigns them; the kernel enforces them.
 - I-EC2: write capabilities are types that Static and Observe contexts cannot
   construct.
-- I-EC3: executable sources (bundles, provider packages, catalog packs) are
+- I-EC3: executable sources (bundles, provider packages, catalog sources) are
   acquired only in Prepare. Discovery never acquires executable source.
 
 #### Failure model
@@ -1692,7 +1692,7 @@ coverage matrix (`synthesis/GUEST-EFFIGY.md` §2).
 | Managed TUI and headless (`dev`, profiles) | channel | Admission of a `Detached` managed run, child of the session run. The guest renders events; the host supervisor owns workloads and attachments. |
 | Managed `status`, `logs`, `stop`; `tasks status` | channel | Observe requests for status and logs; `stop` is a generation-fenced request (K7). Host and guest pids are never mixed. |
 | `tasks cache`, task-lock `unlock` | channel; `unlock` refused | Cache reads are host Observe requests; clears are RefreshDerived requests to the owning store engine. `unlock` refuses in both placements: there is no unlock command (I-G7). QA groups are in the admission row. |
-| `doctor` | local and channel | Manifest and tool checks local; runtime checks (backend, gateway, routes, catalog pack, ownership, volumes) are host Observe requests. |
+| `doctor` | local and channel | Manifest and tool checks local; runtime checks (backend, gateway, routes, ownership, volumes) are host Observe requests. |
 | `container shell`, bounded shell, `exec`, aliases | channel | Admission request; the host launches the command in the named service, including the current container, through remote custody. |
 | `container up`, `down`, `reset`, `retire` | channel | Mutate requests to the environment engine under R4. A guest `down` of its own environment follows §8.7. |
 | `container status`, `stats`, `logs` | channel | Host Observe requests on the backend inventory. |
@@ -1700,7 +1700,7 @@ coverage matrix (`synthesis/GUEST-EFFIGY.md` §2).
 | `secrets` list, doctor, get, export | channel | Observe requests to the secrets engine; plaintext follows the host CLI's policy. |
 | `secrets` init, set, unset, import, unlock, lock, passphrase change; required task secrets | channel | Mutate requests to the secrets engine; task secrets arrive as per-run grants (§8.2). |
 | `deps` status, link, unlink, pin, unpin | channel | Status is Observe; changes are requests to the deps engine. |
-| `graph` index; `bundle` sync; `service` pack install, rollback and remove; `config` user settings | channel | RefreshDerived, Prepare or Mutate requests to the owning store engine. The guest has no separate preference file. |
+| `graph` index; `bundle` sync (bundle and catalog source pins); `config` user settings | channel | RefreshDerived, Prepare or Mutate requests to the owning store engine. The guest has no separate preference file. |
 | `state` apply, capture; `artifact` stage, capture, push; `init`; `docs` index writes; `release`, `deploy`, `bootstrap`, `demo`, `uninstall` | channel | Requests under the same authorisation as the host CLI. |
 | `gateway` subcommands | channel | Requests to the gateway engine; never a guest gateway. |
 | Hidden internal entry points | refused | Never exposed on the channel; a guest invocation refuses. |
