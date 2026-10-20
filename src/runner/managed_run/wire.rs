@@ -36,8 +36,6 @@ pub(in crate::runner) enum EngineEvent {
     Started { process: String, sequence: i64 },
     /// A workload's process ended with `code`.
     Exited { process: String, code: i32 },
-    /// A workload could not start; the run stops.
-    StartFailed { process: String, reason: String },
     /// Every workload has started.
     StartupFinished,
     /// The run is stopping: workloads, then the environment, are settling.

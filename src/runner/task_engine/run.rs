@@ -462,7 +462,7 @@ impl TaskRun {
                         run: None,
                         shared: None,
                         target,
-                                ancestors: Vec::new(),
+                        ancestors: Vec::new(),
                         shared_owners: Vec::new(),
                         _custody_scope: None,
                         admission: None,
@@ -618,11 +618,7 @@ impl TaskRun {
     ) {
         let admission = self.admission.take();
         let result = match self.run.take() {
-            Some(run) => close_run_settled(
-                owned(run),
-                workload,
-                kernel::cleanup_context(budget),
-            ),
+            Some(run) => close_run_settled(owned(run), workload, kernel::cleanup_context(budget)),
             None => (None, Vec::new()),
         };
         drop(admission);

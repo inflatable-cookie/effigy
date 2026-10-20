@@ -1808,22 +1808,23 @@ mod client_order_tests {
         }
         let committed = Cell::new(false);
         let id = RunId::new(1, [1; 10]).unwrap();
-        let (eof, requests) = observe_client_requests(&mut Eof(&committed), &mut Vec::new(), || {
-            Ok(if committed.get() {
-                vec![Request {
-                    id,
-                    run: id,
-                    expected: Fence {
-                        resource: ResourceId::gateway("fixture").unwrap(),
-                        generation: crate::id::Generation::new(1),
-                    },
-                    action: RequestAction::Detach,
-                }]
-            } else {
-                vec![]
+        let (eof, requests) =
+            observe_client_requests(&mut Eof(&committed), &mut Vec::new(), || {
+                Ok(if committed.get() {
+                    vec![Request {
+                        id,
+                        run: id,
+                        expected: Fence {
+                            resource: ResourceId::gateway("fixture").unwrap(),
+                            generation: crate::id::Generation::new(1),
+                        },
+                        action: RequestAction::Detach,
+                    }]
+                } else {
+                    vec![]
+                })
             })
-        })
-        .unwrap();
+            .unwrap();
         assert!(eof);
         assert!(matches!(
             requests.as_slice(),

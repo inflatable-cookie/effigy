@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use crossterm::event::{self, Event, KeyEventKind};
 
 use super::config::{INPUT_POLL_WAIT, MAX_EVENTS_PER_TICK};
@@ -96,10 +98,22 @@ pub(super) fn run_event_loop_with_control(
             break;
         }
 
-        if !event::poll(INPUT_POLL_WAIT)? {
-            continue;
-        }
-        if let Event::Key(key) = event::read()? {
+        // Every event crossterm already read, then whatever the terminal has.
+        // A closed terminal ends the session like a quit: the caller's
+        // shutdown stops and settles what the session started.
+        let mut wait = INPUT_POLL_WAIT;
+        loop {
+            if matches!(terminal_input(wait), TerminalInput::HungUp) {
+                runtime.terminal_lost = true;
+                return Ok(true);
+            }
+            wait = Duration::ZERO;
+            if !event::poll(Duration::ZERO)? {
+                break;
+            }
+            let Event::Key(key) = event::read()? else {
+                continue;
+            };
             if key.kind != KeyEventKind::Press {
                 continue;
             }
@@ -121,6 +135,88 @@ pub(super) fn run_event_loop_with_control(
     Ok(false)
 }
 
+enum TerminalInput {
+    Ready,
+    Idle,
+    HungUp,
+}
+
+/// Waits up to `wait` for terminal input without letting crossterm wait on
+/// it: crossterm's tty reader retries a zero-byte read forever, so after the
+/// terminal closes (POLLHUP) any crossterm poll spins. `Idle` with a zero
+/// wait still lets crossterm hand out events it already parsed.
+fn terminal_input(wait: Duration) -> TerminalInput {
+    // SAFETY: isatty on this process's standard input.
+    if unsafe { libc::isatty(libc::STDIN_FILENO) } != 1 {
+        // crossterm reads /dev/tty instead; it alone can wait on it.
+        return match event::poll(wait) {
+            Ok(true) => TerminalInput::Ready,
+            _ => TerminalInput::Idle,
+        };
+    }
+    terminal_input_on(libc::STDIN_FILENO, wait)
+}
+
+fn terminal_input_on(fd: libc::c_int, wait: Duration) -> TerminalInput {
+    let mut input = libc::pollfd {
+        fd,
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    let millis = i32::try_from(wait.as_millis()).unwrap_or(i32::MAX);
+    // SAFETY: one initialized pollfd for this process's standard input.
+    let ready = unsafe { libc::poll(&mut input, 1, millis) };
+    if ready <= 0 {
+        return TerminalInput::Idle;
+    }
+    if input.revents & (libc::POLLHUP | libc::POLLERR | libc::POLLNVAL) != 0 {
+        TerminalInput::HungUp
+    } else {
+        TerminalInput::Ready
+    }
+}
+
 fn startup_states_settled(runtime: &SessionRuntime) -> bool {
     runtime.state.pending_startup == 0
+}
+
+#[cfg(test)]
+mod terminal_input_tests {
+    use super::*;
+
+    /// A closed terminal reads as hangup, never as idle input, so the loop
+    /// ends instead of handing crossterm a reader that spins on EOF.
+    #[test]
+    fn terminal_input_reports_idle_ready_and_hangup_on_a_real_pty() {
+        let (mut master, mut slave) = (0, 0);
+        // SAFETY: openpty fills two descriptors this test owns and closes.
+        let opened = unsafe {
+            libc::openpty(
+                &mut master,
+                &mut slave,
+                std::ptr::null_mut(),
+                std::ptr::null(),
+                std::ptr::null(),
+            )
+        };
+        assert_eq!(opened, 0, "private PTY");
+        assert!(matches!(
+            terminal_input_on(slave, Duration::ZERO),
+            TerminalInput::Idle
+        ));
+        // SAFETY: a one-byte write to the live master this test owns.
+        assert_eq!(unsafe { libc::write(master, b"x".as_ptr().cast(), 1) }, 1);
+        assert!(matches!(
+            terminal_input_on(slave, Duration::from_millis(500)),
+            TerminalInput::Ready
+        ));
+        // SAFETY: closes the master this test owns: the terminal goes away.
+        unsafe { libc::close(master) };
+        assert!(matches!(
+            terminal_input_on(slave, Duration::from_millis(500)),
+            TerminalInput::HungUp
+        ));
+        // SAFETY: closes the slave this test owns.
+        unsafe { libc::close(slave) };
+    }
 }

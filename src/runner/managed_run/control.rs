@@ -85,14 +85,19 @@ impl Addressed<'_> {
     }
 }
 
+/// A managed run is long-lived: a stop it was asked for is its normal end,
+/// so a cancelled run reads `stopped` everywhere it is shown.
+fn shown_state(state: &str) -> &str {
+    match state {
+        "cancelled" => "stopped",
+        other => other,
+    }
+}
+
 /// The newest run of this task and profile, projected from the journal.
 pub(in crate::runner) fn status_view(addressed: &Addressed<'_>) -> ManagedStatus {
     let view = task_status(addressed.target, HISTORY_LIMIT);
-    // A managed run is long-lived: a stop it was asked for is its normal end.
-    let state = match view.state.as_str() {
-        "cancelled" => "stopped".to_owned(),
-        other => other.to_owned(),
-    };
+    let state = shown_state(&view.state).to_owned();
     let mut status = ManagedStatus {
         schema: STATUS_SCHEMA,
         task: addressed.task.to_owned(),
@@ -430,7 +435,7 @@ pub(in crate::runner) fn stop(addressed: &Addressed<'_>) -> Result<String, Runne
         "settled managed task `{}` (profile `{}`): {}{}",
         addressed.task,
         addressed.profile,
-        settled.view.state,
+        shown_state(&settled.view.state),
         match settled.view.cleanup {
             Some("incomplete") => ", cleanup incomplete (residue is listed by status)",
             _ => "",
@@ -444,6 +449,13 @@ pub(in crate::runner) fn stop(addressed: &Addressed<'_>) -> Result<String, Runne
             "; environment `{}` {}",
             environment.name, environment.state
         ));
+    }
+    // Residue is not a clean stop: the exit status says so (R5).
+    if settled.view.cleanup == Some("incomplete") {
+        return Err(RunnerError::task_invocation(format!(
+            "{summary}. Run `{}` to retry its settle",
+            addressed.command("stop")
+        )));
     }
     Ok(summary)
 }
@@ -461,11 +473,21 @@ pub(in crate::runner) fn stop_run(id: RunId) -> Result<String, RunnerError> {
         }
     };
     request_stop(&record)?;
-    let deadline = Instant::now() + SETTLE_BUDGET + Duration::from_secs(30);
+    let budget = SETTLE_BUDGET + Duration::from_secs(30);
+    let deadline = Instant::now() + budget;
     loop {
         match lookup_run(id) {
             Lookup::Found(now) if now.summary.phase == Phase::Closed => {
-                return Ok(format!("run {id} settled: {}", now.view.state));
+                if now.view.cleanup == Some("incomplete") {
+                    return Err(RunnerError::task_invocation(format!(
+                        "run {id} settled ({}) with cleanup incomplete; its residue is listed by its status",
+                        shown_state(&now.view.state)
+                    )));
+                }
+                return Ok(format!(
+                    "run {id} settled: {}",
+                    shown_state(&now.view.state)
+                ));
             }
             Lookup::Found(now) if now.view.state == "interrupted" => {
                 let _ = request_stop(&now);
@@ -475,7 +497,7 @@ pub(in crate::runner) fn stop_run(id: RunId) -> Result<String, RunnerError> {
         if Instant::now() >= deadline {
             return Err(RunnerError::task_invocation(format!(
                 "run {id} did not settle within {}s of its stop request",
-                deadline.elapsed().as_secs()
+                budget.as_secs()
             )));
         }
         std::thread::sleep(task_engine::RUN_POLL);

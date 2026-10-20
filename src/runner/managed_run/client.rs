@@ -1,8 +1,8 @@
 //! The client of a managed run: it starts the run's detached supervisor
 //! and is one of its front ends (§5.8 steps 1, 2 and 6).
 //!
-//! The text front end follows the run's own output and waits for it to
-//! close; the detached front end returns once the run is active; the TUI
+//! The text front end follows the run's own output and every workload's
+//! (`[name] line`) and waits for the run to close; the detached front end returns once the run is active; the TUI
 //! renders every workload. Each is the run's owning client until it
 //! detaches: its death, by terminal close, SIGHUP or an agent's SIGKILL,
 //! stops and settles the run. INT, TERM and HUP to a client send the stop
@@ -141,6 +141,94 @@ impl OutputFollower {
     }
 }
 
+/// The text front end's view: the run's own output as it is, then every
+/// workload's output as `[name] line`, as v0.14's headless owner printed it.
+/// Lines are emitted whole; a final relay flushes what is left.
+struct TextFollower {
+    output: OutputFollower,
+    run: RunId,
+    workloads: Vec<FollowedWorkload>,
+}
+
+struct FollowedWorkload {
+    name: String,
+    sequence: i64,
+    offsets: [u64; 2],
+    partial: [Vec<u8>; 2],
+}
+
+impl TextFollower {
+    fn new(run: RunId) -> Self {
+        Self {
+            output: OutputFollower::new(run),
+            run,
+            workloads: Vec::new(),
+        }
+    }
+
+    fn relay(&mut self, finish: bool) {
+        relay(&mut self.output);
+        // A restart is a new effect: its output follows under the same name.
+        if let Observed::Verified(effects, _) = task_engine::run_effects(self.run) {
+            for view in control::processes(&effects, false) {
+                if !self
+                    .workloads
+                    .iter()
+                    .any(|workload| workload.sequence == view.sequence)
+                {
+                    self.workloads.push(FollowedWorkload {
+                        name: view.name,
+                        sequence: view.sequence,
+                        offsets: [0, 0],
+                        partial: [Vec::new(), Vec::new()],
+                    });
+                }
+            }
+        }
+        let mut rendered = [String::new(), String::new()];
+        for workload in &mut self.workloads {
+            for (slot, stream) in [Stream::Stdout, Stream::Stderr].into_iter().enumerate() {
+                if let Observed::Verified(read, _) = read_run_log(
+                    self.run,
+                    workload.sequence,
+                    stream,
+                    workload.offsets[slot],
+                    READ_MAX,
+                ) {
+                    workload.offsets[slot] = read.from + read.bytes.len() as u64;
+                    workload.partial[slot].extend_from_slice(&read.bytes);
+                }
+                let pending = &mut workload.partial[slot];
+                let whole = if finish {
+                    pending.len()
+                } else {
+                    pending
+                        .iter()
+                        .rposition(|byte| *byte == b'\n')
+                        .map_or(0, |end| end + 1)
+                };
+                if whole == 0 {
+                    continue;
+                }
+                let lines = pending.drain(..whole).collect::<Vec<_>>();
+                for line in String::from_utf8_lossy(&lines).lines() {
+                    rendered[slot].push_str(&format!("[{}] {line}\n", workload.name));
+                }
+            }
+        }
+        if !rendered[0].is_empty() {
+            let mut stdout = std::io::stdout().lock();
+            let _ = stdout.write_all(rendered[0].as_bytes());
+            let _ = stdout.flush();
+        }
+        if !rendered[1].is_empty() {
+            let mut stderr = std::io::stderr().lock();
+            let _ = stderr.write_all(rendered[1].as_bytes());
+            let _ = stderr.flush();
+        }
+    }
+}
+
 /// How the client's view of the run ended.
 pub(in crate::runner) struct Closed {
     pub(in crate::runner) error: Option<String>,
@@ -191,30 +279,30 @@ pub(in crate::runner) fn attach_text(
         stop_command(addressed)
     );
     flush();
-    let mut output = OutputFollower::new(run);
+    let mut output = TextFollower::new(run);
     let mut stop = StopSender::new();
     let closed = loop {
         if !task_engine::routed_signals().is_empty() {
             stop.send(&client);
         }
-        relay(&mut output);
+        output.relay(false);
         match next_event(&mut client) {
             Ok(Some(Event::Engine(bytes))) => {
                 if let Some(EngineEvent::Outcome { error }) = wire::decode(&bytes) {
-                    relay(&mut output);
+                    output.relay(false);
                     // Closed follows the outcome on the same pipe.
                     wait_closed(&mut client);
-                    relay(&mut output);
+                    output.relay(true);
                     break Closed { error };
                 }
             }
             Ok(Some(Event::Closed { .. })) => {
-                relay(&mut output);
+                output.relay(true);
                 break Closed { error: None };
             }
             Ok(_) => {}
             Err(lost) => {
-                relay(&mut output);
+                output.relay(true);
                 break supervisor_lost(run, addressed, &lost);
             }
         }

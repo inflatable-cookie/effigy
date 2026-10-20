@@ -1009,7 +1009,12 @@ fn managed_matrix_failed_down_keeps_residue_until_the_next_run_settles_it() {
         stop_text.contains("cleanup incomplete"),
         "a failed down must not report settled: {stop_text}"
     );
-    owner.finish(None);
+    assert!(
+        !stop.status.success(),
+        "residue is not a clean stop: {stop_text}"
+    );
+    // The owning client reports the incomplete settle in its exit status.
+    owner.finish(Some(false));
     let closed = case.closed();
     assert_eq!(closed["run"]["cleanup"], "incomplete", "{closed}");
     assert_eq!(closed["environment"]["state"], "residue", "{closed}");

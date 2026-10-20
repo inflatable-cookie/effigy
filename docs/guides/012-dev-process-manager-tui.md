@@ -286,11 +286,15 @@ setup, the gateway, the environment and every workload, and its one settle is
 the only cleanup. The TUI, `--headless` and `--detach` are front ends over that
 run:
 
-- The TUI and `--headless` stay attached. Closing the terminal, SIGHUP, SIGINT,
-  SIGTERM or SIGKILL to that client stops and settles the run. A second
-  interrupt within two seconds escalates the stop.
-- `--detach` returns once every workload has started. The run keeps going
-  until `effigy dev stop`. Killing a detaching client before that point stops
+- The TUI and `--headless` stay attached. `--headless` prints the run's own
+  lines (`[environment]`, `[managed]`) and every workload's output as
+  `[name] line`. Closing the terminal, SIGHUP, SIGINT, SIGTERM or SIGKILL to
+  that client stops and settles the run, and the client exits non-zero when
+  the settle leaves residue. A second interrupt within two seconds escalates
+  the stop.
+- `--detach` returns once every workload has started, before `health_wait`
+  routes have answered (`status` and `logs lifecycle` show them). The run
+  keeps going until `effigy dev stop`. Killing a detaching client before that point stops
   the run it started.
 
 The journal is the run's only record. `.effigy/runtime/managed/` session
@@ -323,7 +327,7 @@ A stop reports settled only after the run's settle finished:
   `cargo run` cannot outlive the stop;
 - the environment the run started is down (volumes kept);
 - the run is `closed` in the journal. `cleanup incomplete` lists the residue
-  in `status`, and the next run settles it first.
+  in `status`, `stop` exits non-zero, and the next run settles it first.
 
 Use another shell or automation process to inspect or stop it:
 

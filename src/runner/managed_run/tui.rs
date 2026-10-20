@@ -402,7 +402,8 @@ pub(in crate::runner) fn attach_tui(
             shutdown_on_exit: tab.shutdown_on_exit,
         })
         .collect();
-    // INT, TERM or HUP to the client ends the TUI, which stops the run.
+    // INT, TERM or HUP to the client ends the TUI, which stops the run; so
+    // does its terminal closing (the TUI's own input wait sees the hangup).
     let poll = |_: &dyn SessionProcesses| -> Result<bool, String> {
         Ok(!task_engine::routed_signals().is_empty()
             || shared

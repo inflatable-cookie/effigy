@@ -9954,6 +9954,53 @@ fn assert_managed_children_exited_clean(
     }
 }
 
+/// `--headless` prints every workload's output as `[name] line`, beside the
+/// run's own lifecycle lines, as v0.14's headless owner did; the run ends
+/// when its host workloads exit.
+#[test]
+fn cli_managed_headless_streams_workload_output_by_name() {
+    let _guard = CLI_PROCESS_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    // A short private HOME: the run's control socket must fit SUN_LEN.
+    let home = tempfile::Builder::new()
+        .prefix("e235o.")
+        .tempdir_in("/tmp")
+        .expect("short private home");
+    let root = home.path().join("repo");
+    fs::create_dir(&root).expect("fixture repo");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"[tasks.dev]
+mode = "tui"
+concurrent = [
+  { name = "api", run = "printf 'api one\\napi two\\n'", start = 1 },
+  { name = "front", run = "printf 'front one\\n'", start = 2 },
+]
+"#,
+    )
+    .expect("write manifest");
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("--repo")
+        .arg(&root)
+        .args(["dev", "--headless"])
+        .env("HOME", home.path())
+        .env("NO_COLOR", "1")
+        .stdin(Stdio::null())
+        .output()
+        .expect("run headless dev");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.status.success(), "{text}");
+    for line in ["[api] api one", "[api] api two", "[front] front one"] {
+        assert!(text.contains(line), "missing `{line}`: {text}");
+    }
+    assert!(text.contains("every workload has started"), "{text}");
+}
+
 /// Headless `dev` with a container lifecycle on a healthy stack: concurrent
 /// children wait out a slow first start (colima start delay), reach running
 /// once the lifecycle's startup completes, and a second run after the

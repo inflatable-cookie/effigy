@@ -13,7 +13,10 @@ During v0.x, MINOR bumps may include breaking changes.
   is the only cleanup. The TUI, `--headless` and the new `--detach` are front
   ends: closing the terminal, SIGHUP, SIGINT, SIGTERM or SIGKILL to an
   attached client stops and settles the run, and `--detach` returns once every
-  workload has started. `.effigy/runtime/managed/` session files, stop markers,
+  workload has started. `--headless` prints the run's own lines and every
+  workload's output as `[name] line`, as before. `<task> stop` and an
+  attached client exit non-zero when the settle leaves residue.
+  `.effigy/runtime/managed/` session files, stop markers,
   lifecycle state files and the generated lifecycle shell with its EXIT trap
   are gone. `<task> status --json` prints `effigy.managed.status.v1`, and
   `<task> logs lifecycle` reads the run's own output. The environment comes up

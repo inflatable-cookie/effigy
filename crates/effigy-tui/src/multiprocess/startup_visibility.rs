@@ -299,6 +299,7 @@ fn run_blocking_baseline(root: &Path) {
         state,
         diagnostics: RuntimeDiagnostics::from_env(),
         vt_emulator_enabled: false,
+        terminal_lost: false,
     };
     fs::write(root.join("supervisor.returned"), "released")
         .expect("record blocking supervisor completion before rendering");

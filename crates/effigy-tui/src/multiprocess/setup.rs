@@ -78,6 +78,7 @@ pub(super) fn prepare_runtime_session(
         state,
         diagnostics,
         vt_emulator_enabled,
+        terminal_lost: false,
     })
 }
 
@@ -116,6 +117,7 @@ pub(super) fn prepare_source_session(
         state,
         diagnostics: RuntimeDiagnostics::from_env(),
         vt_emulator_enabled: vt_emulator_enabled_from_env(),
+        terminal_lost: false,
     })
 }
 

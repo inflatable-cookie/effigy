@@ -2378,8 +2378,10 @@ fn wait_for_owned_listener(
     let preferred = config.bind.parse::<SocketAddr>().map_err(|error| {
         RunnerError::task_invocation(format!("managed listener bind address is invalid: {error}"))
     })?;
-    let mut exclusivity: Option<std::io::Error> = None;
+    let mut exclusivity: Option<std::io::Error>;
     loop {
+        // Per observation: an earlier iteration's sharer is not this one's.
+        exclusivity = None;
         if shutdown.load(Ordering::SeqCst) {
             return Err(ListenerStartupFailure::Stopped);
         }

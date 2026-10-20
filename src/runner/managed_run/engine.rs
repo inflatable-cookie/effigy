@@ -20,7 +20,7 @@ use effigy_kernel::custody::{
     Custody, EnvValue, Lifetime, OwnedProcess, ProcessSpec, SecretValue, Terminal,
 };
 use effigy_kernel::observe::Observed;
-use effigy_kernel::outcome::WorkloadOutcome;
+use effigy_kernel::outcome::{CleanupOutcome, WorkloadOutcome};
 use effigy_kernel::run::{EffectSpec, RequestAction, RunError, Settlement};
 use effigy_kernel::supervise::{EngineSession, OwnerWatch};
 
@@ -653,7 +653,24 @@ impl Owner {
                 outcome.workload(),
                 outcome.cleanup()
             ),
-            None => "[managed] the run could not settle; `effigy run stop` retries".to_owned(),
+            None => "[managed] the run could not settle".to_owned(),
+        };
+        // A run that did not settle, or settled with residue, did not end
+        // cleanly whatever its workloads did (R5): the client exits non-zero.
+        let unsettled = match &outcome {
+            None => Some(format!(
+                "managed task `{}` (profile `{}`) could not settle; `effigy {} stop` retries",
+                plan.task, plan.profile, plan.task
+            )),
+            Some(outcome) if outcome.cleanup() == CleanupOutcome::Incomplete => Some(format!(
+                "managed task `{}` (profile `{}`) settled with cleanup incomplete; `effigy {} status` lists the residue and `effigy {} stop` retries",
+                plan.task, plan.profile, plan.task, plan.task
+            )),
+            Some(_) => None,
+        };
+        let error = match (error, unsettled) {
+            (Some(error), Some(unsettled)) => Some(format!("{error}\n{unsettled}")),
+            (error, unsettled) => error.or(unsettled),
         };
         println!("{summary}");
         if let Some(error) = &error {

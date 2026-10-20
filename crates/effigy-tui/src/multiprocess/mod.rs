@@ -127,6 +127,8 @@ struct SessionRuntime {
     state: SessionState,
     diagnostics: RuntimeDiagnostics,
     vt_emulator_enabled: bool,
+    /// The terminal hung up: nothing can be restored or written to it.
+    terminal_lost: bool,
 }
 
 impl std::fmt::Display for MultiProcessTuiError {
@@ -227,6 +229,12 @@ fn run_session(
 
     let after_shutdown =
         control.map(|control| (control.after_shutdown)(runtime.supervisor.as_ref()));
+    if runtime.terminal_lost {
+        // Dropping the terminal would try to show the cursor on a closed
+        // terminal and report the failure on its closed stderr.
+        let SessionRuntime { terminal, .. } = runtime;
+        std::mem::forget(terminal);
+    }
     let non_zero_exits = summary_result?;
     let stopped_by_user = result?;
     if let Some(result) = before_shutdown {
