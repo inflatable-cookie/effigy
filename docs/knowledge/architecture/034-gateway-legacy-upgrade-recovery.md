@@ -315,3 +315,15 @@ The `gateway.status.after-owner-read` fault point proves gate release and
 retirement between owner observations. Supervisor detach observes client EOF
 before draining durable requests: detach commits before pipe closure, so an
 EOF cannot overtake the request and spuriously stop the gateway.
+
+Operator child environments discard inherited `EFFIGY_CUSTODY_NONCE` and
+`EFFIGY_PROBE_NONCE`; the kernel assigns the daemon its own custody identity.
+Forwarding a parent nonce is a spawn refusal before process registration, so
+there is no daemon stderr to capture. Startup consumes the supervisor's spawn
+result before probing readiness and retains the 15-second startup budget.
+A daemon that exits after exec has its outcome and redacted stderr persisted
+by kernel custody. A settled failed run remains `stopped`, with the exit code
+and up to 4096 bytes of stderr tail in the status reason; `up` returns that
+reason as soon as the run closes. Missing log evidence never changes positive
+settlement into an unknown outcome. An ordinary requested shutdown has no
+failure reason.
