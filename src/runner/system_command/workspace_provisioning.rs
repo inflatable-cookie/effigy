@@ -100,6 +100,20 @@ pub(super) fn ensure_workspace_permissions_ready(
     if plan.targets.is_empty() {
         return Ok(());
     }
+    let allow_repair = match effigy_containers::exec::probe_mount_drift(
+        workspace_repo_root,
+        policy,
+        std::time::Instant::now() + std::time::Duration::from_secs(15),
+    ) {
+        Ok(drift) if drift.is_empty() => true,
+        Ok(drift) => return Err(RunnerError::task_invocation(drift.join("\n"))),
+        Err(error) => {
+            eprintln!(
+                "warning: {error}; workspace permissions will be verified without ownership repair"
+            );
+            false
+        }
+    };
     let perm_plan = plan_workspace_permission_prep(&plan.owned_disposable_paths());
     let progress_label = render_workspace_permission_progress_label(&perm_plan);
     let mut progress = workspace::WorkspaceTransientProgressReporter::new(
@@ -111,6 +125,7 @@ pub(super) fn ensure_workspace_permissions_ready(
     super::workspace_permissions::ensure_workspace_permissions_ready_with(
         policy,
         container_name,
+        allow_repair,
         &mut backend,
     )
     .inspect_err(|_| progress.finish(false))?;

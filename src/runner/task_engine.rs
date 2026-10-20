@@ -15,9 +15,9 @@ mod kernel;
 mod legacy;
 mod process;
 mod run;
+mod spawn_env;
 mod status;
 
-pub(in crate::runner) use admission::mark_child;
 pub(in crate::runner) use control::{
     list as list_runs, lookup as lookup_run, read_log as read_run_log, request_stop,
     resolve as resolve_run, signal_owner, workload_process, Lookup, RunRecord, StopStarted,
@@ -33,9 +33,10 @@ pub(in crate::runner) use status::{
     run_liveness, task_status, RunLiveness, RunView, TaskStatusView, HISTORY_LIMIT,
 };
 
-pub(in crate::runner) use kernel::interrupted_by;
 #[cfg(test)]
 pub(in crate::runner) use kernel::test_state_home;
+pub(in crate::runner) use kernel::{interrupted_by, CustodyWait};
+pub(in crate::runner) use spawn_env::{nested_capture, spawn_plain_env, SpawnScope};
 
 /// The recorded outcome of a task command that exited with `code`.
 pub(in crate::runner) fn workload_for_exit(code: i32) -> effigy_kernel::outcome::WorkloadOutcome {
@@ -65,6 +66,40 @@ pub(in crate::runner) fn root_task_status_for_tests(
 #[cfg(test)]
 pub(in crate::runner) fn root_task_state_for_tests(root: &std::path::Path, task: &str) -> String {
     root_task_status_for_tests(root, task).state
+}
+
+/// Cancellation is checked before admission/spawn as well as while waiting.
+/// A request between two steps must not start the next workload.
+pub(in crate::runner) fn pending_stop(
+    label: &str,
+) -> Option<(i32, effigy_kernel::outcome::WorkloadOutcome)> {
+    use effigy_kernel::{ctx::StopCause, outcome::WorkloadOutcome};
+    let signals = kernel::poll_router();
+    if let Some(signal) = signals
+        .first()
+        .map(|signal| signal.received)
+        .or_else(kernel::interrupted_by)
+    {
+        return Some((128 + signal, workload_for_exit(128 + signal)));
+    }
+    if run::stop_requested() {
+        return Some((
+            1,
+            WorkloadOutcome::Cancelled {
+                cause: StopCause::Requested,
+                signal: None,
+            },
+        ));
+    }
+    if spawn_env::remaining().is_some_and(|remaining| remaining.is_zero()) {
+        return Some((
+            124,
+            WorkloadOutcome::TimedOut {
+                phase: label.to_owned(),
+            },
+        ));
+    }
+    None
 }
 
 #[cfg(test)]

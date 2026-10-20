@@ -300,6 +300,23 @@ pub(in crate::runner) fn refuse_environment_mutation(
     )))
 }
 
+/// Mount reconciliation runs before the incoming task's container workload.
+/// Its own ordinary task gate is admitted, but is not a bound workload yet.
+/// Exempt only that exact process, never an ancestor, managed run or unknown
+/// holder. Explicit CLI up has no such ordinary gate of its own.
+pub(in crate::runner) fn refuse_pre_spawn_mount_reconcile(
+    repo_root: &Path,
+    environment: &str,
+) -> Result<(), RunnerError> {
+    if environment_lock_holders(repo_root, environment)
+        .iter()
+        .all(|holder| holder.pid == Some(std::process::id()) && holder.managed_run.is_none())
+    {
+        return Ok(());
+    }
+    refuse_environment_mutation(repo_root, environment, None, None)
+}
+
 /// Refuse a judged-failed generation's recovery teardown while a live
 /// process of that run still holds a task gate: the owner may have been
 /// misjudged dead through a stale or missing record, and tearing the
@@ -548,6 +565,21 @@ mod tests {
             .expect_err("successor protects environment");
         assert!(error.to_string().contains("task:dev"));
         held.close(WorkloadOutcome::Succeeded);
+    }
+
+    #[test]
+    fn isolated_dirs_pre_spawn_exemption_never_exempts_a_managed_holder() {
+        let private = tempfile::tempdir().expect("mount preparation fixture");
+        let held = hold_task(private.path(), None);
+        refuse_pre_spawn_mount_reconcile(private.path(), "stack")
+            .expect("own ordinary preparation gate");
+        refuse_environment_mutation(private.path(), "stack", None, None)
+            .expect_err("general teardown keeps its stricter guard");
+        held.close(WorkloadOutcome::Succeeded);
+        let managed = hold_task(private.path(), Some("managedrun-bound"));
+        refuse_pre_spawn_mount_reconcile(private.path(), "stack")
+            .expect_err("even a same-process managed holder remains protected");
+        managed.close(WorkloadOutcome::Succeeded);
     }
 
     #[cfg(unix)]

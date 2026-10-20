@@ -496,3 +496,43 @@ terms = ["ManifestSecretsVaultIdentity", "ManifestSecretsUnlockPolicy", "vault.i
 paths = []
 config_keys = ["secrets.vault.identity", "secrets.vault.unlock", "secrets.vault.external"]
 allow = ["CHANGELOG.md", "docs/knowledge/contracts/032-secret-and-local-config-management-contract.md", "docs/guides/026-json-payload-examples.md", "crates/effigy-manifest/tests/secrets_config.rs"]
+
+[[retired]]
+id = "effigy-sequence-depends_on"
+retired = "2026-10-19"
+replacement = "Remove depends_on from sequence steps. Steps run in declaration order and stop on failure; use the invoked tool's own retry policy when needed."
+owner = "docs/guides/020-dag-lock-policy-baseline.md"
+terms = ["sequence depends_on"]
+paths = []
+config_keys = ["tasks.*.run[].depends_on", "tasks.*.concurrent[].setup[].depends_on"]
+allow = ["CHANGELOG.md", "docs/guides/020-dag-lock-policy-baseline.md", "crates/effigy-manifest/src/composition.rs", "src/tests/runner_tests/run_array_tests/dag_validation_tests.rs"]
+
+[[retired]]
+id = "effigy-sequence-retry"
+retired = "2026-10-19"
+replacement = "Remove retry from sequence steps. Steps run in declaration order and stop on failure; use the invoked tool's own retry policy when needed."
+owner = "docs/guides/020-dag-lock-policy-baseline.md"
+terms = ["sequence retry"]
+paths = []
+config_keys = ["tasks.*.run[].retry", "tasks.*.concurrent[].setup[].retry"]
+allow = ["CHANGELOG.md", "docs/guides/020-dag-lock-policy-baseline.md", "crates/effigy-manifest/src/composition.rs", "src/tests/runner_tests/run_array_tests/dag_validation_tests.rs"]
+
+[[retired]]
+id = "effigy-sequence-retry_delay_ms"
+retired = "2026-10-19"
+replacement = "Remove retry_delay_ms from sequence steps. Steps run in declaration order and stop on failure; use the invoked tool's own retry policy when needed."
+owner = "docs/guides/020-dag-lock-policy-baseline.md"
+terms = ["sequence retry_delay_ms"]
+paths = []
+config_keys = ["tasks.*.run[].retry_delay_ms", "tasks.*.concurrent[].setup[].retry_delay_ms"]
+allow = ["CHANGELOG.md", "docs/guides/020-dag-lock-policy-baseline.md", "crates/effigy-manifest/src/composition.rs", "src/tests/runner_tests/run_array_tests/dag_validation_tests.rs"]
+
+[[retired]]
+id = "effigy-sequence-fail_fast"
+retired = "2026-10-19"
+replacement = "Remove fail_fast from sequence steps. Steps run in declaration order and stop on failure; use the invoked tool's own retry policy when needed."
+owner = "docs/guides/020-dag-lock-policy-baseline.md"
+terms = ["sequence fail_fast"]
+paths = []
+config_keys = ["tasks.*.run[].fail_fast", "tasks.*.concurrent[].setup[].fail_fast"]
+allow = ["CHANGELOG.md", "docs/guides/020-dag-lock-policy-baseline.md", "crates/effigy-manifest/src/composition.rs", "src/tests/runner_tests/run_array_tests/dag_validation_tests.rs"]

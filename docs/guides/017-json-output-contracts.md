@@ -479,3 +479,15 @@ After this guide, you should be able to:
 ## Next Step
 
 After updating any envelope or payload shape, add or refresh examples in [`026-json-payload-examples.md`](026-json-payload-examples.md) and run `effigy contracts check-json --fast`.
+
+
+## Sequence results
+
+Host sequences retain `effigy.task.run.v1` inside the command envelope and add
+`steps` (index, label, child run ID, typed outcome, exit code and captured streams)
+and `failed_step`. Later steps report `state: "not_started"` after failure.
+Execution and exit codes match text mode, including 124 for timeout and 128 + n
+for cancellation. A failed command envelope carries the task payload in
+`error.details`; success carries it in `result`. This is an additive v1 extension.
+Task status v2 adds nested `steps` to run views. Container steps are journalled
+with their legacy exit status; remote custody is deferred to #236.

@@ -27,6 +27,10 @@ run = "\"$EFFIGY_TEST_BIN\" inner"
 admission = "heavy"
 run = "touch inner.txt"
 
+[tasks.steps]
+admission = "heavy"
+run = [{ task = "inner" }, { task = "heavy" }]
+
 [tasks.light]
 run = "touch light.txt"
 
@@ -288,6 +292,26 @@ fn a_nested_heavy_invocation_runs_inside_its_parent_admission() {
         .filter(|line| line.starts_with('{'))
         .count();
     assert_eq!(requests, 1, "the nested heavy run never queued twice");
+}
+
+#[test]
+fn nested_heavy_task_steps_run_inside_the_sequence_admission() {
+    let fixture = Fixture::new();
+    let hook = fixture.hook("hold.sh", HOLD_HOOK);
+    let output = fixture.with_hook(&hook, &["steps"]);
+    assert!(output.status.success(), "{}", text(&output));
+    assert!(fixture.exists("inner.txt") && fixture.exists("ran.txt"));
+    let log = fixture.read("hook.log");
+    let requests: Vec<&str> = log.lines().filter(|line| line.starts_with('{')).collect();
+    assert_eq!(requests.len(), 1, "heavy steps never queue again: {log}");
+    let request: serde_json::Value = serde_json::from_str(requests[0]).expect("request");
+    assert_eq!(request["task"], "steps");
+    assert_eq!(
+        fixture.read("marker.txt"),
+        request["run_id"].as_str().expect("run id"),
+        "a step's children carry the sequence's admitted marker"
+    );
+    assert!(log.contains("released"), "settle released the one admission");
 }
 
 #[test]

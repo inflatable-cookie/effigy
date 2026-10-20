@@ -32,6 +32,7 @@ fn begin(target: &TaskTarget) -> Result<TaskRun, RunnerError> {
         args: &[],
         key: None,
         admission: None,
+        cwd: None,
     })
 }
 
@@ -144,4 +145,101 @@ fn shared_lock_excludes_other_tasks_that_declare_it() {
         .expect("released shared lock admits the other task")
         .close(WorkloadOutcome::Succeeded);
     assert!(live_holders(root.path()).is_empty());
+}
+
+#[test]
+fn sequence_durable_stop_request_cancels_active_custody_and_settles_child() {
+    let _guard = crate::contract_test_support::lock_test();
+    let root = tempfile::tempdir().unwrap();
+    let catalog = catalog(root.path(), "", "root", 0);
+    let target = TaskTarget::for_catalog(root.path(), "stop-proof", &catalog);
+    let run = begin(&target).unwrap();
+    let mut child = run.step(0, "active").unwrap();
+    let id = run.id();
+    // Read the fence from the live owner handle before another thread posts
+    // the durable request. Only the owning thread writes run outcomes.
+    let mut parent = run;
+    let expected = parent.run_mut().fence().clone();
+    let requester = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        effigy_kernel::run::request(
+            &super::kernel::effects(),
+            super::kernel::effects_root().unwrap(),
+            &effigy_kernel::run::Request {
+                id: effigy_kernel::id::RunId::new(99, [19; 10]).unwrap(),
+                run: id,
+                expected,
+                action: effigy_kernel::run::RequestAction::Stop,
+            },
+        )
+        .unwrap();
+    });
+    let exit = {
+        let _parent = parent.enter();
+        let _step = child.enter();
+        run_plain(
+            &mut child,
+            PlainCommand {
+                command: "sleep 30",
+                cwd: root.path(),
+                env: vec![],
+                capture: true,
+                timeout_ms: Some(5000),
+            },
+        )
+        .unwrap()
+    };
+    requester.join().unwrap();
+    assert_eq!(
+        exit.workload,
+        WorkloadOutcome::Cancelled {
+            cause: effigy_kernel::ctx::StopCause::Requested,
+            signal: None
+        }
+    );
+    child.close(exit.workload.clone());
+    parent.close(exit.workload);
+    let status = task_status(&target, HISTORY_LIMIT);
+    assert_eq!(status.latest.unwrap().steps[0].state, "cancelled");
+}
+
+#[test]
+fn sequence_pending_stop_starts_no_next_workload() {
+    let _guard = crate::contract_test_support::lock_test();
+    let root = tempfile::tempdir().unwrap();
+    let catalog = catalog(root.path(), "", "root", 0);
+    let target = TaskTarget::for_catalog(root.path(), "pending-stop-proof", &catalog);
+    let mut parent = begin(&target).unwrap();
+    let expected = parent.run_mut().fence().clone();
+    effigy_kernel::run::request(
+        &super::kernel::effects(),
+        super::kernel::effects_root().unwrap(),
+        &effigy_kernel::run::Request {
+            id: effigy_kernel::id::RunId::new(99, [20; 10]).unwrap(),
+            run: parent.id(),
+            expected,
+            action: effigy_kernel::run::RequestAction::Stop,
+        },
+    )
+    .unwrap();
+    let mut child = parent.step(0, "must-not-start").unwrap();
+    let exit = {
+        let _parent = parent.enter();
+        let _step = child.enter();
+        run_plain(
+            &mut child,
+            PlainCommand {
+                command: "touch should-not-exist",
+                cwd: root.path(),
+                env: vec![],
+                capture: true,
+                timeout_ms: None,
+            },
+        )
+        .unwrap()
+    };
+    assert!(!root.path().join("should-not-exist").exists());
+    assert!(child.run_mut().effects().unwrap().is_empty());
+    child.close(exit.workload.clone());
+    parent.close(exit.workload);
 }

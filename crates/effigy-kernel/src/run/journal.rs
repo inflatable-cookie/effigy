@@ -74,8 +74,9 @@ pub(super) fn insert_effect(
         [id.to_string()],
         |r| r.get(0),
     )?;
-    // A process intent ends positive NotStarted evidence before any fork.
-    if spec.kind == crate::custody::KIND {
+    // A process or child-run intent ends positive NotStarted evidence before
+    // any fork or child admission.
+    if spec.kind == crate::custody::KIND || spec.kind == super::children::KIND {
         txn.conn().execute(
             "UPDATE runs SET workload_outcome=NULL WHERE run_id=?1",
             [id.to_string()],

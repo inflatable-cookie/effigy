@@ -104,13 +104,6 @@ pub(in crate::runner) fn child_marker() -> Option<String> {
     })
 }
 
-/// Sets the admitted marker on a child the engine spawns outside custody.
-pub(in crate::runner) fn mark_child(command: &mut std::process::Command) {
-    if let Some(marker) = child_marker() {
-        command.env(ADMITTED_ENV, marker);
-    }
-}
-
 fn held_marker() -> Option<String> {
     HELD.lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -164,12 +157,10 @@ pub(super) fn admit(
     class: ManifestTaskAdmission,
     command: &str,
     timeout: Duration,
+    cwd: &std::path::Path,
 ) -> Result<Admission, RunnerError> {
     let run_id = run.id().to_string();
-    // The invocation directory the CLI captured; never a fresh process read.
-    let cwd = crate::runner::command_context::active_runtime_context()
-        .map(|context| context.invocation_cwd().to_path_buf())
-        .unwrap_or_else(|| target.root.clone());
+    let cwd = cwd.to_path_buf();
     let request = serde_json::json!({
         "schema": REQUEST_SCHEMA,
         "run_id": run_id,

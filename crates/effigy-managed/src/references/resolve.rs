@@ -117,7 +117,9 @@ where
             Some(ResolvedTaskExecutionBinding::Workspace(_))
         );
     if let Some(run_spec) = selection.task.run.as_ref() {
-        if resolution.host_launched && host_needs_container {
+        if resolution.host_launched
+            && (host_needs_container || matches!(run_spec, ManifestManagedRun::Sequence(_)))
+        {
             return render_nested_catalog_invocation(selector_rendered, selection, resolution);
         }
         return render_selected_task_run(selection, run_spec, task_name, resolution);

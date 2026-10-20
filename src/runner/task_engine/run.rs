@@ -7,9 +7,11 @@
 //! every effect and releases the gate; journal failures become warnings and
 //! never change the task's own result (K10).
 
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::io::Read;
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use effigy_kernel::ctx::{EffectClass, Placement};
@@ -73,6 +75,8 @@ pub(in crate::runner) struct TaskRunRequest<'a> {
     pub(in crate::runner) key: Option<&'a RunKey>,
     /// The task's declared admission class (Q-006).
     pub(in crate::runner) admission: Option<effigy_manifest::ManifestTaskAdmission>,
+    /// The resolved invocation directory, reported to the admission hook.
+    pub(in crate::runner) cwd: Option<&'a std::path::Path>,
 }
 
 /// A caller-chosen `--run-id` key and the one run id it derives. Equal keys
@@ -123,14 +127,41 @@ impl RunKey {
 
 #[derive(Debug)]
 pub(in crate::runner) struct TaskRun {
-    run: Option<Run<'static>>,
+    run: Option<Arc<Mutex<Run<'static>>>>,
     shared: Option<Run<'static>>,
     target: TaskTarget,
+    ancestors: Vec<ResourceId>,
+    shared_owners: Vec<ResourceId>,
+    _custody_scope: Option<kernel::CustodyWait>,
     /// Held for the run's life; the run's settle stops the hook.
     admission: Option<super::admission::Admission>,
     /// Named by a caller's `--run-id` key: its output is logged for
     /// `effigy run logs`.
     keyed: bool,
+}
+
+#[derive(Clone)]
+struct Parent {
+    run: Arc<Mutex<Run<'static>>>,
+    ancestors: Vec<ResourceId>,
+    shared_owners: Vec<ResourceId>,
+}
+thread_local! {
+    static PARENTS: RefCell<Vec<Parent>> = const { RefCell::new(Vec::new()) };
+}
+pub(in crate::runner) struct ParentScope;
+impl Drop for ParentScope {
+    fn drop(&mut self) {
+        PARENTS.with(|parents| {
+            parents.borrow_mut().pop();
+        });
+    }
+}
+fn owned(run: Arc<Mutex<Run<'static>>>) -> Run<'static> {
+    Arc::try_unwrap(run)
+        .expect("parent scope ends before run closes")
+        .into_inner()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 impl TaskRun {
@@ -169,6 +200,7 @@ impl TaskRun {
                 args: &[],
                 key: None,
                 admission: None,
+                cwd: None,
             },
             false,
         )
@@ -203,16 +235,31 @@ impl TaskRun {
                 args: &[],
                 key: None,
                 admission,
+                cwd: Some(root),
             },
             false,
         )
     }
 
     fn begin_with(request: TaskRunRequest<'_>, task_gate: bool) -> Result<Self, RunnerError> {
+        let parent = PARENTS.with(|parents| parents.borrow().last().cloned());
         let root = kernel::effects_root()?;
         let checkout = checkout::mint(&request.target.root)?;
         let owner = request.target.owner(checkout)?;
         let task_id = request.target.task_id(checkout)?;
+        let ancestors = parent
+            .as_ref()
+            .map(|parent| parent.ancestors.clone())
+            .unwrap_or_default();
+        let mut shared_owners = parent
+            .as_ref()
+            .map(|parent| parent.shared_owners.clone())
+            .unwrap_or_default();
+        if ancestors.contains(&owner) {
+            return Err(RunnerError::task_invocation(format!(
+                "task reference cycle at `{}`: a nested reference cannot reacquire an ancestor's Task gate; remove the recursive reference",
+                request.target.label)));
+        }
         let admission = super::admission::plan(request.admission)?;
         let run_id = match request.key {
             Some(key) => {
@@ -221,7 +268,8 @@ impl TaskRun {
             }
             None => new_run_id()?,
         };
-        let custody = if request.custody || admission.needs_custody() {
+        let needs_custody = request.custody || admission.needs_custody();
+        let custody = if needs_custody {
             kernel::install_router()?;
             Some(LifecyclePlan {
                 executable: kernel::executable()?,
@@ -230,8 +278,9 @@ impl TaskRun {
         } else {
             None
         };
+        let custody_scope = needs_custody.then(kernel::CustodyWait::enter);
         let started = Instant::now();
-        let wait = if request.lock_wait_ms == 0 {
+        let wait = if parent.is_some() || request.lock_wait_ms == 0 {
             Wait::FailFast
         } else {
             Wait::Until(started + Duration::from_millis(request.lock_wait_ms))
@@ -254,7 +303,8 @@ impl TaskRun {
         // A shared lock is its own resource with its own run, held around
         // the task's run and released after it, always in that order.
         let shared = match request.target.shared_lock_owner(checkout)? {
-            Some(lock_owner) => {
+            Some(lock_owner) if !shared_owners.contains(&lock_owner) => {
+                shared_owners.push(lock_owner.clone());
                 let invocation =
                     invocation(&task_id, lock_owner.clone(), argv.clone(), &provenance)?;
                 let run = Run::begin(
@@ -282,34 +332,46 @@ impl TaskRun {
                 })?;
                 Some(run)
             }
-            None => None,
+            _ => None,
         };
         if !task_gate {
             let mut run = Self {
-                run: shared,
+                run: shared.map(|run| Arc::new(Mutex::new(run))),
                 shared: None,
                 target: request.target.clone(),
+                ancestors,
+                shared_owners,
+                _custody_scope: custody_scope,
                 admission: None,
                 keyed: false,
             };
-            run.admit(request.admission, admission)?;
+            run.admit(request.admission, admission, request.cwd)?;
             return Ok(run);
         }
         let invocation = invocation(&task_id, owner.clone(), argv, &provenance)?;
-        let run = Run::begin(
-            &cx,
-            root,
-            &invocation,
-            BeginOpts {
-                id: run_id,
-                wait,
-                acknowledge: Vec::new(),
-                next,
-                custody,
-            },
-            &cleanup,
-            &mut TaskSettlement,
-        )
+        let opts = BeginOpts {
+            id: run_id,
+            wait,
+            acknowledge: Vec::new(),
+            next,
+            custody,
+        };
+        let run = match parent {
+            Some(parent) => parent
+                .run
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .begin_child(
+                    &invocation,
+                    BeginOpts {
+                        wait: Wait::FailFast,
+                        ..opts
+                    },
+                    &cleanup,
+                    &mut TaskSettlement,
+                ),
+            None => Run::begin(&cx, root, &invocation, opts, &cleanup, &mut TaskSettlement),
+        }
         .map_err(|error| match request.key {
             // The racing first invocation with this key holds the gate, or
             // finished between our check and our insert: attach to it.
@@ -328,13 +390,16 @@ impl TaskRun {
             }
         };
         let mut run = Self {
-            run: Some(run),
+            run: Some(Arc::new(Mutex::new(run))),
             shared,
             target: request.target.clone(),
+            ancestors,
+            shared_owners,
+            _custody_scope: custody_scope,
             admission: None,
             keyed: request.key.is_some(),
         };
-        run.admit(request.admission, admission)?;
+        run.admit(request.admission, admission, request.cwd)?;
         Ok(run)
     }
 
@@ -344,13 +409,22 @@ impl TaskRun {
         &mut self,
         class: Option<effigy_manifest::ManifestTaskAdmission>,
         plan: super::admission::Plan,
+        cwd: Option<&std::path::Path>,
     ) -> Result<(), RunnerError> {
         let (Some(class), super::admission::Plan::Hook { command, timeout }) = (class, plan) else {
             return Ok(());
         };
         let target = self.target.clone();
-        let admitted = match self.run.as_mut() {
-            Some(run) => super::admission::admit(run, &target, class, &command, timeout),
+        let cwd = cwd.unwrap_or(&target.root).to_path_buf();
+        let admitted = match self.run.as_ref() {
+            Some(run) => super::admission::admit(
+                &mut run.lock().unwrap_or_else(std::sync::PoisonError::into_inner),
+                &target,
+                class,
+                &command,
+                timeout,
+                &cwd,
+            ),
             None => return Ok(()),
         };
         match admitted {
@@ -365,6 +439,9 @@ impl TaskRun {
                         run: None,
                         shared: None,
                         target,
+                        ancestors: Vec::new(),
+                        shared_owners: Vec::new(),
+                        _custody_scope: None,
                         admission: None,
                         keyed: false,
                     },
@@ -384,21 +461,126 @@ impl TaskRun {
             .map(|admission| admission.waited.as_millis().min(u128::from(u64::MAX)) as u64)
     }
 
-    pub(in crate::runner) fn run_mut(&mut self) -> &mut Run<'static> {
-        self.run.as_mut().expect("open run")
+    /// Whether a caller's `--run-id` key names this run.
+    pub(in crate::runner) fn keyed(&self) -> bool {
+        self.keyed
+    }
+
+    pub(in crate::runner) fn run_mut(&mut self) -> MutexGuard<'_, Run<'static>> {
+        self.run
+            .as_ref()
+            .expect("open run")
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// The lexical parent for nested invocations on this thread. This carries
+    /// handles, never global environment or authority from an untrusted token.
+    pub(in crate::runner) fn enter(&self) -> ParentScope {
+        let run = self.run.as_ref().expect("open run").clone();
+        let mut ancestors = self.ancestors.clone();
+        ancestors.push(
+            run.lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .fence()
+                .resource
+                .clone(),
+        );
+        PARENTS.with(|parents| {
+            parents.borrow_mut().push(Parent {
+                run,
+                ancestors,
+                shared_owners: self.shared_owners.clone(),
+            })
+        });
+        ParentScope
+    }
+
+    pub(in crate::runner) fn step(&self, index: usize, label: &str) -> Result<Self, RunnerError> {
+        let checkout = checkout::mint(&self.target.root)?;
+        let owner = ResourceId::store(
+            effigy_kernel::id::Scope::Checkout(checkout),
+            &format!(
+                "task-step:{}:{index}",
+                self.run
+                    .as_ref()
+                    .expect("open run")
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .fence()
+                    .resource
+                    .name()
+            ),
+        )
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+        let invocation = invocation(
+            &self.target.task_id(checkout)?,
+            owner,
+            vec![OsString::from(label)],
+            &BTreeMap::new(),
+        )?;
+        kernel::install_router()?;
+        let custody_scope = kernel::CustodyWait::enter();
+        let run = self
+            .run
+            .as_ref()
+            .expect("open run")
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .begin_child(
+                &invocation,
+                BeginOpts {
+                    id: new_run_id()?,
+                    wait: Wait::FailFast,
+                    acknowledge: Vec::new(),
+                    next: kernel::next_invocation(&self.target.label)?,
+                    custody: Some(LifecyclePlan {
+                        executable: kernel::executable()?,
+                        placement: LifecyclePlacement::Inline,
+                    }),
+                },
+                &kernel::cleanup()?,
+                &mut TaskSettlement,
+            )
+            .map_err(|error| {
+                RunnerError::task_invocation(format!("cannot admit step `{label}`: {error}"))
+            })?;
+        let mut target = self.target.clone();
+        target.label = label.to_owned();
+        let mut ancestors = self.ancestors.clone();
+        ancestors.push(
+            self.run
+                .as_ref()
+                .expect("open run")
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .fence()
+                .resource
+                .clone(),
+        );
+        Ok(Self {
+            run: Some(Arc::new(Mutex::new(run))),
+            shared: None,
+            target,
+            ancestors,
+            shared_owners: self.shared_owners.clone(),
+            _custody_scope: Some(custody_scope),
+            admission: None,
+            keyed: false,
+        })
     }
 
     pub(in crate::runner) fn id(&self) -> RunId {
-        self.run.as_ref().expect("open run").id()
+        self.run
+            .as_ref()
+            .expect("open run")
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .id()
     }
 
     pub(in crate::runner) fn target(&self) -> &TaskTarget {
         &self.target
-    }
-
-    /// Whether a caller's `--run-id` key names this run.
-    pub(in crate::runner) fn keyed(&self) -> bool {
-        self.keyed
     }
 
     /// Records the workload outcome, settles every effect and releases the
@@ -408,7 +590,7 @@ impl TaskRun {
         // Settle stops the admission hook; the marker goes with it.
         let admission = self.admission.take();
         if let Some(run) = self.run.take() {
-            warnings.extend(close_run(run, workload.clone()));
+            warnings.extend(close_run(owned(run), workload.clone()));
         }
         if let Some(shared) = self.shared.take() {
             let mirrored = match workload {
@@ -448,6 +630,7 @@ impl TaskRun {
             args: &[],
             key: None,
             admission: None,
+            cwd: None,
         })
         .expect("live task fixture")
     }
@@ -476,7 +659,10 @@ impl Drop for TaskRun {
     /// journal records it interrupted rather than claiming an outcome.
     fn drop(&mut self) {
         let cleanup = kernel::cleanup();
-        for run in [self.run.take(), self.shared.take()].into_iter().flatten() {
+        for run in [self.run.take().map(owned), self.shared.take()]
+            .into_iter()
+            .flatten()
+        {
             if let Ok(cleanup) = cleanup.as_ref() {
                 let _ = run.settle(cleanup, &mut TaskSettlement);
             }
@@ -817,5 +1003,28 @@ fn age_text(started_ms: i64) -> Option<String> {
         0..=59 => format!("{seconds}s"),
         60..=3599 => format!("{}m{}s", seconds / 60, seconds % 60),
         _ => format!("{}h{}m", seconds / 3600, (seconds % 3600) / 60),
+    })
+}
+
+/// A stop request on any lexical ancestor stops the active step. Requests stay
+/// generation-fenced in the kernel; no marker file or PID grants authority.
+pub(super) fn stop_requested() -> bool {
+    PARENTS.with(|parents| {
+        parents.borrow().iter().any(|parent| {
+            parent
+                .run
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .requests()
+                .is_ok_and(|requests| {
+                    requests.iter().any(|request| {
+                        matches!(
+                            request.action,
+                            effigy_kernel::run::RequestAction::Stop
+                                | effigy_kernel::run::RequestAction::Escalate
+                        )
+                    })
+                })
+        })
     })
 }

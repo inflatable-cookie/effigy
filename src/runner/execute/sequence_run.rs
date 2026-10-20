@@ -1,524 +1,455 @@
-use std::collections::BTreeMap;
-use std::ffi::OsString;
-use std::io::{self, Write};
-use std::path::{Path, PathBuf};
-use std::process::{Child, Command as ProcessCommand};
-use std::thread;
-use std::time::{Duration, Instant};
-
-use effigy_cli::{Command, TaskInvocation};
-use effigy_core::shell::with_local_node_bin_path;
-use effigy_env::resolver::ResolvedEnv;
-use effigy_env::secret::SecretString;
-use effigy_execution::ExecutionOutputMode;
-use effigy_managed::{
-    build_run_sequence_schedule, render_step_command_template, StepEnvAccumulator,
-};
-use effigy_manifest::{ManifestManagedRun, ManifestManagedRunStep, TaskSelection};
-use effigy_routing::resolve_catalog_by_prefix;
-use effigy_tasks::{parse_task_reference_invocation, render_task_selector};
-
-use super::context::ExecutionTaskContext;
-use super::preflight::ExecutionPreflight;
+//! One typed, ordered sequence engine. Output mode chooses sinks only.
+use super::{context::ExecutionTaskContext, preflight::ExecutionPreflight};
 use crate::runner::command_context::EmbeddedRepoOverrideMode;
-use crate::runner::embedded_runner::{
-    parse_embedded_command, run_embedded_command, run_embedded_task,
-    run_embedded_task_with_output_mode,
-};
+use crate::runner::embedded_runner::{parse_embedded_command, run_embedded_task_with_output_mode};
 use crate::runner::error::RunnerError;
-use crate::runner::script_command::execute_repo_rhai_script;
+use crate::runner::task_engine::{run_plain, CustodyWait, PlainCommand, SpawnScope, TaskRun};
+use effigy_cli::{Command, TaskInvocation};
+use effigy_env::{resolver::ResolvedEnv, secret::SecretString};
+use effigy_kernel::outcome::WorkloadOutcome;
+use effigy_managed::{render_step_command_template, StepEnvAccumulator};
+use effigy_manifest::{ManifestManagedRun, ManifestManagedRunStep, TaskSelection};
+use effigy_routing::{resolve_catalog_by_prefix, select_catalog_and_task};
+use effigy_tasks::{parse_task_reference_invocation, render_task_selector};
+use std::path::{Path, PathBuf};
 
 pub(super) fn maybe_run_in_process_sequence(
     preflight: &ExecutionPreflight,
     selection: &TaskSelection<'_>,
     context: &ExecutionTaskContext<'_>,
-    env_schema_resolved: &Option<ResolvedEnv>,
-    secret_env: Option<&[(&str, &SecretString)]>,
+    env_schema: &Option<ResolvedEnv>,
+    secrets: Option<&[(&str, &SecretString)]>,
+    run: &mut TaskRun,
+    workload: &mut Option<WorkloadOutcome>,
 ) -> Result<Option<String>, RunnerError> {
-    if preflight.output_json {
-        return Ok(None);
-    }
-
-    let ManifestManagedRun::Sequence(steps) =
-        selection
-            .task
-            .run
-            .as_ref()
-            .ok_or_else(|| RunnerError::TaskMissingRunCommand {
-                task: preflight.selector.task_name.clone(),
-                path: selection.catalog.manifest_path.clone(),
-            })?
-    else {
+    let Some(ManifestManagedRun::Sequence(steps)) = &selection.task.run else {
         return Ok(None);
     };
-
-    let overall_failed = run_in_process_sequence_steps_inner(
+    let report = run_steps(
         preflight,
         selection,
         steps,
-        env_schema_resolved,
-        secret_env,
-        &preflight.selector.task_name,
-        &preflight.runtime_args_exec.passthrough,
+        env_schema,
+        secrets,
+        (
+            &preflight.selector.task_name,
+            &preflight.runtime_args_exec.passthrough,
+        ),
+        run,
     )?;
-
-    if let Some(code) = overall_failed {
+    *workload = Some(report.outcome.clone());
+    if preflight.output_json {
+        let mut payload: serde_json::Value =
+            serde_json::from_str(&super::json_payload::render_task_command_json(
+                &preflight.selector,
+                context.repo_for_task(),
+                context.command(),
+                Some(report.code),
+                &report.stdout,
+                &report.stderr,
+            )?)
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+        payload["steps"] = serde_json::Value::Array(report.steps);
+        payload["failed_step"] = serde_json::json!(report.failed_step);
+        let rendered = effigy_ui::encode_json(&payload, true)?;
+        return if report.code == 0 {
+            Ok(Some(rendered))
+        } else {
+            Err(RunnerError::CommandJsonFailure { rendered })
+        };
+    }
+    if report.code != 0 {
         return Err(RunnerError::TaskCommandFailure {
-            command: context.command().to_owned(),
-            code: Some(
-                if preflight.output_mode == ExecutionOutputMode::Passthrough {
-                    code
-                } else {
-                    1
-                },
+            command: format!(
+                "{} step `{}`",
+                preflight.selector.task_name,
+                report.failed_step.unwrap_or_default()
             ),
-            stdout: String::new(),
-            stderr: String::new(),
+            code: Some(report.code),
+            stdout: report.stdout,
+            stderr: report.stderr,
         });
     }
-
-    if preflight.runtime_args_raw.verbose_root {
-        return Ok(Some(context.render_resolution_trace()));
-    }
-    Ok(Some(String::new()))
-}
-
-pub(super) fn maybe_run_fully_in_process_sequence(
-    preflight: &ExecutionPreflight,
-    selection: &TaskSelection<'_>,
-    context: &ExecutionTaskContext<'_>,
-    env_schema_resolved: &Option<ResolvedEnv>,
-    secret_env: Option<&[(&str, &SecretString)]>,
-) -> Result<Option<String>, RunnerError> {
-    let Some(run_spec) = selection.task.run.as_ref() else {
-        return Ok(None);
-    };
-    if !run_spec_is_fully_in_process_capable(run_spec) {
-        return Ok(None);
-    }
-    maybe_run_in_process_sequence(
-        preflight,
-        selection,
-        context,
-        env_schema_resolved,
-        secret_env,
-    )
+    Ok(Some(if preflight.runtime_args_raw.verbose_root {
+        context.render_resolution_trace()
+    } else {
+        String::new()
+    }))
 }
 
 pub(super) fn run_in_process_sequence_steps(
     preflight: &ExecutionPreflight,
     selection: &TaskSelection<'_>,
     steps: &[ManifestManagedRunStep],
-    env_schema_resolved: &Option<ResolvedEnv>,
-    secret_env: Option<&[(&str, &SecretString)]>,
-    task_name: &str,
-    passthrough: &[String],
+    env_schema: &Option<ResolvedEnv>,
+    secrets: Option<&[(&str, &SecretString)]>,
+    owner: (&str, &[String]),
+    run: &TaskRun,
 ) -> Result<(), RunnerError> {
-    let overall_failed = run_in_process_sequence_steps_inner(
-        preflight,
-        selection,
-        steps,
-        env_schema_resolved,
-        secret_env,
-        task_name,
-        passthrough,
-    )?;
-    if let Some(code) = overall_failed {
-        return Err(RunnerError::TaskCommandFailure {
-            command: task_name.to_owned(),
-            code: Some(
-                if preflight.output_mode == ExecutionOutputMode::Passthrough {
-                    code
-                } else {
-                    1
-                },
+    let report = run_steps(preflight, selection, steps, env_schema, secrets, owner, run)?;
+    if report.code == 0 {
+        Ok(())
+    } else {
+        Err(RunnerError::TaskCommandFailure {
+            command: format!(
+                "{} step `{}`",
+                owner.0,
+                report.failed_step.unwrap_or_default()
             ),
-            stdout: String::new(),
-            stderr: String::new(),
-        });
+            code: Some(report.code),
+            stdout: report.stdout,
+            stderr: report.stderr,
+        })
     }
-    Ok(())
 }
 
-fn run_in_process_sequence_steps_inner(
+struct SequenceReport {
+    code: i32,
+    stdout: String,
+    stderr: String,
+    steps: Vec<serde_json::Value>,
+    failed_step: Option<String>,
+    outcome: WorkloadOutcome,
+}
+
+fn run_steps(
     preflight: &ExecutionPreflight,
     selection: &TaskSelection<'_>,
     steps: &[ManifestManagedRunStep],
-    env_schema_resolved: &Option<ResolvedEnv>,
-    secret_env: Option<&[(&str, &SecretString)]>,
-    task_name: &str,
-    passthrough: &[String],
-) -> Result<Option<i32>, RunnerError> {
-    let _output_mode = ScopedOutputMode::set(preflight.output_mode);
-    let execution_root = preflight.task_execution_root(&selection.catalog.catalog_root);
-    let mut task_env = env_schema_resolved
-        .as_ref()
-        .map(|resolved| resolved.plain_env())
-        .unwrap_or_default();
-    for (key, value) in &selection.task.env {
-        task_env.insert(key.clone(), value.clone());
+    env_schema: &Option<ResolvedEnv>,
+    secrets: Option<&[(&str, &SecretString)]>,
+    owner: (&str, &[String]),
+    run: &TaskRun,
+) -> Result<SequenceReport, RunnerError> {
+    let (task_name, passthrough) = owner;
+    let _signals = CustodyWait::enter();
+    if steps.is_empty() {
+        return Err(RunnerError::task_invocation(
+            "a run sequence must contain at least one step",
+        ));
     }
-    let mut env_state = StepEnvAccumulator::new(
+    let mut labels = std::collections::BTreeSet::new();
+    for step in steps {
+        if let ManifestManagedRunStep::Step(table) = step {
+            if let Some(label) = &table.id {
+                if label.trim().is_empty() || !labels.insert(label) {
+                    return Err(RunnerError::task_invocation(format!(
+                        "task `{task_name}` has an empty or duplicate step id `{label}`"
+                    )));
+                }
+            }
+        }
+    }
+    let root = preflight.task_execution_root(&selection.catalog.catalog_root);
+    let mut task_env = env_schema
+        .as_ref()
+        .map(|env| env.plain_env())
+        .unwrap_or_default();
+    task_env.extend(selection.task.env.clone());
+    let mut env = StepEnvAccumulator::new(
         selection.task.env_file.as_ref(),
         preflight.runtime_args_raw.env_schema_override.as_deref(),
-    )
-    .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    for (key, value) in &task_env {
-        env_state.chained_env().get(key);
-        let _ = value;
-    }
-
-    let mut planned_steps = Vec::with_capacity(steps.len());
-    for step in steps {
-        env_state
-            .apply_from_step(
-                task_name,
-                step,
-                &selection.catalog.manifest.env,
-                execution_root,
-                &preflight.catalogs,
-            )
-            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-        let step_env = merged_step_env(
-            &task_env,
-            env_state.chained_env(),
-            execution_root,
-            preflight
-                .task_source
-                .as_ref()
-                .map(|source| source.source_root.as_path()),
-        );
-        planned_steps.push(StepPlan {
-            action: resolve_step_action(step, preflight, selection, passthrough)?,
-            policy: step_policy(step),
-            env: step_env,
-        });
-    }
-
-    let schedule = build_run_sequence_schedule(task_name, steps)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    if let Some(levels) = schedule {
-        run_scheduled_steps(
-            &planned_steps,
-            &levels,
-            selection,
-            execution_root,
-            secret_env,
+    )?;
+    let mut planned = Vec::with_capacity(steps.len());
+    for (index, step) in steps.iter().enumerate() {
+        env.apply_from_step(
             task_name,
-            passthrough,
-        )
-    } else {
-        run_step_indexes_in_order(
-            planned_steps.iter().enumerate().map(|(index, _)| index),
-            &planned_steps,
-            selection,
-            execution_root,
-            secret_env,
-            task_name,
-            passthrough,
-        )
-    }
-}
-
-fn merged_step_env(
-    task_env: &BTreeMap<String, String>,
-    chained_env: &BTreeMap<String, String>,
-    repo_root: &Path,
-    skill_root: Option<&Path>,
-) -> BTreeMap<String, String> {
-    let mut merged = BTreeMap::new();
-    for (key, value) in task_env {
-        merged.insert(key.clone(), render_env_value(value, repo_root, skill_root));
-    }
-    for (key, value) in chained_env {
-        merged.insert(key.clone(), render_env_value(value, repo_root, skill_root));
-    }
-    merged
-}
-
-fn run_spec_is_fully_in_process_capable(run: &ManifestManagedRun) -> bool {
-    let ManifestManagedRun::Sequence(steps) = run else {
-        return false;
-    };
-    steps.iter().all(step_is_fully_in_process_capable)
-}
-
-pub(super) fn step_is_fully_in_process_capable(step: &ManifestManagedRunStep) -> bool {
-    match step {
-        ManifestManagedRunStep::Command(command) => command
-            .strip_prefix("task:")
-            .map(str::trim)
-            .is_some_and(|value| !value.is_empty()),
-        ManifestManagedRunStep::Step(table) => {
-            let table = table.as_ref();
-            match (
-                table.run.as_deref(),
-                table.task.as_deref(),
-                table.rhai.as_deref(),
-            ) {
-                (Some(_), None, None) => false,
-                (None, Some(task_ref), None) => !task_ref.trim().is_empty(),
-                (None, None, Some(path)) => !path.trim().is_empty(),
-                (None, None, None) => table.env.is_some() || table.env_file.is_some(),
-                _ => false,
-            }
-        }
-    }
-}
-
-fn render_env_value(value: &str, repo_root: &Path, skill_root: Option<&Path>) -> String {
-    let repo = repo_root.display().to_string();
-    let rendered = value.replace("{project}", &repo).replace("{repo}", &repo);
-    skill_root.map_or(rendered.clone(), |root| {
-        rendered.replace("{skill}", &root.display().to_string())
-    })
-}
-
-#[derive(Clone, Copy)]
-struct StepPolicy {
-    retry: usize,
-    retry_delay_ms: u64,
-    timeout_ms: Option<u64>,
-    fail_fast: bool,
-}
-
-fn step_policy(step: &ManifestManagedRunStep) -> StepPolicy {
-    match step {
-        ManifestManagedRunStep::Command(_) => StepPolicy {
-            retry: 0,
-            retry_delay_ms: 0,
-            timeout_ms: None,
-            fail_fast: true,
-        },
-        ManifestManagedRunStep::Step(table) => StepPolicy {
-            retry: table.retry.unwrap_or(0),
-            retry_delay_ms: table.retry_delay_ms.unwrap_or(0),
-            timeout_ms: table.timeout_ms,
-            fail_fast: table.fail_fast.unwrap_or(true),
-        },
-    }
-}
-
-struct StepPlan {
-    action: StepAction,
-    policy: StepPolicy,
-    env: BTreeMap<String, String>,
-}
-
-fn run_scheduled_steps(
-    planned_steps: &[StepPlan],
-    levels: &[Vec<usize>],
-    selection: &TaskSelection<'_>,
-    execution_root: &Path,
-    secret_env: Option<&[(&str, &SecretString)]>,
-    task_name: &str,
-    passthrough: &[String],
-) -> Result<Option<i32>, RunnerError> {
-    let mut overall_failed = None;
-    let max_parallel = dag_max_parallel();
-    for level in levels {
-        for batch in level.chunks(max_parallel) {
-            if batch
-                .iter()
-                .all(|index| planned_steps[*index].action.is_shell())
-            {
-                let batch_failed =
-                    run_parallel_shell_batch(batch, planned_steps, execution_root, secret_env)?;
-                overall_failed = overall_failed.or(batch_failed);
-            } else {
-                let batch_failed = run_step_indexes_in_order(
-                    batch.iter().copied(),
-                    planned_steps,
-                    selection,
-                    execution_root,
-                    secret_env,
-                    task_name,
-                    passthrough,
-                )?;
-                overall_failed = overall_failed.or(batch_failed);
-            }
-            if overall_failed.is_some()
-                && batch
-                    .iter()
-                    .any(|index| planned_steps[*index].policy.fail_fast)
-            {
-                return Ok(overall_failed);
-            }
-        }
-    }
-    Ok(overall_failed)
-}
-
-fn run_step_indexes_in_order<I>(
-    indexes: I,
-    planned_steps: &[StepPlan],
-    selection: &TaskSelection<'_>,
-    execution_root: &Path,
-    secret_env: Option<&[(&str, &SecretString)]>,
-    task_name: &str,
-    passthrough: &[String],
-) -> Result<Option<i32>, RunnerError>
-where
-    I: IntoIterator<Item = usize>,
-{
-    let mut overall_failed = None;
-    for index in indexes {
-        let step = &planned_steps[index];
-        match run_step_with_retry(
             step,
-            selection,
-            execution_root,
-            secret_env,
-            task_name,
-            passthrough,
-        ) {
-            Ok(()) => {}
-            Err(error) if step.policy.fail_fast => return Err(error),
-            Err(error) => {
-                overall_failed.get_or_insert(error.task_exit_status().unwrap_or(1));
+            &selection.catalog.manifest.env,
+            root,
+            &preflight.catalogs,
+        )?;
+        let mut step_env = task_env.clone();
+        step_env.extend(env.chained_env().clone());
+        for value in step_env.values_mut() {
+            *value = value
+                .replace("{repo}", &root.display().to_string())
+                .replace("{project}", &root.display().to_string());
+            if let Some(source) = &preflight.task_source {
+                *value = value.replace("{skill}", &source.source_root.display().to_string());
             }
         }
-    }
-    Ok(overall_failed)
-}
-
-fn run_parallel_shell_batch(
-    batch: &[usize],
-    planned_steps: &[StepPlan],
-    execution_root: &Path,
-    secret_env: Option<&[(&str, &SecretString)]>,
-) -> Result<Option<i32>, RunnerError> {
-    let mut handles = Vec::with_capacity(batch.len());
-    for index in batch {
-        let step = &planned_steps[*index];
-        let StepAction::Command(command) = &step.action else {
-            unreachable!("parallel shell batch only supports command steps");
+        let (label, timeout) = match step {
+            ManifestManagedRunStep::Command(_) => ((index + 1).to_string(), None),
+            ManifestManagedRunStep::Step(table) => (
+                table.id.clone().unwrap_or_else(|| (index + 1).to_string()),
+                table.timeout_ms,
+            ),
         };
-        let command = command.clone();
-        let cwd = execution_root.to_path_buf();
-        let env = step.env.clone();
-        let policy = step.policy;
-        let secrets = secret_env.map(|entries| {
-            entries
-                .iter()
-                .map(|(key, value)| ((*key).to_owned(), (*value).clone()))
-                .collect::<Vec<_>>()
-        });
-        handles.push(thread::spawn(move || {
-            run_shell_step_with_retry_owned(&command, &cwd, &env, secrets.as_deref(), policy)
-        }));
+        planned.push((
+            resolve_step_action(step, preflight, selection, passthrough)?,
+            step_env,
+            label,
+            timeout,
+        ));
     }
-
-    let mut overall_failed = None;
-    let mut first_fail_fast_error = None;
-    for (offset, handle) in handles.into_iter().enumerate() {
-        let result = handle
-            .join()
-            .map_err(|_| RunnerError::task_invocation("parallel run-array step panicked"))?;
-        match result {
-            Ok(()) => {}
-            Err(error) if planned_steps[batch[offset]].policy.fail_fast => {
-                if first_fail_fast_error.is_none() {
-                    first_fail_fast_error = Some(error);
-                }
-            }
+    let mut report = SequenceReport {
+        code: 0,
+        stdout: String::new(),
+        stderr: String::new(),
+        steps: Vec::new(),
+        failed_step: None,
+        outcome: WorkloadOutcome::Succeeded,
+    };
+    for (index, (action, env, label, timeout)) in planned.into_iter().enumerate() {
+        if report.code != 0 {
+            report
+                .steps
+                .push(serde_json::json!({"index":index, "step":label, "state":"not_started"}));
+            continue;
+        }
+        if let Some((code, outcome)) = crate::runner::task_engine::pending_stop(&label) {
+            report.code = code;
+            report.outcome = outcome;
+            report.failed_step = Some(label.clone());
+            report
+                .steps
+                .push(serde_json::json!({"index":index, "step":label, "state":"not_started"}));
+            continue;
+        }
+        let mut child = run.step(index, &label)?;
+        let child_id = child.id();
+        let result = {
+            let _parent = child.enter();
+            let _env = SpawnScope::enter(&env, secrets, preflight.output_json, timeout);
+            execute_step(
+                &action,
+                preflight,
+                selection,
+                root,
+                (task_name, passthrough),
+                timeout,
+                &mut child,
+            )
+        };
+        let (code, stdout, stderr, workload) = match result {
+            Ok(exit) => exit,
             Err(error) => {
-                overall_failed.get_or_insert(error.task_exit_status().unwrap_or(1));
+                let rendered = error
+                    .rendered_output()
+                    .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok());
+                let pending = crate::runner::task_engine::pending_stop(&label);
+                let code = pending
+                    .as_ref()
+                    .map(|(code, _)| *code)
+                    .or_else(|| {
+                        rendered
+                            .as_ref()
+                            .and_then(|value| value["exit_code"].as_i64())
+                            .map(|code| code as i32)
+                            .or(error.task_exit_status())
+                    })
+                    .unwrap_or_else(|| error.process_exit_code());
+                let (stdout, stderr) = match (&rendered, &error) {
+                    (Some(value), _) => (
+                        value["stdout"].as_str().unwrap_or_default().to_owned(),
+                        value["stderr"].as_str().unwrap_or_default().to_owned(),
+                    ),
+                    (_, RunnerError::TaskCommandFailure { stdout, stderr, .. })
+                        if !stdout.is_empty() || !stderr.is_empty() =>
+                    {
+                        (stdout.clone(), stderr.clone())
+                    }
+                    _ => (String::new(), error.to_string()),
+                };
+                (
+                    code,
+                    stdout,
+                    stderr,
+                    pending.map(|(_, outcome)| outcome).unwrap_or_else(|| {
+                        if code == 124 {
+                            WorkloadOutcome::TimedOut {
+                                phase: label.clone(),
+                            }
+                        } else {
+                            crate::runner::task_engine::workload_for_exit(code)
+                        }
+                    }),
+                )
             }
+        };
+        for warning in child.close(workload.clone()) {
+            eprintln!("warning: step `{label}`: {warning}");
+        }
+        report.steps.push(serde_json::json!({"index":index, "step":label, "run_id":child_id.to_string(), "outcome":workload, "exit_code":code, "stdout":stdout, "stderr":stderr}));
+        report.stdout.push_str(&stdout);
+        report.stderr.push_str(&stderr);
+        if code != 0 {
+            report.code = code;
+            report.outcome = workload;
+            report.failed_step = Some(label);
         }
     }
-
-    if let Some(error) = first_fail_fast_error {
-        return Err(error);
-    }
-
-    Ok(overall_failed)
+    Ok(report)
 }
 
-fn run_step_with_retry(
-    step: &StepPlan,
+type StepExit = (i32, String, String, WorkloadOutcome);
+fn execute_step(
+    action: &StepAction,
+    preflight: &ExecutionPreflight,
     selection: &TaskSelection<'_>,
-    execution_root: &Path,
-    secret_env: Option<&[(&str, &SecretString)]>,
-    task_name: &str,
-    passthrough: &[String],
-) -> Result<(), RunnerError> {
-    let mut attempt = 0;
-    loop {
-        match run_single_step(
-            step,
-            selection,
-            execution_root,
-            secret_env,
-            task_name,
-            passthrough,
-        ) {
-            Ok(()) => return Ok(()),
-            Err(error) if attempt >= step.policy.retry => return Err(error),
-            Err(_) => {
-                attempt += 1;
-                if step.policy.retry_delay_ms > 0 {
-                    thread::sleep(Duration::from_millis(step.policy.retry_delay_ms));
+    root: &Path,
+    owner: (&str, &[String]),
+    timeout_ms: Option<u64>,
+    run: &mut TaskRun,
+) -> Result<StepExit, RunnerError> {
+    let (task_name, passthrough) = owner;
+    match action {
+        StepAction::Task { invocation, cwd } => {
+            let output =
+                run_embedded_task_with_output_mode(invocation, cwd, preflight.output_mode)?;
+            nested_exit(output, preflight.output_json)
+        }
+        StepAction::Rhai { path }
+            if !super::pipeline::standard::runs_plain_host_command(preflight, selection) =>
+        {
+            legacy_container_step(|| {
+                crate::runner::script_command::execute_repo_rhai_script(
+                    root,
+                    task_name,
+                    path,
+                    passthrough,
+                )
+            })?;
+            Ok((0, String::new(), String::new(), WorkloadOutcome::Succeeded))
+        }
+        StepAction::Builtin { parsed, cwd, .. }
+            if matches!(parsed.as_ref(), Command::Exec(_) | Command::Container(_)) =>
+        {
+            let output = legacy_container_step(|| {
+                crate::runner::embedded_runner::run_embedded_command(
+                    root,
+                    effigy_cli::apply_global_json_flag(*parsed.clone(), preflight.output_json),
+                    cwd,
+                    EmbeddedRepoOverrideMode::Force,
+                )
+            })?;
+            nested_exit(output, preflight.output_json)
+        }
+        StepAction::Command(command)
+            if !super::pipeline::standard::runs_plain_host_command(preflight, selection) =>
+        {
+            legacy_container_step(|| {
+                super::pipeline::standard::run_sequence_container_command(
+                    preflight, selection, command, run,
+                )
+            })
+            .and_then(|output| nested_exit(output, preflight.output_json))
+        }
+        _ => {
+            let command = match action {
+                StepAction::Command(command) | StepAction::Builtin { command, .. } => {
+                    command.clone()
+                }
+                StepAction::Rhai { path } => {
+                    let executable =
+                        effigy_core::effigy_invocation::resolve_effigy_invocation_prefix(concat!(
+                            env!("CARGO_MANIFEST_DIR"),
+                            "/Cargo.toml"
+                        ))
+                        .map_err(RunnerError::Cwd)?;
+                    format!(
+                        "{executable} script run --file {} --repo-root {} --task-name {}",
+                        effigy_core::shell::shell_quote(&path.display().to_string()),
+                        effigy_core::shell::shell_quote(&root.display().to_string()),
+                        effigy_core::shell::shell_quote(task_name)
+                    )
+                }
+                StepAction::Noop => ":".to_owned(),
+                _ => unreachable!("references returned above"),
+            };
+            let cwd = match action {
+                StepAction::Builtin { cwd, .. } => cwd.as_path(),
+                _ => root,
+            };
+            let helper = matches!(action, StepAction::Builtin { .. } | StepAction::Rhai { .. });
+            let mut environment = Vec::new();
+            if helper {
+                environment.push((
+                    "EFFIGY_INTERNAL_SUPPRESS_HEADER".to_owned(),
+                    crate::runner::task_engine::EnvOverride::Plain("1".to_owned()),
+                ));
+            }
+            if matches!(action, StepAction::Rhai { .. }) {
+                for (key, value) in [
+                    (
+                        "EFFIGY_RHAI_ARGS_JSON",
+                        serde_json::to_string(passthrough)
+                            .map_err(|error| RunnerError::task_invocation(error.to_string()))?,
+                    ),
+                    (
+                        "EFFIGY_RHAI_CATALOG_ROOT",
+                        selection.catalog.catalog_root.display().to_string(),
+                    ),
+                    (
+                        "EFFIGY_RHAI_INVOCATION_CWD",
+                        preflight.invocation_cwd.display().to_string(),
+                    ),
+                ] {
+                    environment.push((
+                        key.to_owned(),
+                        crate::runner::task_engine::EnvOverride::Plain(value),
+                    ));
                 }
             }
+            let exit = run_plain(
+                run,
+                PlainCommand {
+                    command: &command,
+                    cwd,
+                    env: environment,
+                    capture: preflight.output_json || helper,
+                    timeout_ms,
+                },
+            )?;
+            if helper && !preflight.output_json {
+                print!("{}", String::from_utf8_lossy(&exit.stdout));
+                if exit.code == 0 {
+                    eprint!("{}", String::from_utf8_lossy(&exit.stderr));
+                }
+            }
+            Ok((
+                exit.code,
+                String::from_utf8_lossy(&exit.stdout).into_owned(),
+                String::from_utf8_lossy(&exit.stderr).into_owned(),
+                exit.workload,
+            ))
         }
     }
 }
 
-fn run_single_step(
-    step: &StepPlan,
-    _selection: &TaskSelection<'_>,
-    execution_root: &Path,
-    secret_env: Option<&[(&str, &SecretString)]>,
-    task_name: &str,
-    passthrough: &[String],
-) -> Result<(), RunnerError> {
-    match &step.action {
-        StepAction::Command(command) => run_shell_step_with_retry(
-            command,
-            execution_root,
-            &step.env,
-            secret_env,
-            StepPolicy {
-                retry: 0,
-                retry_delay_ms: 0,
-                timeout_ms: step.policy.timeout_ms,
-                fail_fast: step.policy.fail_fast,
-            },
-        ),
-        StepAction::Task { invocation, cwd } => {
-            ensure_timeout_supported(&step.action, step.policy.timeout_ms)?;
-            let _env_guard = ScopedEnvOverride::set(&step.env);
-            let output = if nested_output_mode() == ExecutionOutputMode::Passthrough {
-                run_embedded_task_with_output_mode(
-                    invocation,
-                    cwd,
-                    ExecutionOutputMode::Passthrough,
-                )?
-            } else {
-                run_embedded_task(invocation, cwd)?
-            };
-            render_nested_output(&output)
+fn nested_exit(output: String, capture: bool) -> Result<StepExit, RunnerError> {
+    if capture {
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(&output) {
+            if value["schema"] != "effigy.task.run.v1" {
+                return Ok((0, output, String::new(), WorkloadOutcome::Succeeded));
+            }
+            let code = value["exit_code"].as_i64().unwrap_or(0) as i32;
+            return Ok((
+                code,
+                value["stdout"].as_str().unwrap_or_default().to_owned(),
+                value["stderr"].as_str().unwrap_or_default().to_owned(),
+                crate::runner::task_engine::workload_for_exit(code),
+            ));
         }
-
-        StepAction::Builtin { command, cwd } => {
-            ensure_timeout_supported(&step.action, step.policy.timeout_ms)?;
-            let _env_guard = ScopedEnvOverride::set(&step.env);
-            let output = run_embedded_command(
-                execution_root,
-                *command.clone(),
-                cwd,
-                EmbeddedRepoOverrideMode::Force,
-            )?;
-            render_nested_output(&output)
-        }
-        StepAction::Rhai { path } => {
-            ensure_timeout_supported(&step.action, step.policy.timeout_ms)?;
-            let _env_guard = ScopedEnvOverride::set(&step.env);
-            execute_repo_rhai_script(execution_root, task_name, path, passthrough)
-        }
-        StepAction::Noop => Ok(()),
+    } else if !output.is_empty() {
+        print!("{output}");
     }
+    Ok((
+        0,
+        if capture { output } else { String::new() },
+        String::new(),
+        WorkloadOutcome::Succeeded,
+    ))
+}
+
+/// TODO(#236): replace legacy container exec/setup with RemoteCustody and its
+/// recovery adapter once #232 publishes the environment generation. Callers
+/// admit a child Run first; this seam preserves the legacy exit status.
+pub(in crate::runner) fn legacy_container_step<T>(
+    execute: impl FnOnce() -> Result<T, RunnerError>,
+) -> Result<T, RunnerError> {
+    execute()
 }
 
 enum StepAction {
@@ -528,7 +459,8 @@ enum StepAction {
         cwd: PathBuf,
     },
     Builtin {
-        command: Box<Command>,
+        command: String,
+        parsed: Box<Command>,
         cwd: PathBuf,
     },
     Rhai {
@@ -536,19 +468,15 @@ enum StepAction {
     },
     Noop,
 }
-
 impl StepAction {
-    fn is_shell(&self) -> bool {
-        matches!(self, Self::Command(_))
-    }
-
+    #[cfg(test)]
     fn kind(&self) -> &'static str {
         match self {
             Self::Command(_) => "command",
             Self::Task { .. } => "task",
-            Self::Builtin { .. } => "builtin task",
-            Self::Rhai { .. } => "rhai script",
-            Self::Noop => "env-only step",
+            Self::Builtin { .. } => "builtin",
+            Self::Rhai { .. } => "rhai",
+            Self::Noop => "env",
         }
     }
 }
@@ -593,7 +521,6 @@ fn resolve_step_action(
                     Ok(StepAction::Command(render_skill_token(rendered, preflight)))
                 }
                 (None, Some(task_ref), None) => resolve_task_step(task_ref, preflight, selection),
-
                 (None, None, Some(path)) => Ok(StepAction::Rhai {
                     path: PathBuf::from(render_script_path(
                         path,
@@ -619,8 +546,9 @@ fn resolve_task_step(
     preflight: &ExecutionPreflight,
     selection: &TaskSelection<'_>,
 ) -> Result<StepAction, RunnerError> {
-    let (mut selector, mut args) =
-        parse_task_reference_invocation(task_ref).map_err(RunnerError::task_invocation)?;
+    let (mut selector, mut args) = parse_task_reference_invocation(task_ref).map_err(|error| {
+        RunnerError::task_invocation(format!("run step task ref `{task_ref}`: {error}"))
+    })?;
     args.extend(preflight.runtime_args_exec.passthrough.clone());
     if effigy_managed::BUILTIN_TASKS
         .iter()
@@ -640,9 +568,15 @@ fn resolve_task_step(
             selection.catalog.catalog_root.clone()
         };
         let cwd = preflight.task_execution_root(&catalog_root).to_path_buf();
-        let command = parse_builtin_step_command(&selector.task_name, &args, &cwd)?;
+        let parsed = parse_builtin_step_command(&selector.task_name, &args, &cwd)?;
+        let command = effigy_managed::render_builtin_reference_invocation(
+            &selector.task_name,
+            &effigy_tasks::render_template_args(&args),
+            &cwd,
+        )?;
         return Ok(StepAction::Builtin {
-            command: Box::new(command),
+            command,
+            parsed: Box::new(parsed),
             cwd,
         });
     }
@@ -657,6 +591,9 @@ fn resolve_task_step(
     } else {
         selector.prefix = Some(selection.catalog.alias.clone());
     }
+    select_catalog_and_task(&selector, &preflight.catalogs, &preflight.invocation_cwd).map_err(
+        |error| RunnerError::task_invocation(format!("run step task ref `{task_ref}`: {error}")),
+    )?;
     let invocation = TaskInvocation {
         name: render_task_selector(&selector),
         args,
@@ -707,275 +644,6 @@ fn parse_builtin_step_command(
     parse_embedded_command(repo_root, &argv, false, EmbeddedRepoOverrideMode::Force)
 }
 
-fn run_shell_step_with_retry(
-    command: &str,
-    cwd: &Path,
-    step_env: &BTreeMap<String, String>,
-    secret_env: Option<&[(&str, &SecretString)]>,
-    policy: StepPolicy,
-) -> Result<(), RunnerError> {
-    let mut attempt = 0;
-    loop {
-        match run_shell_step_once(command, cwd, step_env, secret_env, policy.timeout_ms) {
-            Ok(()) => return Ok(()),
-            Err(error) if attempt >= policy.retry => return Err(error),
-            Err(_) => {
-                attempt += 1;
-                if policy.retry_delay_ms > 0 {
-                    thread::sleep(Duration::from_millis(policy.retry_delay_ms));
-                }
-            }
-        }
-    }
-}
-
-fn run_shell_step_with_retry_owned(
-    command: &str,
-    cwd: &Path,
-    step_env: &BTreeMap<String, String>,
-    secret_env: Option<&[(String, SecretString)]>,
-    policy: StepPolicy,
-) -> Result<(), RunnerError> {
-    let mut attempt = 0;
-    loop {
-        match run_shell_step_once_owned(command, cwd, step_env, secret_env, policy.timeout_ms) {
-            Ok(()) => return Ok(()),
-            Err(error) if attempt >= policy.retry => return Err(error),
-            Err(_) => {
-                attempt += 1;
-                if policy.retry_delay_ms > 0 {
-                    thread::sleep(Duration::from_millis(policy.retry_delay_ms));
-                }
-            }
-        }
-    }
-}
-
-fn run_shell_step_once(
-    command: &str,
-    cwd: &Path,
-    step_env: &BTreeMap<String, String>,
-    secret_env: Option<&[(&str, &SecretString)]>,
-    timeout_ms: Option<u64>,
-) -> Result<(), RunnerError> {
-    let mut process = ProcessCommand::new("sh");
-    process.arg("-c").arg(command).current_dir(cwd);
-    with_local_node_bin_path(&mut process, cwd);
-    crate::runner::task_engine::mark_child(&mut process);
-    process.envs(
-        step_env
-            .iter()
-            .map(|(key, value)| (key.as_str(), value.as_str())),
-    );
-    if let Some(secrets) = secret_env {
-        for (key, secret) in secrets {
-            process.env(key, secret.expose());
-        }
-    }
-    finish_shell_process(process, command, timeout_ms)
-}
-
-fn run_shell_step_once_owned(
-    command: &str,
-    cwd: &Path,
-    step_env: &BTreeMap<String, String>,
-    secret_env: Option<&[(String, SecretString)]>,
-    timeout_ms: Option<u64>,
-) -> Result<(), RunnerError> {
-    let mut process = ProcessCommand::new("sh");
-    process.arg("-c").arg(command).current_dir(cwd);
-    with_local_node_bin_path(&mut process, cwd);
-    crate::runner::task_engine::mark_child(&mut process);
-    process.envs(
-        step_env
-            .iter()
-            .map(|(key, value)| (key.as_str(), value.as_str())),
-    );
-    if let Some(secrets) = secret_env {
-        for (key, secret) in secrets {
-            process.env(key, secret.expose());
-        }
-    }
-    finish_shell_process(process, command, timeout_ms)
-}
-
-fn finish_shell_process(
-    mut process: ProcessCommand,
-    command: &str,
-    timeout_ms: Option<u64>,
-) -> Result<(), RunnerError> {
-    let own_group = timeout_ms.is_some() || crate::runner::owned_children::signal_scope_active();
-    if own_group {
-        crate::runner::owned_children::configure_owned_process_group(&mut process);
-    }
-    if let Some(timeout_ms) = timeout_ms {
-        return wait_for_shell_step_with_timeout(
-            process
-                .spawn()
-                .map_err(|error| RunnerError::TaskCommandLaunch {
-                    command: command.to_owned(),
-                    error,
-                })?,
-            command,
-            timeout_ms,
-        );
-    }
-
-    let status = if own_group {
-        let child = process
-            .spawn()
-            .map_err(|error| RunnerError::TaskCommandLaunch {
-                command: command.to_owned(),
-                error,
-            })?;
-        crate::runner::owned_children::wait_for_owned_child_unbounded(child).map_err(|error| {
-            RunnerError::TaskCommandLaunch {
-                command: command.to_owned(),
-                error,
-            }
-        })?
-    } else {
-        process
-            .status()
-            .map_err(|error| RunnerError::TaskCommandLaunch {
-                command: command.to_owned(),
-                error,
-            })?
-    };
-    if status.success() {
-        return Ok(());
-    }
-    Err(RunnerError::TaskCommandFailure {
-        command: command.to_owned(),
-        code: status.code(),
-        stdout: String::new(),
-        stderr: String::new(),
-    })
-}
-
-fn wait_for_shell_step_with_timeout(
-    child: Child,
-    command: &str,
-    timeout_ms: u64,
-) -> Result<(), RunnerError> {
-    let deadline = Instant::now() + Duration::from_millis(timeout_ms);
-    match crate::runner::owned_children::wait_for_owned_child(
-        child,
-        deadline,
-        Duration::from_millis(10),
-    )
-    .map_err(|error| RunnerError::TaskCommandLaunch {
-        command: command.to_owned(),
-        error,
-    })? {
-        crate::runner::owned_children::OwnedChildOutcome::Exited(status) if status.success() => {
-            Ok(())
-        }
-        crate::runner::owned_children::OwnedChildOutcome::Exited(status) => {
-            Err(RunnerError::TaskCommandFailure {
-                command: command.to_owned(),
-                code: status.code(),
-                stdout: String::new(),
-                stderr: String::new(),
-            })
-        }
-        crate::runner::owned_children::OwnedChildOutcome::TimedOut => {
-            Err(RunnerError::TaskCommandFailure {
-                command: command.to_owned(),
-                code: Some(124),
-                stdout: String::new(),
-                stderr: String::new(),
-            })
-        }
-    }
-}
-
-fn dag_max_parallel() -> usize {
-    std::env::var("EFFIGY_DAG_MAX_PARALLEL")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(4)
-}
-
-fn ensure_timeout_supported(
-    action: &StepAction,
-    timeout_ms: Option<u64>,
-) -> Result<(), RunnerError> {
-    if timeout_ms.is_some() && !action.is_shell() {
-        return Err(RunnerError::task_invocation(format!(
-            "run-array timeout is only supported for shell command steps in-process; `{}` steps cannot set `timeout_ms`",
-            action.kind()
-        )));
-    }
-    Ok(())
-}
-
-fn render_nested_output(output: &str) -> Result<(), RunnerError> {
-    let passthrough = nested_output_mode() == ExecutionOutputMode::Passthrough;
-    if (passthrough && output.is_empty()) || (!passthrough && output.trim().is_empty()) {
-        return Ok(());
-    }
-    let mut stdout = io::stdout().lock();
-    stdout
-        .write_all(output.as_bytes())
-        .map_err(RunnerError::Cwd)?;
-    if !passthrough && !output.ends_with('\n') {
-        stdout.write_all(b"\n").map_err(RunnerError::Cwd)?;
-    }
-    stdout.flush().map_err(RunnerError::Cwd)
-}
-
-thread_local! {
-    static NESTED_OUTPUT_MODE: std::cell::Cell<ExecutionOutputMode> = const {
-        std::cell::Cell::new(ExecutionOutputMode::Capture)
-    };
-}
-
-fn nested_output_mode() -> ExecutionOutputMode {
-    NESTED_OUTPUT_MODE.with(std::cell::Cell::get)
-}
-
-struct ScopedOutputMode(ExecutionOutputMode);
-
-impl ScopedOutputMode {
-    fn set(mode: ExecutionOutputMode) -> Self {
-        Self(NESTED_OUTPUT_MODE.with(|current| current.replace(mode)))
-    }
-}
-
-impl Drop for ScopedOutputMode {
-    fn drop(&mut self) {
-        NESTED_OUTPUT_MODE.with(|current| current.set(self.0));
-    }
-}
-
-struct ScopedEnvOverride {
-    original: Vec<(String, Option<OsString>)>,
-}
-
-impl ScopedEnvOverride {
-    fn set(entries: &BTreeMap<String, String>) -> Self {
-        let mut original = Vec::with_capacity(entries.len());
-        for (key, value) in entries {
-            original.push((key.clone(), std::env::var_os(key)));
-            std::env::set_var(key, value);
-        }
-        Self { original }
-    }
-}
-
-impl Drop for ScopedEnvOverride {
-    fn drop(&mut self) {
-        for (key, value) in self.original.drain(..).rev() {
-            match value {
-                Some(value) => std::env::set_var(&key, value),
-                None => std::env::remove_var(&key),
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::parse_builtin_step_command;
@@ -983,7 +651,6 @@ mod tests {
     use crate::runner::execute::preflight::ExecutionPreflight;
     use effigy_cli::Command;
     use effigy_core::resolver::{ResolutionMode, ResolvedTarget};
-    use effigy_env::secret::SecretString;
     use effigy_execution::ExecutionDiscoveryPlan;
     use effigy_manifest::{LoadedCatalog, TaskManifest, TaskSelection};
     use effigy_tasks::{CatalogSelectionMode, TaskRuntimeArgs, TaskSelector};
@@ -1042,6 +709,8 @@ mod tests {
             "/workspace-root/acowtancy/farmyard",
             manifest_from_toml(
                 r#"
+[tasks."db:migrate"]
+run = "true"
 [tasks."state:apply:schema"]
 run = [{ task = "db:migrate" }]
 "#,
@@ -1111,323 +780,5 @@ run = [{ task = "db:migrate" }]
             }
             other => panic!("expected nested task action, got {:?}", other.kind()),
         }
-    }
-
-    #[cfg(unix)]
-    fn empty_step_env() -> std::collections::BTreeMap<String, String> {
-        std::collections::BTreeMap::new()
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn timeout_descendants_sequence_success_and_nonzero_exit() {
-        let _lock = crate::runner::owned_children::hold_group_cleanup_test_lock();
-        let dir = tempfile::Builder::new()
-            .prefix("effigy-seq-exit-")
-            .tempdir()
-            .expect("tempdir");
-        super::run_shell_step_once("true", dir.path(), &empty_step_env(), None, None)
-            .expect("true must succeed");
-        let borrowed_fail =
-            super::run_shell_step_once("false", dir.path(), &empty_step_env(), None, None)
-                .expect_err("false must fail");
-        assert_eq!(borrowed_fail.task_exit_status(), Some(1));
-
-        let secret = SecretString::new("timeout-proof".to_owned());
-        let owned = vec![("EFFIGY_TIMEOUT_PROOF".to_owned(), secret)];
-        super::run_shell_step_once_owned(
-            "true",
-            dir.path(),
-            &empty_step_env(),
-            Some(owned.as_slice()),
-            None,
-        )
-        .expect("owned true must succeed");
-        let owned_fail = super::run_shell_step_once_owned(
-            "false",
-            dir.path(),
-            &empty_step_env(),
-            Some(owned.as_slice()),
-            None,
-        )
-        .expect_err("owned false must fail");
-        assert_eq!(owned_fail.task_exit_status(), Some(1));
-    }
-
-    #[cfg(unix)]
-    fn assert_sequence_timeout_reaps(
-        run: impl FnOnce(&std::path::Path, &str) -> Result<(), crate::runner::error::RunnerError>,
-    ) {
-        use crate::runner::owned_children::timeout_descendant_proof::TimeoutDescendantFixture;
-        use std::time::{Duration, Instant};
-
-        let mut fixture = TimeoutDescendantFixture::new("effigy-seq-timeout-");
-        fixture.spawn_unrelated_sibling();
-        let command = fixture.hang_command();
-        let started = Instant::now();
-        let error = run(fixture.cwd(), &command).expect_err("hang must time out");
-        let pids = fixture.wait_for_recorded_pids();
-        assert_eq!(error.task_exit_status(), Some(124), "{error}");
-        fixture.assert_owned_gone(&pids);
-        fixture.assert_sibling_alive();
-        assert!(
-            started.elapsed() < Duration::from_secs(10),
-            "timeout must not wait out /bin/sleep 300"
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn timeout_descendants_sequence_borrowed_reaps_leader_and_descendant() {
-        let _lock = crate::runner::owned_children::hold_group_cleanup_test_lock();
-        assert_sequence_timeout_reaps(|cwd, command| {
-            super::run_shell_step_once(command, cwd, &empty_step_env(), None, Some(2_000))
-        });
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn timeout_descendants_sequence_owned_reaps_leader_and_descendant() {
-        let _lock = crate::runner::owned_children::hold_group_cleanup_test_lock();
-        let secret = SecretString::new("timeout-proof".to_owned());
-        let owned = vec![("EFFIGY_TIMEOUT_PROOF".to_owned(), secret)];
-        assert_sequence_timeout_reaps(|cwd, command| {
-            super::run_shell_step_once_owned(
-                command,
-                cwd,
-                &empty_step_env(),
-                Some(owned.as_slice()),
-                Some(2_000),
-            )
-        });
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn timeout_descendants_sequence_reaps_term_immune_descendant() {
-        use crate::runner::owned_children::timeout_descendant_proof::TimeoutDescendantFixture;
-        use std::time::{Duration, Instant};
-
-        let _lock = crate::runner::owned_children::hold_group_cleanup_test_lock();
-        let mut fixture = TimeoutDescendantFixture::new("effigy-seq-timeout-term-immune-");
-        fixture.spawn_unrelated_sibling();
-        let command = fixture.hang_command_ignoring_term();
-        let started = Instant::now();
-        let error = super::run_shell_step_once(
-            &command,
-            fixture.cwd(),
-            &empty_step_env(),
-            None,
-            Some(2_000),
-        )
-        .expect_err("hang must time out");
-        let pids = fixture.wait_for_recorded_pids();
-        assert_eq!(error.task_exit_status(), Some(124), "{error}");
-        fixture.wait_until_owned_gone(&pids);
-        fixture.assert_sibling_alive();
-        assert!(
-            started.elapsed() < Duration::from_secs(10),
-            "timeout must not wait out /bin/sleep 300"
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn release_preparation_fixture_timeout_descendants_sequence_interrupt_reaps_leader_and_descendant(
-    ) {
-        use crate::runner::owned_children::timeout_descendant_proof::TimeoutDescendantFixture;
-        use std::thread;
-        use std::time::{Duration, Instant};
-
-        let _locks = crate::runner::owned_children::hold_signal_proof_test_locks();
-        let mut fixture = TimeoutDescendantFixture::new("effigy-seq-interrupt-");
-        fixture.spawn_unrelated_sibling();
-        let command = fixture.hang_command();
-        let cwd = fixture.cwd().to_path_buf();
-        let started = Instant::now();
-        let handle = thread::spawn(move || {
-            super::run_shell_step_once(&command, &cwd, &empty_step_env(), None, Some(30_000))
-        });
-        TimeoutDescendantFixture::wait_until_signal_scope_active();
-        let pids = fixture.wait_for_recorded_pids();
-        crate::runner::owned_children::record_test_signal_initiation(libc::SIGINT);
-        let raise_result = unsafe { libc::raise(libc::SIGINT) };
-        crate::runner::owned_children::record_test_signal_raise_result(libc::SIGINT, raise_result);
-        let _ = handle.join().expect("sequence interrupt wait thread");
-        fixture.wait_until_owned_gone(&pids);
-        fixture.assert_sibling_alive();
-        assert!(
-            started.elapsed() < Duration::from_secs(10),
-            "interrupt must not wait out /bin/sleep 300"
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn release_preparation_fixture_timeout_descendants_sequence_interrupt_without_forwarding_fails_reap_oracle(
-    ) {
-        use crate::runner::owned_children::timeout_descendant_proof::TimeoutDescendantFixture;
-        use std::panic::AssertUnwindSafe;
-        use std::thread;
-        use std::time::{Duration, Instant};
-
-        let _seam = crate::runner::owned_children::disable_group_cleanup_for_test();
-        let _test_state_lock = crate::contract_test_support::lock_test();
-        let _forwarding = crate::runner::owned_children::disable_forwarding_for_test();
-        let mut fixture = TimeoutDescendantFixture::new("effigy-seq-interrupt-negative-");
-        fixture.spawn_unrelated_sibling();
-        let command = fixture.hang_command();
-        let cwd = fixture.cwd().to_path_buf();
-        let handle = thread::spawn(move || {
-            super::run_shell_step_once(&command, &cwd, &empty_step_env(), None, Some(2_000))
-        });
-        TimeoutDescendantFixture::wait_until_signal_scope_active();
-        let pids = fixture.wait_for_recorded_pids();
-        crate::runner::owned_children::record_test_signal_initiation(libc::SIGINT);
-        let raise_result = unsafe { libc::raise(libc::SIGINT) };
-        crate::runner::owned_children::record_test_signal_raise_result(libc::SIGINT, raise_result);
-        let deadline = Instant::now() + Duration::from_millis(500);
-        while Instant::now() < deadline {
-            assert!(
-                pids.iter()
-                    .any(|pid| TimeoutDescendantFixture::pid_alive(*pid)),
-                "forwarding disabled: a descendant must still be alive: {pids:?}"
-            );
-            thread::sleep(Duration::from_millis(20));
-        }
-        let oracle = std::panic::catch_unwind(AssertUnwindSafe(|| {
-            fixture.assert_owned_gone(&pids);
-        }));
-        assert!(
-            oracle.is_err(),
-            "reap oracle must fail while interrupt forwarding is disabled"
-        );
-        fixture.assert_sibling_alive();
-        let _ = handle
-            .join()
-            .expect("sequence interrupt negative wait thread");
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn timeout_descendants_sequence_group_cleanup_disabled_fails_reap_oracle() {
-        use crate::runner::owned_children::timeout_descendant_proof::TimeoutDescendantFixture;
-        use std::panic::AssertUnwindSafe;
-
-        let _seam = crate::runner::owned_children::disable_group_cleanup_for_test();
-        let mut fixture = TimeoutDescendantFixture::new("effigy-seq-timeout-negative-");
-        fixture.spawn_unrelated_sibling();
-        let command = fixture.hang_command();
-        let error = super::run_shell_step_once(
-            &command,
-            fixture.cwd(),
-            &empty_step_env(),
-            None,
-            Some(2_000),
-        )
-        .expect_err("pid-only timeout must still return 124");
-        assert_eq!(error.task_exit_status(), Some(124), "{error}");
-        let pids = fixture.wait_for_recorded_pids();
-        assert!(
-            pids.iter()
-                .any(|pid| TimeoutDescendantFixture::pid_alive(*pid)),
-            "group cleanup disabled: a descendant must still be alive: {pids:?}"
-        );
-        let oracle = std::panic::catch_unwind(AssertUnwindSafe(|| {
-            fixture.assert_owned_gone(&pids);
-        }));
-        assert!(
-            oracle.is_err(),
-            "reap oracle must fail while group cleanup is disabled"
-        );
-        fixture.assert_sibling_alive();
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn timeout_descendants_sequence_fixture_guard_reaps_on_failure() {
-        use crate::runner::owned_children::timeout_descendant_proof::TimeoutDescendantFixture;
-        use std::os::unix::process::CommandExt;
-        use std::panic::AssertUnwindSafe;
-        use std::process::{Command, Stdio};
-
-        let _lock = crate::runner::owned_children::hold_group_cleanup_test_lock();
-        let mut fixture = TimeoutDescendantFixture::new("effigy-seq-timeout-guard-");
-        let command = fixture.hang_command();
-        let child = Command::new("sh")
-            .arg("-c")
-            .arg(&command)
-            .current_dir(fixture.cwd())
-            .process_group(0)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("spawn hang without production reap");
-        fixture.adopt_direct_child(child);
-        let pids = fixture.wait_for_recorded_pids();
-        assert!(
-            pids.iter()
-                .all(|pid| TimeoutDescendantFixture::pid_alive(*pid)),
-            "fixture failure path starts with a live tree: {pids:?}"
-        );
-        let panicked = std::panic::catch_unwind(AssertUnwindSafe(|| {
-            panic!("fixture failure");
-        }));
-        assert!(panicked.is_err());
-        drop(fixture);
-        let alive = pids
-            .iter()
-            .copied()
-            .filter(|pid| TimeoutDescendantFixture::pid_alive(*pid))
-            .collect::<Vec<_>>();
-        assert!(
-            alive.is_empty(),
-            "fixture RAII must reap recorded pids after failure: {alive:?}"
-        );
-    }
-
-    /// The real owned sequence caller spawns its child, then the shared
-    /// supervisor's scope install fails. The caller must report the original
-    /// launch error (never a timeout or success) and the already-owned tree
-    /// must be reaped. The readiness-gated injection lets the child record
-    /// itself before the failure fires.
-    #[cfg(unix)]
-    #[test]
-    fn release_preparation_fixture_supervision_init_sequence_owned_caller_reports_error_and_reaps_tree(
-    ) {
-        use crate::runner::owned_children::timeout_descendant_proof::TimeoutDescendantFixture;
-        use crate::runner::owned_children::SupervisionInitFailurePointForTest;
-
-        let _locks = crate::runner::owned_children::hold_signal_proof_test_locks();
-        let mut fixture = TimeoutDescendantFixture::new("effigy-seq-supervision-init-");
-        fixture.spawn_unrelated_sibling();
-        let command = fixture.hang_command();
-        let _inject =
-            crate::runner::owned_children::inject_supervision_init_failure_when_ready_for_test(
-                SupervisionInitFailurePointForTest::BeforeSignals,
-                fixture.ready_path().to_path_buf(),
-            );
-        let error = super::run_shell_step_once_owned(
-            &command,
-            fixture.cwd(),
-            &empty_step_env(),
-            None,
-            Some(30_000),
-        )
-        .expect_err("initialization failure must fail the owned step");
-        let pids = fixture.wait_for_recorded_pids();
-        let rendered = error.to_string();
-        assert!(
-            rendered.contains("injected signal supervision initialization failure"),
-            "original initialization error must be preserved: {rendered}"
-        );
-        assert_eq!(
-            error.task_exit_status(),
-            None,
-            "an initialization failure must not report a command exit code"
-        );
-        fixture.wait_until_owned_gone(&pids);
-        fixture.assert_sibling_alive();
     }
 }

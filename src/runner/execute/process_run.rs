@@ -31,6 +31,7 @@ pub(super) fn run_task_process(
             cwd: context.repo_for_task(),
             env,
             capture: output_json,
+            timeout_ms: None,
         },
     )?;
     *workload = Some(exit.workload.clone());

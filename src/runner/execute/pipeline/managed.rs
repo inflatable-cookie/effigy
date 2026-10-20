@@ -199,6 +199,7 @@ pub(in crate::runner) fn run_managed_task(
                 args: &preflight.runtime_args_exec.passthrough,
                 key: run_key,
                 admission: selection.task.admission,
+                cwd: Some(&preflight.invocation_cwd),
             })?;
             let result = run_workspace_with_repo_root_and_cleanup_override(
                 &preflight.resolved.resolved_root,
@@ -254,21 +255,6 @@ pub(in crate::runner) fn run_managed_task(
     } else {
         Vec::new()
     };
-    if execution_mode != ManagedExecutionMode::RenderPlan {
-        run_managed_setup_steps(
-            &mut plan,
-            ManagedSetupContext {
-                preflight,
-                selection,
-                env_schema_resolved: &env_schema_resolved,
-                binding_resolution: &binding_resolution,
-                container_binding,
-                container_handoff,
-                container_repo_root: container_repo_root.as_deref(),
-                managed_task_secret_pairs: &managed_task_secret_pairs,
-            },
-        )?;
-    }
     if !container_handoff
         && execution_mode == ManagedExecutionMode::Tui
         && !plan
@@ -339,6 +325,10 @@ pub(in crate::runner) fn run_managed_task(
     // Rendering the plan is a read; only a run that starts processes
     // holds the task's gate. The profile is recorded on the run; the gate
     // stays per task, so two profiles of one task still exclude each other.
+    // The managed frontend owns signals after setup. Keep the task engine's
+    // idle watcher from exiting between setup custody and frontend settlement.
+    let _managed_signals = (execution_mode != ManagedExecutionMode::RenderPlan)
+        .then(crate::runner::task_engine::CustodyWait::enter);
     let mut task_run = None;
     let mut task_target = TaskTarget::for_selection(
         &preflight.resolved.resolved_root,
@@ -358,9 +348,35 @@ pub(in crate::runner) fn run_managed_task(
             args: &preflight.runtime_args_exec.passthrough,
             key: run_key,
             admission: selection.task.admission,
+            cwd: Some(&preflight.invocation_cwd),
         })?);
     }
 
+    let setup_result = if let Some(run) = task_run.as_ref() {
+        let _parent = run.enter();
+        run_managed_setup_steps(
+            &mut plan,
+            run,
+            ManagedSetupContext {
+                preflight,
+                selection,
+                env_schema_resolved: &env_schema_resolved,
+                binding_resolution: &binding_resolution,
+                container_binding,
+                container_handoff,
+                container_repo_root: container_repo_root.as_deref(),
+                managed_task_secret_pairs: &managed_task_secret_pairs,
+            },
+        )
+    } else {
+        Ok(())
+    };
+    if setup_result.is_err() {
+        if let Some(run) = task_run.take() {
+            close_task_run(run, &task_target, &setup_result);
+        }
+        setup_result?;
+    }
     if execution_mode != ManagedExecutionMode::RenderPlan && !container_handoff {
         maybe_start_managed_gateway(
             &repo_for_task,
@@ -489,8 +505,15 @@ pub(in crate::runner) fn run_managed_task(
 fn close_task_run<T>(run: TaskRun, target: &TaskTarget, result: &Result<T, RunnerError>) {
     let workload = match result {
         Ok(_) => effigy_kernel::outcome::WorkloadOutcome::Succeeded,
-        Err(RunnerError::TaskManagedNonZeroExit { .. }) | Err(_) => {
-            effigy_kernel::outcome::WorkloadOutcome::Failed { code: 1 }
+        Err(error) => {
+            let code = error.task_exit_status().unwrap_or(1);
+            if code == 124 {
+                effigy_kernel::outcome::WorkloadOutcome::TimedOut {
+                    phase: target.label.clone(),
+                }
+            } else {
+                crate::runner::task_engine::workload_for_exit(code)
+            }
         }
     };
     for warning in run.close(workload) {
@@ -511,6 +534,7 @@ struct ManagedSetupContext<'a, 'catalog> {
 
 fn run_managed_setup_steps(
     plan: &mut effigy_managed::ManagedTaskPlan,
+    run: &TaskRun,
     context: ManagedSetupContext<'_, '_>,
 ) -> Result<(), RunnerError> {
     let ManagedSetupContext {
@@ -537,14 +561,23 @@ fn run_managed_setup_steps(
             continue;
         }
         if managed_setup_steps_can_run_locally(process, container_binding, container_handoff) {
+            let mut local_task = selection.task.clone();
+            local_task.run_in = Some(effigy_manifest::ManifestTaskRunIn::Host);
+            let local_selection = TaskSelection {
+                task: &local_task,
+                catalog: selection.catalog,
+                mode: selection.mode,
+                evidence: selection.evidence.clone(),
+                surface: selection.surface,
+            };
             run_in_process_sequence_steps(
                 preflight,
-                selection,
+                &local_selection,
                 &process.setup_steps,
                 env_schema_resolved,
                 local_secret_ref,
-                &process.name,
-                &[],
+                (&process.name, &[]),
+                run,
             )?;
             process.setup = None;
             continue;
@@ -554,14 +587,36 @@ fn run_managed_setup_steps(
             super::super::api::ExecutionBindingKind::NamedContainer
         ) && !plan_has_lifecycle
         {
-            run_named_container_managed_setup_steps(
-                preflight,
-                selection,
-                process,
-                container_binding,
-                container_repo_root,
-                managed_task_secret_pairs,
-            )?;
+            for (index, step) in process.setup_steps.iter().enumerate() {
+                let child = run.step(index, &format!("{} setup {}", process.name, index + 1))?;
+                let result = {
+                    let _parent = child.enter();
+                    let mut single = process.clone();
+                    single.setup_steps = vec![step.clone()];
+                    crate::runner::execute::sequence_run::legacy_container_step(|| {
+                        run_named_container_managed_setup_steps(
+                            preflight,
+                            selection,
+                            &single,
+                            container_binding,
+                            container_repo_root,
+                            managed_task_secret_pairs,
+                        )
+                    })
+                };
+                let workload = result
+                    .as_ref()
+                    .map(|_| effigy_kernel::outcome::WorkloadOutcome::Succeeded)
+                    .unwrap_or_else(|error| {
+                        crate::runner::task_engine::workload_for_exit(
+                            error.task_exit_status().unwrap_or(1),
+                        )
+                    });
+                for warning in child.close(workload) {
+                    eprintln!("warning: {warning}");
+                }
+                result?;
+            }
             process.setup = None;
         }
     }

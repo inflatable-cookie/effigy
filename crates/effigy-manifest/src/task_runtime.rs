@@ -271,15 +271,7 @@ pub struct ManifestManagedRunStepTable {
     #[serde(default)]
     pub id: Option<String>,
     #[serde(default)]
-    pub depends_on: Vec<String>,
-    #[serde(default)]
     pub timeout_ms: Option<u64>,
-    #[serde(default)]
-    pub retry: Option<usize>,
-    #[serde(default)]
-    pub retry_delay_ms: Option<u64>,
-    #[serde(default)]
-    pub fail_fast: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
@@ -348,11 +340,7 @@ impl ManifestInlineTaskDefinition {
                     env: None,
                     env_file: None,
                     id: None,
-                    depends_on: Vec::new(),
                     timeout_ms: None,
-                    retry: None,
-                    retry_delay_ms: None,
-                    fail_fast: None,
                 })),
             ])),
             run_in: self.run_in,

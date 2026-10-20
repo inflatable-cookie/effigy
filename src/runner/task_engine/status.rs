@@ -19,6 +19,10 @@ pub(in crate::runner) const HISTORY_LIMIT: usize = 20;
 #[derive(Debug, Clone, Serialize)]
 pub(in crate::runner) struct RunView {
     pub(in crate::runner) run_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(in crate::runner) step: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(in crate::runner) steps: Vec<RunView>,
     pub(in crate::runner) state: String,
     pub(in crate::runner) phase: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -124,7 +128,14 @@ pub(in crate::runner) fn task_status(target: &TaskTarget, limit: usize) -> TaskS
         // Only the newest open run can hold the gate now; older open rows
         // are interrupted runs the next admission settles.
         let held = if index == 0 { Some(&gate) } else { None };
-        let run = project(summary, held);
+        let mut run = project(summary, held);
+        match project_children(&cx, &root, &reader, summary.id, 0) {
+            Ok(steps) => run.steps = steps,
+            Err(reason) => {
+                run.state = "unknown".to_owned();
+                view.warnings.push(reason);
+            }
+        }
         if index == 0 {
             view.state = run.state.clone();
             if summary.phase != Phase::Closed {
@@ -182,6 +193,12 @@ fn project(summary: &RunSummary, gate: Option<&Observed<GateState>>) -> RunView 
     };
     RunView {
         run_id: summary.id.to_string(),
+        step: summary
+            .parent
+            .and(summary.invocation.as_ref())
+            .and_then(|inv| inv.spec().argv.first())
+            .map(|label| label.to_string_lossy().into_owned()),
+        steps: Vec::new(),
         state,
         phase: phase_name(summary.phase),
         profile,
@@ -284,4 +301,35 @@ pub(in crate::runner) fn run_liveness(run_id: &str, next: &[&str]) -> RunLivenes
             }
         }
     }
+}
+
+fn project_children(
+    cx: &effigy_kernel::ctx::ObserveContext,
+    root: &effigy_kernel::root::StateRoot,
+    reader: &effigy_kernel::store::StoreReader,
+    parent: effigy_kernel::id::RunId,
+    depth: usize,
+) -> Result<Vec<RunView>, String> {
+    if depth >= 12 {
+        return Err("step journal exceeds the status nesting limit".to_owned());
+    }
+    let children = match effigy_kernel::run::children(reader, parent) {
+        Observed::Verified(children, _) => children,
+        Observed::Absent(_) => return Ok(Vec::new()),
+        Observed::Unknown(reason) => {
+            return Err(format!("step journal is unreadable: {reason:?}"));
+        }
+    };
+    children
+        .iter()
+        .map(|summary| {
+            let gate = summary
+                .invocation
+                .as_ref()
+                .map(|inv| Gate::probe(cx, root, &inv.spec().owner));
+            let mut view = project(summary, gate.as_ref());
+            view.steps = project_children(cx, root, reader, summary.id, depth + 1)?;
+            Ok(view)
+        })
+        .collect()
 }

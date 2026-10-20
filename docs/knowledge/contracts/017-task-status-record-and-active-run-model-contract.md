@@ -85,8 +85,13 @@ A SIGSTOPped holder keeps it. Nothing steals, reclaims or unlocks a gate.
 ## Not owned here
 
 - `effigy tasks status` output: [018](018-task-status-query-surface-and-read-model-contract.md).
-- Sequence step journals and the one sequence engine: the follow-up task engine
-  work.
+- Host sequence steps are child kernel runs with independently gated custody.
+  Parent settlement recovers children before closing. The child rows record step
+  labels and outcomes; JSON and text share execution. Container custody remains
+  legacy through the #236 migration seam until #232 publishes environment generations.
+  Container setup embedded in lifecycle-managed process commands retains its
+  readiness and startup order; its process exit remains the available outcome.
+  The operator deferred these per-step journals to #236 on 2026-10-19.
 - Managed (`dev`) run supervision: the run supervisor lane. Managed runs hold
   the same task gate for their whole lifetime and record their run token's
   digest on the run. Each managed process receives the token through its spawn

@@ -74,7 +74,7 @@ run = [{ task = "tasks" }]
 run_in = "host"
 
 [tasks.raw-non-fail-fast-exit]
-run = [{ task = "raw-exit", fail_fast = false }]
+run = [{ task = "raw-exit" }]
 run_in = "host"
 
 [tasks.raw-marker]

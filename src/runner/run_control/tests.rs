@@ -72,6 +72,7 @@ fn start(root: &Path, task: &str, key: &RunKey, command: &str) -> std::thread::J
             args: &[],
             key: Some(&key),
             admission: None,
+            cwd: None,
         })
         .expect("keyed run admitted");
         let exit = run_plain(
@@ -81,6 +82,7 @@ fn start(root: &Path, task: &str, key: &RunKey, command: &str) -> std::thread::J
                 cwd: &root,
                 env: Vec::new(),
                 capture: true,
+                timeout_ms: None,
             },
         )
         .expect("command ran");
@@ -341,6 +343,7 @@ fn a_run_key_names_one_run_under_racing_invocations_and_repeats() {
                     args: &[],
                     key: Some(&key),
                     admission: None,
+                    cwd: None,
                 })
             })
         })
@@ -369,6 +372,7 @@ fn a_run_key_names_one_run_under_racing_invocations_and_repeats() {
         args: &[],
         key: Some(&key),
         admission: None,
+        cwd: None,
     });
     assert!(
         matches!(repeat, Err(RunnerError::RunKeyExists { .. })),
@@ -382,6 +386,7 @@ fn a_run_key_names_one_run_under_racing_invocations_and_repeats() {
         args: &[],
         key: Some(&key),
         admission: None,
+        cwd: None,
     })
     .expect_err("a key never binds a second task");
     assert!(other.to_string().contains("already names run"), "{other}");

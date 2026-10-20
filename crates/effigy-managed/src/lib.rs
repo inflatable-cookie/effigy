@@ -44,7 +44,6 @@ pub use run_spec::{
     render_task_run_spec, resolve_run_step_env, wrap_command_with_env,
     wrap_reference_command_in_cwd, RunSpecContext, StepEnvAccumulator,
 };
-pub use scheduler::build_run_sequence_schedule;
 
 /// Pure-data plan shapes moved in from `runner::model::managed`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

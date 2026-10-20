@@ -157,6 +157,7 @@ impl Fixture {
         std::fs::create_dir_all(root.join("scripts")).unwrap();
         std::fs::create_dir_all(root.join("state")).unwrap();
         std::fs::create_dir_all(root.join("bin")).unwrap();
+        std::fs::create_dir_all(root.join("host-home")).unwrap();
         std::fs::write(
             root.join("scripts/build.rhai"),
             include_str!("../../../../../scripts/build-linux-workspace-artifact.rhai"),
@@ -611,9 +612,16 @@ fn concurrent_caller_and_expired_binding_have_no_effect() {
         0,
     )
     .unwrap();
-    fixture
-        .task()
-        .expect_err("active builder operation cannot be entered twice");
+    // The library guard uses the private unit-test kernel home. Exercise
+    // its helper in that same process; sequence Rhai now runs in a real child
+    // with the fixture HOME and therefore a different state authority.
+    let error =
+        crate::runner::container_command::workspace_artifact_builder::build(&fixture.root, &[])
+            .expect_err("active builder operation cannot be entered twice");
+    assert!(matches!(
+        error,
+        crate::runner::error::RunnerError::TaskLockConflict(_)
+    ));
     assert!(!fixture.root.join("state/build-effect").exists());
     drop(guard);
     let row = effigy_containers::exec::RunningComposeContainer {

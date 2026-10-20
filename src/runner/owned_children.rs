@@ -311,6 +311,7 @@ impl Drop for OwnedChildrenScope {
     }
 }
 
+#[cfg(test)]
 pub(super) fn signal_scope_active() -> bool {
     current_signal_state().is_some()
 }
@@ -380,6 +381,7 @@ pub(super) fn wait_for_owned_child(
 
 /// Wait until the owned child exits. Drop still terminates the tree if this
 /// wait is abandoned. Acquires the signal scope the same way as the timed wait.
+#[cfg(test)]
 pub(super) fn wait_for_owned_child_unbounded(child: Child) -> io::Result<std::process::ExitStatus> {
     let session = OwnedChildSession::new(child);
     let _scope = OwnedChildrenScope::enter()?;
@@ -409,6 +411,7 @@ impl OwnedChildSession {
         register_process_group(self.pid);
     }
 
+    #[cfg(test)]
     fn wait(mut self) -> io::Result<std::process::ExitStatus> {
         let status = {
             let child = self
@@ -453,6 +456,7 @@ impl OwnedChildSession {
         Ok(outcome)
     }
 
+    #[cfg(test)]
     fn reap_group_after_cancellation(&mut self) {
         if !cancellation_observed() {
             return;
@@ -879,36 +883,6 @@ fn process_group_is_live(group: i32) -> Option<bool> {
     }
 }
 
-/// Test-only negative seam. While held, the signal forwarder observes signals
-/// and records them, but never delivers them to a registered process group.
-/// This backs the termination-oracle negative proof: with delivery off the
-/// oracle must report no observed termination, and unconditional cleanup must
-/// still reap every test-created child. Never compiled into a release build.
-#[cfg(test)]
-pub(super) struct ForwardingDisabledForTest;
-
-#[cfg(test)]
-static FORWARDING_DISABLED_FOR_TEST: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
-
-#[cfg(test)]
-pub(super) fn disable_forwarding_for_test() -> ForwardingDisabledForTest {
-    FORWARDING_DISABLED_FOR_TEST.store(true, std::sync::atomic::Ordering::SeqCst);
-    ForwardingDisabledForTest
-}
-
-#[cfg(test)]
-impl Drop for ForwardingDisabledForTest {
-    fn drop(&mut self) {
-        FORWARDING_DISABLED_FOR_TEST.store(false, std::sync::atomic::Ordering::SeqCst);
-    }
-}
-
-#[cfg(test)]
-fn forwarding_disabled_for_test() -> bool {
-    FORWARDING_DISABLED_FOR_TEST.load(std::sync::atomic::Ordering::SeqCst)
-}
-
 /// Serializes timeout-descendant proofs, interrupt proofs, and other tests
 /// that install the process-wide signal-forwarding scope.
 #[cfg(all(test, unix))]
@@ -1103,18 +1077,6 @@ fn forward_signal_to_process_group(
     #[cfg(test)] scope_generation: Option<u64>,
     #[cfg(test)] cancellation_generation: Option<u64>,
 ) {
-    #[cfg(test)]
-    if forwarding_disabled_for_test() {
-        let mut event = diagnostic_event("signal_forward_attempt");
-        event.scope_generation = scope_generation;
-        event.cancellation_generation = cancellation_generation;
-        event.process_group = Some(process_group);
-        event.signal = Some(signal);
-        event.source = Some("process_group_signal_forwarder");
-        event.result = Some("disabled_by_test_seam".to_owned());
-        record_test_diagnostic_event(event);
-        return;
-    }
 
     use nix::sys::signal::{kill, Signal};
     use nix::unistd::Pid;

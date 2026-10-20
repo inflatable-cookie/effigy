@@ -32,6 +32,26 @@ pub(in crate::runner) fn build_task_command(
                 task: preflight.selector.task_name.clone(),
                 path: selection.catalog.manifest_path.clone(),
             })?;
+    // A sequence is an executable plan, never a generated shell program.
+    if let ManifestManagedRun::Sequence(steps) = run_spec {
+        return Ok(format!(
+            "sequence ({} ordered steps): {}",
+            steps.len(),
+            steps
+                .iter()
+                .map(|step| match step {
+                    effigy_manifest::ManifestManagedRunStep::Command(command) => command.clone(),
+                    effigy_manifest::ManifestManagedRunStep::Step(table) => table
+                        .run
+                        .clone()
+                        .or_else(|| table.task.as_ref().map(|task| format!("task {task}")))
+                        .or_else(|| table.rhai.as_ref().map(|path| format!("rhai {path}")))
+                        .unwrap_or_else(|| "environment directive".to_owned()),
+                })
+                .collect::<Vec<_>>()
+                .join("; ")
+        ));
+    }
     let command = render_task_run_spec(
         run_spec,
         RunSpecContext {
@@ -255,7 +275,7 @@ env = { ROOT = "{repo}/data", ALIAS = "{project}" }
         assert!(host.contains(&root.display().to_string()), "{host}");
         assert!(!host.contains("/workspace with"));
         let sequence = command(&root, "sequence", vec![]);
-        assert!(sequence.contains(&root.display().to_string()), "{sequence}");
+        assert_eq!(sequence, "sequence (1 ordered steps): task local");
         assert!(!sequence.contains("/workspace with"));
     }
 

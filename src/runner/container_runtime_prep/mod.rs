@@ -85,8 +85,18 @@ pub(in crate::runner) fn ensure_container_runtime_prepared(
         });
     }
     let system_was_running = check_runtime_running_state_stage(repo_root, policy)?;
+    // Unavailable observations preserve reuse; only observed drift may ask
+    // the guarded up path to reconcile. Permission prep separately withholds
+    // repair authority when it cannot observe the live mounts.
+    let mounts_need_reconcile = system_was_running
+        && effigy_containers::exec::probe_mount_drift(
+            repo_root,
+            policy,
+            Instant::now() + OWNED_EXEC_VERIFICATION_TIMEOUT,
+        )
+        .is_ok_and(|drift| !drift.is_empty());
     ensure_runtime_running_stage(
-        system_was_running,
+        system_was_running && !mounts_need_reconcile,
         container_name.map(str::to_owned),
         repo_override,
         run_container,

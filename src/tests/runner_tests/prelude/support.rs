@@ -74,7 +74,6 @@ pub(in crate::runner::tests) mod cases {
 }
 
 pub(in crate::runner::tests) mod errors {
-    pub(in crate::runner::tests) use super::super::super::runner_test_support::assertions::assert_task_command_failure_code;
     pub(in crate::runner::tests) use super::super::error_assertions::*;
 }
 
