@@ -836,39 +836,6 @@ pub enum ServiceSubcommand {
         service: String,
         dir: Option<PathBuf>,
     },
-    Pack(ServicePackSubcommand),
-}
-
-/// Management surface for independently versioned catalog packs, nested under
-/// the existing `service` owner.
-///
-/// `update` resolves the compiled official `stable` channel to a digest, then
-/// reuses the install transaction. It takes no coordinate arguments.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ServicePackSubcommand {
-    /// Report the active selection, lineage, and health.
-    Status,
-    /// Install an explicit candidate and activate it after validation.
-    Install {
-        source: ServicePackInstallSource,
-        /// Guarded workspace preparation: exact content and no prior selection.
-        prepare_content: Option<String>,
-    },
-    /// Resolve the official `stable` channel and install that digest.
-    Update,
-    /// Select the previous validated installed pack.
-    Rollback,
-    /// Select the compiled baseline, retaining installed content.
-    Reset,
-}
-
-/// Where an explicit install candidate comes from.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ServicePackInstallSource {
-    /// Digest-addressed `oci://` reference.
-    Oci { reference: String },
-    /// Explicitly operator-selected local directory.
-    Path { path: PathBuf },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

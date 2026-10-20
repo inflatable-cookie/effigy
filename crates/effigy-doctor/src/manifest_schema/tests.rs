@@ -139,7 +139,6 @@ changelog = "CHANGELOG.md"
 tag-format = "v{version}"
 initial-tag-current-version = true
 sync-files = ["Cargo.lock"]
-sync-catalog-pack-support-policy = "support/catalog-pack-update.toml"
 
 [release.hosted-evidence]
 workflow = "ci.yml"

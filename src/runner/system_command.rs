@@ -1,5 +1,4 @@
 mod workspace;
-mod workspace_catalog;
 pub(in crate::runner) mod workspace_permissions;
 mod workspace_provisioning;
 mod workspace_session;

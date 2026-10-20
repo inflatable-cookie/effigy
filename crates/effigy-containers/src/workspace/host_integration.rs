@@ -6,7 +6,7 @@ use std::process::Command as ProcessCommand;
 use effigy_manifest::{ManifestContainerConfig, ManifestContainerServiceConfig};
 
 use crate::{
-    layered_catalog_resolver, mount_spec::expand_host_path, policy_support::effigy_home_dir,
+    catalog_resolver, mount_spec::expand_host_path, policy_support::effigy_home_dir,
     ContainerPolicyError,
 };
 
@@ -64,7 +64,7 @@ pub(crate) fn load_workspace_catalog_capabilities(
     let Some(service) = config.services.get(primary_service) else {
         return Ok(WorkspaceCatalogCapabilities::default());
     };
-    let fragment = layered_catalog_resolver(Some(repo_root)).resolve(&service.catalog)?;
+    let fragment = catalog_resolver(Some(repo_root))?.resolve(&service.catalog)?;
     Ok(WorkspaceCatalogCapabilities {
         workspace_host_integration: fragment.schema.capabilities.workspace_host_integration,
         installs_mkcert_ca: fragment.schema.capabilities.installs_mkcert_ca,
@@ -264,7 +264,7 @@ pub(crate) fn build_host_composer_home_mount(
     let Some(service) = config.services.get(primary_service) else {
         return Ok(None);
     };
-    if service.catalog != "php-fpm"
+    if effigy_catalog::service_name(&service.catalog) != "php-fpm"
         || !service_bool_param(service, "mount_host_composer_home", false)
     {
         return Ok(None);
@@ -291,7 +291,7 @@ pub(crate) fn build_shared_composer_home_mount(
     let Some(service) = config.services.get(primary_service) else {
         return Ok(None);
     };
-    if service.catalog != "php-fpm"
+    if effigy_catalog::service_name(&service.catalog) != "php-fpm"
         || !service_bool_param(service, "mount_shared_composer_auth", true)
     {
         return Ok(None);
@@ -311,7 +311,7 @@ pub(crate) fn build_shared_composer_cache_mount(
     let Some(service) = config.services.get(primary_service) else {
         return Ok(None);
     };
-    if service.catalog != "php-fpm"
+    if effigy_catalog::service_name(&service.catalog) != "php-fpm"
         || !service_bool_param(service, "mount_shared_composer_cache", true)
     {
         return Ok(None);

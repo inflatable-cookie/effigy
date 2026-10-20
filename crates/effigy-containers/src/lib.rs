@@ -1,4 +1,5 @@
 pub mod backend;
+mod catalog_sources;
 pub mod colima;
 pub mod compose;
 pub mod exec;
@@ -112,10 +113,8 @@ pub(crate) fn test_env_lock() -> std::sync::MutexGuard<'static, ()> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use effigy_catalog::pack::{layered_resolver, CatalogLayers, PackStore};
-use effigy_catalog::CatalogResolver;
 use effigy_manifest::user_config::UserContainerBackendPreference;
 use effigy_manifest::ManifestContainerDriver;
 
@@ -123,7 +122,8 @@ pub(crate) const DEFAULT_COLIMA_PROFILE: &str = "effigy";
 pub(crate) const DEFAULT_ATTACH_TIMEOUT_SECS: u64 = 10;
 pub(crate) const DEFAULT_HEALTH_TIMEOUT_SECS: u64 = 60;
 const GENERATED_RUNTIME_COMPOSE_DIR: &str = ".effigy/runtime/compose";
-pub(crate) const PROJECT_LOCAL_CATALOG_DIR: &str = "infra/dev/catalog";
+pub(crate) use catalog_sources::PROJECT_LOCAL_CATALOG_DIR;
+pub use catalog_sources::{catalog_resolver, catalog_service_sources, CatalogServiceSource};
 const SHARED_SERVICE_HOST: &str = "host.docker.internal";
 const NERDCTL_MOUNTS_LABEL_BUDGET_BYTES: usize = 4096;
 
@@ -140,7 +140,7 @@ pub(crate) fn resolve_catalog_network_contract(
     repo_root: Option<&Path>,
     catalog: &str,
 ) -> Result<Option<CatalogNetworkContract>, ContainerPolicyError> {
-    let fragment = layered_catalog_resolver(repo_root).resolve(catalog)?;
+    let fragment = catalog_resolver(repo_root)?.resolve(catalog)?;
     let capabilities = fragment.schema.capabilities;
     let (Some(domain_label), Some(container_port)) = (
         capabilities.loopback_alias_label,
@@ -155,41 +155,6 @@ pub(crate) fn resolve_catalog_network_contract(
         shared_host_env_vars: capabilities.shared_host_env_vars,
         shared_port_env_vars: capabilities.shared_port_env_vars,
     }))
-}
-
-fn project_local_catalog_dir(repo_root: Option<&Path>) -> Option<PathBuf> {
-    let repo_root = repo_root?;
-    let path = repo_root.join(PROJECT_LOCAL_CATALOG_DIR);
-    path.is_dir().then_some(path)
-}
-
-/// Layered resolver for container work: project override,
-/// active installed pack, compiled baseline.
-///
-/// Goes through `effigy_catalog::pack` so layer order and pack health live in
-/// one implementation, while `~/.effigy` discovery stays with this crate's
-/// existing `effigy_home_dir` (and its test override).
-pub(crate) fn layered_catalog_resolver(repo_root: Option<&Path>) -> CatalogResolver {
-    let resolver = catalog_layers(project_local_catalog_dir(repo_root)).resolver;
-    match repo_root {
-        Some(repo_root) => resolver.with_overlay(policy::compose_file::overlay_for(repo_root)),
-        None => resolver,
-    }
-}
-
-pub(crate) fn catalog_layers(project_local: Option<PathBuf>) -> CatalogLayers {
-    let home = crate::policy_support::effigy_home_dir();
-    let retired_user_catalog = home
-        .as_ref()
-        .map(|home| home.join("catalog"))
-        .filter(|path| path.is_dir());
-    let store = home.as_deref().map(PackStore::under_home);
-    layered_resolver(
-        project_local,
-        retired_user_catalog,
-        store.as_ref(),
-        env!("CARGO_PKG_VERSION"),
-    )
 }
 
 pub fn user_global_backend_preference() -> Option<BackendId> {

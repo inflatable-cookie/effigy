@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use crate::value_parsing::{next_required_value, parse_repo_path};
 use crate::{
     Command, ExecArgs, GatewayArgs, GatewayPrivateArgs, GatewaySubcommand, HelpTopic, ServiceArgs,
-    ServicePackInstallSource, ServicePackSubcommand, ServiceSubcommand, SystemArgs,
+    ServiceSubcommand, SystemArgs,
     SystemSubcommand, WorkspaceArgs,
 };
 
@@ -298,6 +298,8 @@ where
     }))
 }
 
+const SERVICE_PACK_RETIRED_ERROR: &str = "`effigy service pack` is retired in v0.15 with the catalog-pack runtime. Services resolve from the project catalog (`infra/dev/catalog/`), the bundle's `catalog/`, declared `[catalog.sources.<name>]` sources pinned by `effigy bundle sync`, and the compiled baseline; `effigy service list` shows where each service comes from. Installed pack state is ignored and left untouched";
+
 pub(super) fn parse_service_command<I>(args: I) -> Result<Command, CliParseError>
 where
     I: IntoIterator<Item = String>,
@@ -311,125 +313,11 @@ where
         "--help" | "-h" => Ok(Command::Help(HelpTopic::Service)),
         "list" => parse_service_list(args),
         "extract" => parse_service_extract(args),
-        "pack" => parse_service_pack(args),
+        "pack" => Err(CliParseError::InvalidArguments(
+            SERVICE_PACK_RETIRED_ERROR.to_owned(),
+        )),
         other => Err(unknown_argument(other)),
     }
-}
-
-fn parse_service_pack<I>(args: I) -> Result<Command, CliParseError>
-where
-    I: IntoIterator<Item = String>,
-{
-    let mut args = args.into_iter();
-    let Some(subcmd) = args.next() else {
-        return Ok(Command::Help(HelpTopic::Service));
-    };
-
-    match subcmd.as_str() {
-        "--help" | "-h" => Ok(Command::Help(HelpTopic::Service)),
-        "status" => parse_service_pack_simple(args, ServicePackSubcommand::Status),
-        "update" => parse_service_pack_simple(args, ServicePackSubcommand::Update),
-        "rollback" => parse_service_pack_simple(args, ServicePackSubcommand::Rollback),
-        "reset" => parse_service_pack_simple(args, ServicePackSubcommand::Reset),
-        "install" => parse_service_pack_install(args),
-        other => Err(unknown_argument(other)),
-    }
-}
-
-fn parse_service_pack_simple<I>(
-    args: I,
-    subcommand: ServicePackSubcommand,
-) -> Result<Command, CliParseError>
-where
-    I: IntoIterator<Item = String>,
-{
-    let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
-
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Service)),
-            other => return Err(unknown_argument(other)),
-        }
-    }
-
-    Ok(Command::Service(ServiceArgs {
-        subcommand: ServiceSubcommand::Pack(subcommand),
-        repo_override,
-        output_json,
-    }))
-}
-
-fn parse_service_pack_install<I>(args: I) -> Result<Command, CliParseError>
-where
-    I: IntoIterator<Item = String>,
-{
-    let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
-    let mut path: Option<PathBuf> = None;
-    let mut reference: Option<String> = None;
-    let mut prepare_content = None;
-
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
-            "--prepare-content" => {
-                prepare_content = Some(next_required_value(
-                    &mut args,
-                    CliParseError::MissingFlagValue {
-                        flag: "--prepare-content".to_owned(),
-                    },
-                )?);
-            }
-            "--path" => {
-                let value = next_required_value(
-                    &mut args,
-                    CliParseError::MissingFlagValue {
-                        flag: "--path".to_owned(),
-                    },
-                )?;
-                path = Some(PathBuf::from(value));
-            }
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Service)),
-            other if other.starts_with('-') => return Err(unknown_argument(other)),
-            other if reference.is_none() => reference = Some(other.to_owned()),
-            other => return Err(unknown_argument(other)),
-        }
-    }
-
-    // Exactly one candidate. Ambiguity here would decide what gets activated,
-    // so it fails rather than picking a winner.
-    let source = match (reference, path) {
-        (Some(_), Some(_)) => {
-            return Err(CliParseError::UnknownArgument(
-                "--path with an `oci://` reference".to_owned(),
-            ))
-        }
-        (Some(reference), None) => ServicePackInstallSource::Oci { reference },
-        (None, Some(path)) => ServicePackInstallSource::Path { path },
-        (None, None) => {
-            return Err(CliParseError::MissingFlagValue {
-                flag: "oci://<REPO>@sha256:<DIGEST> or --path <DIR>".to_owned(),
-            })
-        }
-    };
-
-    if prepare_content.is_some() && !matches!(source, ServicePackInstallSource::Path { .. }) {
-        return Err(unknown_argument("--prepare-content requires --path"));
-    }
-    Ok(Command::Service(ServiceArgs {
-        subcommand: ServiceSubcommand::Pack(ServicePackSubcommand::Install {
-            source,
-            prepare_content,
-        }),
-        repo_override,
-        output_json,
-    }))
 }
 
 fn parse_service_list<I>(args: I) -> Result<Command, CliParseError>

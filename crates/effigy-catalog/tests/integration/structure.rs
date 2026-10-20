@@ -41,12 +41,12 @@ default = "7"
 
     // Redis should resolve from project-local.
     let fragment = resolver.resolve("redis").unwrap();
-    assert!(matches!(fragment.source, FragmentSource::ProjectLocal(_)));
+    assert!(matches!(fragment.source, FragmentSource::Project(_)));
     assert!(fragment.compose_template.contains("custom-redis"));
 
     // MariaDB should still resolve from bundled.
     let mariadb = resolver.resolve("mariadb").unwrap();
-    assert_eq!(mariadb.source, FragmentSource::Bundled);
+    assert_eq!(mariadb.source, FragmentSource::Baseline);
 }
 
 #[test]
@@ -68,7 +68,7 @@ fn list_shows_overrides_at_correct_layer() {
 
     // Custom service should show as project-local.
     let custom = list.iter().find(|f| f.name == "my-custom-service").unwrap();
-    assert!(matches!(custom.source, FragmentSource::ProjectLocal(_)));
+    assert!(matches!(custom.source, FragmentSource::Project(_)));
 }
 
 #[test]

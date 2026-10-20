@@ -16,14 +16,25 @@ pub struct ManifestReleaseConfig {
     pub initial_tag_current_version: Option<bool>,
     #[serde(default)]
     pub sync_files: Vec<String>,
-    #[serde(default)]
-    pub sync_catalog_pack_support_policy: Option<String>,
+    #[serde(
+        default,
+        rename = "sync-catalog-pack-support-policy",
+        deserialize_with = "reject_catalog_pack_support_policy"
+    )]
+    _retired_catalog_pack_support_policy: Option<toml::Value>,
     #[serde(default)]
     pub gates: IndexMap<String, ManifestReleaseGateConfig>,
     #[serde(default)]
     pub tag_format: Option<String>,
     #[serde(default)]
     pub hosted_evidence: Option<ManifestReleaseHostedEvidenceConfig>,
+}
+
+fn reject_catalog_pack_support_policy<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<toml::Value>, D::Error> {
+    let _: serde::de::IgnoredAny = serde::Deserialize::deserialize(deserializer)?;
+    Err(serde::de::Error::custom("`release.sync-catalog-pack-support-policy` was removed in v0.15 with the catalog-pack runtime; remove the key and delete the policy file"))
 }
 
 #[derive(Debug, serde::Deserialize)]

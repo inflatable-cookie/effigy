@@ -17,7 +17,7 @@ use serde_yaml::Value as YamlValue;
 use crate::exec::{discover_running_compose_containers, RunningComposeContainerInventory};
 use crate::runtime::scope::{CHECKOUT_LABEL, MANAGED_LABEL, PROJECT_LABEL, SCOPE_LABEL};
 use crate::{
-    layered_catalog_resolver, mount_spec::resolve_host_mounts, resolve_catalog_network_contract,
+    catalog_resolver, mount_spec::resolve_host_mounts, resolve_catalog_network_contract,
     ContainerPolicyError, SharedServiceBinding, GENERATED_RUNTIME_COMPOSE_DIR, SHARED_SERVICE_HOST,
 };
 
@@ -451,7 +451,7 @@ pub(crate) fn resolve_compose_source(
     }
 
     let services = build_service_declarations(repo_root, bundle_root, config, &local_services)?;
-    let assembler = ComposeAssembler::new(layered_catalog_resolver(Some(repo_root)));
+    let assembler = ComposeAssembler::new(catalog_resolver(Some(repo_root))?);
     let generated_catalog_root = format!("{GENERATED_RUNTIME_COMPOSE_DIR}/.effigy-catalog");
     let (host_uid, host_gid) = host_workspace_identity();
     let mut assembly = assembler.assemble(
@@ -620,7 +620,7 @@ fn build_service_declarations(
     container_config: &ManifestContainerConfig,
     services: &std::collections::BTreeMap<String, ManifestContainerServiceConfig>,
 ) -> Result<Vec<ServiceDeclaration>, ContainerPolicyError> {
-    let resolver = layered_catalog_resolver(Some(repo_root));
+    let resolver = catalog_resolver(Some(repo_root))?;
 
     services
         .iter()
@@ -726,7 +726,7 @@ fn resolve_shared_service_bindings(
             variant: None,
             config: None,
         };
-        let assembler = ComposeAssembler::new(layered_catalog_resolver(None));
+        let assembler = ComposeAssembler::new(catalog_resolver(None)?);
         let (host_uid, host_gid) = host_workspace_identity();
         let mut assembly = assembler.assemble(
             &[declaration],
@@ -1069,7 +1069,7 @@ fn shared_service_loopback_port_rules(
     service_name: &str,
     service: &ManifestContainerServiceConfig,
 ) -> Result<Vec<LoopbackPortRule>, ContainerPolicyError> {
-    let fragment = layered_catalog_resolver(None).resolve(&service.catalog)?;
+    let fragment = catalog_resolver(None)?.resolve(&service.catalog)?;
     let capabilities = fragment.schema.capabilities;
     let Some(container_port) = capabilities.loopback_alias_port else {
         return Ok(Vec::new());
@@ -1132,7 +1132,7 @@ pub(crate) fn prepare_container_policy_loopbacks(
     }
     let mut changed = false;
     for shared in &policy.shared_services {
-        let fragment = layered_catalog_resolver(None).resolve(&shared.catalog)?;
+        let fragment = catalog_resolver(None)?.resolve(&shared.catalog)?;
         if fragment.schema.capabilities.loopback_alias_port.is_none() {
             continue;
         }

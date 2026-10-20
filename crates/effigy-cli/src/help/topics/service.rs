@@ -6,20 +6,15 @@ pub(crate) fn render_service_help<R: HelpRenderer + ?Sized>(renderer: &mut R) ->
         renderer,
         "service",
         &[
-            "Inspect the layered service catalog used by catalog-backed container environments.",
-            "Extraction writes bundled fragments into a project-local override directory so repos can take ownership without patching the bundled service catalog.",
-            "Catalog layers resolve in order: project override, active installed pack, compiled baseline. The compiled baseline always ships with Effigy, so nothing here needs a pack store, `oras`, or a network.",
-            "`service pack` manages independently versioned catalog packs. Registry acquisition is explicit: an immutable `oci://...@sha256:...` reference, a local directory, or `service pack update`. Update resolves the compiled official `stable` channel to a digest, then uses the same validate-store-activate transaction. Workspace handoff may prepare the selected retained pack in an empty guest store. Ordinary catalog use never probes a registry.",
+            "Inspect the service catalog used by catalog-backed container environments.",
+            "Catalog sources resolve in order: the project catalog (`infra/dev/catalog/`), the bundle's shipped `catalog/`, declared `[catalog.sources.<name>]` sources, then the compiled baseline. `service list` names the source of each service and what it shadows.",
+            "Select one source with a qualified name, `<source>/<service>`, for example `catalog = \"baseline/redis\"`. Source handles are `project`, `bundle`, each declared name, and `baseline`.",
+            "Declared sources are git, OCI or path sources pinned per checkout, like bundles. Only `effigy bundle sync` on the host moves their pins; reads never fetch.",
+            "Extraction copies a baseline fragment into the project catalog so a repo can take ownership of it.",
         ],
         &[
             "effigy service list [--repo <PATH>] [--json]",
             "effigy service extract <SERVICE> [--repo <PATH>] [--dir <PATH>] [--json]",
-            "effigy service pack status [--json]",
-            "effigy service pack install oci://<REPO>@sha256:<DIGEST> [--json]",
-            "effigy service pack install --path <DIR> [--json]",
-            "effigy service pack update [--json]",
-            "effigy service pack rollback [--json]",
-            "effigy service pack reset [--json]",
             "effigy --json service list [--repo <PATH>]",
         ],
         &[
@@ -28,14 +23,6 @@ pub(crate) fn render_service_help<R: HelpRenderer + ?Sized>(renderer: &mut R) ->
                 "--dir <PATH>",
                 "Override the extraction destination; defaults to `infra/dev/catalog` inside the repo",
             ),
-            (
-                "--path <DIR>",
-                "Install a catalog pack from an explicitly selected local directory",
-            ),
-            (
-                "--prepare-content <sha256:DIGEST>",
-                "With --path, prepare exact workspace pack content only when no selection exists; preserve all existing selections",
-            ),
             ("--json", "Render machine-readable catalog payloads"),
             ("-h, --help", "Print command help"),
         ],
@@ -43,11 +30,7 @@ pub(crate) fn render_service_help<R: HelpRenderer + ?Sized>(renderer: &mut R) ->
             "effigy service list",
             "effigy service extract php-fpm",
             "effigy service extract nginx --dir infra/dev/catalog-custom",
-            "effigy service pack status",
-            "effigy service pack install --path ./catalog-pack",
-            "effigy service pack update",
-            "effigy service pack rollback",
-            "effigy service pack reset",
+            "effigy bundle sync",
         ],
     )
 }

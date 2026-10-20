@@ -318,7 +318,7 @@ pub const GENERAL_HELP_ENTRIES: &[GeneralHelpEntry] = &[
     GeneralHelpEntry {
         group: HelpGroup::Local,
         command: "effigy service",
-        description: "Inspect the layered service catalog, extract bundled fragments, and manage installed catalog packs",
+        description: "Inspect catalog sources and services, and extract baseline fragments",
         deferred_builtin: Some("service"),
         help_argument: Some("service"),
     },

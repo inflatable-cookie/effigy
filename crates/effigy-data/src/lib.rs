@@ -423,7 +423,9 @@ pub enum DatabaseServiceKind {
 
 impl DatabaseServiceKind {
     pub fn from_catalog(value: impl AsRef<str>) -> Option<Self> {
-        match value.as_ref() {
+        // A source-qualified entry (`source/postgres`) is the same engine.
+        let value = value.as_ref();
+        match value.split_once('/').map_or(value, |(_, service)| service) {
             "postgres" => Some(Self::Postgres),
             "mariadb" | "mysql" => Some(Self::MariaDb),
             _ => None,

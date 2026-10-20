@@ -3,15 +3,13 @@ use crate::runner::tests::prelude::{
     doctor_nonzero_rendered, run_builtin_ok, run_doctor_err_from_cwd,
     setup_doctor_explain_catalog_workspace, temp_workspace, write_manifest, write_root_manifest,
 };
-use effigy_catalog::pack::with_test_effigy_home;
 
 #[test]
 fn run_doctor_text_output_has_blank_line_between_sections() {
     let root = temp_workspace("doctor-section-spacing");
     write_root_manifest(&root, "[tasks.health]\nrun = \"printf ok\"\n");
 
-    let catalog_home = root.join(".fixture-catalog-home");
-    let out = with_test_effigy_home(&catalog_home, || run_builtin_ok(root, "doctor", &[]));
+    let out = run_builtin_ok(root, "doctor", &[]);
 
     assert!(out.starts_with("Doctor's Report\n"));
     assert_output_contains_all(&out, &["No findings.", "\nsummary  ok:"]);

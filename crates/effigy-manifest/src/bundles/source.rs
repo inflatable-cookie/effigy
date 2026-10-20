@@ -358,6 +358,38 @@ pub fn resolve_catalog_source(
     let selection = BundleSelection::from_spec(manifest, source)?;
     resolve_source(manifest, &format!("catalog:{name}"), &selection).map(inspect)
 }
+/// Pinned catalog source directories, in resolver precedence order below the
+/// project catalog. Local reads only: nothing is acquired, and an unprepared
+/// source is an error naming `effigy bundle sync`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CatalogSourceRoots {
+    /// The bundle's shipped `catalog/` directory, when the bundle has one.
+    pub bundle: Option<PathBuf>,
+    /// Declared `[catalog.sources.<name>]` roots, in handle order.
+    pub declared: Vec<(String, PathBuf)>,
+}
+
+pub fn catalog_source_roots(manifest: &Path) -> Result<CatalogSourceRoots, ManifestError> {
+    if !manifest.is_file() {
+        return Ok(CatalogSourceRoots::default());
+    }
+    let (bundle, catalogs) = crate::composition::load_manifest_source_declarations(manifest)?;
+    let bundle = match bundle.as_ref().filter(|bundle| bundle.base.is_some()) {
+        Some(bundle) => {
+            let selection = resolve_bundle_selection(manifest, bundle)?;
+            Some(resolve_source(manifest, "bundle", &selection)?.local_path.join("catalog"))
+                .filter(|root| root.is_dir())
+        }
+        None => None,
+    };
+    let declared = catalogs
+        .iter()
+        .map(|(name, source)| {
+            resolve_catalog_source(manifest, name, source).map(|pin| (name.clone(), pin.local_path))
+        })
+        .collect::<Result<_, _>>()?;
+    Ok(CatalogSourceRoots { bundle, declared })
+}
 fn notice(message: &str) {
     // A single bounded diagnostic per process; nested manifest discovery can
     // resolve the same checkout repeatedly (completion and graph in particular).

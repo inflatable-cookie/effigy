@@ -6,134 +6,26 @@ use crate::tests::prelude::{
 use effigy_cli::{
     BootstrapDbSeedInput, BundleArgs, BundleSubcommand, ContainerCacheSubcommand,
     ContainerDataSubcommand, ContainerDbDumpInput, ContainerProfileSubcommand,
-    ContainerVolumeSubcommand, ServicePackInstallSource, ServicePackSubcommand,
+    ContainerVolumeSubcommand,
 };
 
-fn service_pack(subcommand: ServicePackSubcommand, output_json: bool) -> Command {
-    Command::Service(ServiceArgs {
-        subcommand: ServiceSubcommand::Pack(subcommand),
-        repo_override: None,
-        output_json,
-    })
-}
-
 #[test]
-fn parse_service_pack_status_update_rollback_and_reset() {
-    for (word, expected) in [
-        ("status", ServicePackSubcommand::Status),
-        ("update", ServicePackSubcommand::Update),
-        ("rollback", ServicePackSubcommand::Rollback),
-        ("reset", ServicePackSubcommand::Reset),
+fn parse_service_pack_is_retired_with_an_actionable_error() {
+    for args in [
+        vec!["service", "pack"],
+        vec!["service", "pack", "status", "--json"],
+        vec!["service", "pack", "install", "--path", "./catalog-pack"],
+        vec!["service", "pack", "update"],
+        vec!["service", "pack", "rollback"],
+        vec!["service", "pack", "reset"],
     ] {
-        let cmd = parse_command(vec![
-            "service".to_owned(),
-            "pack".to_owned(),
-            word.to_owned(),
-            "--json".to_owned(),
-        ])
-        .expect("parse should succeed");
-        assert_eq!(cmd, service_pack(expected, true));
+        let error = parse_command(args.iter().map(|arg| (*arg).to_owned()).collect::<Vec<_>>())
+            .expect_err("service pack is retired")
+            .to_string();
+        assert!(error.contains("`effigy service pack` is retired"), "{error}");
+        assert!(error.contains("[catalog.sources.<name>]"), "{error}");
+        assert!(error.contains("effigy service list"), "{error}");
     }
-}
-
-#[test]
-fn parse_service_pack_install_accepts_an_oci_reference_or_a_path() {
-    let cmd = parse_command(vec![
-        "service".to_owned(),
-        "pack".to_owned(),
-        "install".to_owned(),
-        "oci://packs.invalid/effigy/default-catalog@sha256:abc".to_owned(),
-    ])
-    .expect("parse should succeed");
-    assert_eq!(
-        cmd,
-        service_pack(
-            ServicePackSubcommand::Install {
-                prepare_content: None,
-                source: ServicePackInstallSource::Oci {
-                    reference: "oci://packs.invalid/effigy/default-catalog@sha256:abc".to_owned(),
-                },
-            },
-            false,
-        )
-    );
-
-    let cmd = parse_command(vec![
-        "service".to_owned(),
-        "pack".to_owned(),
-        "install".to_owned(),
-        "--path".to_owned(),
-        "./catalog-pack".to_owned(),
-    ])
-    .expect("parse should succeed");
-    assert_eq!(
-        cmd,
-        service_pack(
-            ServicePackSubcommand::Install {
-                prepare_content: None,
-                source: ServicePackInstallSource::Path {
-                    path: PathBuf::from("./catalog-pack"),
-                },
-            },
-            false,
-        )
-    );
-}
-
-#[test]
-fn parse_service_pack_install_requires_exactly_one_candidate() {
-    parse_command(vec![
-        "service".to_owned(),
-        "pack".to_owned(),
-        "install".to_owned(),
-    ])
-    .expect_err("no candidate must fail");
-
-    parse_command(vec![
-        "service".to_owned(),
-        "pack".to_owned(),
-        "install".to_owned(),
-        "oci://packs.invalid/p@sha256:abc".to_owned(),
-        "--path".to_owned(),
-        "./catalog-pack".to_owned(),
-    ])
-    .expect_err("two candidates must fail");
-}
-
-#[test]
-fn parse_service_pack_update_accepts_json_and_rejects_coordinate_args() {
-    let cmd = parse_command(vec![
-        "service".to_owned(),
-        "pack".to_owned(),
-        "update".to_owned(),
-        "--json".to_owned(),
-    ])
-    .expect("parse should succeed");
-    assert_eq!(cmd, service_pack(ServicePackSubcommand::Update, true));
-
-    parse_command(vec![
-        "service".to_owned(),
-        "pack".to_owned(),
-        "update".to_owned(),
-        "oci://ghcr.io/inflatable-cookie/effigy-catalog-pack@sha256:abc".to_owned(),
-    ])
-    .expect_err("update must not accept a coordinate override");
-
-    parse_command(vec![
-        "service".to_owned(),
-        "pack".to_owned(),
-        "update".to_owned(),
-        "--path".to_owned(),
-        "./catalog-pack".to_owned(),
-    ])
-    .expect_err("update must not accept --path");
-}
-
-#[test]
-fn parse_service_pack_without_a_subcommand_renders_service_help() {
-    let cmd =
-        parse_command(vec!["service".to_owned(), "pack".to_owned()]).expect("parse should succeed");
-    assert_eq!(cmd, Command::Help(HelpTopic::Service));
 }
 
 #[test]
@@ -1754,46 +1646,6 @@ fn parse_named_container_data_seed_is_rejected() {
     assert!(err
         .to_string()
         .contains("`effigy container web data seed` is not supported"));
-}
-
-#[test]
-fn parse_service_pack_workspace_preparation_requires_a_local_candidate() {
-    let command = parse_command(
-        [
-            "service",
-            "pack",
-            "install",
-            "--path",
-            "retained-pack",
-            "--prepare-content",
-            "sha256:canonical-content-is-validated-by-the-installer",
-            "--json",
-        ]
-        .map(str::to_owned),
-    )
-    .expect("parse guarded local preparation");
-    assert!(matches!(
-        command,
-        Command::Service(ServiceArgs {
-            subcommand: ServiceSubcommand::Pack(ServicePackSubcommand::Install {
-                prepare_content: Some(_),
-                source: ServicePackInstallSource::Path { .. },
-            }),
-            ..
-        })
-    ));
-    assert!(parse_command(
-        [
-            "service",
-            "pack",
-            "install",
-            "oci://example.invalid/pack@sha256:abc",
-            "--prepare-content",
-            "sha256:abc",
-        ]
-        .map(str::to_owned)
-    )
-    .is_err());
 }
 
 #[test]

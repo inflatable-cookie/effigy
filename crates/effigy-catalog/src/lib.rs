@@ -2,41 +2,37 @@
 //!
 //! This crate provides:
 //!
-//! - Loading and parsing of service catalog fragments (bundled, installed
-//!   pack, project-local).
+//! - Loading and parsing of service catalog fragments from ordered catalog
+//!   sources: project, bundle, declared sources, compiled baseline.
+//! - Fragment requirements (`[requires]`) checked against the running Effigy.
 //! - Parameter schema validation against `service.toml` declarations.
 //! - Template rendering via Jinja2-style syntax (minijinja).
 //! - Compose assembly from rendered fragments into a complete
 //!   `docker-compose.yml`.
-//! - Local validation of Effigy's catalog-pack update support floor. That
-//!   parser is not part of pack selection, acquisition, or activation.
 //!
 //! The crate is intentionally isolated — no dependency on other effigy domain
-//! crates. Integration into the main runner happens separately.
+//! crates. Callers locate source directories; this crate only reads them.
 
 pub mod assembly;
 pub mod atomic_write;
 pub mod error;
 pub mod fragment;
-pub mod pack;
+pub mod requirements;
 pub mod schema;
 pub mod starter;
-pub mod support_policy;
 pub mod template;
 pub mod volumes;
 
 pub use assembly::ComposeAssembler;
 pub use error::CatalogError;
-pub use fragment::{CatalogFragment, CatalogResolver, FragmentSource, InstalledPackLayer};
-pub use pack::{
-    install_pack, resolve_catalog_layers, select_pack, CatalogLayers, InstalledPackRecord,
-    OfficialPackChannel, PackCandidateAcquirer, PackCandidateSource, PackError, PackManifest,
-    PackSelection, PackSelectionReason, PackSourceRecord, PackStore, PackStoreState,
+pub use fragment::{
+    service_name, split_qualified, validate_source_handle, CatalogFragment, CatalogResolver,
+    FragmentInfo, FragmentSource, RESERVED_SOURCE_HANDLES,
+};
+pub use requirements::{
+    current_effigy_version, FragmentRequirements, SUPPORTED_FRAGMENT_CAPABILITIES,
+    SUPPORTED_FRAGMENT_SCHEMA,
 };
 pub use schema::{ParamSchema, ParamType, ServiceSchema};
 pub use starter::{Starter, StarterError, StarterFile, StarterInfo, StarterResolver};
-pub use support_policy::{
-    current_effigy_release, CatalogPackUpdatePolicy, PackUpdateCapability, SupportPolicyError,
-    CATALOG_PACK_UPDATE_POLICY_FILE, SUPPORTED_CATALOG_PACK_UPDATE_SCHEMA,
-};
 pub use template::TemplateRenderer;
