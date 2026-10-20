@@ -256,6 +256,78 @@ impl Gate {
         probe_names(cx, root, &scope_name(id.scope()), &id.name().to_string())
     }
 
+    /// Signals the live holder of `id`'s gate, only when the gate body names
+    /// `run` and the holder's start and boot identity match it again right
+    /// before the signal (I-P4). A free gate, another run's holder or any
+    /// unverified evidence signals nothing.
+    pub fn signal_holder(
+        cx: &EffectContext,
+        root: &StateRoot,
+        id: &ResourceId,
+        run: &RunId,
+        signal: i32,
+    ) -> Observed<u32> {
+        if cx.require(Capability::HostAuthority).is_err() {
+            return Observed::Unknown(UnknownReason::HostAuthorityRequired);
+        }
+        let gates = match root.family(Family::Gates) {
+            Ok(Some(gates)) => gates,
+            Ok(None) => return Observed::Absent(AbsenceProof::NoGateInode),
+            Err(error) => return Observed::Unknown(crate::root::unknown(&error)),
+        };
+        let file = match gates
+            .child(&scope_name(id.scope()), Trust::Private, false)
+            .and_then(|dir| match dir {
+                Some(dir) => open_gate(&dir, &format!("{}.gate", id.name()), false),
+                None => Ok(None),
+            }) {
+            Ok(Some(file)) => file,
+            Ok(None) => return Observed::Absent(AbsenceProof::NoGateInode),
+            Err(error) => return Observed::Unknown(crate::root::unknown(&error)),
+        };
+        match fs::try_flock(&file, libc::LOCK_SH) {
+            Ok(true) => {
+                fs::unlock(&file);
+                return Observed::Absent(AbsenceProof::NoGateInode);
+            }
+            Ok(false) => {}
+            Err(error) => return Observed::Unknown(UnknownReason::Inconsistent(error.to_string())),
+        }
+        let diag = match holder(&file) {
+            Observed::Verified(diag, _) => diag,
+            Observed::Absent(proof) => return Observed::Absent(proof),
+            Observed::Unknown(reason) => return Observed::Unknown(reason),
+        };
+        let run_text = run.to_string();
+        if diag.run.as_deref() != Some(run_text.as_str())
+            || !matches!(diag.state, Observed::Verified(..))
+        {
+            return Observed::Unknown(UnknownReason::Inconsistent(
+                "the gate holder is not this run's verified owner".into(),
+            ));
+        }
+        match ident::process_identity(diag.pid) {
+            Observed::Verified(identity, _)
+                if Some(identity.start.text()) == diag.start
+                    && Some(identity.boot.as_str()) == diag.boot.as_deref() => {}
+            _ => {
+                return Observed::Unknown(UnknownReason::Inconsistent(
+                    "the gate holder changed before the signal".into(),
+                ))
+            }
+        }
+        // SAFETY: kill(2) of one pid whose identity was just re-verified.
+        if unsafe { libc::kill(diag.pid as i32, signal) } != 0 {
+            return Observed::Unknown(UnknownReason::Inconsistent(
+                std::io::Error::last_os_error().to_string(),
+            ));
+        }
+        Observed::Verified(
+            diag.pid,
+            Evidence::new("kernel gate holder signal".into(), None).expect("fixed source"),
+        )
+    }
+
     /// Removes a scope's gate directory under `LOCK_EX | LOCK_NB` on its
     /// scope gate (§7.4). The `.scope` inode itself is never unlinked, so an
     /// acquirer always meets the same inode a remover locked.

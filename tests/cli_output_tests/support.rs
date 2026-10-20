@@ -178,17 +178,6 @@ pub(super) fn temp_execution_workspace(name: &str) -> PathBuf {
     root
 }
 
-// HOME isolation must not redirect inherited parent verification to an empty
-// private home. Use the actual state location, without copying credentials.
-pub(super) fn scheduler_state_root() -> PathBuf {
-    std::env::var_os("EFFIGY_HOST_RUN_ROOT")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            PathBuf::from(std::env::var_os("HOME").expect("original HOME"))
-                .join(".local/state/host-run")
-        })
-}
-
 pub(super) fn write_effigy_release_root_marker(root: &Path) {
     fs::write(
         root.join("Cargo.toml"),

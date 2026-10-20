@@ -11,7 +11,7 @@ use effigy_containers::exec::{
     list_running_compose_containers_for_policy_with_deadline, verify_workspace_artifact_builder,
     verify_workspace_artifact_builder_declaration,
 };
-use effigy_containers::{load_container_policy, ContainerAction, EffectiveComposeSource};
+use effigy_containers::{load_container_policy, ContainerAction};
 
 use super::admission::AdmissionContext;
 use crate::runner::environment;
@@ -56,7 +56,6 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
     if command.is_empty()
         || policy.primary_service != "builder"
         || policy.profile != "effigy-release"
-        || policy.compose_source != EffectiveComposeSource::Direct
         || !policy.shared_services.is_empty()
         || !policy.declared_ports.is_empty()
         || !policy.dns_routes.is_empty()

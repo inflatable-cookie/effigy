@@ -23,7 +23,7 @@ use crate::runner::execute::workspace_seeded::{
     inside_container_handoff, run_workspace_seeded_task_session,
 };
 use crate::runner::task_engine::{
-    refuse_live_legacy_holder, resolve_lock_wait_ms, TaskRun, TaskRunRequest, TaskTarget,
+    refuse_live_legacy_holder, resolve_lock_wait_ms, RunKey, TaskRun, TaskRunRequest, TaskTarget,
 };
 use effigy_containers::compose::compose_args;
 use effigy_containers::session::{
@@ -55,6 +55,7 @@ pub(in crate::runner) fn run_managed_task(
     preflight: &ExecutionPreflight,
     selection: &TaskSelection<'_>,
     selection_plan: &ExecutionSelectionPlan,
+    run_key: Option<&RunKey>,
 ) -> Result<Option<String>, RunnerError> {
     let container_handoff = inside_container_handoff();
     let managed_invocation = (selection.task.mode.as_deref() == Some("tui"))
@@ -196,6 +197,9 @@ pub(in crate::runner) fn run_managed_task(
                 custody: false,
                 managed_run_token: None,
                 args: &preflight.runtime_args_exec.passthrough,
+                key: run_key,
+                admission: selection.task.admission,
+                cwd: Some(&preflight.invocation_cwd),
             })?;
             let result = run_workspace_with_repo_root_and_cleanup_override(
                 &preflight.resolved.resolved_root,
@@ -342,6 +346,9 @@ pub(in crate::runner) fn run_managed_task(
             custody: false,
             managed_run_token: managed_run_token.as_deref(),
             args: &preflight.runtime_args_exec.passthrough,
+            key: run_key,
+            admission: selection.task.admission,
+            cwd: Some(&preflight.invocation_cwd),
         })?);
     }
 

@@ -10,15 +10,17 @@ use crate::value_parsing::{next_required_value, parse_repo_path};
 use super::container_data::parse_container_data;
 use super::{unknown_argument, CliParseError};
 
+const CONTAINER_EJECT_RETIRED_ERROR: &str = "`effigy container eject` is retired in v0.15 with `compose_file`: generated Compose stays internal. Run `effigy container render <NAME>` to read the exact render, and customise a service with a project catalog fragment under `infra/dev/catalog/`";
+
 const NAMED_CONTAINER_RETIRE_ERROR: &str = "`effigy container <NAME> retire` is unsupported; use `effigy container retire` for the checkout or `effigy container retire --scope <TOKEN>` for one recorded scope";
 
 pub(super) fn parse_container_command<I>(args: I) -> Result<Command, CliParseError>
 where
     I: IntoIterator<Item = String>,
 {
-    const ACTIONS: [&str; 17] = [
+    const ACTIONS: [&str; 18] = [
         "up", "down", "status", "stats", "logs", "shell", "reset", "cache", "volume", "data",
-        "profile", "eject", "hosts", "retire", "scope", "ports", "render",
+        "profile", "eject", "hosts", "retire", "scope", "ports", "render", "migrate",
     ];
 
     let mut args = args.into_iter();
@@ -40,7 +42,10 @@ where
     };
 
     match action.as_str() {
-        "render" => parse_container_render(name, args),
+        "render" => parse_container_render(name, args, |name| ContainerSubcommand::Render { name }),
+        "migrate" => {
+            parse_container_render(name, args, |name| ContainerSubcommand::Migrate { name })
+        }
         "up" => parse_container_up(name, args),
         "down" => parse_container_down(name, args),
         "status" => parse_container_status(name, args),
@@ -52,7 +57,9 @@ where
         "volume" => parse_container_volume(name, args),
         "profile" => parse_container_profile(name, args),
         "data" => parse_container_data(name, args),
-        "eject" => parse_container_eject(name, args),
+        "eject" => Err(CliParseError::InvalidArguments(
+            CONTAINER_EJECT_RETIRED_ERROR.to_owned(),
+        )),
         "scope" => parse_container_scope(name, args),
         "hosts" => parse_container_hosts(name, args),
         "retire" => parse_container_retire(name, args),
@@ -235,7 +242,12 @@ where
     }))
 }
 
-fn parse_container_render<I>(mut name: Option<String>, args: I) -> Result<Command, CliParseError>
+/// `render` and `migrate` share one grammar: an optional name, `--repo`, `--json`.
+fn parse_container_render<I>(
+    mut name: Option<String>,
+    args: I,
+    subcommand: impl FnOnce(Option<String>) -> ContainerSubcommand,
+) -> Result<Command, CliParseError>
 where
     I: IntoIterator<Item = String>,
 {
@@ -252,17 +264,10 @@ where
         }
     }
     Ok(Command::Container(ContainerArgs {
-        subcommand: ContainerSubcommand::Render { name },
+        subcommand: subcommand(name),
         repo_override,
         output_json,
     }))
-}
-
-fn parse_container_eject<I>(name: Option<String>, args: I) -> Result<Command, CliParseError>
-where
-    I: IntoIterator<Item = String>,
-{
-    parse_named_container_simple_subcommand(name, args, |name| ContainerSubcommand::Eject { name })
 }
 
 fn parse_container_hosts<I>(name: Option<String>, args: I) -> Result<Command, CliParseError>

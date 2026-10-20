@@ -53,29 +53,6 @@ pub fn state_root(
         .map_err(|error| EnvError::Invalid(format!("cannot open the Effigy state root: {error}")))
 }
 
-/// The engine the environment record says `name` runs on, read without
-/// effects. Every Compose, volume and data invocation consults it first, so
-/// they all target the backend the stack was applied on (exact targeting).
-pub fn recorded_backend(repo_root: &std::path::Path, name: &str) -> Option<crate::BackendId> {
-    let checkout = crate::policy::render::checkout_for_root(repo_root).ok()?;
-    let env = EnvRef::new(checkout, name).ok()?;
-    let operation = reconcile::operation(
-        effigy_kernel::ctx::EffectClass::Observe,
-        effigy_kernel::ctx::CancelToken::default(),
-        std::time::Duration::from_secs(5),
-    );
-    let cx = operation.observe().ok()?;
-    let observed = observe_root(&cx);
-    let root = observed.verified()?;
-    let reader = effigy_kernel::store::Store::read(&cx, root);
-    let reader = reader.verified()?;
-    let resource = reader.resource(&env.resource);
-    let metadata = resource.verified()?.backend.as_ref()?;
-    BackendSelection::from_metadata(metadata)
-        .verified()
-        .map(|selection| selection.engine.clone())
-}
-
 /// A read-only view of the state root; never creates it (R2).
 pub fn observe_root(
     cx: &effigy_kernel::ctx::ObserveContext,

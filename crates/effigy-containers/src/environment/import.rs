@@ -278,7 +278,6 @@ pub fn import(ctx: &EnvContext<'_>, request: ImportRequest<'_>) -> Result<Import
     let active = matches!(labels, LabelEvidence::Verified { .. }) && primary_running;
     let result = (|| {
         run.write_record(&record)?;
-        run.set_backend(request.backend)?;
         if active {
             // Adoption publishes the running stack as applied without any
             // backend call: nothing restarts because of an import (M7).

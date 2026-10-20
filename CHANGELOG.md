@@ -33,6 +33,41 @@ During v0.x, MINOR bumps may include breaking changes.
   containers are adopted without a restart, and the marker files are never
   changed. A stack whose ownership cannot be proven is not adopted and needs an
   explicit `container down`.
+- Heavy tasks no longer go through the Queue/Nucleus host-run client
+  (Q-006). `admission = "heavy"` is metadata only: with no hook set a heavy
+  task runs like any other, CI runners included. When the launcher sets
+  `EFFIGY_ADMISSION_HOOK`, a heavy run calls it with an
+  `effigy.admission-request.v1` request in `EFFIGY_ADMISSION_REQUEST` and
+  waits, bounded by `EFFIGY_ADMISSION_HOOK_TIMEOUT_MS`, for `admit` or
+  `deny <reason>`. The admitted hook is held under the run's custody until
+  the run settles; deny, timeout or a crash refuses the run before its
+  command starts (`effigy.admission.v1` details). Nested heavy runs inherit
+  `EFFIGY_ADMITTED` and never queue twice. `qa`, `ci` and `ci:fresh` are no
+  longer heavy by name. Exit 75 now means only a held task lock; 77 is gone.
+- `[containers.<name>].compose_file` is deprecated. For one release each
+  Compose service is read as a project catalog fragment, with a warning.
+  `effigy container migrate [<name>]` writes the fragments to
+  `infra/dev/catalog/<container>-<service>/` and replaces the key with
+  `[containers.<name>.services]`; it checks the render is unchanged. Translated
+  environments behave like catalog environments: services carry checkout and
+  scope labels (the first `up` recreates them once), named volumes become
+  `<project>-<volume>` (old `<project>_<volume>` volumes are left alone),
+  published ports get Prepare-assigned host ports on the publish address unless
+  `[host].ports` fixes them, and `data`, `cache` and `reset` commands apply. Compose features a fragment cannot
+  express refuse with the key to move. Effigy's own `linux-release` builder is
+  migrated.
+- `effigy container eject` and `container::eject` are retired: generated
+  Compose stays internal. Use `effigy container render <name>`.
+- Each environment's backend is recorded in the kernel store when its
+  generation is prepared, and every Compose, volume and data action uses it.
+  Volume actions no longer infer Docker or Colima from the profile name, and
+  shared services start on their environment's backend. The v0.14
+  `.effigy-runtime.json` record is imported and left untouched; an unreadable
+  one refuses volume and data actions until `EFFIGY_COMPOSE_BACKEND` names the
+  backend. `container status` reports `backend_source`.
+- Reset, cache prune and data import/export act only on volumes whose Effigy
+  labels name the environment's project; a same-named lookalike is reported and
+  left alone.
 - Tasks now have `visibility = "public" | "internal"` and optional `group`.
   Human inventory, general/work help and completion show public tasks; `tasks --all` and
   `tasks --json` include everything. Unnamespaced entry points stay public;
@@ -104,6 +139,12 @@ During v0.x, MINOR bumps may include breaking changes.
   credential or prompt.
 
 ### Removed
+- Retire the host-run client: `src/runner/host_scheduler`, the
+  `effigy-host-run` crate, `HOST_RUN_TOKEN`/`HOST_RUN_ID` parent tokens,
+  `EFFIGY_SCHEDULER_OVERRIDE`, `EFFIGY_HOST_RUN_ROOT`, the private-parent
+  fixture harness and contract 049's client obligations.
+  `--host-run-request-id` and `effigy tasks request status|follow` refuse with
+  the replacement: `--run-id <key>` and `effigy run status|logs|stop <key>`.
 - Retire `[secrets.vault].identity`, `[secrets.vault].unlock` and
   `[secrets.vault].external` after consumer cleanup. Delete these lines; they
   only restated the passphrase default. Errors name the declaring file and line.
@@ -135,6 +176,21 @@ During v0.x, MINOR bumps may include breaking changes.
   backend, why it was chosen, and its record: active or stopped, persistent or
   held, the applied generation, a partial generation and its holders. Status
   JSON gains an `environment` object.
+- Run control for every run (Q-006): `effigy --run-id <key> <task>` names a
+  run with a caller key, and a repeat or a racing second invocation attaches
+  to it and exits with its result instead of starting another. `effigy runs`
+  lists runs (`effigy.runs.v1`), `effigy run status <run>` reports one
+  (`effigy.run.v1`), `effigy run logs <run> [--follow]` reads its output by
+  exact byte offset and ends on settle with the run's exit code
+  (`effigy.run.logs.v1`; resume with `--stdout-offset`/`--stderr-offset`),
+  and `effigy run stop <run>` stops it through a fenced kernel request. A
+  lost follower never loses or duplicates output, a terminal run without
+  logs still reports its real result, and expired log bytes are reported
+  (closes papercut 910c578a). A plain run named by `--run-id` whose stdout or
+  stderr is not a terminal is captured, relayed as it arrives with declared
+  secrets redacted, and logged; other runs keep their descriptors untouched.
+- `tasks --json` rows and `--plan --json` carry `"admission": "heavy"` for a
+  classified task.
 - Keep CLI presentation local and bounded: banner sizing never launches `tput`, and version metadata reads environment or installed stamps without running Git. Unstamped development binaries report the package version.
 - Graph reads, documentation context and doctor never refresh or create graph
   files. Explicit `graph index` uses a kernel store gate and migrates existing
@@ -499,9 +555,6 @@ During v0.x, MINOR bumps may include breaking changes.
   1.2.0.
 
 ### Fixed
-- Volume, cache, data and reset actions target the backend the environment
-  runs on instead of guessing from the profile name, and shared services run
-  on the dependent environment's backend (D3-25).
 - Reset drops only the selected environment's render references.
 - Container preparation detects missing or changed named-volume mounts before
   reusing a running stack, including worktree `isolated_dirs`. Status and doctor

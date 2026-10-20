@@ -1033,8 +1033,8 @@ fn private_startup_failure_and_interruption_withhold_ready_and_cleanup() {
 }
 
 #[test]
-fn private_direct_scoped_compose_refuses_fixed_identity_before_effects() {
-    let mut fixture = Fixture::new();
+fn private_translated_scoped_compose_renders_its_own_port() {
+    let fixture = Fixture::new();
     let root = &fixture.stacks[2].root;
     let manifest = fs::read_to_string(root.join("effigy.toml")).unwrap();
     let direct = manifest
@@ -1051,27 +1051,29 @@ fn private_direct_scoped_compose_refuses_fixed_identity_before_effects() {
         "services:\n  db:\n    image: fixture.invalid/db\n    ports: [\"4000:5432\"]\n",
     )
     .unwrap();
+    // A translated `compose_file` is a catalog environment: the scoped
+    // checkout renders its own port instead of the primary's fixed one.
     let output = fixture
-        .command(2, &["container", "up", "--detach", "--json"])
+        .command(2, &["container", "render", "--json"])
         .output()
         .unwrap();
-    assert!(!output.status.success());
-    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(json["error"]["details"]["state"], "unavailable");
-    let human = fixture
-        .command(2, &["container", "up", "--detach"])
-        .output()
-        .unwrap();
-    assert!(
-        String::from_utf8_lossy(&human.stderr).contains("cannot isolate repo-owned compose"),
-        "{human:?}"
-    );
-    assert!(!fixture.stacks[2].root.join("commands.jsonl").exists());
-    fixture.probe(2);
-    println!(
-        "direct scoped identity refusal: {}",
-        String::from_utf8_lossy(&human.stderr)
-    );
+    assert!(output.status.success(), "{output:?}");
+    let render: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let compose = render["result"]["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|file| {
+            file["name"]
+                .as_str()
+                .unwrap()
+                .ends_with(".generated.compose.yml")
+        })
+        .and_then(|file| file["content"].as_str())
+        .unwrap()
+        .to_owned();
+    assert!(compose.contains(":5432"), "{compose}");
+    assert!(!compose.contains("4000:5432"), "{compose}");
 }
 
 #[test]

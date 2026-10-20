@@ -311,8 +311,8 @@ command -v effigy
 effigy --version
 ```
 
-The version command identifies the resolved executable; heavy selectors route
-through the Queue/Nucleus scheduler, and Effigy no longer exposes a local
+The version command identifies the resolved executable. Heavy selectors wait
+only for an `EFFIGY_ADMISSION_HOOK` the launcher sets; Effigy exposes no
 admission capability query. Skill lookup and binary provenance are independent. See
 [`080-host-wide-validation-admission.md`](080-host-wide-validation-admission.md).
 

@@ -1,8 +1,7 @@
-#[path = "../../../../../tests/support/sealed_fixture.rs"]
-mod sealed_fixture;
 use super::*;
 use crate::policy::admission::PolicyAdmission;
 use crate::policy::load::{load_container_policy, prepare_container_policy};
+use crate::sealed_fixture;
 use std::os::unix::fs::PermissionsExt;
 
 fn fixture() -> (sealed_fixture::SealedFixture, PathBuf, PathBuf) {

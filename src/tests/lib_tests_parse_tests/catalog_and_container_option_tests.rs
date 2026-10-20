@@ -481,24 +481,35 @@ fn parse_container_retire_named_environment_is_rejected() {
 }
 
 #[test]
-fn parse_container_eject_is_supported() {
-    let cmd = parse_command(vec![
+fn parse_container_eject_is_retired_with_an_actionable_error() {
+    let error = parse_command(vec![
         "container".to_owned(),
         "web".to_owned(),
         "eject".to_owned(),
-        "--json".to_owned(),
     ])
-    .expect("parse should succeed");
-    assert_eq!(
-        cmd,
-        Command::Container(ContainerArgs {
-            subcommand: ContainerSubcommand::Eject {
-                name: Some("web".to_owned()),
-            },
-            repo_override: None,
-            output_json: true,
-        })
-    );
+    .expect_err("eject is retired");
+    assert!(error.to_string().contains("effigy container render <NAME>"));
+}
+
+#[test]
+fn parse_container_migrate_is_supported() {
+    for args in [
+        vec!["container", "migrate", "linux-release", "--json"],
+        vec!["container", "linux-release", "migrate", "--json"],
+    ] {
+        let cmd = parse_command(args.into_iter().map(str::to_owned).collect::<Vec<_>>())
+            .expect("parse should succeed");
+        assert_eq!(
+            cmd,
+            Command::Container(ContainerArgs {
+                subcommand: ContainerSubcommand::Migrate {
+                    name: Some("linux-release".to_owned()),
+                },
+                repo_override: None,
+                output_json: true,
+            })
+        );
+    }
 }
 
 #[test]

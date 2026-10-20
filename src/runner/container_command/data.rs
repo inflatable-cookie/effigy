@@ -232,7 +232,6 @@ pub(super) fn run_container_data_seed(
     yes: bool,
 ) -> Result<String, RunnerError> {
     let policy = effigy_containers::load_container_policy(repo_root, name)?;
-    ensure_seed_prompt_target(&policy)?;
     let _operation_plan = effigy_runtime::data::data_operation_plan(
         repo_root,
         &policy,
@@ -381,7 +380,6 @@ where
     CaptureFn: Fn(&str, &str, &Path, bool) -> Result<serde_json::Value, RunnerError>,
 {
     let policy = effigy_containers::load_container_policy(repo_root, name)?;
-    ensure_dump_target(&policy)?;
     let _operation_plan = effigy_runtime::data::data_operation_plan(
         repo_root,
         &policy,
@@ -513,7 +511,6 @@ pub(super) fn maybe_confirm_container_data_import(
     yes: bool,
 ) -> Result<(), RunnerError> {
     let policy = effigy_containers::load_container_policy(repo_root, name)?;
-    ensure_import_prompt_target(&policy)?;
     if !container_data_import_prompt_required(
         &policy.name,
         output_json,
@@ -556,55 +553,13 @@ pub(super) fn maybe_confirm_destructive_container_action(
     confirm_destructive_container_action_from_io(description, &mut stdin, &mut stdout)
 }
 
-fn ensure_import_prompt_target(
-    policy: &effigy_containers::EffectiveContainerPolicy,
-) -> Result<(), RunnerError> {
-    if policy.compose_source != effigy_containers::EffectiveComposeSource::Generated {
-        return Err(RunnerError::task_invocation(format!(
-            "container `{}` uses direct `compose_file` ownership; `data import` is supported only on the generated-compose path",
-            policy.name
-        )));
-    }
-    Ok(())
-}
-
 fn ensure_pull_production_prompt_target(
     policy: &effigy_containers::EffectiveContainerPolicy,
 ) -> Result<(), RunnerError> {
-    if policy.compose_source != effigy_containers::EffectiveComposeSource::Generated {
-        return Err(RunnerError::task_invocation(format!(
-            "container `{}` uses direct `compose_file` ownership; `data pull-production` is supported only on the generated-compose path",
-            policy.name
-        )));
-    }
     if policy.pull_production_hook.is_none() {
         return Err(RunnerError::task_invocation(format!(
             "container `{}` does not declare `[containers.{}.data].pull_production`",
             policy.name, policy.name
-        )));
-    }
-    Ok(())
-}
-
-fn ensure_seed_prompt_target(
-    policy: &effigy_containers::EffectiveContainerPolicy,
-) -> Result<(), RunnerError> {
-    if policy.compose_source != effigy_containers::EffectiveComposeSource::Generated {
-        return Err(RunnerError::task_invocation(format!(
-            "container `{}` uses direct `compose_file` ownership; `data seed` is supported only on the generated-compose path",
-            policy.name
-        )));
-    }
-    Ok(())
-}
-
-fn ensure_dump_target(
-    policy: &effigy_containers::EffectiveContainerPolicy,
-) -> Result<(), RunnerError> {
-    if policy.compose_source != effigy_containers::EffectiveComposeSource::Generated {
-        return Err(RunnerError::task_invocation(format!(
-            "container `{}` uses direct `compose_file` ownership; `data dump` is supported only on the generated-compose path",
-            policy.name
         )));
     }
     Ok(())
@@ -821,20 +776,16 @@ mod tests {
     };
     use super::{
         resolve_db_dump_output_paths, resolve_db_dump_plans, run_container_data_dump,
-        run_container_data_dump_with_hooks, run_container_data_pull_production,
-        run_container_data_seed,
+        run_container_data_dump_with_hooks,
     };
     use effigy_bootstrap::BootstrapStagedDbSeed;
-    use effigy_cli::{BootstrapDbSeedInput, ContainerDbDumpInput};
+    use effigy_cli::ContainerDbDumpInput;
     use effigy_containers::{
         EffectiveComposeSource, EffectiveContainerPolicy, SharedServiceBinding,
     };
     use effigy_manifest::{
         ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerShutdownMode,
         ManifestContainerStartup, TaskManifest,
-    };
-    use effigy_runtime::data::{
-        run_container_data_export, run_container_data_import, run_container_data_list,
     };
     use std::fs;
     use std::io::Cursor;
@@ -928,96 +879,6 @@ mod tests {
             detach_timeout_secs: 10,
             host_processes: Vec::new(),
         }
-    }
-
-    #[test]
-    fn run_container_data_list_rejects_direct_compose_ownership() {
-        let root = temp_repo("data-list-direct");
-        fs::write(
-            root.join("effigy.toml"),
-            r#"
-[containers]
-default = "web"
-
-[containers.web]
-compose_file = "infra/dev/docker-compose.yml"
-primary_service = "app"
-"#,
-        )
-        .expect("write manifest");
-        fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
-        fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
-
-        let error = run_container_data_list(&root, None, false, |_, _, _| unreachable!())
-            .expect_err("should fail");
-        assert!(error
-            .to_string()
-            .contains("`data list` is supported only on the generated-compose path"));
-    }
-
-    #[test]
-    fn run_container_data_export_rejects_direct_compose_ownership() {
-        let root = temp_repo("data-export-direct");
-        fs::write(
-            root.join("effigy.toml"),
-            r#"
-[containers]
-default = "web"
-
-[containers.web]
-compose_file = "infra/dev/docker-compose.yml"
-primary_service = "app"
-"#,
-        )
-        .expect("write manifest");
-        fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
-        fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
-
-        let error = run_container_data_export(
-            &root,
-            None,
-            "demo-web-dev-db-data",
-            Path::new("/tmp/demo.tar.gz"),
-            false,
-            |_, _, _| unreachable!(),
-        )
-        .expect_err("should fail");
-        assert!(error
-            .to_string()
-            .contains("`data export` is supported only on the generated-compose path"));
-    }
-
-    #[test]
-    fn run_container_data_dump_rejects_direct_compose_ownership() {
-        let root = temp_repo("data-dump-direct");
-        fs::write(
-            root.join("effigy.toml"),
-            r#"
-[containers]
-default = "web"
-
-[containers.web]
-compose_file = "infra/dev/docker-compose.yml"
-primary_service = "app"
-"#,
-        )
-        .expect("write manifest");
-        fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
-        fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
-
-        let error = run_container_data_dump(
-            &root,
-            None,
-            &[ContainerDbDumpInput {
-                target: None,
-                path: PathBuf::from("/tmp/latest.sql"),
-            }],
-            false,
-            false,
-        )
-        .expect_err("should fail");
-        let message = error.to_string();
-        assert!(message.contains("`data dump` is supported only on the generated-compose path"));
     }
 
     #[test]
@@ -1286,68 +1147,6 @@ database = "acowtancy"
     }
 
     #[test]
-    fn run_container_data_import_rejects_direct_compose_ownership() {
-        let root = temp_repo("data-import-direct");
-        let archive = root.join("backup.tar.gz");
-        fs::write(&archive, "fake archive").expect("write archive");
-        fs::write(
-            root.join("effigy.toml"),
-            r#"
-[containers]
-default = "web"
-
-[containers.web]
-compose_file = "infra/dev/docker-compose.yml"
-primary_service = "app"
-"#,
-        )
-        .expect("write manifest");
-        fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
-        fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
-
-        let error = run_container_data_import(
-            &root,
-            None,
-            "demo-web-dev-db-data",
-            &archive,
-            false,
-            |_, _, _| unreachable!(),
-        )
-        .expect_err("should fail");
-        assert!(error
-            .to_string()
-            .contains("`data import` is supported only on the generated-compose path"));
-    }
-
-    #[test]
-    fn run_container_data_pull_production_rejects_direct_compose_ownership() {
-        let root = temp_repo("data-pull-production-direct");
-        fs::write(
-            root.join("effigy.toml"),
-            r#"
-[containers]
-default = "web"
-
-[containers.web]
-compose_file = "infra/dev/docker-compose.yml"
-primary_service = "app"
-
-[containers.web.data]
-pull_production = "scripts/pull-production.sh"
-"#,
-        )
-        .expect("write manifest");
-        fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
-        fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
-
-        let error =
-            run_container_data_pull_production(&root, None, false, false).expect_err("should fail");
-        assert!(error
-            .to_string()
-            .contains("`data pull-production` is supported only on the generated-compose path"));
-    }
-
-    #[test]
     fn prompt_container_data_pull_production_renders_and_confirms() {
         let mut output = Vec::new();
         confirm_container_data_pull_production_from_io(
@@ -1489,41 +1288,6 @@ pull_production = "scripts/pull-production.sh"
         let json = container_data_seed_prompt_required("web", true, false, true, true)
             .expect_err("json should fail");
         assert!(json.to_string().contains("--yes"));
-    }
-
-    #[test]
-    fn run_container_data_seed_rejects_direct_compose_ownership() {
-        let root = temp_repo("data-seed-direct");
-        fs::write(
-            root.join("effigy.toml"),
-            r#"
-[containers]
-default = "web"
-
-[containers.web]
-compose_file = "infra/dev/docker-compose.yml"
-primary_service = "app"
-"#,
-        )
-        .expect("write manifest");
-        fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
-        fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
-
-        let error = run_container_data_seed(
-            &root,
-            None,
-            &[BootstrapDbSeedInput {
-                target: None,
-                path: PathBuf::from("/tmp/latest.sql"),
-            }],
-            false,
-            true,
-            true,
-        )
-        .expect_err("should fail");
-        assert!(error
-            .to_string()
-            .contains("`data seed` is supported only on the generated-compose path"));
     }
 
     #[test]

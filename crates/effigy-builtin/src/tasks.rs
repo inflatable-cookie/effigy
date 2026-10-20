@@ -46,7 +46,6 @@ pub(super) fn run_builtin_tasks(
                     status_all: request.status_all,
                     output_json: request.output_json,
                     pretty_json: request.pretty_json,
-                    request: None,
                     qa: None,
                 })
                 .map(Some)

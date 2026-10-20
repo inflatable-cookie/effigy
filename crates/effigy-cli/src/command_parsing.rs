@@ -34,8 +34,8 @@ use crate::{
     DepsSubcommand, DoctorArgs, DraftArgs, DraftsArgs, GatewayPrivateArgs, HelpGroup, HelpTopic,
     InternalContainerLeaseReaperArgs, InternalGatewayArgs, InternalGatewayIdentityArgs,
     InternalHostProcessStopArgs, InternalHostProcessSuperviseArgs, InternalScriptRunArgs, RhaiArgs,
-    RhaiSubcommand, SkillArgs, SkillStdioMode, SkillSubcommand, TaskInvocation, TasksArgs,
-    TasksQaCommand, TasksRequestCommand, UninstallArgs,
+    RhaiSubcommand, RunsAction, RunsArgs, SkillArgs, SkillStdioMode, SkillSubcommand,
+    TaskInvocation, TasksArgs, TasksQaCommand, UninstallArgs,
 };
 use artifact::parse_artifact_command;
 use bootstrap::parse_bootstrap_command;
@@ -100,6 +100,16 @@ where
         "release" => parse_release_command(args),
         "doctor" => parse_doctor(args),
         "tasks" => parse_tasks(args),
+        "runs" => parse_runs(None, args),
+        "run" => {
+            let mut args = args;
+            // Bare `effigy run` is the run-control panel, so a root task named
+            // `run` (routed here by deferral) still validates as a selector.
+            match args.next() {
+                Some(action) => parse_runs(Some(action), args),
+                None => Ok(Command::Help(HelpTopic::Runs)),
+            }
+        }
         "drafts" => parse_drafts(args),
         "draft" => parse_draft(args),
         "script" => parse_internal_script_command(args),
@@ -1233,7 +1243,9 @@ where
             return parse_tasks_qa(arg == "qa-groups", args, repo_override);
         }
         if arg == "request" {
-            return parse_tasks_request(args);
+            return Err(CliParseError::InvalidArguments(
+                crate::RETIRED_TASKS_REQUEST.to_owned(),
+            ));
         }
         match arg.as_str() {
             "status" => {
@@ -1334,69 +1346,7 @@ where
         status_all,
         output_json,
         pretty_json,
-        request: None,
         qa: None,
-    }))
-}
-
-fn parse_tasks_request<I>(args: I) -> Result<Command, CliParseError>
-where
-    I: IntoIterator<Item = String>,
-{
-    let mut args = args.into_iter();
-    let action = args.next().ok_or_else(|| {
-        CliParseError::InvalidArguments("`tasks request` requires `status` or `follow`".to_owned())
-    })?;
-    let mut caller = None;
-    let mut request_id = None;
-    let mut output_json = false;
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--caller" => {
-                if caller.is_some() {
-                    return Err(CliParseError::InvalidArguments(
-                        "`--caller` may be supplied only once".to_owned(),
-                    ));
-                }
-                caller = Some(next_required_value(
-                    &mut args,
-                    CliParseError::InvalidArguments("missing value for --caller".to_owned()),
-                )?);
-            }
-            "--request-id" => {
-                if request_id.is_some() {
-                    return Err(CliParseError::InvalidArguments(
-                        "`--request-id` may be supplied only once".to_owned(),
-                    ));
-                }
-                request_id = Some(next_required_value(
-                    &mut args,
-                    CliParseError::InvalidArguments("missing value for --request-id".to_owned()),
-                )?);
-            }
-            "--json" => output_json = true,
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Tasks)),
-            other => return Err(unknown_argument(other)),
-        }
-    }
-    let (Some(caller), Some(request_id)) = (caller, request_id) else {
-        return Err(CliParseError::InvalidArguments(
-            "`tasks request` requires both `--caller` and `--request-id`".to_owned(),
-        ));
-    };
-    let request = match action.as_str() {
-        "status" => TasksRequestCommand::Status { caller, request_id },
-        "follow" => TasksRequestCommand::Follow { caller, request_id },
-        other => {
-            return Err(CliParseError::InvalidArguments(format!(
-                "`tasks request` supports `status` or `follow`, not `{other}`"
-            )))
-        }
-    };
-    Ok(Command::Tasks(TasksArgs {
-        output_json,
-        request: Some(request),
-        ..TasksArgs::default()
     }))
 }
 
@@ -1468,7 +1418,6 @@ where
         }
         return Ok(Command::Tasks(TasksArgs {
             repo_override,
-            request: None,
             qa: Some(TasksQaCommand::GroupsList {
                 filter,
                 file,
@@ -1518,8 +1467,7 @@ where
             let selector = selector.ok_or(CliParseError::MissingQaGroupSelector)?;
             Ok(Command::Tasks(TasksArgs {
                 repo_override,
-                request: None,
-                qa: Some(TasksQaCommand::GroupRun {
+                        qa: Some(TasksQaCommand::GroupRun {
                     selector,
                     file,
                     scopes,
@@ -1533,8 +1481,7 @@ where
             let (run_id, output_json, repo_override) = parse_run_id_command(args, repo_override)?;
             Ok(Command::Tasks(TasksArgs {
                 repo_override,
-                request: None,
-                qa: Some(TasksQaCommand::GroupStatus { run_id, output_json }),
+                        qa: Some(TasksQaCommand::GroupStatus { run_id, output_json }),
                 ..TasksArgs::default()
             }))
         }
@@ -1564,8 +1511,7 @@ where
             let run_id = run_id.ok_or(CliParseError::MissingQaGroupRunId)?;
             Ok(Command::Tasks(TasksArgs {
                 repo_override: override_after,
-                request: None,
-                qa: Some(TasksQaCommand::GroupLogs { run_id, follow }),
+                        qa: Some(TasksQaCommand::GroupLogs { run_id, follow }),
                 ..TasksArgs::default()
             }))
         }
@@ -1573,8 +1519,7 @@ where
             let (run_id, output_json, repo_override) = parse_run_id_command(args, repo_override)?;
             Ok(Command::Tasks(TasksArgs {
                 repo_override,
-                request: None,
-                qa: Some(TasksQaCommand::GroupStop { run_id, output_json }),
+                        qa: Some(TasksQaCommand::GroupStop { run_id, output_json }),
                 ..TasksArgs::default()
             }))
         }
@@ -1629,7 +1574,6 @@ where
     }
     Ok(Command::Tasks(TasksArgs {
         repo_override: Some(PathBuf::from(repo_value)),
-        request: None,
         qa: Some(TasksQaCommand::GroupsList {
             filter,
             file,
@@ -1768,6 +1712,113 @@ where
         selector,
         args: passthrough,
         output_json,
+    }))
+}
+
+/// `effigy runs [--limit N] [--all]` and `effigy run status|logs|stop <run>`.
+fn parse_runs<I>(action: Option<String>, args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_override = None;
+    let mut output_json = false;
+    let mut run = None;
+    let mut limit = None;
+    let mut all = false;
+    let mut follow = false;
+    let mut stdout_offset = 0;
+    let mut stderr_offset = 0;
+    let mut wait_ms = None;
+    let action = action.as_deref();
+    if matches!(action, Some("--help" | "-h")) {
+        return Ok(Command::Help(HelpTopic::Runs));
+    }
+    let number = |flag: &str, value: String| {
+        value.parse::<u64>().map_err(|_| {
+            CliParseError::InvalidArguments(format!("`{flag}` needs a non-negative integer"))
+        })
+    };
+    while let Some(arg) = args.next() {
+        let flag = arg.as_str();
+        match (action, flag) {
+            (_, "--help" | "-h") => return Ok(Command::Help(HelpTopic::Runs)),
+            (_, "--repo") => repo_override = Some(parse_repo_path(&mut args)?),
+            (_, "--json") => output_json = true,
+            (None, "--all") => all = true,
+            (None, "--limit") => {
+                let value = next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: flag.to_owned(),
+                    },
+                )?;
+                limit = Some(number(flag, value)? as usize);
+            }
+            (Some("logs"), "--follow" | "-f") => follow = true,
+            (Some("logs"), "--stdout-offset" | "--stderr-offset") => {
+                let value = next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: flag.to_owned(),
+                    },
+                )?;
+                let value = number(flag, value)?;
+                if flag == "--stdout-offset" {
+                    stdout_offset = value;
+                } else {
+                    stderr_offset = value;
+                }
+            }
+            (Some("stop"), "--wait-ms") => {
+                let value = next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: flag.to_owned(),
+                    },
+                )?;
+                wait_ms = Some(number(flag, value)?);
+            }
+            (Some(_), _) if !flag.starts_with('-') && run.is_none() => run = Some(arg),
+            _ => return Err(unknown_argument(flag)),
+        }
+    }
+    let required = |run: Option<String>| {
+        run.ok_or_else(|| {
+            CliParseError::InvalidArguments(format!(
+                "`effigy run {}` requires a run id or `--run-id` key",
+                action.unwrap_or_default()
+            ))
+        })
+    };
+    let action = match action {
+        None => RunsAction::List {
+            limit: limit.unwrap_or(20).clamp(1, 500),
+            all,
+        },
+        Some("status") => RunsAction::Status {
+            run: required(run)?,
+        },
+        Some("logs") => RunsAction::Logs {
+            run: required(run)?,
+            follow,
+            stdout_offset,
+            stderr_offset,
+        },
+        Some("stop") => RunsAction::Stop {
+            run: required(run)?,
+            wait_ms,
+        },
+        Some(other) => {
+            return Err(CliParseError::InvalidArguments(format!(
+                "`effigy run` supports `status`, `logs` or `stop`, not `{other}`"
+            )))
+        }
+    };
+    Ok(Command::Runs(RunsArgs {
+        repo_override,
+        output_json,
+        action,
     }))
 }
 

@@ -46,8 +46,11 @@ fn temp_repo(manifest: &str) -> std::path::PathBuf {
     ));
     std::fs::create_dir_all(root.join("infra/dev")).expect("mkdir repo");
     std::fs::write(root.join("effigy.toml"), manifest).expect("write manifest");
-    std::fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n")
-        .expect("write compose");
+    std::fs::write(
+        root.join("infra/dev/docker-compose.yml"),
+        "services:\n  workspace:\n    image: example\n",
+    )
+    .expect("write compose");
     root
 }
 

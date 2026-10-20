@@ -386,10 +386,8 @@ fn up_publishes_applies_promotes_and_reuses_the_running_generation() {
     assert_eq!(applied.last_applied.as_deref(), Some(render.digest()));
     assert_eq!(applied.partial(), None);
     assert_eq!(applied.engine().unwrap().retention, Retention::Persistent);
-    assert_eq!(
-        applied.recorded_backend().unwrap().engine,
-        selection().engine
-    );
+    // Prepare records the backend (#230); a bring-up never writes it.
+    assert!(applied.recorded_backend().is_none());
     // Same render, running: no backend call, still active.
     assert_eq!(
         bring_up(&ctx, &stack, &fake, &render, Retention::Held, &[]).unwrap(),
@@ -924,13 +922,18 @@ fn backend_selection_records_its_reason_and_unknown_engines_refuse() {
     let recorded = selection();
     let metadata = recorded.metadata();
     assert_eq!(metadata.engine, "colima-nerdctl");
+    // The shape Prepare writes (#230): engine, context and a source label.
+    assert_eq!(metadata.source, "driver-default");
     let Observed::Verified(read, _) = BackendSelection::from_metadata(&metadata) else {
         panic!("recorded selection unreadable");
     };
     assert_eq!(read.kind, BackendKind::Colima);
     assert_eq!(read.context, "fixture");
-    assert!(matches!(read.reason, BackendReason::Recorded(_)));
-    assert!(read.describe().contains("manifest driver `colima`"));
+    assert_eq!(
+        read.reason,
+        BackendReason::Recorded("driver-default".into())
+    );
+    assert!(read.describe().contains("chosen by: driver-default"));
     let mut foreign = metadata.clone();
     foreign.engine = "podman".into();
     assert!(matches!(
@@ -938,7 +941,7 @@ fn backend_selection_records_its_reason_and_unknown_engines_refuse() {
         Observed::Unknown(_)
     ));
     let mut torn = metadata;
-    torn.source = "{".into();
+    torn.source = " ".into();
     assert!(matches!(
         BackendSelection::from_metadata(&torn),
         Observed::Unknown(_)

@@ -81,7 +81,7 @@ failure_count += check_no_unlisted_matches(
     ["src/runner", "crates/effigy-runtime/src"],
     `resolve_compose_backend|ComposeBackend`,
     #{ glob: "*.rs" },
-    `^(src/runner/doctor_ports\.rs|src/runner/exec_command/transport\.rs|src/runner/container_runtime_prep/prep\.rs|src/runner/container_command/lifecycle\.rs)$`,
+    `^(src/runner/doctor_ports\.rs|src/runner/exec_command/transport\.rs|src/runner/container_command/lifecycle\.rs)$`,
 );
 
 failure_count += check_no_unlisted_matches(

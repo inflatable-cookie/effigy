@@ -2792,15 +2792,6 @@ fn container_command_for_env(
         "Config": {"Labels": labels}, "NetworkSettings": {"Ports": {}},
     });
     let mut command = Command::new(EFFIGY);
-    if std::env::var_os("HOST_RUN_TOKEN").is_some() {
-        let state = std::env::var_os("EFFIGY_HOST_RUN_ROOT")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| {
-                PathBuf::from(std::env::var_os("HOME").expect("original scheduler home"))
-                    .join(".local/state/host-run")
-            });
-        command.env("EFFIGY_HOST_RUN_ROOT", state);
-    }
     command
         .env("FAKE_OWNED_CONTAINER", proof.to_string())
         .env(

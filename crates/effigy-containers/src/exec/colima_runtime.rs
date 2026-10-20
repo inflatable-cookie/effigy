@@ -990,7 +990,7 @@ fn shell_quote(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{write_runtime_backend_override, EffectiveComposeSource};
+    use crate::EffectiveComposeSource;
     use effigy_manifest::{
         with_test_user_config_home, ManifestContainerDriver, ManifestContainerOnTaskExit,
         ManifestContainerShutdownMode, ManifestContainerStartup,
@@ -1024,8 +1024,13 @@ mod tests {
             "[containers]\nbackend = \"containerd\"\n",
         )
         .expect("write config");
-        write_runtime_backend_override(&repo_root, Some("web"), &BackendId::docker_compose())
-            .expect("write runtime backend metadata");
+        // A v0.14 per-environment record, read until Prepare imports it.
+        std::fs::create_dir_all(repo_root.join(".effigy/runtime/compose")).expect("mkdir");
+        std::fs::write(
+            repo_root.join(".effigy/runtime/compose/.effigy-runtime.json"),
+            "[containers.web]\nbackend = \"docker-compose\"\n",
+        )
+        .expect("write legacy runtime backend record");
 
         let detection = with_test_user_config_home(&home, || {
             runtime_detection_for_policy(&repo_root, &test_policy())

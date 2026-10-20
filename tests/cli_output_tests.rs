@@ -1,5 +1,8 @@
 #[path = "cli_output_tests/command_behavior_tests.rs"]
 mod command_behavior_tests;
+#[cfg(unix)]
+#[path = "cli_output_tests/container_migrate_tests.rs"]
+mod container_migrate_tests;
 #[path = "cli_output_tests/core_output_tests.rs"]
 mod core_output_tests;
 #[path = "shared/deploy_fixture_support.rs"]
@@ -46,8 +49,6 @@ mod wave4_papercuts_tests;
 
 #[path = "support/mod.rs"]
 mod execution_fixture_support;
-#[path = "cli_output_tests/fixture_parent_tests.rs"]
-mod fixture_parent_tests;
 
 #[cfg(unix)]
 #[path = "cli_output_tests/partial_startup_tests.rs"]

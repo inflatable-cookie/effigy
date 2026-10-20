@@ -157,7 +157,6 @@ fn parse_tasks_with_filters() {
             status_all: false,
             output_json: false,
             pretty_json: true,
-            request: None,
             qa: None,
         })
     );
@@ -178,7 +177,6 @@ fn parse_tasks_supports_json_flag() {
             status_all: false,
             output_json: true,
             pretty_json: true,
-            request: None,
             qa: None,
         })
     );
@@ -204,7 +202,6 @@ fn parse_tasks_status_with_selector_and_json() {
             status_all: false,
             output_json: true,
             pretty_json: true,
-            request: None,
             qa: None,
         })
     );
@@ -241,7 +238,6 @@ fn parse_tasks_status_all_with_json() {
             status_all: true,
             output_json: true,
             pretty_json: true,
-            request: None,
             qa: None,
         })
     );

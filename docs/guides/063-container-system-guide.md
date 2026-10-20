@@ -159,7 +159,7 @@ effigy container <NAME> data export <VOLUME> <PATH>
 effigy container <NAME> data import <VOLUME> <PATH>
 effigy container <NAME> data pull-production
 effigy container <NAME> reset --keep-data
-effigy container <NAME> eject
+effigy container migrate <NAME>
 effigy container hosts
 effigy container scope [--repo <PATH>] [--json]
 effigy container retire --yes
@@ -353,7 +353,7 @@ Use `container` when you want to:
 
 - bring a declared local environment up or down directly
 - inspect logs or open a shell in one container service
-- export, import, reset, or eject environment data
+- export, import or reset environment data
 - operate a simple compose-backed repo without the fuller `system` setup
 
 If the question is instead:
@@ -502,9 +502,9 @@ ownership, HTTP probe status and route. Unobserved phases show `not_reached` or
 and the top-level `status` remains the current state. The field list is in
 the managed host listener section of the container runtime contract.
 
-- prefer catalog-driven generated compose for normal use
-- use a repo-owned `compose_file` only when the repo genuinely needs direct
-  compose ownership
+- declare services from the catalog; a service the catalog lacks gets a
+  project fragment under `infra/dev/catalog/<name>/`
+- a repo-owned `compose_file` is deprecated; migrate it (below)
 
 ### Catalog-Driven
 
@@ -595,7 +595,7 @@ project name, published ports, routes — stays separate. Services that only
 one side declares keep their own volumes.
 
 Validation refuses, at manifest load, an unknown or self target, chains or
-cycles, driver mismatches, direct `compose_file` ownership on either side,
+cycles, driver mismatches, a retired `compose_file` on either side,
 `share_runtime_identity` on the borrower, and the same service name bound to
 different catalogs.
 
@@ -629,10 +629,6 @@ service preparation, just before it submits the primary Compose up. A source
 that is absent then is skipped; a required catalog member still fails if it
 is missing. Status and other policy reads do not announce a runtime skip, and
 Effigy does not create the host source directory for an optional mount.
-
-For direct Compose, an already-running primary service keeps its loaded mount
-spec for that `up`; Effigy does not refresh it just to apply an optional mount.
-No creation-time mount decision is reported in that case.
 
 After a new create spec is submitted and Compose up succeeds, the diagnostic
 reports each included or skipped source/target pair. Detached
@@ -742,34 +738,38 @@ binding per container environment:
 publish_address = "0.0.0.0"
 ```
 
-### Repo-Owned `compose_file`
+### Migrating a Repo-Owned `compose_file`
 
-```toml
-[containers.web]
-driver = "colima"
-startup = "attached"
-profile = "effigy"
-compose_file = "infra/dev/docker-compose.yml"
-project_name = "my-app-dev"
-primary_service = "app"
+`compose_file` is deprecated in v0.15. Effigy reads each Compose service as a
+project catalog fragment for one release and prints a warning naming the
+command. Write the fragments out once:
 
-[containers.web.host]
-ports = ["8080:80", "3306:3306"]
-mounts = ["./:/workspace"]
+```sh
+effigy container render linux-release   # optional: the exact render
+effigy container migrate linux-release
 ```
 
-Use this when:
+`migrate` writes `infra/dev/catalog/<container>-<service>/` (`service.toml`
+and `compose.fragment.yml`), replaces `compose_file` with
+`[containers.<name>.services.<service>] catalog = "<fragment>"` in the manifest
+file that declared it, and checks that the render did not change. Comments and
+other keys stay. Delete the old Compose file afterwards; it is no longer read.
+Rerunning after an interruption completes the migration.
 
-- the repo already owns its own compose file
-- the repo has taken local ownership through `effigy container <name> eject`
-- the generated catalog path is not sufficient
+The translated environment is a normal catalog environment:
 
-Runtime-scoped checkouts using a repo-owned Compose file still get a scoped
-project name. Effigy refuses fixed published ports, `container_name`, and
-named or external top-level volumes and networks in that file because it
-cannot safely rewrite repo-owned Compose resources. Remove those fixed
-resources, use generated Compose, or explicitly opt into a shared runtime
-with `share_runtime_identity = true`.
+- every service carries Effigy's checkout and scope labels, so the first `up`
+  after upgrade recreates it once
+- named volumes become `<project>-<volume>`; the old `<project>_<volume>`
+  volumes are left alone and never adopted
+- published ports follow catalog port policy: Prepare assigns the host port
+  (see `effigy container ports status`) on the publish address (`127.0.0.1` by
+  default) unless `[host].ports` fixes it
+- `data`, `cache` and `reset` commands apply
+
+Compose features a fragment cannot express (custom networks, volume options,
+`extends`, `$` interpolation and similar) refuse with the key to move. `eject`
+is retired: generated Compose stays internal.
 
 ## Core Rules
 
@@ -780,11 +780,12 @@ Current v1 rules:
 - Docker/Desktop is a supported backend for bootstrap and runtime use, not just
   an ambient CLI fallback
 - `primary_service` is required
-- `compose_file`, when used, must stay repo-relative
+- a deprecated `compose_file` must stay repo-relative
 - repo-relative `host.mounts` may not escape the repo root unless they use the
   structured `external = true` form
-- generated-compose data lifecycle stays on the product-owned path instead of
-  widening direct `compose_file` ownership
+- every volume and data action runs on the environment's exact backend and
+  touches only volumes whose Effigy labels name this project; a same-named
+  lookalike is reported and left alone
 
 ## External Host Mounts
 
@@ -1150,7 +1151,6 @@ Generated-compose environments support:
 - `data seed`
 - data-safe `reset`
 - explicit `reset --wipe-data`
-- `eject`
 
 These stay on the generated-compose path so Effigy can keep the runtime data
 behavior predictable.
@@ -1700,7 +1700,6 @@ Still intentionally narrow:
 
 - no broad multi-driver abstraction
 - no richer per-service health DSL yet
-- direct `compose_file` ownership remains narrower than generated-compose
 
 ## Related
 

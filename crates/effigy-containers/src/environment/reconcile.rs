@@ -398,12 +398,6 @@ impl<'r> EnvRun<'r> {
         self.kernel(result)
     }
 
-    /// Records the exact backend this environment runs on, and why.
-    pub fn set_backend(&mut self, selection: &BackendSelection) -> Result<(), EnvError> {
-        let result = self.run.set_backend(&selection.metadata());
-        self.kernel(result)
-    }
-
     /// Replaces the engine's fields on the record.
     pub fn write_record(&mut self, record: &EngineRecord) -> Result<(), EnvError> {
         let value =

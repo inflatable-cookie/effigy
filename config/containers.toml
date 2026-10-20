@@ -2,11 +2,13 @@
 driver = "colima"
 startup = "detached"
 profile = "effigy-release"
-compose_file = "infra/release/linux/docker-compose.yml"
 # Stable private builder protocol identity; upgrades reuse this project.
 # Legacy effigy-linux-release resources are retained and never adopted.
 project_name = "effigy-artifact-builder-v1"
 primary_service = "builder"
+
+[containers."linux-release".services.builder]
+catalog = "linux-release-builder"
 
 [containers."linux-release".lifecycle]
 on_task_exit = "stop"

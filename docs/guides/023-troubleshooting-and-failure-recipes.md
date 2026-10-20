@@ -556,18 +556,19 @@ effigy service extract postgres --dir ./services
 This writes the bundled service definition to `./services/postgres.toml` so you
 can modify it without losing upstream updates.
 
-### Symptom: need container resource usage or ejected compose files
+### Symptom: need container resource usage or the generated compose
 
 ```sh
 # Show resource usage for running containers
 effigy container stats
 
-# Export the generated compose for manual inspection
-effigy container <name> eject
+# Print the exact immutable render, without writing anything
+effigy container render <name>
 ```
 
-Use `stats` when you need to debug memory/CPU issues.  
-Use `eject` when you need to inspect or manually edit the generated compose configuration.
+Use `stats` when you need to debug memory/CPU issues.
+Use `render` to inspect the generated Compose. To change a service, write a
+project catalog fragment under `infra/dev/catalog/`; `eject` is retired.
 
 ## 8) Deferral Failures
 

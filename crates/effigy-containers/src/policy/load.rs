@@ -455,6 +455,10 @@ fn build_effective_policy(
         library_mounts,
         record_optional_extra_mount_decisions,
     } = context;
+    // Retired `compose_file` resolves as the catalog declaration that
+    // `effigy container migrate` would write, so both forms render alike.
+    let translated = super::compose_file::translate_for_policy(repo_root, name, config)?;
+    let config = translated.as_ref().unwrap_or(config);
     let mut draft = super::render::Draft::default();
     draft.declarations(declarations)?;
     let driver = config.driver.unwrap_or(ManifestContainerDriver::Colima);
@@ -583,11 +587,7 @@ fn build_effective_policy(
         driver,
         startup: config.startup.unwrap_or(ManifestContainerStartup::Attached),
         profile,
-        compose_source: if config.compose_file.is_some() {
-            EffectiveComposeSource::Direct
-        } else {
-            EffectiveComposeSource::Generated
-        },
+        compose_source: EffectiveComposeSource::Generated,
         compose_files,
         compose_file_display,
         managed_volumes,
@@ -892,7 +892,7 @@ fn infer_default_workspace_for_container(
     }
 }
 
-fn resolve_container_name(
+pub(crate) fn resolve_container_name(
     containers: &ManifestContainersConfig,
     requested_name: Option<&str>,
 ) -> Result<String, ContainerPolicyError> {

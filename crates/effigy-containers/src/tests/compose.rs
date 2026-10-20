@@ -699,7 +699,7 @@ catalog = "workspace-rust-bun"
 }
 
 #[test]
-fn linked_direct_compose_with_fixed_port_fails_closed() {
+fn linked_translated_compose_with_fixed_port_allocates_a_scoped_port() {
     let root = temp_repo("linked-direct-fixed-port");
     let checkout = root.join("worker");
     let private = root.join("primary/.git/worktrees/worker");
@@ -727,14 +727,23 @@ primary_service = "app"
 "#,
     )
     .unwrap();
-    let error = load_container_policy(&checkout, None)
-        .unwrap_err()
-        .to_string();
-    assert!(error.contains("services.app.ports"), "{error}");
+    // A scoped checkout never binds the primary's fixed port: the translated
+    // mapping is allocated per checkout instead of refused.
+    let policy = load_container_policy(&checkout, None).unwrap();
+    assert!(
+        !policy.declared_ports.contains(&"8080:80".to_owned()),
+        "{:?}",
+        policy.declared_ports
+    );
+    let compose = policy.read_compose(&policy.compose_files[0]).unwrap();
+    assert!(
+        compose.contains(crate::policy::ports::UNASSIGNED_PORT_EXPRESSION),
+        "{compose}"
+    );
 }
 
 #[test]
-fn marked_clone_direct_compose_with_fixed_port_fails_closed() {
+fn marked_clone_translated_compose_with_fixed_port_allocates_a_scoped_port() {
     let root = temp_repo("clone-direct-fixed-port");
     let checkout = root.join("clone");
     fs::create_dir_all(checkout.join(".git")).unwrap();
@@ -759,14 +768,23 @@ primary_service = "app"
 "#,
     )
     .unwrap();
-    let error = load_container_policy(&checkout, None)
-        .unwrap_err()
-        .to_string();
-    assert!(error.contains("services.app.ports"), "{error}");
+    // A scoped checkout never binds the primary's fixed port: the translated
+    // mapping is allocated per checkout instead of refused.
+    let policy = load_container_policy(&checkout, None).unwrap();
+    assert!(
+        !policy.declared_ports.contains(&"8080:80".to_owned()),
+        "{:?}",
+        policy.declared_ports
+    );
+    let compose = policy.read_compose(&policy.compose_files[0]).unwrap();
+    assert!(
+        compose.contains(crate::policy::ports::UNASSIGNED_PORT_EXPRESSION),
+        "{compose}"
+    );
 }
 
 #[test]
-fn unmarked_clone_direct_compose_keeps_primary_fixed_port_behavior() {
+fn unmarked_clone_translated_compose_port_is_assigned_by_prepare() {
     let root = temp_repo("unmarked-clone-direct-fixed-port");
     let checkout = root.join("clone");
     fs::create_dir_all(checkout.join(".git")).unwrap();
@@ -787,8 +805,14 @@ primary_service = "app"
 "#,
     )
     .unwrap();
+    // A translated port is a catalog port: Prepare assigns the host side,
+    // so no checkout claims the fixed 8080.
     let policy = load_container_policy(&checkout, None).unwrap();
-    assert!(policy.declared_ports.contains(&"8080:80".to_owned()));
+    assert!(!policy.declared_ports.contains(&"8080:80".to_owned()));
+    assert!(policy
+        .declared_ports
+        .iter()
+        .any(|port| port.ends_with(":80")));
 }
 
 #[test]
@@ -1907,7 +1931,11 @@ catalog = "php-fpm"
     )
     .expect("write manifest");
     fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
-    fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
+    fs::write(
+        root.join("infra/dev/docker-compose.yml"),
+        "services:\n  app:\n    image: example\n",
+    )
+    .expect("compose");
 
     let error = load_container_policy(&root, None).expect_err("should fail");
     assert!(error
@@ -1946,12 +1974,13 @@ services:
 
     let policy = load_container_policy(&root, None).expect("policy");
 
-    assert_eq!(policy.compose_files.len(), 3);
-    assert!(policy.compose_files[0].ends_with("infra/dev/docker-compose.yml"));
-    assert!(policy.compose_files[1].ends_with(".effigy/runtime/compose/web.ownership.compose.yml"));
-    assert!(policy.compose_files[2].ends_with(".effigy/runtime/dns/web.compose.override.yml"));
+    // Translated `compose_file` renders like any catalog environment: one
+    // generated document carrying ownership labels, plus the DNS override.
+    assert_eq!(policy.compose_files.len(), 2);
+    assert!(policy.compose_files[0].ends_with(".effigy/runtime/compose/web.generated.compose.yml"));
+    assert!(policy.compose_files[1].ends_with(".effigy/runtime/dns/web.compose.override.yml"));
     let dns_override = policy
-        .read_compose(&policy.compose_files[2])
+        .read_compose(&policy.compose_files[1])
         .expect("read dns override");
     assert!(
         dns_override.contains("app:\n    dns:"),

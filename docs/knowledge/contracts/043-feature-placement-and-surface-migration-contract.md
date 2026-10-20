@@ -62,7 +62,7 @@ Primary ownership is fixed as follows:
 
 | Topic | Primary commands and shapes |
 | --- | --- |
-| `work` (direct) | `<task>`, `<catalog>/<task>`, `tasks`, `draft`, `drafts`, `test`, `doctor`, `init` |
+| `work` (direct) | `<task>`, `<catalog>/<task>`, `tasks`, `runs` (with `run status\|logs\|stop`), `draft`, `drafts`, `test`, `doctor`, `init` |
 | `local` | `container`, `system`, `workspace`, `gateway`, `service`, `exec` |
 | `repo` | `graph`, `scan`, `docs`, `contracts` |
 | `deliver` | `artifact`, `state`, `deploy`, `release`, `bundle`, `bootstrap`, `demo` |
@@ -78,6 +78,9 @@ current deferral permits it. No multi-token
 [`046`](046-published-and-draft-task-surface-contract.md). They explicitly
 select or inventory provisional task definitions; they do not turn the `work`
 help topic into an executable namespace or change flat published-task routing.
+`runs` and `run` are direct work commands governed by contract
+[`049`](049-heavy-validation-admission-contract.md); a root task named `run`
+or `runs` owns that word, as for every built-in.
 
 ## Repository-Intelligence Contract
 

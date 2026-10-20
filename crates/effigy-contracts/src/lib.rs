@@ -770,6 +770,19 @@ fn assert_required_json_contract_keys(schema: &str, payload: &Value) -> Result<(
             }
             Ok(())
         }
+        "effigy.container.migrate.v1" => {
+            if ["environment", "compose_file", "manifest"]
+                .iter()
+                .any(|key| !payload.get(key).is_some_and(Value::is_string))
+                || !payload.get("fragments").is_some_and(Value::is_array)
+                || !payload
+                    .get("render_unchanged")
+                    .is_some_and(Value::is_boolean)
+            {
+                return Err(format!("required keys missing for {schema}"));
+            }
+            Ok(())
+        }
         "effigy.container.render.v1" => {
             if ["environment", "path", "digest"]
                 .iter()
@@ -889,6 +902,24 @@ fn expand_contract_fixture_tokens(
     }
     if args
         .iter()
+        .any(|arg| arg.contains("<fixture_container_migrate>"))
+    {
+        let fixture = create_contract_fixture_files(
+            fixtures,
+            &[
+                ("effigy.toml", "[containers]\ndefault='web'\n[containers.web]\ncompose_file='compose.yml'\nprimary_service='app'\n"),
+                ("compose.yml", "services:\n  app:\n    image: example\n"),
+            ],
+        )
+        .map_err(|error| error.to_string())?;
+        replace_contract_token(
+            &mut args,
+            "<fixture_container_migrate>",
+            &fixture.to_string_lossy(),
+        );
+    }
+    if args
+        .iter()
         .any(|arg| arg.contains("<fixture_task_success>"))
     {
         let fixture =
@@ -997,13 +1028,13 @@ fn build_qa_groups_contract_fixture(
         .output()
         .map_err(|error| format!("failed to execute fixture group run: {error}"))?;
     if !output.status.success() {
+        // Captured output stays private: only the status is reported.
         return Err(format!(
-            "fixture group run failed unexpectedly (status={}); category: {}",
+            "fixture group run failed unexpectedly (status={})",
             output
                 .status
                 .code()
                 .map_or("signal".to_owned(), |code| code.to_string()),
-            fixture_group_refusal_category(&output.stdout).unwrap_or("unavailable")
         ));
     }
 
@@ -1027,27 +1058,6 @@ fn build_qa_groups_contract_fixture(
         .to_owned();
 
     Ok((fixture, run_id))
-}
-
-fn fixture_group_refusal_category(stdout: &[u8]) -> Option<&'static str> {
-    let payload: Value = serde_json::from_slice(stdout).ok()?;
-    let report = payload
-        .get("result")
-        .filter(|value| !value.is_null())
-        .or_else(|| payload.get("error")?.get("details"))?;
-    for member in report.get("members")?.as_array()? {
-        let summary = member
-            .get("summary")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        if summary.starts_with("runner error: invalid_parent_token:") {
-            return Some("invalid_parent_token");
-        }
-        if summary.starts_with("runner error: scheduler_unreachable:") {
-            return Some("scheduler_unreachable");
-        }
-    }
-    None
 }
 
 const QA_GROUPS_CONTRACT_FIXTURE_GROUP: &str = "release-probe";
@@ -1249,9 +1259,17 @@ fn create_contract_fixture(
     fixtures: &mut ContractFixtures,
     manifest: &str,
 ) -> Result<PathBuf, std::io::Error> {
+    create_contract_fixture_files(fixtures, &[("effigy.toml", manifest)])
+}
+
+fn create_contract_fixture_files(
+    fixtures: &mut ContractFixtures,
+    files: &[(&str, &str)],
+) -> Result<PathBuf, std::io::Error> {
     let fixture_dir = fixtures.directory("effigy-contract-", FixturePlacement::External)?;
-    std::fs::write(fixture_dir.join("package.json"), "{}\n")?;
-    std::fs::write(fixture_dir.join("effigy.toml"), manifest)?;
+    for (name, content) in [("package.json", "{}\n")].iter().chain(files) {
+        std::fs::write(fixture_dir.join(name), content)?;
+    }
     Ok(fixture_dir)
 }
 

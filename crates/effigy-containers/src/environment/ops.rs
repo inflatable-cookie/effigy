@@ -119,7 +119,8 @@ fn reconcile_in(
     record.retention = retention;
     record.project = request.project.to_owned();
     run.write_record(&record)?;
-    run.set_backend(request.backend)?;
+    // Prepare recorded the backend (#230); `request.backend` is what this
+    // run targets.
     let running = match request.running {
         Observed::Verified(running, _) => running,
         Observed::Absent(_) => false,

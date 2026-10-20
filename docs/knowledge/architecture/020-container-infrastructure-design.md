@@ -169,10 +169,14 @@ User customization layers on top:
 <service>` extracts a bundled fragment to the override directory for
 customization.
 
-### Eject
+### Repo-owned Compose (retired)
 
-`effigy container <name> eject` copies the generated compose file into a repo-owned compose file, switches the manifest to `compose_file =`, and the user
-owns it directly. Generated-compose data commands no longer apply after eject.
+Effigy owns the environment; Compose is the engine adapter (Q-004). Direct
+`compose_file` ownership and `eject` are retired. For one release a
+`compose_file` environment is read as project-layer fragments under
+`infra/dev/catalog/`, and `effigy container migrate <name>` writes them out
+with an unchanged render (contract 005). `effigy container render <name>`
+shows the exact render.
 
 ### Design reference: DDEV
 
@@ -542,7 +546,7 @@ The implemented policy is described in the following subsection.
 | --- | --- | --- | --- |
 | `effigy_process::boot_identity` | Linux `/proc/sys/kernel/random/boot_id`; macOS `sysctl kern.boottime` | Per boot | None |
 | `effigy_process::process_start_identity` | Linux `/proc/<pid>/stat` field 22 (ticks); macOS `ps -o lstart=` | Linux: tick-granularity within a boot. macOS `lstart` is locale-dependent and must not be persisted as a generation key | QA-group owner liveness (`qa_group_status.rs`); not gateway |
-| `effigy_host_run::canonical_start_identity` | Linux `{pid}@{boot}:{ticks}`; macOS `{pid}@UTC-whole-seconds` from `pbi_start_tvsec` only | Host-run contract 010 wire format truncates macOS start time to whole seconds. Do not change 010. Do not persist that string as the gateway record | Host-run peer proof only |
+| `effigy_host_run::canonical_start_identity` (retired with the host-run client, effigy#227) | Linux `{pid}@{boot}:{ticks}`; macOS `{pid}@UTC-whole-seconds` from `pbi_start_tvsec` only | The retired host-run wire format truncated macOS start time to whole seconds; never a gateway record | None (removed) |
 | macOS `libc::proc_bsdinfo` | `proc_pidinfo(PROC_PIDTBSDINFO)` → `pbi_start_tvsec` and `pbi_start_tvusec` (`u64` each). Locked `libc` 0.2.189 and XNU's public `sys/proc_info.h` both expose the usec field. XNU copies both fields from the kernel process start timestamp. Host-run ignores usec. XNU `proc_info.c` applies `CHECK_SAME_USER`; a cross-uid read needs `PRIV_GLOBAL_PROC_INFO` | Strongest macOS start-time primitive in this tree: pid + boot + sec + usec. Whole-second collision is avoidable truncation. A root-owned gateway is unverifiable through this API from the ordinary operator uid ([Q-002](../questions.md#q-002--macos-gateway-cross-user-identity-access)) | Unused by gateway |
 | Linux pidfd | not used | Would make open-then-signal atomic on Linux 5.3+ | Not portable to macOS; out of the smallest fix |
 
@@ -715,8 +719,8 @@ records until the administrator can establish the exact generation. The
 retained v0.14.1 lifecycle and the retired pre-identity window are distinguished
 in [architecture 034](034-gateway-legacy-upgrade-recovery.md#migration-boundary).
 
-Shared boot-ID callers are unaffected on macOS: `effigy_host_run` derives its
-wire identity from `pbi_start_tvsec` only, and the QA-group owner check uses
+Shared boot-ID callers are unaffected on macOS: the retired host-run client
+derived its wire identity from `pbi_start_tvsec` only, and the QA-group owner check uses
 `process_start_identity`, not `boot_identity`. The QA-group record's
 informational `boot_identity` field now carries the session UUID on macOS.
 
@@ -1100,7 +1104,7 @@ repo-owned Compose volumes stay unless labelled mutable.
 
 | Owner | Role |
 | --- | --- |
-| `effigy-catalog` | fragment schema, layered lookup, template rendering, compose assembly, output/eject, volume classification, catalog packs |
+| `effigy-catalog` | fragment schema, layered lookup, template rendering, compose assembly, volume classification and identity, catalog packs |
 | `effigy-manifest` | systems, workspaces, containers, DNS routes, services, lifecycle, host, data, and alias grammar |
 | `effigy-containers` | effective policy, generated Compose, manager facade, backend operations, workspace transport |
 | `effigy-exec` | host/container route decision, cwd translation, aliases, capability detection, readiness model |
@@ -1169,9 +1173,9 @@ run = "rhai:scripts/seed.rhai"
 ```
 
 The manifest declares local infrastructure and task binding, not a production
-provider topology. `compose_file` can replace the generated service block
-when the repository needs direct Compose ownership. Release and provider
-export remain separate surfaces.
+provider topology. A repository that needs its own service definition writes
+a project catalog fragment; the retired `compose_file` translates to one.
+Release and provider export remain separate surfaces.
 
 ## Design Boundaries
 

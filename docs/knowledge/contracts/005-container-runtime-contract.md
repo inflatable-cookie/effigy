@@ -48,8 +48,8 @@ container. A catalog that owns its own system uses that system's namespace.
 Human and JSON selector plans render the command with this runtime path. The
 plan's catalog and `cwd` fields remain host-side selection evidence; they are
 not an assertion that a host directory exists inside the container. Task
-schema and env-file discovery, cache inputs, configuration and scheduler
-control paths remain host-rooted. Literal command text, user arguments,
+schema and env-file discovery, cache inputs, configuration and run-control
+paths remain host-rooted. Literal command text, user arguments,
 secret values and bundle/skill source paths are not rewritten by replacing a
 host-path substring. This contract does not promise that a selected service
 has mounted a path merely because a command was mapped successfully.
@@ -60,7 +60,7 @@ metadata for that inner resolution. Mixed container sequences retain their
 existing handoff route; host-owned aggregate task references resolve each
 standard leaf independently. This change does not enable inline standard
 routing, alter managed command mapping or interpret builtin `exec` raw argv as
-manifest placeholders. It transfers no scheduler credentials into a container
+manifest placeholders. It transfers no host credentials into a container
 and establishes no real Linux or remote cancellation proof.
 
 ## Isolated directory mounts and reuse
@@ -126,24 +126,55 @@ that create spec; catalog members remain required. Policy, status, and doctor
 loads do not emit runtime skip diagnostics. They may render a snapshot, but
 that snapshot is not evidence about a later creation.
 
-For direct Compose, if the primary service is already running, Effigy keeps the
-loaded workspace mount spec for this `up`; it does not refresh that spec in a
-way that could recreate the running service just to apply an optional mount.
-No creation-time mount decision is reported for that existing service.
+### Retired `compose_file` (one-release translation)
 
-Direct `compose_file` containers get the same checkout identity as generated
-ones. Effigy includes an ownership override in the immutable closure, at
-`checkout/.effigy/runtime/compose/<container>.ownership.compose.yml` relative to
-the generation root. It labels each
-service the file declares with `com.effigy.checkout` (the canonical checkout)
-and, when the checkout has a runtime scope token, `com.effigy.scope`. The repo
-file is not edited, and the override adds labels to no service the file does not
-declare. Owned-binding checks still require exact full-ID, project, declared
-service, non-one-off, running, checkout and scope matches. A container created
-before this override has no checkout label, so those checks refuse it and it is
-not adopted. Compose applies label changes on its next `up`, which recreates the
-affected service. That `up` is the supported recovery for an existing unlabelled
-direct container. Diagnostics name it but never perform it.
+Direct `compose_file` ownership is retired (Q-004). For v0.15 a `compose_file`
+environment is read as project-layer catalog fragments, one per Compose
+service, with a once-per-process deprecation warning. Each fragment resolves as
+`infra/dev/catalog/<container>-<service>/` (suffixed `-migrated` when the name
+would shadow a compiled fragment) and the environment as the
+`[containers.<name>.services.<service>] catalog = "<fragment>"` declaration
+`effigy container migrate <name>` writes. Policy resolution therefore takes the
+generated path for both forms, and the render is identical before and after
+migration; only the recorded declaration inputs differ. The Compose file is
+read, never copied into the closure, and is not read again after migration.
+
+Translation rewrites Compose-relative paths against the template's
+`{{ repo_root }}` (build contexts, bind sources, `env_file`), names each
+project volume `{{ project_name }}-<volume>` once for every service that mounts
+it, and keeps published container ports. As in any catalog fragment, Prepare
+assigns the host side unless `[host].ports` fixes it, and the publish address
+applies; a gateway route keeps naming the container port. A declared
+`[host].ports` mapping no service publishes is published by the primary
+service. Generated Compose attaches `[host].mounts` to services that
+bind the repo root, or to the primary service when none does, so the binds
+direct mode only described now exist. Everything else a fragment cannot express
+refuses with the offending key: top-level `networks`, `configs`, `secrets`,
+`include`, `name` and extension fields; volume options; service `extends`,
+`networks`, `network_mode`, `configs`, `secrets`, `volumes_from`,
+`build.additional_contexts`; long-syntax named volumes; non-TCP or
+non-loopback port bindings; Compose `$` interpolation; template syntax; YAML
+merge keys. A fragment directory already on disk must hold exactly the
+translation, or loading refuses.
+
+Translated services carry generated-Compose identity: every service has the
+`com.effigy.checkout` label (and `com.effigy.scope` with a runtime token), and
+project volumes carry Effigy's volume labels. The first `up` after upgrade
+therefore recreates a direct service, and the old `<project>_<volume>` volumes
+are left in place and never adopted. Data, cache and reset commands now apply
+to these environments.
+
+`effigy container migrate [<name>]` is a Mutate command. It writes each fragment
+(`service.toml`, `compose.fragment.yml`) and replaces `compose_file` in the one
+checkout manifest file that declares it, preserving comments and unrelated
+keys, then re-resolves and compares the render. A changed render restores the
+manifest and removes the fragments it wrote. A foreign fragment directory
+refuses before anything is written; a matching one is reused, so an interrupted
+migration completes on retry. A key declared in a bundle refuses. JSON uses
+`effigy.container.migrate.v1` with `environment`, `compose_file`, `manifest`,
+`fragments` (`name`, `service`, `path`, `written`) and `render_unchanged`.
+`effigy container eject` is retired with it: generated Compose stays internal
+and `effigy container render` shows it.
 
 Exec readiness applies the same owned-binding check before any probe. The
 readiness probe and the recovery restart run only after the running primary
@@ -318,8 +349,7 @@ retain Compose interpolation. Prepare establishes owned mount directories before
 admission, so creating a cache cannot change canonical bind paths afterward.
 Relative generated asset paths, including `./` spellings, name files in that
 same generation. Relative user build contexts and Dockerfiles keep their
-Compose meaning. `compose.override.yml` and direct `compose_file` inputs
-are copied into the closure. Existing mutable generated files are not imported
+Compose meaning. `compose.override.yml` inputs are copied into the closure. Existing mutable generated files are not imported
 or rewritten; the next Prepare renders their replacement automatically.
 
 `effigy container render [<env>]` is read-only and prints every closure file,
@@ -353,11 +383,36 @@ shared-service startup, supplies its immutable generation root to the child.
 
 Reset then drops only the selected environment's object references through kernel
 `Objects::reset`; physical reclamation is kernel retention's responsibility.
-Sibling environment references survive. Eject exports the resolved closure to
-`infra/dev` and does not require a previous `up` or remove admitted objects.
+Sibling environment references survive.
+
+### Exact backend and resource adoption
+
+Every Compose, volume and data action targets one exact backend, resolved in
+this order: `EFFIGY_COMPOSE_BACKEND` for the invocation, the environment's
+kernel `resources` row, a v0.14 `.effigy/runtime/compose/.effigy-runtime.json`
+entry not yet imported, the user preference, then the driver default. Prepare
+records the engine, its context (the Colima profile, or `DOCKER_CONTEXT`/
+`default`) and the source that chose it in the same owner run that publishes
+the desired generation, before any engine effect. The legacy file is read for
+one release and never written or deleted. A record Effigy cannot read, or an
+unparsable legacy file, is `Unknown`: activation may fall through to the next
+source, but volume and data actions refuse until the backend is named with
+`EFFIGY_COMPOSE_BACKEND`, and Prepare records nothing from a guess.
+`container status` reports `backend_source` (and `backend_unknown`).
+
+Volume actions run on the environment's endpoint: `docker`, or its Colima
+profile. The profile name no longer implies the engine; the exact backend
+chooses the endpoint, `EFFIGY_COMPOSE_BACKEND` never redirects the Docker
+endpoint, and shared services start on the dependent environment's backend. A volume is adopted
+only when Effigy's labels prove it: `com.effigy.managed=true`,
+`com.effigy.project` naming the environment's project and
+`com.effigy.volume-name` naming the volume. Reset and cache prune remove only
+such volumes; a same-named lookalike is reported and left alone, and data
+import and export refuse it. A listing or inspection failure is an error,
+never an absence (contract 052 R3).
 
 The focused `test:containers:generations:cli` proof snapshots bytes and filesystem
-metadata around status, hosts, scope, plan, render and logs for direct Compose
+metadata around status, hosts, scope, plan, render and logs for a translated `compose_file`
 and pinned bundles. The operator-only `test:containers:generations:consumers`
 selector requires Python with PyYAML and the cbs/Acowtancy checkouts. It archives
 the pre-cutover main renderer into a private temporary fixture, copies the
@@ -878,8 +933,8 @@ identity labels.
 
 The manifest layer validates every reference at load: the target must exist and
 not be the environment itself, chains and cycles are refused, both environments
-must use the same driver, and neither side may use direct `compose_file`
-ownership or `share_runtime_identity`. A service name declared in both
+must use the same driver, and neither side may declare the retired
+`compose_file` or `share_runtime_identity`. A service name declared in both
 environments with different catalogs is refused rather than silently split.
 
 Borrowed volumes are declared `external: true` in the borrowing environment's

@@ -334,7 +334,7 @@ maintained definitions.
 
 `expected_wall_ms` describes total group execution wall time under the named
 `expectation_basis`. It includes setup, compilation, member execution, and
-cleanup after scheduler launch. `admission_wait_ms` records scheduler capacity
+cleanup after admission. `admission_wait_ms` records the admission hook's
 wait separately and is not compared with the expectation. If the expectation
 is unknown, the CLI prints
 `expected: unknown`; it does not derive an ETA from recent runs.
@@ -351,39 +351,37 @@ can therefore be `outcome = "passed"` and `budget_state = "over_budget"`.
 Over-budget evidence is not a timeout or failed check. It never truncates the
 member list.
 
-An explicit `hard_timeout_ms` is a separate policy. It starts after scheduler
-launch, does not replace the scheduler capacity deadline, and on expiry returns
+An explicit `hard_timeout_ms` is a separate policy. It starts after
+admission, does not replace the hook's admission deadline, and on expiry returns
 `outcome = "timed_out"`. It is usable only when the resolved process tree can
 be stopped and attributed safely. Unsupported routes fail plan validation;
 Effigy must not pretend to enforce a timeout on an unowned child.
 
 ## Admission and run control
 
-Heavy groups compose with host-wide admission contract
+Heavy groups compose with heavy-task admission contract
 [049](049-heavy-validation-admission-contract.md):
 
 - Resolution inspects every selected member's effective task route before any
-  member side effect. If any selected path is heavy, Effigy submits the whole
-  group to the Queue/Nucleus scheduler before setup and retains that scheduler
-  run through cleanup.
-- Nested Effigy task references validate and reuse the group's parent token.
-  They never request a second scheduler run or wait behind themselves. Caller
-  environment flags cannot fabricate parent authority.
+  member side effect. If any selected path is heavy, the group run calls
+  `EFFIGY_ADMISSION_HOOK`, when set, once before setup and holds that
+  admission through cleanup.
+- Members and nested Effigy task references run inside the group's admission
+  (the in-process admission and the `EFFIGY_ADMITTED` marker). They never call
+  the hook again or wait behind themselves.
 - If a dependency cannot be resolved before execution, `--plan` fails closed;
-  the runtime does not discover heavy work after it has begun and submit a
-  second run.
+  the runtime does not discover heavy work after it has begun.
 - A member's heavy classification comes from its typed task definition,
   regardless of public/internal discovery visibility.
-- A group with no heavy member submits no heavy scheduler run. Its execution is still
-  timed and recorded; it does not receive machine-wide CPU or memory
-  enforcement.
+- A group with no heavy member calls no hook. Its execution is still timed and
+  recorded; it does not receive machine-wide CPU or memory enforcement.
 
 Current availability after the contract 051 implementation:
 
 | Capability | State | Notes |
 | --- | --- | --- |
-| Legacy Effigy lease admission | Retired. | The old local store and its records remain untouched and opaque; the current binary has no legacy admission route. `EFFIGY_HOST_SCHEDULER=0` fails before effects. |
-| Queue/Nucleus scheduler routing | Implemented. | Unset or `EFFIGY_HOST_SCHEDULER=1` selects the scheduler. A heavy group is submitted whole under [049](049-heavy-validation-admission-contract.md#scheduler-routing); the launched child owns the ledger, and nested members reuse its validated token. A run settled before launch leaves a completed record with outcome `capacity_timeout` or `cancelled`. |
+| Legacy Effigy lease admission and the host-run client | Retired. | The old local store and its records remain untouched and opaque. Neither the lease nor the Queue/Nucleus scheduler client exists (Q-006). |
+| Admission hook | Implemented. | A heavy group is admitted once through `EFFIGY_ADMISSION_HOOK` under [049](049-heavy-validation-admission-contract.md#admission-hook); a refusal records no group and runs no member. |
 | Task admission | Implemented. | Public and internal tasks share typed admission metadata; legacy task syntax translates under contract 046. |
 | Group run status and logs | Implemented. | Runs persist a definition snapshot, head/worktree context, member ledger, and run-scoped pipeline-redacted logs; `tasks qa-group status/logs` read them live and after completion. |
 | Ordinary process stop | Unavailable. | Parsing exists so the command can refuse before any side effect with the precise prerequisite: the owned-run supervision contract [052](052-runtime-kernel-contract.md), proposed and unavailable until implementation. |
@@ -395,7 +393,7 @@ Current availability after the contract 051 implementation:
 scoped to that run and its supervised process generation. It records the
 request, signal delivery, member that was active, and whether descendants were
 confirmed gone. Logs are run-scoped and redact secrets. A caller interrupt can
-cancel its own scheduler-waiting group without affecting another scheduler run.
+cancel its own admission-waiting group without affecting another run.
 
 Owned-run supervision (contract
 [052](052-runtime-kernel-contract.md)) remains the prerequisite for
@@ -413,9 +411,8 @@ Group outcome is separate from budget evidence:
 - `cancelled`: the owner or operator cancelled the run;
 - `timed_out`: an explicitly configured execution deadline fired;
 - `blocked`: selection or a required runtime route failed before execution;
-- `waiting_for_capacity`: a live Queue/Nucleus scheduler state, not a terminal
-  outcome; the Effigy group record is written after launch or settlement;
-- `capacity_timeout`: the scheduler capacity deadline elapsed before launch;
+- `waiting_for_capacity` and `capacity_timeout`: read only from v0.14 records
+  written under the retired scheduler; current runs never write them;
 - `unknown`: persisted evidence cannot prove a live or complete result.
 
 Member states are `passed`, `failed`, `cancelled`, `timed_out`, `blocked`, or
@@ -511,10 +508,11 @@ The run payload includes at least:
 }
 ```
 
-A heavy group that ran under the default scheduler backend adds one optional
-object, `backend`: `kind` (`host_scheduler` or `host_scheduler_override`),
-`scheduler_run_id`, `scheduler_epoch`, `queue_wait_ms` and `settlement`
-(`capacity_timeout`, `cancelled` or `null`). Every metric is `null` when
+A heavy group that an admission hook admitted adds one optional object,
+`backend`: `kind` `admission_hook`, `queue_wait_ms` (the hook's wait), and
+`scheduler_run_id`, `scheduler_epoch` and `settlement`, which are always
+`null` now. v0.14 records may carry `host_scheduler` or
+`host_scheduler_override` with those fields set. Every metric is `null` when
 unavailable, never zero. The key is absent on light groups and on historical
 records that predate this field. The run schema stays `effigy.qa-group-run.v1`
 with `schema_version` 1: the
@@ -611,10 +609,9 @@ when each brief is approved and dispatched.
 - An injected failure in each declared test/compile/docs/proof member fails
   the group with the correct member ID and exit result. A stopped or timed-out
   member marks remaining members `not_started`; no pass is synthesized.
-- Heavy members run inside one Queue/Nucleus scheduler run for the group;
-  nested heavy tasks reuse its validated token. Discovery visibility never
-  changes admission classification.
-  Non-heavy runs do not claim OS resource enforcement.
+- Heavy members run inside one admission for the group; nested heavy tasks
+  never call the hook again. Discovery visibility never changes admission
+  classification. Non-heavy runs do not claim OS resource enforcement.
 - Text and JSON distinguish capacity wait/timeout, pass, failed check,
   cancellation, execution timeout, unknown/interrupted evidence, and over
   budget. Tests inject capacity and execution timing; they do not sleep on wall

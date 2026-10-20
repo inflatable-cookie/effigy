@@ -1,9 +1,10 @@
 //! The backend seam: "reconcile this environment from its render" (Q-004).
 //!
 //! One selection names the exact engine and context an environment runs on,
-//! and why it was chosen. The selection is recorded on the environment's
-//! kernel resource row, so every later lifecycle, volume and data action
-//! targets that backend instead of re-guessing from a profile name. Colima
+//! and why it was chosen. The engine and its precedence are
+//! [`crate::backend::exact_backend`]'s; Prepare records them on the
+//! environment's kernel resource row, and every transition targets that
+//! backend instead of re-guessing from a profile name. Colima
 //! and Docker (Desktop on macOS, Engine on Linux) implement the seam today; a
 //! future Apple Containers adapter implements the same trait.
 
@@ -45,8 +46,9 @@ impl BackendKind {
 pub enum BackendReason {
     /// `EFFIGY_COMPOSE_BACKEND` named it for this invocation.
     EnvironmentVariable(String),
-    /// The environment record holds the backend its stack was applied on.
-    Recorded(Box<BackendReason>),
+    /// The environment record holds the backend Prepare recorded, with the
+    /// label of the source that chose it then.
+    Recorded(String),
     /// A v0.14.1 per-checkout backend metadata file named it (read-only).
     LegacyMetadata,
     /// `~/.effigy/config.toml` prefers this backend.
@@ -61,9 +63,8 @@ impl BackendReason {
             Self::EnvironmentVariable(value) => {
                 format!("EFFIGY_COMPOSE_BACKEND={value} selects it for this invocation")
             }
-            Self::Recorded(original) => format!(
-                "the environment record keeps the backend its stack was applied on (originally: {})",
-                original.describe()
+            Self::Recorded(source) => format!(
+                "the environment record keeps the backend its generation was prepared on (chosen by: {source})"
             ),
             Self::LegacyMetadata => {
                 "the checkout's v0.14 backend metadata names it".to_owned()
@@ -73,11 +74,15 @@ impl BackendReason {
         }
     }
 
-    /// The original policy source, without the recorded wrapper.
-    pub fn origin(&self) -> &BackendReason {
+    /// The source label the kernel record carries (`resources.backend`),
+    /// shared with [`crate::backend::BackendSource::label`].
+    pub fn source_label(&self) -> String {
         match self {
-            Self::Recorded(original) => original.origin(),
-            other => other,
+            Self::EnvironmentVariable(_) => "environment".to_owned(),
+            Self::Recorded(source) => source.clone(),
+            Self::LegacyMetadata => "legacy-runtime-file".to_owned(),
+            Self::UserPreference => "user-preference".to_owned(),
+            Self::ManifestDriver(_) => "driver-default".to_owned(),
         }
     }
 }
@@ -93,40 +98,39 @@ pub struct BackendSelection {
 }
 
 impl BackendSelection {
-    /// The kernel record of this selection (`resources.backend`).
+    /// The kernel record of this selection (`resources.backend`), in the
+    /// shape Prepare writes.
     pub fn metadata(&self) -> BackendMetadata {
         BackendMetadata {
             engine: self.engine.as_str().to_owned(),
             context: self.context.clone(),
-            source: serde_json::to_string(&(self.kind, self.reason.origin()))
-                .expect("backend reason serializes"),
+            source: self.reason.source_label(),
         }
     }
 
-    /// Reads a recorded selection. An unreadable source is `Unknown`, never a
-    /// default: destructive actions refuse until the backend is named (M4).
+    /// Reads a recorded selection. An unknown engine or an empty source is
+    /// `Unknown`, never a default: destructive actions refuse until the
+    /// backend is named (M4).
     pub fn from_metadata(metadata: &BackendMetadata) -> Observed<Self> {
-        let decoded = serde_json::from_str::<(BackendKind, BackendReason)>(&metadata.source);
         let engine = BackendId::new(metadata.engine.clone());
-        match decoded {
-            Ok((kind, reason))
-                if engine == BackendId::colima_nerdctl()
-                    || engine == BackendId::docker_compose() =>
-            {
-                Observed::Verified(
-                    Self {
-                        kind,
-                        engine,
-                        context: metadata.context.clone(),
-                        reason: BackendReason::Recorded(Box::new(reason)),
-                    },
-                    effigy_kernel::observe::Evidence::new(
-                        "environment backend record".into(),
-                        None,
-                    )
+        let kind = if engine == BackendId::colima_nerdctl() {
+            Some(BackendKind::Colima)
+        } else if engine == BackendId::docker_compose() {
+            Some(docker_kind())
+        } else {
+            None
+        };
+        match kind {
+            Some(kind) if !metadata.source.trim().is_empty() => Observed::Verified(
+                Self {
+                    kind,
+                    engine,
+                    context: metadata.context.clone(),
+                    reason: BackendReason::Recorded(metadata.source.clone()),
+                },
+                effigy_kernel::observe::Evidence::new("environment backend record".into(), None)
                     .expect("fixed evidence"),
-                )
-            }
+            ),
             _ => Observed::Unknown(UnknownReason::Inconsistent(format!(
                 "recorded backend `{}` is not a known engine",
                 metadata.engine
@@ -178,29 +182,34 @@ impl BackendSelection {
     }
 }
 
-/// Resolves the selection for `policy` from policy sources, ignoring any
-/// record. Pure: reads environment, user config and manifest facts only.
+/// The selection for `policy`: [`crate::backend::exact_backend`]'s engine
+/// and precedence, with the context and reason this seam shows. Observe
+/// only: reads the store, the legacy file and configuration, writes nothing.
 pub fn select(repo_root: &Path, policy: &EffectiveContainerPolicy) -> BackendSelection {
-    let (engine, reason) = if let Some((value, engine)) = std::env::var("EFFIGY_COMPOSE_BACKEND")
-        .ok()
-        .and_then(|value| crate::backend_override_from_env_value(&value).map(|id| (value, id)))
-    {
-        (engine, BackendReason::EnvironmentVariable(value))
-    } else if let Some(engine) =
-        crate::load_runtime_backend_override(repo_root, Some(policy.name.as_str()))
-    {
-        (engine, BackendReason::LegacyMetadata)
-    } else if let Some(engine) = crate::user_global_backend_preference() {
-        (engine, BackendReason::UserPreference)
-    } else {
-        match policy.driver {
-            ManifestContainerDriver::Colima => (
-                BackendId::colima_nerdctl(),
-                BackendReason::ManifestDriver(crate::driver_label(policy.driver).to_owned()),
-            ),
-        }
+    use crate::backend::BackendSource;
+    let exact = crate::backend::exact_backend(repo_root, &policy.name, policy.driver);
+    let reason = match exact.source {
+        BackendSource::Environment => BackendReason::EnvironmentVariable(
+            std::env::var("EFFIGY_COMPOSE_BACKEND").unwrap_or_default(),
+        ),
+        BackendSource::Recorded(source) => BackendReason::Recorded(source),
+        BackendSource::Legacy => BackendReason::LegacyMetadata,
+        BackendSource::UserPreference => BackendReason::UserPreference,
+        BackendSource::DriverDefault => match policy.driver {
+            ManifestContainerDriver::Colima => {
+                BackendReason::ManifestDriver(crate::driver_label(policy.driver).to_owned())
+            }
+        },
     };
-    selection_for(engine, &policy.profile, reason)
+    selection_for(exact.id, &policy.profile, reason)
+}
+
+fn docker_kind() -> BackendKind {
+    if cfg!(target_os = "macos") {
+        BackendKind::DockerDesktop
+    } else {
+        BackendKind::DockerEngine
+    }
 }
 
 fn selection_for(engine: BackendId, profile: &str, reason: BackendReason) -> BackendSelection {
@@ -215,11 +224,7 @@ fn selection_for(engine: BackendId, profile: &str, reason: BackendReason) -> Bac
             })
             .unwrap_or_else(|| "default".to_owned());
         BackendSelection {
-            kind: if cfg!(target_os = "macos") {
-                BackendKind::DockerDesktop
-            } else {
-                BackendKind::DockerEngine
-            },
+            kind: docker_kind(),
             engine,
             context,
             reason,
@@ -234,8 +239,9 @@ fn selection_for(engine: BackendId, profile: &str, reason: BackendReason) -> Bac
     }
 }
 
-/// An explicit backend for this invocation outranks the record; the record
-/// outranks every other policy source (exact targeting).
+/// [`select`], with the recorded context when the record is what chose it:
+/// an explicit backend for this invocation outranks the record, and the
+/// record outranks every other policy source (exact targeting).
 pub fn effective(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
@@ -243,8 +249,10 @@ pub fn effective(
 ) -> BackendSelection {
     let selected = select(repo_root, policy);
     match (recorded, &selected.reason) {
-        (_, BackendReason::EnvironmentVariable(_)) | (None, _) => selected,
-        (Some(recorded), _) => recorded.clone(),
+        (Some(recorded), BackendReason::Recorded(_)) if recorded.engine == selected.engine => {
+            recorded.clone()
+        }
+        _ => selected,
     }
 }
 

@@ -349,3 +349,33 @@ fn run_failed_journal_write_poisoning_prevents_later_effects() {
         assert!(!home.path().join("owned").exists());
     }
 }
+
+#[test]
+fn run_log_read_fault_is_unknown_never_an_empty_log() {
+    use crate::custody::Stream;
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut log = crate::custody::capture::Log::open(
+        &root,
+        id(40),
+        3,
+        Stream::Stdout,
+        cx.operation().limits(),
+    )
+    .unwrap();
+    log.append(b"bytes").unwrap();
+    for injected in [Fault::Eperm, Fault::Enospc] {
+        fault::arm_point(Point::LogRead, injected);
+        let read = log_read(&cx, &root, Stream::Stdout, 0, 64);
+        fault::arm(None);
+        assert!(
+            matches!(read, Observed::Unknown(_)),
+            "an unreadable log is unknown, never empty: {read:?}"
+        );
+    }
+    assert!(matches!(
+        log_read(&cx, &root, Stream::Stdout, 0, 64),
+        Observed::Verified(LogRead { ref bytes, .. }, _) if bytes == b"bytes"
+    ));
+}

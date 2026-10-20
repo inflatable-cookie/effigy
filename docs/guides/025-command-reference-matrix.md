@@ -49,9 +49,9 @@ For narrative workflow guidance instead of lookup, start with:
 - Need to inspect a selector without running it: use `effigy <selector> --plan`
   (or `effigy --json <selector> --plan`). `--json` alone still executes; see
   [`017-json-output-contracts.md`](017-json-output-contracts.md).
-- Need to recover a heavy selector after restart or a lost submit reply: persist
-  a UUID first, pass `--host-run-request-id <UUID>`, then use
-  `effigy tasks request status|follow`; see
+- Need to recover a run after a restart or a lost stream: start it with
+  `effigy --run-id <key> <task>`, then use `effigy run status|logs|stop <key>`;
+  a repeat with the same key attaches instead of starting another. See
   [`080-host-wide-validation-admission.md`](080-host-wide-validation-admission.md).
 - Need machine-readable output: add top-level `effigy --json <command>` (or
   task-local `--json` where the command supports it; see
@@ -163,7 +163,8 @@ through the help route.
 | `effigy changelog` | Validate, format, analyze, and extract Northstar changelog content | `validate`, `format`, `analyze`, `extract`, `--repo`, `--write`, `--preview`, `--version`, `--json` | changelog subcommands render direct output; some results can be wrapped in `effigy.command.v1` with global JSON mode | `052-changelog-workflows-and-northstar-profile.md` |
 | `effigy state` | Plan, apply, capture, and inspect layered state-stack reports without moving app semantics into Effigy | `plan [<STACK>]`, `plan --manifest <PATH>`, `plan --stack <NAME>`, `apply [<STACK>]`, `capture <STACK> <PROFILE>`, `capture --role ... --source-env ... --key ...`, `history [<STACK>]`, `--write-report`, `--yes`, `--push`, `--repo`, `--json` | `effigy.state-stack.lineage.v1`, `effigy.state-stack.apply.v1`, `effigy.state-stack.capture.v1`, `effigy.state-stack.history.v1` | `073-state-stack-guide.md`, [`../contracts/016-state-stack-and-layered-seed-framework-contract.md`](../knowledge/contracts/016-state-stack-and-layered-seed-framework-contract.md) |
 | `effigy <task>` / `effigy <catalog>/<task>` | Run manifest-defined tasks with routing rules; `--plan` inspects the resolved task, catalog, and command without executing; managed tasks also support a concurrent headless supervisor selected by flag or environment | Effigy flags before the task: `--json`, `--plan`, `--repo`, `--verbose-root`, `--env-schema`, `--lock-wait-ms`; `EFFIGY_LOCK_WAIT_MS`; everything after the task name is the task's (`<task> --plan` / `<task> --json` still Effigy's for one release); managed `--headless` / `EFFIGY_MANAGED_HEADLESS=1`, `status`, `logs [process] [--follow]`, `stop` | `effigy.task.run.v1`, `effigy.task.plan.v1`; lock-conflict details use `effigy.lock-wait.v2` | `012-dev-process-manager-tui.md`, `016-task-routing-precedence.md`, `020-dag-lock-policy-baseline.md`, `022-manifest-cookbook.md`, `050-env-schema-integration.md` |
-| `effigy --host-run-request-id <UUID> <task>` | Submit one top-level heavy selector with a caller-persisted identity | leading `--host-run-request-id`; existing `EFFIGY_CALLER` label | request status `effigy.host_run.request-status.v1`; follow `effigy.host_run.request-follow.v1` | `080-host-wide-validation-admission.md` |
+| `effigy --run-id <key> <task>` | Name a task run with a caller key; a repeat attaches to that run and exits with its result | leading `--run-id`; `EFFIGY_ADMISSION_HOOK` gates `admission = "heavy"` tasks | `effigy.task.run.v1`; attach reuses the run's result | `080-host-wide-validation-admission.md` |
+| `effigy runs` / `effigy run status\|logs\|stop <run>` | List, inspect, follow and stop runs from the kernel run journal | `--limit`, `--all`; `logs --follow`, `--stdout-offset`, `--stderr-offset`; `stop --wait-ms`; `--json` | `effigy.runs.v1`, `effigy.run.v1`, `effigy.run.logs.v1` | `080-host-wide-validation-admission.md` |
 
 ## JSON Envelope
 
@@ -294,7 +295,7 @@ effigy container <NAME> logs [--repo <PATH>] [--service <NAME>] [--follow] [--js
 effigy container <NAME> shell [--repo <PATH>] [--service <NAME>] [--command <CMD>]
 effigy container <NAME> reset [--repo <PATH>] [--keep-data] [--json]
 effigy container render [<NAME>] [--repo <PATH>] [--json]
-effigy container <NAME> eject [--repo <PATH>] [--json]
+effigy container migrate [<NAME>] [--repo <PATH>] [--json]
 effigy container hosts [--repo <PATH>] [--json]
 effigy container <NAME> hosts [--repo <PATH>] [--json]
 effigy container scope [--repo <PATH>] [--json]
@@ -375,13 +376,15 @@ effigy init <name> [--dry-run] [--force] [--json]
 effigy init --list [--json]
 effigy <task> [--repo <PATH>] [--verbose-root] [--env-schema <PATH>] [--lock-wait-ms <MS>] [--plan] [--json] [task args]
 effigy <catalog>/<task> [--repo <PATH>] [--verbose-root] [--env-schema <PATH>] [--lock-wait-ms <MS>] [--plan] [--json] [task args]
-effigy --host-run-request-id <UUID> <heavy-task>
-effigy tasks request status --caller <CALLER> --request-id <UUID> [--json]
-effigy tasks request follow --caller <CALLER> --request-id <UUID> [--json]
+effigy --run-id <key> <task> [task args]
+effigy runs [--limit <N>] [--all] [--json]
+effigy run status <run> [--json]
+effigy run logs <run> [--follow] [--stdout-offset <N>] [--stderr-offset <N>] [--json]
+effigy run stop <run> [--wait-ms <MS>] [--json]
 ```
 
 See [`080-host-wide-validation-admission.md`](080-host-wide-validation-admission.md)
-for heavy scheduler routing, waiting, cancellation, and retained-history rules.
+for heavy tasks, the admission hook, and run control.
 
 Use `effigy scan <subcommand> --help` (and per-scanner help) for optional scan
 flags such as `--include`, `--exclude`, `--threshold`, `--source-root`, marker
@@ -467,8 +470,10 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
   `container shell --command … --bounded` capture supports it when all required
   deadline and byte limits are supplied
 - `container status --global` and `container stats --global` are cross-project views
-- generated-compose data lifecycle stays on the product-owned path and does not
-  widen direct `compose_file` ownership
+- `container migrate` writes a deprecated `compose_file` out as project catalog
+  fragments with an unchanged render; `container eject` is retired
+- volume and data commands run on the environment's exact backend and touch
+  only volumes whose Effigy labels name the project
 - `system logs --json` returns a finite snapshot; `system logs --follow` streams
   logs and rejects `--json`. The same distinction applies to `container <NAME> logs`
 - `system repair` and `system reset-runtime` are the recovery surfaces for

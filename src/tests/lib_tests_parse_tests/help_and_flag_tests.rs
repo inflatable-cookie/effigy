@@ -1,9 +1,9 @@
 use crate::tests::prelude::{
     parse_command, strip_global_json_flag, strip_global_json_flags, Command, DoctorArgs, HelpGroup,
-    HelpTopic, PathBuf, TaskInvocation, TasksArgs, TasksRequestCommand,
+    HelpTopic, PathBuf, TaskInvocation, TasksArgs,
 };
 use effigy_cli::command_surface::HELP_COMMAND_TOPICS;
-use effigy_cli::INTERNAL_HOST_RUN_REQUEST_ID_ARG;
+use effigy_cli::{RunsAction, RunsArgs, INTERNAL_RUN_ID_ARG};
 
 fn parse(args: &[&str]) -> Command {
     parse_command(args.iter().map(|arg| (*arg).to_owned())).expect("parse should succeed")
@@ -141,7 +141,6 @@ fn parse_command_applies_leading_repo_and_json_to_tasks_builtin() {
             status_all: false,
             output_json: true,
             pretty_json: true,
-            request: None,
             qa: None,
         })
     );
@@ -211,15 +210,14 @@ fn parse_command_rejects_task_only_global_flags_for_builtin_commands() {
 }
 
 #[test]
-fn parse_command_carries_the_caller_request_id_only_to_a_selector() {
-    let request_id = "00000000-0000-4000-8000-000000000001";
+fn parse_command_carries_the_run_id_key_only_to_a_selector() {
     let cmd = parse_command(vec![
-        "--host-run-request-id".to_owned(),
-        request_id.to_owned(),
+        "--run-id".to_owned(),
+        "ci-1234".to_owned(),
         "--json".to_owned(),
         "heavy-check".to_owned(),
     ])
-    .expect("parse selector request identity");
+    .expect("parse selector run key");
     assert_eq!(
         cmd,
         Command::Task(TaskInvocation {
@@ -227,54 +225,102 @@ fn parse_command_carries_the_caller_request_id_only_to_a_selector() {
             args: vec![
                 "--json".to_owned(),
                 effigy_core::task_args::TASK_ARGS_BOUNDARY.to_owned(),
-                INTERNAL_HOST_RUN_REQUEST_ID_ARG.to_owned(),
-                request_id.to_owned(),
+                INTERNAL_RUN_ID_ARG.to_owned(),
+                "ci-1234".to_owned(),
             ],
         })
     );
+    let error = parse_command(vec![
+        "--run-id".to_owned(),
+        "ci-1234".to_owned(),
+        "doctor".to_owned(),
+    ])
+    .expect_err("a run key names a task run");
+    assert!(error.to_string().contains("--run-id"), "{error}");
 }
 
 #[test]
-fn parse_command_parses_exact_host_run_request_status() {
-    let cmd = parse_command([
+fn retired_host_run_request_surfaces_refuse_with_the_replacement() {
+    let flag = parse_command(vec![
+        "--host-run-request-id".to_owned(),
+        "00000000-0000-4000-8000-000000000001".to_owned(),
+        "heavy-check".to_owned(),
+    ])
+    .expect_err("the request flag is retired");
+    assert!(flag.to_string().contains("--run-id <key>"), "{flag}");
+    let request = parse_command(vec![
         "tasks".to_owned(),
         "request".to_owned(),
         "status".to_owned(),
-        "--caller".to_owned(),
-        "northstar-worker".to_owned(),
-        "--request-id".to_owned(),
-        "00000000-0000-4000-8000-000000000001".to_owned(),
-        "--json".to_owned(),
     ])
-    .expect("parse exact request status");
-    assert_eq!(
-        cmd,
-        Command::Tasks(TasksArgs {
-            output_json: true,
-            request: Some(TasksRequestCommand::Status {
-                caller: "northstar-worker".to_owned(),
-                request_id: "00000000-0000-4000-8000-000000000001".to_owned(),
-            }),
-            ..TasksArgs::default()
-        })
+    .expect_err("tasks request is retired");
+    assert!(
+        request.to_string().contains("effigy run status <key>"),
+        "{request}"
     );
 }
 
 #[test]
-fn parse_command_rejects_caller_request_id_for_non_selector_commands() {
-    let error = parse_command(vec![
-        "--host-run-request-id".to_owned(),
-        "00000000-0000-4000-8000-000000000001".to_owned(),
-        "tasks".to_owned(),
-        "request".to_owned(),
-        "status".to_owned(),
-        "--caller".to_owned(),
-        "northstar-worker".to_owned(),
-        "--request-id".to_owned(),
-        "00000000-0000-4000-8000-000000000001".to_owned(),
-    ])
-    .expect_err("request identity belongs on a selector invocation");
-    assert_eq!(error.to_string(), "unknown argument: --host-run-request-id");
+fn parse_command_parses_run_control() {
+    assert_eq!(
+        parse_command(["runs".to_owned(), "--all".to_owned()]).expect("runs"),
+        Command::Runs(RunsArgs {
+            repo_override: None,
+            output_json: false,
+            action: RunsAction::List {
+                limit: 20,
+                all: true
+            },
+        })
+    );
+    assert_eq!(
+        parse_command(
+            [
+                "run",
+                "logs",
+                "ci-1234",
+                "--follow",
+                "--stdout-offset",
+                "10",
+                "--stderr-offset",
+                "3"
+            ]
+            .map(str::to_owned)
+        )
+        .expect("run logs"),
+        Command::Runs(RunsArgs {
+            repo_override: None,
+            output_json: false,
+            action: RunsAction::Logs {
+                run: "ci-1234".to_owned(),
+                follow: true,
+                stdout_offset: 10,
+                stderr_offset: 3,
+            },
+        })
+    );
+    assert_eq!(
+        parse_command(["run", "stop", "ci-1234", "--wait-ms", "500"].map(str::to_owned))
+            .expect("run stop"),
+        Command::Runs(RunsArgs {
+            repo_override: None,
+            output_json: false,
+            action: RunsAction::Stop {
+                run: "ci-1234".to_owned(),
+                wait_ms: Some(500),
+            },
+        })
+    );
+    assert!(parse_command(["run".to_owned(), "status".to_owned()]).is_err());
+    assert_eq!(
+        parse_command(["run".to_owned()]).expect("bare run"),
+        Command::Help(HelpTopic::Runs),
+        "bare `run` is the panel, so a root task named `run` stays a valid selector"
+    );
+    assert_eq!(
+        parse_command(["run".to_owned(), "--help".to_owned()]).expect("help"),
+        Command::Help(HelpTopic::Runs)
+    );
 }
 
 #[test]

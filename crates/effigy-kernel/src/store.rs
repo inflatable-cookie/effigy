@@ -243,11 +243,20 @@ impl Store {
         .and_then(|conn| {
             conn.busy_timeout(busy)?;
             conn.execute_batch("PRAGMA query_only=1; PRAGMA trusted_schema=OFF;")?;
+            // A writer creates the file before its schema transaction
+            // commits: no schema object yet is a store still being created,
+            // with nothing in it, not a corrupt one.
+            let objects: i64 =
+                conn.query_row("SELECT count(*) FROM sqlite_schema", [], |row| row.get(0))?;
+            if objects == 0 {
+                return Ok(None);
+            }
             let version = schema_version(&conn)?;
-            Ok(StoreReader { conn, version })
+            Ok(Some(StoreReader { conn, version }))
         });
         match opened {
-            Ok(reader) => Observed::Verified(reader, evidence("kernel store")),
+            Ok(Some(reader)) => Observed::Verified(reader, evidence("kernel store")),
+            Ok(None) => Observed::Absent(AbsenceProof::NoStore),
             Err(error) => Observed::Unknown(read_unknown(&error)),
         }
     }

@@ -43,7 +43,7 @@ The target structure for this lane is:
 
 ## Extraction Rules
 
-- lifecycle owns: `up`, `down`, `status`, `stats`, `logs`, `shell`, `reset`, `eject`
+- lifecycle owns: `up`, `down`, `status`, `stats`, `logs`, `shell`, `reset`; `migrate` and `render` own the declaration and its render; `eject` is retired
 - data owns: `data list`, `data export`, `data dump`, `data import`, `data seed`, `data pull-production`
 - cache owns: `cache list`, `cache prune`
 - volume owns: `volume list`, `volume prune`

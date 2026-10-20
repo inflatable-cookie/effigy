@@ -4,11 +4,18 @@
 //! with a durable custody record before it executes. Signals reach this
 //! process through the one router and are forwarded to that group only. The
 //! run's settle verifies the group closed, so nothing the task started
-//! outlives the run. Text and JSON differ only in whether stdout and stderr
-//! are captured (K11).
+//! outlives the run. Text and JSON differ only in how captured output is
+//! rendered (K11): text relays it as it arrives, JSON keeps a tail.
+//!
+//! A run named by `--run-id` captures its output, and so logs it for
+//! `effigy run logs`, unless both stdout and stderr are terminals; this
+//! process relays it as it arrives. Other text runs keep inheriting the
+//! operator's descriptors untouched. A `run stop` request reaches the owner
+//! through the journal and stops the task's group as a signal would.
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
+use std::io::{IsTerminal, Write};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -16,6 +23,7 @@ use effigy_kernel::ctx::{OpenReason, StopCause};
 use effigy_kernel::custody::{Custody, EnvValue, Lifetime, ProcessSpec, SecretValue, Terminal};
 use effigy_kernel::observe::Observed;
 use effigy_kernel::outcome::WorkloadOutcome;
+use effigy_kernel::run::{Request, RequestAction};
 
 use super::kernel::{self, CustodyWait};
 use super::run::TaskRun;
@@ -29,6 +37,11 @@ const SIGNAL_EXIT_BUDGET: Duration = Duration::from_secs(10);
 const CAPTURE_TAIL: usize = 8 << 20;
 /// Exit, signal and capture polling interval for a waiting owner.
 const POLL: Duration = Duration::from_millis(20);
+/// The journal label of an env-schema `exec()` command: part of the run,
+/// never its workload output.
+pub(super) const ENV_EXEC_LABEL: &str = "env-schema exec";
+/// How often a waiting owner reads its run's pending stop requests.
+const REQUEST_POLL: Duration = Duration::from_millis(250);
 
 pub(in crate::runner) struct PlainCommand<'a> {
     pub(in crate::runner) command: &'a str,
@@ -70,6 +83,9 @@ pub(in crate::runner) fn run_plain(
             stderr: Vec::new(),
         });
     }
+    let relay = !command.capture
+        && run.keyed()
+        && !(std::io::stdout().is_terminal() && std::io::stderr().is_terminal());
     let spec = ProcessSpec {
         argv: vec![
             OsString::from("/bin/sh"),
@@ -88,7 +104,7 @@ pub(in crate::runner) fn run_plain(
             (None, None) => Lifetime::Open(OpenReason::Shell),
         },
         terminal: Terminal::Inherit {
-            capture: command.capture,
+            capture: command.capture || relay,
         },
         label: run.target().label.clone(),
     };
@@ -115,9 +131,30 @@ pub(in crate::runner) fn run_plain(
     };
     let mut stdout = Tail::default();
     let mut stderr = Tail::default();
+    let mut drain = |process: &effigy_kernel::custody::OwnedProcess| {
+        let (out, err) = process.take_stream_output();
+        let moved = !out.is_empty() || !err.is_empty();
+        if relay {
+            // Observability only: a closed reader never changes the run (K10).
+            let _ = std::io::stdout()
+                .lock()
+                .write_all(&out)
+                .and_then(|()| std::io::stdout().flush());
+            let _ = std::io::stderr().lock().write_all(&err);
+        } else if command.capture {
+            stdout.push(&out);
+            stderr.push(&err);
+        }
+        moved
+    };
     let mut signalled: Option<(i32, Instant)> = None;
     let mut timed_out = false;
     let mut requested = false;
+    // A `run stop` addressed to this run outside any parent scope: TERM to
+    // the group, then the run records `cancelled` by request, exactly as the
+    // parent-scope path above does.
+    let mut own_request: Option<(Request, Instant)> = None;
+    let mut requests_read = Instant::now();
     let exit = loop {
         if process.expired() {
             timed_out = true;
@@ -133,26 +170,30 @@ pub(in crate::runner) fn run_plain(
                 signalled = Some((routed.received, Instant::now()));
             }
         }
+        if own_request.is_none() && requests_read.elapsed() >= REQUEST_POLL {
+            requests_read = Instant::now();
+            if let Some(request) = stop_request(run) {
+                let _ = process.forward(libc::SIGTERM);
+                own_request = Some((request, Instant::now()));
+            }
+        }
         match process.poll() {
             Observed::Verified(exit, _) => break Some(exit),
-            _ if signalled.is_some_and(|(_, at)| at.elapsed() >= SIGNAL_EXIT_BUDGET) => {
+            _ if signalled
+                .map(|(_, at)| at)
+                .or(own_request.as_ref().map(|(_, at)| *at))
+                .is_some_and(|at| at.elapsed() >= SIGNAL_EXIT_BUDGET) =>
+            {
                 // Settle escalates TERM to KILL and verifies the group.
                 break None;
             }
             _ => {}
         }
-        if command.capture {
-            let (out, err) = process.take_stream_output();
-            stdout.push(&out);
-            stderr.push(&err);
+        if !drain(&process) {
+            std::thread::sleep(POLL);
         }
-        std::thread::sleep(POLL);
     };
-    if command.capture {
-        let (out, err) = process.take_stream_output();
-        stdout.push(&out);
-        stderr.push(&err);
-    }
+    drain(&process);
     let code = exit.map(|exit| exit.code);
     if let Some(exit) = exit {
         // Natural completion is recorded only from the verified exit (R5).
@@ -163,6 +204,12 @@ pub(in crate::runner) fn run_plain(
             phase: run.target().label.clone(),
         }
     } else if requested {
+        WorkloadOutcome::Cancelled {
+            cause: StopCause::Requested,
+            signal: None,
+        }
+    } else if let Some((request, _)) = own_request.as_ref().filter(|_| signalled.is_none()) {
+        let _ = run.run_mut().resolve_request(request);
         WorkloadOutcome::Cancelled {
             cause: StopCause::Requested,
             signal: None,
@@ -179,6 +226,15 @@ pub(in crate::runner) fn run_plain(
             _,
         ) => 128 + signal,
         (WorkloadOutcome::TimedOut { .. }, _) => 124,
+        // Cancelled by request: the group's own exit (often 143) is not the
+        // run's result.
+        (
+            WorkloadOutcome::Cancelled {
+                cause: StopCause::Requested,
+                signal: None,
+            },
+            _,
+        ) => 1,
         (_, Some(code)) => code,
         (_, None) => 1,
     };
@@ -228,7 +284,7 @@ impl effigy_env::ExecRunner for RunExec<'_> {
             grace: Duration::from_secs(1),
             lifetime: Lifetime::Finite(timeout),
             terminal: Terminal::None,
-            label: "env-schema exec".to_owned(),
+            label: ENV_EXEC_LABEL.to_owned(),
         };
         let _waiting = CustodyWait::enter();
         let cx = kernel::effects();
@@ -308,7 +364,16 @@ pub(in crate::runner) fn workload(code: Option<i32>, forwarded: Option<i32>) -> 
     }
 }
 
-fn environment(
+/// A pending `run stop` for this run, read from the journal.
+fn stop_request(run: &mut TaskRun) -> Option<Request> {
+    run.run_mut()
+        .requests()
+        .ok()?
+        .into_iter()
+        .find(|request| matches!(request.action, RequestAction::Stop))
+}
+
+pub(super) fn environment(
     cwd: &Path,
     overrides: Vec<(String, EnvOverride)>,
 ) -> Result<BTreeMap<OsString, EnvValue>, RunnerError> {
@@ -317,6 +382,13 @@ fn environment(
         .filter(|(key, _)| key != "EFFIGY_CUSTODY_NONCE" && key != "EFFIGY_PROBE_NONCE")
         .map(|(key, value)| (key, EnvValue::Plain(value)))
         .collect();
+    // A child of an admitted run never queues for admission again.
+    if let Some(marker) = super::admission::child_marker() {
+        env.insert(
+            OsString::from(super::admission::ADMITTED_ENV),
+            EnvValue::Plain(OsString::from(marker)),
+        );
+    }
     let local_bin = cwd.join("node_modules/.bin");
     if local_bin.is_dir() {
         let path = match env.get(std::ffi::OsStr::new("PATH")) {

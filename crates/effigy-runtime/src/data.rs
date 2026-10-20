@@ -8,7 +8,9 @@ mod volumes;
 use std::path::Path;
 use std::process::Output;
 
-use effigy_catalog::volumes::{remove_volume_command, DockerCommand, ManagedVolume};
+use effigy_catalog::volumes::{
+    remove_volume_command, DockerCommand, ManagedVolume, VolumeIdentity,
+};
 use effigy_containers::ContainerAction;
 use effigy_containers::{
     annotate_workspace_extra_mount_decisions, cache_list_global_report, cache_list_report,
@@ -36,7 +38,8 @@ use report::{
     annotate_registered_gateway_routes, annotate_shared_service_notes, annotate_warning_lines,
     render_container_report,
 };
-use transfer::{ensure_generated_data_path, resolve_managed_volume, validate_transfer_path};
+use transfer::{resolve_managed_volume, validate_transfer_path};
+pub use volume_io::volume_identities;
 use volume_io::{hydrate_managed_volumes, run_volume_transfer};
 use volumes::{collect_global_volume_entries, collect_repo_volume_entries};
 
@@ -52,7 +55,6 @@ where
     let policy = load_container_policy(repo_root, name)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     let _operation_plan = data_operation_plan(repo_root, &policy, ContainerDataOperation::list());
-    ensure_generated_data_path(&policy, "list")?;
     validate_container_policy(repo_root, &policy)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     validate_compose_backend_runtime(repo_root, &policy)
@@ -98,7 +100,6 @@ where
         &policy,
         ContainerCacheOperation::list(false, None, None),
     );
-    ensure_generated_data_path(&policy, "cache list")?;
     validate_container_policy(repo_root, &policy)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     validate_compose_backend_runtime(repo_root, &policy)
@@ -160,10 +161,7 @@ pub fn run_container_cache_list_all<F>(
 where
     F: Fn(&Path, &str, &DockerCommand) -> Result<Output, EffigyRuntimeError>,
 {
-    let resolved_profile = profile
-        .map(str::to_owned)
-        .or_else(user_global_colima_profile)
-        .unwrap_or_else(|| "effigy".to_owned());
+    let resolved_profile = effigy_containers::backend::global_endpoint(profile);
     let _operation_plan = global_cache_operation_plan(
         cwd,
         &resolved_profile,
@@ -205,7 +203,6 @@ where
         &policy,
         ContainerCacheOperation::prune(false, None, None, false),
     );
-    ensure_generated_data_path(&policy, "cache prune")?;
     validate_container_policy(repo_root, &policy)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     validate_compose_backend_runtime(repo_root, &policy)
@@ -217,16 +214,36 @@ where
     )?;
 
     let volumes = hydrate_managed_volumes(repo_root, &policy, false, &run_runtime_volume_capture)?;
+    let endpoint = volume_io::policy_endpoint(repo_root, &policy)?;
+    let caches = volumes
+        .iter()
+        .filter(|volume| volume.cache_kind().is_some())
+        .map(|volume| volume.name.clone())
+        .collect::<Vec<_>>();
+    let identities = volume_identities(
+        repo_root,
+        &endpoint,
+        &policy.project_name,
+        &caches,
+        &run_runtime_volume_capture,
+    )?;
     let mut entries = Vec::new();
+    let mut warnings = Vec::new();
     for volume in volumes {
         let Some(kind) = volume.cache_kind() else {
             continue;
         };
-        run_runtime_volume_capture(
-            repo_root,
-            &policy.profile,
-            &remove_volume_command(&volume.name),
-        )?;
+        match identities.get(&volume.name) {
+            Some(VolumeIdentity::Owned) => {}
+            Some(VolumeIdentity::Lookalike(reason)) => {
+                warnings.push(format!(
+                    "left {reason}; it was not created for this environment"
+                ));
+                continue;
+            }
+            Some(VolumeIdentity::Absent) | None => continue,
+        }
+        run_runtime_volume_capture(repo_root, &endpoint, &remove_volume_command(&volume.name))?;
         entries.push(ContainerCachePruneEntry {
             name: volume.name,
             kind: cache_kind_label(kind).to_owned(),
@@ -237,10 +254,9 @@ where
         });
     }
 
-    Ok(render_container_report(
-        cache_prune_report(&format!("container `{}`", policy.name), &entries),
-        output_json,
-    ))
+    let mut report = cache_prune_report(&format!("container `{}`", policy.name), &entries);
+    annotate_warning_lines(&mut report, &warnings);
+    Ok(render_container_report(report, output_json))
 }
 
 pub fn run_container_cache_prune_all<F>(
@@ -254,10 +270,7 @@ pub fn run_container_cache_prune_all<F>(
 where
     F: Fn(&Path, &str, &DockerCommand) -> Result<Output, EffigyRuntimeError>,
 {
-    let resolved_profile = profile
-        .map(str::to_owned)
-        .or_else(user_global_colima_profile)
-        .unwrap_or_else(|| "effigy".to_owned());
+    let resolved_profile = effigy_containers::backend::global_endpoint(profile);
     let _operation_plan = global_cache_operation_plan(
         cwd,
         &resolved_profile,
@@ -516,13 +529,6 @@ where
             }
         },
     );
-    ensure_generated_data_path(
-        &policy,
-        match action {
-            ContainerDataTransferAction::Export => "export",
-            ContainerDataTransferAction::Import => "import",
-        },
-    )?;
     validate_container_policy(repo_root, &policy)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     validate_compose_backend_runtime(repo_root, &policy)
@@ -587,7 +593,6 @@ where
         &policy,
         ContainerDataOperation::pull_production(false),
     );
-    ensure_generated_data_path(&policy, "pull-production")?;
     validate_container_policy(repo_root, &policy)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     validate_compose_backend_runtime(repo_root, &policy)

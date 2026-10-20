@@ -7,7 +7,6 @@
 use std::ffi::OsString;
 use std::path::Path;
 
-use crate::load_runtime_backend_override;
 use crate::EffectiveContainerPolicy;
 
 use crate::{
@@ -64,22 +63,12 @@ pub(crate) fn resolve_declared_backend(
     name: &str,
     driver: ManifestContainerDriver,
 ) -> ComposeBackend {
-    let mut detection = compose_backend_detection();
-    if detection.backend_override.is_none() {
-        detection.backend_override = recorded_or_legacy_backend(repo_root, name);
-    }
-    if detection.backend_override.is_none() {
-        detection.backend_override = crate::user_global_backend_preference();
-    }
-    if detection.backend_override.is_none() {
-        detection.backend_override = Some(match driver {
-            ManifestContainerDriver::Colima => BackendId::colima_nerdctl(),
-        });
-    }
-    let backend_id = ContainerBackendRegistry::defaults()
-        .detect_backend(&detection)
-        .unwrap_or_else(|_| BackendId::colima_nerdctl());
-    ComposeBackend::from_backend_id(&backend_id)
+    ComposeBackend::from_backend_id(&crate::backend::exact_backend(repo_root, name, driver).id)
+}
+
+/// The explicit per-invocation backend, if any.
+pub(crate) fn environment_backend_override() -> Option<BackendId> {
+    compose_backend_detection().backend_override
 }
 
 #[cfg(test)]
@@ -223,29 +212,9 @@ fn compose_backend_detection_for_policy(
     policy: &EffectiveContainerPolicy,
 ) -> ContainerBackendDetection {
     let mut detection = compose_backend_detection();
-    if detection.backend_override.is_none() {
-        detection.backend_override = recorded_or_legacy_backend(repo_root, &policy.name);
-    }
-    if detection.backend_override.is_none() {
-        detection.backend_override = crate::user_global_backend_preference();
-    }
-    if detection.backend_override.is_none() {
-        detection.backend_override = Some(backend_id_for_policy(policy));
-    }
+    detection.backend_override =
+        Some(crate::backend::exact_backend(repo_root, &policy.name, policy.driver).id);
     detection
-}
-
-/// The environment record's backend, else the v0.14.1 per-checkout
-/// metadata file, read only, until the first bring-up records it.
-pub fn recorded_or_legacy_backend(repo_root: &Path, name: &str) -> Option<BackendId> {
-    crate::environment::recorded_backend(repo_root, name)
-        .or_else(|| load_runtime_backend_override(repo_root, Some(name)))
-}
-
-fn backend_id_for_policy(policy: &EffectiveContainerPolicy) -> BackendId {
-    match policy.driver {
-        ManifestContainerDriver::Colima => BackendId::colima_nerdctl(),
-    }
 }
 
 impl ComposeBackend {

@@ -354,7 +354,11 @@ fn render_container_help_shows_runtime_options() {
     assert!(rendered.contains("effigy container <NAME> logs"));
     assert!(rendered.contains("effigy container <NAME> shell"));
     assert!(rendered.contains("effigy container <NAME> reset"));
-    assert!(rendered.contains("effigy container <NAME> eject"));
+    assert!(rendered.contains("effigy container migrate [<NAME>]"));
+    // The retired command is gone from usage and examples; "reject" and
+    // similar words elsewhere in the help are unrelated.
+    assert!(!rendered.contains("effigy container <NAME> eject"));
+    assert!(!rendered.contains("effigy container web eject"));
     assert!(rendered.contains("effigy container hosts"));
     assert!(rendered.contains("effigy container scope"));
     assert!(rendered.contains("effigy container retire"));

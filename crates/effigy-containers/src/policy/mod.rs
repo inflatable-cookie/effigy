@@ -1,4 +1,5 @@
 pub mod admission;
+pub mod compose_file;
 pub mod data_from;
 pub mod hosts;
 pub mod inline_workspace;

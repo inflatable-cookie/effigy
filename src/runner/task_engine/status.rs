@@ -153,6 +153,14 @@ pub(in crate::runner) fn task_status(target: &TaskTarget, limit: usize) -> TaskS
     view
 }
 
+/// One run's view from its row and, while it is open, its owner gate.
+pub(in crate::runner) fn project_run(
+    summary: &RunSummary,
+    gate: Option<&Observed<GateState>>,
+) -> RunView {
+    project(summary, gate)
+}
+
 fn project(summary: &RunSummary, gate: Option<&Observed<GateState>>) -> RunView {
     let profile = summary
         .invocation

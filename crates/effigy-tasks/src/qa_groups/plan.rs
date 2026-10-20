@@ -271,7 +271,7 @@ pub fn build_qa_group_plan(
         admission: QaGroupAdmissionPlan {
             required: !heavy_member_ids.is_empty(),
             member_ids: heavy_member_ids,
-            model: "one host-wide heavy lease per group run; serial members reserve the maximum serial requirement",
+            model: "one admission per group run through EFFIGY_ADMISSION_HOOK, when set; members run inside it",
         },
         members,
         capabilities: QaGroupCapabilityLimits {
@@ -345,12 +345,6 @@ fn resolve_member(
             member.task
         ));
     }
-    if is_admission_reserved_name(&member.task) {
-        heavy_reasons.push(format!(
-            "selector `{}` routes through the canonical heavy admission gate",
-            member.task
-        ));
-    }
     classify_task_admission(
         task,
         surface,
@@ -374,8 +368,7 @@ fn resolve_member(
     })
 }
 
-/// Task-selector names the admission gate treats as heavy even without
-/// metadata (mirrors the canonical pipeline's `qa`/`ci` handling).
+/// A task is heavy only by its declared class (Q-006); no name implies it.
 fn is_directly_heavy(task: &ManifestTask) -> bool {
     task.admission.is_some()
 }
@@ -434,7 +427,7 @@ fn classify_task_admission(
                 catalog.alias
             )
         })?;
-        if is_directly_heavy(nested) || is_admission_reserved_name(name) {
+        if is_directly_heavy(nested) {
             heavy_reasons.push(format!(
                 "nested {} task `{}` in catalog `{}` is heavy",
                 reference_surface.as_str(),
@@ -452,10 +445,6 @@ fn classify_task_admission(
         )?;
     }
     Ok(())
-}
-
-fn is_admission_reserved_name(name: &str) -> bool {
-    matches!(name, "qa" | "ci" | "ci:fresh")
 }
 
 /// Collect a task's direct nested task references in declaration order.

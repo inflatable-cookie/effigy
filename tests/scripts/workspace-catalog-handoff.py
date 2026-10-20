@@ -197,7 +197,6 @@ if user == '0' and command[:2] == ['chown', '-R']:
 if len(command) == 3 and command[:2] == ['sh', '-lc'] and command[2].startswith('id -u '):
     assert str(os.getuid()) in command[2]
     sys.exit(0)
-assert 'HOST_RUN_TOKEN' not in env and 'HOST_RUN_ID' not in env, 'guest inherited host authority'
 assert user == str(os.getuid()), ('wrong user', user)
 assert env.get('HOME') == str(root / 'guest-home'), ('wrong HOME', env.get('HOME'))
 assert command[:2] in (['sh', '-c'], ['sh', '-lc']) or command[0].startswith('/')
@@ -304,10 +303,7 @@ class Fixture:
             executable.chmod(0o755)
         write(root / 'generation', 'a' * 64)
         self.env = {key: value for key, value in os.environ.items()
-                    if key in ['PATH', 'TMPDIR', 'LANG', 'LC_ALL', 'RUSTUP_HOME', 'CARGO_HOME',
-                               'HOST_RUN_TOKEN', 'HOST_RUN_ID', 'EFFIGY_HOST_RUN_ROOT']}
-        if self.env.get('HOST_RUN_TOKEN') and not self.env.get('EFFIGY_HOST_RUN_ROOT'):
-            self.env['EFFIGY_HOST_RUN_ROOT'] = str(Path.home() / '.local/state/host-run')
+                    if key in ['PATH', 'TMPDIR', 'LANG', 'LC_ALL', 'RUSTUP_HOME', 'CARGO_HOME']}
         self.env.update(HOME=str(self.host), PATH=str(root / 'bin') + ':/usr/bin:/bin',
                         EFFIGY_COMPOSE_BACKEND='docker', EFFIGY_WORKSPACE_EFFIGY_ARTIFACT_SOURCE='download',
                         EFFIGY_ACTIVE_VERSION='0.14.1-fixture',

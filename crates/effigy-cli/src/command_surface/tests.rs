@@ -37,6 +37,7 @@ const CURRENT_HELP_TOPICS: &[HelpTopic] = &[
     HelpTopic::Uninstall,
     HelpTopic::Drafts,
     HelpTopic::Draft,
+    HelpTopic::Runs,
 ];
 
 const CURRENT_TOP_LEVEL_HELP_ROUTES: &[(&str, HelpTopic)] = &[
@@ -70,6 +71,8 @@ const CURRENT_TOP_LEVEL_HELP_ROUTES: &[(&str, HelpTopic)] = &[
     ("test", HelpTopic::Test),
     ("init", HelpTopic::Init),
     ("uninstall", HelpTopic::Uninstall),
+    ("runs", HelpTopic::Runs),
+    ("run", HelpTopic::Runs),
 ];
 
 /// `effigy changelog --help` keeps its typed panel but stays out of the
@@ -85,6 +88,7 @@ const CONTRACT_GROUP_INVENTORIES: &[(HelpGroup, &[&str])] = &[
             "effigy <catalog>/<task>",
             "effigy <managed-task> --headless",
             "effigy tasks",
+            "effigy runs",
             "effigy test",
             "effigy doctor",
             "effigy init",

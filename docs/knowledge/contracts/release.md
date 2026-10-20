@@ -189,12 +189,13 @@ checkout. Queue milestone QA uses a disposable checkout and cannot supply
 that in-place preparation or transferable fingerprints.
 
 Run the complete preparation command through a maintained Effigy task marked
-`admission = "heavy"`, so Queue/Nucleus admits the entire operation before
-compilation, prepared-file writes and configured gates. The release built-in
-alone does not provide heavy admission. This route is for explicitly
+`admission = "heavy"`, so the launcher's `EFFIGY_ADMISSION_HOOK`, when set,
+admits the entire operation before compilation, prepared-file writes and
+configured gates (contract [049](049-heavy-validation-admission-contract.md)).
+The release built-in alone carries no admission class. This route is for explicitly
 authorized preparation, not worker per-task QA, a milestone bypass, or release
 execution. It must preserve the configured gates and same-run nested
-admission; no direct raw gate bundle, scheduler override, copied prepared
+admission; no direct raw gate bundle, copied prepared
 fingerprints or temporary Queue validation setting is a substitute. The
 selector itself must be independently reviewed before use. Preparation
 approval still does not permit tagging, publishing, installing or live
@@ -218,8 +219,8 @@ plan is `effigy release:prepare -- --plan`; that path still builds the
 current-source Effigy but performs no mutation. The mutating planner command is
 `effigy release:prepare --yes --version 0.14.0`, which becomes
 `effigy release prepare --yes --check-gates --version 0.14.0` in this
-checkout. The whole operation runs inside one admitted host-run; nested gate
-work reuses that run instead of resubmitting, and a failed gate or cancelled
+checkout. The whole operation runs inside one admission; nested heavy gate
+work runs inside it instead of queueing again, and a failed gate or cancelled
 run keeps the built-in's rollback and honest non-zero exit.
 
 ### Admission for isolated release install verification
@@ -228,9 +229,9 @@ Effigy's published binary also needs an isolated install proof after its
 release assets are available. The built-in
 `effigy release verify-install --tag vX.Y.Z` installs the tagged source into a
 temporary root and exercises its installed command against a fixture. Run that
-proof through the maintained `effigy release:verify-install` selector so
-Queue/Nucleus admits the complete install and fixture run before the child
-starts. This source selector is a follow-up after v0.14.0; the published
+proof through the maintained `effigy release:verify-install` selector so an
+admission hook, when set, admits the complete install and fixture run before
+the child starts. This source selector is a follow-up after v0.14.0; the published
 v0.14.0 binary does not provide it.
 
 The selector is declared `admission = "heavy"` in
@@ -247,9 +248,7 @@ Invoke the selector through that compatible source-built binary as
 replacing or refreshing the installed local Effigy. The selector is for the
 planner's authorized post-publication install proof, not worker validation or
 release preparation. It does not authorize a tag, publish, workflow change,
-or live operation. Its private acceptance fixture checks fixed argv, refusal
-before child start, and inherited host-run behavior without performing an
-install or contacting release hosts.
+or live operation.
 
 For a public repository whose SSH origin requires authentication, pass the
 supported `--repo-url https://github.com/owner/repository.git` option to the

@@ -178,6 +178,8 @@ fn selection_reasons_follow_policy_precedence() {
     std::env::set_var("HOME", home.path());
     std::env::remove_var("EFFIGY_COMPOSE_BACKEND");
     let policy = super::policy(home.path());
+    // The engine and precedence are `crate::backend::exact_backend`'s; this
+    // seam adds the context and the reason it shows.
     let selected = select_backend(home.path(), &policy);
     assert_eq!(selected.kind, BackendKind::Colima);
     assert_eq!(selected.context, policy.profile);
@@ -185,15 +187,16 @@ fn selection_reasons_follow_policy_precedence() {
         selected.reason,
         BackendReason::ManifestDriver("colima".into())
     );
-    // The record outranks every other policy source …
+    // A record the store does not hold grants nothing: it is used only when
+    // the exact backend names the record as its source.
     let mut recorded = selected.clone();
     recorded.context = "recorded".into();
-    recorded.reason = BackendReason::Recorded(Box::new(BackendReason::UserPreference));
+    recorded.reason = BackendReason::Recorded("user-preference".into());
     assert_eq!(
         effective_backend(home.path(), &policy, Some(&recorded)),
-        recorded
+        selected
     );
-    // … except an explicit backend for this invocation.
+    // An explicit backend for this invocation outranks every other source.
     std::env::set_var("EFFIGY_COMPOSE_BACKEND", "docker");
     let explicit = effective_backend(home.path(), &policy, Some(&recorded));
     assert_eq!(explicit.engine, crate::BackendId::docker_compose());

@@ -26,7 +26,7 @@ No lease file, timer, marker or per-call-site holder check remains.
 | Part | Where | Meaning |
 | --- | --- | --- |
 | Generation, state | `resources` row | `active` (attachable at the current generation), `stopped`, or neither while a run is in progress |
-| Backend | `resources.backend` | exact engine, context and the policy source that chose it (§5) |
+| Backend | `resources.backend` | exact engine, context and the policy source that chose it, written by Prepare (§6) |
 | Engine fields | `resources.engine` | `{schema, retention, project, applying, imported}` |
 | Desired, last applied, superseded | `object_refs` | render digests (#229); the last 3 superseded are kept |
 | Holders | `attachments` | runs attached to the environment, with liveness from their owner gates |
@@ -126,20 +126,23 @@ Desktop on macOS, Docker Engine on Linux). An Apple Containers adapter
 implements the same trait; it must pass the strict-fake adapter suite and
 052 §5.10 before it is selectable.
 
-Selection, highest first, with the reason recorded and shown:
+The engine and its precedence are one resolver,
+`effigy_containers::backend::exact_backend` (effigy#230). Highest first:
 
 1. `EFFIGY_COMPOSE_BACKEND` for this invocation;
-2. the environment record (the backend its stack was applied on);
-3. the v0.14.1 per-checkout metadata file, read only until a bring-up
-   records the environment;
+2. the environment record;
+3. the v0.14.1 per-checkout metadata file, read only until Prepare records
+   the environment;
 4. the user preference in `~/.effigy/config.toml`;
 5. the manifest driver default.
 
-Every Compose, volume, data and shared-service action targets that exact
-backend. A volume action on a profile resolves the backend of the
-environments using it, never the profile's name; environments on different
-backends refuse (D3-25). `effigy container status` and `effigy doctor` show
-each environment's backend, why it was chosen, and its record.
+Prepare is the record's only writer: it records engine, context and the source
+label in `resources.backend` when it publishes the desired generation, and
+never records a guess. The reconciler reads that record; its transitions,
+like every Compose, volume, data and shared-service action, target that exact
+backend (D3-25). Volume and data actions resolve the endpoint per environment
+and refuse an unknown record. `effigy container status` and `effigy doctor`
+show each environment's backend, why it was chosen, and its record.
 
 ## 7. Marker importer
 

@@ -127,6 +127,7 @@ pub fn run_container_status(
     for detail in &mount_details {
         report.success_text.push_str(&format!("\n[warn] {detail}"));
     }
+    annotate_backend_source(&mut report, repo_root, &policy);
     annotate_warning_lines(&mut report, &colima_profile_warnings(&policy, repo_root));
     if let Some(warning) = primary_service_exec_warning {
         annotate_warning_lines(&mut report, &[warning]);
@@ -139,6 +140,30 @@ pub fn run_container_status(
         report.success_text.push_str(&note);
     }
     Ok(render_container_report(report, output_json))
+}
+
+/// Which backend this environment uses, and why (contract 052 §10.3).
+fn annotate_backend_source(
+    report: &mut effigy_containers::ContainerCommandReport,
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) {
+    let exact = effigy_containers::backend::exact_backend(repo_root, &policy.name, policy.driver);
+    let source = exact.source.label();
+    if let Some(json) = report.json.as_object_mut() {
+        json.insert("backend_source".to_owned(), source.clone().into());
+        if let Some(reason) = &exact.unknown {
+            json.insert("backend_unknown".to_owned(), reason.clone().into());
+        }
+    }
+    report
+        .success_text
+        .push_str(&format!("\nbackend_source: {source}"));
+    if let Some(reason) = exact.unknown {
+        report
+            .success_text
+            .push_str(&format!("\n[warn] recorded backend is unknown: {reason}"));
+    }
 }
 
 pub fn run_container_logs(

@@ -3,29 +3,6 @@ use serde_json::json;
 use std::path::Path;
 
 #[test]
-fn contract_fixture_failure_category_does_not_echo_captured_output_or_private_fields() {
-    let payload = json!({"result":{"members":[{
-        "summary":"runner error: invalid_parent_token: private-path-and-secret",
-        "stdout":"secret-output", "token":"secret-token"
-    }]}});
-    assert_eq!(
-        super::fixture_group_refusal_category(payload.to_string().as_bytes()),
-        Some("invalid_parent_token")
-    );
-    assert_eq!(
-        super::fixture_group_refusal_category(b"secret-not-json"),
-        None
-    );
-    let payload = json!({"error":{"details":{"members":[{
-        "summary":"command output invalid_parent_token: arbitrary-data"
-    }]}}});
-    assert_eq!(
-        super::fixture_group_refusal_category(payload.to_string().as_bytes()),
-        None
-    );
-}
-
-#[test]
 fn contract_fixture_arguments_preserve_spaces_quotes_and_paired_roots() {
     let repo = tempfile::tempdir().expect("repo");
     let root = repo.path().join("repo with 'quoted' paths");
@@ -307,4 +284,40 @@ fn container_render_contract_has_owned_inputs_and_requires_its_public_fields() {
     }
     drop(fixtures);
     assert!(!root.exists());
+}
+
+#[test]
+fn container_migrate_contract_has_owned_compose_file_inputs_and_requires_its_fields() {
+    let repo = tempfile::tempdir().unwrap();
+    let mut fixtures = super::ContractFixtures::new(repo.path());
+    let args = super::expand_contract_fixture_tokens(
+        "effigy container migrate web --json --repo <fixture_container_migrate>",
+        &mut fixtures,
+    )
+    .unwrap();
+    let root = std::path::PathBuf::from(args.last().unwrap());
+    assert!(!root.starts_with(repo.path()));
+    assert!(std::fs::read_to_string(root.join("effigy.toml"))
+        .unwrap()
+        .contains("compose_file='compose.yml'"));
+    assert!(root.join("compose.yml").is_file());
+    let payload = json!({"schema":"effigy.container.migrate.v1", "schema_version":1,
+        "environment":"web", "compose_file":"compose.yml", "manifest":"effigy.toml",
+        "fragments":[], "render_unchanged":true});
+    super::assert_required_json_contract_keys("effigy.container.migrate.v1", &payload).unwrap();
+    for key in [
+        "environment",
+        "compose_file",
+        "manifest",
+        "fragments",
+        "render_unchanged",
+    ] {
+        let mut incomplete = payload.clone();
+        incomplete.as_object_mut().unwrap().remove(key);
+        assert!(
+            super::assert_required_json_contract_keys("effigy.container.migrate.v1", &incomplete)
+                .is_err(),
+            "{key}"
+        );
+    }
 }

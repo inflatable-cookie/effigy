@@ -81,7 +81,7 @@
     "crates/effigy-contracts/src/lib.rs": {
       "std.process.Command.new": 5,
       "std.process.Command.output": 5,
-      "std::fs::write": 17
+      "std::fs::write": 16
     },
     "crates/effigy-core/src/build_info.rs": {
       "std.process.Command.new": 3,
@@ -177,9 +177,6 @@
     },
     "crates/effigy-gateway/src/transition_lock.rs": {
       "fs2.FileExt.lock": 3
-    },
-    "crates/effigy-host-run/src/transport.rs": {
-      "fs2.FileExt.lock": 6
     },
     "crates/effigy-managed/src/runtime/headless.rs": {
       "signal_hook.registration": 1,
@@ -431,13 +428,6 @@
       "std::fs::remove_file": 4,
       "std::fs::rename": 1,
       "std::fs::write": 1
-    },
-    "src/runner/host_scheduler/config.rs": {
-      "std.process.Command.new": 1,
-      "std.process.Command.output": 1
-    },
-    "src/runner/host_scheduler/submit.rs": {
-      "signal_hook.registration": 1
     },
     "src/runner/owned_children.rs": {
       "nix::sys::signal::kill": 11,
@@ -880,10 +870,6 @@
       "std.process.Command.new": 4,
       "std.process.Command.spawn": 4,
       "std::fs::write": 3
-    },
-    "src/runner/host_scheduler/tests.rs": {
-      "std.process.Command.new": 1,
-      "std.process.Command.spawn": 1
     },
     "src/runner/managed_settle.rs": {
       "std.process.Command.new": 1,

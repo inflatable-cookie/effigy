@@ -12,8 +12,6 @@ const TASKS_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         "effigy tasks [--all] [--repo <PATH>] [--task <TASK_NAME>] [--resolve <SELECTOR>] [--json] [--pretty true|false]",
         "effigy tasks status <SELECTOR> [--repo <PATH>] [--json]",
         "effigy tasks status --all [--repo <PATH>] [--json]",
-        "effigy tasks request status --caller <CALLER> --request-id <UUID> [--json]",
-        "effigy tasks request follow --caller <CALLER> --request-id <UUID> [--json]",
         "effigy tasks qa-groups list [FILTER] [--file PATH] [--json]",
         "effigy tasks qa-group run <SELECTOR> [--file PATH] [--scope TOKEN]... [--plan] [--json]",
         "effigy tasks qa-group status <RUN_ID> [--json]",
@@ -38,10 +36,6 @@ const TASKS_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         (
             "status --all",
             "Show every declared task's state, plus live runs of tasks no longer declared",
-        ),
-        (
-            "request status|follow",
-            "Look up or follow one exact host-run caller/request UUID after restart; only authenticated unknown_run reports absence",
         ),
         (
             "qa-groups list [FILTER]",
@@ -71,9 +65,6 @@ const TASKS_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         "effigy tasks status test",
         "effigy tasks status catalog-a/build --json",
         "effigy tasks status --all",
-        "effigy --host-run-request-id <UUID> qa:ci:fast",
-        "effigy tasks request status --caller northstar-worker --request-id <UUID> --json",
-        "effigy tasks request follow --caller northstar-worker --request-id <UUID> --json",
         "effigy tasks --resolve <catalog>/<task>",
         "effigy tasks --json --resolve test",
         "effigy --json tasks --repo /path/to/workspace --task test",

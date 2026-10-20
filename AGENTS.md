@@ -33,11 +33,11 @@ The plan (lanes, their documents and their order), leads, papercuts, brief draft
 
 ## Validate
 
-Workers run the changed-code tests, compile the touched targets, and run docs checks when docs changed, once. Briefs name those targeted Effigy selectors. Then open the PR and report; no whole suites or repeat passes. Reviewers read the diff, run the same targeted checks, and exercise the behavior.
+Workers run the changed-code tests, compile the touched targets, and run docs checks when docs changed, once. Briefs name those targeted Effigy selectors. Then open the PR and report; no whole suites or repeat passes. Reviewers read the diff, run the same targeted checks, and exercise the behavior. A re-review checks only the change since the last reviewed head, plus the targeted checks for that change. A base that has moved on is not a content finding. Anyone who starts fixture processes stops them by recorded PID, and removes the fixture, before reporting.
 
 The planner runs milestone full QA on `main` through Queue `project.qa.run` and reads its result with `project.qa.get`, then briefs fixes for failures. Do not configure a per-task Queue validation command. Run `effigy skill run northstar/retired-concepts` when retiring concepts.
 
-Run validation through Effigy selectors, not raw Cargo, Bun, or Vitest commands. During the v0.15 rebuild, this checkout's `effigy.toml` uses keys the installed v0.14.1 binary rejects. Run selectors with the worktree build, `cargo run --bin effigy -- <selector>`, not the installed `effigy`. Until the host-run name rule is retired, don't invoke a selector named `qa`, `ci` or `ci:fresh` as a worker; use the narrow selectors under it. Record background exit codes. Stop only processes you started, using their recorded PIDs or process groups; never use pattern kills (`pkill -f`, `killall`, or `pgrep` piped into `kill`).
+Run validation through Effigy selectors, not raw Cargo, Bun, or Vitest commands. During the v0.15 rebuild, this checkout's `effigy.toml` uses keys the installed v0.14.1 binary rejects. Run selectors with the worktree build, `cargo run --bin effigy -- <selector>`, not the installed `effigy`. Record background exit codes. Stop only processes you started, using their recorded PIDs or process groups; never use pattern kills (`pkill -f`, `killall`, or `pgrep` piped into `kill`).
 
 <!-- northstar:rust-quality:start -->
 ## Northstar Rust Quality

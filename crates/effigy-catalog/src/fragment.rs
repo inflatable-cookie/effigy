@@ -97,6 +97,11 @@ pub struct CatalogResolver {
 
     /// Active installed catalog pack, below the project override layer.
     installed_pack: Option<InstalledPackLayer>,
+
+    /// In-memory project fragments that are not on disk yet, below the
+    /// project directory and above the pack. Translation of retired inputs
+    /// uses this so a later on-disk copy resolves to identical content.
+    overlay: HashMap<String, CatalogFragment>,
 }
 
 impl CatalogResolver {
@@ -107,7 +112,15 @@ impl CatalogResolver {
         Self {
             project_local,
             installed_pack: None,
+            overlay: HashMap::new(),
         }
+    }
+
+    /// Attach in-memory project fragments, keyed by fragment name.
+    #[must_use]
+    pub fn with_overlay(mut self, overlay: HashMap<String, CatalogFragment>) -> Self {
+        self.overlay = overlay;
+        self
     }
 
     /// Attach the active installed pack layer.
@@ -133,6 +146,10 @@ impl CatalogResolver {
                     FragmentSource::ProjectLocal(fragment_dir.clone()),
                 );
             }
+        }
+
+        if let Some(fragment) = self.overlay.get(name) {
+            return Ok(fragment.clone());
         }
 
         // 2. Active installed pack
@@ -175,6 +192,25 @@ impl CatalogResolver {
         let mut infos: Vec<_> = seen.into_values().collect();
         infos.sort_by(|a, b| a.name.cmp(&b.name));
         infos
+    }
+
+    /// Build a fragment from its `service.toml` and compose template text,
+    /// exactly as a directory holding those two files would load.
+    pub fn fragment_from_sources(
+        name: &str,
+        service_toml: &str,
+        compose_template: &str,
+        source: FragmentSource,
+    ) -> Result<CatalogFragment, CatalogError> {
+        Ok(CatalogFragment {
+            name: name.to_string(),
+            schema: ServiceSchema::parse(service_toml, name)?,
+            compose_template: compose_template.to_string(),
+            dockerfile: None,
+            config_variants: HashMap::new(),
+            param_variants: HashMap::new(),
+            source,
+        })
     }
 
     /// Load a fragment from a filesystem directory.
