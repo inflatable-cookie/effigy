@@ -179,7 +179,8 @@ pub(in crate::runner) fn attach_text(
 ) -> Result<Option<String>, RunnerError> {
     task_engine::install_client_router()?;
     let Started { mut client, run } = started;
-    println!(
+    let _ = writeln!(
+        std::io::stdout(),
         "[managed] `{}` (profile `{}`): run {run}; stop with `{}`, or interrupt this client",
         addressed.task,
         addressed.profile,

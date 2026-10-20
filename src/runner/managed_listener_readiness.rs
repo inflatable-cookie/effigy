@@ -174,13 +174,20 @@ mod tests {
     /// same engine Axum's default `serve` uses for HTTP/1 requests. It runs on
     /// its own thread and is leaked for the life of the test process.
     fn spawn_hyper_http1_server(status: u16) -> SocketAddr {
-        start_hyper_http1_server(status, || {})
+        spawn_delayed_hyper_http1_server(status, Duration::ZERO)
+    }
+
+    /// The service answers only after `delay`, so the server sees a request
+    /// side half-close before it has a response to write.
+    fn spawn_delayed_hyper_http1_server(status: u16, delay: Duration) -> SocketAddr {
+        start_hyper_http1_server(status, delay, || {})
             .recv_timeout(Duration::from_secs(5))
             .expect("hyper fixture ready")
     }
 
     fn start_hyper_http1_server(
         status: u16,
+        delay: Duration,
         before_runtime: impl FnOnce() + Send + 'static,
     ) -> Receiver<SocketAddr> {
         let (ready_tx, ready_rx) = mpsc::channel();
@@ -205,6 +212,10 @@ mod tests {
                     let (stream, _) = listener.accept().await.expect("accept hyper fixture");
                     tokio::spawn(async move {
                         let service = service_fn(move |_request: Request<Incoming>| async move {
+                            if !delay.is_zero() {
+                                let _ = tokio::task::spawn_blocking(move || thread::sleep(delay))
+                                    .await;
+                            }
                             Ok::<_, Infallible>(
                                 Response::builder()
                                     .status(status)
@@ -256,7 +267,7 @@ mod tests {
     fn managed_host_readiness_fixture_waits_for_runtime_before_publishing_address() {
         let (starting_tx, starting_rx) = mpsc::channel();
         let (resume_tx, resume_rx) = mpsc::channel();
-        let ready = start_hyper_http1_server(200, move || {
+        let ready = start_hyper_http1_server(200, Duration::ZERO, move || {
             starting_tx.send(()).expect("fixture startup reached");
             resume_rx
                 .recv_timeout(Duration::from_secs(5))
@@ -293,10 +304,13 @@ mod tests {
 
     /// Mechanism control for the old probe: once the request side is
     /// half-closed, the ordinary HTTP/1 server returns no response bytes even
-    /// though the same server answers a complete request with 200.
+    /// though the same server answers a complete request with 200. An
+    /// immediate service can write its response before the server reads the
+    /// half-close (papercuts 9d186411, d49a23e8), so the service here answers
+    /// after the half-close is certain to be read.
     #[test]
     fn managed_host_readiness_half_closed_request_gets_no_ordinary_response() {
-        let address = spawn_hyper_http1_server(200);
+        let address = spawn_delayed_hyper_http1_server(200, Duration::from_millis(300));
         let mut stream = TcpStream::connect_timeout(&address, Duration::from_millis(300))
             .expect("connect hyper fixture");
         stream

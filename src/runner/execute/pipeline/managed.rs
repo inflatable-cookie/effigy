@@ -1017,7 +1017,7 @@ fn managed_workloads(
             let run = wrapped(run);
             let setup = setup.map(wrapped);
             let relative = std::path::Path::new(EXEC_MARKER_DIR).join(format!(
-                "{}-{}",
+                "{}+{}",
                 marker_component(&context.preflight.selector.task_name),
                 marker_component(&plan.profile)
             ));
@@ -1082,17 +1082,19 @@ fn managed_workloads(
     Ok(workloads)
 }
 
+/// One path component per name, injective (K1): `+` separates components
+/// and is never left bare, and every byte outside `[A-Za-z0-9_-]` is
+/// escaped as `%XX`, so distinct names never share a marker.
 fn marker_component(value: &str) -> String {
-    value
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
-                ch
-            } else {
-                '_'
-            }
-        })
-        .collect()
+    let mut encoded = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_') {
+            encoded.push(char::from(byte));
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    encoded
 }
 
 /// A settle's release of an inline environment the run started: the task's

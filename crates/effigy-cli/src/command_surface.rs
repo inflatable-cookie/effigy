@@ -247,7 +247,7 @@ pub const GENERAL_HELP_ENTRIES: &[GeneralHelpEntry] = &[
     GeneralHelpEntry {
         group: HelpGroup::Work,
         command: "effigy <managed-task> --headless",
-        description: "Run a managed concurrent task without the terminal UI; inspect it with task-local status, logs, and stop companions",
+        description: "Follow a managed run as text (`--detach` starts it in the background); inspect it with task-local status, logs, and stop companions",
         deferred_builtin: None,
         help_argument: None,
     },

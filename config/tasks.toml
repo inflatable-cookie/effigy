@@ -575,9 +575,7 @@
   "cargo check -p effigy -p effigy-managed -p effigy-containers -p effigy-tui -p effigy-process --all-targets --profile test",
   "cargo clippy -p effigy -p effigy-managed -p effigy-containers -p effigy-tui -p effigy-process --all-targets -- -D warnings",
 ] }
-# Run supervisor (effigy#235): the 108-cell strict-fake lifecycle matrix
-# (front end × prior × stop × failed children), each cell a real-binary run
-# against the fake Compose backend with an immediate restart.
+# Run supervisor (effigy#235): unit and in-process front-end proofs.
 "test:supervisor:unit" = { visibility = "internal", group = "Maintenance", run = [
   { id = "supervisor-lib", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(/^runner::managed_run::/) | test(/^runner::managed_settle::/) | test(/^runner::execute::pipeline::managed::/) | test(managed_and_locking_tests::) | test(/^runner::container_command::handover::/) | test(/^runner::demo_command::execute::task::selection::/) | test(/^runner::task_engine::/)' --no-fail-fast --retries 0 --no-tests fail {args}", timeout_ms = 1200000 },
   { id = "supervisor-crates", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-managed -p effigy-containers -p effigy-tui --lib --filterset 'test(/^invocation::/) | test(/^session::/) | test(/^runtime::/) | test(/^multiprocess::/) | test(/^presentation::/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
@@ -585,27 +583,18 @@
 # The supervisor SIGKILLed at every kernel journal crossing it makes, each
 # followed by a settle and a clean restart (test-binary-only arming).
 "test:supervisor:faults" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --features fault-injection --lib --filterset 'test(managed_supervisor_fault_tests::)' --success-output immediate --no-fail-fast --retries 0 --no-tests fail {args}", timeout_ms = 3600000 }] }
-"test:supervisor:matrix" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/managed-matrix-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_matrix_)' --success-output immediate --no-fail-fast --retries 0 --no-tests fail -j 4 {args}", timeout_ms = 3600000 }] }
-"test:managed:matrix" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/managed-matrix-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_matrix_) & !test(managed_matrix_failed_stop_)' --success-output immediate --no-fail-fast --retries 0 --no-tests fail -j 2", timeout_ms = 2500000 }] }
-# The matrix cases own their fake Docker proxy socket from bind through teardown.
-"test:managed:matrix:unsettled" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/managed-matrix-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_matrix_unsettled_previous_record_under_live_startup)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 }] }
-"test:fixtures:matrix-port" = { visibility = "internal", group = "Maintenance", run = [{ task = "test:managed:matrix" }, { task = "test:managed:failed-stop" }] }
+# The 108-cell strict-fake lifecycle matrix (front end × prior × stop ×
+# failed children) plus the client-death cases, each a real-binary run
+# against the fake Compose backend with an immediate restart.
+"test:managed:matrix" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/managed-matrix-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_matrix_)' --success-output immediate --no-fail-fast --retries 0 --no-tests fail -j 2 {args}", timeout_ms = 3600000 }] }
+"test:fixtures:matrix-port" = { visibility = "internal", group = "Maintenance", run = [{ task = "test:managed:matrix" }] }
 "test:fixtures:merge-helpers" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(/^runner::bootstrap_command::tests::/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
 "check:fixtures:matrix-port" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo check -p effigy --all-targets --profile test", timeout_ms = 600000 }] }
 "lint:fixtures:matrix-port" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo clippy -p effigy --all-targets -- -D warnings", timeout_ms = 600000 }] }
-"test:managed:matrix:all-failed" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/managed-matrix-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_matrix_all_failed_)' --success-output immediate --no-fail-fast --retries 0 --no-tests fail -j 2", timeout_ms = 2500000 }] }
-"test:managed:failed-stop" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/managed-matrix-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_matrix_failed_stop_)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 }] }
 "test:managed:recovery" = { visibility = "internal", group = "Maintenance", run = [
   { id = "managed-shutdown-labels", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib --filterset 'test(legacy_admission_tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
-  { task = "test:managed:session-runtime" },
+  { task = "test:supervisor:unit" },
   { task = "test:tui:startup-visibility" },
-  { task = "test:managed:recovery-controls" },
-] }
-"test:managed:session-runtime" = { visibility = "internal", group = "Maintenance", run = [
-  { id = "managed-session-runtime", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-managed --lib --filterset 'test(runtime::headless::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
-] }
-"test:managed:recovery-controls" = { visibility = "internal", group = "Maintenance", run = [
-  { id = "managed-recovery-controls", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(managed_and_locking_tests::managed_headless_tests::) | test(managed_settle::tests::) | test(host_container_lease::tests::) | test(finish_managed_task_) | test(reconcile_restarts_an_environment_a_handover_stopped) | test(partial_activation_running_primary_)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
 ] }
 "test:managed:headless-lifecycle" = { visibility = "internal", group = "Maintenance", run = [
   { id = "managed-exec-readiness-render", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib --filterset 'test(session::tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 300000 },

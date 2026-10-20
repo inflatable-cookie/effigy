@@ -6,6 +6,7 @@
 //! settles the run.
 
 use std::collections::{BTreeMap, VecDeque};
+use std::io::Write as _;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -432,7 +433,8 @@ pub(in crate::runner) fn attach_tui(
     if let Err(error) = rendered {
         // The run is already stopping or stopped through the source's
         // shutdown; report the terminal failure after its outcome.
-        eprintln!("warning: managed TUI: {error}");
+        // The terminal may be gone (client death): never panic writing.
+        let _ = writeln!(std::io::stderr(), "warning: managed TUI: {error}");
     }
     match closed {
         Some(Closed { error: Some(error) }) => Err(RunnerError::task_invocation(error)),

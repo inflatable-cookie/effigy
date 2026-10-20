@@ -130,7 +130,7 @@ struct Case<'a> {
     home: PathBuf,
     // The run's control socket lives under HOME, so HOME stays short enough
     // for a Unix socket path (SUN_LEN).
-    _home: tempfile::TempDir,
+    _home: crate::sealed_fixture::SealedFixture,
     gateway: &'a Path,
     effects: &'a HostEffectSentinels,
     foreign_ca: &'a Path,
@@ -247,7 +247,7 @@ impl<'a> Case<'a> {
             root,
             state,
             home,
-            _home: short_home,
+            _home: crate::sealed_fixture::SealedFixture(short_home),
             gateway,
             effects,
             foreign_ca,
@@ -350,6 +350,16 @@ impl<'a> Case<'a> {
                 None,
             )
             .expect("private PTY");
+            // Like a terminal emulator, only this side holds the master: a
+            // client that inherited it would keep its own terminal open.
+            {
+                use std::os::fd::AsRawFd;
+                // SAFETY: sets FD_CLOEXEC on a live descriptor this test owns.
+                let set = unsafe {
+                    libc::fcntl(pair.master.as_raw_fd(), libc::F_SETFD, libc::FD_CLOEXEC)
+                };
+                assert_eq!(set, 0, "PTY master close-on-exec");
+            }
             let slave = fs::File::from(pair.slave);
             command
                 .stdin(slave.try_clone().expect("PTY stdin"))
@@ -358,11 +368,27 @@ impl<'a> Case<'a> {
             command.env("EFFIGY_MANAGED_TUI", "1");
             let child = command.spawn().expect("TUI owner");
             let mut master = fs::File::from(pair.master);
+            let hangup = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let closing = hangup.clone();
             let reader = thread::spawn(move || {
+                use std::os::fd::AsRawFd;
                 let mut file = file;
                 let mut buffer = [0; 4096];
                 let mut recent = Vec::new();
-                while let Ok(count) = master.read(&mut buffer) {
+                // Dropping the master on hangup is the terminal closing.
+                while !closing.load(std::sync::atomic::Ordering::Acquire) {
+                    let mut poll = libc::pollfd {
+                        fd: master.as_raw_fd(),
+                        events: libc::POLLIN,
+                        revents: 0,
+                    };
+                    // SAFETY: one initialized pollfd for a live descriptor.
+                    if unsafe { libc::poll(&mut poll, 1, 50) } <= 0 {
+                        continue;
+                    }
+                    let Ok(count) = master.read(&mut buffer) else {
+                        break;
+                    };
                     if count == 0 {
                         break;
                     }
@@ -380,6 +406,7 @@ impl<'a> Case<'a> {
                 front,
                 child: ManagedSupervisor(child),
                 reader: Some(reader),
+                hangup: Some(hangup),
                 output,
                 previous,
             }
@@ -392,6 +419,7 @@ impl<'a> Case<'a> {
                 front,
                 child: ManagedSupervisor(command.spawn().expect("managed client")),
                 reader: None,
+                hangup: None,
                 output,
                 previous,
             }
@@ -643,6 +671,8 @@ struct Owner {
     front: Front,
     child: ManagedSupervisor,
     reader: Option<JoinHandle<()>>,
+    /// Closes a TUI client's terminal: the PTY master goes away.
+    hangup: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     output: PathBuf,
     previous: Option<String>,
 }
@@ -671,6 +701,15 @@ impl Owner {
         }
         if let Some(reader) = self.reader.take() {
             reader.join().expect("PTY output drained");
+        }
+    }
+    fn close_terminal(&mut self) {
+        self.hangup
+            .as_ref()
+            .expect("a TUI client has a terminal")
+            .store(true, std::sync::atomic::Ordering::Release);
+        if let Some(reader) = self.reader.take() {
+            reader.join().expect("PTY closed");
         }
     }
     fn signal(&self, signal: nix::sys::signal::Signal) {
@@ -811,6 +850,118 @@ matrix_case!(managed_matrix_detached_request, Detached, Request);
 matrix_case!(managed_matrix_detached_supervisor_term, Detached, Interrupt);
 matrix_case!(managed_matrix_detached_handover, Detached, Handover);
 matrix_case!(managed_matrix_detached_supervisor_kill, Detached, Kill);
+
+/// How an owning client dies (Tom's ruling 5): its terminal closes, it is
+/// hung up or terminated, or an agent KILLs it before its run is active.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Death {
+    TerminalClose,
+    Hangup,
+    Terminate,
+    KillBeforeActive,
+}
+
+/// Every owning-client death stops and settles the run: one down, no owned
+/// process left, cleanup complete, and the next run starts immediately.
+fn client_death(front: Front, death: Death) {
+    let fixture = managed_host_fixture();
+    let effects = HostEffectSentinels::new(fixture.path());
+    let bin = std::env::split_paths(&effects.env_path)
+        .next()
+        .expect("fake directory");
+    write_switch_fake_docker(&bin.join("docker"));
+    let foreign_ca = fixture.path().join("foreign-ca");
+    fs::create_dir(&foreign_ca).expect("foreign CA");
+    let mut cleanup = GatewayCleanup::new(&effects, &foreign_ca);
+    let (gateway, _) =
+        start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut cleanup);
+    let case = Case::new(&fixture.path().join("death"), &gateway, &effects, &foreign_ca);
+    eprintln!("client death front={front:?} death={death:?}");
+    let down_before = case.down_count();
+    let mut killed = None;
+    let pids = if death == Death::KillBeforeActive {
+        // A readiness probe that never answers keeps the run short of
+        // active while its client still owns it.
+        fs::write(case.state.join("hold-exec"), "hold readiness").expect("hold readiness");
+        let owner = case.spawn(front, "owner");
+        let deadline = Instant::now() + Duration::from_secs(60);
+        loop {
+            let status = case.status();
+            let phase = status["run"]["phase"].as_str().unwrap_or_default();
+            if matches!(phase, "admitted" | "starting")
+                && case.state.join("active-matrix-stack").exists()
+            {
+                break;
+            }
+            assert!(Instant::now() < deadline, "no run started: {status}");
+            thread::sleep(Duration::from_millis(50));
+        }
+        owner.signal(nix::sys::signal::Signal::SIGKILL);
+        owner.finish(None);
+        killed = Some(Instant::now());
+        Vec::new()
+    } else {
+        let mut owner = case.spawn(front, "owner");
+        let pids = case.ready(&mut owner, 0);
+        match death {
+            Death::TerminalClose => owner.close_terminal(),
+            Death::Hangup => owner.signal(nix::sys::signal::Signal::SIGHUP),
+            Death::Terminate => owner.signal(nix::sys::signal::Signal::SIGTERM),
+            Death::KillBeforeActive => unreachable!(),
+        }
+        owner.finish(None);
+        pids
+    };
+    // The held probe is cancelled by the stop, never waited out.
+    let closed = case.closed();
+    if let Some(killed) = killed {
+        assert!(
+            killed.elapsed() < Duration::from_secs(30),
+            "the stop waited out the held probe"
+        );
+    }
+    let _ = fs::remove_file(case.state.join("hold-exec"));
+    assert_eq!(
+        closed["run"]["cleanup"], "complete",
+        "settled truthfully: {closed}"
+    );
+    assert_eq!(
+        case.down_count(),
+        down_before + 1,
+        "exactly one down: {}",
+        case.lifecycle_log()
+    );
+    case.assert_down(&pids);
+    for child in ["api", "jobs"] {
+        let _ = fs::remove_file(case.root.join(format!("work-{child}.pid")));
+    }
+    let mut restarted = case.spawn(front, "restart");
+    let restarted_pids = case.ready(&mut restarted, 0);
+    case.success(&["serve", "stop"]);
+    restarted.finish(Some(true));
+    case.closed();
+    case.assert_down(&restarted_pids);
+}
+macro_rules! death_case {
+    ($name:ident, $front:ident, $death:ident) => {
+        #[test]
+        fn $name() {
+            client_death(Front::$front, Death::$death);
+        }
+    };
+}
+death_case!(managed_matrix_death_tui_terminal_close, Tui, TerminalClose);
+death_case!(managed_matrix_death_tui_hangup, Tui, Hangup);
+death_case!(managed_matrix_death_tui_terminate, Tui, Terminate);
+death_case!(managed_matrix_death_tui_kill_before_active, Tui, KillBeforeActive);
+death_case!(managed_matrix_death_text_hangup, Text, Hangup);
+death_case!(managed_matrix_death_text_terminate, Text, Terminate);
+death_case!(managed_matrix_death_text_kill_before_active, Text, KillBeforeActive);
+death_case!(
+    managed_matrix_death_detached_kill_before_active,
+    Detached,
+    KillBeforeActive
+);
 
 /// A down that fails leaves the run closed with residue, never `settled`; a
 /// following run settles it first (K5) and stops cleanly.
@@ -1022,6 +1173,8 @@ if op=='payload' or (op=='exec' and '.pgid' in args[-1]):
   os.replace(pending,pid_file)
   sys.exit(child.wait())
 if op=='exec':
+ held=time.time()+60
+ while (state/'hold-exec').exists() and time.time()<held: time.sleep(.05)
  if (state/'deny-exec').exists(): sys.exit(72)
  if args[-1].startswith('alive()'): sys.exit(subprocess.call(['sh','-c',args[-1]]))
  sys.exit(0)

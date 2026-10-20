@@ -7,6 +7,20 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Breaking
+- Managed tasks (`mode = "tui"` with `concurrent`) run under one detached
+  supervisor per run (effigy#235). The supervisor admits the run in the kernel
+  journal, then owns setup, gateway, environment and workloads, and one settle
+  is the only cleanup. The TUI, `--headless` and the new `--detach` are front
+  ends: closing the terminal, SIGHUP, SIGINT, SIGTERM or SIGKILL to an
+  attached client stops and settles the run, and `--detach` returns once every
+  workload has started. `.effigy/runtime/managed/` session files, stop markers,
+  lifecycle state files and the generated lifecycle shell with its EXIT trap
+  are gone. `<task> status --json` prints `effigy.managed.status.v1`, and
+  `<task> logs lifecycle` reads the run's own output. The environment comes up
+  and passes exec and route readiness, observed to the readiness budget,
+  before any workload starts. A run that holds an environment stays up when
+  its workloads exit, until a stop. A live v0.14 headless session is refused
+  with its stop command. `--run-id` is refused for managed tasks.
 - Heavy tasks no longer go through the Queue/Nucleus host-run client
   (Q-006). `admission = "heavy"` is metadata only: with no hook set a heavy
   task runs like any other, CI runners included. When the launcher sets
@@ -525,6 +539,12 @@ During v0.x, MINOR bumps may include breaking changes.
   1.2.0.
 
 ### Fixed
+- Managed host listener readiness keeps polling while another process briefly
+  shares the listening socket, and fails with the exclusivity error only at
+  its deadline; its diagnostic no longer mixes a stale HTTP status into a
+  later observation.
+- A run's control socket left unrecorded by an owner killed between bind and
+  receipt is removed at settle instead of becoming residue.
 - Task and step admission no longer fails intermittently with `helper pipe
   closed` reported as a `kernel.db` store error when the running `effigy`
   binary's path is replaced (for example by `cargo run --bin effigy`) while a
