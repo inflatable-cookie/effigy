@@ -148,10 +148,36 @@ pub enum RunError {
     HeldBy(Vec<Holder>),
     EnvNotActive,
     Conflict(ResourceId),
+    /// A re-executed helper (sentinel or supervisor) ended or stopped
+    /// answering before it acknowledged its handshake. Nothing ran on its
+    /// behalf; `cause` is the parent's handshake error.
+    HelperExited {
+        helper: String,
+        exit: crate::supervise::HelperExit,
+        cause: String,
+        stderr_tail: String,
+    },
 }
 impl std::fmt::Display for RunError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "run refused: {self:?}")
+        match self {
+            Self::HelperExited {
+                helper,
+                exit,
+                cause,
+                stderr_tail,
+            } => {
+                write!(
+                    f,
+                    "kernel helper `{helper}` {exit} before acknowledging ({cause})"
+                )?;
+                if !stderr_tail.is_empty() {
+                    write!(f, ": {}", stderr_tail.trim_end())?;
+                }
+                Ok(())
+            }
+            _ => write!(f, "run refused: {self:?}"),
+        }
     }
 }
 impl std::error::Error for RunError {}

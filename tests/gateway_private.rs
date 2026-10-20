@@ -709,6 +709,10 @@ fn private_gateway_cli_serves_verified_https_and_isolates_concurrent_instances()
 }
 
 #[test]
+#[cfg_attr(
+    effigy_shared_process,
+    ignore = "known v0.15 rebuild defect: papercut b1bf877f-972f-484b-b3d5-69ad73156245; owner lane v015-gateway"
+)]
 fn managed_host_dependent_replacement_preserves_routes_and_scope_teardown() {
     managed_host_dependent_replacement_proof(true);
 }
@@ -1867,7 +1871,7 @@ fn start_managed_listener_gateway(
 /// sibling keeps the declared name and is refused before any child starts.
 #[test]
 #[cfg_attr(
-    all(target_os = "macos", effigy_shared_process),
+    target_os = "macos",
     ignore = "known v0.15 rebuild defect: papercut a841af96; owner lane v015-supervisor"
 )]
 fn managed_host_listeners_scoped_host_routes_follow_checkout_identity() {

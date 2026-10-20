@@ -876,6 +876,7 @@ fn run_error(error: &RunError) -> String {
     match error {
         RunError::Store(error) => format!("state store: {error}"),
         RunError::Gate(error) => format!("gate: {error}"),
+        RunError::HelperExited { .. } => error.to_string(),
         other => format!("{other:?}"),
     }
 }
