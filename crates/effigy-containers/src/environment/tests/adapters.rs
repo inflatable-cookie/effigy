@@ -12,10 +12,13 @@ struct FakeTools {
     bin: PathBuf,
     logs: PathBuf,
     previous_path: Option<std::ffi::OsString>,
+    // Held until `Drop` restores PATH: shared-process test runs share it.
+    _env: std::sync::MutexGuard<'static, ()>,
 }
 
 impl FakeTools {
     fn install() -> Self {
+        let env = crate::test_env_lock();
         let dir = home();
         let bin = dir.path().join("bin");
         let logs = dir.path().join("logs");
@@ -49,13 +52,13 @@ impl FakeTools {
             path.push(":");
             path.push(previous);
         }
-        // nextest runs each test in its own process; no thread shares PATH.
         std::env::set_var("PATH", path);
         Self {
             _dir: dir,
             bin,
             logs,
             previous_path,
+            _env: env,
         }
     }
 
@@ -166,6 +169,7 @@ fn docker_adapter_targets_only_the_docker_cli() {
 
 #[test]
 fn selection_reasons_follow_policy_precedence() {
+    let _env = crate::test_env_lock();
     let home = home();
     let previous = (
         std::env::var_os("HOME"),
