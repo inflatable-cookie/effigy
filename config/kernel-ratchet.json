@@ -801,7 +801,7 @@
       "std::fs::write": 64
     },
     "src/runner/container_command/bounded_exec/tests.rs": {
-      "std.process.Command.new": 3,
+      "std.process.Command.new": 4,
       "std.process.Command.output": 1,
       "std.process.Command.spawn": 2,
       "std::fs::File::create": 2,
@@ -944,6 +944,7 @@
       "std.process.Command.new": 1,
       "std.process.Command.spawn": 1,
       "std::env::set_var": 1,
+      "std::fs::File::create": 1,
       "std::fs::remove_file": 1,
       "std::fs::write": 19
     },

@@ -160,13 +160,14 @@
 # Light composition calls heavy runner leaves through a CLI boundary so each
 # leaf has its own admitted run and inherits the normal admission marker.
 # One nextest invocation uses -j 2 for up to two concurrent per-test processes;
-# all tests retain the existing per-test/global timeout and leak controls.
+# Per-test timeout and leak controls are unchanged; the environment profile
+# gives the complete case matrix its own aggregate budget.
 "test:environment:ci:isolated" = { visibility = "internal", group = "Maintenance", run = [
   { run = "cargo run --bin effigy -- test:environment:ci:isolated:runner", timeout_ms = 7200000 },
 ] }
 "test:environment:ci:isolated:runner" = { visibility = "internal", group = "Maintenance", admission = "heavy", run = [
   { run = "cargo build --bin effigy", timeout_ms = 600000 },
-  { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-containers --lib -E 'test(runtime::dns::tests::) | test(tests::compose::) | test(policy::admission::) | test(policy::render::tests::) | test(workspace::tests::host_git_mount_tests::) | test(exec::healthcheck_timer::) | test(exec::restart_recovery::) | test(bounded_exec::tests::) | test(builder_recovery::) | test(host_container_lease::tests::) | test(handover_end_owner_releases_lock_for_reverse_handover)' --no-fail-fast --retries 0 --no-tests fail -j 2", timeout_ms = 1200000 },
+  { run = "cargo nextest run --config-file tests/config/environment-nextest.toml --user-config-file none -p effigy -p effigy-containers --lib -E 'test(runtime::dns::tests::) | test(tests::compose::) | test(policy::admission::) | test(policy::render::tests::) | test(workspace::tests::host_git_mount_tests::) | test(exec::healthcheck_timer::) | test(exec::restart_recovery::) | test(bounded_exec::tests::) | test(builder_recovery::) | test(host_container_lease::tests::) | test(handover_end_owner_releases_lock_for_reverse_handover)' --no-fail-fast --retries 0 --no-tests fail -j 2", timeout_ms = 1200000 },
 ] }
 "test:environment:ci:shared" = { visibility = "internal", group = "Maintenance", run = [
   { run = "cargo run --bin effigy -- test:environment:ci:shared:runner", timeout_ms = 7200000 },

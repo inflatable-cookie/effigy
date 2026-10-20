@@ -1857,6 +1857,11 @@ Bounded-exec public children snapshot inherited handoff markers under the
 same test environment lock used by their mutators.
 `test:environment:ci` covers these fixtures, DNS and Compose generation,
 mkcert mounts, and health-check recovery in isolated and shared test processes.
+The environment snapshot proof checks the child-spawn boundary directly.
+Artifact identity and legacy-namespace matrices give each case its own test
+and per-test timeout. Semantic public-path fixtures allow kernel/process startup
+within their absolute operation budget; deadline-refusal cases still require
+refusal at the original deadline and preserve all byte/phase assertions.
 
 The minimum proof set should cover:
 

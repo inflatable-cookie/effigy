@@ -1,0 +1,7 @@
+# Per-case and leak bounds match the gateway harness. The environment family
+# includes real kernel-custodied child launches and deadline-expiry proofs;
+# its aggregate budget leaves two minutes for cleanup inside the 20m task cap.
+[profile.default]
+slow-timeout = { period = "180s", terminate-after = 1, grace-period = "2s" }
+leak-timeout = { period = "1s", result = "fail" }
+global-timeout = "1080s"
