@@ -959,6 +959,7 @@ after `Admitted` whenever a run's custody is non-empty, in either placement.
 | --- | --- |
 | Supervisor Crash or Kill | The sentinel settles. |
 | Supervisor and sentinel both Crash or Kill | Status shows `interrupted`; the next Mutate on the owner, or `stop`, settles. |
+| Sentinel or supervisor dies, or stops answering, before it acknowledges | `RunError::HelperExited { helper, exit, cause, stderr_tail }`, never a store error. `exit` is the helper's code or signal, or `Stopped` when it was still running after a 2-second bound: it is the parent's own unreaped, unregistered child, so stopping it is identity-safe. Until it acknowledges, the helper's stderr is an unlinked private file under the state root; the outcome carries its last 4 KiB, and the hidden entry writes its refusal there before exiting. After acknowledgement stderr returns to the null device. An admitted run then settles `Closed(NotStarted)`: nothing ran on the helper's behalf. |
 | ENOSPC on the socket path | The admitted run launches no workload and settles with nothing applied: `Closed(NotStarted)`. If closing also fails, the run reads Interrupted under §5.6 recovery. |
 | Perm on the socket | The peer-uid check refuses. The request row remains; the supervisor reads requests when it polls the store. |
 | Clock | No time authority. |
@@ -1868,7 +1869,13 @@ file identity instead of a content digest, and holding the startup image open
 (§5.8, I-SV4). When a build replaces the running binary's path (`cargo run` of
 Effigy inside an Effigy sequence), a later sentinel re-execs a private copy of
 the unchanged startup image under the state root, removed once the sentinel
-acknowledges; a changed image still refuses.
+acknowledges; a changed image still refuses. A replacement can also land
+between this process's verify and the sentinel's own (effigy#239: library
+tests' nested `cargo run --bin effigy` re-uplifts `target/debug/effigy` as a
+new inode on every invocation). That sentinel refuses and exits
+unacknowledged; it did nothing and nothing recorded it, so admission retries
+once from the private copy. The detached supervisor has no such fallback yet:
+a replaced path still refuses its start, now as a typed `HelperExited`.
 
 Read-boundary CLI proofs use the `discovery-proof` Cargo profile: the real,
 CLI and helper dispatch with release optimization and symbols stripped so macOS's

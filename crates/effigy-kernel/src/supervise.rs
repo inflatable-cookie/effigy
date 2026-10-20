@@ -100,13 +100,21 @@ impl Executable {
     }
     pub fn verify(&self) -> io::Result<()> {
         let fresh = Self::capture(&self.path)?;
-        if self.device != fresh.device
-            || self.inode != fresh.inode
-            || self.size != fresh.size
-            || self.modified != fresh.modified
-            || self.changed != fresh.changed
-        {
-            return Err(io::Error::other("startup binary replaced"));
+        let changed: Vec<_> = [
+            ("device", self.device != fresh.device),
+            ("inode", self.inode != fresh.inode),
+            ("size", self.size != fresh.size),
+            ("mtime", self.modified != fresh.modified),
+            ("ctime", self.changed != fresh.changed),
+        ]
+        .into_iter()
+        .filter_map(|(field, differs)| differs.then_some(field))
+        .collect();
+        if !changed.is_empty() {
+            return Err(io::Error::other(format!(
+                "startup binary replaced ({} changed)",
+                changed.join(", ")
+            )));
         }
         Ok(())
     }
@@ -166,6 +174,107 @@ struct SentinelConfig {
     next: Vec<Vec<u8>>,
     executable: Executable,
 }
+/// How a helper ended before acknowledging its handshake.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HelperExit {
+    Code(i32),
+    Signal(i32),
+    /// Still running when its handshake failed: the kernel stopped its own
+    /// unacknowledged child.
+    Stopped,
+}
+impl std::fmt::Display for HelperExit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Code(code) => write!(f, "exited with code {code}"),
+            Self::Signal(signal) => write!(f, "was killed by signal {signal}"),
+            Self::Stopped => f.write_str("stopped answering"),
+        }
+    }
+}
+/// The bounded stderr tail a failed handshake reports.
+const HELPER_TAIL: u64 = 4096;
+/// How long a helper whose handshake failed has to finish exiting.
+const HELPER_EXIT_WAIT: Duration = Duration::from_secs(2);
+/// A helper's stderr until it acknowledges: an unlinked private file under
+/// the state root, so an early exit keeps its reason and leaves no residue.
+fn helper_log(root: &StateRoot) -> io::Result<std::fs::File> {
+    let name = FileName::new(&format!("helper-{}-{}.log", std::process::id(), nonce()))
+        .map_err(io::Error::other)?;
+    let (file, _) = root
+        .dir()
+        .open_file(
+            &name,
+            libc::O_RDWR | libc::O_EXCL,
+            Some(0o600),
+            Trust::Private,
+        )
+        .map_err(io::Error::other)?
+        .ok_or_else(|| io::Error::other("helper log missing"))?;
+    root.dir().remove(&name, false).map_err(io::Error::other)?;
+    Ok(file)
+}
+fn helper_tail(log: &std::fs::File) -> String {
+    let Ok(len) = log.metadata().map(|m| m.len()) else {
+        return String::new();
+    };
+    let size = len.min(HELPER_TAIL);
+    let mut bytes = vec![0u8; size as usize];
+    match std::os::unix::fs::FileExt::read_exact_at(log, &mut bytes, len - size) {
+        Ok(()) => String::from_utf8_lossy(&bytes).into_owned(),
+        Err(_) => String::new(),
+    }
+}
+/// The typed outcome of a failed handshake. A helper still running is this
+/// process's own unreaped child, so stopping it is identity-safe (R3).
+fn helper_failed(
+    entry: &str,
+    child: &mut Child,
+    log: &std::fs::File,
+    cause: io::Error,
+) -> RunError {
+    use std::os::unix::process::ExitStatusExt;
+    let deadline = Instant::now() + HELPER_EXIT_WAIT;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(2)),
+            _ => break None,
+        }
+    };
+    let exit = match status.map(|s| (s.code(), s.signal())) {
+        Some((Some(code), _)) => HelperExit::Code(code),
+        Some((None, Some(signal))) => HelperExit::Signal(signal),
+        _ => {
+            let _ = child.kill();
+            let _ = child.wait();
+            HelperExit::Stopped
+        }
+    };
+    RunError::HelperExited {
+        helper: entry.into(),
+        exit,
+        cause: cause.to_string(),
+        stderr_tail: helper_tail(log),
+    }
+}
+/// After acknowledging, a helper's stderr returns to the null device it had
+/// before: a long-lived helper never grows the unlinked log.
+fn release_helper_log() {
+    // SAFETY: open of a static C string; dup2 onto fd 2 and close of our own fd.
+    unsafe {
+        let null = libc::open(c"/dev/null".as_ptr(), libc::O_WRONLY | libc::O_CLOEXEC);
+        if null >= 0 {
+            libc::dup2(null, libc::STDERR_FILENO);
+            libc::close(null);
+        }
+    }
+}
+fn nonce() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_nanos())
+}
 pub(crate) fn helper(executable: &Executable, entry: &str) -> io::Result<Command> {
     executable.verify()?;
     let mut command = Command::new(&executable.path);
@@ -206,11 +315,8 @@ fn private_image<'a>(
     let Some(image) = executable.replaced_image() else {
         return Ok(None);
     };
-    let nonce = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_nanos());
-    let name =
-        FileName::new(&format!("exe-{}-{nonce}", std::process::id())).map_err(io::Error::other)?;
+    let name = FileName::new(&format!("exe-{}-{}", std::process::id(), nonce()))
+        .map_err(io::Error::other)?;
     let (mut copy, _) = root
         .dir()
         .open_file(
@@ -257,13 +363,40 @@ pub(crate) fn spawn_sentinel(
         .parent()
         .and_then(Path::parent)
         .ok_or_else(|| RunError::Invalid("invalid state root".into()))?;
-    // A rebuilt path re-execs the startup image, never the replacement.
-    let pin = private_image(root, &plan.executable)?;
-    let executable = pin.as_ref().map_or(&plan.executable, |pin| &pin.executable);
+    let mut retried = false;
+    loop {
+        // A rebuilt path re-execs the startup image, never the replacement.
+        let pin = private_image(root, &plan.executable)?;
+        match sentinel_attempt(run, root, home, pin.as_ref(), plan, next) {
+            // A rebuild can replace the path between this process's verify and
+            // the sentinel's own (`cargo run` of Effigy beside a live run): the
+            // sentinel refuses and exits unacknowledged. It did nothing and
+            // nothing recorded it, so one retry from the unchanged startup
+            // image is safe (I-SV4).
+            Err(RunError::HelperExited { .. })
+                if !retried && pin.is_none() && plan.executable.replaced_image().is_some() =>
+            {
+                retried = true;
+            }
+            // The sentinel verified and runs its image: the private copy can go.
+            result => return result,
+        }
+    }
+}
+fn sentinel_attempt(
+    run: &Run<'_>,
+    root: &StateRoot,
+    home: &Path,
+    pin: Option<&PrivateImage<'_>>,
+    plan: &LifecyclePlan,
+    next: &Invocation,
+) -> Result<SentinelLease, RunError> {
+    let executable = pin.map_or(&plan.executable, |pin| &pin.executable);
+    let log = helper_log(root)?;
     let mut busy = 0;
     let mut child = loop {
-        let mut command = helper(executable, "__kernel-sentinel")?;
-        command.stdout(Stdio::piped());
+        let mut command = helper(executable, SENTINEL)?;
+        command.stdout(Stdio::piped()).stderr(log.try_clone()?);
         match command.spawn() {
             // A just-written image can be briefly busy while another thread's
             // fork still holds its write descriptor.
@@ -288,22 +421,24 @@ pub(crate) fn spawn_sentinel(
         next: next.argv().iter().map(|a| a.as_bytes().to_vec()).collect(),
         executable: executable.clone(),
     };
-    nonblocking(writer.as_raw_fd())?;
-    write_frame(&mut writer, &config)?;
     let mut ready = child
         .stdout
         .take()
         .ok_or_else(|| RunError::Invalid("sentinel ready pipe missing".into()))?;
-    nonblocking(ready.as_raw_fd())?;
-    let mut ack = [0u8];
-    read_exact(&mut ready, &mut ack)?;
-    if ack != [1] {
-        return Err(RunError::Invalid(
-            "invalid sentinel ready acknowledgement".into(),
-        ));
+    let acknowledged = (|| {
+        nonblocking(writer.as_raw_fd())?;
+        write_frame(&mut writer, &config)?;
+        nonblocking(ready.as_raw_fd())?;
+        let mut ack = [0u8];
+        read_exact(&mut ready, &mut ack)?;
+        if ack != [1] {
+            return Err(io::Error::other("invalid sentinel ready acknowledgement"));
+        }
+        Ok(())
+    })();
+    if let Err(error) = acknowledged {
+        return Err(helper_failed(SENTINEL, &mut child, &log, error));
     }
-    // The sentinel verified and runs its image: the private copy can go.
-    drop(pin);
     let identity = ident::process_identity(child.id())
         .verified()
         .cloned()
@@ -418,12 +553,20 @@ pub fn internal_entry(
     adapter: &mut impl SettlementAdapter,
     validate_next: impl Fn(&[OsString]) -> bool,
 ) -> Option<Result<(), RunError>> {
-    match entry {
-        "__kernel-sentinel" => Some(sentinel(adapter, validate_next)),
-        "__kernel-supervise" => Some(supervisor(router, adapter, validate_next)),
-        _ => None,
+    let result = match entry {
+        SENTINEL => sentinel(adapter, validate_next),
+        SUPERVISOR => supervisor(router, adapter, validate_next),
+        _ => return None,
+    };
+    // Before acknowledgement stderr is the parent's private log, so an early
+    // failure names itself in the parent's typed error; afterwards it is null.
+    if let Err(error) = &result {
+        let _ = writeln!(io::stderr(), "{entry}: {error}");
     }
+    Some(result)
 }
+const SENTINEL: &str = "__kernel-sentinel";
+const SUPERVISOR: &str = "__kernel-supervise";
 fn sentinel(
     adapter: &mut impl SettlementAdapter,
     validate_next: impl Fn(&[OsString]) -> bool,
@@ -431,7 +574,10 @@ fn sentinel(
     let mut input = std::io::stdin().lock();
     nonblocking(input.as_raw_fd())?;
     let config: SentinelConfig = serde_json::from_slice(&read_frame(&mut input)?)?;
-    config.executable.verify()?;
+    config
+        .executable
+        .verify()
+        .map_err(|error| RunError::Invalid(format!("startup binary refused: {error}")))?;
     let next = Invocation::validated(
         config.next.into_iter().map(OsString::from_vec).collect(),
         validate_next,
@@ -442,6 +588,7 @@ fn sentinel(
         ready.write_all(&[1])?;
         ready.flush()?;
     }
+    release_helper_log();
     // Only this read is intentionally open-ended: its lifetime is exactly the
     // owning run. The sole writer is CLOEXEC and lives inside Run.
     let mut byte = [0u8; 1];
@@ -755,20 +902,27 @@ pub fn start_detached(
         next: next.argv().iter().map(|a| a.as_bytes().to_vec()).collect(),
         executable: executable.clone(),
     };
-    let mut command = helper(executable, "__kernel-supervise")?;
-    command.stdout(Stdio::piped());
+    let root = StateRoot::effects(cx, home).map_err(crate::store::StoreError::from)?;
+    let log = helper_log(&root)?;
+    let mut command = helper(executable, SUPERVISOR)?;
+    command.stdout(Stdio::piped()).stderr(log.try_clone()?);
     let mut child = command.spawn()?;
     let mut writer = child
         .stdin
         .take()
         .ok_or_else(|| RunError::Invalid("owner pipe missing".into()))?;
-    nonblocking(writer.as_raw_fd())?;
-    write_frame(&mut writer, &config)?;
     let events = child
         .stdout
         .take()
         .ok_or_else(|| RunError::Invalid("event pipe missing".into()))?;
-    nonblocking(events.as_raw_fd())?;
+    let sent = (|| {
+        nonblocking(writer.as_raw_fd())?;
+        write_frame(&mut writer, &config)?;
+        nonblocking(events.as_raw_fd())
+    })();
+    if let Err(error) = sent {
+        return Err(helper_failed(SUPERVISOR, &mut child, &log, error));
+    }
     let mut result = SupervisorClient {
         child,
         writer: Some(writer),
@@ -783,10 +937,11 @@ pub fn start_detached(
         active: false,
         closed: false,
     };
-    match result.event(cx.operation())? {
-        Event::Admitted { fence, .. } => result.fence = fence,
-        Event::Refused(reason) => return Err(RunError::Invalid(reason)),
-        _ => return Err(RunError::Invalid("invalid admission event".into())),
+    match result.event(cx.operation()) {
+        Ok(Event::Admitted { fence, .. }) => result.fence = fence,
+        Ok(Event::Refused(reason)) => return Err(RunError::Invalid(reason)),
+        Ok(_) => return Err(RunError::Invalid("invalid admission event".into())),
+        Err(error) => return Err(helper_failed(SUPERVISOR, &mut result.child, &log, error)),
     }
     // Explicit detach is an operation, not a different topology. The caller
     // supplies the durable request id through detach; Owning is the default.
@@ -850,7 +1005,10 @@ fn supervisor(
     nonblocking(input.as_raw_fd())?;
     nonblocking(libc::STDOUT_FILENO)?;
     let config: SupervisorConfig = serde_json::from_slice(&read_frame(&mut input)?)?;
-    config.executable.verify()?;
+    config
+        .executable
+        .verify()
+        .map_err(|error| RunError::Invalid(format!("startup binary refused: {error}")))?;
     let inv = ResolvedInvocation::decode(&config.invocation)
         .map_err(|e| RunError::Invalid(e.to_string()))?;
     let next = Invocation::validated(
@@ -902,6 +1060,7 @@ fn supervisor(
         Ok(listener) => listener,
         Err(error) => {
             emit(&Event::Refused(error.to_string()));
+            release_helper_log();
             run.interrupt(&cleanup, WorkloadOutcome::NotStarted)?;
             run.settle(&cleanup, adapter)?;
             return Ok(());
@@ -911,6 +1070,7 @@ fn supervisor(
         run: run.id(),
         fence: run.fence().clone(),
     });
+    release_helper_log();
     nonblocking(input.as_raw_fd())?;
     let specs = config
         .processes
@@ -1040,3 +1200,6 @@ fn supervisor(
     });
     Ok(())
 }
+
+#[cfg(all(test, feature = "fault-injection"))]
+mod tests;
