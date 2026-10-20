@@ -43,35 +43,12 @@ impl Fixture {
         Self::adopt(tempfile::Builder::new().prefix(prefix).tempdir_in(parent)?)
     }
 
-    /// Explicit in-repository exception: nested task executions must remain
-    /// inside the authenticated scheduler token's root (contract 049).
-    /// Without a parent token this stays external, using a Colima-shared parent
-    /// on macOS for public container execution paths.
-    pub fn authenticated(prefix: &str, checkout: &Path) -> io::Result<Self> {
-        if std::env::var_os("HOST_RUN_TOKEN").is_none() {
-            // Public container paths enforce Colima's macOS share boundary even
-            // with a fake transport. Keep these explicit workspace fixtures on
-            // a shared, external parent when there is no authenticated root.
-            #[cfg(target_os = "macos")]
-            return Self::in_parent(prefix, Path::new("/Users/Shared"));
-            #[cfg(not(target_os = "macos"))]
-            return Self::new(prefix);
-        }
-        let checkout = fs::canonicalize(checkout)?;
-        let parent = fs::canonicalize(checkout.join("crates"))?;
-        if !parent.starts_with(&checkout) {
-            return Err(io::Error::other("fixture parent escaped checkout"));
-        }
-        Self::adopt(
-            tempfile::Builder::new()
-                .prefix(&format!(
-                    "effigy-parent-fixtures-{}",
-                    prefix
-                        .strip_prefix("effigy-parent-fixtures-")
-                        .unwrap_or(prefix)
-                ))
-                .tempdir_in(parent)?,
-        )
+    /// External workspace fixture on a parent shared with container transports.
+    pub fn workspace(prefix: &str) -> io::Result<Self> {
+        #[cfg(target_os = "macos")]
+        return Self::in_parent(prefix, Path::new("/Users/Shared"));
+        #[cfg(not(target_os = "macos"))]
+        Self::new(prefix)
     }
 
     fn adopt(directory: tempfile::TempDir) -> io::Result<Self> {

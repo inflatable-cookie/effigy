@@ -1,7 +1,6 @@
 use super::*;
 use crate::policy::admission::PolicyAdmission;
 use crate::policy::load::{load_container_policy, prepare_container_policy};
-use crate::sealed_fixture;
 use std::os::unix::fs::PermissionsExt;
 
 fn fixture() -> (effigy_test_support::Fixture, PathBuf, PathBuf) {

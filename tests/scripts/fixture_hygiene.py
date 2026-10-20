@@ -24,12 +24,8 @@ def unseal(root):
 
 
 @contextmanager
-def owned_fixture(prefix, authenticated_checkout=None):
-    # Contract 049 requires a nested selector's CWD under its parent token root.
+def owned_fixture(prefix):
     parent = Path(os.environ.get('EFFIGY_TEST_FIXTURE_ROOT', tempfile.gettempdir()))
-    if authenticated_checkout is not None and 'HOST_RUN_TOKEN' in os.environ:
-        parent = authenticated_checkout / 'crates'
-        prefix = 'effigy-parent-fixtures-' + prefix
     with tempfile.TemporaryDirectory(prefix=prefix, dir=parent) as directory:
         root = Path(directory).resolve()
         record = None
@@ -62,7 +58,7 @@ def main():
     if not command:
         parser.error('a test runner command is required')
     checkout = Path(__file__).resolve().parents[2]
-    before = set((checkout / 'crates').iterdir())
+    before = set((checkout / 'crates').rglob('*'))
     root = Path(tempfile.mkdtemp(prefix='effigy-fixture-suite-')).resolve()
     try:
         (root / 'directories').mkdir()
@@ -128,7 +124,7 @@ def main():
             record.unlink()
         if any((root / 'directories').iterdir()):
             return result or 2
-        new_entries = set((checkout / 'crates').iterdir()) - before
+        new_entries = set((checkout / 'crates').rglob('*')) - before
         if new_entries:
             print(f'new entries under crates/: {sorted(map(str, new_entries))}', file=sys.stderr)
             leaked = True

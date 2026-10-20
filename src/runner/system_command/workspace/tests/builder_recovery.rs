@@ -7,10 +7,15 @@ use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
 const FAKE_DOCKER: &str = r#"#!/usr/bin/env python3
-import json, os, pathlib, re, sys, time
+import atexit, json, os, pathlib, re, sys, time
 root = pathlib.Path(os.environ['EFFIGY_RECOVERY_ROOT'])
 state = root / 'state'
 args = sys.argv[1:]
+def trace(phase):
+    with (state / 'timing').open('a') as f:
+        f.write(json.dumps([time.monotonic(), os.getpid(), phase, args]) + '\n')
+trace('start')
+atexit.register(lambda: trace('exit'))
 with (state / 'calls').open('a') as f: f.write(json.dumps(args) + '\n')
 mode = (state / 'mode').read_text()
 cmd = next((a for a in args if a in ['ps', 'inspect', 'up', 'exec', 'down', 'info']), '')
@@ -125,11 +130,8 @@ impl Fixture {
     }
 
     fn with_declaration(retained: bool, changed: bool, backend: &str, scoped: bool) -> Self {
-        let temp = effigy_test_support::Fixture::authenticated(
-            "effigy-parent-fixtures-recovery-",
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
-        )
-        .unwrap();
+        let temp =
+            effigy_test_support::Fixture::workspace("effigy-parent-fixtures-recovery-").unwrap();
         let root = temp.path().canonicalize().unwrap();
         std::fs::create_dir_all(root.join(".git")).unwrap();
         std::fs::write(
@@ -189,17 +191,7 @@ nerdctl) while [ "$1" != -- ]; do shift; done; shift; exec "$(dirname "$0")/dock
 esac
 "#,
         );
-        let scheduler_state = std::env::var_os("EFFIGY_HOST_RUN_ROOT")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| {
-                std::path::PathBuf::from(std::env::var_os("HOME").expect("original HOME"))
-                    .join(".local/state/host-run")
-            });
         let env = EnvGuard::set_many(&[
-            (
-                "EFFIGY_HOST_RUN_ROOT",
-                Some(scheduler_state.display().to_string()),
-            ),
             (
                 "PATH",
                 Some(format!(
@@ -424,7 +416,13 @@ esac
             self.root.clone(),
         )
         .map(|_| ())
-        .map_err(|error| error.to_string())
+        .map_err(|error| {
+            format!(
+                "{error}\nprivate backend timing:\n{}\ncolima calls:\n{}",
+                std::fs::read_to_string(self.root.join("state/timing")).unwrap_or_default(),
+                std::fs::read_to_string(self.root.join("state/colima-calls")).unwrap_or_default(),
+            )
+        })
     }
     fn mutate(&self, update: impl FnOnce(&mut Value)) {
         let path = self.root.join("state/identity.json");

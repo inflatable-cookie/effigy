@@ -172,11 +172,8 @@ struct BuilderOutcome {
 }
 
 fn run_direct_builder_activation(label: &str, mode: &str) -> BuilderOutcome {
-    let temp = effigy_test_support::Fixture::authenticated(
-        &format!("effigy-parent-fixtures-builder-{label}-"),
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
-    )
-    .expect("fresh private root");
+    let temp = effigy_test_support::Fixture::workspace(&format!("effigy-builder-{label}-"))
+        .expect("fresh private root");
     let root = fs::canonicalize(temp.path()).expect("canonical private root");
     fs::create_dir_all(root.join("infra/release")).expect("mkdir compose dir");
     fs::write(
@@ -338,17 +335,7 @@ esac
         std::env::var("PATH").expect("PATH")
     );
     fs::create_dir_all(root.join("home")).expect("private subprocess HOME");
-    let scheduler_state = std::env::var_os("EFFIGY_HOST_RUN_ROOT")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| {
-            std::path::PathBuf::from(std::env::var_os("HOME").expect("original HOME"))
-                .join(".local/state/host-run")
-        });
     let _env = crate::contract_test_support::EnvGuard::set_many(&[
-        (
-            "EFFIGY_HOST_RUN_ROOT",
-            Some(scheduler_state.display().to_string()),
-        ),
         ("HOME", Some(root.join("home").display().to_string())),
         (
             "EFFIGY_EXECUTABLE",

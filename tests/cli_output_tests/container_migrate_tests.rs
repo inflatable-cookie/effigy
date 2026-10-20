@@ -1,25 +1,20 @@
 //! `compose_file` is read as project catalog fragments for one release, and
 //! `effigy container migrate` writes exactly those fragments out.
-use super::sealed_fixture::SealedFixture;
+use effigy_test_support::Fixture as DirectoryFixture;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Command, Output};
 
 struct Fixture {
-    owner: SealedFixture,
+    owner: DirectoryFixture,
     repo: PathBuf,
 }
 
 impl Fixture {
     fn new() -> Self {
-        let owner = SealedFixture(
-            tempfile::Builder::new()
-                .prefix("effigy-parent-fixtures-migrate-")
-                .tempdir_in(Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
-                .unwrap(),
-        );
+        let owner = DirectoryFixture::workspace("effigy-migrate-").unwrap();
         let root = owner.path().canonicalize().unwrap();
         let repo = root.join("checkout");
         for directory in [repo.join("infra/dev"), root.join("home")] {

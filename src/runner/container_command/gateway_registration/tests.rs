@@ -1930,11 +1930,7 @@ for line in sys.stdin: print('exec:'+line.strip(),flush=True)
         }
     }
 
-    let fixture = effigy_test_support::Fixture::authenticated(
-        "effigy-158-publication-",
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
-    )
-    .unwrap();
+    let fixture = effigy_test_support::Fixture::workspace("effigy-158-publication-").unwrap();
     let root = fixture.path();
     let checkout = root.join("selected");
     std::fs::create_dir(&checkout).unwrap();

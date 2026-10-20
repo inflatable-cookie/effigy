@@ -28,11 +28,8 @@ impl Drop for Fixture {
 }
 impl Fixture {
     fn new() -> Self {
-        let root = effigy_test_support::Fixture::authenticated(
-            "effigy-158-private-",
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
-        )
-        .expect("fresh private root");
+        let root = effigy_test_support::Fixture::workspace("effigy-158-private-")
+            .expect("fresh private root");
         fs::create_dir(root.path().join("bin")).expect("bin");
         fs::create_dir(root.path().join("home")).expect("home");
         for name in ["docker", "colima"] {

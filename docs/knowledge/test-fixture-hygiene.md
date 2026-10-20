@@ -18,33 +18,15 @@ paths retain a thread-local owner for their nested workspaces and Git remotes.
 Process-wide state uses `Fixture::process_lifetime`, whose owners are explicitly
 drained at process exit because Rust statics do not run destructors.
 
-## In-repository exceptions
+## Workspace placement
 
-The following is the complete set of exception families. They call
-`Fixture::authenticated` (the Python adapter calls `owned_fixture` with an
-explicit checkout). When `HOST_RUN_TOKEN` is present, contract
-[049](contracts/049-heavy-validation-admission-contract.md) requires every nested
-task CWD to remain beneath the authenticated checkout root. These owners allocate
-one fresh `crates/effigy-parent-fixtures-*` directory. Without a parent token,
-they allocate externally. On macOS these explicit workspace fixtures use
-`/Users/Shared`: public container paths enforce Colima's share boundary even
-when the transport is fake. No token is removed, broadened or copied.
-
-| Family | Reason |
-| --- | --- |
-| Unit `contract_test_support::temp_workspace` | Nested task, catalog, state and managed execution |
-| CLI `tests/support::temp_workspace` | Public task/skill/bootstrap/secret execution |
-| Bootstrap crate support | Bootstrap task execution and its private Git remotes |
-| Gateway managed-host and managed matrix | Public managed lifecycle and container tasks |
-| CLI private startup, reset, headless, handover and attached cases | Actual CLI lifecycle entry and nested tasks |
-| Direct builder and builder recovery | Rhai execution through the real task engine |
-| Task-engine kill matrix | Real task execution under the inherited admission token |
-| Shared-render and gateway publication proofs | Nested container helper execution |
-| Python workspace catalog handoff | Host task and session execution through real CLI entry |
-
-The outside-root token refusal controls remain external and continue to prove
-that foreign CWDs are rejected before task effects. Production host catalog
-staging is not a test fixture and retains its runtime-owned staging directory.
+There are currently no in-repository fixture exceptions. Scheduler retirement
+removed the authenticated-parent CWD restriction. `Fixture::workspace` allocates
+externally, using `/Users/Shared` on macOS because public container paths enforce
+Colima's share boundary even with a fake transport. Unit workspace, bootstrap,
+CLI, gateway, builder and kill-matrix helpers all use this owner. The Python
+catalog adapter also allocates externally. Production catalog staging remains
+runtime-owned rather than a test fixture.
 
 ## Suite leak assertion
 
@@ -83,8 +65,7 @@ observes the live kernel identity; a PID file is not later treated as kill
 authority. A directory guard settles its registered processes before unsealing
 or removing files. The suite wrapper invokes `effigy-fixture-process sweep`
 before its directory sweep. The runner receives no inherited outer-command custody
-or probe nonce; fixture launches allocate fresh nonces. Scheduler authentication
-remains intact. The wrapper fails for surviving registrations even when cleanup
+or probe nonce; fixture launches allocate fresh nonces. The wrapper fails for surviving registrations even when cleanup
 succeeds, and retains normal nextest timeout/leak policy. If custody remains
 unknown, it retains the exact ledger and fixture paths and fails. A changed
 directory identity is retained too, including during the wrapper's final cleanup;
@@ -117,16 +98,15 @@ and a private test-binary entrypoint provide the same launch path; both are
 covered by `test:fixtures:hygiene:regressions`. Recovery fixtures pin nested
 script dispatch to the built CLI with the existing scoped executable override,
 avoiding a nested Cargo build while the test runner owns its build lock.
-Acceptance uses the repository's `discovery-proof` profile for cold CLI timing
-proofs and marks the long suites for host admission.
+Acceptance uses the optimized `fixture-proof` profile with debug assertions enabled:
+doctor CLI proofs require its debug-only process evidence seams, while cold CLI
+timing proofs retain optimization and retains bounded per-test and suite deadlines.
 
 The parent-death matrix controller launches its lifecycle actor in a separate,
 registered group. Killing and reaping the controller leaves the actor able to
 observe parent death and run its EXIT trap. Its host actor registration is
 outside the fake container's engine scope, so fake container down cannot kill
-its own host cleanup caller. Authenticated recovery and direct-builder fixtures
-retain the original scheduler state locator when isolating `HOME`. The task-engine
-kill matrix retains that locator too, including its executable-replacement proof.
+its own host cleanup caller.
 
 The forked-workload gate proof retains its helper guard after observing leader
 exit, until it has checked gate release while the workload is still alive.
@@ -135,8 +115,8 @@ Cleanup therefore cannot turn a leaked-descriptor failure into a passing proof.
 The read-only observer in `effigy-test-support/src/kernel_helpers.rs` is separate
 from the native process ledger in `src/process.rs`. A fixture HOME can still have
 a kernel sentinel finishing settlement after its client has been killed and reaped. Before directory removal, the guard reads
-helper generations through `custody::test_support::run_helpers` and waits for
-those other processes to cease writing. This observer never signals a sentinel
+helper generations through the existing `run::recent` and `run::metadata` observations and waits for
+those other processes to cease writing. Kernel helper startup and typed `HelperExited` failures remain owned by `supervise`; the fixture adapter adds no handshake or retry implementation. This observer never signals a sentinel
 or infers authority from a PID file. Unknown evidence or an expired wait retains
 the tree; the suite sweep uses the same check before deleting leaked homes.
 `fixture_home_waits_for_kernel_sentinel_after_client_kill` proves the boundary.

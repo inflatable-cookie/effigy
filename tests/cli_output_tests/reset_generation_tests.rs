@@ -12,11 +12,8 @@ struct Fixture {
 }
 impl Fixture {
     fn new() -> Self {
-        let owner = effigy_test_support::Fixture::authenticated(
-            "effigy-parent-fixtures-reset-",
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
-        )
-        .unwrap();
+        let owner =
+            effigy_test_support::Fixture::workspace("effigy-parent-fixtures-reset-").unwrap();
         let root = owner.path().canonicalize().unwrap();
         let repo = root.join("checkout");
         for directory in [repo.join(".git"), root.join("home"), root.join("bin")] {

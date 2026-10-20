@@ -57,11 +57,8 @@ struct Fixture {
 impl Fixture {
     fn new() -> Self {
         let home = effigy_test_support::Fixture::new("effigy-kill-matrix-home-").expect("home");
-        let repo = effigy_test_support::Fixture::authenticated(
-            "effigy-kill-matrix-repo-",
-            Path::new(env!("CARGO_MANIFEST_DIR")),
-        )
-        .expect("authenticated task fixture");
+        let repo = effigy_test_support::Fixture::workspace("effigy-kill-matrix-repo-")
+            .expect("external task fixture");
         fs::write(repo.path().join("effigy.toml"), TASK).expect("manifest");
         Self {
             home: fs::canonicalize(home.path()).expect("home path"),
@@ -77,7 +74,6 @@ impl Fixture {
             .args(args)
             .current_dir(&self.repo)
             .env("HOME", &self.home)
-            .env("EFFIGY_HOST_RUN_ROOT", scheduler_state_root())
             .env_remove("EFFIGY_MANAGED_RUN_TOKEN")
             .env_remove("EFFIGY_CUSTODY_NONCE")
             .env_remove("EFFIGY_LOCK_WAIT_MS")
@@ -148,15 +144,6 @@ impl Fixture {
             std::thread::sleep(Duration::from_millis(20));
         }
     }
-}
-
-fn scheduler_state_root() -> PathBuf {
-    std::env::var_os("EFFIGY_HOST_RUN_ROOT")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            PathBuf::from(std::env::var_os("HOME").expect("original HOME"))
-                .join(".local/state/host-run")
-        })
 }
 
 fn alive(pid: i32) -> bool {
@@ -441,7 +428,6 @@ run = "echo after >> runs.log"
         .arg("rebuild")
         .current_dir(&fixture.repo)
         .env("HOME", &fixture.home)
-        .env("EFFIGY_HOST_RUN_ROOT", scheduler_state_root())
         .env("EFFIGY_UNDER_TEST", &copy)
         .env_remove("EFFIGY_MANAGED_RUN_TOKEN")
         .env_remove("EFFIGY_CUSTODY_NONCE")

@@ -22,11 +22,8 @@ pub(crate) fn temp_workspace(prefix: &str, name: &str) -> PathBuf {
         let mut owner = owner.borrow_mut();
         if owner.is_none() {
             *owner = Some(
-                effigy_test_support::Fixture::authenticated(
-                    "effigy-parent-fixtures-cli-",
-                    std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
-                )
-                .expect("owned CLI fixture root"),
+                effigy_test_support::Fixture::workspace("effigy-parent-fixtures-cli-")
+                    .expect("owned CLI fixture root"),
             );
         }
         owner

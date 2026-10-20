@@ -11,30 +11,13 @@ std::thread_local! {
     static TEST_FIXTURE_ROOT: RefCell<Option<effigy_test_support::Fixture>> = const { RefCell::new(None) };
 }
 
-fn workspace_root() -> PathBuf {
-    for candidate in Path::new(env!("CARGO_MANIFEST_DIR")).ancestors() {
-        let manifest = candidate.join("Cargo.toml");
-        let Ok(contents) = fs::read_to_string(manifest) else {
-            continue;
-        };
-        if contents.lines().any(|line| line.trim() == "[workspace]") {
-            return fs::canonicalize(candidate)
-                .expect("canonicalize the Effigy workspace for bootstrap fixtures");
-        }
-    }
-    panic!("find the Effigy workspace root for bootstrap fixtures");
-}
-
 fn test_fixture_root() -> PathBuf {
     TEST_FIXTURE_ROOT.with(|root| {
         let mut root = root.borrow_mut();
         if root.is_none() {
             *root = Some(
-                effigy_test_support::Fixture::authenticated(
-                    "effigy-bootstrap-fixtures-",
-                    &workspace_root(),
-                )
-                .expect("create owned bootstrap fixture root"),
+                effigy_test_support::Fixture::workspace("effigy-bootstrap-fixtures-")
+                    .expect("create owned bootstrap fixture root"),
             );
         }
         root.as_ref()

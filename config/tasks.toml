@@ -1516,7 +1516,7 @@ qa = { visibility = "public", group = "Validation", run = [{ task = "test" }, { 
 ] }
 "test:fixtures:hygiene:acceptance:once" = { visibility = "internal", admission = "heavy", run = [
   { task = "test:fixtures:hygiene:prepare" },
-  { run = "EFFIGY_TEST_PROCESS_HELPER=target/debug/effigy-fixture-process python3 tests/scripts/fixture_hygiene.py --timeout 3000 -- cargo nextest run --cargo-profile discovery-proof --config-file .config/nextest.toml --user-config-file none -p effigy --lib --test gateway_private --test gateway_operator --test cli_output_tests -E 'binary(gateway_private) | binary(gateway_operator) | binary(cli_output_tests) | test(builder_recovery::)' --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail -j 2", timeout_ms = 3100000 },
+  { run = "EFFIGY_TEST_PROCESS_HELPER=target/debug/effigy-fixture-process python3 tests/scripts/fixture_hygiene.py --timeout 3000 -- cargo nextest run --cargo-profile fixture-proof --config-file .config/nextest.toml --user-config-file none -p effigy --lib --test gateway_private --test gateway_operator --test cli_output_tests -E 'binary(gateway_private) | binary(gateway_operator) | binary(cli_output_tests) | test(builder_recovery::)' --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail -j 4", timeout_ms = 3100000 },
 ] }
 "test:fixtures:hygiene:cwd" = { visibility = "internal", run = [
   { task = "test:fixtures:hygiene:prepare" },
@@ -1533,8 +1533,8 @@ qa = { visibility = "public", group = "Validation", run = [{ task = "test" }, { 
 ] }
 "test:fixtures:hygiene:shared" = { visibility = "internal", admission = "heavy", run = [
   { task = "test:fixtures:hygiene:prepare" },
-  { run = "EFFIGY_TEST_PROCESS_HELPER=target/debug/effigy-fixture-process RUSTFLAGS='--cfg effigy_shared_process' python3 tests/scripts/fixture_hygiene.py --timeout 3000 -- cargo test --profile discovery-proof -p effigy --test gateway_private --test gateway_operator --test cli_output_tests --no-fail-fast -- --test-threads=8", timeout_ms = 3100000 },
-  { run = "EFFIGY_TEST_PROCESS_HELPER=target/debug/effigy-fixture-process RUSTFLAGS='--cfg effigy_shared_process' python3 tests/scripts/fixture_hygiene.py -- cargo test --profile discovery-proof -p effigy --lib builder_recovery:: -- --test-threads=8", timeout_ms = 900000 },
+  { run = "EFFIGY_TEST_PROCESS_HELPER=target/debug/effigy-fixture-process RUSTFLAGS='--cfg effigy_shared_process' python3 tests/scripts/fixture_hygiene.py --timeout 3000 -- cargo test --profile fixture-proof -p effigy --test gateway_private --test gateway_operator --test cli_output_tests --no-fail-fast -- --test-threads=8", timeout_ms = 3100000 },
+  { run = "EFFIGY_TEST_PROCESS_HELPER=target/debug/effigy-fixture-process RUSTFLAGS='--cfg effigy_shared_process' python3 tests/scripts/fixture_hygiene.py -- cargo test --profile fixture-proof -p effigy --lib builder_recovery:: -- --test-threads=8", timeout_ms = 900000 },
 ] }
 
 "test:fixtures:hygiene:regressions" = { visibility = "internal", admission = "heavy", run = [
@@ -1562,4 +1562,26 @@ qa = { visibility = "public", group = "Validation", run = [{ task = "test" }, { 
 "test:fixtures:hygiene:runner-regressions" = { visibility = "internal", admission = "heavy", run = [
   { task = "test:fixtures:hygiene:prepare" },
   { run = "EFFIGY_EXECUTABLE=$PWD/target/discovery-proof/effigy EFFIGY_TEST_PROCESS_HELPER=target/debug/effigy-fixture-process python3 tests/scripts/fixture_hygiene.py --timeout 1800 -- cargo nextest run --cargo-profile discovery-proof --config-file .config/nextest.toml --user-config-file none -p effigy --lib --test task_engine_kill_matrix -E 'test(hung_ownership_batch_is_bounded_and_reaps_its_process_group) | test(ownership_hang_reap_oracle_fails_when_runtime_reap_is_disabled) | test(ownership_preflight_hang_is_unavailable_without_metadata_reap_claim) | test(managed_namespace_builds_without_adopting_any_legacy_shape) | test(migration_failures_never_accept_stale_output_and_reuse_the_new_builder_on_retry) | test(task_engine_equivalent_spellings_from_two_processes_serialize) | test(fixture_home_waits_for_kernel_sentinel_after_client_kill)' --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail -j 1", timeout_ms = 1900000 },
+] }
+
+"test:fixtures:hygiene:run-control" = { visibility = "internal", run = [
+  { task = "test:fixtures:hygiene:prepare" },
+  { run = "EFFIGY_TEST_PROCESS_HELPER=target/debug/effigy-fixture-process python3 tests/scripts/fixture_hygiene.py -- cargo nextest run --cargo-profile discovery-proof --config-file .config/nextest.toml --user-config-file none -p effigy --test run_control_cli --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail -j 2", timeout_ms = 900000 },
+] }
+"test:fixtures:hygiene:container-policy" = { visibility = "internal", run = [
+  { task = "test:fixtures:hygiene:prepare" },
+  { run = "EFFIGY_TEST_PROCESS_HELPER=target/debug/effigy-fixture-process python3 tests/scripts/fixture_hygiene.py -- cargo nextest run --cargo-profile discovery-proof --config-file .config/nextest.toml --user-config-file none -p effigy-containers -E 'test(backend::tests::) | test(policy::compose_file::tests::)' --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail -j 2", timeout_ms = 900000 },
+] }
+
+"test:fixtures:hygiene:support" = { visibility = "internal", run = [
+  { task = "test:fixtures:hygiene:guards:both" },
+  { task = "test:fixtures:hygiene:wrapper" },
+  { task = "test:fixtures:hygiene:kernel" },
+  { task = "test:fixtures:hygiene:run-control" },
+  { task = "test:fixtures:hygiene:container-policy" },
+] }
+
+"test:fixtures:hygiene:recovery-regression" = { visibility = "internal", admission = "heavy", run = [
+  { task = "test:fixtures:hygiene:prepare" },
+  { run = "EFFIGY_EXECUTABLE=$PWD/target/discovery-proof/effigy EFFIGY_TEST_PROCESS_HELPER=target/debug/effigy-fixture-process python3 tests/scripts/fixture_hygiene.py --timeout 1800 -- cargo nextest run --cargo-profile discovery-proof --config-file .config/nextest.toml --user-config-file none -p effigy --lib --test task_engine_kill_matrix -E 'test(managed_namespace_builds_without_adopting_any_legacy_shape)' --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail -j 1", timeout_ms = 1900000 },
 ] }

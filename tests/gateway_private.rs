@@ -1,7 +1,7 @@
 #[path = "support/gateway_legacy.rs"]
 mod gateway_legacy_fixture;
-use gateway_legacy_fixture::LegacyRegistryFixture;
 use effigy_test_support::process::{self, FixtureCommandExt, OwnedChild};
+use gateway_legacy_fixture::LegacyRegistryFixture;
 #[path = "support/scoped_env.rs"]
 mod env_test_support;
 
@@ -25,13 +25,10 @@ use serde_json::Value;
 
 const EFFIGY: &str = env!("CARGO_BIN_EXE_effigy");
 
-// Managed CLI entrypoints inherit the authenticated checkout parent.
+// Container-facing CLI fixtures need an external shared parent on macOS.
 fn managed_host_fixture() -> effigy_test_support::Fixture {
-    effigy_test_support::Fixture::authenticated(
-        "effigy-parent-fixtures-gateway-",
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
-    )
-    .expect("owned contained managed host fixture")
+    effigy_test_support::Fixture::workspace("effigy-parent-fixtures-gateway-")
+        .expect("owned external managed host fixture")
 }
 
 fn copy_dir_all(src: &Path, dst: &Path) {

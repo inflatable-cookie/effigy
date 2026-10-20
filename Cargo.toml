@@ -65,6 +65,12 @@ opt-level = 3
 inherits = "release"
 strip = "symbols"
 
+# Lifecycle fixtures also exercise debug-only process evidence seams. Retain
+# optimization for cold CLI deadlines while enabling those refusing oracles.
+[profile.fixture-proof]
+inherits = "discovery-proof"
+debug-assertions = true
+
 [package]
 name = "effigy"
 version.workspace = true

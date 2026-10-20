@@ -15,10 +15,6 @@ mod runtime;
 pub mod session;
 mod workspace;
 
-#[cfg(test)]
-#[path = "../../../tests/support/sealed_fixture.rs"]
-pub(crate) mod sealed_fixture;
-
 pub use manager::*;
 pub use ops::{
     ContainerCacheListOperation, ContainerCacheOperation, ContainerCachePruneOperation,

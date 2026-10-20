@@ -5,12 +5,13 @@
 
 #![cfg(unix)]
 
+use effigy_test_support::process::{FixtureCommandExt, OwnedChild};
 use std::fs;
 use std::io::Read;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::ExitStatusExt;
 use std::path::PathBuf;
-use std::process::{Child, Command, Output, Stdio};
+use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
 use effigy_kernel::observe::Observed;
@@ -69,22 +70,16 @@ while :; do sleep 0.1; done
 "#;
 
 struct Fixture {
-    _home: tempfile::TempDir,
+    _home: effigy_test_support::Fixture,
     home: PathBuf,
-    _repo: tempfile::TempDir,
+    _repo: effigy_test_support::Fixture,
     repo: PathBuf,
 }
 
 impl Fixture {
     fn new() -> Self {
-        let home = tempfile::Builder::new()
-            .prefix("effigy-run-control-home-")
-            .tempdir()
-            .expect("home");
-        let repo = tempfile::Builder::new()
-            .prefix("effigy-run-control-repo-")
-            .tempdir()
-            .expect("repo");
+        let home = effigy_test_support::Fixture::new("effigy-run-control-home-").expect("home");
+        let repo = effigy_test_support::Fixture::new("effigy-run-control-repo-").expect("repo");
         fs::write(repo.path().join("effigy.toml"), MANIFEST).expect("manifest");
         Self {
             home: fs::canonicalize(home.path()).expect("home path"),
@@ -124,13 +119,13 @@ impl Fixture {
     }
 
     fn run(&self, args: &[&str]) -> Output {
-        self.effigy(args).output().expect("effigy runs")
+        self.effigy(args).output_owned().expect("effigy runs")
     }
 
     fn with_hook(&self, hook: &str, args: &[&str]) -> Output {
         self.effigy(args)
             .env("EFFIGY_ADMISSION_HOOK", hook)
-            .output()
+            .output_owned()
             .expect("effigy runs")
     }
 
@@ -175,7 +170,7 @@ fn alive(pid: u32) -> bool {
     )
 }
 
-fn wait_child(child: &mut Child) -> std::process::ExitStatus {
+fn wait_child(child: &mut OwnedChild) -> std::process::ExitStatus {
     let deadline = Instant::now() + Duration::from_secs(60);
     loop {
         if let Some(status) = child.try_wait().expect("wait") {
@@ -254,7 +249,7 @@ fn a_hook_timeout_or_crash_fails_closed_and_the_hook_never_outlives_the_run() {
         .effigy(&["heavy"])
         .env("EFFIGY_ADMISSION_HOOK", slow)
         .env("EFFIGY_ADMISSION_HOOK_TIMEOUT_MS", "5000")
-        .output()
+        .output_owned()
         .expect("effigy runs");
     assert!(!output.status.success(), "{}", text(&output));
     assert!(started.elapsed() < Duration::from_secs(40), "bounded wait");
@@ -414,7 +409,7 @@ fn racing_invocations_with_one_run_id_start_one_run() {
         .map(|_| {
             fixture
                 .effigy(&["--run-id", "race-1", "slow"])
-                .spawn()
+                .spawn_owned()
                 .expect("racer")
         })
         .collect::<Vec<_>>();
@@ -460,7 +455,7 @@ fn run_stop_settles_a_running_task_and_its_children() {
     let fixture = Fixture::new();
     let mut owner = fixture
         .effigy(&["--run-id", "stop-1", "hold"])
-        .spawn()
+        .spawn_owned()
         .expect("owner");
     fixture.wait_for("the task's child", || {
         fixture.read("child.pid").ends_with('\n')
@@ -489,7 +484,7 @@ fn logs_follow_ends_on_settle_with_the_runs_result() {
     let fixture = Fixture::new();
     let mut owner = fixture
         .effigy(&["--run-id", "tick-1", "ticker"])
-        .spawn()
+        .spawn_owned()
         .expect("owner");
     fixture.wait_for("the run", || {
         fixture.run(&["run", "status", "tick-1"]).status.success()
@@ -512,14 +507,14 @@ fn a_killed_follower_process_reattaches_by_offset_without_gap_or_duplicate() {
     let fixture = Fixture::new();
     let mut owner = fixture
         .effigy(&["--run-id", "chatty-1", "chatty"])
-        .spawn()
+        .spawn_owned()
         .expect("owner");
     fixture.wait_for("the run", || {
         fixture.run(&["run", "status", "chatty-1"]).status.success()
     });
     let mut first = fixture
         .effigy(&["run", "logs", "chatty-1", "--follow"])
-        .spawn()
+        .spawn_owned()
         .expect("first follower");
     std::thread::sleep(Duration::from_millis(1200));
     first.kill().expect("SIGKILL the follower");

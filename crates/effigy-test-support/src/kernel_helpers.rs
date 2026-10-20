@@ -1,6 +1,6 @@
 //! Observe kernel-owned writers before removing a private fixture HOME.
-use effigy_kernel::custody::test_support as custody;
 use effigy_kernel::observe::Observed;
+use effigy_kernel::{run, store::Store};
 use std::{
     fs, io,
     path::Path,
@@ -49,7 +49,31 @@ pub fn wait_kernel_helpers(home: &Path) -> io::Result<()> {
         })?;
         // A killed client can leave a hot journal until its sentinel recovers
         // it. Observation may retry, but never repairs or infers absence.
-        let helpers = match custody::run_helpers(&cx, &root) {
+        let helpers = (|| -> io::Result<_> {
+            let failure = |reason| io::Error::other(format!("fixture runs: {reason:?}"));
+            let reader = match Store::read(&cx, &root) {
+                Observed::Verified(reader, _) => reader,
+                Observed::Absent(_) => return Ok(Vec::new()),
+                Observed::Unknown(reason) => return Err(failure(reason)),
+            };
+            let rows = match run::recent(&reader, None, i64::MAX as usize) {
+                Observed::Verified(rows, _) => rows,
+                Observed::Absent(_) => return Ok(Vec::new()),
+                Observed::Unknown(reason) => return Err(failure(reason)),
+            };
+            let mut helpers = Vec::new();
+            for row in rows {
+                let metadata = match run::metadata(&cx, &root, row.id) {
+                    Observed::Verified(metadata, _) => metadata,
+                    Observed::Absent(_) => continue,
+                    Observed::Unknown(reason) => return Err(failure(reason)),
+                };
+                helpers.extend(metadata.supervisor);
+                helpers.extend(metadata.sentinel);
+            }
+            Ok(helpers)
+        })();
+        let helpers = match helpers {
             Ok(helpers) => {
                 last_observation = None;
                 helpers

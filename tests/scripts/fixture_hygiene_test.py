@@ -1,5 +1,6 @@
 """Suite cleanup retains fixtures when directory or kernel ownership is unknown."""
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -10,6 +11,28 @@ import fixture_hygiene
 
 
 class SuiteOwnership(unittest.TestCase):
+    def test_unregistered_nested_crate_file_fails_the_suite(self):
+        with tempfile.TemporaryDirectory(prefix='effigy-wrapper-crates-') as owner:
+            checkout = Path(owner) / 'checkout'
+            script = checkout / 'tests/scripts/fixture_hygiene.py'
+            script.parent.mkdir(parents=True)
+            shutil.copyfile(fixture_hygiene.__file__, script)
+            crate = checkout / 'crates/existing'
+            crate.mkdir(parents=True)
+            baseline = crate / 'preserve'
+            baseline.write_text('pre-existing')
+            leaked = crate / 'leaked'
+            result = subprocess.run(
+                [sys.executable, str(script), '--', sys.executable, '-c',
+                 'from pathlib import Path; import sys; Path(sys.argv[1]).write_text("leak")',
+                 str(leaked)], env=dict(os.environ, TMPDIR=owner, TMP=owner, TEMP=owner),
+                capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 1, result)
+            self.assertIn('new entries under crates/', result.stderr)
+            self.assertIn(str(leaked), result.stderr)
+            self.assertEqual(baseline.read_text(), 'pre-existing')
+            self.assertEqual(leaked.read_text(), 'leak')
+
     def test_unknown_ownership_is_not_deleted_by_final_cleanup(self):
         child = r"""
 import json, os

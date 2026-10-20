@@ -27,11 +27,8 @@ pub(super) fn temp_workspace(name: &str) -> PathBuf {
         let mut root = root.borrow_mut();
         if root.is_none() {
             *root = Some(
-                effigy_test_support::Fixture::authenticated(
-                    "effigy-parent-fixtures-",
-                    std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
-                )
-                .expect("create owned test fixture root"),
+                effigy_test_support::Fixture::workspace("effigy-parent-fixtures-")
+                    .expect("create owned test fixture root"),
             );
         }
         root.as_ref()
