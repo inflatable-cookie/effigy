@@ -128,6 +128,7 @@ variant = "default"
         std::fs::create_dir_all(&repo_root).expect("mkdir repo");
         std::fs::write(repo_root.join("effigy.toml"), MANIFEST).expect("write manifest");
         let containers_home = fixture.path().join("home/.effigy");
+        std::fs::create_dir_all(&containers_home).expect("fixture home");
         // The writer thread resolves the policy through the same private home;
         // env (unlike a thread-local) reaches the spawned writer.
         let _env = crate::contract_test_support::EnvGuard::set_many(&[(
