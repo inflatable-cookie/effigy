@@ -643,6 +643,7 @@
 # Exercise the default CI resource reservation (the focused listener profile
 # deliberately uses a separate configuration).
 "test:host-process:dependent-replacement:ci" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_host_dependent_replacement_)' --success-output immediate --no-fail-fast --retries 0 --no-tests fail -j 4", timeout_ms = 600000 }] }
+"test:host-process:dependent-replacement:shared" = { visibility = "internal", group = "Maintenance", run = [{ run = "RUSTFLAGS='--cfg effigy_shared_process' cargo test -p effigy --test gateway_private managed_host_dependent_replacement_ -- --nocapture --test-threads=8", timeout_ms = 600000 }] }
 "test:host-process:exit-observation:matrix" = { visibility = "internal", group = "Maintenance", run = [
   { task = "test:host-process:exit-observation" },
   { task = "test:host-process:dependent-replacement" },

@@ -1179,10 +1179,11 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
     assert_eq!(dependent_successor["status"], "ready");
     println!("published dependent replacement: predecessor={} old_child={} successor={} new_child={} dependency_generation={} selected_phase=published native_exit_and_group_settlement=true",
         old_dependent["generation"], old_dependent["child_pid"], dependent_successor["generation"], dependent_successor["child_pid"], new_state["generation"]);
+    let websocket = curl_websocket_for_hostname(https_address, &ca_path, primary_domain);
     assert!(
-        curl_websocket_for_hostname(https_address, &ca_path, primary_domain)
-            .contains("101 Switching Protocols"),
-        "managed listener WebSocket upgrade did not pass through verified private HTTPS"
+        websocket.contains("101 Switching Protocols"),
+        "managed listener WebSocket upgrade did not pass through verified private HTTPS: {websocket}; gateway={}",
+        fs::read_to_string(private_gateway.join("gateway.stderr.log")).unwrap_or_default()
     );
 
     let sibling_domain = checkouts[2].2.as_str();
