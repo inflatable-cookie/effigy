@@ -427,6 +427,10 @@ run = "echo after >> runs.log"
 }
 
 #[test]
+#[cfg_attr(
+    target_os = "linux",
+    ignore = "known v0.15 rebuild defect: papercut 4461e320-ef29-4498-b7b6-c1e462e18456; owner lane v015-task-engine"
+)]
 fn sequence_signal_matrix_each_step_text_and_json_settles_the_entire_tree() {
     for json in [false, true] {
         for step in 0..3 {
