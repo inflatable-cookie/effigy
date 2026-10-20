@@ -1502,8 +1502,16 @@ impl RemoteExecAdapter for Reports {
 fn a_backend_terminal_downgrade_frames_on_stderr_and_never_upgrades() {
     // Requested, reported by the backend, and what the launch must carry.
     for (requested, reported, effective) in [
-        (RemoteTerminal::Tty, RemoteTerminal::Stdin, RemoteTerminal::Stdin),
-        (RemoteTerminal::None, RemoteTerminal::Tty, RemoteTerminal::None),
+        (
+            RemoteTerminal::Tty,
+            RemoteTerminal::Stdin,
+            RemoteTerminal::Stdin,
+        ),
+        (
+            RemoteTerminal::None,
+            RemoteTerminal::Tty,
+            RemoteTerminal::None,
+        ),
     ] {
         let home = tempfile::tempdir().unwrap();
         let cx = cx();

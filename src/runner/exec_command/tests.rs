@@ -14,7 +14,7 @@ use crate::runner::exec_command::surface::{
 };
 use crate::runner::exec_command::transport::{
     build_routed_task_exec_args, copy_file_into_service_invocation, parse_compose_exec_args,
-    resolve_host_program,
+    resolve_host_program, routed_task_exec,
 };
 use crate::runner::exec_command::{
     activate_exec_surface_with, routed_task_exec_requires_workspace_effigy,
@@ -934,4 +934,82 @@ fn activate_exec_surface_preserves_skip_lease_policy_for_handoff_sessions() {
             effigy_runtime_plan::RuntimeLeasePolicy::Skip,
         ))
     );
+}
+
+/// Before and after the remote custody cutover (effigy#236): the v0.14.1
+/// Compose exec arguments and the remote workload carry the same command,
+/// working directory, user and environment, for both consumer shapes. Only
+/// the transport changed: values are no longer `-e KEY=value` argv.
+#[test]
+fn remote_workload_matches_the_v0_14_compose_exec_for_consumer_steps() {
+    use crate::runner::task_engine::EnvOverride;
+    use effigy_env::secret::SecretString;
+    let secret = SecretString::new("hunter2".to_owned());
+    let secrets = [("DB_PASSWORD", &secret)];
+    let task_env = std::collections::BTreeMap::from([(
+        "SCHEMA_DIR".to_owned(),
+        "{repo}/infra/dev/bootstrap".to_owned(),
+    )]);
+    // cbs `seed` run step; Acowtancy's `exec bun install` reaches the same
+    // raw strategy through `effigy exec`.
+    for command in [
+        "mysql --skip-ssl -h db -uroot --password=secret < infra/dev/bootstrap/cbs.schema.sql",
+        "bun install --frozen-lockfile",
+    ] {
+        let strategy = effigy_exec::ExecStrategy::RawExec {
+            working_dir: "/var/www/cbs".to_owned(),
+            command: vec!["sh".to_owned(), "-lc".to_owned(), command.to_owned()],
+        };
+        let identity = Some(("dev", Some("/home/dev")));
+        let before = build_routed_task_exec_args(
+            &strategy,
+            Some(&task_env),
+            Some(&secrets),
+            identity,
+            "app",
+            "/var/www/cbs",
+        );
+        let after = routed_task_exec(
+            &strategy,
+            Some(&task_env),
+            Some(&secrets),
+            identity,
+            "/var/www/cbs",
+            false,
+        );
+        let before = before
+            .iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        // Command and working directory.
+        assert_eq!(&before[before.len() - 3..], after.argv.as_slice());
+        let workdir = before.iter().position(|arg| arg == "-w").unwrap();
+        assert_eq!(before[workdir + 1], after.workdir);
+        // Workspace user.
+        let user = before.iter().position(|arg| arg == "-u").unwrap();
+        assert_eq!(Some(before[user + 1].clone()), after.user);
+        // The same variables with the same values.
+        let mut before_env = before
+            .windows(2)
+            .filter(|pair| pair[0] == "-e")
+            .map(|pair| pair[1].clone())
+            .collect::<Vec<_>>();
+        let mut after_env = after
+            .env
+            .iter()
+            .map(|(key, value)| match value {
+                EnvOverride::Plain(value) | EnvOverride::Secret(value) => format!("{key}={value}"),
+            })
+            .collect::<Vec<_>>();
+        before_env.sort();
+        after_env.sort();
+        assert_eq!(before_env, after_env);
+        assert!(after_env.contains(&"SCHEMA_DIR=/var/www/cbs/infra/dev/bootstrap".to_owned()));
+        // The secret is private now, never argv.
+        assert!(after
+            .env
+            .iter()
+            .any(|(key, value)| key == "DB_PASSWORD" && matches!(value, EnvOverride::Secret(_))));
+        assert!(!after.argv.iter().any(|arg| arg.contains("hunter2")));
+    }
 }

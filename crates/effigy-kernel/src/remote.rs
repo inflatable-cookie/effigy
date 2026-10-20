@@ -301,7 +301,9 @@ impl RemoteCustody {
         let mut command = spec.command;
         // The effective terminal decides the framing stream (stdout on a
         // backend terminal, stderr otherwise); the adapter launches with it.
-        let terminal = adapter.terminal(&id, command.terminal).min(command.terminal);
+        let terminal = adapter
+            .terminal(&id, command.terminal)
+            .min(command.terminal);
         command.terminal = terminal;
         command.env.insert(
             "EFFIGY_CUSTODY_NONCE".into(),

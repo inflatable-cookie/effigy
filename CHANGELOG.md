@@ -13,6 +13,9 @@ During v0.x, MINOR bumps may include breaking changes.
   reaches the container session (not only the local `docker`/`colima`
   client), and the run settles only once that session is observed closed.
   A killed Effigy is settled on its next run from what the backend reports.
+  A step whose exec client dies while its container session runs on is
+  recorded as interrupted, not with the client's exit status, and the session
+  is stopped.
   Values for the container never appear in a command line. A value that spans
   lines can no longer be passed to a container workload and is refused.
 - A built-in `exec` step in a sequence reports the command's own exit code and

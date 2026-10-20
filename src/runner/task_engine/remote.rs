@@ -231,6 +231,12 @@ pub(in crate::runner) fn run_remote_with(
             cause: StopCause::Signal(*signal),
             signal: Some(*signal),
         },
+        (None, Some(exit)) if client_lost(adapter, &remote, exit.code) => {
+            // The exec client died by a signal while the session runs on: the
+            // workload has no outcome yet. Settle stops the session.
+            let _ = remote.client().complete(&mut run.run_mut(), exit);
+            WorkloadOutcome::Interrupted
+        }
         (None, Some(exit)) => {
             // Natural completion: the backend reports the registered
             // leader's own exit. The session's closure is observed by settle.
@@ -268,6 +274,25 @@ pub(in crate::runner) fn run_remote_with(
         stdout: stdout.bytes,
         stderr: stderr.bytes,
     })
+}
+
+/// Client exit is never remote closure (K6). A client that ended by a signal
+/// while the registered session is not proven closed was lost, not finished:
+/// its exit status is not the workload's.
+fn client_lost(
+    adapter: &mut dyn RemoteExecAdapter,
+    remote: &effigy_kernel::remote::OwnedRemote,
+    code: i32,
+) -> bool {
+    if code <= 128 {
+        return false;
+    }
+    let cx = kernel::effects().operation().child(CALL_TIMEOUT);
+    // Only a positive closure proof lets the client's status stand.
+    !matches!(
+        adapter.observe_session(&remote.registration, &cx),
+        Observed::Verified(effigy_kernel::remote::SessionState::Closed, _) | Observed::Absent(_)
+    )
 }
 
 enum Stop {

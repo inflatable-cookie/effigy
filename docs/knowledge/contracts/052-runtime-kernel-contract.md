@@ -1115,6 +1115,8 @@ pub trait RemoteExecAdapter {
         -> Observed<SessionState>;
     fn find_by_nonce(&self, id: &ContainerIdentity, nonce: &Nonce, cx: &OperationContext)
         -> Observed<Option<RemoteRegistration>>;
+    fn terminal(&self, id: &ContainerIdentity, requested: RemoteTerminal)
+        -> RemoteTerminal;                      // effective; never above `requested`
 }
 
 pub enum RemoteTerminal { None, Stdin, Tty }  // how the exec client meets the operator
@@ -1200,7 +1202,9 @@ is gone or shows different start ticks. Exec failure is `Unknown`, never
 - **Terminal.** `Stdin` and `Tty` inherit the owner's stdin with both client
   streams captured; `Tty` asks the backend for a terminal, which merges the
   workload's streams, so its frame arrives on stdout ending `\r\n`. `None`
-  keeps EOF stdin. The wrapper keeps an exec that is already a session
+  keeps EOF stdin. The adapter reports the terminal its backend actually
+  gives (`terminal`); the kernel launches and frames with that effective
+  terminal and never lets a backend upgrade the request. The wrapper keeps an exec that is already a session
   leader (a backend terminal makes it one) and never lets `setsid(1)` fork a
   group leader, so the exec client waits on the registered leader.
 
@@ -1217,7 +1221,8 @@ is gone or shows different start ticks. Exec failure is `Unknown`, never
   env file on a private descriptor, leaving stdin to the operator; Colima's
   VM shell reads them from stdin, exports them and passes them to `nerdctl` by
   name. Values that span lines are refused. Colima cannot carry a terminal
-  while its stdin carries the values, so `Tty` there attaches stdin only.
+  while its stdin carries the values, so its adapter reports `Tty` as
+  `Stdin`: the frame stays on stderr and its launch refuses a terminal.
 - A fixed POSIX helper runs as root in the registered container: it lists
   `/proc` with session facts and nonce evidence, and rechecks boot,
   namespace, start ticks and nonce immediately before each signal.
@@ -1233,10 +1238,28 @@ is gone or shows different start ticks. Exec failure is `Unknown`, never
   production adapter passes it over a strict container model
   (`test:containers:environment`); the helper itself is proven against a real
   `/proc` on Linux.
+- The task engine's remote matrix (`test:task-engine`) runs a container step
+  whose workload is a real host process group apart from its client: client
+  death (interrupted, then the session stopped), container stop (the
+  workload's own end), engine restart (absent by boot), an unreachable engine
+  (residue, never a kill, settled by the next run) and owner death (settled
+  by the next run), each ending with no surviving process.
 - Real-engine qualification on Colima (docker and containerd), Docker Desktop
   and Linux Docker. Apple Containers must pass before it is supported. This
-  is a qualification-lane step: the relays, helper and identity resolution
-  above have not yet run against a live engine.
+  is a qualification-lane step (planner ruling, 2026-10-20): the relays,
+  helper and identity resolution above have not yet run against a live
+  engine. The recorded steps, on each backend with the candidate binary:
+  1. cbs: `effigy schema:refresh`, then `effigy seed`; compare the dumped
+     schema files and step outcomes with v0.14.1; repeat `seed` under
+     `--json` and compare `steps`.
+  2. Acowtancy: `effigy workspace:js:prepare` (built-in `exec` step) in a
+     terminal and under `--json`.
+  3. During a long step: kill the exec client, `container stop` the service,
+     restart the engine (`colima restart`, or restart Docker Desktop) and
+     SIGKILL Effigy. After each, `effigy run list` shows a settled run and
+     `ps` inside the container shows no survivor carrying the nonce.
+  4. An interactive container task in a terminal: Docker gets a TTY,
+     Colima stdin only.
 
 ### 5.11 `Observed<T>` and `Probe`
 
