@@ -24,8 +24,10 @@ def unseal(root):
 
 
 @contextmanager
-def owned_fixture(prefix):
+def owned_fixture(prefix, shared_workspace=False):
     parent = Path(os.environ.get('EFFIGY_TEST_FIXTURE_ROOT', tempfile.gettempdir()))
+    if shared_workspace and sys.platform == 'darwin':
+        parent = Path('/Users/Shared')
     with tempfile.TemporaryDirectory(prefix=prefix, dir=parent) as directory:
         root = Path(directory).resolve()
         record = None

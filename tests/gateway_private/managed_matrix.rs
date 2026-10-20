@@ -935,13 +935,15 @@ fn authority_matrix(authority: Authority) {
         &effects,
         &foreign_ca,
     );
-    // Keep the successor in startup while the stale generation is observed.
-    if matches!(authority, Authority::PreviousGeneration) {
+    // Keep children pending beyond the suite's bounded proof window. This
+    // case stops during startup rather than racing a four-second delay.
+    let startup_only = matches!(authority, Authority::PreviousGeneration);
+    if startup_only {
         let manifest_path = case.root.join("effigy.toml");
         let manifest = fs::read_to_string(&manifest_path).expect("manifest");
         fs::write(
             manifest_path,
-            manifest.replace("start = 2", "start = 2, start_after_ms = 4000"),
+            manifest.replace("start = 2", "start = 2, start_after_ms = 3600000"),
         )
         .expect("startup delay");
     }
@@ -950,7 +952,18 @@ fn authority_matrix(authority: Authority) {
         .root
         .join(".effigy/runtime/managed/serve-default/session.json");
     let deadline = Instant::now() + Duration::from_secs(35);
-    while !session.exists() || !case.state.join("active-matrix-stack").exists() {
+    while !session.exists()
+        || !case.state.join("active-matrix-stack").exists()
+        || (startup_only
+            && !fs::read(&session)
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+                .and_then(|state| state["processes"].as_array().cloned())
+                .is_some_and(|rows| {
+                    rows.iter()
+                        .any(|row| row["pid"].as_u64().is_some_and(|pid| pid > 0))
+                }))
+    {
         assert!(
             Instant::now() < deadline,
             "successor startup: {}",
@@ -959,7 +972,7 @@ fn authority_matrix(authority: Authority) {
         thread::sleep(Duration::from_millis(25));
     }
     let down_before = case.down_count();
-    let mut observed_pids = Vec::new();
+    let observed_pids: Vec<u32>;
     match authority {
         Authority::PreviousGeneration => {
             let mut prior: Value =
@@ -972,6 +985,15 @@ fn authority_matrix(authority: Authority) {
                     .any(|row| row["status"] == "pending"),
                 "successor must still be starting"
             );
+            observed_pids = prior["processes"]
+                .as_array()
+                .expect("processes")
+                .iter()
+                .filter_map(|row| row["pid"].as_u64().map(|pid| pid as u32))
+                .collect();
+            assert!(!observed_pids.is_empty(), "live lifecycle owns startup");
+            assert!(!case.root.join("work-api.pid").exists());
+            assert!(!case.root.join("work-jobs.pid").exists());
             prior["task"] = "prior".into();
             prior["supervisor_pid"] = 999_999_999u32.into();
             prior["run_token"] = "managedrun-prior".into();

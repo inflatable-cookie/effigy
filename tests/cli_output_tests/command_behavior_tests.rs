@@ -3937,6 +3937,18 @@ fn doctor_git_cli_readiness_proof(arrangement: &str) {
     // graph dirty-paths gets the real Git response and its distinct argv and
     // caller tag remain in the receipt.
     let real_git = real_path_binary("git");
+    // The checkout is immutable during this proof. Freeze its real index so
+    // an unrelated Git startup cannot consume the status-hang deadline. The
+    // controlled status child still starts and is reaped by the real doctor.
+    let index_response = evidence_dir.join("index-response");
+    let index = Command::new(&real_git)
+        .arg("-C")
+        .arg(root)
+        .args(["ls-files", "--stage", "-z", "--", "."])
+        .output_owned()
+        .expect("snapshot the fixture index");
+    assert!(index.status.success(), "{index:?}");
+    fs::write(&index_response, index.stdout).expect("write frozen fixture index");
     let source_events = evidence_dir.join("doctor-process-evidence.jsonl");
     let fixture_events = evidence_dir.join("fixture-process-evidence.jsonl");
     let text_ready = evidence_dir.join("text-inventory-descendant-ready");
@@ -3955,6 +3967,7 @@ fn doctor_git_cli_readiness_proof(arrangement: &str) {
         fixture_exe: &fixture_exe,
         source_events: &source_events,
         fixture_events: &fixture_events,
+        index_response: &index_response,
     };
 
     // This sentinel has its own group and does no fixture initialization for
@@ -4101,6 +4114,7 @@ struct DoctorGitCliFixture<'a> {
     fixture_exe: &'a std::path::Path,
     source_events: &'a std::path::Path,
     fixture_events: &'a std::path::Path,
+    index_response: &'a std::path::Path,
 }
 
 #[cfg(unix)]
@@ -4133,6 +4147,7 @@ fn run_doctor_git_cli(
         .env("EFFIGY_TEST_DOCTOR_FIXTURE_DELAY_MS", "12000")
         .env("EFFIGY_TEST_DOCTOR_FIXTURE_HOLD_MS", "12000")
         .env("PATH", fixture.path_value)
+        .env("EFFIGY_TEST_DOCTOR_GIT_INDEX", fixture.index_response)
         .env("EFFIGY_TEST_DOCTOR_GIT_EVIDENCE", fixture.source_events)
         .env("EFFIGY_TEST_DOCTOR_GIT_INVOCATION", invocation)
         .env("EFFIGY_TEST_DOCTOR_GIT_READY", ready)
@@ -4203,6 +4218,7 @@ fn write_doctor_git_process_shim(bin: &std::path::Path, real: &std::path::Path, 
     let script = format!(
         r##"#!/bin/sh
 case " $* " in
+  *" ls-files --stage -z -- . "*) exec /bin/cat "$EFFIGY_TEST_DOCTOR_GIT_INDEX" ;;
   *--porcelain=v1*)
     export EFFIGY_TEST_DOCTOR_GIT_CALLER_PID="$PPID"
     export EFFIGY_TEST_DOCTOR_GIT_ARGS_TEXT="$*"

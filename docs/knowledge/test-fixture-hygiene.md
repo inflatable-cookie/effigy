@@ -122,3 +122,23 @@ the tree; the suite sweep uses the same check before deleting leaked homes.
 `fixture_home_waits_for_kernel_sentinel_after_client_kill` proves the boundary.
 The doctor hang negative control uses the shared native child guard as well;
 its PID marker remains an oracle rather than cleanup authority.
+
+Doctor Git timeout fixtures freeze their immutable checkout's real index before
+starting doctor, then serve that response from the private Git shim. This keeps
+an unrelated Git prelude from consuming the unchanged status-hang deadline;
+the real doctor still owns the controlled status child's deadline and cleanup.
+`test:fixtures:hygiene:doctor-git` covers the ready, serial-observer and delayed
+descendant controls without extending budgets or weakening their assertions.
+
+The shared-process selector mirrors nextest's runner-slot reservation for CLI
+doctor timing proofs: that family runs in one serial libtest process; the
+disjoint remaining CLI family and gateway fixtures keep eight test threads.
+Every case remains selected. This preserves the existing deadline origins and
+process-leak assertions instead of oversubscribing the timing controls.
+
+The previous-generation authority matrix keeps unstarted children scheduled
+beyond the bounded suite window and explicitly stops the holder during startup.
+It observes the live lifecycle PID before injecting the stale record; the proof
+still requires refusal, no foreign down, one owner-authorized down and closed
+owned processes. `test:fixtures:hygiene:startup-authority` runs this case in both
+ordinary and shared-process modes without a four-second observation race.

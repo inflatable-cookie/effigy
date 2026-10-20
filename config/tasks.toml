@@ -1533,7 +1533,11 @@ qa = { visibility = "public", group = "Validation", run = [{ task = "test" }, { 
 ] }
 "test:fixtures:hygiene:shared" = { visibility = "internal", admission = "heavy", run = [
   { task = "test:fixtures:hygiene:prepare" },
-  { run = "EFFIGY_TEST_PROCESS_HELPER=target/debug/effigy-fixture-process RUSTFLAGS='--cfg effigy_shared_process' python3 tests/scripts/fixture_hygiene.py --timeout 3000 -- cargo test --profile fixture-proof -p effigy --test gateway_private --test gateway_operator --test cli_output_tests --no-fail-fast -- --test-threads=8", timeout_ms = 3100000 },
+  # Match nextest's exclusive runner slots for deadline-sensitive doctor proofs.
+  # The disjoint CLI partitions retain every case and unchanged assertions.
+  { run = "EFFIGY_TEST_PROCESS_HELPER=target/debug/effigy-fixture-process RUSTFLAGS='--cfg effigy_shared_process' python3 tests/scripts/fixture_hygiene.py --timeout 1200 -- cargo test --profile fixture-proof -p effigy --test cli_output_tests doctor -- --test-threads=1", timeout_ms = 1300000 },
+  { run = "EFFIGY_TEST_PROCESS_HELPER=target/debug/effigy-fixture-process RUSTFLAGS='--cfg effigy_shared_process' python3 tests/scripts/fixture_hygiene.py --timeout 3000 -- cargo test --profile fixture-proof -p effigy --test cli_output_tests -- --skip doctor --test-threads=8", timeout_ms = 3100000 },
+  { run = "EFFIGY_TEST_PROCESS_HELPER=target/debug/effigy-fixture-process RUSTFLAGS='--cfg effigy_shared_process' python3 tests/scripts/fixture_hygiene.py --timeout 3000 -- cargo test --profile fixture-proof -p effigy --test gateway_private --test gateway_operator --no-fail-fast -- --test-threads=8", timeout_ms = 3100000 },
   { run = "EFFIGY_TEST_PROCESS_HELPER=target/debug/effigy-fixture-process RUSTFLAGS='--cfg effigy_shared_process' python3 tests/scripts/fixture_hygiene.py -- cargo test --profile fixture-proof -p effigy --lib builder_recovery:: -- --test-threads=8", timeout_ms = 900000 },
 ] }
 
@@ -1584,4 +1588,15 @@ qa = { visibility = "public", group = "Validation", run = [{ task = "test" }, { 
 "test:fixtures:hygiene:recovery-regression" = { visibility = "internal", admission = "heavy", run = [
   { task = "test:fixtures:hygiene:prepare" },
   { run = "EFFIGY_EXECUTABLE=$PWD/target/discovery-proof/effigy EFFIGY_TEST_PROCESS_HELPER=target/debug/effigy-fixture-process python3 tests/scripts/fixture_hygiene.py --timeout 1800 -- cargo nextest run --cargo-profile discovery-proof --config-file .config/nextest.toml --user-config-file none -p effigy --lib --test task_engine_kill_matrix -E 'test(managed_namespace_builds_without_adopting_any_legacy_shape)' --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail -j 1", timeout_ms = 1900000 },
+] }
+
+"test:fixtures:hygiene:doctor-git" = { visibility = "internal", run = [
+  { task = "test:fixtures:hygiene:prepare" },
+  { run = "EFFIGY_TEST_PROCESS_HELPER=target/debug/effigy-fixture-process python3 tests/scripts/fixture_hygiene.py -- cargo nextest run --cargo-profile fixture-proof --config-file .config/nextest.toml --user-config-file none -p effigy --test cli_output_tests -E 'test(cli_deep_doctor_timeout_terminates_git_identity_tree) | test(doctor_git_cli_serial_observer_counterexample) | test(doctor_git_cli_deliberately_late_descendant)' --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail -j 1", timeout_ms = 900000 },
+] }
+
+"test:fixtures:hygiene:startup-authority" = { visibility = "internal", run = [
+  { task = "test:fixtures:hygiene:prepare" },
+  { run = "EFFIGY_TEST_PROCESS_HELPER=target/debug/effigy-fixture-process python3 tests/scripts/fixture_hygiene.py -- cargo nextest run --cargo-profile fixture-proof --config-file .config/nextest.toml --user-config-file none -p effigy --test gateway_private -E 'test(managed_matrix_unsettled_previous_record_under_live_startup)' --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail -j 1", timeout_ms = 900000 },
+  { run = "EFFIGY_TEST_PROCESS_HELPER=target/debug/effigy-fixture-process RUSTFLAGS='--cfg effigy_shared_process' python3 tests/scripts/fixture_hygiene.py -- cargo test --profile fixture-proof -p effigy --test gateway_private managed_matrix_unsettled_previous_record_under_live_startup -- --test-threads=8", timeout_ms = 900000 },
 ] }
