@@ -1,0 +1,134 @@
+#!/bin/sh
+set -eu
+svc="${EFFIGY_TEST_FAKE_SERVICE:-builder}"
+proj="${EFFIGY_TEST_FAKE_PROJECT:-fixture-builder-dev}"
+cname="$proj-$svc-1"
+printf "%s\n" "$*" >> "$EFFIGY_TEST_DOCKER_ARGS_FILE"
+state="$EFFIGY_TEST_BUILDER_STATE_DIR"
+mode="${EFFIGY_TEST_BUILDER_MODE:-applied}"
+subcmd=""
+for arg in "$@"; do
+  case "$arg" in
+    up|down|ps|logs|exec|kill|inspect|info)
+      subcmd="$arg"
+      break
+      ;;
+  esac
+done
+case "$subcmd" in
+  info) exit 0 ;;
+  up)
+    ovr=""
+    for arg in "$@"; do
+      case "$arg" in
+        *ownership.compose.yml|*generated.compose.yml) ovr="$arg" ;;
+      esac
+    done
+    mode="${EFFIGY_TEST_BUILDER_MODE:-applied}"
+    : > "$state/labels"
+    if [ "$mode" != "unlabelled" ] && [ -n "$ovr" ]; then
+      checkout=$(sed -n 's/^ *com.effigy.checkout: //p' "$ovr" | head -1)
+      scope=$(sed -n 's/^ *com.effigy.scope: //p' "$ovr" | head -1)
+      if [ "$mode" = "wrong_checkout" ]; then
+        checkout="/elsewhere/checkout"
+      fi
+      if [ "$mode" = "foreign_scope" ]; then
+        scope="foreign-scope-token"
+      fi
+      if [ "$mode" = "wrong_project" ]; then printf foreign-project > "$state/project"; fi
+      printf "checkout=%s\n" "$checkout" >> "$state/labels"
+      printf "scope=%s\n" "$scope" >> "$state/labels"
+    fi
+    : > "$state/running"
+    printf "compose-up\n"
+    ;;
+  ps)
+    if [ -f "$state/delay-binding" ]; then sleep 1.2; fi
+    if [ -f "$state/running" ]; then
+      printf "%s\tUp 1 second\t\t%s\t\t%s\tFalse\n" "$cname" "$proj" "$svc"
+    fi
+    if [ -f "$state/delay-binding" ]; then
+      for sibling in dbgate mailpit silo; do
+        printf "%s-%s-1\tUp 1 second\t\t%s\t\t%s\tFalse\n" "$proj" "$sibling" "$proj" "$sibling"
+      done
+    fi
+    if [ -f "$state/sibling.json" ]; then
+      printf "fixture-sibling-dev-sibling-1\tUp 1 second\t\tfixture-sibling-dev\t\tsibling\tFalse\n"
+    fi
+    ;;
+  inspect)
+    if [ -f "$state/delay-binding" ]; then
+      sleep 0.9
+      printf '%s\n' "$*" >> "$state/delayed-inspects"
+    fi
+    for arg in "$@"; do
+      if [ "$arg" = "fixture-sibling-dev-sibling-1" ] && [ -f "$state/sibling.json" ]; then cat "$state/sibling.json"; exit 0; fi
+    done
+    count=0
+    if [ -f "$state/inspects" ]; then
+      count=$(cat "$state/inspects")
+    fi
+    count=$((count + 1))
+    printf "%s\n" "$count" > "$state/inspects"
+    id_char="a"
+    if { [ "$mode" = "changing" ] && [ "$count" -gt 1 ]; } || [ -f "$state/replaced" ]; then
+      id_char="b"
+    fi
+    id=$(printf "%064d" 0 | tr 0 "$id_char")
+    checkout=""
+    scope=""
+    if [ -f "$state/labels" ]; then
+      checkout=$(sed -n 's/^checkout=//p' "$state/labels")
+      scope=$(sed -n 's/^scope=//p' "$state/labels")
+    fi
+    if [ "$mode" = changing_scope ] && [ "$count" -gt 1 ]; then scope=foreign-scope-token; fi
+    if [ "$mode" = changing_checkout ] && [ "$count" -gt 1 ]; then checkout=/elsewhere/checkout; fi
+    if [ "$mode" = delayed_foreign ] && [ -f "$state/delay-binding" ]; then checkout=/elsewhere/checkout; fi
+    if [ -f "$state/project" ]; then proj=$(cat "$state/project"); fi
+    extra=""
+    if [ -n "$checkout" ]; then
+      extra="$extra,\"com.effigy.checkout\":\"$checkout\""
+    fi
+    if [ -n "$scope" ]; then
+      extra="$extra,\"com.effigy.scope\":\"$scope\""
+    fi
+    printf '[{"Id":"%s","Name":"/%s","State":{"Status":"running","Running":true},"Config":{"Labels":{"com.docker.compose.project":"%s","com.docker.compose.service":"%s","com.docker.compose.oneoff":"False"%s}},"Mounts":[],"NetworkSettings":{"Ports":{}}}]\n' "$id" "$cname" "$proj" "$svc" "$extra"
+    ;;
+  exec)
+    printf '%s\0' "$@" > "$state/native-argv"
+    # Only native full-ID execution is admitted. Compose service/name execution
+    # is the original counterexample and deliberately fails this fake backend.
+    while [ "$1" != exec ]; do shift; done
+    shift
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        -i|-t) shift ;;
+        -w|-u|-e) shift 2 ;;
+        *) target="$1"; shift; break ;;
+      esac
+    done
+    if [ "$mode" = literal ] && [ "$1" = printf ]; then cat > "$state/stdin"; fi
+    expected=$(printf "%064d" 0 | tr 0 a)
+    if [ -f "$state/replaced" ]; then expected=$(printf "%064d" 0 | tr 0 b); fi
+    if [ "$mode" = "replace_at_exec" ] && [ "$1" != true ]; then
+      : > "$state/replaced"
+      expected=$(printf "%064d" 0 | tr 0 b)
+    fi
+    if [ "$target" != "$expected" ]; then exit 1; fi
+    if [ "$1" = true ]; then
+      printf '%s\n' "$target" >> "$state/readiness"
+      if [ "$mode" = "replace_after_readiness" ] || [ -f "$state/arm-replacement" ]; then : > "$state/replaced"; fi
+    else
+      printf '%s\n' "$target" "$@" >> "$state/effects"
+    fi
+    printf "exec-ok\n"
+    ;;
+  down)
+    rm -f "$state/running"
+    printf "compose-down\n"
+    ;;
+  *)
+    printf "unexpected docker invocation: %s\n" "$*" >&2
+    exit 1
+    ;;
+esac

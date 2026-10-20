@@ -1077,7 +1077,6 @@ fn forward_signal_to_process_group(
     #[cfg(test)] scope_generation: Option<u64>,
     #[cfg(test)] cancellation_generation: Option<u64>,
 ) {
-
     use nix::sys::signal::{kill, Signal};
     use nix::unistd::Pid;
     use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};

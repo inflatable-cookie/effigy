@@ -1,0 +1,44 @@
+
+[tasks.dev]
+mode = "tui"
+workspace = "app"
+container_lifecycle = true
+concurrent = [
+  { role = "lifecycle", start = 1, tab = 1 },
+  { name = "api", run = "printf api-running", start = 2, tab = 2 },
+  { name = "front", run = "printf front-running", start = 3, tab = 3 },
+  { name = "window", run = "sleep 60", run_in = "host", start = 4, tab = 4, shutdown_on_exit = true },
+]
+
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
+working_dir = "/workspace"
+user = "dev"
+home = "/home/dev"
+
+[containers]
+default = "web"
+
+[containers.web]
+driver = "colima"
+startup = "detached"
+profile = "dev"
+compose_file = "infra/dev/docker-compose.yml"
+project_name = "fixture-web-dev"
+primary_service = "app"
+working_dir = "/workspace"
+
+[containers.web.lifecycle]
+on_task_exit = "stop"
+shutdown = "graceful"
+detach_timeout_secs = 1
+
+[containers.web.host]
+ports = ["8080:80"]
+mounts = ["./app:/workspace"]

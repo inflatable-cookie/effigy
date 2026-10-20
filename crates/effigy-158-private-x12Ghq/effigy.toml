@@ -1,0 +1,21 @@
+
+[containers]
+default = "web"
+
+[containers.web]
+driver = "colima"
+startup = "attached"
+profile = "dev"
+project_name = "fixture-web-dev"
+primary_service = "app"
+
+[containers.web.data]
+pull_production = "scripts/pull-production.sh"
+
+[containers.web.services.app]
+catalog = "php-fpm"
+version = "8.3"
+
+[containers.web.services.web]
+catalog = "nginx"
+variant = "default"

@@ -1,0 +1,70 @@
+[tasks.devc]
+mode = "tui"
+workspace = "stack"
+container_lifecycle = true
+concurrent = [
+  { role = "lifecycle", start = 1 },
+  { name = "watch", run = "i=0; while [ \"$i\" -lt 600 ]; do sleep 1; i=$((i+1)); done", run_in = "host", start = 2 },
+]
+
+[tasks.devh]
+mode = "tui"
+workspace = "web"
+container_lifecycle = true
+concurrent = [
+  { role = "lifecycle", start = 1 },
+  { name = "api", run = "printf hybrid-running", start = 2, shutdown_on_exit = true },
+]
+
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "stack"
+
+[systems.dev.workspaces.stack]
+container = "stack"
+
+[systems.dev.workspaces.web]
+container = "web"
+
+[containers]
+default = "stack"
+
+[containers.stack]
+driver = "colima"
+startup = "detached"
+profile = "dev"
+compose_file = "infra/dev/docker-compose.yml"
+project_name = "fixture-stack-dev"
+primary_service = "app"
+working_dir = "/Users/tom/.paseo/northstar-queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-f46c8c06-9987-4d11-98ee-bb7774761157/crates/effigy-handover-slow-down-TTyOZC"
+
+[containers.stack.dns]
+routes = [{ domain = "switch.test", tls = false, port = 8080, service = "app" }]
+
+[containers.stack.host]
+ports = ["8080:80"]
+
+[containers.stack.lifecycle]
+on_task_exit = "stop"
+detach_timeout_secs = 1
+
+[containers.web]
+driver = "colima"
+startup = "detached"
+profile = "dev"
+compose_file = "infra/dev/docker-compose.yml"
+project_name = "fixture-web-dev"
+primary_service = "app"
+working_dir = "/Users/tom/.paseo/northstar-queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-f46c8c06-9987-4d11-98ee-bb7774761157/crates/effigy-handover-slow-down-TTyOZC"
+
+[containers.web.dns]
+routes = [{ domain = "switch.test", tls = false, port = 8081, service = "app" }]
+
+[containers.web.host]
+ports = ["8081:80"]
+
+[containers.web.lifecycle]
+on_task_exit = "stop"
+detach_timeout_secs = 1

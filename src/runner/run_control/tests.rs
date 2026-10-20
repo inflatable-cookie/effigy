@@ -435,8 +435,8 @@ fn run_stop_settles_a_running_task_and_its_children() {
     );
     assert_eq!(
         run.join().expect("run thread"),
-        128 + libc::SIGTERM,
-        "the owner stops the task as TERM would"
+        1,
+        "a requested stop records `cancelled`, exit 1"
     );
     let settled = found(key.id()).expect("settled run");
     assert_eq!(settled.view.state, "cancelled");

@@ -20,10 +20,10 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use effigy_kernel::ctx::{OpenReason, StopCause};
-use effigy_kernel::run::{Request, RequestAction};
 use effigy_kernel::custody::{Custody, EnvValue, Lifetime, ProcessSpec, SecretValue, Terminal};
 use effigy_kernel::observe::Observed;
 use effigy_kernel::outcome::WorkloadOutcome;
+use effigy_kernel::run::{Request, RequestAction};
 
 use super::kernel::{self, CustodyWait};
 use super::run::TaskRun;
@@ -150,8 +150,9 @@ pub(in crate::runner) fn run_plain(
     let mut signalled: Option<(i32, Instant)> = None;
     let mut timed_out = false;
     let mut requested = false;
-    // A `run stop` addressed to this run itself: TERM to the group, as a
-    // signal would, then the run records `cancelled` (128 + TERM).
+    // A `run stop` addressed to this run outside any parent scope: TERM to
+    // the group, then the run records `cancelled` by request, exactly as the
+    // parent-scope path above does.
     let mut own_request: Option<(Request, Instant)> = None;
     let mut requests_read = Instant::now();
     let exit = loop {
@@ -211,7 +212,7 @@ pub(in crate::runner) fn run_plain(
         let _ = run.run_mut().resolve_request(request);
         WorkloadOutcome::Cancelled {
             cause: StopCause::Requested,
-            signal: Some(libc::SIGTERM),
+            signal: None,
         }
     } else {
         workload(code, signalled.map(|(signal, _)| signal))
@@ -225,6 +226,15 @@ pub(in crate::runner) fn run_plain(
             _,
         ) => 128 + signal,
         (WorkloadOutcome::TimedOut { .. }, _) => 124,
+        // Cancelled by request: the group's own exit (often 143) is not the
+        // run's result.
+        (
+            WorkloadOutcome::Cancelled {
+                cause: StopCause::Requested,
+                signal: None,
+            },
+            _,
+        ) => 1,
         (_, Some(code)) => code,
         (_, None) => 1,
     };

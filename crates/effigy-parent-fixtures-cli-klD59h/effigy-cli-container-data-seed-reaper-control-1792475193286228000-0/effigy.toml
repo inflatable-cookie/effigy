@@ -1,0 +1,21 @@
+
+[containers]
+default = "web"
+
+[containers.web]
+driver = "colima"
+startup = "attached"
+profile = "dev"
+project_name = "fixture-web-dev"
+primary_service = "app"
+working_dir = "/workspace"
+
+[containers.web.host]
+mounts = ["./:/workspace"]
+
+[containers.web.services.app]
+catalog = "php-fpm"
+version = "8.3"
+
+[tasks."bootstrap:db-seed"]
+run = "sh -lc 'printf seeded > .effigy/local/db-seed.marker'"

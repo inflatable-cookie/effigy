@@ -311,7 +311,10 @@ fn nested_heavy_task_steps_run_inside_the_sequence_admission() {
         request["run_id"].as_str().expect("run id"),
         "a step's children carry the sequence's admitted marker"
     );
-    assert!(log.contains("released"), "settle released the one admission");
+    assert!(
+        log.contains("released"),
+        "settle released the one admission"
+    );
 }
 
 #[test]
@@ -439,7 +442,11 @@ fn run_stop_settles_a_running_task_and_its_children() {
         "{}",
         text(&stop)
     );
-    assert_eq!(wait_child(&mut owner).code(), Some(143));
+    assert_eq!(
+        wait_child(&mut owner).code(),
+        Some(1),
+        "a requested stop records `cancelled`, exit 1"
+    );
     assert!(!alive(child), "the task's child was stopped with its group");
     let run = fixture.status_json("stop-1");
     assert_eq!(run["state"], "cancelled");

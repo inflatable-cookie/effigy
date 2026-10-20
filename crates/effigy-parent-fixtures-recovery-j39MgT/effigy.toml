@@ -1,0 +1,19 @@
+[tasks."workspace:linux:artifact"]
+run = [{ rhai = "scripts/build.rhai" }]
+[containers."linux-release"]
+driver = "colima"
+startup = "detached"
+profile = "effigy-release"
+compose_file = "infra/release/linux/docker-compose.yml"
+# Stable private builder protocol identity; upgrades reuse this project.
+# Legacy effigy-linux-release resources are retained and never adopted.
+project_name = "effigy-artifact-builder-v1"
+primary_service = "builder"
+
+[containers."linux-release".lifecycle]
+on_task_exit = "stop"
+shutdown = "graceful"
+detach_timeout_secs = 10
+
+[containers."linux-release".host]
+mounts = ["./:/workspace"]

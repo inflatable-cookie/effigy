@@ -1,0 +1,13 @@
+#!/bin/sh
+set -eu
+case "$1" in
+  status) printf 'INFO[0000] status: Running\n' ;;
+  start) exit 0 ;;
+  ssh) exit 0 ;;
+  nerdctl)
+    while [ "$1" != -- ]; do shift; done
+    shift
+    exec "$(dirname "$0")/docker" "$@"
+    ;;
+  *) exit 1 ;;
+esac

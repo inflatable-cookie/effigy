@@ -1,0 +1,6 @@
+services:
+  {{ service_name }}:
+    image: fixture:private
+    working_dir: /workspace
+    volumes:
+      - {{ repo_root }}:/workspace

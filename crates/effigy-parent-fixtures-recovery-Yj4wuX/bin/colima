@@ -1,0 +1,8 @@
+#!/bin/sh
+printf '%s\n' "$*" >> "$EFFIGY_RECOVERY_ROOT/state/colima-calls"
+case "$1" in
+status) echo 'INFO[0000] status: Running' ;;
+ssh) exit 0 ;;
+nerdctl) while [ "$1" != -- ]; do shift; done; shift; exec "$(dirname "$0")/docker" "$@" ;;
+*) exit 1 ;;
+esac

@@ -1,0 +1,18 @@
+#!/bin/sh
+set -eu
+printf "%s\n" "$*" >> "$EFFIGY_TEST_COLIMA_ARGS_FILE"
+if [ "${1:-}" = "status" ]; then
+  if [ -f "$EFFIGY_TEST_COLIMA_STATE_FILE" ]; then
+    printf "Running\n"
+  else
+    printf "Stopped\n"
+  fi
+  exit 0
+fi
+if [ "${1:-}" = "start" ]; then
+  : > "$EFFIGY_TEST_COLIMA_STATE_FILE"
+  printf "started\n"
+  exit 0
+fi
+printf "unexpected colima invocation: %s\n" "$*" >&2
+exit 1

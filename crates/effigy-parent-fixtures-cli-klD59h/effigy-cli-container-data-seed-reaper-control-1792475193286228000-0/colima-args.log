@@ -1,0 +1,156 @@
+1792475196 status --profile dev
+1792475196 nerdctl --profile dev -- ps --filter label=com.docker.compose.project=fixture-web-dev --format {{.Names}}	{{.Status}}	{{.Ports}}	{{.Label "com.docker.compose.project"}}	{{.Label "com.docker.compose.project.working_dir"}}	{{.Label "com.docker.compose.service"}}	{{.Label "com.docker.compose.oneoff"}}
+1792475196 status --profile dev
+1792475196 nerdctl --profile dev -- info
+1792475196 ssh --profile dev -- sudo buildctl debug workers
+1792475196 ssh --profile dev -- sh -c src=/run/host-services/ssh-auth.sock; if [ ! -e "$src" ] && [ ! -L "$src" ]; then echo absent; exit 0; fi; tgt=$(readlink -f "$src" 2>/dev/null || true); if [ -n "$tgt" ] && [ -S "$tgt" ]; then echo healthy; else echo stale; fi
+1792475196 nerdctl --profile dev -- ps --all --format {{.Names}}	{{.Status}}	{{.Ports}}	{{.Label "com.docker.compose.project"}}	{{.Label "com.docker.compose.project.working_dir"}}	{{.Label "com.docker.compose.service"}}	{{.Label "com.docker.compose.oneoff"}}
+1792475196 nerdctl --profile dev -- compose -f /Users/tom/.paseo/northstar-queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-f46c8c06-9987-4d11-98ee-bb7774761157/crates/effigy-parent-fixtures-cli-klD59h/effigy-cli-container-data-seed-reaper-control-1792475193286228000-0/.effigy/state/objects/039605e6db3127e61e08497565ce54e3d3dfadcc76bf7bb7e2d1cc17525141f0/checkout/.effigy/runtime/compose/web.generated.compose.yml -f /Users/tom/.paseo/northstar-queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-f46c8c06-9987-4d11-98ee-bb7774761157/crates/effigy-parent-fixtures-cli-klD59h/effigy-cli-container-data-seed-reaper-control-1792475193286228000-0/.effigy/state/objects/039605e6db3127e61e08497565ce54e3d3dfadcc76bf7bb7e2d1cc17525141f0/checkout/.effigy/runtime/dns/web.compose.override.yml -p fixture-web-dev up -d --build --force-recreate
+1792475196 nerdctl --profile dev -- ps --all --filter label=com.docker.compose.project=fixture-web-dev --format {{.Names}}	{{.Status}}	{{.Ports}}	{{.Label "com.docker.compose.project"}}	{{.Label "com.docker.compose.project.working_dir"}}	{{.Label "com.docker.compose.service"}}	{{.Label "com.docker.compose.oneoff"}}
+1792475196 nerdctl --profile dev -- ps --filter label=com.docker.compose.project=fixture-web-dev --format {{.Names}}	{{.Status}}	{{.Ports}}	{{.Label "com.docker.compose.project"}}	{{.Label "com.docker.compose.project.working_dir"}}	{{.Label "com.docker.compose.service"}}	{{.Label "com.docker.compose.oneoff"}}
+1792475196 nerdctl --profile dev -- inspect fixture-web-dev-app-1
+1792475196 nerdctl --profile dev -- inspect fixture-web-dev-app-1
+1792475196 nerdctl --profile dev -- exec -w /workspace aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa true
+1792475196 nerdctl --profile dev -- ps --filter label=com.docker.compose.project=fixture-web-dev --format {{.Names}}	{{.Status}}	{{.Ports}}	{{.Label "com.docker.compose.project"}}	{{.Label "com.docker.compose.project.working_dir"}}	{{.Label "com.docker.compose.service"}}	{{.Label "com.docker.compose.oneoff"}}
+1792475197 nerdctl --profile dev -- inspect fixture-web-dev-app-1
+1792475197 nerdctl --profile dev -- ps --filter label=com.docker.compose.project=fixture-web-dev --format {{.Names}}	{{.Status}}	{{.Ports}}	{{.Label "com.docker.compose.project"}}	{{.Label "com.docker.compose.project.working_dir"}}	{{.Label "com.docker.compose.service"}}	{{.Label "com.docker.compose.oneoff"}}
+1792475197 nerdctl --profile dev -- exec -u 0 fixture-web-dev-app-1 sh -c uid="$(id -u "$1")" && gid="$(id -g "$1")" && printf '%s\n%s\n' "$uid" "$gid" effigy-workspace-identity dev
+1792475197 nerdctl --profile dev -- exec -u 0 fixture-web-dev-app-1 sh -c for path do
+  if [ -L "$path" ]; then
+    printf 'symlink\n'
+  elif [ ! -e "$path" ]; then
+    printf 'missing\n'
+  elif [ -d "$path" ]; then
+    metadata="$(stat -c '%u %g %a' -- "$path")" || exit 1
+    printf 'dir %s\n' "$metadata"
+  else
+    metadata="$(stat -c '%u %g %a' -- "$path")" || exit 1
+    printf 'file %s\n' "$metadata"
+  fi
+done effigy-perm-inspect-batch /home/dev /home/dev/.cache /home/dev/.config /home/dev/.local /home/dev/.local/share/pnpm/store
+1792475197 nerdctl --profile dev -- exec -u 0 fixture-web-dev-app-1 sh -c if [ -L '/home/dev/.cache' ]; then
+  printf 'symlink\n'
+elif [ ! -e '/home/dev/.cache' ]; then
+  printf 'clean\n'
+else
+  first="$(find -P '/home/dev/.cache' -xdev ! -type l ! \( -user 501 -a -group 20 \) -print -quit)" || exit 1
+  if [ -n "$first" ]; then printf 'dirty\t%s\n' "$first"; else printf 'clean\n'; fi
+fi
+if [ -L '/home/dev/.config' ]; then
+  printf 'symlink\n'
+elif [ ! -e '/home/dev/.config' ]; then
+  printf 'clean\n'
+else
+  first="$(find -P '/home/dev/.config' -xdev ! -type l ! \( -user 501 -a -group 20 \) -print -quit)" || exit 1
+  if [ -n "$first" ]; then printf 'dirty\t%s\n' "$first"; else printf 'clean\n'; fi
+fi
+if [ -L '/home/dev/.local' ]; then
+  printf 'symlink\n'
+elif [ ! -e '/home/dev/.local' ]; then
+  printf 'clean\n'
+else
+  first="$(find -P '/home/dev/.local' -xdev \( -path '/home/dev/.local/share/pnpm/store' -prune \) -o ! -type l ! \( -user 501 -a -group 20 \) -print -quit)" || exit 1
+  if [ -n "$first" ]; then printf 'dirty\t%s\n' "$first"; else printf 'clean\n'; fi
+fi
+if [ -L '/home/dev/.local/share/pnpm/store' ]; then
+  printf 'symlink\n'
+elif [ ! -e '/home/dev/.local/share/pnpm/store' ]; then
+  printf 'clean\n'
+else
+  first="$(find -P '/home/dev/.local/share/pnpm/store' -xdev ! -type l ! \( -user 501 -a -group 20 \) -print -quit)" || exit 1
+  if [ -n "$first" ]; then printf 'dirty\t%s\n' "$first"; else printf 'clean\n'; fi
+fi
+ effigy-perm-find-batch 501 20 /home/dev/.cache /home/dev/.config /home/dev/.local /home/dev/.local/share/pnpm/store
+1792475197 nerdctl --profile dev -- exec -u 501:20 fixture-web-dev-app-1 sh -c while [ "$#" -ge 2 ]; do
+  path=$1; directory=$2; shift 2
+  if [ -L "$path" ]; then
+    printf 'symlink\n'
+  elif [ ! -e "$path" ]; then
+    printf 'missing\n'
+  elif [ ! -r "$path" ] || [ ! -w "$path" ]; then
+    printf 'unwritable\n'
+  elif [ "$directory" = yes ]; then
+    probe="${path%/}/.effigy-write-probe-$$"
+    if touch "$probe" && rm -f -- "$probe"; then printf 'ready\n'; else printf 'lock-failed\n'; fi
+  else
+    printf 'ready\n'
+  fi
+done effigy-perm-access-batch /home/dev yes /home/dev/.cache yes /home/dev/.config yes /home/dev/.local yes /home/dev/.local/share/pnpm/store yes
+1792475197 nerdctl --profile dev -- ps --filter label=com.docker.compose.project=fixture-web-dev --format {{.Names}}	{{.Status}}	{{.Ports}}	{{.Label "com.docker.compose.project"}}	{{.Label "com.docker.compose.project.working_dir"}}	{{.Label "com.docker.compose.service"}}	{{.Label "com.docker.compose.oneoff"}}
+1792475197 nerdctl --profile dev -- inspect fixture-web-dev-app-1
+1792475197 nerdctl --profile dev -- inspect fixture-web-dev-app-1
+1792475197 nerdctl --profile dev -- ps --filter label=com.docker.compose.project=fixture-web-dev --format {{.Names}}	{{.Status}}	{{.Ports}}	{{.Label "com.docker.compose.project"}}	{{.Label "com.docker.compose.project.working_dir"}}	{{.Label "com.docker.compose.service"}}	{{.Label "com.docker.compose.oneoff"}}
+1792475197 status --profile dev
+1792475197 nerdctl --profile dev -- info
+1792475197 ssh --profile dev -- sudo buildctl debug workers
+1792475197 nerdctl --profile dev -- compose -f /Users/tom/.paseo/northstar-queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-f46c8c06-9987-4d11-98ee-bb7774761157/crates/effigy-parent-fixtures-cli-klD59h/effigy-cli-container-data-seed-reaper-control-1792475193286228000-0/.effigy/state/objects/039605e6db3127e61e08497565ce54e3d3dfadcc76bf7bb7e2d1cc17525141f0/checkout/.effigy/runtime/compose/web.generated.compose.yml -f /Users/tom/.paseo/northstar-queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-f46c8c06-9987-4d11-98ee-bb7774761157/crates/effigy-parent-fixtures-cli-klD59h/effigy-cli-container-data-seed-reaper-control-1792475193286228000-0/.effigy/state/objects/039605e6db3127e61e08497565ce54e3d3dfadcc76bf7bb7e2d1cc17525141f0/checkout/.effigy/runtime/dns/web.compose.override.yml -p fixture-web-dev up -d --no-recreate
+1792475197 nerdctl --profile dev -- ps --all --filter label=com.docker.compose.project=fixture-web-dev --format {{.Names}}	{{.Status}}	{{.Ports}}	{{.Label "com.docker.compose.project"}}	{{.Label "com.docker.compose.project.working_dir"}}	{{.Label "com.docker.compose.service"}}	{{.Label "com.docker.compose.oneoff"}}
+1792475197 nerdctl --profile dev -- ps --filter label=com.docker.compose.project=fixture-web-dev --format {{.Names}}	{{.Status}}	{{.Ports}}	{{.Label "com.docker.compose.project"}}	{{.Label "com.docker.compose.project.working_dir"}}	{{.Label "com.docker.compose.service"}}	{{.Label "com.docker.compose.oneoff"}}
+1792475197 nerdctl --profile dev -- inspect fixture-web-dev-app-1
+1792475197 nerdctl --profile dev -- inspect fixture-web-dev-app-1
+1792475197 nerdctl --profile dev -- exec -w /workspace aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa true
+1792475197 nerdctl --profile dev -- ps --filter label=com.docker.compose.project=fixture-web-dev --format {{.Names}}	{{.Status}}	{{.Ports}}	{{.Label "com.docker.compose.project"}}	{{.Label "com.docker.compose.project.working_dir"}}	{{.Label "com.docker.compose.service"}}	{{.Label "com.docker.compose.oneoff"}}
+1792475197 nerdctl --profile dev -- ps --filter label=com.docker.compose.project=fixture-web-dev --format {{.Names}}	{{.Status}}	{{.Ports}}	{{.Label "com.docker.compose.project"}}	{{.Label "com.docker.compose.project.working_dir"}}	{{.Label "com.docker.compose.service"}}	{{.Label "com.docker.compose.oneoff"}}
+1792475197 nerdctl --profile dev -- inspect fixture-web-dev-app-1
+1792475197 nerdctl --profile dev -- exec -u 0 fixture-web-dev-app-1 sh -c uid="$(id -u "$1")" && gid="$(id -g "$1")" && printf '%s\n%s\n' "$uid" "$gid" effigy-workspace-identity dev
+1792475197 nerdctl --profile dev -- exec -u 0 fixture-web-dev-app-1 sh -c for path do
+  if [ -L "$path" ]; then
+    printf 'symlink\n'
+  elif [ ! -e "$path" ]; then
+    printf 'missing\n'
+  elif [ -d "$path" ]; then
+    metadata="$(stat -c '%u %g %a' -- "$path")" || exit 1
+    printf 'dir %s\n' "$metadata"
+  else
+    metadata="$(stat -c '%u %g %a' -- "$path")" || exit 1
+    printf 'file %s\n' "$metadata"
+  fi
+done effigy-perm-inspect-batch /home/dev /home/dev/.cache /home/dev/.config /home/dev/.local /home/dev/.local/share/pnpm/store
+1792475197 nerdctl --profile dev -- exec -u 0 fixture-web-dev-app-1 sh -c if [ -L '/home/dev/.cache' ]; then
+  printf 'symlink\n'
+elif [ ! -e '/home/dev/.cache' ]; then
+  printf 'clean\n'
+else
+  first="$(find -P '/home/dev/.cache' -xdev ! -type l ! \( -user 501 -a -group 20 \) -print -quit)" || exit 1
+  if [ -n "$first" ]; then printf 'dirty\t%s\n' "$first"; else printf 'clean\n'; fi
+fi
+if [ -L '/home/dev/.config' ]; then
+  printf 'symlink\n'
+elif [ ! -e '/home/dev/.config' ]; then
+  printf 'clean\n'
+else
+  first="$(find -P '/home/dev/.config' -xdev ! -type l ! \( -user 501 -a -group 20 \) -print -quit)" || exit 1
+  if [ -n "$first" ]; then printf 'dirty\t%s\n' "$first"; else printf 'clean\n'; fi
+fi
+if [ -L '/home/dev/.local' ]; then
+  printf 'symlink\n'
+elif [ ! -e '/home/dev/.local' ]; then
+  printf 'clean\n'
+else
+  first="$(find -P '/home/dev/.local' -xdev \( -path '/home/dev/.local/share/pnpm/store' -prune \) -o ! -type l ! \( -user 501 -a -group 20 \) -print -quit)" || exit 1
+  if [ -n "$first" ]; then printf 'dirty\t%s\n' "$first"; else printf 'clean\n'; fi
+fi
+if [ -L '/home/dev/.local/share/pnpm/store' ]; then
+  printf 'symlink\n'
+elif [ ! -e '/home/dev/.local/share/pnpm/store' ]; then
+  printf 'clean\n'
+else
+  first="$(find -P '/home/dev/.local/share/pnpm/store' -xdev ! -type l ! \( -user 501 -a -group 20 \) -print -quit)" || exit 1
+  if [ -n "$first" ]; then printf 'dirty\t%s\n' "$first"; else printf 'clean\n'; fi
+fi
+ effigy-perm-find-batch 501 20 /home/dev/.cache /home/dev/.config /home/dev/.local /home/dev/.local/share/pnpm/store
+1792475197 nerdctl --profile dev -- exec -u 501:20 fixture-web-dev-app-1 sh -c while [ "$#" -ge 2 ]; do
+  path=$1; directory=$2; shift 2
+  if [ -L "$path" ]; then
+    printf 'symlink\n'
+  elif [ ! -e "$path" ]; then
+    printf 'missing\n'
+  elif [ ! -r "$path" ] || [ ! -w "$path" ]; then
+    printf 'unwritable\n'
+  elif [ "$directory" = yes ]; then
+    probe="${path%/}/.effigy-write-probe-$$"
+    if touch "$probe" && rm -f -- "$probe"; then printf 'ready\n'; else printf 'lock-failed\n'; fi
+  else
+    printf 'ready\n'
+  fi
+done effigy-perm-access-batch /home/dev yes /home/dev/.cache yes /home/dev/.config yes /home/dev/.local yes /home/dev/.local/share/pnpm/store yes

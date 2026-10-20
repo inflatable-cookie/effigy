@@ -1,0 +1,26 @@
+
+[containers]
+default = "web"
+
+[containers.web]
+driver = "colima"
+startup = "attached"
+profile = "dev"
+compose_file = "infra/dev/docker-compose.yml"
+project_name = "fixture-web-dev"
+primary_service = "app"
+working_dir = "/workspace"
+
+[containers.web.lifecycle]
+on_task_exit = "stop"
+shutdown = "graceful"
+detach_timeout_secs = 1
+
+[containers.web.health]
+check = "tcp://127.0.0.1:61426"
+timeout_secs = 2
+
+[containers.web.host]
+ports = ["8080:80", "3306:3306"]
+mounts = ["./app:/workspace"]
+

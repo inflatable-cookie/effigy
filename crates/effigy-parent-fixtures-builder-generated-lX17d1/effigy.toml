@@ -1,0 +1,24 @@
+[tasks.validate]
+run = [{ rhai = "scripts/builder.rhai" }]
+
+[containers]
+default = "builder"
+
+[containers.builder]
+driver = "colima"
+startup = "detached"
+profile = "dev"
+project_name = "fixture-builder-dev"
+primary_service = "builder"
+working_dir = "/workspace"
+
+[containers.builder.lifecycle]
+on_task_exit = "stop"
+shutdown = "graceful"
+detach_timeout_secs = 1
+
+[containers.builder.host]
+mounts = ["./:/workspace"]
+
+[containers.builder.services.builder]
+catalog = "private-builder"

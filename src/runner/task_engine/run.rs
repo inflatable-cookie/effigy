@@ -418,7 +418,9 @@ impl TaskRun {
         let cwd = cwd.unwrap_or(&target.root).to_path_buf();
         let admitted = match self.run.as_ref() {
             Some(run) => super::admission::admit(
-                &mut run.lock().unwrap_or_else(std::sync::PoisonError::into_inner),
+                &mut run
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner),
                 &target,
                 class,
                 &command,

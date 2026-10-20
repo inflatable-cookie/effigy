@@ -98,7 +98,8 @@ the journal only.
   each stream's `next_offset`; a client polls with those offsets.
 - **`effigy run stop <run> [--wait-ms MS]`.** The kernel stop path: a
   generation-fenced `Stop` request in the journal. A plain task's owner reads
-  it and stops the task's whole group as TERM would (`cancelled`, exit 143).
+  it and stops the task's whole group (`cancelled` by request, exit 1, as for a
+  cancelled sequence step).
   An owner that reads no requests gets TERM through its verified gate holder
   (`Gate::signal_holder`), never a pattern kill. An interrupted run is settled
   directly under its gate.
