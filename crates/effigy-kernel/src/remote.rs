@@ -65,7 +65,7 @@ pub struct AdapterError(pub UnknownReason);
 /// workload EOF stdin. `Stdin` attaches the owner's stdin; `Tty` also asks the
 /// backend for a terminal, which merges the workload's streams, so the
 /// registration frame then arrives on stdout with a `\r\n` ending.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub enum RemoteTerminal {
     #[default]
     None,
@@ -164,6 +164,14 @@ pub trait RemoteExecAdapter {
         nonce: &Nonce,
         cx: &OperationContext,
     ) -> Observed<Option<RemoteRegistration>>;
+    /// The terminal this backend actually gives a `requested` one on `id`.
+    /// The registration is framed on the stream that terminal uses, so a
+    /// backend that cannot carry a terminal must report the downgrade here
+    /// and launch accordingly. The kernel never lets it upgrade a request.
+    fn terminal(&self, id: &ContainerIdentity, requested: RemoteTerminal) -> RemoteTerminal {
+        let _ = id;
+        requested
+    }
 }
 #[derive(Debug)]
 pub struct RemoteLaunch {
@@ -291,7 +299,10 @@ impl RemoteCustody {
         })?;
         crate::fault_point!(RemoteAfterIntent).map_err(RunError::from)?;
         let mut command = spec.command;
-        let terminal = command.terminal;
+        // The effective terminal decides the framing stream (stdout on a
+        // backend terminal, stderr otherwise); the adapter launches with it.
+        let terminal = adapter.terminal(&id, command.terminal).min(command.terminal);
+        command.terminal = terminal;
         command.env.insert(
             "EFFIGY_CUSTODY_NONCE".into(),
             EnvValue::Secret(

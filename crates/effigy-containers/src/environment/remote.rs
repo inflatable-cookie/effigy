@@ -406,12 +406,13 @@ impl<C: BackendCli> ComposeRemote<C> {
         }
         let mut flags = Vec::new();
         let colima = container.kind == BackendKind::Colima;
-        // Colima's VM shell cannot hold a terminal while it also carries the
-        // forwarded values on stdin: a terminal request attaches stdin only.
+        // `terminal` reported Colima's downgrade, so the kernel frames on
+        // stderr; a terminal reaching here would frame on the wrong stream.
         match (cmd.terminal, colima) {
             (RemoteTerminal::None, _) => {}
-            (RemoteTerminal::Stdin, _) | (RemoteTerminal::Tty, true) => {
-                flags.push(OsString::from("-i"))
+            (RemoteTerminal::Stdin, _) => flags.push(OsString::from("-i")),
+            (RemoteTerminal::Tty, true) => {
+                return Err(inconsistent("Colima cannot carry a backend terminal"))
             }
             (RemoteTerminal::Tty, false) => {
                 flags.extend(["-i", "-t"].map(OsString::from));
@@ -648,6 +649,19 @@ impl<C: BackendCli> Transport for Session<'_, C> {
 }
 
 impl<C: BackendCli> RemoteExecAdapter for ComposeRemote<C> {
+    /// Colima's VM shell carries the forwarded values on stdin, so it cannot
+    /// also hold a terminal: a terminal request there attaches stdin only.
+    fn terminal(&self, id: &ContainerIdentity, requested: RemoteTerminal) -> RemoteTerminal {
+        match RemoteContainer::parse(&id.id) {
+            Some(container)
+                if container.kind == BackendKind::Colima && requested == RemoteTerminal::Tty =>
+            {
+                RemoteTerminal::Stdin
+            }
+            _ => requested,
+        }
+    }
+
     fn identity(
         &mut self,
         target: &ContainerTarget,

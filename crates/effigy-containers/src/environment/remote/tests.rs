@@ -464,11 +464,30 @@ fn colima_launch_relays_values_to_the_vm_and_attaches_stdin_for_a_terminal() {
         Some(exec_options()),
     );
     let target = RemoteContainer::new(&colima(), "effigy".into(), ID);
+    // The VM shell carries the values on stdin, so no terminal there: the
+    // adapter reports the downgrade, and a terminal reaching launch refuses.
+    let colima_id = ContainerIdentity {
+        id: target.encode(),
+        ..identity()
+    };
+    assert_eq!(
+        launcher.terminal(&colima_id, RemoteTerminal::Tty),
+        RemoteTerminal::Stdin
+    );
+    assert_eq!(
+        launcher.terminal(&colima_id, RemoteTerminal::Stdin),
+        RemoteTerminal::Stdin
+    );
+    assert_eq!(
+        launcher.terminal(&identity(), RemoteTerminal::Tty),
+        RemoteTerminal::Tty
+    );
+    assert!(launcher
+        .launch_spec(&target, command(RemoteTerminal::Tty))
+        .is_err());
     for (terminal, mode, flags) in [
         (RemoteTerminal::None, "none", vec![]),
         (RemoteTerminal::Stdin, "stdin", vec!["-i"]),
-        // The VM shell carries the values on stdin, so no terminal there.
-        (RemoteTerminal::Tty, "stdin", vec!["-i"]),
     ] {
         let spec = launcher.launch_spec(&target, command(terminal)).unwrap();
         let argv = strings(&spec.argv);

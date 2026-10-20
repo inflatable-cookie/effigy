@@ -1453,3 +1453,84 @@ fn linux_wrapper_keeps_an_existing_session_leader_instead_of_forking() {
     assert_eq!(receipt.leader_pid, pid);
     assert!(receipt.session_isolated);
 }
+/// A backend that reports a fixed terminal for every request.
+struct Reports(StrictRemote, RemoteTerminal);
+impl RemoteExecAdapter for Reports {
+    fn identity(
+        &mut self,
+        target: &ContainerTarget,
+        cx: &OperationContext,
+    ) -> Observed<ContainerIdentity> {
+        self.0.identity(target, cx)
+    }
+    fn launch(
+        &mut self,
+        id: &ContainerIdentity,
+        cmd: RemoteCommand,
+        cx: &EffectContext,
+    ) -> Result<ProcessSpec, AdapterError> {
+        self.0.launch(id, cmd, cx)
+    }
+    fn signal_session(
+        &mut self,
+        reg: &RemoteRegistration,
+        sig: Signal,
+        cx: &CleanupContext,
+    ) -> Observed<SessionState> {
+        self.0.signal_session(reg, sig, cx)
+    }
+    fn observe_session(
+        &mut self,
+        reg: &RemoteRegistration,
+        cx: &OperationContext,
+    ) -> Observed<SessionState> {
+        self.0.observe_session(reg, cx)
+    }
+    fn find_by_nonce(
+        &mut self,
+        id: &ContainerIdentity,
+        nonce: &Nonce,
+        cx: &OperationContext,
+    ) -> Observed<Option<RemoteRegistration>> {
+        self.0.find_by_nonce(id, nonce, cx)
+    }
+    fn terminal(&self, _: &ContainerIdentity, _: RemoteTerminal) -> RemoteTerminal {
+        self.1
+    }
+}
+#[test]
+fn a_backend_terminal_downgrade_frames_on_stderr_and_never_upgrades() {
+    // Requested, reported by the backend, and what the launch must carry.
+    for (requested, reported, effective) in [
+        (RemoteTerminal::Tty, RemoteTerminal::Stdin, RemoteTerminal::Stdin),
+        (RemoteTerminal::None, RemoteTerminal::Tty, RemoteTerminal::None),
+    ] {
+        let home = tempfile::tempdir().unwrap();
+        let cx = cx();
+        let root = StateRoot::effects(&cx, home.path()).unwrap();
+        let mut a = Reports(remote(launch_steps(home.path(), true)), reported);
+        let mut settle = Adapter(remote(vec![]));
+        let mut run = begin(&cx, &root, &mut settle);
+        let expected = expected(&run);
+        let mut spec = launch_spec();
+        spec.command.terminal = requested;
+        // The model frames on stderr, as a backend without a terminal does.
+        let mut remote = RemoteCustody::launch(&mut run, spec, &cx, &mut a).unwrap();
+        assert_eq!(remote.registration, expected);
+        assert_eq!(a.0.launches[0].terminal, effective);
+        let _ = remote
+            .client()
+            .wait(&cx.operation().child(Duration::from_secs(1)));
+        settle.0.tape.expect(step(
+            RemoteCall::Observe(expected),
+            session(SessionState::Closed),
+        ));
+        run.settle(
+            &cx.operation().cleanup(Duration::from_secs(3)).unwrap(),
+            &mut settle,
+        )
+        .unwrap();
+        a.0.tape.assert_finished();
+        settle.0.tape.assert_finished();
+    }
+}
