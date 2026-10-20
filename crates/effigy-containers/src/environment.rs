@@ -13,6 +13,7 @@ mod reconcile;
 mod record;
 #[cfg(test)]
 mod tests;
+mod view;
 
 pub use backend::{
     effective as effective_backend, parse_inspect, select as select_backend, BackendError,
@@ -33,6 +34,7 @@ pub use record::{
     EngineRecord, EnvRecord, EnvState, ImportedMarker, LabelEvidence, LegacyImport, Retention,
     RECORD_SCHEMA,
 };
+pub use view::EnvironmentView;
 
 /// The Effigy home whose `.effigy/state` holds environment records and
 /// render objects: `$HOME`, or the crate's private fixture home in tests.

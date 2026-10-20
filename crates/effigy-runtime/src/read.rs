@@ -107,6 +107,8 @@ pub fn run_container_status(
     if let Some(warning) = primary_service_exec_warning {
         annotate_warning_lines(&mut report, &[warning]);
     }
+    // Which backend this environment uses and why, and its record.
+    effigy_containers::environment::EnvironmentView::read(repo_root, &policy).annotate(&mut report);
     // Text-only discoverability breadcrumb; the status JSON schema is unchanged.
     if let Some(note) = port_capacity_note() {
         report.success_text.push('\n');
