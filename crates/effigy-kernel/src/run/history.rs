@@ -42,6 +42,21 @@ pub fn history(
     )
 }
 
+/// One run by id, for holder projections that need its owner.
+pub fn summary(reader: &StoreReader, id: RunId) -> Observed<RunSummary> {
+    let sql = format!("SELECT {COLUMNS} FROM runs WHERE run_id=?1");
+    match read(reader, &sql, params![id.to_string()]) {
+        Observed::Verified(mut rows, evidence) => match rows.pop() {
+            Some(row) => Observed::Verified(row, evidence),
+            None => Observed::Absent(crate::observe::AbsenceProof::NoRow {
+                table: "runs".into(),
+            }),
+        },
+        Observed::Absent(proof) => Observed::Absent(proof),
+        Observed::Unknown(reason) => Observed::Unknown(reason),
+    }
+}
+
 /// Every non-closed run whose owner lives in `scope`, oldest first. A free
 /// owner gate makes such a run `Interrupted`, never absent.
 pub fn unclosed(reader: &StoreReader, scope: Scope) -> Observed<Vec<RunSummary>> {

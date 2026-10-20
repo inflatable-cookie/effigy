@@ -77,6 +77,7 @@ fn up_in(
         Some(closure) => Some(run.publish_desired(closure)?),
         None => None,
     };
+    run.settle_interrupted_holders()?;
     let previous = run.engine_record().cloned();
     // An explicit up makes the environment persistent; a task's ensure never
     // demotes an environment an explicit up owns.
@@ -115,7 +116,7 @@ fn up_in(
             run.write_record(&record)?;
         }
         Applied::Reused
-    } else if running && run.record().protected() {
+    } else if running && holders_remain(run) {
         Applied::KeptForHolders
     } else {
         run.apply_with(
@@ -135,6 +136,13 @@ fn up_in(
         run.activate(request.holders)?;
     }
     Ok(applied)
+}
+
+fn holders_remain(run: &EnvRun<'_>) -> bool {
+    match run.holders() {
+        Observed::Verified(holders, _) => !holders.is_empty(),
+        _ => true,
+    }
 }
 
 /// One stop. `exempt` is the holder whose own stop this is: it must already

@@ -18,7 +18,7 @@ pub use attachments::{
     AttachMode, AttachmentTicket, Attachments, Holder, Liveness, TransitionPermit,
 };
 pub use claims::{Claims, ReservationToken};
-pub use history::{history, unclosed, RunSummary};
+pub use history::{history, summary, unclosed, RunSummary};
 pub(crate) use settle::settle_interrupted_wait;
 pub use settle::{settle_interrupted, Reconciled, Settled, SettlementAdapter};
 

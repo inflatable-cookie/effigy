@@ -19,7 +19,7 @@ pub use backend::{
     BackendKind, BackendReason, BackendSelection, ColimaBackend, DockerBackend, EnvironmentBackend,
     RenderRef, Workload,
 };
-pub use hold::{hold, mode_for, reap_if_idle, Hold, HoldError, Idle};
+pub use hold::{hold, mode_for, reap_if_idle, Hold, HoldError, Idle, Session};
 pub use import::{
     import, label_evidence, recorded_admission, sanitize as sanitize_marker_component,
     ImportRequest, Imported, LegacyMarkers, Marker, Ownership,

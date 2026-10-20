@@ -138,12 +138,17 @@ pub fn reap_if_idle(
         Err(EnvError::Busy(_)) => return Ok(Idle::Kept("another transition holds it")),
         Err(error) => return Err(error),
     };
+    run.settle_interrupted_holders()?;
     // Re-read under the gate: an attach may have landed after the pre-check.
     let fresh = match run.holders() {
         Observed::Verified(holders, _) => holders.is_empty(),
         _ => false,
     };
-    if let Some(kept) = keep(run.record()).or((!fresh).then_some("holders remain")) {
+    let kept = match keep(run.record()) {
+        Some("holders remain") | None => (!fresh).then_some("holders remain"),
+        other => other,
+    };
+    if let Some(kept) = kept {
         run.finish(true)?;
         return Ok(Idle::Kept(kept));
     }
@@ -162,5 +167,114 @@ fn keep(record: &EnvRecord) -> Option<&'static str> {
         Some(Retention::Persistent) => return Some("persistent"),
         None => return Some("retention unknown"),
     }
-    record.protected().then_some("holders remain")
+    // Interrupted holders are settled by the reap itself (I-A2).
+    let blocking = match &record.holders {
+        Observed::Verified(holders, _) => holders.iter().any(|holder| {
+            !matches!(
+                holder.liveness,
+                Observed::Verified(effigy_kernel::run::Liveness::Interrupted, _)
+            )
+        }),
+        _ => true,
+    };
+    blocking.then_some("holders remain")
+}
+
+/// The holder for a command with no task run of its own (an exec, a shell,
+/// a data command): one kernel run that holds the environment while the
+/// command uses it. Closing it settles the run, which releases the hold.
+#[derive(Debug)]
+pub struct Session<'r> {
+    run: Option<Run<'r>>,
+    cleanup: effigy_kernel::ctx::CleanupContext,
+}
+
+impl<'r> Session<'r> {
+    /// Admits a fresh session run of `env`'s checkout. Each session owns a
+    /// distinct identity, so concurrent commands never wait on each other.
+    pub fn begin(ctx: &EnvContext<'r>, env: &EnvRef, label: &str) -> Result<Self, EnvError> {
+        use effigy_kernel::ctx::{EffectClass, Placement};
+        use effigy_kernel::id::{ExecutionTarget, InvocationSpec, ResolvedInvocation, Route};
+        let nonce = super::reconcile::new_run_id()?;
+        let task = effigy_kernel::id::TaskId::new(
+            env.checkout,
+            "",
+            effigy_kernel::id::Surface::Published,
+            "@environment-session",
+            Some(&nonce.to_string()),
+        )
+        .map_err(|error| EnvError::Invalid(error.to_string()))?;
+        let invocation = ResolvedInvocation::new(InvocationSpec {
+            task: task.clone(),
+            route: Route::Task,
+            argv: vec![std::ffi::OsString::from(label)],
+            cwd: String::new(),
+            target: ExecutionTarget::Host,
+            env: Default::default(),
+            owner: task.resource(),
+            gates: vec![],
+            attachments: vec![],
+            class: EffectClass::Mutate,
+            placement: Placement::Host,
+            provenance: Default::default(),
+        })
+        .map_err(|error| EnvError::Invalid(error.to_string()))?;
+        let run = Run::begin(
+            &ctx.cx,
+            ctx.root,
+            &invocation,
+            effigy_kernel::run::BeginOpts {
+                id: nonce,
+                wait: Wait::FailFast,
+                acknowledge: vec![],
+                next: effigy_kernel::outcome::Invocation::validated(
+                    vec![
+                        std::ffi::OsString::from("effigy"),
+                        std::ffi::OsString::from("container"),
+                        std::ffi::OsString::from("status"),
+                    ],
+                    |_| true,
+                )
+                .map_err(|_| EnvError::Invalid("invalid recovery command".into()))?,
+                custody: None,
+            },
+            &ctx.cleanup,
+            &mut super::reconcile::EnvSettlement,
+        )
+        .map_err(|error| EnvError::Invalid(format!("environment session refused: {error}")))?;
+        Ok(Self {
+            run: Some(run),
+            cleanup: ctx.cleanup.clone(),
+        })
+    }
+
+    pub fn id(&self) -> effigy_kernel::id::RunId {
+        self.run.as_ref().expect("open session").id()
+    }
+
+    pub fn run_mut(&mut self) -> &mut Run<'r> {
+        self.run.as_mut().expect("open session")
+    }
+
+    /// Ends the session: the settle releases its hold (no gate needed).
+    pub fn close(mut self) -> effigy_kernel::outcome::CleanupOutcome {
+        self.settle()
+    }
+
+    fn settle(&mut self) -> effigy_kernel::outcome::CleanupOutcome {
+        let Some(mut run) = self.run.take() else {
+            return effigy_kernel::outcome::CleanupOutcome::NotNeeded;
+        };
+        let _ = run.finish(effigy_kernel::outcome::WorkloadOutcome::Succeeded);
+        match run.settle(&self.cleanup, &mut super::reconcile::EnvSettlement) {
+            Ok(outcome) => outcome.cleanup(),
+            Err(_) => effigy_kernel::outcome::CleanupOutcome::Incomplete,
+        }
+    }
+}
+
+impl Drop for Session<'_> {
+    fn drop(&mut self) {
+        let _ = self.settle();
+    }
 }

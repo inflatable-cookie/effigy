@@ -510,8 +510,9 @@ fn an_unknown_inventory_never_authorises_recreation() {
 }
 
 /// The matrix: every transition against a live, an interrupted and an
-/// unknown holder. Each refuses, and the strict fake records zero
-/// destructive calls (O11).
+/// unknown holder. Live and unknown holders refuse every transition with
+/// zero backend calls (O11); an interrupted holder is settled by the
+/// transition first, which then acts exactly once.
 #[test]
 fn transitions_refuse_against_live_interrupted_and_unknown_holders() {
     for liveness in ["live", "interrupted", "unknown"] {
@@ -560,30 +561,50 @@ fn transitions_refuse_against_live_interrupted_and_unknown_holders() {
             let before = fake.calls().len();
             let result = match transition {
                 "recreate" => bring_up(&ctx, &stack, &fake, &closure("two"), Retention::Held, &[])
-                    .map(|applied| assert_eq!(applied, Applied::KeptForHolders)),
+                    .map(|applied| {
+                        let expected = if liveness == "interrupted" {
+                            Applied::Reconciled
+                        } else {
+                            Applied::KeptForHolders
+                        };
+                        assert_eq!(applied, expected, "recreate against a {liveness} holder");
+                    }),
                 "down" => take_down(&ctx, &stack, Operation::Down, &fake, None),
                 "handover" => take_down(&ctx, &stack, Operation::Handover, &fake, None),
                 "reset" => reset(&ctx, &stack, &selection(), PROJECT, || fake.stop()),
                 _ => reap_if_idle(&ctx, &stack, |run| {
                     run.stop_with(&selection(), PROJECT, None, || fake.stop())
                 })
-                .map(|idle| assert!(matches!(idle, Idle::Kept(_)))),
+                .map(|idle| {
+                    let stopped = idle == Idle::Stopped;
+                    assert_eq!(stopped, liveness == "interrupted", "reap: {idle:?}");
+                }),
             };
-            if transition != "recreate" && transition != "reap" {
-                assert!(
-                    matches!(result, Err(EnvError::HeldBy { .. })),
-                    "{transition} against a {liveness} holder: {result:?}"
-                );
+            if liveness == "interrupted" {
+                // The transition settles the dead holder as gate holder
+                // (I-A2), then acts exactly once.
+                result.unwrap_or_else(|error| panic!("{transition}: {error}"));
+                assert_eq!(fake.calls().len(), before + 1, "{transition}");
+                assert!(!record(&ctx, &stack).protected());
             } else {
-                result.unwrap();
+                if transition != "recreate" && transition != "reap" {
+                    assert!(
+                        matches!(result, Err(EnvError::HeldBy { .. })),
+                        "{transition} against a {liveness} holder: {result:?}"
+                    );
+                } else {
+                    result.unwrap();
+                }
+                assert_eq!(
+                    fake.calls().len(),
+                    before,
+                    "{transition} reached the backend against a {liveness} holder"
+                );
+                assert!(
+                    record(&ctx, &stack).protected(),
+                    "{liveness} holder lost protection"
+                );
             }
-            assert_eq!(
-                fake.calls().len(),
-                before,
-                "{transition} reached the backend against a {liveness} holder"
-            );
-            let held = record(&ctx, &stack);
-            assert!(held.protected(), "{liveness} holder lost protection");
             drop(task);
             assert_store_sound_except_holders(&ctx);
         }
@@ -800,7 +821,7 @@ fn a_stalled_transition_excludes_a_concurrent_attach() {
 }
 
 #[test]
-fn an_interrupted_holder_protects_until_its_successor_settles_it() {
+fn a_transition_settles_an_interrupted_holder_before_acting() {
     let home = home();
     let root = root(home.path());
     let ctx = EnvContext::new(&root, CancelToken::default()).unwrap();
@@ -809,20 +830,59 @@ fn an_interrupted_holder_protects_until_its_successor_settles_it() {
     bring_up(&ctx, &stack, &fake, &closure("one"), Retention::Held, &[]).unwrap();
     let mut task = holder(&ctx, "dev", 1);
     hold(&mut task, &ctx, &stack, Wait::FailFast).unwrap();
-    let id = task.id();
     drop(task);
     let observed = record(&ctx, &stack);
     assert!(matches!(&observed.holders, Observed::Verified(holders, _)
         if matches!(holders[0].liveness, Observed::Verified(Liveness::Interrupted, _))));
+    // A live successor of the same task settles its predecessor itself.
+    let successor = holder(&ctx, "dev", 2);
+    assert!(!record(&ctx, &stack).protected());
+    successor.settle(&ctx.cleanup, &mut EnvSettlement).unwrap();
+    // A dead session with no successor is settled by the next transition.
+    let mut session = Session::begin(&ctx, &stack, "exec").unwrap();
+    hold(session.run_mut(), &ctx, &stack, Wait::FailFast).unwrap();
     assert!(matches!(
         take_down(&ctx, &stack, Operation::Down, &fake, None),
         Err(EnvError::HeldBy { .. })
     ));
-    // The task's next run settles its interrupted predecessor (K5).
-    let successor = holder(&ctx, "dev", 2);
-    assert_ne!(successor.id(), id);
-    successor.settle(&ctx.cleanup, &mut EnvSettlement).unwrap();
-    take_down(&ctx, &stack, Operation::Down, &fake, None).unwrap();
+    std::mem::forget(session);
+    // `forget` leaves the session's gate descriptor open in this process,
+    // so it still reads live: the down keeps refusing.
+    assert!(matches!(
+        take_down(&ctx, &stack, Operation::Down, &fake, None),
+        Err(EnvError::HeldBy { .. })
+    ));
+    assert_eq!(fake.calls(), ["apply"]);
+    assert_store_sound_except_holders(&ctx);
+}
+
+#[test]
+fn a_session_holds_for_a_command_without_a_task_run() {
+    let home = home();
+    let root = root(home.path());
+    let ctx = EnvContext::new(&root, CancelToken::default()).unwrap();
+    let stack = env("stack");
+    let fake = Fake::new();
+    bring_up(&ctx, &stack, &fake, &closure("one"), Retention::Held, &[]).unwrap();
+    let mut first = Session::begin(&ctx, &stack, "exec").unwrap();
+    let mut second = Session::begin(&ctx, &stack, "shell").unwrap();
+    assert_ne!(first.id(), second.id(), "sessions never share a gate");
+    hold(first.run_mut(), &ctx, &stack, Wait::FailFast).unwrap();
+    hold(second.run_mut(), &ctx, &stack, Wait::FailFast).unwrap();
+    assert!(matches!(
+        take_down(&ctx, &stack, Operation::Down, &fake, None),
+        Err(EnvError::HeldBy { .. })
+    ));
+    assert_eq!(first.close(), CleanupOutcome::Complete);
+    let reap = || {
+        reap_if_idle(&ctx, &stack, |run| {
+            run.stop_with(&selection(), PROJECT, None, || fake.stop())
+        })
+        .unwrap()
+    };
+    assert_eq!(reap(), Idle::Kept("holders remain"));
+    drop(second);
+    assert_eq!(reap(), Idle::Stopped);
     assert_eq!(fake.calls(), ["apply", "stop"]);
     assert_store_sound(&ctx);
 }

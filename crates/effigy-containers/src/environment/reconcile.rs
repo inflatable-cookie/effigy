@@ -287,6 +287,7 @@ impl SettlementAdapter for EnvSettlement {
 #[derive(Debug)]
 pub struct EnvRun<'r> {
     pub(super) run: Run<'r>,
+    cx: EffectContext,
     root: &'r StateRoot,
     env: EnvRef,
     cleanup: CleanupContext,
@@ -354,6 +355,7 @@ impl<'r> EnvRun<'r> {
         };
         Ok(Self {
             run,
+            cx: ctx.cx.clone(),
             root: ctx.root,
             env: env.clone(),
             cleanup: ctx.cleanup.clone(),
@@ -423,6 +425,68 @@ impl<'r> EnvRun<'r> {
             Observed::Absent(proof) => Observed::Absent(proof),
             Observed::Unknown(reason) => Observed::Unknown(reason),
         }
+    }
+
+    /// Settles every interrupted holder as this transition's gate holder
+    /// (I-A2): its owner gate is taken `FailFast`, so a live successor that
+    /// is settling it already is left alone. Live and unknown holders stay.
+    pub fn settle_interrupted_holders(&mut self) -> Result<(), EnvError> {
+        let Observed::Verified(holders, _) = self.holders() else {
+            return Ok(());
+        };
+        let cx = operation(
+            EffectClass::Observe,
+            CancelToken::default(),
+            Duration::from_secs(10),
+        )
+        .observe()
+        .expect("observe context");
+        let reader = match effigy_kernel::store::Store::read(&cx, self.root) {
+            Observed::Verified(reader, _) => reader,
+            _ => return Ok(()),
+        };
+        for holder in holders {
+            if !matches!(
+                holder.liveness,
+                Observed::Verified(effigy_kernel::run::Liveness::Interrupted, _)
+            ) {
+                continue;
+            }
+            let Observed::Verified(summary, _) = effigy_kernel::run::summary(&reader, holder.run)
+            else {
+                continue;
+            };
+            let Some(owner) = summary
+                .invocation
+                .map(|invocation| invocation.spec().owner.clone())
+            else {
+                continue;
+            };
+            let next = Invocation::validated(
+                vec![
+                    OsString::from("effigy"),
+                    OsString::from("tasks"),
+                    OsString::from("status"),
+                    OsString::from("--all"),
+                ],
+                |_| true,
+            )
+            .map_err(|_| EnvError::Invalid("invalid recovery command".into()))?;
+            match effigy_kernel::run::settle_interrupted(
+                &self.cx,
+                self.root,
+                &owner,
+                holder.run,
+                next,
+                &self.cleanup,
+                &mut EnvSettlement,
+            ) {
+                // A successor holds the owner gate and settles it first (K5).
+                Ok(_) | Err(RunError::Gate(_)) => {}
+                Err(error) => return Err(EnvError::from_run(&self.env.name, error)),
+            }
+        }
+        Ok(())
     }
 
     /// Converges the backend on the render through the seam.
@@ -516,6 +580,7 @@ impl<'r> EnvRun<'r> {
         effect: impl FnOnce() -> Result<(), BackendError>,
     ) -> Result<(), EnvError> {
         let env = self.env.name.clone();
+        self.settle_interrupted_holders()?;
         let mut permit = permit(&mut self.run, exempt).map_err(|error| {
             self.failed = true;
             EnvError::from_run(&env, error)
