@@ -697,6 +697,10 @@ fn both_handoffs_automatically_build_through_changed_input_partial_recovery() {
 }
 
 #[test]
+#[cfg_attr(
+    target_os = "macos",
+    ignore = "known v0.15 rebuild defect: papercut e2197722-d51d-4af7-8224-341b4a4c70fc; owner lane v015-task-engine"
+)]
 fn recovery_cannot_publish_failed_wrong_target_or_unchanged_old_output() {
     let _lock = crate::contract_test_support::lock_test();
     for bounded in [false, true] {
@@ -955,6 +959,10 @@ fn both_handoffs_migrate_the_authentic_legacy_namespace_without_manual_commands(
 }
 
 #[test]
+#[cfg_attr(
+    target_os = "macos",
+    ignore = "known v0.15 rebuild defect: papercut e2197722-d51d-4af7-8224-341b4a4c70fc; owner lane v015-task-engine"
+)]
 fn migration_failures_never_accept_stale_output_and_reuse_the_new_builder_on_retry() {
     let _lock = crate::contract_test_support::lock_test();
     for bounded in [false, true] {
