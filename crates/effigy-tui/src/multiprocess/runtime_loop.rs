@@ -204,8 +204,9 @@ mod terminal_input_tests {
             terminal_input_on(slave, Duration::ZERO),
             TerminalInput::Idle
         ));
-        // SAFETY: a one-byte write to the live master this test owns.
-        assert_eq!(unsafe { libc::write(master, b"x".as_ptr().cast(), 1) }, 1);
+        // A whole line: the fresh slave is canonical, unlike the TUI's raw one.
+        // SAFETY: a two-byte write to the live master this test owns.
+        assert_eq!(unsafe { libc::write(master, b"x\n".as_ptr().cast(), 2) }, 2);
         assert!(matches!(
             terminal_input_on(slave, Duration::from_millis(500)),
             TerminalInput::Ready
