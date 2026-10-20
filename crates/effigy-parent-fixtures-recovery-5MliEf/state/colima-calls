@@ -1,1 +1,0 @@
-nerdctl --profile effigy-release -- ps --filter label=com.docker.compose.project=effigy-artifact-builder-v1-ec-7288dc2b3e84 --format {{.Names}}	{{.Status}}	{{.Ports}}	{{.Label "com.docker.compose.project"}}	{{.Label "com.docker.compose.project.working_dir"}}	{{.Label "com.docker.compose.service"}}	{{.Label "com.docker.compose.oneoff"}}
