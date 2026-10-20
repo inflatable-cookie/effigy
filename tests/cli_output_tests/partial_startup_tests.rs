@@ -190,7 +190,6 @@ version = "16"
             .env("COLIMA_HOME", self.root.path().join("home/colima"))
             .env("DOCKER_CONFIG", self.root.path().join("home/docker"))
             .env("EFFIGY_COMPOSE_BACKEND", "docker")
-            .env("EFFIGY_DISABLE_HOST_CONTAINER_LEASE_REAPER", "1")
             .env("PRIVATE_BACKEND_ROOT", self.root.path())
             .env(
                 "PATH",

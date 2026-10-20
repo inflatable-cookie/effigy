@@ -65,9 +65,6 @@
       "std.process.Command.output": 1,
       "std::fs::write": 5
     },
-    "crates/effigy-containers/src/lib.rs": {
-      "std::fs::write": 1
-    },
     "crates/effigy-containers/src/runtime/scope.rs": {
       "std::fs::remove_file": 2,
       "std::fs::rename": 1,
@@ -438,13 +435,6 @@
     "src/runner/gateway_command/mod.rs": {
       "std.process.Command.new": 1,
       "std.process.Command.spawn": 1
-    },
-    "src/runner/host_container_lease.rs": {
-      "std.fs.OpenOptions.write": 2,
-      "std.process.Command.new": 1,
-      "std.process.Command.spawn": 1,
-      "std::fs::remove_file": 4,
-      "std::fs::write": 4
     },
     "src/runner/host_process.rs": {
       "libc::flock": 2,
@@ -897,9 +887,6 @@
       "std.process.Command.output": 1,
       "std.process.Command.spawn": 4,
       "std::fs::write": 27
-    },
-    "src/runner/host_container_lease.rs": {
-      "std::fs::write": 8
     },
     "src/runner/host_process.rs": {
       "nix::sys::signal::kill": 1,

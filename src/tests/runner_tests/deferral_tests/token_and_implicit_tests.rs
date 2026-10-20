@@ -197,10 +197,6 @@ exit 0
             Some(bin_dir.join("mkcert").display().to_string()),
         ),
         (
-            "EFFIGY_DISABLE_HOST_CONTAINER_LEASE_REAPER",
-            Some("1".to_owned()),
-        ),
-        (
             "EFFIGY_TEST_HOST_CONTAINER_LEASE_HOME",
             Some(lease_home.display().to_string()),
         ),

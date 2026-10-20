@@ -954,3 +954,39 @@ fn a_reconciled_generation_is_not_attachable_until_activation() {
     task.settle(&ctx.cleanup, &mut EnvSettlement).unwrap();
     assert_store_sound(&ctx);
 }
+
+#[test]
+fn a_bring_up_after_an_earlier_stop_activates() {
+    let home = home();
+    let root = root(home.path());
+    let ctx = EnvContext::new(&root, CancelToken::default()).unwrap();
+    let stack = env("stack");
+    let fake = Fake::new();
+    bring_up(
+        &ctx,
+        &stack,
+        &fake,
+        &closure("one"),
+        Retention::Persistent,
+        &[],
+    )
+    .unwrap();
+    take_down(&ctx, &stack, Operation::Down, &fake, None).unwrap();
+    assert_eq!(record(&ctx, &stack).state, EnvState::Stopped);
+    // Only a stop during this bring-up's integrations refuses activation.
+    assert_eq!(
+        bring_up(
+            &ctx,
+            &stack,
+            &fake,
+            &closure("one"),
+            Retention::Persistent,
+            &[]
+        )
+        .unwrap(),
+        Applied::Reconciled
+    );
+    assert!(record(&ctx, &stack).active());
+    assert_eq!(fake.calls(), ["apply", "stop", "apply"]);
+    assert_store_sound(&ctx);
+}

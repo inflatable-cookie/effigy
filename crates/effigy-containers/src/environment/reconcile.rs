@@ -585,10 +585,13 @@ impl<'r> EnvRun<'r> {
         let result = permit(&mut self.run, exempt).and_then(|mut permit| permit.publish_stopped());
         self.kernel(result)?;
         self.published = true;
-        if let Some(mut record) = self.engine_record().cloned() {
-            record.applying = None;
-            self.write_record(&record)?;
-        }
+        let mut record = self
+            .engine_record()
+            .cloned()
+            .unwrap_or_else(|| EngineRecord::new(super::record::Retention::Held, project));
+        record.applying = None;
+        record.stopped_at = Some(self.run.fence().generation.get());
+        self.write_record(&record)?;
         Ok(())
     }
 

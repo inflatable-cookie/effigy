@@ -291,12 +291,7 @@ pub fn list_compose_containers_for_policy_including_stopped_with_deadline(
     let output = run_runtime_command_capture_with_repair(
         repo_root,
         policy,
-        &[
-            OsString::from("ps"),
-            OsString::from("--all"),
-            OsString::from("--format"),
-            OsString::from(DOCKER_PS_FORMAT),
-        ],
+        &project_ps_args(policy.project_name.as_str(), true),
         "runtime ps --all",
         None,
         deadline,

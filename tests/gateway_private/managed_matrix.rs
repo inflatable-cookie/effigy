@@ -231,7 +231,6 @@ impl<'a> Case<'a> {
             .env("EFFIGY_EXECUTABLE", self.root.join("effigy-wrapper"))
             .env("COLIMA_HOME", self.home.join("colima"))
             .env("EFFIGY_COMPOSE_BACKEND", "docker")
-            .env("EFFIGY_DISABLE_HOST_CONTAINER_LEASE_REAPER", "1")
             .env("EFFIGY_TEST_SKIP_WORKSPACE_EFFIGY_HANDOFF", "1")
             .env(
                 effigy_gateway::private_state::PRIVATE_STATE_ROOT_ENV,
@@ -1013,7 +1012,11 @@ fn authority_matrix(authority: Authority) {
                 .join(".effigy/runtime/managed-lifecycle/prior-stack.state");
             let deadline = Instant::now() + Duration::from_secs(25);
             while fs::read_to_string(&marker).unwrap_or_default().trim() != "ready" {
-                assert!(Instant::now() < deadline, "prior lifecycle readiness");
+                assert!(
+                    Instant::now() < deadline,
+                    "prior lifecycle readiness: {}",
+                    fs::read_to_string(case.root.join("prior-lifecycle.out")).unwrap_or_default()
+                );
                 thread::sleep(Duration::from_millis(25));
             }
             parent.0.kill().expect("kill only prior parent");

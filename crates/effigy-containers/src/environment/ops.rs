@@ -48,6 +48,8 @@ pub enum Applied {
 pub struct Pending {
     pub applied: Applied,
     digest: Option<String>,
+    /// The reconcile run's generation: a later stop invalidates it.
+    generation: u64,
 }
 
 /// Brings `env` to its desired generation in two gated runs. `apply`
@@ -158,6 +160,7 @@ fn reconcile_in(
         } else {
             digest
         },
+        generation: run.fence().generation.get(),
     })
 }
 
@@ -177,7 +180,11 @@ pub fn activate(
         Wait::Until(Instant::now() + GATE_WAIT),
     )?;
     let result = (|| {
-        let changed = run.record().state == super::record::EnvState::Stopped
+        let stopped_since = run
+            .engine_record()
+            .and_then(|record| record.stopped_at)
+            .is_some_and(|stopped| stopped > pending.generation);
+        let changed = stopped_since
             || pending
                 .digest
                 .as_ref()

@@ -7,6 +7,29 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Breaking
+- Container environments now have one kernel record each (contract 053).
+  Every stop, restart, recreation, reset, handover and idle stop is a
+  transition that refuses while any run holds the environment, except that
+  run's own stop. Container tasks, `exec`, shells and data commands hold their
+  environment while they run; `container down` under a live `dev` names the
+  holding run and changes nothing.
+- Idle stop is holder-based: a stack a task starts stops when the last run
+  using it ends, not 5 minutes later. `effigy container up --detach` keeps a
+  stack running; `EFFIGY_DISABLE_HOST_CONTAINER_LEASE=1` keeps task-started
+  stacks running. The lease file, `EFFIGY_HOST_CONTAINER_LEASE_TIMEOUT_SECS`,
+  `EFFIGY_DISABLE_HOST_CONTAINER_LEASE_REAPER` and the hidden
+  `__container-lease-reaper` command are retired.
+- The exec-readiness restart refuses while a run holds the environment and
+  reports the readiness failure instead. A changed configuration under live
+  holders keeps the running generation until they end, with a warning.
+- A failed managed run's environment is no longer torn down by its
+  successor's start; the kernel settles the failed run and the successor's
+  bring-up reconciles the stack.
+- Existing v0.14.1 stacks are imported automatically on their first bring-up
+  or stop: lifecycle markers and labels become the environment record, running
+  containers are adopted without a restart, and the marker files are never
+  changed. A stack whose ownership cannot be proven is not adopted and needs an
+  explicit `container down`.
 - Tasks now have `visibility = "public" | "internal"` and optional `group`.
   Human inventory, general/work help and completion show public tasks; `tasks --all` and
   `tasks --json` include everything. Unnamespaced entry points stay public;
@@ -92,6 +115,10 @@ During v0.x, MINOR bumps may include breaking changes.
   lists the families still present.
 
 ### Added
+- `effigy container status` and `effigy doctor` show each environment's
+  backend, why it was chosen, and its record: active or stopped, persistent or
+  held, the applied generation, a partial generation and its holders. Status
+  JSON gains an `environment` object.
 - Keep CLI presentation local and bounded: banner sizing never launches `tput`, and version metadata reads environment or installed stamps without running Git. Unstamped development binaries report the package version.
 - Graph reads, documentation context and doctor never refresh or create graph
   files. Explicit `graph index` uses a kernel store gate and migrates existing
@@ -441,6 +468,10 @@ During v0.x, MINOR bumps may include breaking changes.
   1.2.0.
 
 ### Fixed
+- Volume, cache, data and reset actions target the backend the environment
+  runs on instead of guessing from the profile name, and shared services run
+  on the dependent environment's backend (D3-25).
+- Reset drops only the selected environment's render references.
 - Stopping a managed run now ends the process group it started through
   container exec in containers whose shell is dash or busybox. The stop
   previously reached only the group's leader there, so an Effigy task running

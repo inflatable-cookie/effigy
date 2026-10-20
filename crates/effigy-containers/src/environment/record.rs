@@ -77,6 +77,10 @@ pub struct EngineRecord {
     pub applying: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub imported: Option<LegacyImport>,
+    /// The generation of the last stop transition, so a bring-up can tell
+    /// a stop during its integrations from one before it began.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stopped_at: Option<u64>,
 }
 
 impl EngineRecord {
@@ -87,6 +91,7 @@ impl EngineRecord {
             project: project.to_owned(),
             applying: None,
             imported: None,
+            stopped_at: None,
         }
     }
 }

@@ -11240,7 +11240,6 @@ fn cli_workspace_binding_handoff_stops_environment_after_return() {
         .env("EFFIGY_TEST_OWNED_INSPECT_FILE", &inspect)
         .env("EFFIGY_TEST_OWNED_CHECKOUT", &canonical_root)
         .env("EFFIGY_TEST_SKIP_WORKSPACE_EFFIGY_HANDOFF", "1")
-        .env("EFFIGY_DISABLE_HOST_CONTAINER_LEASE_REAPER", "1")
         .output()
         .expect("run workspace handoff");
     assert!(

@@ -43,6 +43,8 @@ const ENVIRONMENT_INSPECTION_TIMEOUT: Duration = Duration::from_secs(15);
 pub(super) struct PendingHandover {
     /// The peer environment's manifest name.
     environment: String,
+    /// The peer environment's resolved policy in this checkout and scope.
+    policy: EffectiveContainerPolicy,
     /// The requested environment's gateway domains the peer holds live.
     domains: Vec<String>,
     /// Whether the pair shares data volumes through `data_from`.
@@ -104,6 +106,7 @@ pub(super) fn hand_over_conflicting_environments(
                         peer.clone(),
                         PendingHandover {
                             environment: peer.clone(),
+                            policy: peer_policy,
                             domains: Vec::new(),
                             data_from: true,
                         },
@@ -130,19 +133,20 @@ pub(super) fn hand_over_conflicting_environments(
             }
             continue;
         }
-        // The peer must resolve for a clean whole-environment stop.
-        load_container_policy(repo_root, Some(&conflict.environment)).map_err(|error| {
-            RunnerError::task_invocation(format!(
-                "cannot hand over environment `{}`, which holds gateway domain `{}`: {error}",
-                conflict.environment, conflict.domain
-            ))
-        })?;
+        let peer_policy =
+            load_container_policy(repo_root, Some(&conflict.environment)).map_err(|error| {
+                RunnerError::task_invocation(format!(
+                    "cannot hand over environment `{}`, which holds gateway domain `{}`: {error}",
+                    conflict.environment, conflict.domain
+                ))
+            })?;
         targets.insert(
             conflict.environment.clone(),
             PendingHandover {
                 environment: conflict.environment.clone(),
                 domains: vec![conflict.domain],
                 data_from: data_peers.iter().any(|peer| peer == &conflict.environment),
+                policy: peer_policy,
             },
         );
     }
@@ -172,6 +176,7 @@ pub(super) fn hand_over_conflicting_environments(
                 environment: name,
                 domains,
                 data_from,
+                policy: peer_policy,
             },
         );
     }
@@ -498,14 +503,31 @@ fn execute_handover(
     // the losing environment ends through its own stop before the handover's
     // transition asks for a permit.
     let owner_notes = end_headless_managed_owners(repo_root, target)?;
-    effigy_runtime::write::run_container_down(
-        repo_root,
-        Some(&target.environment),
-        false,
-        deregister_gateway_routes,
-        environment::stop_hook(Operation::Handover),
-    )
-    .map_err(|error| {
+    let ordinary_down = || {
+        effigy_runtime::write::run_container_down(
+            repo_root,
+            Some(&target.environment),
+            false,
+            deregister_gateway_routes,
+            environment::stop_hook(Operation::Handover),
+        )
+        .map(|_| ())
+    };
+    // The owners' cascades already brought the environment down through
+    // their own stop transitions. Withdraw any routes an inline cascade could
+    // not (it stops Compose only), then verify instead of racing a second
+    // down; a live remainder still takes the handover transition.
+    let down_result = if owner_notes.is_empty() {
+        ordinary_down()
+    } else {
+        let _ = deregister_gateway_routes(&target.policy)?;
+        let routes = SameCheckoutRoutes::load(repo_root)?;
+        match environment_is_live(repo_root, &target.policy, routes.as_ref()) {
+            Ok(false) => Ok(()),
+            _ => ordinary_down(),
+        }
+    };
+    down_result.map_err(|error| {
         RunnerError::task_invocation(format!(
             "{note} failed: {error}. Environment `{}` stays in a state its own `effigy container up` or `effigy container down` recovers from",
             target.environment
