@@ -753,31 +753,6 @@ fn partial_activation_reconcile_pending(
     if let Some(context) = &plan.admitted_context {
         context.verify(repo_root, &plan.policy, recorded || context.marker_required)?;
     }
-    let failed_runs =
-        effigy_managed::runtime::failed_managed_run_tokens(repo_root, &plan.policy.name);
-    if !failed_runs.is_empty() {
-        crate::runner::managed_settle::refuse_environment_mutation(
-            repo_root,
-            &plan.policy.name,
-            None,
-            None,
-        )?;
-        // Never tear the environment down while a process of a judged-failed
-        // generation still holds a task gate: the dead-owner judgment
-        // can be wrong through a stale or missing record, and the down would
-        // SIGKILL a live run's execs.
-        for token in &failed_runs {
-            crate::runner::managed_settle::refuse_recovery_while_token_live(repo_root, token)?;
-        }
-        // Input admission above precedes teardown authority. Down ends any
-        // exec groups the dead owner could not end; volumes are kept.
-        effigy_containers::exec::verify_owned_stack_for_shutdown(repo_root, &plan.policy)?;
-        lifecycle_cleanup_failed_container_up(repo_root, &plan.policy)?;
-        for token in failed_runs {
-            effigy_managed::runtime::clear_managed_run_failure(repo_root, &token)?;
-        }
-        return Ok(false);
-    }
     // Without a record (a stack from an earlier release, a task-started stack,
     // or one whose stale record was retired) `compose up` applies the current
     // inputs, once any running containers are proven to be this checkout's.
@@ -1104,19 +1079,39 @@ fn run_container_down_adapter(
     name: Option<&str>,
     output_json: bool,
 ) -> Result<String, RunnerError> {
-    let policy = load_container_policy(repo_root, name)?;
-    let stopping_token = std::env::var("EFFIGY_INTERNAL_MANAGED_STOP_TOKEN").ok();
     // An explicit host task can finish under its own calling task's gate.
-    // A managed caller, even in this process, needs its runner's stop token.
+    // A managed workload, even in this process, is protected by its run.
     let calling_task_pid = std::env::var_os(effigy_managed::RUN_TOKEN_ENV)
         .filter(|token| !token.is_empty())
         .is_none()
         .then(std::process::id);
+    container_down_exempting(repo_root, name, output_json, calling_task_pid, None)
+}
+
+/// A managed run's settle releasing the environment it started: the
+/// ordinary `container down`, exempting only holders that carry the run's
+/// own token (R4: the run's own settle releasing its own hold).
+pub(in crate::runner) fn release_managed_environment(
+    repo_root: &Path,
+    name: Option<&str>,
+    run_token: &str,
+) -> Result<String, RunnerError> {
+    container_down_exempting(repo_root, name, false, None, Some(run_token))
+}
+
+fn container_down_exempting(
+    repo_root: &Path,
+    name: Option<&str>,
+    output_json: bool,
+    calling_task_pid: Option<u32>,
+    run_token: Option<&str>,
+) -> Result<String, RunnerError> {
+    let policy = load_container_policy(repo_root, name)?;
     crate::runner::managed_settle::refuse_environment_mutation(
         repo_root,
         &policy.name,
         calling_task_pid,
-        stopping_token.as_deref(),
+        run_token,
     )?;
     stop_host_processes_best_effort(repo_root, name);
     let _operation_plan =

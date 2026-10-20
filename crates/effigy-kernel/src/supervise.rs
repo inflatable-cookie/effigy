@@ -1368,6 +1368,11 @@ impl EngineSession {
     pub fn detached(&self) -> bool {
         self.channel.detached
     }
+    /// Watches the owning pipe while the engine is inside a blocking step and
+    /// cannot take a `control` turn. It reads nothing: frames stay queued.
+    pub fn owner_watch(&self) -> io::Result<OwnerWatch> {
+        OwnerWatch::start(&self.channel.input)
+    }
     /// From now on this process's own stdout and stderr, and those of every
     /// child that inherits them, are the run's output log (sequence 0),
     /// redacted before the sink (K12). Readers use `run::read_log`.
@@ -1387,6 +1392,64 @@ impl EngineSession {
             workload: outcome.workload().clone(),
             exit_code: outcome.exit_code(),
         });
+    }
+}
+/// Whether the owning client went away, observed without consuming its
+/// frames: the pipe polls readable with nothing left to read.
+#[derive(Debug)]
+pub struct OwnerWatch {
+    lost: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    done: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+impl OwnerWatch {
+    fn start(input: &std::fs::File) -> io::Result<Self> {
+        let fd = private_dup(input.as_raw_fd())?;
+        let lost = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (thread_lost, thread_done) = (lost.clone(), done.clone());
+        let thread = std::thread::Builder::new()
+            .name("effigy-owner-watch".into())
+            .spawn(move || {
+                use std::sync::atomic::Ordering;
+                while !thread_done.load(Ordering::Acquire) {
+                    let mut poll = libc::pollfd {
+                        fd: fd.as_raw_fd(),
+                        events: libc::POLLIN,
+                        revents: 0,
+                    };
+                    // SAFETY: one initialized pollfd for a live descriptor.
+                    let ready = unsafe { libc::poll(&mut poll, 1, 100) };
+                    if ready <= 0 {
+                        continue;
+                    }
+                    let mut pending: libc::c_int = 0;
+                    // SAFETY: FIONREAD writes the readable byte count to `pending`.
+                    let queued = unsafe { libc::ioctl(fd.as_raw_fd(), libc::FIONREAD, &mut pending) };
+                    if queued == 0 && pending == 0 {
+                        thread_lost.store(true, Ordering::Release);
+                        return;
+                    }
+                    // Queued frames wait for the owner's next turn.
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+            })?;
+        Ok(Self {
+            lost,
+            done,
+            thread: Some(thread),
+        })
+    }
+    pub fn lost(&self) -> bool {
+        self.lost.load(std::sync::atomic::Ordering::Acquire)
+    }
+}
+impl Drop for OwnerWatch {
+    fn drop(&mut self) {
+        self.done.store(true, std::sync::atomic::Ordering::Release);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
     }
 }
 /// The run's own output log, fed from pipes on descriptors 1 and 2.

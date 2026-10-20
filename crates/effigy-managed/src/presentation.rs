@@ -7,7 +7,6 @@ use super::render_support::{
     managed_plan_overview_fields, managed_plan_summary_counts, write_managed_overview,
     write_managed_plan_passthrough, write_managed_plan_process_table,
 };
-use super::runtime;
 use crate::ManagedError;
 use crate::ManagedTaskPlan;
 use crate::{render_utf8, text_renderer};
@@ -35,7 +34,7 @@ fn render_managed_task_plan(
         Vec::new(),
         &[
             "Interactive TUI runtime is available for this task.",
-            "Use --headless to run without the terminal UI.",
+            "Use --headless to follow the run as text, or --detach to start it in the background.",
         ],
     )?;
     write_managed_plan_process_table(&mut renderer, &plan)?;
@@ -45,25 +44,15 @@ fn render_managed_task_plan(
     render_utf8(renderer.into_inner())
 }
 
-pub fn run_or_render_managed_task(
+/// The plan of a managed task, rendered without starting it. Runs go through
+/// the runner's run supervisor; nothing here spawns a process.
+pub fn render_managed_plan(
     task_name: &str,
     repo_root: &Path,
     manifest_path: &Path,
     plan: ManagedTaskPlan,
-    execution_mode: ManagedExecutionMode,
-    settle: Option<&crate::ManagedRunSettle<'_>>,
 ) -> Result<String, ManagedError> {
-    match execution_mode {
-        ManagedExecutionMode::Headless => {
-            runtime::run_managed_task_headless(task_name, repo_root, plan, settle)
-        }
-        ManagedExecutionMode::Tui => {
-            runtime::run_managed_task_tui(task_name, repo_root, plan, settle)
-        }
-        ManagedExecutionMode::RenderPlan => {
-            render_managed_task_plan(task_name, repo_root, manifest_path, plan)
-        }
-    }
+    render_managed_task_plan(task_name, repo_root, manifest_path, plan)
 }
 
 pub fn managed_execution_mode() -> Result<ManagedExecutionMode, ManagedError> {

@@ -628,6 +628,28 @@ impl<'a> Run<'a> {
             ));
         }
         self.completed.insert(ticket.sequence, obligation);
+        // The observed exit joins the receipt for status readers. It is
+        // evidence of what ended, never of success (R5), and a failed write
+        // changes nothing about the run (K10).
+        if let crate::outcome::RequiredObligation::ProcessExit(code) = obligation {
+            if let Some(Value::Object(mut receipt)) = effect.receipt {
+                receipt.insert("exit".into(), Value::from(code));
+                let receipt = Value::Object(receipt);
+                let _ = self.store.transaction(
+                    &self.cx.child(std::time::Duration::from_secs(30)),
+                    |txn| {
+                        journal::write_effect(
+                            txn,
+                            self.id,
+                            ticket.sequence,
+                            EffectState::Applied,
+                            Some(&receipt),
+                            None,
+                        )
+                    },
+                );
+            }
+        }
         Ok(())
     }
     /// Records natural completion/failure before cleanup. Recovery never infers

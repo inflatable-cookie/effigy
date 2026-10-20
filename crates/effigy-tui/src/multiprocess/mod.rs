@@ -1,7 +1,9 @@
 use std::io;
 use std::path::PathBuf;
 
-use effigy_process::{ProcessManagerError, ProcessSpec, ProcessSupervisor};
+use effigy_process::{
+    ProcessEvent, ProcessManagerError, ProcessSpec, ProcessSupervisor, ShutdownProgress,
+};
 use effigy_ui::UiError;
 
 mod config;
@@ -36,12 +38,74 @@ pub struct MultiProcessTuiOutcome {
     pub stopped_by_user: bool,
 }
 
+/// The processes one TUI session renders: children it supervises itself, or
+/// the workloads of a run another process supervises. The TUI reads events
+/// and sends input and stop requests; it never changes what runs.
+pub trait SessionProcesses {
+    fn next_event_timeout(&self, timeout: std::time::Duration) -> Option<ProcessEvent>;
+    fn send_input(&self, process: &str, input: &str) -> Result<(), ProcessManagerError>;
+    fn terminate_process(&self, process: &str) -> Result<(), ProcessManagerError>;
+    fn restart_process(&self, process: &str) -> Result<(), ProcessManagerError>;
+    fn startup_finished(&self) -> bool;
+    fn cancel_startup(&self);
+    fn take_startup_error(&self) -> Option<ProcessManagerError>;
+    fn exit_diagnostics(&self) -> Vec<(String, String)>;
+    fn terminate_all_graceful_with_progress(
+        &self,
+        timeout: std::time::Duration,
+        on_progress: &mut dyn FnMut(ShutdownProgress),
+    );
+}
+
+impl SessionProcesses for ProcessSupervisor {
+    fn next_event_timeout(&self, timeout: std::time::Duration) -> Option<ProcessEvent> {
+        ProcessSupervisor::next_event_timeout(self, timeout)
+    }
+    fn send_input(&self, process: &str, input: &str) -> Result<(), ProcessManagerError> {
+        ProcessSupervisor::send_input(self, process, input)
+    }
+    fn terminate_process(&self, process: &str) -> Result<(), ProcessManagerError> {
+        ProcessSupervisor::terminate_process(self, process)
+    }
+    fn restart_process(&self, process: &str) -> Result<(), ProcessManagerError> {
+        ProcessSupervisor::restart_process(self, process)
+    }
+    fn startup_finished(&self) -> bool {
+        ProcessSupervisor::startup_finished(self)
+    }
+    fn cancel_startup(&self) {
+        ProcessSupervisor::cancel_startup(self)
+    }
+    fn take_startup_error(&self) -> Option<ProcessManagerError> {
+        ProcessSupervisor::take_startup_error(self)
+    }
+    fn exit_diagnostics(&self) -> Vec<(String, String)> {
+        ProcessSupervisor::exit_diagnostics(self)
+    }
+    fn terminate_all_graceful_with_progress(
+        &self,
+        timeout: std::time::Duration,
+        on_progress: &mut dyn FnMut(ShutdownProgress),
+    ) {
+        ProcessSupervisor::terminate_all_graceful_with_progress(self, timeout, on_progress)
+    }
+}
+
+/// What a TUI session shows for one process tab when another process
+/// supervises it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionTab {
+    pub name: String,
+    pub pty: bool,
+    pub shutdown_on_exit: bool,
+}
+
 /// Host-owned session controls. Shutdown hooks run even when the event loop
 /// fails, and the UI always stops its children before reporting hook errors.
 pub struct MultiProcessTuiControl<'a> {
-    pub poll: &'a dyn Fn(&ProcessSupervisor) -> Result<bool, String>,
-    pub before_shutdown: &'a dyn Fn(&ProcessSupervisor) -> Result<(), String>,
-    pub after_shutdown: &'a dyn Fn(&ProcessSupervisor) -> Result<(), String>,
+    pub poll: &'a dyn Fn(&dyn SessionProcesses) -> Result<bool, String>,
+    pub before_shutdown: &'a dyn Fn(&dyn SessionProcesses) -> Result<(), String>,
+    pub after_shutdown: &'a dyn Fn(&dyn SessionProcesses) -> Result<(), String>,
 }
 
 impl std::fmt::Debug for MultiProcessTuiControl<'_> {
@@ -58,7 +122,7 @@ pub struct MultiProcessTuiOptions {
 }
 
 struct SessionRuntime {
-    supervisor: ProcessSupervisor,
+    supervisor: Box<dyn SessionProcesses>,
     terminal: TuiTerminal,
     state: SessionState,
     diagnostics: RuntimeDiagnostics,
@@ -121,22 +185,48 @@ pub fn run_multiprocess_tui_with_control(
         return Err(MultiProcessTuiError::NoProcesses);
     }
 
-    let mut runtime = setup::prepare_runtime_session(repo_root, processes, tab_order)?;
+    let runtime = setup::prepare_runtime_session(repo_root, processes, tab_order)?;
+    run_session(runtime, options, control)
+}
+
+/// A TUI over processes `source` supervises; `tabs` name them in order.
+pub fn run_multiprocess_tui_with_source(
+    repo_root: PathBuf,
+    source: Box<dyn SessionProcesses>,
+    tabs: Vec<SessionTab>,
+    tab_order: Vec<String>,
+    options: MultiProcessTuiOptions,
+    control: Option<&MultiProcessTuiControl<'_>>,
+) -> Result<MultiProcessTuiOutcome, MultiProcessTuiError> {
+    if tabs.is_empty() {
+        return Err(MultiProcessTuiError::NoProcesses);
+    }
+    let runtime = setup::prepare_source_session(repo_root, source, tabs, tab_order)?;
+    run_session(runtime, options, control)
+}
+
+fn run_session(
+    mut runtime: SessionRuntime,
+    options: MultiProcessTuiOptions,
+    control: Option<&MultiProcessTuiControl<'_>>,
+) -> Result<MultiProcessTuiOutcome, MultiProcessTuiError> {
     let result = runtime_loop::run_event_loop_with_control(&mut runtime, options, control);
     runtime.supervisor.cancel_startup();
-    let before_shutdown = control.map(|control| (control.before_shutdown)(&runtime.supervisor));
+    let before_shutdown =
+        control.map(|control| (control.before_shutdown)(runtime.supervisor.as_ref()));
     let startup_error = runtime.supervisor.take_startup_error();
 
     let summary_result = shutdown_and_render_summary(
         &mut runtime.terminal,
-        &runtime.supervisor,
+        runtime.supervisor.as_ref(),
         std::mem::take(&mut runtime.state.observed_non_zero),
         &runtime.state.logs,
         &runtime.state.process_started_at,
         &runtime.diagnostics,
     );
 
-    let after_shutdown = control.map(|control| (control.after_shutdown)(&runtime.supervisor));
+    let after_shutdown =
+        control.map(|control| (control.after_shutdown)(runtime.supervisor.as_ref()));
     let non_zero_exits = summary_result?;
     let stopped_by_user = result?;
     if let Some(result) = before_shutdown {

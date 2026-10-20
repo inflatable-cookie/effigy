@@ -1,6 +1,6 @@
 use crossterm::event::{KeyCode, KeyEvent};
 
-use effigy_process::ProcessSupervisor;
+use crate::multiprocess::SessionProcesses;
 
 use super::super::render::options_actions;
 use super::super::state::{OptionsAction, SessionState};
@@ -17,7 +17,7 @@ use navigation::{close_options_overlay, move_options_down, move_options_up};
 
 pub(super) fn handle_options_overlay_key(
     key: &KeyEvent,
-    supervisor: &ProcessSupervisor,
+    supervisor: &dyn SessionProcesses,
     state: &mut SessionState,
     max_offset: usize,
 ) -> Result<Option<LoopControl>, MultiProcessTuiError> {
@@ -51,7 +51,7 @@ pub(super) fn handle_options_overlay_key(
 
 fn dispatch_action(
     action: OptionsAction,
-    supervisor: &ProcessSupervisor,
+    supervisor: &dyn SessionProcesses,
     state: &mut SessionState,
     max_offset: usize,
 ) -> Result<Option<LoopControl>, MultiProcessTuiError> {

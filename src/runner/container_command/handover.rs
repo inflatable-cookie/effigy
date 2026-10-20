@@ -424,55 +424,40 @@ pub(super) fn stop_peer_data_services(
     Ok(notes)
 }
 
-/// End every live headless managed owner of this checkout whose plan is
-/// bound to `environment`, through the same path as `effigy <task> stop`.
+/// End every live managed run of this checkout whose journal binds it to
+/// `environment`, through the same kernel stop path as `effigy <task> stop`.
 /// Runs after the #195 handover record lands and before the environment
-/// stops: the record already leaves the environment recoverable by its
-/// own `up` or `down`, so a failure refuses with the environment still
-/// stoppable and says what to run. The owner's whole stop cascade -
-/// including its own `container <env> down` - finishes before the
-/// handover continues, so the wait uses the derived managed settle
-/// budget. The owner's exit releases its own task lock through the lock
-/// owner-token rules; a stale lock from a dead holder is still reclaimed
-/// only by the existing lock rules, never weakened here.
+/// stops: the record already leaves the environment recoverable by its own
+/// `up` or `down`, so a failure refuses with the environment still
+/// stoppable and says what to run. The run's whole settle - including its
+/// own `container <env> down` - finishes before the handover continues.
 fn end_headless_managed_owners(
     repo_root: &Path,
     target: &PendingHandover,
 ) -> Result<Vec<String>, RunnerError> {
     let mut notes = Vec::new();
-    for session in effigy_managed::runtime::live_headless_sessions(repo_root) {
-        if session.container_environment.as_deref() != Some(target.environment.as_str()) {
+    for holder in crate::runner::task_engine::live_holders(repo_root) {
+        let Some(run) = holder.managed_run.as_ref().and(holder.run) else {
+            continue;
+        };
+        if crate::runner::managed_run::bound_environment(run).as_deref()
+            != Some(target.environment.as_str())
+        {
             continue;
         }
-        settle_headless_owner(repo_root, &session).map_err(|error| {
+        let label = holder.scope_label();
+        crate::runner::managed_run::stop_run(run).map_err(|error| {
             RunnerError::task_invocation(format!(
-                "cannot hand over environment `{}`: failed to end managed task `{}` (profile `{}`) bound to it: {error}. The stop the handover requested is already in progress and settles or fails on its own; environment `{}` stays in a state its own `effigy container up` or `effigy container down` recovers",
-                target.environment, session.task, session.profile, target.environment,
+                "cannot hand over environment `{}`: failed to end managed run {run} (`{label}`) bound to it: {error}. The stop the handover requested is already in progress and settles or fails on its own; environment `{}` stays in a state its own `effigy container up` or `effigy container down` recovers",
+                target.environment, target.environment,
             ))
         })?;
         notes.push(format!(
-            "[handover] ended managed task `{}` (profile `{}`) bound to environment `{}`",
-            session.task, session.profile, target.environment,
+            "[handover] ended managed run {run} (`{label}`) bound to environment `{}`",
+            target.environment,
         ));
     }
     Ok(notes)
-}
-
-/// End one live headless owner through the same path as
-/// `effigy <task> stop` and wait for its real settle: every owned child
-/// process has ended - including the groups the owner exec'd into the
-/// environment - and every task lock the run took is released, through
-/// the derived settle budget. Refuses naming what is still running; it
-/// never advises the stop that is already in progress.
-fn settle_headless_owner(
-    repo_root: &Path,
-    session: &effigy_managed::runtime::LiveHeadlessSession,
-) -> Result<String, RunnerError> {
-    crate::runner::managed_settle::stop_and_settle_headless_run(
-        repo_root,
-        &session.task,
-        &session.profile,
-    )
 }
 
 /// Bring one environment down with the ordinary `container down` semantics:

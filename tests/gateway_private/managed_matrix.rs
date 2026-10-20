@@ -894,7 +894,6 @@ fn managed_matrix_missing_record_stop_and_live_views() {
 enum Authority {
     PreviousGeneration,
     Reaper,
-    ExitTrap,
     MissingRecordHandover,
 }
 
@@ -1007,54 +1006,6 @@ fn authority_matrix(authority: Authority) {
                 "refusal must retain the lease"
             );
         }
-        Authority::ExitTrap => {
-            observed_pids = case.ready(&mut owner, 0);
-            let rendered = effigy_containers::session::managed_lifecycle_command(
-                effigy_containers::session::ManagedLifecycleRequest {
-                    repo_root: &case.root,
-                    container_name: Some("stack"),
-                    owner_task: "prior",
-                    health_wait: false,
-                    health_wait_timeout_secs: 10,
-                    ready_message: None,
-                    dns_route_lines: &[],
-                    readiness_probe_urls: &[],
-                    setup_commands: &[],
-                    executable: case.root.join("effigy-wrapper").to_str().expect("wrapper"),
-                    secrets_required: false,
-                },
-            );
-            let output =
-                fs::File::create(case.root.join("prior-lifecycle.out")).expect("prior log");
-            // The background exec makes the rendered shell a direct child
-            // of the parent we kill. Its normal parent-death loop runs EXIT.
-            let script = format!("exec {rendered} & wait");
-            let mut parent = ManagedSupervisor(
-                case.shell(&script)
-                    .stdout(output.try_clone().expect("log"))
-                    .stderr(output)
-                    .spawn()
-                    .expect("prior parent"),
-            );
-            let marker = case
-                .root
-                .join(".effigy/runtime/managed-lifecycle/prior-stack.state");
-            let deadline = Instant::now() + Duration::from_secs(25);
-            while fs::read_to_string(&marker).unwrap_or_default().trim() != "ready" {
-                assert!(Instant::now() < deadline, "prior lifecycle readiness");
-                thread::sleep(Duration::from_millis(25));
-            }
-            parent.0.kill().expect("kill only prior parent");
-            parent.0.wait().expect("reap prior parent");
-            let deadline = Instant::now() + Duration::from_secs(5);
-            while fs::read_to_string(&marker).unwrap_or_default().trim() != "stopped" {
-                assert!(
-                    Instant::now() < deadline,
-                    "parent death must execute EXIT trap"
-                );
-                thread::sleep(Duration::from_millis(25));
-            }
-        }
         Authority::MissingRecordHandover => {
             observed_pids = case.ready(&mut owner, 0);
             fs::remove_file(&session).expect("remove live session");
@@ -1102,10 +1053,6 @@ fn managed_matrix_unsettled_previous_record_under_live_startup() {
 #[test]
 fn managed_matrix_reaper_under_live_holder() {
     authority_matrix(Authority::Reaper);
-}
-#[test]
-fn managed_matrix_exit_trap_on_parent_death() {
-    authority_matrix(Authority::ExitTrap);
 }
 #[test]
 fn managed_matrix_missing_record_handover_preserves_live_holder() {

@@ -3,54 +3,53 @@ use super::super::super::container_command::{
 };
 use super::super::super::gateway_command::gateway_up_for_managed_task;
 use super::super::super::managed_shell::{
-    managed_readiness_probe_urls, render_handoff_managed_lifecycle_command,
-    render_inline_compose_command, render_inline_managed_lifecycle_command,
-    render_inline_managed_shell_command, render_inline_managed_standard_exec_command,
+    managed_readiness_probe_urls, render_inline_compose_command,
+    render_inline_managed_exec_command, render_inline_managed_shell_command,
+    InlineManagedExecRequest,
 };
-use super::super::super::runtime_session_context::{
-    current_runtime_session_context, LeaseRefreshPolicy, RuntimeSessionContext,
-};
+use super::super::super::runtime_session_context::current_runtime_session_context;
 use super::super::super::system_command::run_workspace_with_repo_root_and_cleanup_override;
 use super::super::api::{
     ensure_inline_workspace_supported, resolve_execution_binding_resolution,
     ContainerExecutionBinding, InlineWorkspaceCapabilitySurface,
 };
 use super::super::planning::ExecutionPreflight;
-use crate::runner::container_runtime_prep::build_runtime_activation_plan;
 use crate::runner::error::RunnerError;
 use crate::runner::execute::sequence_run::run_in_process_sequence_steps;
-use crate::runner::execute::workspace_seeded::{
-    inside_container_handoff, run_workspace_seeded_task_session,
+use crate::runner::execute::workspace_seeded::inside_container_handoff;
+use crate::runner::managed_run::{
+    self, Addressed, Binding, ClientStart, EnvironmentPlan, ExecGroupSpec, Front, ManagedTab,
+    OwnedRun, TabSource, WorkloadSpec,
 };
 use crate::runner::task_engine::{
     refuse_live_legacy_holder, resolve_lock_wait_ms, RunKey, TaskRun, TaskRunRequest, TaskTarget,
 };
 use effigy_containers::compose::compose_args;
 use effigy_containers::session::{
-    container_exec_command, managed_gateway_command, managed_lifecycle_command,
-    managed_lifecycle_shutdown_command, managed_shell_command, managed_standard_exec_command,
-    resolve_effigy_invocation_prefix, ManagedLifecycleRequest, ManagedStandardExecRequest,
+    container_exec_command, managed_exec_command, managed_gateway_command, managed_shell_command,
+    resolve_effigy_invocation_prefix, ManagedExecRequest,
 };
-use effigy_containers::{
-    load_container_policy, ContainerCapturedExecOperation, EffectiveContainerPolicy,
-};
+use effigy_containers::{ContainerCapturedExecOperation, EffectiveContainerPolicy};
 use effigy_env::secret::SecretString;
 use effigy_execution::{ExecutionBindingInput, ExecutionSelectionPlan};
 use effigy_managed::command::resolve_managed_task_plan;
-use effigy_managed::presentation::run_or_render_managed_task;
 use effigy_managed::ManagedProcessRole;
 use effigy_managed::{
-    managed_execution_mode, parse_managed_invocation, render_run_step_sequence,
-    wrap_command_with_env, ManagedExecutionMode, ManagedInvocation,
+    managed_execution_mode, parse_managed_invocation, render_managed_plan,
+    render_run_step_sequence, wrap_command_with_env, ManagedExecutionMode, ManagedInvocation,
 };
 use effigy_manifest::ManifestTaskSecretsMode;
 use effigy_manifest::TaskSelection;
-use effigy_runtime_plan::{RuntimeActivationPlan, RuntimeActivationRoute};
 use std::collections::BTreeMap;
-use std::process::Command;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-const MANAGED_LIFECYCLE_CLEANUP_POLL_MS: u64 = 100;
+/// `up` of an environment a managed run starts: bounded, even for a cold
+/// engine that pulls images and boots a VM inside it.
+const ENVIRONMENT_UP_BUDGET: Duration = Duration::from_secs(900);
+/// Where an exec workload's remote session leader records itself, under
+/// the checkout. Each marker carries its effect's nonce (`EXEC_NONCE`).
+const EXEC_MARKER_DIR: &str = ".effigy/runtime/managed-exec";
+
 pub(in crate::runner) fn run_managed_task(
     preflight: &ExecutionPreflight,
     selection: &TaskSelection<'_>,
@@ -61,88 +60,21 @@ pub(in crate::runner) fn run_managed_task(
     let managed_invocation = (selection.task.mode.as_deref() == Some("tui"))
         .then(|| parse_managed_invocation(&preflight.runtime_args_exec))
         .transpose()?;
-    if let Some(invocation) = managed_invocation.as_ref() {
-        let control = match &invocation.action {
-            ManagedInvocation::Status { profile } => {
-                Some(("status", profile.as_str(), None, false))
-            }
-            ManagedInvocation::Logs {
-                profile,
-                process,
-                follow,
-            } => Some(("logs", profile.as_str(), process.as_deref(), *follow)),
-            ManagedInvocation::Stop { profile } => Some(("stop", profile.as_str(), None, false)),
-            ManagedInvocation::Run { .. } => None,
-        };
-        if let Some((command, profile, process, follow)) = control {
-            if !effigy_managed::has_concurrent_profile(selection.task, profile) {
-                return Err(effigy_managed::ManagedError::TaskManagedProfileNotFound {
-                    task: preflight.selector.task_name.clone(),
-                    profile: profile.to_owned(),
-                    available: effigy_managed::available_concurrent_profiles(selection.task),
-                }
-                .into());
-            }
-            let output = match command {
-                "status" => {
-                    if effigy_managed::runtime::managed_headless_state_readable(
-                        &selection.catalog.catalog_root,
-                        &preflight.selector.task_name,
-                        profile,
-                    ) {
-                        effigy_managed::runtime::managed_headless_status(
-                            &selection.catalog.catalog_root,
-                            &preflight.selector.task_name,
-                            profile,
-                        )
-                        .map_err(RunnerError::from)
-                    } else {
-                        crate::runner::managed_settle::headless_status_from_locks(
-                            &selection.catalog.catalog_root,
-                            &preflight.selector.task_name,
-                            profile,
-                        )
-                    }
-                }
-                "logs" => {
-                    if effigy_managed::runtime::managed_headless_state_readable(
-                        &selection.catalog.catalog_root,
-                        &preflight.selector.task_name,
-                        profile,
-                    ) {
-                        effigy_managed::runtime::managed_headless_logs(
-                            &selection.catalog.catalog_root,
-                            &preflight.selector.task_name,
-                            profile,
-                            process,
-                            follow,
-                        )
-                        .map_err(RunnerError::from)
-                    } else {
-                        crate::runner::managed_settle::headless_logs_from_locks(
-                            &selection.catalog.catalog_root,
-                            &preflight.selector.task_name,
-                            profile,
-                            process,
-                            follow,
-                        )
-                    }
-                }
-                "stop" => crate::runner::managed_settle::stop_and_settle_headless_run(
-                    &selection.catalog.catalog_root,
-                    &preflight.selector.task_name,
-                    profile,
-                ),
-                _ => unreachable!("managed control command"),
-            }?;
-            return Ok(Some(output));
-        }
+    if let Some(output) = run_managed_control(preflight, selection, managed_invocation.as_ref())? {
+        return Ok(Some(output));
     }
-    let default_execution_mode = managed_execution_mode()?;
+    // The detached supervisor re-resolves its client's invocation and owns
+    // the run it admits (§5.8 step 3).
+    let owner = managed_run::take_owner();
     let execution_mode = match managed_invocation.as_ref().map(|value| &value.action) {
-        Some(ManagedInvocation::Run { headless: true }) => ManagedExecutionMode::Headless,
-        _ => default_execution_mode,
+        _ if owner.is_some() => ManagedExecutionMode::Headless,
+        Some(ManagedInvocation::Run { headless: true, .. }) => ManagedExecutionMode::Headless,
+        _ => managed_execution_mode()?,
     };
+    let detach = matches!(
+        managed_invocation.as_ref().map(|value| &value.action),
+        Some(ManagedInvocation::Run { detach: true, .. })
+    );
     let binding_resolution = resolve_execution_binding_resolution(
         selection
             .catalog
@@ -174,17 +106,13 @@ pub(in crate::runner) fn run_managed_task(
         &selection.catalog.catalog_root,
         &effigy_routing::resolve_task_selection,
     )?;
-    let Some(mut plan) = plan else {
+    let Some(plan) = plan else {
         // Not a managed run: leave the environment untouched.
         if should_open_workspace_shell_for_non_managed_task(
             selection.task.run.is_some(),
             container_binding,
             container_handoff,
         ) {
-            let ContainerExecutionBinding::Container { name, .. } = &container_binding else {
-                unreachable!("workspace shell guard should only match named containers");
-            };
-            let _ = name;
             let target = TaskTarget::for_selection(
                 &preflight.resolved.resolved_root,
                 &preflight.selector.task_name,
@@ -220,284 +148,343 @@ pub(in crate::runner) fn run_managed_task(
         )?;
         return Ok(None);
     };
-    // One managed run owns a settle identity that every process it starts
-    // carries in its spawn environment, never in this process's global
-    // environment (K12): host children get it through their process spec,
-    // and the rendered exec commands inject it on the far side of the exec
-    // surface. Task runs anywhere in the run's tree record its digest. A
-    // managed run that does not own a settle identity blanks an inherited
-    // one so nothing it starts is attributed to a stale run.
-    let managed_run_token = matches!(
-        execution_mode,
-        ManagedExecutionMode::Headless | ManagedExecutionMode::Tui
+    if owner.is_none() && execution_mode == ManagedExecutionMode::RenderPlan {
+        return render_managed_plan(
+            &preflight.selector.task_name,
+            &selection.catalog.catalog_root,
+            &selection.catalog.manifest_path,
+            plan,
+        )
+        .map(Some)
+        .map_err(Into::into);
+    }
+    let context = ManagedContext {
+        preflight,
+        selection,
+        binding_resolution: &binding_resolution,
+        container_handoff,
+    };
+    if run_key.is_some() {
+        return Err(RunnerError::task_invocation(format!(
+            "`--run-id` names one-shot runs; managed task `{}` is addressed by its task and \
+             profile (`effigy {} status|logs|stop`)",
+            preflight.selector.task_name, preflight.selector.task_name
+        )));
+    }
+    match owner {
+        Some(owner) => own_managed_run(owner, &context, plan),
+        None => {
+            let front = match (execution_mode, detach) {
+                (_, true) => Front::Detached,
+                (ManagedExecutionMode::Tui, false) => Front::Tui,
+                _ => Front::Text,
+            };
+            start_managed_run(&context, plan, front)
+        }
+    }
+}
+
+/// `status`, `logs` and `stop` of one managed task and profile.
+fn run_managed_control(
+    preflight: &ExecutionPreflight,
+    selection: &TaskSelection<'_>,
+    invocation: Option<&effigy_managed::ParsedManagedInvocation>,
+) -> Result<Option<String>, RunnerError> {
+    let Some(invocation) = invocation else {
+        return Ok(None);
+    };
+    let profile = match &invocation.action {
+        ManagedInvocation::Status { profile }
+        | ManagedInvocation::Logs { profile, .. }
+        | ManagedInvocation::Stop { profile } => profile,
+        ManagedInvocation::Run { .. } => return Ok(None),
+    };
+    if !effigy_managed::has_concurrent_profile(selection.task, profile) {
+        return Err(effigy_managed::ManagedError::TaskManagedProfileNotFound {
+            task: preflight.selector.task_name.clone(),
+            profile: profile.to_owned(),
+            available: effigy_managed::available_concurrent_profiles(selection.task),
+        }
+        .into());
+    }
+    let target = TaskTarget::for_selection(
+        &preflight.resolved.resolved_root,
+        &preflight.selector.task_name,
+        selection,
     )
-    .then(generate_managed_run_token);
+    .with_profile(profile);
+    let addressed = Addressed {
+        target: &target,
+        task: &preflight.selector.task_name,
+        profile,
+    };
+    let output = match &invocation.action {
+        ManagedInvocation::Status { .. } => managed_run::status(&addressed, preflight.output_json),
+        ManagedInvocation::Logs {
+            process, follow, ..
+        } => managed_run::logs(&addressed, process.as_deref(), *follow),
+        ManagedInvocation::Stop { .. } => managed_run::stop(&addressed),
+        ManagedInvocation::Run { .. } => unreachable!("handled above"),
+    }?;
+    Ok(Some(output))
+}
+
+/// What both sides of a managed run resolve from the same invocation.
+struct ManagedContext<'a, 'catalog> {
+    preflight: &'a ExecutionPreflight,
+    selection: &'a TaskSelection<'catalog>,
+    binding_resolution: &'a super::super::api::ExecutionBindingResolution,
+    container_handoff: bool,
+}
+
+impl ManagedContext<'_, '_> {
+    fn target(&self, profile: &str) -> TaskTarget {
+        let target = TaskTarget::for_selection(
+            &self.preflight.resolved.resolved_root,
+            &self.preflight.selector.task_name,
+            self.selection,
+        );
+        if self.selection.task.mode.as_deref() == Some("tui") {
+            target.with_profile(profile)
+        } else {
+            target
+        }
+    }
+
+    fn repo(&self) -> &std::path::Path {
+        &self.selection.catalog.catalog_root
+    }
+
+    fn secrets_required(&self) -> bool {
+        matches!(
+            self.selection.task.secrets,
+            Some(ManifestTaskSecretsMode::Required)
+        )
+    }
+
+    fn task_secrets(&self) -> Result<Vec<(String, SecretString)>, RunnerError> {
+        if !self.secrets_required() {
+            return Ok(Vec::new());
+        }
+        super::standard::resolve_task_secret_env(
+            &self.preflight.resolved.resolved_root,
+            &self.preflight.secret_targets,
+            self.selection.task,
+            true,
+            self.preflight.selector.task_name == "dev",
+        )
+    }
+}
+
+/// The client: resolve what only the operator can supply (the vault
+/// passphrase), start the run's supervisor and attach the front end.
+fn start_managed_run(
+    context: &ManagedContext<'_, '_>,
+    plan: effigy_managed::ManagedTaskPlan,
+    front: Front,
+) -> Result<Option<String>, RunnerError> {
+    // Reading the task's secrets here prompts once for the passphrase on
+    // this terminal; the supervisor receives it in its spawn environment.
+    context.task_secrets()?;
+    let target = context.target(&plan.profile);
+    refuse_live_legacy_holder(&target)?;
+    let addressed = Addressed {
+        target: &target,
+        task: &context.preflight.selector.task_name,
+        profile: &plan.profile,
+    };
+    let terminal = (front == Front::Tui)
+        .then(crossterm::terminal::size)
+        .and_then(Result::ok);
+    let started = managed_run::start(&ClientStart {
+        addressed: Addressed {
+            target: &target,
+            task: &context.preflight.selector.task_name,
+            profile: &plan.profile,
+        },
+        invocation: &context.preflight.invocation,
+        cwd: context.preflight.invocation_cwd.clone(),
+        front,
+        terminal,
+    })?;
+    match front {
+        Front::Detached => managed_run::detach(started, &addressed),
+        Front::Text => managed_run::attach_text(started, &addressed),
+        Front::Tui => {
+            let (tabs, shells) = tui_tabs(context, &plan)?;
+            managed_run::attach_tui(
+                started,
+                &addressed,
+                context.repo().to_path_buf(),
+                tabs,
+                plan.tab_order.clone(),
+                shells,
+            )
+        }
+    }
+}
+
+/// The TUI's tabs: the lifecycle tab shows the run's own output, workloads
+/// show their logs, and shell tabs are local interactive terminals.
+fn tui_tabs(
+    context: &ManagedContext<'_, '_>,
+    plan: &effigy_managed::ManagedTaskPlan,
+) -> Result<(Vec<ManagedTab>, Vec<effigy_process::ProcessSpec>), RunnerError> {
+    let mut tabs = Vec::new();
+    let mut shells = Vec::new();
+    for process in &plan.processes {
+        let source = match process.role {
+            ManagedProcessRole::Lifecycle => TabSource::Output,
+            ManagedProcessRole::Standard => TabSource::Workload,
+            ManagedProcessRole::Shell => TabSource::Shell,
+        };
+        if source == TabSource::Shell {
+            shells.push(effigy_process::ProcessSpec {
+                name: process.name.clone(),
+                run: shell_command(context, process)?,
+                cwd: process.cwd.clone(),
+                start_after_ms: 0,
+                shutdown_on_exit: process.shutdown_on_exit,
+                pty: true,
+                env: BTreeMap::new(),
+            });
+        }
+        tabs.push(ManagedTab {
+            name: process.name.clone(),
+            pty: process.role != ManagedProcessRole::Lifecycle,
+            shutdown_on_exit: process.shutdown_on_exit,
+            source,
+        });
+    }
+    Ok((tabs, shells))
+}
+
+/// A shell tab's interactive attach, run by the TUI client itself.
+fn shell_command(
+    context: &ManagedContext<'_, '_>,
+    process: &effigy_managed::ManagedProcessSpec,
+) -> Result<String, RunnerError> {
+    let repo = context.repo();
+    if context.container_handoff {
+        return Ok(context
+            .selection
+            .catalog
+            .manifest
+            .shell
+            .as_ref()
+            .and_then(|shell| shell.run.clone())
+            .unwrap_or_else(default_handoff_managed_shell_run));
+    }
+    if let Some(policy) = inline_policy(context)? {
+        return Ok(render_inline_managed_shell_command(
+            repo,
+            &policy,
+            process.service.as_deref(),
+        ));
+    }
+    let executable = resolve_effigy_invocation_prefix().map_err(RunnerError::Cwd)?;
+    Ok(managed_shell_command(
+        repo,
+        context.binding_resolution.binding().container_name(),
+        process.service.as_deref(),
+        &executable,
+    ))
+}
+
+fn inline_policy(
+    context: &ManagedContext<'_, '_>,
+) -> Result<Option<EffectiveContainerPolicy>, RunnerError> {
+    if context.binding_resolution.is_inline_container() {
+        context.binding_resolution.effective_policy(context.repo())
+    } else {
+        Ok(None)
+    }
+}
+
+fn named_policy(
+    context: &ManagedContext<'_, '_>,
+) -> Result<Option<EffectiveContainerPolicy>, RunnerError> {
+    if context.binding_resolution.is_inline_container() {
+        Ok(None)
+    } else {
+        context.binding_resolution.effective_policy(context.repo())
+    }
+}
+
+/// The supervisor: everything the run starts, resolved on the host after
+/// admission: setup, gateway, environment and workloads.
+fn own_managed_run(
+    owner: managed_run::OwnerSession,
+    context: &ManagedContext<'_, '_>,
+    mut plan: effigy_managed::ManagedTaskPlan,
+) -> Result<Option<String>, RunnerError> {
+    let preflight = context.preflight;
+    let selection = context.selection;
+    let token = generate_managed_run_token();
+    let secrets = context.task_secrets()?;
     let env_schema_resolved = super::standard::resolve_env_schema_if_present(
         &selection.catalog.catalog_root,
         preflight.runtime_args_raw.env_schema_override.as_deref(),
         selection.catalog.manifest.env_schema.as_ref(),
         None,
     )?;
-    let container_repo_root =
-        binding_resolution.exec_working_dir(&selection.catalog.catalog_root)?;
-    let managed_task_secret_pairs = if execution_mode != ManagedExecutionMode::RenderPlan
-        && matches!(
-            selection.task.secrets,
-            Some(ManifestTaskSecretsMode::Required)
-        ) {
-        super::standard::resolve_task_secret_env(
-            &preflight.resolved.resolved_root,
-            &preflight.secret_targets,
-            selection.task,
-            true,
-            preflight.selector.task_name == "dev",
-        )?
-    } else {
-        Vec::new()
-    };
-    if !container_handoff
-        && execution_mode == ManagedExecutionMode::Tui
-        && !plan
-            .processes
-            .iter()
-            .any(|process| process.role == ManagedProcessRole::Lifecycle)
-        && matches!(
-            container_binding,
-            ContainerExecutionBinding::Container { .. }
-        )
-    {
-        let policy = load_container_policy(
-            &selection.catalog.catalog_root,
-            container_binding.requested_container_name().flatten(),
-        )
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-        let _activation_plan = managed_runtime_activation_plan(
-            &selection.catalog.catalog_root,
-            &policy,
-            container_binding.container_name(),
-            current_runtime_session_context().lease_refresh_policy,
-        );
-        validate_running_container_runtime_match(&selection.catalog.catalog_root, &policy)?;
-        maybe_start_managed_gateway(
-            &selection.catalog.catalog_root,
-            &preflight.selector.task_name,
-            selection,
-            plan.gateway_auto_start,
-        )?;
-        return run_workspace_seeded_task_session(
-            &selection.catalog.catalog_root,
-            container_binding,
-            preflight.runtime_args_raw.repo_override.clone(),
-            &preflight.selector.task_name,
-            &preflight.runtime_args_exec.passthrough,
-            Some(current_runtime_session_context().public_workspace_cleanup),
-        )
-        .map(Some);
-    }
-    materialize_special_managed_processes(
-        &mut plan,
-        preflight,
-        selection,
-        container_handoff,
-        &managed_task_secret_pairs,
-        managed_run_token.as_deref(),
-    )?;
     let role_schema_env = managed_role_schema_env(
         &preflight.catalogs,
         &selection.catalog.catalog_root,
         preflight.runtime_args_raw.env_schema_override.as_deref(),
     )?;
-    apply_schema_env_to_managed_role_processes(
-        &mut plan,
-        &role_schema_env,
-        &selection.catalog.catalog_root,
-    );
-
-    plan.run_token = managed_run_token.clone();
-    for process in &mut plan.processes {
-        process.secret_env.insert(
-            effigy_managed::RUN_TOKEN_ENV.to_owned(),
-            managed_run_token.clone().unwrap_or_default(),
-        );
-    }
-
-    let repo_for_task = selection.catalog.catalog_root.clone();
-    // Rendering the plan is a read; only a run that starts processes
-    // holds the task's gate. The profile is recorded on the run; the gate
-    // stays per task, so two profiles of one task still exclude each other.
-    // The managed frontend owns signals after setup. Keep the task engine's
-    // idle watcher from exiting between setup custody and frontend settlement.
-    let _managed_signals = (execution_mode != ManagedExecutionMode::RenderPlan)
-        .then(crate::runner::task_engine::CustodyWait::enter);
-    let mut task_run = None;
-    let mut task_target = TaskTarget::for_selection(
-        &preflight.resolved.resolved_root,
-        &preflight.selector.task_name,
-        selection,
-    );
-    if execution_mode != ManagedExecutionMode::RenderPlan {
-        if selection.task.mode.as_deref() == Some("tui") {
-            task_target = task_target.with_profile(&plan.profile);
-        }
-        refuse_live_legacy_holder(&task_target)?;
-        task_run = Some(TaskRun::begin(TaskRunRequest {
-            target: &task_target,
-            lock_wait_ms: resolve_lock_wait_ms(preflight.runtime_args_raw.lock_wait_ms)?,
-            custody: false,
-            managed_run_token: managed_run_token.as_deref(),
-            args: &preflight.runtime_args_exec.passthrough,
-            key: run_key,
-            admission: selection.task.admission,
-            cwd: Some(&preflight.invocation_cwd),
-        })?);
-    }
-
-    let setup_result = if let Some(run) = task_run.as_ref() {
-        let _parent = run.enter();
-        run_managed_setup_steps(
-            &mut plan,
-            run,
-            ManagedSetupContext {
-                preflight,
-                selection,
-                env_schema_resolved: &env_schema_resolved,
-                binding_resolution: &binding_resolution,
-                container_binding,
-                container_handoff,
-                container_repo_root: container_repo_root.as_deref(),
-                managed_task_secret_pairs: &managed_task_secret_pairs,
-            },
-        )
-    } else {
-        Ok(())
-    };
-    if setup_result.is_err() {
-        if let Some(run) = task_run.take() {
-            close_task_run(run, &task_target, &setup_result);
-        }
-        setup_result?;
-    }
-    if execution_mode != ManagedExecutionMode::RenderPlan && !container_handoff {
-        maybe_start_managed_gateway(
-            &repo_for_task,
-            &preflight.selector.task_name,
-            selection,
-            plan.gateway_auto_start,
-        )?;
-    }
-
-    let lifecycle_cleanup = if !container_handoff
-        && execution_mode != ManagedExecutionMode::RenderPlan
-        && plan
-            .processes
+    let container_repo_root = context
+        .binding_resolution
+        .exec_working_dir(context.repo())?;
+    let environment = environment_plan(context, &plan, &token, &role_schema_env)?;
+    let target = context.target(&plan.profile);
+    refuse_live_legacy_holder(&target)?;
+    let owned = OwnedRun {
+        target,
+        lock_wait_ms: resolve_lock_wait_ms(preflight.runtime_args_raw.lock_wait_ms)?,
+        admission: selection.task.admission,
+        cwd: preflight.invocation_cwd.clone(),
+        args: preflight.runtime_args_exec.passthrough.clone(),
+        token: token.clone(),
+        task: preflight.selector.task_name.clone(),
+        profile: plan.profile.clone(),
+        environment,
+        fail_on_non_zero: plan.fail_on_non_zero,
+        secrets: secrets
             .iter()
-            .any(|process| process.role == ManagedProcessRole::Lifecycle)
-    {
-        Some(build_managed_lifecycle_cleanup_command(
-            &repo_for_task,
-            container_binding,
-            managed_run_token.as_deref(),
-        )?)
-    } else {
-        None
+            .map(|(_, value)| value.expose().to_owned())
+            .collect(),
     };
-
-    if let Some(command) = lifecycle_cleanup.as_deref() {
-        if let Some(policy) = container_binding.load_effective_policy(&repo_for_task)? {
-            if let Some(token) = effigy_managed::runtime::failed_managed_run_token(
-                &repo_for_task,
-                &preflight.selector.task_name,
-                &plan.profile,
-                &policy.name,
-            )? {
-                // Never tear an environment down while a process of the
-                // judged-failed generation still holds a run-token lock: the
-                // dead-owner judgment can be wrong through a stale or missing
-                // record, and the down would SIGKILL a live run's execs.
-                crate::runner::managed_settle::refuse_recovery_while_token_live(
-                    &repo_for_task,
-                    &token,
-                )?;
-                crate::runner::managed_settle::refuse_environment_mutation(
-                    &repo_for_task,
-                    &policy.name,
-                    Some(std::process::id()),
-                    None,
-                )?;
-                // Preserve partial-admission drift protection before any down.
-                // A completed admission may adopt changed inputs by its existing
-                // rule; a recorded partial must still match its original inputs.
-                crate::runner::host_container_lease::retire_stale_detached_admission(
-                    &repo_for_task,
-                    &policy,
-                )?;
-                crate::runner::host_container_lease::partial_activation_recorded(
-                    &repo_for_task,
-                    &policy,
-                )?;
-                effigy_containers::exec::verify_owned_stack_for_shutdown(&repo_for_task, &policy)?;
-                run_managed_lifecycle_cleanup(command)?;
-                effigy_managed::runtime::clear_managed_run_failure(&repo_for_task, &token)?;
-            }
+    let prepare = |run: &mut TaskRun| -> Result<Vec<WorkloadSpec>, RunnerError> {
+        {
+            let _parent = run.enter();
+            run_managed_setup_steps(
+                &mut plan,
+                run,
+                ManagedSetupContext {
+                    preflight,
+                    selection,
+                    env_schema_resolved: &env_schema_resolved,
+                    binding_resolution: context.binding_resolution,
+                    container_binding: context.binding_resolution.binding(),
+                    container_handoff: context.container_handoff,
+                    container_repo_root: container_repo_root.as_deref(),
+                    managed_task_secret_pairs: &secrets,
+                },
+            )?;
         }
-    }
-
-    let end_container_process = if execution_mode == ManagedExecutionMode::RenderPlan {
-        None
-    } else {
-        build_container_process_end_hook(&repo_for_task, container_binding, container_handoff)?
+        if !context.container_handoff && plan.gateway_auto_start {
+            managed_run::record_gateway(run)?;
+            maybe_start_managed_gateway(
+                context.repo(),
+                &preflight.selector.task_name,
+                selection,
+                true,
+            )?;
+        }
+        managed_workloads(context, &plan, &secrets, &token, container_repo_root.as_deref())
     };
-    let settle = end_container_process
-        .as_ref()
-        .map(|hook| effigy_managed::ManagedRunSettle {
-            end_container_process: Some(hook as &dyn Fn(u32) -> Result<(), String>),
-        });
-
-    let managed_profile = plan.profile.clone();
-    let result = run_or_render_managed_task(
-        &preflight.selector.task_name,
-        &repo_for_task,
-        &selection.catalog.manifest_path,
-        plan,
-        execution_mode,
-        settle.as_ref(),
-    );
-
-    let finished = finish_managed_task(
-        result.map(Some).map_err(Into::into),
-        lifecycle_cleanup.as_deref(),
-        || {
-            if let Some(policy) = container_binding.load_effective_policy(&repo_for_task)? {
-                crate::runner::managed_settle::refuse_environment_mutation(
-                    &repo_for_task,
-                    &policy.name,
-                    Some(std::process::id()),
-                    managed_run_token.as_deref(),
-                )?;
-                effigy_containers::exec::verify_owned_stack_for_shutdown(&repo_for_task, &policy)?;
-            }
-            Ok(())
-        },
-        |error| {
-            if matches!(
-                execution_mode,
-                ManagedExecutionMode::Headless | ManagedExecutionMode::Tui
-            ) {
-                effigy_managed::runtime::record_managed_run_settle(
-                    &repo_for_task,
-                    &preflight.selector.task_name,
-                    &managed_profile,
-                    managed_run_token.as_deref(),
-                    error.map(ToString::to_string),
-                )?;
-            }
-            Ok(())
-        },
-    );
-    if let Some(run) = task_run {
-        close_task_run(run, &task_target, &finished);
-    }
-    finished
+    managed_run::own(owner, owned, prepare)
 }
 
 /// Records the managed run's outcome and releases its gate. Journal
@@ -784,161 +771,330 @@ fn normalize_managed_lifecycle_container_ref(container_name: &str) -> Option<&st
     }
 }
 
-fn managed_runtime_activation_plan(
-    repo_root: &std::path::Path,
-    policy: &EffectiveContainerPolicy,
-    container_name: Option<&str>,
-    lease_refresh_policy: LeaseRefreshPolicy,
-) -> RuntimeActivationPlan {
-    build_runtime_activation_plan(
-        repo_root,
-        &policy.name,
-        container_name,
-        Some(repo_root.to_path_buf()),
-        RuntimeActivationRoute::Managed,
-        RuntimeSessionContext {
-            lease_refresh_policy,
-            ..RuntimeSessionContext::default()
-        },
-    )
-}
-
-fn build_managed_lifecycle_cleanup_command(
-    repo_root: &std::path::Path,
-    container_binding: &ContainerExecutionBinding,
-    managed_run_token: Option<&str>,
-) -> Result<String, RunnerError> {
-    match container_binding {
-        ContainerExecutionBinding::Inline { .. } => {
-            let policy = container_binding
-                .load_effective_policy(repo_root)?
-                .ok_or_else(|| {
-                    RunnerError::task_invocation("missing inline workspace container policy")
-                })?;
-            Ok(render_inline_compose_command(
-                repo_root,
-                &policy,
-                &compose_args(&policy, ["down", "--remove-orphans"]),
-            ))
-        }
-        _ => {
-            let executable = resolve_effigy_invocation_prefix().map_err(RunnerError::Cwd)?;
-            let command = managed_lifecycle_shutdown_command(
-                repo_root,
-                container_binding
-                    .container_name()
-                    .and_then(normalize_managed_lifecycle_container_ref),
-                &executable,
-            );
-            Ok(match managed_run_token {
-                Some(token) => format!(
-                    "env EFFIGY_INTERNAL_MANAGED_STOP_TOKEN={} {command}",
-                    effigy_core::shell::shell_quote(token)
-                ),
-                None => command,
-            })
-        }
-    }
-}
-
-fn run_managed_lifecycle_cleanup(command: &str) -> Result<(), RunnerError> {
-    println!("{}", render_managed_lifecycle_cleanup_notice(command));
-    run_managed_lifecycle_cleanup_with_timeout(
-        command,
-        Duration::from_secs(effigy_managed::runtime::LIFECYCLE_CLEANUP_TIMEOUT_SECS),
-        Duration::from_millis(MANAGED_LIFECYCLE_CLEANUP_POLL_MS),
-    )
-}
-
-fn run_managed_lifecycle_cleanup_with_timeout(
-    command: &str,
-    timeout: Duration,
-    poll: Duration,
-) -> Result<(), RunnerError> {
-    let mut process = Command::new("sh");
-    process.arg("-lc").arg(command);
-    crate::runner::owned_children::configure_owned_process_group(&mut process);
-    let child = process.spawn().map_err(RunnerError::Cwd)?;
-    let deadline = Instant::now() + timeout;
-    match crate::runner::owned_children::wait_for_owned_child(child, deadline, poll)
-        .map_err(RunnerError::Cwd)?
-    {
-        crate::runner::owned_children::OwnedChildOutcome::Exited(status) if status.success() => {
-            Ok(())
-        }
-        crate::runner::owned_children::OwnedChildOutcome::Exited(status) => {
-            Err(RunnerError::task_invocation(format!(
-                "managed lifecycle cleanup failed: `{command}` exited with {status}"
-            )))
-        }
-        crate::runner::owned_children::OwnedChildOutcome::TimedOut => {
-            Err(RunnerError::task_invocation(format!(
-                "managed lifecycle cleanup timed out after {}s: `{command}`",
-                timeout.as_secs()
-            )))
-        }
-    }
-}
-
-fn render_managed_lifecycle_cleanup_notice(command: &str) -> String {
-    format!("[info] waiting for container shutdown: `{command}`")
-}
-
-fn finish_managed_task(
-    task_result: Result<Option<String>, RunnerError>,
-    cleanup_command: Option<&str>,
-    admit_cleanup: impl FnOnce() -> Result<(), RunnerError>,
-    record_settle: impl FnOnce(Option<&RunnerError>) -> Result<(), RunnerError>,
-) -> Result<Option<String>, RunnerError> {
-    // Child failure does not revoke the run's responsibility for its env.
-    let cleanup_result = cleanup_command
-        .map(|command| {
-            // A startup refusal may have left a foreign stack untouched. It
-            // must not turn unconditional cleanup into teardown authority.
-            admit_cleanup()?;
-            run_managed_lifecycle_cleanup(command)
-        })
-        .transpose()
-        .map(|_| ());
-    let runtime_cleanup_error = task_result
-        .as_ref()
-        .err()
-        .filter(|error| !matches!(error, RunnerError::TaskManagedNonZeroExit { .. }));
-    if let Err(record_error) =
-        record_settle(cleanup_result.as_ref().err().or(runtime_cleanup_error))
-    {
-        let primary = task_result.as_ref().err().or(cleanup_result.as_ref().err());
-        return Err(match primary {
-            Some(primary) => RunnerError::task_invocation(format!(
-                "{primary}\nmanaged settle outcome could not be recorded: {record_error}"
-            )),
-            None => record_error,
-        });
-    }
-    match (task_result, cleanup_result) {
-        (Ok(output), Ok(())) => Ok(output),
-        (Ok(_), Err(cleanup_error)) => Err(cleanup_error),
-        (Err(task_error), Ok(())) => Err(task_error),
-        (Err(task_error), Err(cleanup_error)) => Err(RunnerError::task_invocation(format!(
-            "{task_error}\nmanaged lifecycle cleanup also failed: {cleanup_error}"
-        ))),
-    }
-}
-
-fn materialize_special_managed_processes(
-    plan: &mut effigy_managed::ManagedTaskPlan,
-    preflight: &ExecutionPreflight,
-    selection: &TaskSelection<'_>,
-    container_handoff: bool,
-    managed_task_secret_pairs: &[(String, SecretString)],
-    managed_run_token: Option<&str>,
-) -> Result<(), RunnerError> {
-    let has_lifecycle = plan
+/// The environment a profile with a lifecycle entry brings up, or borrows.
+/// Inside a container handoff the workspace container is already the
+/// environment: there is nothing to bring up.
+fn environment_plan(
+    context: &ManagedContext<'_, '_>,
+    plan: &effigy_managed::ManagedTaskPlan,
+    token: &str,
+    schema_env: &BTreeMap<String, String>,
+) -> Result<Option<EnvironmentPlan>, RunnerError> {
+    let owns_environment = plan
         .processes
         .iter()
         .any(|process| process.role == ManagedProcessRole::Lifecycle);
-    let repo_root = selection.catalog.catalog_root.as_path();
-    let binding_resolution = resolve_execution_binding_resolution(
+    if !owns_environment || context.container_handoff {
+        return Ok(None);
+    }
+    let repo = context.repo().to_path_buf();
+    let inline = inline_policy(context)?;
+    let named = named_policy(context)?;
+    let Some(policy) = inline.as_ref().or(named.as_ref()) else {
+        return Ok(None);
+    };
+    if inline.is_none() {
+        validate_running_container_runtime_match(&repo, policy)?;
+    }
+    let (binding, up) = match &inline {
+        Some(policy) => (
+            Binding::Inline {
+                task: context.preflight.invocation.name.clone(),
+            },
+            render_inline_compose_command(&repo, policy, &compose_args(policy, ["up", "-d"])),
+        ),
+        None => {
+            let selector = context
+                .binding_resolution
+                .binding()
+                .container_name()
+                .and_then(normalize_managed_lifecycle_container_ref)
+                .map(str::to_owned);
+            let executable = resolve_effigy_invocation_prefix().map_err(RunnerError::Cwd)?;
+            (
+                Binding::Named {
+                    selector: selector.clone(),
+                },
+                managed_environment_up_command(&repo, selector.as_deref(), &executable),
+            )
+        }
+    };
+    let mut up_env = schema_env
+        .iter()
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect::<Vec<_>>();
+    up_env.push((effigy_managed::RUN_TOKEN_ENV.to_owned(), token.to_owned()));
+    if context.secrets_required() {
+        up_env.push(("EFFIGY_SECRETS_REQUIRED".to_owned(), "1".to_owned()));
+    }
+    let exec_workloads = plan.processes.iter().any(|process| {
+        process.role == ManagedProcessRole::Standard
+            && !process.run_on_host
+            && !matches!(
+                context.binding_resolution.binding(),
+                ContainerExecutionBinding::None | ContainerExecutionBinding::Host
+            )
+    });
+    let working_dir = context
+        .binding_resolution
+        .exec_working_dir(&repo)?
+        .unwrap_or_else(|| repo.clone());
+    let mut ready_lines = Vec::new();
+    if let Some(message) =
+        managed_ready_message(context.selection.task.ready_message.as_deref(), Some(policy))
+    {
+        ready_lines.push(format!("ready: {message}"));
+    }
+    for line in managed_dns_route_lines(Some(policy)) {
+        ready_lines.push(format!("route: {line}"));
+    }
+    Ok(Some(EnvironmentPlan {
+        name: policy.name.clone(),
+        repo: repo.clone(),
+        binding,
+        up,
+        up_env,
+        borrowed: environment_borrowed(&repo, policy),
+        exec_probe: exec_workloads.then(|| (policy.primary_service.clone(), working_dir)),
+        route_urls: if plan.readiness.health_wait {
+            managed_readiness_probe_urls(Some(policy))
+        } else {
+            Vec::new()
+        },
+        up_budget: ENVIRONMENT_UP_BUDGET,
+        readiness_budget: Duration::from_secs(plan.readiness.timeout_secs),
+        ready_lines,
+    }))
+}
+
+/// A stack its own explicit `effigy container up` started is borrowed: the
+/// run leaves it running (Tom's ruling 5). Anything else this run starts.
+fn environment_borrowed(repo: &std::path::Path, policy: &EffectiveContainerPolicy) -> bool {
+    crate::runner::host_container_lease::persistent_container_owner_recorded(repo, policy)
+}
+
+fn managed_environment_up_command(
+    repo: &std::path::Path,
+    selector: Option<&str>,
+    executable: &str,
+) -> String {
+    let mut command = format!("{executable} container");
+    if let Some(selector) = selector {
+        command.push(' ');
+        command.push_str(&effigy_core::shell::shell_quote(selector));
+    }
+    command.push_str(&format!(
+        " up --detach --repo {}",
+        effigy_core::shell::shell_quote(&repo.display().to_string())
+    ));
+    command
+}
+
+/// Every standard entry as a workload of the run. Host entries get the
+/// task's secrets through their spawn environment (K12); exec entries attach
+/// through the environment's exec surface once it is ready, and record the
+/// remote group their leader starts.
+fn managed_workloads(
+    context: &ManagedContext<'_, '_>,
+    plan: &effigy_managed::ManagedTaskPlan,
+    secrets: &[(String, SecretString)],
+    token: &str,
+    container_repo_root: Option<&std::path::Path>,
+) -> Result<Vec<WorkloadSpec>, RunnerError> {
+    let repo = context.repo();
+    let binding = context.binding_resolution.binding();
+    let inline = inline_policy(context)?;
+    let selector = binding
+        .container_name()
+        .and_then(normalize_managed_lifecycle_container_ref)
+        .map(str::to_owned);
+    let mut workloads = Vec::new();
+    for process in plan
+        .processes
+        .iter()
+        .filter(|process| process.role == ManagedProcessRole::Standard)
+    {
+        let run = crate::runner::secret_session::inject_secret_passphrase_into_internal_command(
+            process.run.clone(),
+        );
+        let setup = process.setup.as_ref().map(|setup| {
+            crate::runner::secret_session::inject_secret_passphrase_into_internal_command(
+                setup.clone(),
+            )
+        });
+        let runs_on_host = process.run_on_host
+            || context.container_handoff
+            || matches!(
+                binding,
+                ContainerExecutionBinding::None | ContainerExecutionBinding::Host
+            );
+        let mut plain = BTreeMap::from([(
+            effigy_managed::RUN_TOKEN_ENV.to_owned(),
+            token.to_owned(),
+        )]);
+        let mut secret = BTreeMap::new();
+        let (command, exec_group) = if runs_on_host {
+            secret.extend(
+                secrets
+                    .iter()
+                    .map(|(key, value)| (key.clone(), value.expose().to_owned())),
+            );
+            secret.extend(process.secret_env.clone());
+            let command = if context.container_handoff {
+                render_handoff_managed_standard_command(setup.as_deref(), &run)
+            } else {
+                match setup.as_deref() {
+                    Some(setup) => format!("{setup}\n{run}"),
+                    None => run,
+                }
+            };
+            (command, None)
+        } else {
+            plain.clear();
+            let wrapped = |command: String| {
+                wrap_with_managed_secret_env(
+                    wrap_command_with_run_token(command, Some(token), repo),
+                    secrets,
+                    repo,
+                )
+            };
+            let run = wrapped(run);
+            let setup = setup.map(wrapped);
+            let relative = std::path::Path::new(EXEC_MARKER_DIR).join(format!(
+                "{}-{}",
+                marker_component(&context.preflight.selector.task_name),
+                marker_component(&plan.profile)
+            ));
+            let file = format!("{}.pgid", marker_component(&process.name));
+            let host_marker = repo.join(&relative).join(&file);
+            let container_marker = container_repo_root.unwrap_or(repo).join(&relative).join(&file);
+            let (command, binding) = match &inline {
+                Some(policy) => (
+                    render_inline_managed_exec_command(InlineManagedExecRequest {
+                        repo_root: repo,
+                        policy,
+                        process_cwd: &process.cwd,
+                        container_repo_root,
+                        setup_command: setup.as_deref(),
+                        command: &run,
+                        exec_group: Some((&container_marker, managed_run::EXEC_NONCE)),
+                    }),
+                    Binding::Inline {
+                        task: context.preflight.invocation.name.clone(),
+                    },
+                ),
+                None => {
+                    let executable =
+                        resolve_effigy_invocation_prefix().map_err(RunnerError::Cwd)?;
+                    (
+                        managed_exec_command(ManagedExecRequest {
+                            repo_root: repo,
+                            container_name: selector.as_deref(),
+                            process_cwd: &process.cwd,
+                            container_repo_root,
+                            setup_command: setup.as_deref(),
+                            executable: &executable,
+                            command: &run,
+                            exec_group: Some((&container_marker, managed_run::EXEC_NONCE)),
+                        }),
+                        Binding::Named {
+                            selector: selector.clone(),
+                        },
+                    )
+                }
+            };
+            (
+                command,
+                Some(ExecGroupSpec {
+                    repo: repo.to_path_buf(),
+                    binding,
+                    marker: host_marker,
+                }),
+            )
+        };
+        workloads.push(WorkloadSpec {
+            name: process.name.clone(),
+            command,
+            cwd: process.cwd.clone(),
+            env: managed_run::workload_env(&plain, &secret),
+            pty: true,
+            start_after_ms: process.start_after_ms,
+            shutdown_on_exit: process.shutdown_on_exit,
+            exec_group,
+        });
+    }
+    Ok(workloads)
+}
+
+fn marker_component(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+/// A settle's release of an inline environment the run started: the task's
+/// inline policy, re-resolved from the repository, brought down by Compose.
+pub(in crate::runner) fn release_inline_managed_environment(
+    repo: &std::path::Path,
+    task: &str,
+    token: &str,
+) -> Result<String, RunnerError> {
+    let policy = inline_managed_policy(repo, task)?.ok_or_else(|| {
+        RunnerError::task_invocation(format!(
+            "task `{task}` no longer resolves to an inline workspace container"
+        ))
+    })?;
+    crate::runner::managed_settle::refuse_environment_mutation(
+        repo,
+        &policy.name,
+        None,
+        Some(token),
+    )?;
+    let plan = effigy_runtime::container_manager::compose_invocation_plan_from_tail_args(
+        repo,
+        &policy,
+        compose_args(&policy, ["down", "--remove-orphans"]),
+        effigy_containers::ContainerAction::Shutdown,
+        "inline managed environment down",
+    )
+    .map_err(RunnerError::from)?;
+    let output =
+        effigy_runtime::signals::run_compose_plan_capture(&policy, &plan).map_err(RunnerError::from)?;
+    if output.status.success() {
+        Ok(format!("inline environment `{}` is down", policy.name))
+    } else {
+        Err(RunnerError::task_invocation(format!(
+            "inline environment `{}` down exited {:?}: {}",
+            policy.name,
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        )))
+    }
+}
+
+/// The inline workspace container policy of `task` under `repo`.
+pub(in crate::runner) fn inline_managed_policy(
+    repo: &std::path::Path,
+    task: &str,
+) -> Result<Option<EffectiveContainerPolicy>, RunnerError> {
+    let invocation = effigy_cli::TaskInvocation {
+        name: task.to_owned(),
+        args: Vec::new(),
+    };
+    let preflight =
+        super::super::preflight::build_execution_preflight(&invocation, repo.to_path_buf())?;
+    let selection = match super::super::selection::resolve_task_selection(&invocation, &preflight)? {
+        super::super::selection::SelectionResolution::Selected { selection, .. } => selection,
+        super::super::selection::SelectionResolution::Output(_) => return Ok(None),
+    };
+    let resolution = resolve_execution_binding_resolution(
         selection
             .catalog
             .manifest
@@ -949,265 +1105,14 @@ fn materialize_special_managed_processes(
         selection.catalog.manifest.containers.as_ref(),
         &preflight.selector.task_name,
         selection.task,
-        "managed process materialization",
+        "managed environment settle",
     )?;
-    let container_binding = binding_resolution.binding();
-    if !has_lifecycle {
-        for process in &mut plan.processes {
-            let runs_on_host = process.run_on_host
-                || container_handoff
-                || matches!(
-                    container_binding,
-                    ContainerExecutionBinding::None | ContainerExecutionBinding::Host
-                );
-            if process.role == ManagedProcessRole::Standard && runs_on_host {
-                inject_managed_secret_env(process, managed_task_secret_pairs);
-            }
-        }
-        return Ok(());
+    if !resolution.is_inline_container() {
+        return Ok(None);
     }
-
-    let executable = resolve_effigy_invocation_prefix().map_err(RunnerError::Cwd)?;
-    let inline_policy = if binding_resolution.is_inline_container() {
-        binding_resolution.effective_policy(repo_root)?
-    } else {
-        None
-    };
-    let named_policy = if binding_resolution.is_inline_container() {
-        None
-    } else {
-        binding_resolution.effective_policy(repo_root)?
-    };
-    if !container_handoff {
-        if let Some(policy) = inline_policy.as_ref() {
-            let _activation_plan = managed_runtime_activation_plan(
-                repo_root,
-                policy,
-                Some(policy.name.as_str()),
-                LeaseRefreshPolicy::SkipRefresh,
-            );
-            validate_running_container_runtime_match(repo_root, policy)?;
-        } else if let Some(policy) = named_policy.as_ref() {
-            let _activation_plan = managed_runtime_activation_plan(
-                repo_root,
-                policy,
-                container_binding.container_name(),
-                current_runtime_session_context().lease_refresh_policy,
-            );
-            validate_running_container_runtime_match(repo_root, policy)?;
-        }
-    }
-    let ready_message = managed_ready_message(
-        selection.task.ready_message.as_deref(),
-        inline_policy.as_ref().or(named_policy.as_ref()),
-    );
-    let dns_route_lines = managed_dns_route_lines(inline_policy.as_ref().or(named_policy.as_ref()));
-    let readiness_probe_urls =
-        managed_readiness_probe_urls(inline_policy.as_ref().or(named_policy.as_ref()));
-    let health_wait_timeout_secs = plan.readiness.timeout_secs;
-    let exec_readiness_timeout_secs = plan.readiness.timeout_secs;
-    let container_repo_root = binding_resolution.exec_working_dir(repo_root)?;
-    for process in &mut plan.processes {
-        match process.role {
-            ManagedProcessRole::Lifecycle => {
-                process.run = if container_handoff {
-                    render_handoff_managed_lifecycle_command(
-                        repo_root,
-                        container_binding.container_name().unwrap_or("default"),
-                        &preflight.selector.task_name,
-                        selection.task.health_wait.unwrap_or(false),
-                        ready_message.as_deref(),
-                        &dns_route_lines,
-                        &[],
-                    )
-                } else if let Some(policy) = inline_policy.as_ref() {
-                    render_inline_managed_lifecycle_command(
-                        repo_root,
-                        policy,
-                        crate::runner::managed_shell::InlineManagedLifecycle {
-                            owner_task: &preflight.selector.task_name,
-                            health_wait: selection.task.health_wait.unwrap_or(false),
-                            health_wait_timeout_secs,
-                            ready_message: ready_message.as_deref(),
-                            dns_route_lines: &dns_route_lines,
-                            readiness_probe_urls: &readiness_probe_urls,
-                            setup_commands: &[],
-                        },
-                    )
-                } else {
-                    managed_lifecycle_command(ManagedLifecycleRequest {
-                        repo_root,
-                        container_name: container_binding.container_name(),
-                        owner_task: &preflight.selector.task_name,
-                        health_wait: selection.task.health_wait.unwrap_or(false),
-                        health_wait_timeout_secs,
-                        ready_message: ready_message.as_deref(),
-                        dns_route_lines: &dns_route_lines,
-                        readiness_probe_urls: &readiness_probe_urls,
-                        setup_commands: &[],
-                        executable: &executable,
-                        secrets_required: matches!(
-                            selection.task.secrets,
-                            Some(ManifestTaskSecretsMode::Required)
-                        ),
-                    })
-                };
-            }
-            ManagedProcessRole::Shell => {
-                process.run = if container_handoff {
-                    selection
-                        .catalog
-                        .manifest
-                        .shell
-                        .as_ref()
-                        .and_then(|shell| shell.run.clone())
-                        .unwrap_or_else(default_handoff_managed_shell_run)
-                } else if let Some(policy) = inline_policy.as_ref() {
-                    render_inline_managed_shell_command(
-                        repo_root,
-                        policy,
-                        &preflight.selector.task_name,
-                        process.service.as_deref(),
-                    )
-                } else {
-                    managed_shell_command(
-                        repo_root,
-                        container_binding.container_name(),
-                        &preflight.selector.task_name,
-                        process.service.as_deref(),
-                        &executable,
-                        exec_readiness_timeout_secs,
-                    )
-                };
-            }
-            ManagedProcessRole::Standard => {
-                let injected_run =
-                    crate::runner::secret_session::inject_secret_passphrase_into_internal_command(
-                        process.run.clone(),
-                    );
-                let injected_setup = process.setup.as_ref().map(|setup| {
-                    crate::runner::secret_session::inject_secret_passphrase_into_internal_command(
-                        setup.clone(),
-                    )
-                });
-                let runs_on_host = process.run_on_host
-                    || container_handoff
-                    || matches!(
-                        container_binding,
-                        ContainerExecutionBinding::None | ContainerExecutionBinding::Host
-                    );
-                if runs_on_host {
-                    inject_managed_secret_env(process, managed_task_secret_pairs);
-                }
-                let wrapped_run = if runs_on_host {
-                    injected_run
-                } else {
-                    wrap_with_managed_secret_env(
-                        wrap_command_with_run_token(injected_run, managed_run_token, repo_root),
-                        managed_task_secret_pairs,
-                        repo_root,
-                    )
-                };
-                let wrapped_setup = injected_setup.map(|setup| {
-                    if runs_on_host {
-                        setup
-                    } else {
-                        wrap_with_managed_secret_env(
-                            wrap_command_with_run_token(setup, managed_run_token, repo_root),
-                            managed_task_secret_pairs,
-                            repo_root,
-                        )
-                    }
-                });
-                if process.run_on_host
-                    || matches!(
-                        container_binding,
-                        ContainerExecutionBinding::None | ContainerExecutionBinding::Host
-                    )
-                {
-                    // Host entries receive secrets through ProcessSpec.env.
-                    // The setup script, if any, runs in that same environment.
-                    if let Some(setup) = wrapped_setup.as_deref() {
-                        process.run = format!("{setup}\n{wrapped_run}");
-                    } else {
-                        process.run = wrapped_run;
-                    }
-                    continue;
-                }
-                if container_handoff {
-                    process.run = render_handoff_managed_standard_command(
-                        wrapped_setup.as_deref(),
-                        &wrapped_run,
-                    );
-                    continue;
-                }
-                if let Some(policy) = inline_policy.as_ref() {
-                    process.exec_group_file = Some(container_side_exec_group_file(
-                        repo_root,
-                        container_repo_root.as_deref(),
-                        &preflight.selector.task_name,
-                        &plan.profile,
-                        &process.name,
-                    ));
-                    process.run = render_inline_managed_standard_exec_command(
-                        crate::runner::managed_shell::InlineManagedStandardExecRequest {
-                            repo_root,
-                            policy,
-                            owner_task: &preflight.selector.task_name,
-                            process_cwd: &process.cwd,
-                            container_repo_root: container_repo_root.as_deref(),
-                            setup_command: wrapped_setup.as_deref(),
-                            command: &wrapped_run,
-                            exec_readiness_timeout_secs,
-                            exec_group_file: process.exec_group_file.as_deref(),
-                        },
-                    );
-                } else if container_binding.container_name().is_some() {
-                    process.exec_group_file = Some(container_side_exec_group_file(
-                        repo_root,
-                        container_repo_root.as_deref(),
-                        &preflight.selector.task_name,
-                        &plan.profile,
-                        &process.name,
-                    ));
-                    process.run = managed_standard_exec_command(ManagedStandardExecRequest {
-                        repo_root,
-                        container_name: container_binding.container_name(),
-                        owner_task: &preflight.selector.task_name,
-                        process_cwd: &process.cwd,
-                        container_repo_root: container_repo_root.as_deref(),
-                        setup_command: wrapped_setup.as_deref(),
-                        executable: &executable,
-                        command: &wrapped_run,
-                        exec_readiness_timeout_secs,
-                        exec_group_file: process.exec_group_file.as_deref(),
-                    });
-                }
-            }
-        }
-    }
-    // Record the environment this plan's lifecycle owns so the headless
-    // runtime can persist it in session state; a whole-environment
-    // handover uses it to find the live owner bound to the environment
-    // coming down. Handoff sessions render no policy, so they bind to
-    // no environment here.
-    plan.container_environment = inline_policy
-        .as_ref()
-        .or(named_policy.as_ref())
-        .map(|policy| policy.name.clone());
-    Ok(())
+    resolution.effective_policy(&selection.catalog.catalog_root)
 }
 
-fn inject_managed_secret_env(
-    process: &mut effigy_managed::ManagedProcessSpec,
-    managed_task_secret_pairs: &[(String, SecretString)],
-) {
-    process.secret_env.extend(
-        managed_task_secret_pairs
-            .iter()
-            .map(|(key, value)| (key.clone(), value.expose().to_owned())),
-    );
-}
 
 /// Carry the managed run's settle token into a command that runs on the far
 /// side of the exec surface, where the host environment cannot follow.
@@ -1227,22 +1132,6 @@ fn wrap_command_with_run_token(
     )
 }
 
-/// Container-side path of one process's exec-group marker: the session
-/// leader the attach creates records itself here, and the stop reads the
-/// same file through the shared checkout.
-fn container_side_exec_group_file(
-    repo_root: &std::path::Path,
-    container_repo_root: Option<&std::path::Path>,
-    task_name: &str,
-    profile: &str,
-    process_name: &str,
-) -> std::path::PathBuf {
-    let base = container_repo_root.unwrap_or(repo_root);
-    effigy_managed::runtime::exec_group_file_path(
-        &effigy_managed::runtime::session_runtime_dir(base, task_name, profile),
-        process_name,
-    )
-}
 
 /// One unique token identifying this managed run's settle.
 fn generate_managed_run_token() -> String {
@@ -1258,26 +1147,6 @@ fn generate_managed_run_token() -> String {
     )
 }
 
-/// End recorded groups through label-verified full-ID runtime exec. Cleanup
-/// does not need exec readiness, and missing containers are already settled.
-fn build_container_process_end_hook(
-    repo_root: &std::path::Path,
-    container_binding: &ContainerExecutionBinding,
-    container_handoff: bool,
-) -> Result<Option<impl Fn(u32) -> Result<(), String>>, RunnerError> {
-    let policy = if container_handoff {
-        None
-    } else {
-        container_binding.load_effective_policy(repo_root)?
-    };
-    let repo_root = repo_root.to_path_buf();
-    Ok(policy.map(|policy| {
-        move |pgid| {
-            effigy_containers::exec::end_owned_container_process_group(&repo_root, &policy, pgid)
-                .map_err(|error| error.to_string())
-        }
-    }))
-}
 
 fn wrap_with_managed_secret_env(
     command: String,
@@ -1314,27 +1183,6 @@ fn managed_role_schema_env(
         .unwrap_or_default())
 }
 
-/// Shell and lifecycle role processes are not task references, so they never
-/// pass through task-render env. Fold the resolved schema env into their run
-/// commands with the same `env 'KEY=VALUE' ...` prefix used for vault
-/// secrets; standard (task) processes already carry schema env from render.
-fn apply_schema_env_to_managed_role_processes(
-    plan: &mut effigy_managed::ManagedTaskPlan,
-    schema_env: &BTreeMap<String, String>,
-    repo_root: &std::path::Path,
-) {
-    if schema_env.is_empty() {
-        return;
-    }
-    for process in &mut plan.processes {
-        if matches!(
-            process.role,
-            ManagedProcessRole::Shell | ManagedProcessRole::Lifecycle
-        ) {
-            process.run = wrap_command_with_env(process.run.clone(), schema_env, repo_root);
-        }
-    }
-}
 
 fn managed_ready_message(
     explicit_ready_message: Option<&str>,
@@ -1446,20 +1294,12 @@ fn default_handoff_managed_shell_run() -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_schema_env_to_managed_role_processes, default_handoff_managed_shell_run,
-        finish_managed_task, managed_dns_route_lines, managed_role_schema_env,
-        managed_runtime_activation_plan, render_handoff_managed_standard_command,
-        render_managed_lifecycle_cleanup_notice, run_managed_lifecycle_cleanup_with_timeout,
+        default_handoff_managed_shell_run, managed_dns_route_lines, managed_role_schema_env,
+        render_handoff_managed_standard_command,
         should_open_workspace_shell_for_non_managed_task, ContainerExecutionBinding,
-        ManagedProcessRole,
     };
-    use crate::runner::error::RunnerError;
     use crate::runner::execute::workspace_seeded::render_workspace_seeded_task_command;
-    use crate::runner::managed_shell::{
-        managed_readiness_probe_urls, render_inline_managed_lifecycle_command,
-        render_inline_managed_standard_exec_command, InlineManagedStandardExecRequest,
-    };
-    use crate::runner::runtime_session_context::LeaseRefreshPolicy;
+    use crate::runner::managed_shell::managed_readiness_probe_urls;
     use effigy_containers::{
         EffectiveComposeSource, EffectiveContainerPolicy, EffectiveDnsRoute, EffectiveServiceAlias,
     };
@@ -1467,107 +1307,9 @@ mod tests {
         LoadedCatalog, ManifestContainerDriver, ManifestContainerOnTaskExit,
         ManifestContainerShutdownMode, ManifestContainerStartup,
     };
-    use effigy_runtime_plan::{RuntimeActivationRoute, RuntimeLeasePolicy};
-    use std::collections::BTreeMap;
     use std::fs;
     use std::path::Path;
     use std::path::PathBuf;
-
-    #[test]
-    fn finish_managed_task_preserves_primary_failure_and_runs_cleanup() {
-        let error = finish_managed_task(
-            Err(RunnerError::task_invocation("task failed")),
-            Some("missing-cleanup-command >/dev/null 2>&1"),
-            || Ok(()),
-            |_| Ok(()),
-        )
-        .expect_err("primary task failure should surface");
-
-        let rendered = error.to_string();
-        assert!(rendered.contains("task failed"), "got: {rendered}");
-        assert!(
-            rendered.contains("managed lifecycle cleanup also failed"),
-            "got: {rendered}"
-        );
-    }
-
-    #[test]
-    fn finish_managed_task_does_not_teardown_an_unverified_stack() {
-        let private = tempfile::tempdir().expect("private cleanup fixture");
-        let marker = private.path().join("cleanup-ran");
-        let command = format!(
-            "touch {}",
-            effigy_core::shell::shell_quote(&marker.display().to_string())
-        );
-        let error = finish_managed_task(
-            Err(RunnerError::task_invocation("startup refused")),
-            Some(&command),
-            || Err(RunnerError::task_invocation("foreign ownership")),
-            |_| Ok(()),
-        )
-        .expect_err("unverified cleanup refuses");
-        assert!(!marker.exists(), "no teardown effect");
-        let rendered = error.to_string();
-        assert!(rendered.contains("startup refused"), "{rendered}");
-        assert!(rendered.contains("foreign ownership"), "{rendered}");
-    }
-
-    #[test]
-    fn finish_managed_task_records_surviving_host_process_even_after_successful_down() {
-        let recorded = std::cell::RefCell::new(None);
-        let error = finish_managed_task(
-            Err(RunnerError::task_invocation(
-                "managed host cleanup failed: api pid 123",
-            )),
-            Some("true"),
-            || Ok(()),
-            |error| {
-                *recorded.borrow_mut() = error.map(ToString::to_string);
-                Ok(())
-            },
-        )
-        .expect_err("host failure survives down");
-        assert!(error.to_string().contains("api pid 123"));
-        assert!(recorded
-            .borrow()
-            .as_ref()
-            .expect("recorded host error")
-            .contains("api pid 123"));
-    }
-
-    #[test]
-    fn finish_managed_task_reports_a_genuine_cleanup_failure() {
-        let recorded = std::cell::RefCell::new(None);
-        let error = finish_managed_task(
-            Ok(None),
-            Some("exit 19"),
-            || Ok(()),
-            |error| {
-                *recorded.borrow_mut() = error.map(ToString::to_string);
-                Ok(())
-            },
-        )
-        .expect_err("down failed");
-        assert!(error
-            .to_string()
-            .contains("managed lifecycle cleanup failed"));
-        assert!(recorded
-            .borrow()
-            .as_ref()
-            .expect("recorded cleanup error")
-            .contains("exit 19"));
-    }
-
-    #[test]
-    fn managed_lifecycle_cleanup_notice_is_stable() {
-        let rendered =
-            render_managed_lifecycle_cleanup_notice("effigy container stack down --repo /tmp/demo");
-
-        assert_eq!(
-            rendered,
-            "[info] waiting for container shutdown: `effigy container stack down --repo /tmp/demo`"
-        );
-    }
 
     #[test]
     fn handoff_shell_default_avoids_hardcoded_zsh_requirement() {
@@ -1634,169 +1376,6 @@ mod tests {
             rendered.contains("managed setup failed before process launch"),
             "got: {rendered}"
         );
-    }
-
-    #[test]
-    fn inline_managed_standard_exec_waits_while_lifecycle_starts() {
-        let rendered =
-            render_inline_managed_standard_exec_command(InlineManagedStandardExecRequest {
-                repo_root: Path::new("/tmp/repo"),
-                policy: &test_policy(),
-                owner_task: "dev",
-                process_cwd: Path::new("/tmp/repo/acme-front"),
-                container_repo_root: Some(Path::new("/workspace-root/repo")),
-                setup_command: None,
-                command: "bun run dev",
-                exec_readiness_timeout_secs: 45,
-                exec_group_file: None,
-            });
-
-        assert!(
-            rendered.contains(
-                "while true; do if [ -f \"$state_path\" ] && [ \"$(cat \"$state_path\")\" = starting ]; then sleep 1; continue; fi; if"
-            ),
-            "got: {rendered}"
-        );
-        assert!(rendered.contains("+ 45 )); while true;"), "got: {rendered}");
-    }
-
-    #[test]
-    fn inline_managed_lifecycle_marks_started_after_up_before_ready() {
-        let rendered = render_inline_managed_lifecycle_command(
-            Path::new("/tmp/repo"),
-            &test_policy(),
-            crate::runner::managed_shell::InlineManagedLifecycle {
-                owner_task: "dev",
-                health_wait: false,
-                health_wait_timeout_secs: 60,
-                ready_message: None,
-                dns_route_lines: &[],
-                readiness_probe_urls: &[],
-                setup_commands: &[],
-            },
-        );
-
-        let up_index = rendered.find("up").expect("lifecycle up");
-        // Single quotes are re-quoted by shell quoting, so match the
-        // quote-free state-write markers.
-        let started_index = rendered
-            .find("started > ")
-            .expect("started marker after up");
-        let ready_index = rendered.find("ready > ").expect("ready marker");
-        assert!(up_index < started_index, "got: {rendered}");
-        assert!(started_index < ready_index, "got: {rendered}");
-    }
-
-    #[test]
-    fn inline_managed_standard_exec_runs_setup_before_attach() {
-        let rendered =
-            render_inline_managed_standard_exec_command(InlineManagedStandardExecRequest {
-                repo_root: Path::new("/tmp/repo"),
-                policy: &test_policy(),
-                owner_task: "dev",
-                process_cwd: Path::new("/tmp/repo/acme-front"),
-                container_repo_root: Some(Path::new("/workspace-root/repo")),
-                setup_command: Some("printf setup-ok; "),
-                command: "bun run dev",
-                exec_readiness_timeout_secs: 45,
-                exec_group_file: None,
-            });
-
-        let setup_index = rendered.find("printf setup-ok").expect("setup command");
-        let attach_index = rendered
-            .find("bun run dev")
-            .expect("attach command should be present");
-        assert!(setup_index < attach_index, "got: {rendered}");
-    }
-
-    #[test]
-    fn inline_managed_standard_exec_records_the_remote_session_leader() {
-        let rendered =
-            render_inline_managed_standard_exec_command(InlineManagedStandardExecRequest {
-                repo_root: Path::new("/tmp/repo"),
-                policy: &test_policy(),
-                owner_task: "dev",
-                process_cwd: Path::new("/tmp/repo/acme-front"),
-                container_repo_root: Some(Path::new("/workspace-root/repo")),
-                setup_command: None,
-                command: "bun run dev",
-                exec_readiness_timeout_secs: 45,
-                exec_group_file: Some(Path::new(
-                    "/workspace-root/repo/.effigy/runtime/managed/dev-default/exec/front.pgid",
-                )),
-            });
-
-        assert!(
-            rendered.contains("mkdir -p ")
-                && rendered
-                    .contains("/workspace-root/repo/.effigy/runtime/managed/dev-default/exec")
-                && rendered.contains("if command -v setsid >/dev/null 2>&1; then setsid sh -c "),
-            "inline attach must run under its own recorded session: {rendered}"
-        );
-        assert!(
-            rendered.contains("\"$$\" > ")
-                && rendered.contains(
-                    "/workspace-root/repo/.effigy/runtime/managed/dev-default/exec/front.pgid"
-                )
-                && rendered.contains("2>/dev/null; "),
-            "inline attach must record the session leader: {rendered}"
-        );
-        assert!(
-            rendered.contains("bun run dev"),
-            "the routed command still runs inside the recorded leader: {rendered}"
-        );
-    }
-
-    #[test]
-    fn managed_runtime_activation_plan_keeps_identity_and_lease_policy() {
-        let plan = managed_runtime_activation_plan(
-            Path::new("/tmp/repo"),
-            &test_policy(),
-            Some("stack"),
-            LeaseRefreshPolicy::RefreshOnActivation,
-        );
-
-        assert_eq!(plan.request.repo_root, Path::new("/tmp/repo"));
-        assert_eq!(plan.request.policy_name, "stack");
-        assert_eq!(plan.request.container_name.as_deref(), Some("stack"));
-        assert_eq!(
-            plan.request.repo_override.as_deref(),
-            Some(Path::new("/tmp/repo"))
-        );
-        assert_eq!(plan.route, RuntimeActivationRoute::Managed);
-        assert_eq!(plan.lease.policy, RuntimeLeasePolicy::RefreshOnActivation);
-    }
-
-    #[test]
-    fn managed_inline_activation_plan_can_skip_host_lease_refresh() {
-        let plan = managed_runtime_activation_plan(
-            Path::new("/tmp/repo"),
-            &test_policy(),
-            Some("stack"),
-            LeaseRefreshPolicy::SkipRefresh,
-        );
-
-        assert_eq!(plan.lease.policy, RuntimeLeasePolicy::Skip);
-    }
-
-    #[test]
-    fn managed_activation_plan_preserves_policy_identity_without_container_name() {
-        let plan = managed_runtime_activation_plan(
-            Path::new("/tmp/repo"),
-            &test_policy(),
-            None,
-            LeaseRefreshPolicy::SkipRefresh,
-        );
-
-        assert_eq!(plan.request.repo_root, Path::new("/tmp/repo"));
-        assert_eq!(plan.request.policy_name, "stack");
-        assert_eq!(plan.request.container_name, None);
-        assert_eq!(plan.route, RuntimeActivationRoute::Managed);
-        assert_eq!(
-            plan.request.repo_override.as_deref(),
-            Some(Path::new("/tmp/repo"))
-        );
-        assert_eq!(plan.lease.policy, RuntimeLeasePolicy::Skip);
     }
 
     #[test]
@@ -1952,94 +1531,6 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
     }
 
-    fn role_process(
-        name: &str,
-        role: ManagedProcessRole,
-        run: &str,
-    ) -> effigy_managed::ManagedProcessSpec {
-        effigy_managed::ManagedProcessSpec {
-            name: name.to_owned(),
-            role,
-            run: run.to_owned(),
-            secret_env: BTreeMap::new(),
-            setup: None,
-            setup_steps: Vec::new(),
-            cwd: PathBuf::from("/tmp/repo"),
-            service: None,
-            start_after_ms: 0,
-            shutdown_on_exit: false,
-            run_on_host: false,
-            exec_group_file: None,
-        }
-    }
-
-    fn role_process_plan(
-        processes: Vec<effigy_managed::ManagedProcessSpec>,
-    ) -> effigy_managed::ManagedTaskPlan {
-        effigy_managed::ManagedTaskPlan {
-            mode: "tui".to_owned(),
-            profile: "dev".to_owned(),
-            processes,
-            tab_order: Vec::new(),
-            fail_on_non_zero: false,
-            passthrough: Vec::new(),
-            gateway_auto_start: false,
-            readiness: effigy_managed::ManagedTaskReadiness::default(),
-            container_environment: None,
-            run_token: None,
-        }
-    }
-
-    #[test]
-    fn shell_and_lifecycle_role_processes_gain_schema_env_prefix() {
-        let mut plan = role_process_plan(vec![
-            role_process(
-                "shell",
-                ManagedProcessRole::Shell,
-                "exec ${SHELL:-/bin/zsh} -i",
-            ),
-            role_process(
-                "lifecycle",
-                ManagedProcessRole::Lifecycle,
-                "effigy container up --detach",
-            ),
-            role_process("api", ManagedProcessRole::Standard, "cargo run -p cp-api"),
-        ]);
-        let env = BTreeMap::from([("ENVIRONMENT".to_owned(), "effigy".to_owned())]);
-
-        apply_schema_env_to_managed_role_processes(&mut plan, &env, Path::new("/tmp/repo"));
-
-        let shell = &plan.processes[0].run;
-        assert!(
-            shell.starts_with("env 'ENVIRONMENT=effigy' sh -c"),
-            "got: {shell}"
-        );
-        assert!(shell.contains("exec ${SHELL:-/bin/zsh} -i"), "got: {shell}");
-        let lifecycle = &plan.processes[1].run;
-        assert!(
-            lifecycle.starts_with("env 'ENVIRONMENT=effigy' sh -c"),
-            "got: {lifecycle}"
-        );
-        assert_eq!(plan.processes[2].run, "cargo run -p cp-api");
-    }
-
-    #[test]
-    fn role_processes_stay_unchanged_without_schema_env() {
-        let mut plan = role_process_plan(vec![role_process(
-            "shell",
-            ManagedProcessRole::Shell,
-            "exec ${SHELL:-/bin/zsh} -i",
-        )]);
-
-        apply_schema_env_to_managed_role_processes(
-            &mut plan,
-            &BTreeMap::new(),
-            Path::new("/tmp/repo"),
-        );
-
-        assert_eq!(plan.processes[0].run, "exec ${SHELL:-/bin/zsh} -i");
-    }
-
     fn test_policy() -> EffectiveContainerPolicy {
         EffectiveContainerPolicy {
             render: None,
@@ -2081,231 +1572,5 @@ mod tests {
             detach_timeout_secs: 10,
             host_processes: Vec::new(),
         }
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn timeout_descendants_managed_success_and_nonzero_exit() {
-        let _lock = crate::runner::owned_children::hold_group_cleanup_test_lock();
-        run_managed_lifecycle_cleanup_with_timeout(
-            "true",
-            std::time::Duration::from_secs(2),
-            std::time::Duration::from_millis(20),
-        )
-        .expect("true must succeed");
-        let error = run_managed_lifecycle_cleanup_with_timeout(
-            "false",
-            std::time::Duration::from_secs(2),
-            std::time::Duration::from_millis(20),
-        )
-        .expect_err("false must fail");
-        let rendered = error.to_string();
-        assert!(
-            rendered.contains("managed lifecycle cleanup failed"),
-            "got: {rendered}"
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn timeout_descendants_managed_reaps_leader_and_descendant() {
-        use crate::runner::owned_children::timeout_descendant_proof::TimeoutDescendantFixture;
-        use std::time::{Duration, Instant};
-
-        let _lock = crate::runner::owned_children::hold_group_cleanup_test_lock();
-        let mut fixture = TimeoutDescendantFixture::new("effigy-managed-timeout-");
-        fixture.spawn_unrelated_sibling();
-        let command = fixture.hang_command();
-        let started = Instant::now();
-        let error = run_managed_lifecycle_cleanup_with_timeout(
-            &command,
-            Duration::from_millis(2_000),
-            Duration::from_millis(20),
-        )
-        .expect_err("hang must time out");
-        let pids = fixture.wait_for_recorded_pids();
-        let rendered = error.to_string();
-        assert!(
-            rendered.contains("timed out"),
-            "expected cleanup timeout, got: {rendered}"
-        );
-        fixture.assert_owned_gone(&pids);
-        fixture.assert_sibling_alive();
-        assert!(
-            started.elapsed() < Duration::from_secs(10),
-            "timeout must not wait out /bin/sleep 300"
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn timeout_descendants_managed_reaps_term_immune_descendant() {
-        use crate::runner::owned_children::timeout_descendant_proof::TimeoutDescendantFixture;
-        use std::time::{Duration, Instant};
-
-        let _lock = crate::runner::owned_children::hold_group_cleanup_test_lock();
-        let mut fixture = TimeoutDescendantFixture::new("effigy-managed-timeout-term-immune-");
-        fixture.spawn_unrelated_sibling();
-        let command = fixture.hang_command_ignoring_term();
-        let started = Instant::now();
-        let error = run_managed_lifecycle_cleanup_with_timeout(
-            &command,
-            Duration::from_millis(2_000),
-            Duration::from_millis(20),
-        )
-        .expect_err("hang must time out");
-        let pids = fixture.wait_for_recorded_pids();
-        let rendered = error.to_string();
-        assert!(
-            rendered.contains("timed out"),
-            "expected cleanup timeout, got: {rendered}"
-        );
-        fixture.wait_until_owned_gone(&pids);
-        fixture.assert_sibling_alive();
-        assert!(
-            started.elapsed() < Duration::from_secs(10),
-            "timeout must not wait out /bin/sleep 300"
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn release_preparation_fixture_timeout_descendants_managed_interrupt_reaps_leader_and_descendant(
-    ) {
-        use crate::runner::owned_children::timeout_descendant_proof::TimeoutDescendantFixture;
-        use std::thread;
-        use std::time::{Duration, Instant};
-
-        let _locks = crate::runner::owned_children::hold_signal_proof_test_locks();
-        let mut fixture = TimeoutDescendantFixture::new("effigy-managed-interrupt-");
-        fixture.spawn_unrelated_sibling();
-        let command = fixture.hang_command();
-        let started = Instant::now();
-        let handle = thread::spawn(move || {
-            run_managed_lifecycle_cleanup_with_timeout(
-                &command,
-                Duration::from_secs(30),
-                Duration::from_millis(20),
-            )
-        });
-        TimeoutDescendantFixture::wait_until_signal_scope_active();
-        let pids = fixture.wait_for_recorded_pids();
-        crate::runner::owned_children::record_test_signal_initiation(libc::SIGINT);
-        let raise_result = unsafe { libc::raise(libc::SIGINT) };
-        crate::runner::owned_children::record_test_signal_raise_result(libc::SIGINT, raise_result);
-        let _ = handle.join().expect("managed interrupt wait thread");
-        fixture.wait_until_owned_gone(&pids);
-        fixture.assert_sibling_alive();
-        assert!(
-            started.elapsed() < Duration::from_secs(10),
-            "interrupt must not wait out /bin/sleep 300"
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn release_preparation_fixture_timeout_descendants_managed_interrupt_with_active_scope_reaps_group(
-    ) {
-        use crate::runner::owned_children::timeout_descendant_proof::TimeoutDescendantFixture;
-        use std::thread;
-        use std::time::{Duration, Instant};
-
-        let _locks = crate::runner::owned_children::hold_signal_proof_test_locks();
-        let _scope = crate::runner::owned_children::OwnedChildrenScope::enter()
-            .expect("enter outer signal scope");
-        let mut fixture = TimeoutDescendantFixture::new("effigy-managed-interrupt-nested-");
-        fixture.spawn_unrelated_sibling();
-        let command = fixture.hang_command();
-        let started = Instant::now();
-        let handle = thread::spawn(move || {
-            run_managed_lifecycle_cleanup_with_timeout(
-                &command,
-                Duration::from_secs(30),
-                Duration::from_millis(20),
-            )
-        });
-        TimeoutDescendantFixture::wait_until_signal_scope_active();
-        let pids = fixture.wait_for_recorded_pids();
-        crate::runner::owned_children::record_test_signal_initiation(libc::SIGINT);
-        let raise_result = unsafe { libc::raise(libc::SIGINT) };
-        crate::runner::owned_children::record_test_signal_raise_result(libc::SIGINT, raise_result);
-        let _ = handle.join().expect("managed nested interrupt wait thread");
-        fixture.wait_until_owned_gone(&pids);
-        fixture.assert_sibling_alive();
-        assert!(
-            started.elapsed() < Duration::from_secs(10),
-            "interrupt must not wait out /bin/sleep 300"
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn timeout_descendants_managed_group_cleanup_disabled_fails_reap_oracle() {
-        use crate::runner::owned_children::timeout_descendant_proof::TimeoutDescendantFixture;
-        use std::panic::AssertUnwindSafe;
-        use std::time::Duration;
-
-        let _seam = crate::runner::owned_children::disable_group_cleanup_for_test();
-        let mut fixture = TimeoutDescendantFixture::new("effigy-managed-timeout-negative-");
-        fixture.spawn_unrelated_sibling();
-        let command = fixture.hang_command();
-        let error = run_managed_lifecycle_cleanup_with_timeout(
-            &command,
-            Duration::from_millis(2_000),
-            Duration::from_millis(20),
-        )
-        .expect_err("pid-only timeout must still fail");
-        assert!(error.to_string().contains("timed out"), "got: {error}");
-        let pids = fixture.wait_for_recorded_pids();
-        assert!(
-            pids.iter()
-                .any(|pid| TimeoutDescendantFixture::pid_alive(*pid)),
-            "group cleanup disabled: a descendant must still be alive: {pids:?}"
-        );
-        let oracle = std::panic::catch_unwind(AssertUnwindSafe(|| {
-            fixture.assert_owned_gone(&pids);
-        }));
-        assert!(
-            oracle.is_err(),
-            "reap oracle must fail while group cleanup is disabled"
-        );
-        fixture.assert_sibling_alive();
-    }
-
-    /// The real managed-lifecycle caller spawns its cleanup child, then the
-    /// shared supervisor's scope install fails. The caller must report the
-    /// original launch error (never a timeout or success) and the already-owned
-    /// tree must be reaped. The readiness-gated injection lets the child record
-    /// itself before the failure fires.
-    #[cfg(unix)]
-    #[test]
-    fn release_preparation_fixture_supervision_init_managed_caller_reports_error_and_reaps_tree() {
-        use crate::runner::owned_children::timeout_descendant_proof::TimeoutDescendantFixture;
-        use crate::runner::owned_children::SupervisionInitFailurePointForTest;
-        use std::time::Duration;
-
-        let _locks = crate::runner::owned_children::hold_signal_proof_test_locks();
-        let mut fixture = TimeoutDescendantFixture::new("effigy-managed-supervision-init-");
-        fixture.spawn_unrelated_sibling();
-        let command = fixture.hang_command();
-        let _inject =
-            crate::runner::owned_children::inject_supervision_init_failure_when_ready_for_test(
-                SupervisionInitFailurePointForTest::BeforeSignals,
-                fixture.ready_path().to_path_buf(),
-            );
-        let error = run_managed_lifecycle_cleanup_with_timeout(
-            &command,
-            Duration::from_secs(30),
-            Duration::from_millis(20),
-        )
-        .expect_err("initialization failure must fail managed cleanup");
-        let pids = fixture.wait_for_recorded_pids();
-        let rendered = error.to_string();
-        assert!(
-            rendered.contains("injected signal supervision initialization failure"),
-            "original initialization error must be preserved: {rendered}"
-        );
-        fixture.wait_until_owned_gone(&pids);
-        fixture.assert_sibling_alive();
     }
 }

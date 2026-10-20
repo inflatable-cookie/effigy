@@ -1,14 +1,14 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::core::InputMode;
-use effigy_process::ProcessSupervisor;
+use crate::multiprocess::SessionProcesses;
 
 use super::super::input::shell_key_input;
 use super::{LoopControl, MultiProcessTuiError, SessionState};
 
 pub(super) fn handle_shell_shortcuts(
     key: &KeyEvent,
-    supervisor: &ProcessSupervisor,
+    supervisor: &dyn SessionProcesses,
     state: &mut SessionState,
     active_process: &str,
     active_is_shell: bool,

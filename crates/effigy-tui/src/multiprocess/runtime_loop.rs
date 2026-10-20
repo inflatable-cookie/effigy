@@ -21,12 +21,12 @@ pub(super) fn run_event_loop_with_control(
 ) -> Result<bool, MultiProcessTuiError> {
     loop {
         if let Some(control) = control {
-            if (control.poll)(&runtime.supervisor).map_err(MultiProcessTuiError::Control)? {
+            if (control.poll)(runtime.supervisor.as_ref()).map_err(MultiProcessTuiError::Control)? {
                 return Ok(true);
             }
         }
         drain_process_events(
-            &runtime.supervisor,
+            runtime.supervisor.as_ref(),
             &mut runtime.state,
             &mut runtime.diagnostics,
             MAX_EVENTS_PER_TICK,
@@ -106,7 +106,7 @@ pub(super) fn run_event_loop_with_control(
             match handle_key_event(
                 &key,
                 KeyEventContext {
-                    supervisor: &runtime.supervisor,
+                    supervisor: runtime.supervisor.as_ref(),
                     state: &mut runtime.state,
                     diagnostics: &mut runtime.diagnostics,
                     options,

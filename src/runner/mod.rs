@@ -32,6 +32,7 @@ mod host_container_lease;
 mod host_process;
 mod interactive_session;
 mod managed_listener_readiness;
+mod managed_run;
 mod managed_settle;
 mod managed_shell;
 mod manifest;

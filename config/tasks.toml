@@ -894,22 +894,6 @@
   { id = "live-route-table-debug", run = "cargo test -p effigy-gateway --lib live_route_table_debug_does_not_lock_or_print_route_contents -- --nocapture", timeout_ms = 600000 },
   { id = "script-context-debug", run = "cargo test -p effigy-rhai --lib script_context_debug_is_available_for_diagnostics -- --nocapture", timeout_ms = 600000 },
 ] }
-# Signal-supervision initialization failure must preserve the original error
-# and terminate/reap exactly the already-owned child tree. Private tempfile
-# fixtures with recorded pids/groups and a private test-only injection at the
-# real initialization boundary; no OS exhaustion or live-process sabotage.
-"test:release:supervision-coordination-control" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo test -p effigy --lib release_preparation_fixture_supervision_init_excludes_parallel_normal_scope_at_wait_boundary -- --nocapture", timeout_ms = 120000 }] }
-"test:release:supervision-fixture-exclusion" = { visibility = "internal", group = "Maintenance", run = [
-  { task = "test:runner:supervision-init" },
-  { task = "test:release:prepared-tree-fixture-coordination" },
-] }
-"test:runner:supervision-init" = { visibility = "internal", group = "Maintenance", run = [
-  { id = "supervision-init", run = "cargo test -p effigy --lib supervision_init -- --nocapture", timeout_ms = 240000 },
-] }
-"check:runner:supervision-init" = { visibility = "internal", group = "Maintenance", run = [
-  "cargo check -p effigy --all-targets --profile test",
-  "cargo clippy -p effigy --all-targets -- -D warnings",
-] }
 "test:init:upstream-guidance" = { visibility = "internal", group = "Maintenance", run = "cargo test -p effigy --lib init_upstream_guidance -- --nocapture" }
 "check:init:upstream-guidance" = { visibility = "internal", group = "Maintenance", run = "cargo check -p effigy-builtin -p effigy --lib --bin effigy --tests" }
 # Built-in suite child evidence ports must remain usable from test builds and
@@ -1244,15 +1228,15 @@
 ] }
 "check:env-isolation" = { visibility = "internal", group = "Maintenance", run = "cargo check -p effigy-core -p effigy --lib --profile test" }
 
-# Release preparation fixture regression: run the selected built-in, environment,
-# signal, and supervision-init proofs together in one libtest process so their
+# Release preparation fixture regression: run the selected built-in, environment
+# and signal proofs together in one libtest process so their
 # process-global locks contend under the same model as `cargo test --workspace`.
 # The Effigy step timeout bounds a hung in-process fixture run.
 "test:release:prepared-tree-fixture-coordination" = { visibility = "internal", group = "Maintenance", run = [
   { id = "prepared-tree-fixture-coordination", run = "cargo test -p effigy --lib release_preparation_fixture -- --nocapture --test-threads=8", timeout_ms = 240000 },
 ] }
 "test:release:preparation-environment-isolation" = { visibility = "internal", group = "Maintenance", run = [
-  { id = "preparation-environment-isolation", run = "cargo nextest run --config-file tests/config/release-preparation-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(release_preparation_fixture_env_isolation_path_and_graph_budget_readers_wait_for_scoped_writer) | test(supervision_init_unbounded_wait_failure_reaps_owned_tree) | test(graph_explore_cold_stale_index_names_next_action) | test(graph_cwd_selection_uses_captured_invocation_context) | test(docs_cold_read_is_bounded_and_never_prepares) | test(graph_timeout_uses_the_existing_two_minute_default_when_unset) | test(resolve_host_program_uses_host_cli_resolver_for_bare_names) | test(copy_file_into_service_invocation_prefers_policy_backend_over_installed_docker)' --max-fail 1:immediate --retries 0", timeout_ms = 240000 },
+  { id = "preparation-environment-isolation", run = "cargo nextest run --config-file tests/config/release-preparation-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(release_preparation_fixture_env_isolation_path_and_graph_budget_readers_wait_for_scoped_writer) | test(graph_explore_cold_stale_index_names_next_action) | test(graph_cwd_selection_uses_captured_invocation_context) | test(docs_cold_read_is_bounded_and_never_prepares) | test(graph_timeout_uses_the_existing_two_minute_default_when_unset) | test(resolve_host_program_uses_host_cli_resolver_for_bare_names) | test(copy_file_into_service_invocation_prefers_policy_backend_over_installed_docker)' --max-fail 1:immediate --retries 0", timeout_ms = 240000 },
 ] }
 "check:release:preparation-environment-isolation" = { visibility = "internal", group = "Maintenance", run = [
   "cargo check -p effigy --lib --tests --profile test",

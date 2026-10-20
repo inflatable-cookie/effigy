@@ -72,6 +72,15 @@ fn detached_owner_recorded(repo_root: &Path, policy: &EffectiveContainerPolicy) 
     persistent_owner_path(repo_root, policy).is_file()
 }
 
+/// Whether an explicit `effigy container up` owns this stack: a managed run
+/// that finds it so borrows it and leaves it running (Tom's ruling 5).
+pub(in crate::runner) fn persistent_container_owner_recorded(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> bool {
+    detached_owner_recorded(repo_root, policy)
+}
+
 /// An explicit `effigy container up` that left the stack running owns it
 /// persistently. Task activation never writes this; `container down` clears it.
 pub(in crate::runner) fn mark_persistent_container_owner(

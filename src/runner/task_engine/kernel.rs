@@ -35,9 +35,25 @@ pub(super) const CLEANUP_BUDGET: Duration = Duration::from_secs(60);
 /// Observe budget for status reads and gate probes.
 pub(super) const OBSERVE_BUDGET: Duration = Duration::from_secs(10);
 
+/// A detached supervisor records its run under its client's state home.
+static STATE_HOME: OnceLock<PathBuf> = OnceLock::new();
+
+/// Adopts the client's state home before this process opens any run.
+pub(in crate::runner) fn adopt_state_home(home: PathBuf) {
+    let _ = STATE_HOME.set(home);
+}
+
+/// The state home this process records runs under, for a supervisor it starts.
+pub(in crate::runner) fn state_home_path() -> Option<PathBuf> {
+    state_home()
+}
+
 /// The Effigy home that owns `~/.effigy/state`. Library tests in one process
 /// share a private temporary home, never the operator's.
 pub(super) fn state_home() -> Option<PathBuf> {
+    if let Some(home) = STATE_HOME.get() {
+        return Some(home.clone());
+    }
     #[cfg(test)]
     {
         static TEST_HOME: OnceLock<tempfile::TempDir> = OnceLock::new();
@@ -89,6 +105,30 @@ pub(super) fn observe() -> ObserveContext {
     .expect("observe context")
 }
 
+/// A Mutate context for an engine's effects, with the process's own cancel.
+pub(in crate::runner) fn effect_context(reason: OpenReason) -> EffectContext {
+    operation(EffectClass::Mutate, Deadline::Open(reason))
+        .effects()
+        .expect("mutate context has effects")
+}
+
+/// An Observe context bounded by `budget`, for an engine's probes.
+pub(in crate::runner) fn observe_context(budget: Duration) -> ObserveContext {
+    operation(
+        EffectClass::Observe,
+        Deadline::At(std::time::Instant::now() + budget),
+    )
+    .observe()
+    .expect("observe context")
+}
+
+/// A cleanup context with its own `budget`, never a cancelled workload's.
+pub(in crate::runner) fn cleanup_context(budget: Duration) -> CleanupContext {
+    operation(EffectClass::Mutate, Deadline::Open(OpenReason::Shell))
+        .cleanup(budget)
+        .expect("cleanup budget")
+}
+
 /// The writable state root, opened once per process for its first run.
 pub(super) fn effects_root() -> Result<&'static StateRoot, RunnerError> {
     static ROOT: OnceLock<Result<StateRoot, String>> = OnceLock::new();
@@ -122,6 +162,19 @@ pub(super) fn observe_root(cx: &ObserveContext) -> Observed<StateRoot> {
 /// rebuild it: a later run's helpers re-exec this image, not a replacement.
 pub fn capture_startup_executable() {
     let _ = executable();
+}
+
+/// The binary identified at startup, for a supervisor this process starts.
+pub(in crate::runner) fn startup_executable() -> Result<Executable, RunnerError> {
+    executable()
+}
+
+/// An operation context with this process's cancellation.
+pub(in crate::runner) fn operation_context(
+    class: EffectClass,
+    deadline: Deadline,
+) -> OperationContext {
+    operation(class, deadline)
 }
 
 pub(super) fn executable() -> Result<Executable, RunnerError> {
@@ -187,6 +240,29 @@ pub(super) fn install_router() -> Result<(), RunnerError> {
     Ok(())
 }
 
+/// Signals routed to this process since the last poll.
+pub(in crate::runner) fn routed_signals() -> Vec<RoutedSignal> {
+    poll_router()
+}
+
+/// The first signal that cancelled this process's root context, if any.
+pub(in crate::runner) fn root_cancel_cause() -> Option<effigy_kernel::ctx::StopCause> {
+    cancel_token().cause().cloned()
+}
+
+/// A front end's router (K9): INT, TERM and HUP become a stop request it
+/// sends; the client never ends the run by dying quietly.
+pub(in crate::runner) fn install_client_router() -> Result<(), RunnerError> {
+    if cfg!(test) || ROUTER.get().is_some() {
+        return Ok(());
+    }
+    let handle = SignalRouter::install(RouterPolicy::Client).map_err(|error| {
+        RunnerError::task_invocation(format!("cannot install the signal router: {error}"))
+    })?;
+    let _ = ROUTER.set(Mutex::new(handle));
+    Ok(())
+}
+
 pub(super) fn poll_router() -> Vec<RoutedSignal> {
     let routed = ROUTER
         .get()
@@ -247,23 +323,33 @@ fn cancel_token() -> CancelToken {
         .unwrap_or_default()
 }
 
-/// Task runs record only kernel effects (custody). Any other effect is not
-/// the task engine's, so recovery observes it as `Unknown` and leaves residue
-/// rather than guessing (R3).
+/// Task runs record kernel effects (custody); managed runs add their own
+/// engine effects, settled by the run supervisor's adapter. Any other effect
+/// is no engine's here, so recovery observes it as `Unknown` and leaves
+/// residue rather than guessing (R3).
 #[derive(Debug, Default)]
 pub(in crate::runner) struct TaskSettlement;
 impl SettlementAdapter for TaskSettlement {
-    fn observe(&mut self, _effect: &Effect, _cx: &CleanupContext) -> Observed<Fence> {
+    fn observe(&mut self, effect: &Effect, cx: &CleanupContext) -> Observed<Fence> {
+        if crate::runner::managed_run::owns_effect(&effect.spec.kind) {
+            return crate::runner::managed_run::observe_effect(effect, cx);
+        }
         Observed::Unknown(UnknownReason::Inconsistent(
             "no engine adapter settles this effect".to_owned(),
         ))
     }
-    fn release(&mut self, _effect: &Effect, _cx: &CleanupContext) -> Observed<()> {
+    fn release(&mut self, effect: &Effect, cx: &CleanupContext) -> Observed<()> {
+        if crate::runner::managed_run::owns_effect(&effect.spec.kind) {
+            return crate::runner::managed_run::release_effect(effect, cx);
+        }
         Observed::Unknown(UnknownReason::Inconsistent(
             "no engine adapter settles this effect".to_owned(),
         ))
     }
-    fn reconcile(&mut self, _effect: &Effect, _cx: &CleanupContext) -> Observed<Reconciled> {
+    fn reconcile(&mut self, effect: &Effect, cx: &CleanupContext) -> Observed<Reconciled> {
+        if crate::runner::managed_run::owns_effect(&effect.spec.kind) {
+            return crate::runner::managed_run::reconcile_effect(effect, cx);
+        }
         Observed::Unknown(UnknownReason::Inconsistent(
             "no engine adapter settles this effect".to_owned(),
         ))
@@ -309,7 +395,7 @@ pub fn run_internal_kernel_entry(entry: &str) -> Option<i32> {
         "__kernel-supervise" => RouterPolicy::Supervisor,
         _ => RouterPolicy::Inline,
     };
-    let mut router = match SignalRouter::install(policy) {
+    let router = match SignalRouter::install(policy) {
         Ok(router) => router,
         Err(_) => return Some(70),
     };
@@ -318,11 +404,16 @@ pub fn run_internal_kernel_entry(entry: &str) -> Option<i32> {
     }
     // One helper serves every engine's runs: a task run records its selector,
     // source preparation records `bundle sync`, the gateway records `gateway up`.
+    // A managed run's detached supervisor is this binary's engine (§5.8).
     let mut adapter = TaskSettlement;
     let validate = |argv: &[OsString]| {
         valid_next(argv) || argv == ["bundle", "sync"] || argv == ["gateway", "up"]
     };
-    match effigy_kernel::supervise::internal_entry(entry, &mut router, &mut adapter, validate) {
+    let engine = |session, router| {
+        adopt_signal_router(router);
+        crate::runner::managed_run::supervise(session)
+    };
+    match effigy_kernel::supervise::engine_entry(entry, router, &mut adapter, validate, engine) {
         Some(Ok(())) => Some(0),
         Some(Err(_)) => Some(1),
         None => None,

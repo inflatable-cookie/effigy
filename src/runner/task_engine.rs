@@ -19,7 +19,8 @@ mod spawn_env;
 mod status;
 
 pub(in crate::runner) use control::{
-    list as list_runs, lookup as lookup_run, read_log as read_run_log, request_stop,
+    effects as run_effects, list as list_runs, lookup as lookup_run, read_log as read_run_log,
+    request_stop,
     resolve as resolve_run, signal_owner, workload_process, Lookup, RunRecord, StopStarted,
     POLL as RUN_POLL,
 };
@@ -35,7 +36,13 @@ pub(in crate::runner) use status::{
 
 #[cfg(test)]
 pub(in crate::runner) use kernel::test_state_home;
-pub(in crate::runner) use kernel::{interrupted_by, CustodyWait};
+pub(in crate::runner) use kernel::{
+    adopt_state_home, cleanup_context, effect_context, install_client_router, interrupted_by,
+    observe_context, operation_context, root_cancel_cause, routed_signals, startup_executable,
+    state_home_path, CustodyWait,
+};
+pub(in crate::runner) use process::spawn_environment;
+pub(in crate::runner) use run::{fresh_request_id, request_run_stop};
 pub(in crate::runner) use spawn_env::{nested_capture, spawn_plain_env, SpawnScope};
 
 /// The recorded outcome of a task command that exited with `code`.

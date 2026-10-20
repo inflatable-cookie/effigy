@@ -718,6 +718,10 @@ run = [{ task = "db:migrate" }]
             1,
         );
         let preflight = ExecutionPreflight {
+            invocation: effigy_cli::TaskInvocation {
+                name: "state:apply:schema".to_owned(),
+                args: Vec::new(),
+            },
             invocation_cwd: PathBuf::from("/workspace-root/acowtancy"),
             runtime_args_raw: TaskRuntimeArgs {
                 repo_override: None,

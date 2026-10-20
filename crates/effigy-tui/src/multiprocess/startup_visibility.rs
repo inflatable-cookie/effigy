@@ -217,12 +217,12 @@ fn run_child_case(case: &str, root: &Path) {
                 fixture_process("first", &root.join("first.pid"), "first-output", root, 0),
                 failed,
             ];
-            let poll = |_: &ProcessSupervisor| Ok(root.join("stop.requested").exists());
-            let before = |_: &ProcessSupervisor| {
+            let poll = |_: &dyn super::SessionProcesses| Ok(root.join("stop.requested").exists());
+            let before = |_: &dyn super::SessionProcesses| {
                 fs::write(root.join("before-shutdown"), "owned group cleanup")
                     .map_err(|error| error.to_string())
             };
-            let after = |_: &ProcessSupervisor| {
+            let after = |_: &dyn super::SessionProcesses| {
                 assert!(root.join("before-shutdown").exists());
                 fs::write(root.join("after-shutdown"), "host children ended")
                     .map_err(|error| error.to_string())
@@ -294,7 +294,7 @@ fn run_blocking_baseline(root: &Path) {
         .startup_states
         .insert("legacy-last".to_owned(), ProcessStartupState::Running);
     let mut runtime = SessionRuntime {
-        supervisor,
+        supervisor: Box::new(supervisor),
         terminal,
         state,
         diagnostics: RuntimeDiagnostics::from_env(),
@@ -305,7 +305,7 @@ fn run_blocking_baseline(root: &Path) {
     let result = runtime_loop::run_event_loop(&mut runtime, MultiProcessTuiOptions::default());
     let cleanup = lifecycle::shutdown_and_render_summary(
         &mut runtime.terminal,
-        &runtime.supervisor,
+        runtime.supervisor.as_ref(),
         std::mem::take(&mut runtime.state.observed_non_zero),
         &runtime.state.logs,
         &runtime.state.process_started_at,
