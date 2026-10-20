@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::collections::BTreeMap;
 
 use effigy_cli::TaskInvocation;
@@ -8,6 +9,26 @@ use super::pipeline::run_execution_pipeline;
 use super::planning::build_execution_preflight_from_input;
 use crate::runner::error::RunnerError;
 use crate::runner::host_scheduler::{self, Route, SubmitContext};
+
+thread_local! {
+    // None means a top-level invocation. Some(false) is still a completed
+    // admission decision: children of a direct run must stay direct.
+    static ADMISSION: Cell<Option<bool>> = const { Cell::new(None) };
+}
+
+struct AdmissionScope(Option<bool>);
+
+impl AdmissionScope {
+    fn enter(host_admitted: bool) -> Self {
+        Self(ADMISSION.replace(Some(host_admitted)))
+    }
+}
+
+impl Drop for AdmissionScope {
+    fn drop(&mut self) {
+        ADMISSION.set(self.0);
+    }
+}
 
 fn run_manifest_task_with_preflight_input(
     task: &TaskInvocation,
@@ -155,6 +176,22 @@ fn run_selected_task_with_scheduler(
     client_request_id: Option<&str>,
     execute: impl FnOnce(bool) -> Result<String, RunnerError>,
 ) -> Result<String, RunnerError> {
+    // Canonical resolution and task gates still apply to children. Host-run
+    // admission belongs to the outer invocation only (Q-006): even a nested
+    // `qa` or explicitly heavy step inherits a direct parent's decision.
+    if let Some(host_admitted) = ADMISSION.get() {
+        if client_request_id.is_some() {
+            return Err(host_scheduler::refuse(
+                2,
+                "--host-run-request-id requires a top-level heavy selector submission",
+            ));
+        }
+        return execute(host_admitted);
+    }
+    let execute = |host_admitted| {
+        let _admission = AdmissionScope::enter(host_admitted);
+        execute(host_admitted)
+    };
     let in_owned_child_scope = crate::runner::owned_children::signal_scope_active();
     if in_owned_child_scope && client_request_id.is_none() {
         return execute(host_scheduler::active_nested().is_some());
@@ -336,7 +373,7 @@ fn run_manifest_task_request_inner(request: TaskExecutionRequest) -> Result<Stri
 
 #[cfg(test)]
 mod tests {
-    use super::is_managed_control_invocation;
+    use super::{is_managed_control_invocation, AdmissionScope, ADMISSION};
     use effigy_tasks::TaskRuntimeArgs;
 
     fn args(passthrough: &[&str]) -> TaskRuntimeArgs {
@@ -364,5 +401,21 @@ mod tests {
         assert!(!is_managed_control_invocation(Some("tui"), &args(&[])).expect("parse"));
         assert!(!is_managed_control_invocation(None, &args(&["status"]))
             .expect("non-managed task args are ignored"));
+    }
+
+    #[test]
+    fn admission_scope_restores_the_outer_decision_after_unwind() {
+        assert_eq!(ADMISSION.get(), None);
+        {
+            let _outer = AdmissionScope::enter(false);
+            let unwound = std::panic::catch_unwind(|| {
+                let _inner = AdmissionScope::enter(true);
+                assert_eq!(ADMISSION.get(), Some(true));
+                panic!("fixture unwind");
+            });
+            assert!(unwound.is_err());
+            assert_eq!(ADMISSION.get(), Some(false));
+        }
+        assert_eq!(ADMISSION.get(), None);
     }
 }

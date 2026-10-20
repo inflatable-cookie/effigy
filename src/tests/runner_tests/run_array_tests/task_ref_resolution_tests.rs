@@ -5,7 +5,7 @@ use crate::runner::tests::prelude::{
     assert_run_array_validate_task_ref_parse_error_case_table, fs, run_validate_ok, temp_workspace,
     write_capture_task_ref_validate_manifest, write_catalog_builtin_test_suite_manifest,
     write_manifest, write_validate_manifest, write_validate_manifest_template,
-    BuiltinTestTaskRefCase, EnvGuard, Path, RunArrayTaskOutputCase, RunArrayTaskOutputDerivedCase,
+    BuiltinTestTaskRefCase, Path, RunArrayTaskOutputCase, RunArrayTaskOutputDerivedCase,
     RunArrayTaskRefParseErrorCase, RunArrayValidateMarkerCase,
 };
 
@@ -125,7 +125,7 @@ fn setup_dag_task_ref_in_process(root: &Path, marker: &Path) {
         r#"[tasks.validate]
 run = [
   { id = "docs", task = "docs check headings README.md --require-heading '# Hello' --require-heading '## World'" },
-  { id = "done", run = "printf validate-ok > \"__MARKER__\"", depends_on = ["docs"] }
+  { id = "done", run = "printf validate-ok > \"__MARKER__\"" }
 ]
 "#,
         &[("__MARKER__", marker)],
@@ -268,7 +268,7 @@ fn run_manifest_task_run_array_task_reference_env_contract_table() {
 }
 
 #[test]
-fn run_manifest_task_run_array_builtin_task_reference_stays_in_process() {
+fn run_manifest_task_run_array_builtin_task_reference_uses_custody() {
     let root = temp_workspace("run-array-task-ref-in-process");
     write_manifest(&root.join("README.md"), "# Hello\n\n## World\n");
     write_validate_manifest(
@@ -277,11 +277,6 @@ fn run_manifest_task_run_array_builtin_task_reference_stays_in_process() {
 run = { task = "docs check headings README.md --require-heading '# Hello' --require-heading '## World'" }
 "#,
     );
-
-    let _guard = EnvGuard::set_many(&[(
-        "EFFIGY_EXECUTABLE",
-        Some("/definitely/not/a/real/effigy".to_owned()),
-    )]);
 
     let out = run_validate_ok(&root, &[]);
     assert_eq!(out, "");
@@ -298,11 +293,6 @@ run = { task = "docs check headings README.md --require-heading '# Hello' --requ
 "#,
     );
 
-    let _guard = EnvGuard::set_many(&[(
-        "EFFIGY_EXECUTABLE",
-        Some("/definitely/not/a/real/effigy".to_owned()),
-    )]);
-
     let out = run_validate_ok(&root, &[]);
     assert_eq!(out, "");
 }
@@ -317,11 +307,6 @@ fn run_manifest_task_shorthand_accepts_single_task_object_without_array_wrapper(
 validate = { task = "docs check headings README.md --require-heading '# Hello' --require-heading '## World'" }
 "#,
     );
-
-    let _guard = EnvGuard::set_many(&[(
-        "EFFIGY_EXECUTABLE",
-        Some("/definitely/not/a/real/effigy".to_owned()),
-    )]);
 
     let out = run_validate_ok(&root, &[]);
     assert_eq!(out, "");
@@ -353,15 +338,10 @@ run = [{{ task = "defer release -- --dry-run" }}, "printf validate-ok"]
 }
 
 #[test]
-fn run_manifest_task_run_array_dag_task_reference_stays_in_process() {
+fn run_manifest_task_run_array_dag_task_reference_uses_custody() {
     let root = temp_workspace("run-array-task-ref-dag-in-process");
     let marker = root.join("task-ref-dag.log");
     setup_dag_task_ref_in_process(&root, &marker);
-
-    let _guard = EnvGuard::set_many(&[(
-        "EFFIGY_EXECUTABLE",
-        Some("/definitely/not/a/real/effigy".to_owned()),
-    )]);
 
     let out = run_validate_ok(&root, &[]);
     assert_eq!(out, "");

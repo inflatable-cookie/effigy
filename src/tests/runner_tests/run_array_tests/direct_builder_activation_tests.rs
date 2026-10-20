@@ -333,7 +333,18 @@ esac
         bin_dir.display(),
         std::env::var("PATH").expect("PATH")
     );
+    fs::create_dir_all(root.join("home")).expect("private subprocess HOME");
     let _env = crate::contract_test_support::EnvGuard::set_many(&[
+        ("HOME", Some(root.join("home").display().to_string())),
+        (
+            "EFFIGY_EXECUTABLE",
+            Some(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("target/debug/effigy")
+                    .display()
+                    .to_string(),
+            ),
+        ),
         ("PATH", Some(path)),
         (
             "EFFIGY_COMPOSE_BACKEND",

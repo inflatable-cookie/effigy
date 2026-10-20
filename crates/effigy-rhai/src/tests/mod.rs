@@ -273,6 +273,25 @@ fn allowed_first_party_process_script(relative: &str, contents: &str) -> bool {
 }
 
 fn collect_rhai_scripts(root: &Path) -> Vec<PathBuf> {
+    // Policy covers repository sources, not concurrently generated test inputs.
+    if let Ok(output) = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["ls-files", "--full-name", "-z", "--", "*.rhai"])
+        .output()
+    {
+        if output.status.success() {
+            let paths = String::from_utf8(output.stdout).expect("UTF-8 tracked Rhai paths");
+            let mut scripts = paths
+                .split('\0')
+                .filter(|path| !path.is_empty())
+                .map(|path| root.join(path))
+                .collect::<Vec<_>>();
+            scripts.sort();
+            return scripts;
+        }
+    }
+    // Source archives have no Git index; exclude generated fixture/build trees.
     let mut scripts = Vec::new();
     collect_rhai_scripts_into(root, &mut scripts);
     scripts.sort();
@@ -324,7 +343,11 @@ fn collect_rhai_scripts_into(dir: &Path, scripts: &mut Vec<PathBuf>) {
         let path = entry.path();
         let file_name = entry.file_name();
         let file_name = file_name.to_string_lossy();
-        if file_name == "target" || file_name == ".git" || file_name == ".effigy" {
+        if file_name == "target"
+            || file_name == ".git"
+            || file_name == ".effigy"
+            || file_name.starts_with("effigy-parent-fixtures-")
+        {
             continue;
         }
         if path.is_dir() {

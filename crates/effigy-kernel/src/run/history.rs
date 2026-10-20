@@ -12,6 +12,7 @@ use crate::store::StoreReader;
 pub struct RunSummary {
     pub id: RunId,
     pub generation: Generation,
+    pub parent: Option<RunId>,
     pub phase: Phase,
     pub workload: Option<WorkloadOutcome>,
     /// `None` until settle commits `Closed`.
@@ -24,7 +25,7 @@ pub struct RunSummary {
 }
 
 const COLUMNS: &str = "runs.run_id,runs.generation,runs.phase,runs.workload_outcome,\
-    runs.cleanup_outcome,runs.invocation,runs.created_at,runs.updated_at,runs.closed_at";
+    runs.cleanup_outcome,runs.invocation,runs.created_at,runs.updated_at,runs.closed_at,runs.parent_run";
 
 /// An owner's runs, newest first, at most `limit`.
 pub fn history(
@@ -52,6 +53,15 @@ pub fn unclosed(reader: &StoreReader, scope: Scope) -> Observed<Vec<RunSummary>>
     read(reader, &sql, params![crate::gate::scope_name(scope)])
 }
 
+/// Direct children in journal admission order. Pure read, including closed runs.
+pub fn children(reader: &StoreReader, parent: RunId) -> Observed<Vec<RunSummary>> {
+    read(
+        reader,
+        &format!("SELECT {COLUMNS} FROM runs WHERE parent_run=?1 ORDER BY created_at,run_id"),
+        params![parent.to_string()],
+    )
+}
+
 fn read(
     reader: &StoreReader,
     sql: &str,
@@ -71,6 +81,7 @@ fn read(
                     row.get::<_, i64>(6)?,
                     row.get::<_, i64>(7)?,
                     row.get::<_, Option<i64>>(8)?,
+                    row.get::<_, Option<String>>(9)?,
                 ))
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -86,10 +97,15 @@ fn read(
                     created,
                     updated,
                     closed,
+                    parent,
                 )| {
                     Ok(RunSummary {
                         id: id
                             .parse()
+                            .map_err(|e: crate::id::IdentityError| RunError::Store(e.into()))?,
+                        parent: parent
+                            .map(|id| id.parse())
+                            .transpose()
                             .map_err(|e: crate::id::IdentityError| RunError::Store(e.into()))?,
                         generation: Generation::new(generation as u64),
                         phase: Phase::parse(&phase)?,

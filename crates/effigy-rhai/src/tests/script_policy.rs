@@ -238,3 +238,39 @@ fn execute_rhai_script_rejects_legacy_module_dot_calls() {
         "got: {error}"
     );
 }
+
+#[test]
+fn first_party_script_inventory_excludes_generated_fixture_directories() {
+    for indexed in [false, true] {
+        let root = temp_root("script-policy-inventory");
+        let source = root.join("scripts/source.rhai");
+        for relative in [
+            "scripts/source.rhai",
+            "crates/effigy-parent-fixtures-builder-literal-example/scripts/builder.rhai",
+            "nested/target/generated.rhai",
+        ] {
+            let path = root.join(relative);
+            fs::create_dir_all(path.parent().expect("script parent")).expect("script directory");
+            fs::write(&path, "container::exec(\"fixture\", [\"true\"]);").expect("script contents");
+        }
+        if indexed {
+            for args in [vec!["init", "--quiet"], vec!["add", "scripts/source.rhai"]] {
+                let output = std::process::Command::new("git")
+                    .arg("-C")
+                    .arg(&root)
+                    .args(args)
+                    .output()
+                    .expect("private fixture Git command");
+                assert!(output.status.success(), "{output:?}");
+            }
+            fs::write(root.join("scripts/untracked.rhai"), "fixture input")
+                .expect("untracked script");
+        }
+        assert_eq!(
+            collect_rhai_scripts(&root),
+            vec![source],
+            "indexed={indexed}"
+        );
+        fs::remove_dir_all(root).expect("remove private script inventory fixture");
+    }
+}

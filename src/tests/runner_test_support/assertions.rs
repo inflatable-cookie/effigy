@@ -88,20 +88,6 @@ pub(crate) fn assert_doctor_non_zero_contains(err: RunnerError, expected: &[&str
     }
 }
 
-pub(crate) fn assert_task_command_failure_code(
-    err: RunnerError,
-    expected_code: Option<Option<i32>>,
-) {
-    match err {
-        RunnerError::TaskCommandFailure { code, .. } => {
-            if let Some(expected) = expected_code {
-                assert_eq!(code, expected);
-            }
-        }
-        other => panic!("unexpected error: {other}"),
-    }
-}
-
 pub(crate) fn assert_manifest_parse_error_contains_any(error: &toml::de::Error, expected: &[&str]) {
     let rendered = error.to_string();
     assert!(

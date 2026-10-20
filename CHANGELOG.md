@@ -15,6 +15,19 @@ During v0.x, MINOR bumps may include breaking changes.
   with a warning. Move their definitions under `[tasks]`, remove lifecycle
   metadata, and use ordinary task references. `effigy draft <name>` warns and
   runs the normal task; `effigy drafts` names `tasks --all` as its replacement.
+- Host task and setup sequences now use one typed engine in text and JSON.
+  Steps are child kernel runs; custody settles descendants on timeout, stop,
+  INT, TERM, HUP and owner loss. JSON adds per-step outcomes and preserves the
+  same exit code as text. Nested task cycles fail before gate acquisition;
+  shared locks held by an ancestor are inherited. Nested steps inherit the
+  top-level admission decision, so a direct sequence reaching `qa`, `ci`,
+  `ci:fresh` or an explicitly heavy step does not queue again.
+- Sequence `depends_on`, `retry`, `retry_delay_ms` and `fail_fast` are removed.
+  Delete these keys and order steps explicitly; sequences stop on the first
+  failure. Container task steps retain legacy execution and journal child
+  outcomes pending the remote-custody cutover (#236). Container setup embedded
+  in lifecycle-managed commands retains process-level outcomes until #236,
+  preserving its existing readiness and startup order.
 - Task runs are now kernel runs. Every invocation resolves once to a task
   identity (catalog path relative to the root, task name), so `build` from
   inside a catalog, `api/build` and `./apps/api/build` share one lock and one
