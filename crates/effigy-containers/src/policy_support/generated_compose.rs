@@ -360,15 +360,32 @@ impl GeneratedComposeService {
     fn append_mounts(&mut self, mounts: &[String]) {
         let volumes = self.volumes.get_or_insert_with(Vec::new);
         for mount in mounts {
-            if volumes
-                .iter()
-                .any(|entry| matches!(entry, GeneratedComposeVolume::String(existing) if existing == mount))
-            {
+            // A spelling of the same bind (for example a non-canonical repo
+            // root) is the same mount; Compose rejects duplicate entries.
+            if volumes.iter().any(|entry| {
+                matches!(entry, GeneratedComposeVolume::String(existing) if same_bind(existing, mount))
+            }) {
                 continue;
             }
             volumes.push(GeneratedComposeVolume::String(mount.clone()));
         }
     }
+}
+
+fn same_bind(left: &str, right: &str) -> bool {
+    if left == right {
+        return true;
+    }
+    let split = |raw: &str| {
+        raw.split_once(':').map(|(source, rest)| {
+            let source = Path::new(source.trim());
+            let source = source
+                .canonicalize()
+                .unwrap_or_else(|_| source.to_path_buf());
+            (source, rest.trim().to_owned())
+        })
+    };
+    matches!((split(left), split(right)), (Some(left), Some(right)) if left == right)
 }
 
 type ResolvedComposeSource = (
@@ -391,12 +408,6 @@ pub(crate) fn resolve_compose_source(
     volume_borrow: Option<&crate::policy::model::ComposeVolumeBorrow>,
     draft: &mut crate::policy::render::Draft,
 ) -> Result<ResolvedComposeSource, ContainerPolicyError> {
-    if config.compose_file.is_some() && !config.services.is_empty() {
-        return Err(ContainerPolicyError::TaskInvocation(format!(
-            "container `{container_name}` cannot combine `compose_file` with `[containers.{container_name}.services]`"
-        )));
-    }
-
     // A linked worktree and a clone marked `effigy.runtimeScope = ephemeral`
     // both isolate their runtime resources; `share_runtime_identity = true`
     // opts either shape back into one shared Compose identity.
@@ -408,47 +419,9 @@ pub(crate) fn resolve_compose_source(
             ))
         })?;
 
-    if let Some(compose_file) = &config.compose_file {
-        if !configured_media_mounts(config).is_empty() {
-            return Err(ContainerPolicyError::TaskInvocation(format!(
-                "container `{container_name}` cannot combine direct `compose_file` ownership with `[containers.{container_name}.data].media`; the bounded media lifecycle path only supports generated compose"
-            )));
-        }
-        let compose_file =
-            repo_relative_path(repo_root, compose_file, "containers.*.compose_file")?;
-        if runtime_scoped {
-            validate_scoped_direct_compose(&compose_file, config, draft)?;
-        }
-        let display = path_relative_to_repo(repo_root, &compose_file);
-        let effective_ports = if config
-            .host
-            .as_ref()
-            .is_some_and(|host| !host.ports.is_empty())
-        {
-            configured_host_ports(config)
-        } else {
-            infer_direct_compose_host_ports(&compose_file, project_name, draft)?
-        };
-        let ownership_override = render_direct_compose_ownership_override(
-            repo_root,
-            container_name,
-            &compose_file,
-            config,
-            draft,
-        )?;
-        return Ok((
-            vec![compose_file, ownership_override],
-            display,
-            Vec::new(),
-            Vec::new(),
-            effective_ports,
-            Vec::new(),
-        ));
-    }
-
     if config.services.is_empty() {
         return Err(ContainerPolicyError::TaskInvocation(format!(
-            "container `{container_name}` must declare either `compose_file` or `[containers.{container_name}.services]`"
+            "container `{container_name}` must declare `[containers.{container_name}.services]`"
         )));
     }
 
@@ -591,119 +564,6 @@ pub(crate) fn resolve_compose_source(
         effective_ports,
         shared_services,
     ))
-}
-
-/// Direct `compose_file` containers carry the same checkout and scope identity
-/// labels as generated ones. Effigy renders them through a Compose override next
-/// to the repo-owned file, so the repo file is not edited. The override only
-/// labels services the direct file already declares.
-fn render_direct_compose_ownership_override(
-    repo_root: &Path,
-    container_name: &str,
-    compose_file: &Path,
-    config: &ManifestContainerConfig,
-    draft: &mut crate::policy::render::Draft,
-) -> Result<PathBuf, ContainerPolicyError> {
-    let source = draft.read(compose_file)?;
-    let value: YamlValue = serde_yaml::from_str(&source).map_err(|error| {
-        ContainerPolicyError::TaskInvocation(format!(
-            "compose file {} is invalid YAML: {error}",
-            compose_file.display()
-        ))
-    })?;
-    let checkout = repo_root
-        .canonicalize()
-        .unwrap_or_else(|_| repo_root.to_path_buf());
-    let mut labels = serde_yaml::Mapping::new();
-    labels.insert(
-        YamlValue::String(CHECKOUT_LABEL.to_owned()),
-        YamlValue::String(checkout.display().to_string()),
-    );
-    if let Some(token) = runtime_scope_token(repo_root, config) {
-        labels.insert(
-            YamlValue::String(SCOPE_LABEL.to_owned()),
-            YamlValue::String(token),
-        );
-    }
-    let mut services = serde_yaml::Mapping::new();
-    if let Some(declared) = value.get("services").and_then(YamlValue::as_mapping) {
-        for name in declared.keys() {
-            let mut service = serde_yaml::Mapping::new();
-            service.insert(
-                YamlValue::String("labels".to_owned()),
-                YamlValue::Mapping(labels.clone()),
-            );
-            services.insert(name.clone(), YamlValue::Mapping(service));
-        }
-    }
-    let mut document = serde_yaml::Mapping::new();
-    document.insert(
-        YamlValue::String("services".to_owned()),
-        YamlValue::Mapping(services),
-    );
-    let rendered = serde_yaml::to_string(&YamlValue::Mapping(document)).map_err(|error| {
-        ContainerPolicyError::TaskInvocation(format!(
-            "failed to serialize direct compose ownership override for `{container_name}`: {error}"
-        ))
-    })?;
-    let path = checkout
-        .join(GENERATED_RUNTIME_COMPOSE_DIR)
-        .join(format!("{container_name}.ownership.compose.yml"));
-    draft.insert(path.clone(), rendered.into_bytes());
-    Ok(path)
-}
-
-fn validate_scoped_direct_compose(
-    compose_file: &Path,
-    config: &ManifestContainerConfig,
-    draft: &mut crate::policy::render::Draft,
-) -> Result<(), ContainerPolicyError> {
-    let source = draft.read(compose_file)?;
-    let value: YamlValue = serde_yaml::from_str(&source).map_err(|error| {
-        ContainerPolicyError::TaskInvocation(format!(
-            "compose file {} is invalid YAML: {error}",
-            compose_file.display()
-        ))
-    })?;
-    let mut fixed = Vec::new();
-    if config
-        .host
-        .as_ref()
-        .is_some_and(|host| !host.ports.is_empty())
-    {
-        fixed.push("manifest host.ports".to_owned());
-    }
-    if let Some(services) = value.get("services").and_then(YamlValue::as_mapping) {
-        for (name, service) in services {
-            let name = name.as_str().unwrap_or("<service>");
-            if service.get("container_name").is_some() {
-                fixed.push(format!("services.{name}.container_name"));
-            }
-            if service
-                .get("ports")
-                .and_then(YamlValue::as_sequence)
-                .is_some_and(|ports| !ports.is_empty())
-            {
-                fixed.push(format!("services.{name}.ports"));
-            }
-        }
-    }
-    for section in ["volumes", "networks"] {
-        if let Some(entries) = value.get(section).and_then(YamlValue::as_mapping) {
-            for (name, entry) in entries {
-                if entry.get("name").is_some() || entry.get("external").is_some() {
-                    fixed.push(format!("{section}.{}", name.as_str().unwrap_or("<name>")));
-                }
-            }
-        }
-    }
-    if fixed.is_empty() {
-        return Ok(());
-    }
-    Err(ContainerPolicyError::TaskInvocation(format!(
-        "runtime-scoped checkout (linked worktree or ephemeral clone) cannot isolate repo-owned compose at {} with fixed resources ({}); use generated compose, remove fixed names/ports, or set share_runtime_identity = true to opt into one shared runtime",
-        compose_file.display(), fixed.join(", ")
-    )))
 }
 
 fn validate_scoped_generated_compose(
@@ -1465,123 +1325,6 @@ fn configured_host_ports(config: &ManifestContainerConfig) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn infer_direct_compose_host_ports(
-    compose_file: &Path,
-    project_name: &str,
-    draft: &mut crate::policy::render::Draft,
-) -> Result<Vec<String>, ContainerPolicyError> {
-    let content = draft.read(compose_file)?;
-    let parsed: YamlValue = serde_yaml::from_str(&content).map_err(|error| {
-        ContainerPolicyError::TaskInvocation(format!(
-            "compose file for `{project_name}` is invalid YAML: {error}"
-        ))
-    })?;
-    let Some(services) = parsed.get("services").and_then(YamlValue::as_mapping) else {
-        return Ok(Vec::new());
-    };
-
-    let mut inferred = Vec::new();
-    let mut service_names = services
-        .keys()
-        .filter_map(YamlValue::as_str)
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-    service_names.sort();
-
-    for service_name in service_names {
-        let Some(service) = services
-            .get(YamlValue::String(service_name))
-            .and_then(YamlValue::as_mapping)
-        else {
-            continue;
-        };
-        let Some(ports) = service.get("ports").and_then(YamlValue::as_sequence) else {
-            continue;
-        };
-        for port in ports {
-            if let Some(binding) = infer_compose_port_binding(port)? {
-                inferred.push(format!("{}:{}", binding.host, binding.container));
-            }
-        }
-    }
-
-    Ok(inferred)
-}
-
-fn infer_compose_port_binding(
-    port: &YamlValue,
-) -> Result<Option<PortBinding>, ContainerPolicyError> {
-    if let Some(raw) = port.as_str() {
-        return infer_compose_port_binding_from_short_syntax(raw).map(Some);
-    }
-    let Some(mapping) = port.as_mapping() else {
-        return Ok(None);
-    };
-    let published = mapping
-        .get("published")
-        .and_then(YamlValue::as_i64)
-        .or_else(|| {
-            mapping
-                .get("published")
-                .and_then(YamlValue::as_str)
-                .and_then(|value| value.parse::<i64>().ok())
-        });
-    let target = mapping
-        .get("target")
-        .and_then(YamlValue::as_i64)
-        .or_else(|| {
-            mapping
-                .get("target")
-                .and_then(YamlValue::as_str)
-                .and_then(|value| value.parse::<i64>().ok())
-        });
-    let Some(published) = published else {
-        return Ok(None);
-    };
-    let Some(target) = target else {
-        return Ok(None);
-    };
-    Ok(Some(PortBinding {
-        host: u16::try_from(published).map_err(|_| {
-            ContainerPolicyError::TaskInvocation(format!(
-                "compose port mapping has invalid published port `{published}`"
-            ))
-        })?,
-        container: u16::try_from(target).map_err(|_| {
-            ContainerPolicyError::TaskInvocation(format!(
-                "compose port mapping has invalid target port `{target}`"
-            ))
-        })?,
-    }))
-}
-
-fn infer_compose_port_binding_from_short_syntax(
-    raw: &str,
-) -> Result<PortBinding, ContainerPolicyError> {
-    let raw = raw.trim();
-    let published = raw.split('/').next().unwrap_or(raw).trim();
-    let mut parts = published.split(':').map(str::trim).collect::<Vec<_>>();
-    if parts.len() < 2 {
-        return Err(ContainerPolicyError::TaskInvocation(format!(
-            "unsupported compose port mapping `{raw}`; expected a published host port"
-        )));
-    }
-    let container = parts.pop().unwrap_or_default();
-    let host = parts.pop().unwrap_or_default();
-    Ok(PortBinding {
-        host: host.parse::<u16>().map_err(|error| {
-            ContainerPolicyError::TaskInvocation(format!(
-                "invalid published host port in compose mapping `{raw}`: {error}"
-            ))
-        })?,
-        container: container.parse::<u16>().map_err(|error| {
-            ContainerPolicyError::TaskInvocation(format!(
-                "invalid target container port in compose mapping `{raw}`: {error}"
-            ))
-        })?,
-    })
-}
-
 fn configured_media_mounts(config: &ManifestContainerConfig) -> Vec<String> {
     config
         .data
@@ -1672,11 +1415,18 @@ fn apply_generated_compose_host_mount_policy(
         attached_services += 1;
     }
 
-    if attached_services == 0 {
+    if attached_services > 0 {
+        return Ok(());
+    }
+    // With no repo-root bind, the declared mounts describe the primary
+    // service's view, as a translated `compose_file` assumed.
+    let primary = config.primary_service.as_deref().unwrap_or_default();
+    let Some(service) = compose_document.services.get_mut(primary) else {
         return Err(ContainerPolicyError::TaskInvocation(format!(
             "container `{container_name}` declares `[containers.{container_name}.host].mounts`, but no generated service has a repo-root bind mount to attach them to"
         )));
-    }
+    };
+    service.append_mounts(&host_mounts);
     Ok(())
 }
 
@@ -1732,20 +1482,6 @@ pub(crate) fn parse_media_mount(
     }
 
     Ok((resolved, target.to_owned()))
-}
-
-pub(crate) fn repo_relative_path(
-    repo_root: &Path,
-    raw: &str,
-    field: &str,
-) -> Result<PathBuf, ContainerPolicyError> {
-    let path = Path::new(raw);
-    if path.is_absolute() {
-        return Err(ContainerPolicyError::TaskInvocation(format!(
-            "`{field}` must stay repo-relative in v1"
-        )));
-    }
-    Ok(repo_root.join(path))
 }
 
 pub(crate) fn path_relative_to_repo(repo_root: &Path, path: &Path) -> String {
@@ -2348,52 +2084,5 @@ services:
             assert_ne!(assigned[0], assigned[1]);
             assert_ne!(assigned[0], "8080:80");
         });
-    }
-
-    #[test]
-    fn direct_compose_ownership_override_labels_declared_services_only() {
-        let root = std::env::temp_dir().join(format!(
-            "effigy-direct-ownership-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("time")
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(root.join("infra")).expect("mkdir repo");
-        let compose = root.join("infra/docker-compose.yml");
-        std::fs::write(
-            &compose,
-            "services:\n  builder:\n    image: example\n  sidecar:\n    image: example\n",
-        )
-        .expect("write compose");
-        let config: ManifestContainerConfig =
-            serde_yaml::from_str("compose_file: infra/docker-compose.yml").expect("config");
-
-        let mut draft = crate::policy::render::Draft::default();
-        let path = render_direct_compose_ownership_override(
-            &root,
-            "linux-release",
-            &compose,
-            &config,
-            &mut draft,
-        )
-        .expect("render override");
-        let rendered: YamlValue = serde_yaml::from_str(&draft.read(&path).expect("read override"))
-            .expect("parse override");
-        let checkout = root
-            .canonicalize()
-            .expect("canonical root")
-            .display()
-            .to_string();
-
-        for service in ["builder", "sidecar"] {
-            assert_eq!(
-                rendered["services"][service]["labels"][CHECKOUT_LABEL].as_str(),
-                Some(checkout.as_str())
-            );
-        }
-        assert!(rendered["services"].get("undeclared").is_none());
-        assert!(path.ends_with(".effigy/runtime/compose/linux-release.ownership.compose.yml"));
     }
 }

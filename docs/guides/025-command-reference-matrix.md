@@ -294,7 +294,7 @@ effigy container <NAME> logs [--repo <PATH>] [--service <NAME>] [--follow] [--js
 effigy container <NAME> shell [--repo <PATH>] [--service <NAME>] [--command <CMD>]
 effigy container <NAME> reset [--repo <PATH>] [--keep-data] [--json]
 effigy container render [<NAME>] [--repo <PATH>] [--json]
-effigy container <NAME> eject [--repo <PATH>] [--json]
+effigy container migrate [<NAME>] [--repo <PATH>] [--json]
 effigy container hosts [--repo <PATH>] [--json]
 effigy container <NAME> hosts [--repo <PATH>] [--json]
 effigy container scope [--repo <PATH>] [--json]
@@ -467,8 +467,10 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
   `container shell --command … --bounded` capture supports it when all required
   deadline and byte limits are supplied
 - `container status --global` and `container stats --global` are cross-project views
-- generated-compose data lifecycle stays on the product-owned path and does not
-  widen direct `compose_file` ownership
+- `container migrate` writes a deprecated `compose_file` out as project catalog
+  fragments with an unchanged render; `container eject` is retired
+- volume and data commands run on the environment's exact backend and touch
+  only volumes whose Effigy labels name the project
 - `system logs --json` returns a finite snapshot; `system logs --follow` streams
   logs and rejects `--json`. The same distinction applies to `container <NAME> logs`
 - `system repair` and `system reset-runtime` are the recovery surfaces for

@@ -1695,7 +1695,7 @@ coverage matrix (`synthesis/GUEST-EFFIGY.md` §2).
 | `container shell`, bounded shell, `exec`, aliases | channel | Admission request; the host launches the command in the named service, including the current container, through remote custody. |
 | `container up`, `down`, `reset`, `retire` | channel | Mutate requests to the environment engine under R4. A guest `down` of its own environment follows §8.7. |
 | `container status`, `stats`, `logs` | channel | Host Observe requests on the backend inventory. |
-| `container data`, `cache`, `volume`, `profile`, `eject`, `hosts`, `scope`, `ports` | local and channel | Declared configuration is local from the context; host facts are Observe requests; mutations, including `eject` source writes, are requests. |
+| `container data`, `cache`, `volume`, `profile`, `migrate`, `hosts`, `scope`, `ports` | local and channel | Declared configuration is local from the context; host facts are Observe requests; mutations, including `eject` source writes, are requests. |
 | `secrets` list, doctor, get, export | channel | Observe requests to the secrets engine; plaintext follows the host CLI's policy. |
 | `secrets` init, set, unset, import, unlock, lock, passphrase change; required task secrets | channel | Mutate requests to the secrets engine; task secrets arrive as per-run grants (§8.2). |
 | `deps` status, link, unlink, pin, unpin | channel | Status is Observe; changes are requests to the deps engine. |
@@ -1910,6 +1910,14 @@ bounds. Ordinary dev, test and release profiles are unchanged.
 | Runtime-scope records | `crates/effigy-containers/src/runtime/scope.rs:221-264` | `checkouts` table, token preserved |
 | Colima repair by `pkill -f` patterns | `crates/effigy-containers/src/exec/colima_runtime.rs:924-944` | retained identities only (I-P4, R3) |
 | Failed-run recovery downs inside `up` | `src/runner/container_command/lifecycle.rs:766` | predecessor settle (K5); permit (R4) |
+
+Environment reconciler adoption, tranche 3 (effigy#230, 2026-10-20):
+
+| Row | State |
+| --- | --- |
+| Backend metadata read-modify-write | Done. Prepare records engine, context and source in the environment's `resources` row through `Run::set_backend`, in the owner run that publishes the desired generation. One resolver serves Compose, runtime, volume, data and shared-service calls. The v0.14 file is read until imported and never written (M3, M6); an unreadable record is `Unknown` and volume and data actions refuse (R3). |
+| Exact resource adoption | Done for volumes: reset, cache prune and data transfer act only on volumes whose Effigy labels name the project and volume, on the exact backend endpoint; lookalikes are reported, never claimed. Containers keep the full-ID ownership check. Backend identity is not yet part of a `Data` `ResourceId` (I-ID4); that is the `data_from` claim task. |
+| Direct `compose_file` (Q-004) | Translated for one release to project catalog fragments; `container migrate` writes them with an unchanged render; `eject` retired. |
 
 ### 10.4 Gateway
 

@@ -375,10 +375,12 @@ default = "cattle"
 
 [containers.cattle]
 driver = "colima"
-compose_file = "docker-compose.yml"
 project_name = "child-cattle"
 primary_service = "cattle"
 working_dir = "/workspace"
+
+[containers.cattle.services.cattle]
+catalog = "workspace-rust-bun"
 
 [tasks.check]
 run = "cargo test"
@@ -1126,8 +1128,10 @@ Shape rules (current v0.3+ form):
   `interval_ms = <N>`) used by `health_wait = true` and `effigy system status`.
 - `[systems.<name>.workspaces.<ws>]` picks which service hosts the interactive
   workspace plus workspace-local overrides; defaults come from the system body.
-- generated compose now lives under `.effigy/runtime/compose/`; `infra/dev/` is
-  only used for user-owned ejected compose files (`effigy container <name> eject`).
+- generated compose is internal and immutable; read it with
+  `effigy container render <name>`. `infra/dev/catalog/` holds project catalog
+  fragments, including those `effigy container migrate <name>` writes for a
+  retired `compose_file`.
 
 Typical commands:
 - `effigy system up` / `effigy system down` / `effigy system status`

@@ -65,9 +65,6 @@
       "std.process.Command.output": 1,
       "std::fs::write": 5
     },
-    "crates/effigy-containers/src/lib.rs": {
-      "std::fs::write": 1
-    },
     "crates/effigy-containers/src/runtime/scope.rs": {
       "std::fs::remove_file": 2,
       "std::fs::rename": 1,
@@ -84,7 +81,7 @@
     "crates/effigy-contracts/src/lib.rs": {
       "std.process.Command.new": 5,
       "std.process.Command.output": 5,
-      "std::fs::write": 17
+      "std::fs::write": 16
     },
     "crates/effigy-core/src/build_info.rs": {
       "std.process.Command.new": 3,

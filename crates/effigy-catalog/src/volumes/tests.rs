@@ -183,25 +183,6 @@ fn remove_volume_command_format() {
     assert!(cmd.args.contains(&"my-project-db-data".to_string()));
 }
 
-#[test]
-fn reset_commands_from_classification() {
-    let vols = test_volumes();
-    let class = classify_for_reset(&vols, true);
-    let cmds = reset_commands(&class);
-    // Both non-persistent volumes should be removed.
-    assert_eq!(cmds.len(), 2);
-    assert!(cmds[0].args.contains(&"proj-cache-data".to_string()));
-    assert!(cmds[1].args.contains(&"proj-pnpm-store".to_string()));
-}
-
-#[test]
-fn reset_commands_all_volumes() {
-    let vols = test_volumes();
-    let class = classify_for_reset(&vols, false);
-    let cmds = reset_commands(&class);
-    assert_eq!(cmds.len(), 4);
-}
-
 // ── ManagedVolume construction ───────────────────────────────────
 
 #[test]
@@ -367,4 +348,51 @@ fn merge_runtime_volume_metadata_updates_matching_entries_only() {
     assert_eq!(merged[0].mount_point.as_deref(), Some("/data/db"));
     assert!(merged[1].size_bytes.is_none());
     assert!(merged[2].size_bytes.is_none());
+}
+
+#[test]
+fn volume_identity_adopts_only_labelled_owners_and_refuses_lookalikes() {
+    let metadata = |labels: &[(&str, &str)]| RuntimeVolumeMetadata {
+        name: "web-dev-db-data".to_owned(),
+        mount_point: None,
+        size_bytes: None,
+        labels: labels
+            .iter()
+            .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+            .collect(),
+    };
+    let owned = metadata(&[
+        ("com.effigy.managed", "true"),
+        ("com.effigy.project", "web-dev"),
+        ("com.effigy.volume-name", "web-dev-db-data"),
+    ]);
+    assert_eq!(
+        verify_volume_identity("web-dev", "web-dev-db-data", Some(&owned)),
+        VolumeIdentity::Owned
+    );
+    assert_eq!(
+        verify_volume_identity("web-dev", "web-dev-db-data", None),
+        VolumeIdentity::Absent
+    );
+    // Same name, created by hand or by another tool: never claimed.
+    let unlabelled = metadata(&[("com.docker.compose.project", "web-dev")]);
+    let VolumeIdentity::Lookalike(reason) =
+        verify_volume_identity("web-dev", "web-dev-db-data", Some(&unlabelled))
+    else {
+        panic!("an unlabelled volume is a lookalike");
+    };
+    assert!(
+        reason.contains("`com.effigy.managed` is missing"),
+        "{reason}"
+    );
+    // Labelled by Effigy, but for another project with a colliding name.
+    let foreign = metadata(&[
+        ("com.effigy.managed", "true"),
+        ("com.effigy.project", "web"),
+        ("com.effigy.volume-name", "web-dev-db-data"),
+    ]);
+    assert!(matches!(
+        verify_volume_identity("web-dev", "web-dev-db-data", Some(&foreign)),
+        VolumeIdentity::Lookalike(reason) if reason.contains("`web`")
+    ));
 }

@@ -300,15 +300,6 @@ pub fn remove_volume_command(volume_name: &str) -> DockerCommand {
     )
 }
 
-/// Build commands for a reset operation based on volume classification.
-pub fn reset_commands(classification: &VolumeClassification) -> Vec<DockerCommand> {
-    classification
-        .remove
-        .iter()
-        .map(|name| remove_volume_command(name))
-        .collect()
-}
-
 pub fn parse_listed_volume_names(output: &str) -> Vec<String> {
     output
         .lines()
@@ -414,6 +405,45 @@ pub fn parse_volume_usage_bytes_map(output: &str) -> BTreeMap<String, u64> {
             Some((mount_point, kibibytes.saturating_mul(1024)))
         })
         .collect()
+}
+
+/// How a runtime volume relates to the volume an environment declares.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VolumeIdentity {
+    /// Effigy's labels name this project and this volume.
+    Owned,
+    /// No volume with this name exists on the selected backend.
+    Absent,
+    /// A volume with this name whose labels do not prove ownership.
+    Lookalike(String),
+}
+
+/// Name alone is never identity. A volume is adopted only when Effigy's own
+/// labels name this project and volume; a lookalike is reported, never
+/// claimed (contract 052 R3).
+pub fn verify_volume_identity(
+    project_name: &str,
+    volume_name: &str,
+    runtime: Option<&RuntimeVolumeMetadata>,
+) -> VolumeIdentity {
+    let Some(runtime) = runtime else {
+        return VolumeIdentity::Absent;
+    };
+    let label = |key: &str| runtime.labels.get(key).map(String::as_str);
+    let mismatch = [
+        ("com.effigy.managed", "true"),
+        ("com.effigy.project", project_name),
+        ("com.effigy.volume-name", volume_name),
+    ]
+    .into_iter()
+    .find(|(key, expected)| label(key) != Some(*expected));
+    match mismatch {
+        None => VolumeIdentity::Owned,
+        Some((key, expected)) => VolumeIdentity::Lookalike(format!(
+            "volume `{volume_name}` exists but label `{key}` is {} instead of `{expected}`",
+            label(key).map_or_else(|| "missing".to_owned(), |value| format!("`{value}`"))
+        )),
+    }
 }
 
 pub fn merge_runtime_volume_metadata(

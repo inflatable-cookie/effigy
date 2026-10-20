@@ -2,10 +2,10 @@ use std::path::Path;
 
 use effigy_containers::{
     compose::{compose_args, compose_up_args, normalize_compose_command_args},
-    load_runtime_backend_override, EffectiveContainerPolicy,
+    EffectiveContainerPolicy,
 };
 use effigy_containers::{
-    BackendId, ContainerAction, ContainerBackendDetection, ContainerCleanupResult,
+    ContainerAction, ContainerBackendDetection, ContainerCleanupResult,
     ContainerComposeInvocationPlan, ContainerInterruptPolicy, ContainerManager,
     ContainerManagerRequest, ContainerOperationReport, ContainerRuntimeInvocationPlan,
     ContainerRuntimeState,
@@ -154,26 +154,17 @@ fn backend_detection_for_policy(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> ContainerBackendDetection {
+    // One exact backend for every adapter call; see `effigy_containers::backend`.
     let mut detection = ContainerBackendDetection::from_env_and_path();
-    if detection.backend_override.is_none() {
-        detection.backend_override =
-            load_runtime_backend_override(repo_root, Some(policy.name.as_str()));
-    }
-    if detection.backend_override.is_none() {
-        detection.backend_override = Some(backend_id_for_policy(policy));
-    }
+    detection.backend_override =
+        Some(effigy_containers::backend::exact_backend(repo_root, &policy.name, policy.driver).id);
     detection
-}
-
-fn backend_id_for_policy(policy: &EffectiveContainerPolicy) -> BackendId {
-    match policy.driver {
-        effigy_manifest::ManifestContainerDriver::Colima => BackendId::colima_nerdctl(),
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use effigy_containers::BackendId;
     use effigy_containers::EffectiveComposeSource;
     use effigy_manifest::{
         ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerShutdownMode,

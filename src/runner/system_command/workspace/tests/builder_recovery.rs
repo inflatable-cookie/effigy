@@ -51,8 +51,9 @@ if cmd == 'inspect':
     sys.exit(0)
 if cmd == 'up':
     if mode == 'up_fail': sys.exit(21)
-    override = next(a for a in args if a.endswith('ownership.compose.yml'))
-    labels = dict(re.findall(r'^\s*(com\.effigy\.[^:]+): (.+)$', pathlib.Path(override).read_text(), re.M))
+    generated = next(a for a in args if a.endswith('.generated.compose.yml'))
+    services = pathlib.Path(generated).read_text().split('\nvolumes:')[0]
+    labels = dict(re.findall(r'^\s*(com\.effigy\.[^:]+): (.+)$', services, re.M))
     labels.update({'com.docker.compose.project': os.environ['EFFIGY_RECOVERY_PROJECT'], 'com.docker.compose.service': 'builder'})
     if os.environ['EFFIGY_COMPOSE_BACKEND'] == 'docker':
         labels.update({'com.docker.compose.oneoff': 'False', 'com.docker.compose.project.working_dir': str(root)})
@@ -166,11 +167,18 @@ impl Fixture {
         // Exercise the shipped declaration and Compose paths, not a test-only project.
         let declaration = include_str!("../../../../../config/containers.toml");
         std::fs::write(root.join("effigy.toml"), format!("[tasks.\"workspace:linux:artifact\"]\nrun = [{{ rhai = \"scripts/build.rhai\" }}]\n{declaration}")).unwrap();
-        let compose = root.join("infra/release/linux/docker-compose.yml");
-        std::fs::create_dir_all(compose.parent().unwrap()).unwrap();
+        let fragment = root.join("infra/dev/catalog/linux-release-builder");
+        std::fs::create_dir_all(&fragment).unwrap();
         std::fs::write(
-            compose,
-            include_str!("../../../../../infra/release/linux/docker-compose.yml"),
+            fragment.join("service.toml"),
+            include_str!("../../../../../infra/dev/catalog/linux-release-builder/service.toml"),
+        )
+        .unwrap();
+        std::fs::write(
+            fragment.join("compose.fragment.yml"),
+            include_str!(
+                "../../../../../infra/dev/catalog/linux-release-builder/compose.fragment.yml"
+            ),
         )
         .unwrap();
         let bin = root.join("bin");
@@ -723,11 +731,11 @@ fn extra_declared_service_and_malformed_retained_admission_refuse() {
     for mode in ["sibling", "malformed_marker", "foreign_marker"] {
         let mut fixture = Fixture::new(true, true, "docker");
         if mode == "sibling" {
-            let compose = fixture.root.join("infra/release/linux/docker-compose.yml");
-            let content = std::fs::read_to_string(&compose)
-                .unwrap()
-                .replace("services:\n", "services:\n  app:\n    image: private:app\n");
-            std::fs::write(compose, content).unwrap();
+            let manifest = fixture.root.join("effigy.toml");
+            let mut content = std::fs::read_to_string(&manifest).unwrap();
+            content
+                .push_str("\n[containers.\"linux-release\".services.app]\ncatalog = \"redis\"\n");
+            std::fs::write(manifest, content).unwrap();
         } else {
             let marker = fixture
                 .preserved

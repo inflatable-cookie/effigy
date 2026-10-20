@@ -44,6 +44,9 @@ services:
       - stack-cache:/cache
       - stack-node-modules:/workspace-root/workspace-app-reference/acme-client/node_modules
       - /tmp/host-path:/workspace-root/host-cache
+volumes:
+  stack-cache:
+  stack-node-modules:
 "#,
     )
     .expect("compose");
@@ -62,82 +65,6 @@ services:
     assert!(!targets
         .iter()
         .any(|value| value == "/workspace-root/workspace-app-reference"));
-}
-
-#[test]
-fn eject_generated_compose_promotes_generated_output_to_direct_ownership() {
-    let _lock = crate::test_env_lock();
-    let root = temp_repo("eject-generated");
-    fs::write(
-        root.join("effigy.toml"),
-        r#"
-[containers]
-default = "web"
-
-[containers.web]
-primary_service = "app"
-
-[containers.web.services.app]
-catalog = "php-fpm"
-version = "8.3"
-
-[containers.web.services.web]
-catalog = "nginx"
-variant = "default"
-"#,
-    )
-    .expect("write manifest");
-
-    let policy = load_container_policy(&root, None).expect("policy");
-    let generated = root.join(".effigy/runtime/compose/web.generated.compose.yml");
-    assert!(
-        !generated.exists(),
-        "pure resolution should leave legacy output absent"
-    );
-
-    let result = eject_generated_compose(&root, &policy).expect("eject");
-    assert_eq!(
-        result.compose_path,
-        root.join("infra/dev/docker-compose.yml")
-    );
-    assert!(
-        result.compose_path.exists(),
-        "permanent compose should exist"
-    );
-    assert!(
-        !generated.exists(),
-        "export does not recreate legacy output"
-    );
-    assert!(root.join("infra/dev/catalog/app/Dockerfile").is_file());
-    assert!(root.join("infra/dev/web.conf").is_file());
-    assert!(fs::read_to_string(&result.compose_path)
-        .unwrap()
-        .contains("catalog/app/Dockerfile"));
-}
-
-#[test]
-fn eject_generated_compose_rejects_direct_compose_ownership() {
-    let root = temp_repo("eject-direct");
-    fs::write(
-        root.join("effigy.toml"),
-        r#"
-[containers]
-default = "web"
-
-[containers.web]
-compose_file = "infra/dev/docker-compose.yml"
-primary_service = "app"
-"#,
-    )
-    .expect("write manifest");
-    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
-    fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
-
-    let policy = load_container_policy(&root, None).expect("policy");
-    let error = eject_generated_compose(&root, &policy).expect_err("should fail");
-    assert!(error
-        .to_string()
-        .contains("direct `compose_file` ownership"));
 }
 
 #[test]
@@ -160,7 +87,11 @@ primary_service = "jobs"
     )
     .expect("write manifest");
     fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
-    fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
+    fs::write(
+        root.join("infra/dev/docker-compose.yml"),
+        "services:\n  app:\n    image: example\n",
+    )
+    .expect("compose");
 
     let policies = load_all_container_policies(&root).expect("policies");
     assert_eq!(policies.len(), 2);
@@ -263,7 +194,11 @@ primary_service = "app"
     )
     .expect("write manifest");
     fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
-    fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
+    fs::write(
+        root.join("infra/dev/docker-compose.yml"),
+        "services:\n  app:\n    image: example\n",
+    )
+    .expect("compose");
 
     let mut policy = load_container_policy(&root, None).expect("policy");
     policy.shared_services = vec![SharedServiceBinding {
@@ -468,33 +403,6 @@ version = "8.3"
 }
 
 #[test]
-fn direct_compose_policy_rejects_media_mounts() {
-    let root = temp_repo("direct-media-reject");
-    fs::write(
-        root.join("effigy.toml"),
-        r#"
-[containers]
-default = "web"
-
-[containers.web]
-compose_file = "infra/dev/docker-compose.yml"
-primary_service = "app"
-
-[containers.web.data]
-media = ["storage/uploads:/var/www/html/storage/uploads"]
-"#,
-    )
-    .expect("write manifest");
-    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
-    fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
-
-    let error = load_container_policy(&root, None).expect_err("should fail");
-    assert!(error
-        .to_string()
-        .contains("bounded media lifecycle path only supports generated compose"));
-}
-
-#[test]
 fn reset_report_renders_keep_data_volume_actions() {
     let root = temp_repo("reset-report");
     fs::write(
@@ -510,7 +418,11 @@ primary_service = "app"
     )
     .expect("write manifest");
     fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
-    fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
+    fs::write(
+        root.join("infra/dev/docker-compose.yml"),
+        "services:\n  app:\n    image: example\n",
+    )
+    .expect("compose");
 
     let policy = load_container_policy(&root, None).expect("policy");
     let report = crate::reset_report(
@@ -558,7 +470,11 @@ primary_service = "app"
     )
     .expect("write manifest");
     fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
-    fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
+    fs::write(
+        root.join("infra/dev/docker-compose.yml"),
+        "services:\n  app:\n    image: example\n",
+    )
+    .expect("compose");
 
     let policy = load_container_policy(&root, None).expect("policy");
     let report = data_list_report(
@@ -847,7 +763,11 @@ primary_service = "app"
     )
     .expect("write manifest");
     fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
-    fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
+    fs::write(
+        root.join("infra/dev/docker-compose.yml"),
+        "services:\n  app:\n    image: example\n",
+    )
+    .expect("compose");
 
     let policy = load_container_policy(&root, None).expect("policy");
     let report = data_transfer_report(
@@ -886,7 +806,11 @@ primary_service = "app"
     )
     .expect("write manifest");
     fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
-    fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
+    fs::write(
+        root.join("infra/dev/docker-compose.yml"),
+        "services:\n  app:\n    image: example\n",
+    )
+    .expect("compose");
 
     let policy = load_container_policy(&root, None).expect("policy");
     let report = crate::data_pull_production_report(
@@ -925,7 +849,11 @@ primary_service = "app"
     )
     .expect("write manifest");
     fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
-    fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
+    fs::write(
+        root.join("infra/dev/docker-compose.yml"),
+        "services:\n  app:\n    image: example\n",
+    )
+    .expect("compose");
 
     let mut policy = load_container_policy(&root, None).expect("policy");
     policy.declared_media_mounts = vec!["storage/uploads:/var/www/html/storage/uploads".to_owned()];
@@ -957,7 +885,11 @@ primary_service = "app"
     )
     .expect("write manifest");
     fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
-    fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
+    fs::write(
+        root.join("infra/dev/docker-compose.yml"),
+        "services:\n  app:\n    image: example\n",
+    )
+    .expect("compose");
 
     let policy = load_container_policy(&root, None).expect("policy");
     let services = vec![ContainerStatusService {
@@ -1001,7 +933,11 @@ primary_service = "app"
     )
     .expect("write manifest");
     fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
-    fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
+    fs::write(
+        root.join("infra/dev/docker-compose.yml"),
+        "services:\n  app:\n    image: example\n",
+    )
+    .expect("compose");
 
     let policy = load_container_policy(&root, None).expect("policy");
     let services = vec![ContainerStatusService {
@@ -1047,7 +983,11 @@ primary_service = "app"
     )
     .expect("write manifest");
     fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
-    fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
+    fs::write(
+        root.join("infra/dev/docker-compose.yml"),
+        "services:\n  app:\n    image: example\n",
+    )
+    .expect("compose");
 
     let policy = load_container_policy(&root, None).expect("policy");
     let report = status_report(&policy, "containerd", true, None, Some(false), None, None);

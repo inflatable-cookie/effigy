@@ -354,7 +354,8 @@ fn render_container_help_shows_runtime_options() {
     assert!(rendered.contains("effigy container <NAME> logs"));
     assert!(rendered.contains("effigy container <NAME> shell"));
     assert!(rendered.contains("effigy container <NAME> reset"));
-    assert!(rendered.contains("effigy container <NAME> eject"));
+    assert!(rendered.contains("effigy container migrate [<NAME>]"));
+    assert!(!rendered.contains("eject"));
     assert!(rendered.contains("effigy container hosts"));
     assert!(rendered.contains("effigy container scope"));
     assert!(rendered.contains("effigy container retire"));

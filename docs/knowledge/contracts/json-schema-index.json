@@ -303,6 +303,13 @@
       "command": "effigy container render web --json --repo <fixture_container_render>",
       "surface": "immutable container render",
       "status": "active"
+    },
+    {
+      "schema": "effigy.container.migrate.v1",
+      "schema_version": 1,
+      "command": "effigy container migrate web --json --repo <fixture_container_migrate>",
+      "surface": "compose_file migration to project catalog fragments",
+      "status": "active"
     }
   ]
 }
