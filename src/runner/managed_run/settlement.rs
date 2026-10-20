@@ -80,7 +80,9 @@ pub(in crate::runner) fn observe(effect: &Effect, _cx: &CleanupContext) -> Obser
 
 pub(in crate::runner) fn release(effect: &Effect, cx: &CleanupContext) -> Observed<()> {
     let result = match effect.spec.kind.as_str() {
-        ENVIRONMENT => payload::<EnvironmentEffect>(effect).and_then(|env| release_environment(&env)),
+        ENVIRONMENT => {
+            payload::<EnvironmentEffect>(effect).and_then(|env| release_environment(&env))
+        }
         EXEC_GROUP => payload::<ExecGroupEffect>(effect).and_then(|group| end_exec_group(&group)),
         other => Err(UnknownReason::Inconsistent(format!(
             "managed effect `{other}` has no release"
@@ -125,11 +127,13 @@ fn unknown<T>(reason: String) -> Observed<T> {
 /// any other live holder refuses (R4).
 fn release_environment(env: &EnvironmentEffect) -> Result<(), UnknownReason> {
     let outcome = match &env.binding {
-        Binding::Named { selector } => crate::runner::container_command::release_managed_environment(
-            &env.repo,
-            selector.as_deref(),
-            &env.token,
-        ),
+        Binding::Named { selector } => {
+            crate::runner::container_command::release_managed_environment(
+                &env.repo,
+                selector.as_deref(),
+                &env.token,
+            )
+        }
         Binding::Inline { task } => {
             crate::runner::execute::release_inline_managed_environment(&env.repo, task, &env.token)
         }
@@ -150,13 +154,14 @@ fn end_exec_group(group: &ExecGroupEffect) -> Result<(), UnknownReason> {
         Observed::Unknown(reason) => return Err(reason),
     };
     let policy = policy(&group.repo, &group.binding).map_err(UnknownReason::Inconsistent)?;
-    effigy_containers::exec::end_owned_container_process_group(&group.repo, &policy, pgid)
-        .map_err(|error| {
+    effigy_containers::exec::end_owned_container_process_group(&group.repo, &policy, pgid).map_err(
+        |error| {
             UnknownReason::Inconsistent(format!(
                 "remote group {pgid} of `{}` was not ended: {error}",
                 group.process
             ))
-        })
+        },
+    )
 }
 
 /// The effective policy of a run's environment, re-resolved for its settle.
@@ -197,7 +202,10 @@ pub(in crate::runner) fn marker_pgid(group: &ExecGroupEffect) -> Observed<u32> {
         }
     };
     let mut fields = raw.split_whitespace();
-    match (fields.next().and_then(|pid| pid.parse::<u32>().ok()), fields.next()) {
+    match (
+        fields.next().and_then(|pid| pid.parse::<u32>().ok()),
+        fields.next(),
+    ) {
         (Some(pgid), Some(nonce)) if pgid > 1 && nonce == group.nonce => {
             Observed::Verified(pgid, evidence())
         }

@@ -713,11 +713,8 @@ impl Owner {
         }
     }
     fn signal(&self, signal: nix::sys::signal::Signal) {
-        nix::sys::signal::kill(
-            nix::unistd::Pid::from_raw(self.child.0.id() as i32),
-            signal,
-        )
-        .expect("signal the client");
+        nix::sys::signal::kill(nix::unistd::Pid::from_raw(self.child.0.id() as i32), signal)
+            .expect("signal the client");
     }
 }
 
@@ -743,7 +740,9 @@ fn matrix(front: Front, stop: Stop) {
     {
         for children in 0..3 {
             let case = Case::new(
-                &fixture.path().join(format!("case-{prior_index}-{children}")),
+                &fixture
+                    .path()
+                    .join(format!("case-{prior_index}-{children}")),
                 &gateway,
                 &effects,
                 &foreign_ca,
@@ -875,7 +874,12 @@ fn client_death(front: Front, death: Death) {
     let mut cleanup = GatewayCleanup::new(&effects, &foreign_ca);
     let (gateway, _) =
         start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut cleanup);
-    let case = Case::new(&fixture.path().join("death"), &gateway, &effects, &foreign_ca);
+    let case = Case::new(
+        &fixture.path().join("death"),
+        &gateway,
+        &effects,
+        &foreign_ca,
+    );
     eprintln!("client death front={front:?} death={death:?}");
     let down_before = case.down_count();
     let mut killed = None;
@@ -953,10 +957,18 @@ macro_rules! death_case {
 death_case!(managed_matrix_death_tui_terminal_close, Tui, TerminalClose);
 death_case!(managed_matrix_death_tui_hangup, Tui, Hangup);
 death_case!(managed_matrix_death_tui_terminate, Tui, Terminate);
-death_case!(managed_matrix_death_tui_kill_before_active, Tui, KillBeforeActive);
+death_case!(
+    managed_matrix_death_tui_kill_before_active,
+    Tui,
+    KillBeforeActive
+);
 death_case!(managed_matrix_death_text_hangup, Text, Hangup);
 death_case!(managed_matrix_death_text_terminate, Text, Terminate);
-death_case!(managed_matrix_death_text_kill_before_active, Text, KillBeforeActive);
+death_case!(
+    managed_matrix_death_text_kill_before_active,
+    Text,
+    KillBeforeActive
+);
 death_case!(
     managed_matrix_death_detached_kill_before_active,
     Detached,
@@ -1036,7 +1048,12 @@ fn managed_matrix_slow_down_is_awaited_by_the_stop() {
     let mut cleanup = GatewayCleanup::new(&effects, &foreign_ca);
     let (gateway, _) =
         start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut cleanup);
-    let case = Case::new(&fixture.path().join("slow"), &gateway, &effects, &foreign_ca);
+    let case = Case::new(
+        &fixture.path().join("slow"),
+        &gateway,
+        &effects,
+        &foreign_ca,
+    );
     let mut owner = case.spawn(Front::Text, "slow-owner");
     let pids = case.ready(&mut owner, 0);
     fs::write(case.state.join("slow-down"), "8").expect("slow cascade");

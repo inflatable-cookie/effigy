@@ -1440,7 +1440,8 @@ impl OwnerWatch {
                     }
                     let mut pending: libc::c_int = 0;
                     // SAFETY: FIONREAD writes the readable byte count to `pending`.
-                    let queued = unsafe { libc::ioctl(fd.as_raw_fd(), libc::FIONREAD, &mut pending) };
+                    let queued =
+                        unsafe { libc::ioctl(fd.as_raw_fd(), libc::FIONREAD, &mut pending) };
                     if queued == 0 && pending == 0 {
                         thread_lost.store(true, Ordering::Release);
                         return;

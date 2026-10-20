@@ -24,7 +24,7 @@ use effigy_kernel::outcome::WorkloadOutcome;
 use effigy_kernel::run::{EffectSpec, RequestAction, RunError, Settlement};
 use effigy_kernel::supervise::{EngineSession, OwnerWatch};
 
-use super::environment::{self, EnvironmentPlan, NotReady};
+use super::environment::{self, EnvironmentPlan, Health, NotReady, RouteHealth};
 use super::settlement::{self, Binding, ExecGroupEffect};
 use super::wire::{self, ClientFrame, EngineEvent, Payload};
 use crate::runner::error::RunnerError;
@@ -60,7 +60,9 @@ pub(in crate::runner) fn supervise(session: EngineSession) -> Result<(), RunErro
         name: payload.task.clone(),
         args: payload.args.clone(),
     });
-    *OWNER.lock().unwrap_or_else(std::sync::PoisonError::into_inner) =
+    *OWNER
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) =
         Some(OwnerSession { session, payload });
     let result = crate::runner::run_command(command);
     let unclaimed = OWNER
@@ -197,6 +199,7 @@ pub(in crate::runner) fn own(
         holds_environment: plan.environment.is_some(),
         terminal: payload.terminal,
         lost_while_blocked: false,
+        health: None,
     };
     let end = owner.start(&mut run, &plan, prepare);
     let end = match end {
@@ -213,6 +216,8 @@ struct Owner {
     terminal: Option<(u16, u16)>,
     /// The owning client went away inside a blocking phase.
     lost_while_blocked: bool,
+    /// `health_wait` routes still to answer once every workload has started.
+    health: Option<RouteHealth>,
 }
 
 impl Owner {
@@ -272,7 +277,7 @@ impl Owner {
         if let Some(environment) = &plan.environment {
             let mut stop = |run: &mut TaskRun| pending_stop(run, watch.as_ref());
             match environment::bring_up(run, environment, &plan.token, &mut stop) {
-                Ok(()) => {}
+                Ok(()) => self.health = Some(RouteHealth::new(environment)),
                 Err(NotReady::Stopped(cause)) => return Err(End::Stopped(self.cause(cause))),
                 Err(NotReady::Failed(reason)) => return Err(End::StartFailed(reason)),
             }
@@ -322,6 +327,13 @@ impl Owner {
                 println!("[managed] every workload has started");
                 active = true;
             }
+            if active {
+                match self.health.as_mut().map(RouteHealth::poll) {
+                    Some(Health::Ready) => self.health = None,
+                    Some(Health::Failed(reason)) => return End::StartFailed(reason),
+                    Some(Health::Pending) | None => {}
+                }
+            }
             let routed = task_engine::routed_signals();
             let control = match self.session.control(&mut run.run_mut(), &routed) {
                 Ok(control) => control,
@@ -356,7 +368,10 @@ impl Owner {
             if !self.holds_environment
                 && next == self.workloads.len()
                 && !self.workloads.is_empty()
-                && self.workloads.iter().all(|workload| workload.exit.is_some())
+                && self
+                    .workloads
+                    .iter()
+                    .all(|workload| workload.exit.is_some())
             {
                 return End::AllExited;
             }

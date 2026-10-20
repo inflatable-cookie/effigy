@@ -104,7 +104,10 @@ fn one_run(root: &Path, case: &str) -> Result<String, String> {
         "{case}: {stop}"
     );
     let status = run_dev(root, &["status"]).unwrap_or_else(|error| error.to_string());
-    assert!(!stop.contains("cleanup incomplete"), "{case}: {stop}\n{status}");
+    assert!(
+        !stop.contains("cleanup incomplete"),
+        "{case}: {stop}\n{status}"
+    );
     assert!(
         !status.contains("): running") && !status.contains("): stopping"),
         "{case}: {status}"
@@ -139,7 +142,12 @@ fn supervisor_killed_at_every_journal_crossing_settles_without_orphans() {
         one_run(&root, "trace").expect("a traced run stops cleanly");
     }
     let armed = crossings(&trace);
-    for required in ["BeginAdmitted#0", "IntendAfter#0", "AppliedAfter#0", "SettleBefore#0"] {
+    for required in [
+        "BeginAdmitted#0",
+        "IntendAfter#0",
+        "AppliedAfter#0",
+        "SettleBefore#0",
+    ] {
         assert!(armed.iter().any(|point| point == required), "{armed:?}");
     }
     let mut missed = Vec::new();
@@ -159,7 +167,9 @@ fn supervisor_killed_at_every_journal_crossing_settles_without_orphans() {
         // Recovery: nothing the killed supervisor left blocks the next run.
         let recovered = one_run(&root, &format!("{point} recovery"));
         assert!(
-            recovered.as_deref().is_ok_and(|out| out.contains("): stopped")),
+            recovered
+                .as_deref()
+                .is_ok_and(|out| out.contains("): stopped")),
             "{point} recovery: {recovered:?}"
         );
     }

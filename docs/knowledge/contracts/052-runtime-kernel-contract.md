@@ -1936,9 +1936,10 @@ and `--detach` are front ends over the same run. Row by row:
   journal-bound environment. `Attachments::holders` waits for the
   environment hold API (SEAM `v015-environment`).
 - Lifecycle shell, state file, EXIT trap, curl readiness, `starting`
-  bypass: replaced. The environment phase is an `up` custody child,
-  exec readiness polled with backoff to a deadline, and route probes through
-  `Probe`. No shell trap remains.
+  bypass: replaced. The environment phase is an `up` custody child and
+  exec readiness polled with backoff to a deadline; `health_wait` route
+  probes run through `Probe` once the workloads have started. No shell trap
+  remains.
 - Progressive spawn without rollback: replaced. Each workload is an intended
   custody effect; a failed start settles everything already started.
 - Supervisor shutdown grace: replaced by `OwnedProcess::stop` in settle.

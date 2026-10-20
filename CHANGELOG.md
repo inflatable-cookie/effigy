@@ -17,8 +17,10 @@ During v0.x, MINOR bumps may include breaking changes.
   lifecycle state files and the generated lifecycle shell with its EXIT trap
   are gone. `<task> status --json` prints `effigy.managed.status.v1`, and
   `<task> logs lifecycle` reads the run's own output. The environment comes up
-  and passes exec and route readiness, observed to the readiness budget,
-  before any workload starts. A run that holds an environment stays up when
+  and passes exec readiness, observed to the readiness budget, before any
+  workload starts, so `start_after_ms` no longer has to wait for it;
+  `health_wait` routes are probed once the workloads that serve them have
+  started. A run that holds an environment stays up when
   its workloads exit, until a stop. A live v0.14 headless session is refused
   with its stop command. `--run-id` is refused for managed tasks.
 - Heavy tasks no longer go through the Queue/Nucleus host-run client

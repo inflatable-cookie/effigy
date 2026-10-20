@@ -25,7 +25,7 @@ use effigy_tui::multiprocess::{
     SessionProcesses, SessionTab,
 };
 
-use super::client::{Closed, StopSender, Started};
+use super::client::{Closed, Started, StopSender};
 use super::control::Addressed;
 use super::engine::SETTLE_BUDGET;
 use super::wire::{self, ClientFrame, EngineEvent};
@@ -102,9 +102,8 @@ impl RunSource {
 impl Shared {
     /// One turn: supervisor events, then new log bytes for every tab.
     fn pump(&mut self) {
-        let op = task_engine::reading_context(Deadline::At(
-            Instant::now() + Duration::from_millis(5),
-        ));
+        let op =
+            task_engine::reading_context(Deadline::At(Instant::now() + Duration::from_millis(5)));
         loop {
             match self.client.event(&op) {
                 Ok(Event::Engine(bytes)) => match wire::decode::<EngineEvent>(&bytes) {
@@ -118,7 +117,8 @@ impl Shared {
                             },
                         );
                         self.exits.remove(&process);
-                        self.queue.push_back(event(&process, ProcessEventKind::Started, ""));
+                        self.queue
+                            .push_back(event(&process, ProcessEventKind::Started, ""));
                     }
                     Some(EngineEvent::Exited { process, code }) => {
                         // Bytes written before the exit reach the tab first.
@@ -438,8 +438,8 @@ pub(in crate::runner) fn attach_tui(
     }
     match closed {
         Some(Closed { error: Some(error) }) => Err(RunnerError::task_invocation(error)),
-        Some(Closed { error: None }) | None => Ok(Some(
-            super::control::render(&super::control::status_view(addressed)),
-        )),
+        Some(Closed { error: None }) | None => Ok(Some(super::control::render(
+            &super::control::status_view(addressed),
+        ))),
     }
 }

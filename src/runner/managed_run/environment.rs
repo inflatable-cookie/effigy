@@ -40,7 +40,7 @@ pub(in crate::runner) struct EnvironmentPlan {
     pub(in crate::runner) borrowed: bool,
     /// The service and working directory exec workloads attach to.
     pub(in crate::runner) exec_probe: Option<(String, PathBuf)>,
-    /// `health_wait` routes, probed once the environment is up.
+    /// `health_wait` routes, probed once the workloads have started.
     pub(in crate::runner) route_urls: Vec<String>,
     /// Bounds `up` itself: a cold engine pulls and boots inside it.
     pub(in crate::runner) up_budget: Duration,
@@ -94,7 +94,11 @@ pub(in crate::runner) fn bring_up(
     };
     println!(
         "[environment] {} `{}`: bringing it up (deadline {}s)",
-        if plan.borrowed { "borrowing" } else { "starting" },
+        if plan.borrowed {
+            "borrowing"
+        } else {
+            "starting"
+        },
         plan.name,
         plan.up_budget.as_secs()
     );
@@ -105,13 +109,93 @@ pub(in crate::runner) fn bring_up(
     if let Some((service, working_dir)) = &plan.exec_probe {
         exec_ready(run, plan, service, working_dir, stop)?;
     }
-    if !plan.route_urls.is_empty() {
-        routes_ready(run, plan, stop)?;
-    }
-    for line in &plan.ready_lines {
-        println!("[environment] {line}");
-    }
     Ok(())
+}
+
+/// `health_wait` after the workloads start: the routes they serve can answer
+/// only then. The owner loop polls it one probe at a time, so frames, exits
+/// and stops keep flowing while it waits.
+pub(in crate::runner) struct RouteHealth {
+    urls: Vec<String>,
+    ready_lines: Vec<String>,
+    budget: Duration,
+    started: Option<Instant>,
+    next_at: Instant,
+    backoff: Duration,
+    last: String,
+}
+
+/// One poll of [`RouteHealth`].
+pub(in crate::runner) enum Health {
+    Pending,
+    Ready,
+    Failed(String),
+}
+
+impl RouteHealth {
+    pub(in crate::runner) fn new(plan: &EnvironmentPlan) -> Self {
+        Self {
+            urls: plan.route_urls.clone(),
+            ready_lines: plan.ready_lines.clone(),
+            budget: plan.readiness_budget,
+            started: None,
+            next_at: Instant::now(),
+            backoff: Duration::from_millis(250),
+            last: String::new(),
+        }
+    }
+
+    /// Probes the next unready route when its backoff is due. The deadline
+    /// starts at the first poll, once every workload has started.
+    pub(in crate::runner) fn poll(&mut self) -> Health {
+        let now = Instant::now();
+        let started = *self.started.get_or_insert(now);
+        if now < self.next_at {
+            return Health::Pending;
+        }
+        while let Some(url) = self.urls.first() {
+            let observed = match find_program("curl") {
+                Some(curl) => probe_route(&curl, url),
+                None => {
+                    return Health::Failed(
+                        "`health_wait` needs `curl` on PATH to probe routes".to_owned(),
+                    )
+                }
+            };
+            match observed {
+                Ok(()) => {
+                    println!(
+                        "[environment] ready: route {url} after {}s",
+                        started.elapsed().as_secs()
+                    );
+                    self.urls.remove(0);
+                    self.backoff = Duration::from_millis(250);
+                    self.last.clear();
+                }
+                Err(observed) => {
+                    if observed != self.last {
+                        println!("[environment] waiting: route {url}: {observed}");
+                        self.last = observed;
+                    }
+                    if started.elapsed() >= self.budget {
+                        return Health::Failed(format!(
+                            "route {url} was not ready within {}s of the workloads starting; \
+                             last observed: {}",
+                            self.budget.as_secs(),
+                            self.last
+                        ));
+                    }
+                    self.next_at = Instant::now() + self.backoff;
+                    self.backoff = (self.backoff * 2).min(BACKOFF_MAX);
+                    return Health::Pending;
+                }
+            }
+        }
+        for line in self.ready_lines.drain(..) {
+            println!("[environment] {line}");
+        }
+        Health::Ready
+    }
 }
 
 /// `up` as a custody child of the run: its output is the run's output, and
@@ -209,29 +293,8 @@ fn exec_ready(
     )
 }
 
-/// `health_wait` routes: each answers with a status other than a gateway or
-/// connection failure (000, 502, 503, 504), probed under a probe guard.
-fn routes_ready(
-    run: &mut TaskRun,
-    plan: &EnvironmentPlan,
-    stop: &mut dyn FnMut(&mut TaskRun) -> Option<StopCause>,
-) -> Result<(), NotReady> {
-    let curl = find_program("curl").ok_or_else(|| {
-        NotReady::Failed("`health_wait` needs `curl` on PATH to probe routes".to_owned())
-    })?;
-    let deadline = Instant::now() + plan.readiness_budget;
-    for url in &plan.route_urls {
-        observe_until(
-            run,
-            &format!("route {url}"),
-            deadline,
-            stop,
-            &mut |_| probe_route(&curl, url),
-        )?;
-    }
-    Ok(())
-}
-
+/// One `health_wait` route probe: any status other than a gateway or
+/// connection failure (000, 502, 503, 504), run under a probe guard.
 fn probe_route(curl: &Path, url: &str) -> Result<(), String> {
     let observe = task_engine::observe_context(ROUTE_PROBE + Duration::from_secs(1));
     let output = observe.probe_process(ProbeCommand {
@@ -248,8 +311,12 @@ fn probe_route(curl: &Path, url: &str) -> Result<(), String> {
             url.into(),
         ],
         cwd: PathBuf::from("/"),
-        env: std::env::vars_os()
-            .map(|(key, value)| (key, EnvValue::Plain(value)))
+        // curl needs only these; the kernel refuses its reserved keys.
+        env: ["PATH", "HOME"]
+            .into_iter()
+            .filter_map(|key| {
+                std::env::var_os(key).map(|value| (OsString::from(key), EnvValue::Plain(value)))
+            })
             .collect::<BTreeMap<_, _>>(),
         deadline: ROUTE_PROBE + Duration::from_millis(500),
         max_output: 64,
@@ -258,7 +325,10 @@ fn probe_route(curl: &Path, url: &str) -> Result<(), String> {
         Observed::Verified(output, _) => {
             let code = String::from_utf8_lossy(&output.output).trim().to_owned();
             match code.as_str() {
-                "" | "000" | "502" | "503" | "504" => Err(format!("answered {}", if code.is_empty() { "nothing" } else { &code })),
+                "" | "000" | "502" | "503" | "504" => Err(format!(
+                    "answered {}",
+                    if code.is_empty() { "nothing" } else { &code }
+                )),
                 _ => Ok(()),
             }
         }
@@ -336,5 +406,79 @@ mod tests {
     fn first_line_keeps_only_the_headline() {
         assert_eq!(first_line("not ready\nmore"), "not ready");
         assert_eq!(first_line(""), "");
+    }
+
+    fn health(url: String, budget: Duration) -> RouteHealth {
+        RouteHealth {
+            urls: vec![url],
+            ready_lines: vec!["ready: http://app.test".to_owned()],
+            budget,
+            started: None,
+            next_at: Instant::now(),
+            backoff: Duration::from_millis(10),
+            last: String::new(),
+        }
+    }
+
+    /// A route answers 503 until `serving` is set, then 200.
+    fn route(serving: std::sync::Arc<std::sync::atomic::AtomicBool>) -> String {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind route");
+        let address = listener.local_addr().expect("route address");
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                let mut request = [0u8; 1024];
+                let _ = stream.read(&mut request);
+                let ready = serving.load(std::sync::atomic::Ordering::Acquire);
+                let status = if ready {
+                    "200 OK"
+                } else {
+                    "503 Service Unavailable"
+                };
+                let _ = stream.write_all(
+                    format!("HTTP/1.1 {status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                        .as_bytes(),
+                );
+                if ready {
+                    return;
+                }
+            }
+        });
+        format!("http://{address}/")
+    }
+
+    /// A route the workloads serve answers only once they run: health stays
+    /// pending without blocking, then turns ready (the deadlock that kept
+    /// consumers on `health_wait = false`).
+    #[test]
+    fn route_health_waits_for_a_route_its_workloads_serve() {
+        let serving = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut health = health(route(serving.clone()), Duration::from_secs(30));
+        let polled = Instant::now();
+        assert!(matches!(health.poll(), Health::Pending));
+        assert!(polled.elapsed() < ROUTE_PROBE + Duration::from_secs(1));
+        assert!(health.last.contains("503"), "{}", health.last);
+        serving.store(true, std::sync::atomic::Ordering::Release);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            match health.poll() {
+                Health::Ready => break,
+                Health::Pending => assert!(Instant::now() < deadline, "never ready"),
+                Health::Failed(reason) => panic!("{reason}"),
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(health.ready_lines.is_empty(), "ready lines print once");
+    }
+
+    #[test]
+    fn route_health_fails_at_its_budget_with_what_it_saw() {
+        let serving = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut health = health(route(serving), Duration::ZERO);
+        let Health::Failed(reason) = health.poll() else {
+            panic!("a spent budget fails");
+        };
+        assert!(reason.contains("503"), "{reason}");
     }
 }

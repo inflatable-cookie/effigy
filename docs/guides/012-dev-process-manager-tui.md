@@ -301,11 +301,15 @@ Headless runs never allocate an interactive TTY and never start shell-role
 tabs: shells belong to a terminal.
 
 The environment phase runs before any workload: `container up` as a child of
-the run, then container exec readiness and the task's routes, polled with
-backoff until they answer or the readiness budget runs out
+the run, then container exec readiness, polled with backoff until the
+workspace service answers or the readiness budget runs out
 (`health_wait_timeout_secs`, default 60 seconds). Readiness is observed and
 never a fixed timer, so a slow first engine start delays the workloads
-instead of failing them. Workloads start only after the environment is ready.
+instead of failing them, and workloads need no `start_after_ms` to wait for
+the environment. With `health_wait = true`, the task's routes are probed once
+every workload has started, since the workloads serve them; the ready
+message prints when they answer, and a route that never answers within the
+budget fails the run.
 
 A run that brought its environment up stops it when the run settles. A run
 that found an environment already running from an explicit `container up`

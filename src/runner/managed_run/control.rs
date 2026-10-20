@@ -98,7 +98,10 @@ pub(in crate::runner) fn status_view(addressed: &Addressed<'_>) -> ManagedStatus
         task: addressed.task.to_owned(),
         profile: addressed.profile.to_owned(),
         state,
-        run: view.current.clone().or_else(|| view.history.first().cloned()),
+        run: view
+            .current
+            .clone()
+            .or_else(|| view.history.first().cloned()),
         environment: None,
         processes: Vec::new(),
         next: Vec::new(),
@@ -120,10 +123,7 @@ pub(in crate::runner) fn status_view(addressed: &Addressed<'_>) -> ManagedStatus
         }
     }
     status.next = match status.state.as_str() {
-        "running" | "stopping" => vec![
-            addressed.command("logs"),
-            addressed.command("stop"),
-        ],
+        "running" | "stopping" => vec![addressed.command("logs"), addressed.command("stop")],
         "interrupted" => vec![addressed.command("stop")],
         "never-run" => vec![format!("effigy {}", addressed.task)],
         _ => vec![format!("effigy {} --headless", addressed.task)],
@@ -178,7 +178,9 @@ pub(in crate::runner) fn processes(effects: &[Effect], live: bool) -> Vec<Proces
         let view = ProcessView {
             name: label.to_owned(),
             state,
-            pid: (state == "running" || state == "starting").then_some(pid).flatten(),
+            pid: (state == "running" || state == "starting")
+                .then_some(pid)
+                .flatten(),
             exit,
             starts: 1,
             sequence: effect.sequence,
@@ -202,7 +204,11 @@ fn environment(effects: &[Effect]) -> Option<EnvironmentView> {
     let payload: EnvironmentEffect = serde_json::from_value(effect.spec.payload.clone()).ok()?;
     Some(EnvironmentView {
         name: payload.environment,
-        ownership: if payload.borrowed { "borrowed" } else { "owned" },
+        ownership: if payload.borrowed {
+            "borrowed"
+        } else {
+            "owned"
+        },
         state: match effect.state {
             EffectState::Intended => "starting",
             EffectState::Applied => "up",

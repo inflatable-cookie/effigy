@@ -201,7 +201,11 @@ fn materialize_demo_special_managed_processes(
         match process.role {
             ManagedProcessRole::Lifecycle => {
                 let up = if let Some(policy) = inline_policy.as_ref() {
-                    render_inline_compose_command(repo_root, policy, &compose_args(policy, ["up", "-d"]))
+                    render_inline_compose_command(
+                        repo_root,
+                        policy,
+                        &compose_args(policy, ["up", "-d"]),
+                    )
                 } else {
                     demo_environment_up(repo_root, container_binding.container_name(), &executable)
                 };

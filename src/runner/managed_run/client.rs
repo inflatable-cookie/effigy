@@ -122,9 +122,13 @@ impl OutputFollower {
     pub(in crate::runner) fn read(&mut self) -> (Vec<u8>, Vec<u8>) {
         let mut out = (Vec::new(), Vec::new());
         for (slot, stream) in [Stream::Stdout, Stream::Stderr].into_iter().enumerate() {
-            if let Observed::Verified(read, _) =
-                read_run_log(self.run, OUTPUT_SEQUENCE, stream, self.offsets[slot], READ_MAX)
-            {
+            if let Observed::Verified(read, _) = read_run_log(
+                self.run,
+                OUTPUT_SEQUENCE,
+                stream,
+                self.offsets[slot],
+                READ_MAX,
+            ) {
                 self.offsets[slot] = read.from + read.bytes.len() as u64;
                 if slot == 0 {
                     out.0 = read.bytes;
@@ -371,5 +375,9 @@ fn profile_suffix(addressed: &Addressed<'_>) -> String {
 }
 
 pub(in crate::runner) fn stop_command(addressed: &Addressed<'_>) -> String {
-    format!("effigy {} stop{}", addressed.task, profile_suffix(addressed))
+    format!(
+        "effigy {} stop{}",
+        addressed.task,
+        profile_suffix(addressed)
+    )
 }

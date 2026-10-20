@@ -213,8 +213,8 @@ mod tests {
                     tokio::spawn(async move {
                         let service = service_fn(move |_request: Request<Incoming>| async move {
                             if !delay.is_zero() {
-                                let _ = tokio::task::spawn_blocking(move || thread::sleep(delay))
-                                    .await;
+                                let _ =
+                                    tokio::task::spawn_blocking(move || thread::sleep(delay)).await;
                             }
                             Ok::<_, Infallible>(
                                 Response::builder()

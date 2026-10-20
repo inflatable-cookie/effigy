@@ -115,12 +115,30 @@ pub(in crate::runner) fn effect_context(reason: OpenReason) -> EffectContext {
 
 /// An Observe context bounded by `budget`, for an engine's probes.
 pub(in crate::runner) fn observe_context(budget: Duration) -> ObserveContext {
-    operation(
+    let observe = operation(
         EffectClass::Observe,
         Deadline::At(std::time::Instant::now() + budget),
     )
     .observe()
-    .expect("observe context")
+    .expect("observe context");
+    match probe_runtime() {
+        Some(runtime) => observe.with_probes(runtime),
+        None => observe,
+    }
+}
+
+/// This process's probe guard service (§5.11), installed on first use. When
+/// it cannot be installed, probes observe `GuardUnavailable`; nothing is
+/// guessed.
+fn probe_runtime() -> Option<std::sync::Arc<effigy_kernel::probe::ProbeRuntime>> {
+    static RUNTIME: OnceLock<Option<std::sync::Arc<effigy_kernel::probe::ProbeRuntime>>> =
+        OnceLock::new();
+    RUNTIME
+        .get_or_init(|| {
+            let executable = executable().ok()?;
+            effigy_kernel::probe::ProbeRuntime::install(executable).ok()
+        })
+        .clone()
 }
 
 /// A cleanup context with its own `budget`, never a cancelled workload's.

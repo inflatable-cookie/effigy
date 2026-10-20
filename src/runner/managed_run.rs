@@ -24,8 +24,8 @@ mod wire;
 pub(in crate::runner) use client::{attach_text, detach, start, ClientStart};
 pub(in crate::runner) use control::{logs, status, stop, stop_run, Addressed};
 pub(in crate::runner) use engine::{
-    own, record_gateway, take_owner, workload_env, ExecGroupSpec, OwnedRun,
-    OwnerSession, WorkloadSpec, EXEC_NONCE,
+    own, record_gateway, take_owner, workload_env, ExecGroupSpec, OwnedRun, OwnerSession,
+    WorkloadSpec, EXEC_NONCE,
 };
 pub(in crate::runner) use environment::EnvironmentPlan;
 pub(in crate::runner) use settlement::Binding;
@@ -75,10 +75,8 @@ pub(in crate::runner) fn bound_environment(run: effigy_kernel::id::RunId) -> Opt
             .rev()
             .find(|effect| effect.spec.kind == settlement::ENVIRONMENT)
             .and_then(|effect| {
-                serde_json::from_value::<settlement::EnvironmentEffect>(
-                    effect.spec.payload.clone(),
-                )
-                .ok()
+                serde_json::from_value::<settlement::EnvironmentEffect>(effect.spec.payload.clone())
+                    .ok()
             })
             .map(|environment| environment.environment),
         _ => None,

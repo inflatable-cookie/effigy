@@ -167,12 +167,7 @@ pub fn managed_shell_command(
         .unwrap_or_default();
     format!(
         "exec {}",
-        effigy_container_command(
-            executable,
-            selector,
-            &format!("shell{service_flag}"),
-            &repo
-        )
+        effigy_container_command(executable, selector, &format!("shell{service_flag}"), &repo)
     )
 }
 
@@ -477,8 +472,17 @@ mod tests {
             None,
             "printf api-ok",
         ));
-        assert!(rendered.starts_with("cd /tmp/repo/acme-api && exec "), "{rendered}");
-        for retired in ["state_path", "deadline", "while true", "sleep 1", "managed-lifecycle"] {
+        assert!(
+            rendered.starts_with("cd /tmp/repo/acme-api && exec "),
+            "{rendered}"
+        );
+        for retired in [
+            "state_path",
+            "deadline",
+            "while true",
+            "sleep 1",
+            "managed-lifecycle",
+        ] {
             assert!(!rendered.contains(retired), "{retired}: {rendered}");
         }
     }
@@ -523,7 +527,10 @@ mod tests {
         assert!(status.success());
         let written = std::fs::read_to_string(&marker).expect("marker");
         let mut fields = written.split_whitespace();
-        assert!(fields.next().and_then(|pid| pid.parse::<u32>().ok()).is_some());
+        assert!(fields
+            .next()
+            .and_then(|pid| pid.parse::<u32>().ok())
+            .is_some());
         assert_eq!(fields.next(), Some("run-1:api:1"));
     }
 

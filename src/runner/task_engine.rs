@@ -20,9 +20,8 @@ mod status;
 
 pub(in crate::runner) use control::{
     effects as run_effects, list as list_runs, lookup as lookup_run, read_log as read_run_log,
-    request_stop,
-    resolve as resolve_run, signal_owner, workload_process, Lookup, RunRecord, StopStarted,
-    POLL as RUN_POLL,
+    request_stop, resolve as resolve_run, signal_owner, workload_process, Lookup, RunRecord,
+    StopStarted, POLL as RUN_POLL,
 };
 pub(in crate::runner) use holders::{live_holders, HolderKind, LiveHolder};
 pub(in crate::runner) use identity::TaskTarget;

@@ -120,8 +120,9 @@ As built (effigy#235): the client starts the engine supervisor with
 `managed:environment` effect: `Release` (an in-process `container down`)
 when the run brought the environment up, `Retain` when it borrowed one an
 explicit `container up` recorded as persistent. The environment phase is an
-`up` custody child, then exec readiness and route probes polled to a
-deadline. Remote groups are `managed:exec-group` effects; their nonce-checked
+`up` custody child, then exec readiness polled to a deadline; `health_wait`
+route probes run from the owner loop once the workloads that serve them have
+started. Remote groups are `managed:exec-group` effects; their nonce-checked
 markers stand in for §5.10 registration. A run that holds an environment
 stays up when its workloads exit, until a stop.
 

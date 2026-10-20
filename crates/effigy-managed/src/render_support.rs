@@ -258,7 +258,7 @@ mod tests {
                 shutdown_on_exit: true,
                 service: None,
                 run_on_host: false,
-                            },
+            },
             ManagedProcessSpec {
                 name: "api".to_owned(),
                 role: ManagedProcessRole::Standard,
@@ -274,7 +274,7 @@ mod tests {
                 shutdown_on_exit: false,
                 service: None,
                 run_on_host: false,
-                            },
+            },
             ManagedProcessSpec {
                 name: "shell".to_owned(),
                 role: ManagedProcessRole::Shell,
@@ -287,7 +287,7 @@ mod tests {
                 shutdown_on_exit: false,
                 service: Some("workspace".to_owned()),
                 run_on_host: false,
-                            },
+            },
         ]);
 
         assert_eq!(specs.len(), 3);

@@ -538,7 +538,13 @@ fn own_managed_run(
                 true,
             )?;
         }
-        managed_workloads(context, &plan, &secrets, &token, container_repo_root.as_deref())
+        managed_workloads(
+            context,
+            &plan,
+            &secrets,
+            &token,
+            container_repo_root.as_deref(),
+        )
     };
     managed_run::own(owner, owned, prepare)
 }
@@ -896,9 +902,10 @@ fn environment_plan(
         .exec_working_dir(&repo)?
         .unwrap_or_else(|| repo.clone());
     let mut ready_lines = Vec::new();
-    if let Some(message) =
-        managed_ready_message(context.selection.task.ready_message.as_deref(), Some(policy))
-    {
+    if let Some(message) = managed_ready_message(
+        context.selection.task.ready_message.as_deref(),
+        Some(policy),
+    ) {
         ready_lines.push(format!("ready: {message}"));
     }
     for line in managed_dns_route_lines(Some(policy)) {
@@ -984,10 +991,8 @@ fn managed_workloads(
                 binding,
                 ContainerExecutionBinding::None | ContainerExecutionBinding::Host
             );
-        let mut plain = BTreeMap::from([(
-            effigy_managed::RUN_TOKEN_ENV.to_owned(),
-            token.to_owned(),
-        )]);
+        let mut plain =
+            BTreeMap::from([(effigy_managed::RUN_TOKEN_ENV.to_owned(), token.to_owned())]);
         let mut secret = BTreeMap::new();
         let (command, exec_group) = if runs_on_host {
             secret.extend(
@@ -1023,7 +1028,10 @@ fn managed_workloads(
             ));
             let file = format!("{}.pgid", marker_component(&process.name));
             let host_marker = repo.join(&relative).join(&file);
-            let container_marker = container_repo_root.unwrap_or(repo).join(&relative).join(&file);
+            let container_marker = container_repo_root
+                .unwrap_or(repo)
+                .join(&relative)
+                .join(&file);
             let (command, binding) = match &inline {
                 Some(policy) => (
                     render_inline_managed_exec_command(InlineManagedExecRequest {
@@ -1123,8 +1131,8 @@ pub(in crate::runner) fn release_inline_managed_environment(
         "inline managed environment down",
     )
     .map_err(RunnerError::from)?;
-    let output =
-        effigy_runtime::signals::run_compose_plan_capture(&policy, &plan).map_err(RunnerError::from)?;
+    let output = effigy_runtime::signals::run_compose_plan_capture(&policy, &plan)
+        .map_err(RunnerError::from)?;
     if output.status.success() {
         Ok(format!("inline environment `{}` is down", policy.name))
     } else {
@@ -1148,7 +1156,8 @@ pub(in crate::runner) fn inline_managed_policy(
     };
     let preflight =
         super::super::preflight::build_execution_preflight(&invocation, repo.to_path_buf())?;
-    let selection = match super::super::selection::resolve_task_selection(&invocation, &preflight)? {
+    let selection = match super::super::selection::resolve_task_selection(&invocation, &preflight)?
+    {
         super::super::selection::SelectionResolution::Selected { selection, .. } => selection,
         super::super::selection::SelectionResolution::Output(_) => return Ok(None),
     };
@@ -1171,7 +1180,6 @@ pub(in crate::runner) fn inline_managed_policy(
     resolution.effective_policy(&selection.catalog.catalog_root)
 }
 
-
 /// Carry the managed run's settle token into a command that runs on the far
 /// side of the exec surface, where the host environment cannot follow.
 /// Host children inherit the variable from the run itself instead.
@@ -1190,7 +1198,6 @@ fn wrap_command_with_run_token(
     )
 }
 
-
 /// One unique token identifying this managed run's settle.
 fn generate_managed_run_token() -> String {
     static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -1204,7 +1211,6 @@ fn generate_managed_run_token() -> String {
         COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     )
 }
-
 
 fn wrap_with_managed_secret_env(
     command: String,
@@ -1240,7 +1246,6 @@ fn managed_role_schema_env(
         .map(|resolved| resolved.plain_env())
         .unwrap_or_default())
 }
-
 
 fn managed_ready_message(
     explicit_ready_message: Option<&str>,
@@ -1353,8 +1358,8 @@ fn default_handoff_managed_shell_run() -> String {
 mod tests {
     use super::{
         default_handoff_managed_shell_run, managed_dns_route_lines, managed_role_schema_env,
-        render_handoff_managed_standard_command,
-        should_open_workspace_shell_for_non_managed_task, ContainerExecutionBinding,
+        render_handoff_managed_standard_command, should_open_workspace_shell_for_non_managed_task,
+        ContainerExecutionBinding,
     };
     use crate::runner::execute::workspace_seeded::render_workspace_seeded_task_command;
     use crate::runner::managed_shell::managed_readiness_probe_urls;

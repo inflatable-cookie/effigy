@@ -10598,8 +10598,7 @@ detach_timeout_secs = 1
         .expect("run restart dev stop");
     assert!(
         restart_stop.status.success()
-            && String::from_utf8_lossy(&restart_stop.stdout)
-                .contains("settled managed task `dev`"),
+            && String::from_utf8_lossy(&restart_stop.stdout).contains("settled managed task `dev`"),
         "restart stop failed: stdout={} stderr={}",
         String::from_utf8_lossy(&restart_stop.stdout),
         String::from_utf8_lossy(&restart_stop.stderr)
