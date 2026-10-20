@@ -747,11 +747,10 @@ mod host_git_mount_tests {
     }
 
     #[test]
-    #[cfg_attr(
-        all(target_os = "macos", effigy_shared_process),
-        ignore = "known v0.15 rebuild defect: papercut 12c025bf-8d0d-4fa0-9f65-6b2a4c473ecd; owner lane v015-environment"
-    )]
     fn mkcert_ca_mount_renders_read_only_when_root_ca_present() {
+        let _environment = RestoreEnvironmentVariable::remove(
+            effigy_gateway::private_state::PRIVATE_STATE_ROOT_ENV,
+        );
         let dir = temp_dir("mkcert-present");
         let pem = dir.join("rootCA.pem");
         fs::write(
@@ -831,6 +830,17 @@ mod host_git_mount_tests {
     }
 
     impl RestoreEnvironmentVariable {
+        fn remove(variable: &'static str) -> Self {
+            let lock = crate::test_env_lock();
+            let previous = std::env::var_os(variable);
+            std::env::remove_var(variable);
+            Self {
+                variable,
+                previous,
+                _lock: lock,
+            }
+        }
+
         fn set(variable: &'static str, value: &std::ffi::OsStr) -> Self {
             let lock = crate::test_env_lock();
             let previous = std::env::var_os(variable);
@@ -883,11 +893,10 @@ mod host_git_mount_tests {
     }
 
     #[test]
-    #[cfg_attr(
-        effigy_shared_process,
-        ignore = "known v0.15 rebuild defect: papercut 12c025bf-8d0d-4fa0-9f65-6b2a4c473ecd; owner lane v015-environment"
-    )]
     fn mkcert_ca_mount_supported_for_node_catalog_entrypoint() {
+        let _environment = RestoreEnvironmentVariable::remove(
+            effigy_gateway::private_state::PRIVATE_STATE_ROOT_ENV,
+        );
         // `node` declares `installs_mkcert_ca` and its Dockerfile entrypoint
         // runs `update-ca-certificates`, matching the other trust-aware
         // workspace catalogs.

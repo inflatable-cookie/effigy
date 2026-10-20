@@ -839,10 +839,14 @@ Use this with `effigy.local.toml` for per-machine mounts.
 
 These waits are bounded. A timeout names the runtime or gateway readiness
 stage; a stopped Compose service is reported with its exit status. After a
-Colima VM restart, a stale nerdctl health-check timer warning is recorded
-when an owned container actually starts. If it stays Exited with that
-collision, Effigy inspects the full container ID and, when the unit pair is
-an exact-owned transient health-check timer/service in the selected
+Colima VM restart, a successful owned-container start that reports a stale
+nerdctl health-check timer records a warning. If start fails with that collision
+but inspect reports the container running, Effigy fails immediately as stale
+backend state: running state does not prove health-check readiness. The error
+names the selected Colima profile and exact inspect/start recovery commands;
+Effigy does not continue readiness or gateway setup. If the container stays
+Exited with that collision, Effigy inspects the full container ID and, when
+the unit pair is an exact-owned transient health-check timer/service in the selected
 profile, stops `{id}.timer`, `reset-failed` `{id}.service`/`{id}.timer`,
 retries start once, and proves readiness by inspect. Persistent, foreign,
 one-off, running, or unverified units are left alone; the error then names

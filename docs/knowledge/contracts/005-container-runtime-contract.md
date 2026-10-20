@@ -1242,8 +1242,13 @@ Start exit 0 is not readiness. A nerdctl warning that
 `Unit <id>.timer was already loaded or has a fragment file` is recorded when
 inspect then shows the owned container running; systemd units are not
 deleted. A start that reports that collision while inspect shows the
-container running is recorded as an unresolved health check with the exact
-inspect/start commands rather than as a clean recovery. If the owned
+container running fails immediately as **stale backend state** with the selected
+Colima profile and exact inspect/start commands. A running process does not
+prove its health-check timer was installed. Effigy does not enter readiness
+polling or publish the environment as ready after this failure, and does not
+stop or mutate the now-running container or its systemd units. The operator
+inspects the named container and retries the exact start after the backend
+timer has unloaded. This applies to Colima/nerdctl only; Docker is unchanged. If the owned
 Colima/nerdctl container stays stopped with that collision, Effigy may
 recover once: inspect the container for a full 64-character hexadecimal ID,
 require stopped status and the selected project/service labels (not one-off,
@@ -1830,6 +1835,19 @@ and failure. A sibling's live runtime and persistent data are left alone.
 
 This contract should be covered by targeted compatibility tests rather than
 large generic runtime smoke tests.
+
+Artifact-recovery and reverse-handover fixtures isolate `HOME`; compiled
+children also use the fixture cwd. Run identity and admission follow
+[contract 049](049-heavy-validation-admission-contract.md).
+Bounded-exec public children snapshot inherited handoff markers under the
+same test environment lock used by their mutators.
+`test:environment:ci` covers these fixtures, DNS and Compose generation,
+mkcert mounts, and health-check recovery in isolated and shared test processes.
+The environment snapshot proof checks the child-spawn boundary directly.
+Artifact identity and legacy-namespace matrices give each case its own test
+and per-test timeout. Semantic public-path fixtures allow kernel/process startup
+within their absolute operation budget; deadline-refusal cases still require
+refusal at the original deadline and preserve all byte/phase assertions.
 
 The minimum proof set should cover:
 
