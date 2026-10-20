@@ -118,6 +118,82 @@ fn recurring_health_collision_refuses_recreation_through_production_adapters() {
 }
 
 #[test]
+fn reboot_timer_collision_fails_fast_even_when_inspect_reports_running() {
+    let fixture = tempfile::tempdir().expect("fresh reboot fixture");
+    let root = fixture.path();
+    let bin = root.join("bin");
+    fs::create_dir(&bin).expect("private bin");
+    fs::write(root.join("effigy.toml"), "[containers.web]\ncompose_file = \"compose.yml\"\nprimary_service = \"db\"\nprofile = \"private-health\"\n")
+        .expect("private manifest");
+    fs::write(
+        root.join("compose.yml"),
+        "services:\n  db:\n    image: fixture.invalid/db\n",
+    )
+    .expect("private compose");
+    let program = bin.join("colima");
+    fs::write(&program, FAKE_COLIMA).expect("strict fake backend");
+    fs::set_permissions(&program, fs::Permissions::from_mode(0o700)).expect("executable fake");
+    let started = std::time::Instant::now();
+    let output = Command::new(std::env::current_exe().expect("test executable"))
+        .args([
+            "--ignored",
+            "--exact",
+            "exec::restart_recovery::production_refusal_tests::private_health_recovery_child",
+            "--nocapture",
+        ])
+        .current_dir(root)
+        .env("PATH", &bin)
+        .env("PRIVATE_HEALTH_FIXTURE", root)
+        .env("PRIVATE_HEALTH_RUNNING", "1")
+        .env("EFFIGY_COMPOSE_BACKEND", "containerd")
+        .output()
+        .expect("run private reboot proof");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(10),
+        "no readiness wait"
+    );
+    let receipt = fs::read_to_string(root.join("refusal.txt")).expect("refusal receipt");
+    assert!(
+        receipt.contains("stale backend state in Colima profile `private-health`"),
+        "{receipt}"
+    );
+    assert!(
+        receipt.contains("did not prove health-check readiness"),
+        "{receipt}"
+    );
+    assert!(
+        receipt.contains(&format!("Unit {FULL_ID}.timer")),
+        "{receipt}"
+    );
+    for action in ["inspect", "start"] {
+        assert!(
+            receipt.contains(&format!(
+                "colima nerdctl --profile private-health -- {action} fixture-db"
+            )),
+            "{receipt}"
+        );
+    }
+    let commands = fs::read_to_string(root.join("commands")).expect("strict call log");
+    let commands: Vec<_> = commands.lines().collect();
+    assert_eq!(
+        commands.len(),
+        3,
+        "only inventory/start/inventory: {commands:?}"
+    );
+    assert!(commands[0].starts_with("nerdctl --profile private-health -- ps --all "));
+    assert_eq!(
+        commands[1],
+        "nerdctl --profile private-health -- start fixture-db"
+    );
+    assert_eq!(commands[0], commands[2]);
+}
+
+#[test]
 #[ignore = "invoked only by the private production-adapter fixture"]
 fn private_health_recovery_child() {
     let root = PathBuf::from(std::env::var_os("PRIVATE_HEALTH_FIXTURE").expect("private root"));
@@ -146,9 +222,14 @@ printf '%s\n' "$*" >> commands
 full=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 case "$*" in
   'nerdctl --profile private-health -- ps --all --filter label=com.docker.compose.project=private-health-project --format '*)
-    printf 'fixture-db\tExited (1)\t\tprivate-health-project\t\tdb\tfalse\n'
+    if [ "${PRIVATE_HEALTH_RUNNING:-}" = 1 ] && [ -f started ]; then
+      printf 'fixture-db\tUp 1 second\t\tprivate-health-project\t\tdb\tfalse\n'
+    else
+      printf 'fixture-db\tExited (1)\t\tprivate-health-project\t\tdb\tfalse\n'
+    fi
     ;;
   'nerdctl --profile private-health -- start fixture-db')
+    : > started
     printf 'systemd-run: Unit %s.timer was already loaded or has a fragment file\n' "$full" >&2
     exit 1
     ;;

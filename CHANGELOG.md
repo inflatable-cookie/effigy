@@ -591,6 +591,10 @@ During v0.x, MINOR bumps may include breaking changes.
   Pre-checkout-label Colima stacks use the existing checkout-bind migration
   proof. Unavailable mount observations preserve reuse while withholding
   recreation and ownership-repair authority.
+- A failed Colima/nerdctl start that reports a stale health-check timer now
+  fails immediately even if the container appears running. The error names
+  the selected profile and exact recovery commands, instead of continuing
+  readiness and gateway setup with an unresolved health check.
 - Stopping a managed run now ends the process group it started through
   container exec in containers whose shell is dash or busybox. The stop
   previously reached only the group's leader there, so an Effigy task running
