@@ -20,8 +20,8 @@ use super::container_runtime_prep::{
     activate_container_runtime_for_task, build_runtime_activation_plan, ActivationRequest,
     ContainerTaskActivation,
 };
+use super::environment::emit_held_notice;
 use super::error::RunnerError;
-use super::host_container_lease::emit_host_container_lease_notice;
 use super::runtime_session_context::{current_runtime_session_context, RuntimeSessionContext};
 use super::system_command::ensure_workspace_effigy_available_for_policy;
 use surface::{
@@ -369,8 +369,8 @@ fn maybe_emit_exec_activation_notice(
     surface: &ResolvedExecSurface,
     activation: ContainerTaskActivation,
 ) {
-    if activation.refreshed_host_container_lease {
-        emit_host_container_lease_notice(&surface.container_name);
+    if activation.started_held {
+        emit_held_notice(&surface.container_name);
     }
 }
 

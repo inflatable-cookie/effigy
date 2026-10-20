@@ -1,0 +1,49 @@
+{
+  "backend": "colima-nerdctl",
+  "compose_source": "generated",
+  "container_name": "stack",
+  "inputs": [
+    {
+      "path": "/Users/tom/Dev/projects/acowtancy/.effigy/runtime/compose/stack.workspace.compose.yml",
+      "sha256": "a33971fad7c60ea97a6802f63c6b915413088b28ed0af2f3ee920248d7ed7d30"
+    },
+    {
+      "path": "/Users/tom/Dev/projects/acowtancy/.effigy/runtime/dns/stack.compose.override.yml",
+      "sha256": "8bca190437861a3b9a542a4d93265c9bac611557954a13b4110287f03bef0a36"
+    },
+    {
+      "path": "/Users/tom/Dev/projects/acowtancy/effigy.toml",
+      "sha256": "f68790dfc97fadffcdbfd3933fb013fb39348379252fb1c4da8745581a8617fc"
+    },
+    {
+      "path": "/Users/tom/Dev/projects/acowtancy/infra/bootstrap.toml",
+      "sha256": "45ba32b0ba90e4ab2b589628e76de15d278ded4a06d440352f7baef609ff6542"
+    },
+    {
+      "path": "/Users/tom/Dev/projects/acowtancy/infra/deploy.toml",
+      "sha256": "3283488e66f92abae6f036c65e74f6ca365cef8d00b47c2e3e407107a6a41fbf"
+    },
+    {
+      "path": "/Users/tom/Dev/projects/acowtancy/infra/secrets.toml",
+      "sha256": "9567223bbaa7553a5998e6e261c2eb10ab6fb637c4ae93b842c1bddf7ec0f56f"
+    },
+    {
+      "path": "/Users/tom/Dev/projects/acowtancy/infra/tasks.toml",
+      "sha256": "48251ad80a031dc098e29db084f0d14dd1f3109f2978819dfef6fdac5f6805cb"
+    },
+    {
+      "path": "/Users/tom/Dev/projects/acowtancy/infra/workspace.toml",
+      "sha256": "b3e16491f5ebd3f77fa92ad9d8ad34a3af5783256c9c7995d28f58974f0d8ab7"
+    },
+    {
+      "path": "/Users/tom/Dev/projects/acowtancy/state/acowtancy.state.toml",
+      "sha256": "b516817b06a71ae6b6044f53cf151020727999814412d9dc6c214e14e747de66"
+    }
+  ],
+  "primary_service": "workspace",
+  "profile": "effigy",
+  "project_name": "acowtancy-dev",
+  "repo_root": "/Users/tom/Dev/projects/acowtancy",
+  "schema": "effigy.container-partial-activation.v2",
+  "scope_token": null
+}

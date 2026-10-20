@@ -1,0 +1,120 @@
+[
+  {
+    "Config": {
+      "Labels": {
+        "com.docker.compose.config-hash": "364f0ee5825a4ddab1ac31dd3ee7da065665ea9e9d36a7c17e1a4bf2035a85e9",
+        "com.docker.compose.project": "acowtancy-dev-wt-bovine-deck-preview-fd4b9a3b-runner-1b1f74c7-wt-4677bfcb81da",
+        "com.docker.compose.service": "workspace",
+        "com.effigy.checkout": "/Users/tom/.paseo/worktrees/25ojb7u5/bovine-deck-preview-fd4b9a3b-runner",
+        "com.effigy.managed": "true",
+        "com.effigy.project": "acowtancy-dev-wt-bovine-deck-preview-fd4b9a3b-runner-1b1f74c7-wt-4677bfcb81da",
+        "com.effigy.scope": "4677bfcb81da18054ef32e71aa3f3c29",
+        "io.containerd.image.config.stop-signal": "SIGTERM",
+        "org.opencontainers.image.source": "https://github.com/rust-lang/docker-rust"
+      }
+    },
+    "Id": "87c434af41df6f447bfb13218637f97b211098ffe97573a00c766c56f5008cdd",
+    "Mounts": [
+      {
+        "Destination": "/workspace-root/acowtancy",
+        "Source": "/Users/tom/.paseo/worktrees/25ojb7u5/bovine-deck-preview-fd4b9a3b-runner",
+        "Type": "bind"
+      },
+      {
+        "Destination": "/Users/tom/Dev/projects/acowtancy/.git",
+        "Source": "/Users/tom/Dev/projects/acowtancy/.git",
+        "Type": "bind"
+      },
+      {
+        "Destination": "/workspace-root/underlay",
+        "Source": "/Users/tom/Dev/projects/underlay",
+        "Type": "bind"
+      },
+      {
+        "Destination": "/workspace-root/poodle",
+        "Source": "/Users/tom/Dev/projects/poodle",
+        "Type": "bind"
+      },
+      {
+        "Destination": "/workspace-root/longhorn",
+        "Source": "/Users/tom/Dev/projects/longhorn",
+        "Type": "bind"
+      },
+      {
+        "Destination": "/home/dev/.gitconfig",
+        "Source": "/Users/tom/.gitconfig",
+        "Type": "bind"
+      },
+      {
+        "Destination": "/home/dev/.ssh/known_hosts",
+        "Source": "/Users/tom/.ssh/known_hosts",
+        "Type": "bind"
+      },
+      {
+        "Destination": "/run/host-services/ssh-auth.sock",
+        "Source": "/run/host-services/ssh-auth.sock",
+        "Type": "bind"
+      },
+      {
+        "Destination": "/usr/local/share/ca-certificates/effigy-mkcert.crt",
+        "Source": "/Users/tom/Library/Application Support/mkcert/rootCA.pem",
+        "Type": "bind"
+      },
+      {
+        "Destination": "/usr/local/cargo/registry",
+        "Source": "/var/lib/nerdctl/1935db59/volumes/default/efv-ee8f8c5c4ab0e36b/_data",
+        "Type": "volume"
+      },
+      {
+        "Destination": "/usr/local/cargo/git",
+        "Source": "/var/lib/nerdctl/1935db59/volumes/default/efv-0e7508d388286cef/_data",
+        "Type": "volume"
+      },
+      {
+        "Destination": "/workspace-root/acowtancy/apps/farmyard/target",
+        "Source": "/var/lib/nerdctl/1935db59/volumes/default/efv-eb3dd6bcdd297f50/_data",
+        "Type": "volume"
+      },
+      {
+        "Destination": "/workspace-root/acowtancy/node_modules",
+        "Source": "/var/lib/nerdctl/1935db59/volumes/default/efv-30305086ed0c433b/_data",
+        "Type": "volume"
+      },
+      {
+        "Destination": "/workspace-root/acowtancy/packages/cattle-grid/node_modules",
+        "Source": "/var/lib/nerdctl/1935db59/volumes/default/efv-dd9b1708859d7a0d/_data",
+        "Type": "volume"
+      },
+      {
+        "Destination": "/workspace-root/acowtancy/packages/froyo/node_modules",
+        "Source": "/var/lib/nerdctl/1935db59/volumes/default/efv-a6eacce2dd679fdc/_data",
+        "Type": "volume"
+      },
+      {
+        "Destination": "/workspace-root/acowtancy/apps/cream/node_modules",
+        "Source": "/var/lib/nerdctl/1935db59/volumes/default/efv-5649667f6f2c7677/_data",
+        "Type": "volume"
+      },
+      {
+        "Destination": "/workspace-root/acowtancy/apps/dairy/node_modules",
+        "Source": "/var/lib/nerdctl/1935db59/volumes/default/efv-f85e6fd46a91f93a/_data",
+        "Type": "volume"
+      },
+      {
+        "Destination": "/workspace-root/acowtancy/apps/bovine-desktop/node_modules",
+        "Source": "/var/lib/nerdctl/1935db59/volumes/default/efv-75883c528683cdcc/_data",
+        "Type": "volume"
+      },
+      {
+        "Destination": "/workspace-root/acowtancy/platform/silo/target",
+        "Source": "/var/lib/nerdctl/1935db59/volumes/default/efv-a5ffefe0b0b6923c/_data",
+        "Type": "volume"
+      }
+    ],
+    "Name": "acowtancy-dev-wt-bovine-deck-preview-fd4b9a3b-runner-1b1f74c7-wt-4677bfcb81da-workspace-1",
+    "State": {
+      "Running": true,
+      "Status": "running"
+    }
+  }
+]

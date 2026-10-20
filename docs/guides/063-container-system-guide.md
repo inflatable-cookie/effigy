@@ -869,25 +869,25 @@ inventory, exec readiness or exposure verification leaves the scope in place.
 activation. It never treats an unavailable probe as an empty or ready stack.
 
 The supported reconciliation command is `effigy container up --detach`.
-Its private admitted-context marker binds the canonical checkout, selected
-backend/profile/project/service, source kind and SHA-256 hashes of the manifest
-and Compose inputs. It persists as the detached owner after successful
-reconciliation. Changed, unreadable, legacy or foreign marker contexts refuse;
-a missing primary also refuses instead of falling back to generated
-`up --force-recreate`. A warm owned stack reconciles fresh inspected bindings
-without Compose up or primary restart. Exec readiness failures and interrupts
-retain unverified state without teardown. Success transfers ownership from a
-temporary task lease to the retained detached context; sibling leases stay.
-`effigy container down` is the explicit stop and clears the admitted context
-while keeping volumes. Retirement removes owned mutable data and is not restart
-recovery.
+Each environment has one record (contract 053): the generation it applied,
+the backend it runs on and why, whether an explicit `up` owns it, and the
+runs holding it. A bring-up that applied its Compose change but did not finish
+leaves a partial generation; rerunning `up --detach` with the same inputs
+reconciles it without recreating running services, and changed inputs refuse
+until `effigy container down`. A warm owned stack reconciles fresh inspected
+bindings without Compose up or primary restart. Exec readiness failures and
+interrupts retain unverified state without teardown. Success makes the
+explicit `up` the persistent owner. `effigy container down` is the explicit
+stop: it ends that ownership and keeps volumes, and it refuses while a run
+(for example `dev`) still holds the environment. Retirement removes owned
+mutable data and is not restart recovery.
 
 JSON failure details expose `state` (`partial` or `unavailable`),
 `phase = "detached_activation"`, unverified readiness/exposure and supported
 recovery/stop commands. `activation_stage` uses the closed vocabulary
-`preparation`, `reconciliation_inventory`, `compose_activation`,
-`admission_record`, `stopped_service_recovery`, `readiness`,
-`runtime_integrations`, or `persistent_owner`. Manifest-declared detached mode
+`preparation`, `environment_handover`, `compose_activation`,
+`stopped_service_recovery`, `readiness`, `runtime_integrations`, or
+`persistent_owner`. Manifest-declared detached mode
 also reports preparation failures as unavailable with no recovery authority.
 These stages identify caller boundaries, not causes or readiness proof. Details
 contain no raw backend output, argv or environment.
@@ -982,7 +982,7 @@ in-container execution instead of failing on host-only runtime probes.
 The opt-in bounded shell (`--bounded`) takes the same local path: the
 absolute deadline and stdout/stderr caps still apply to the local
 execution and the same bounded-exec schema renders, with no discovery,
-lease, or workspace-user fallback phases.
+hold, or workspace-user fallback phases.
 
 ### Public Shell Sessions
 
@@ -1020,30 +1020,26 @@ These use shared task activation instead of session ownership:
 - sibling-service bring-up and exec-readiness recovery run before dispatch
 - a runtime-scoped checkout (linked worktree or marked ephemeral clone)
   proves its selected checkout is readable and writable in the primary
-  service before dispatch; a mismatched mount stops the task before lease
-  refresh. Changed Cargo inputs are touched inside the container so host edits
+  service before dispatch; a mismatched mount stops the task before it runs.
+  Changed Cargo inputs are touched inside the container so host edits
   invalidate stale build artifacts.
 - public gateway/runtime route registration is reconciled when the container
   declares a gateway surface
-- if the task had to start the runtime, or the runtime was already under an
-  active task lease, Effigy refreshes a temporary host-container lease
+- the task holds its environment while it runs: `container down`, a handover,
+  a reset or an idle stop refuses until the task ends
 
-Default lease behavior:
+Holder-based idle stop:
 
-- lease duration defaults to 5 minutes
-- the lease is refreshed on reuse
-- the runtime shuts down after the lease expires unless the user explicitly
-  keeps it up through `effigy container up`, `effigy dev`, or another owned
-  session
+- a stack a task had to start is held: it stops when the last run using it
+  ends. There is no timer.
 - an explicit `effigy container up` that leaves the stack running makes it
-  persistent: later tasks that reuse or restart it never attach a lease, and
-  any earlier lease is dropped. Every `effigy container down` that stops the
-  stack ends that ownership - the checkout form, `--global`, and the
-  cwd-scoped form - as does `effigy container retire` once it removes the
-  scope. A stale owner marker never blocks a later task-started stack from
-  being leased and reclaimed.
-- the notice that announces a lease names `effigy container up --detach` and
-  `EFFIGY_DISABLE_HOST_CONTAINER_LEASE=1` as the ways to keep the stack
+  persistent: tasks borrow it and never stop it. Every `effigy container down`
+  that stops the stack ends that ownership - the checkout form, `--global`,
+  and the cwd-scoped form.
+- the notice that announces a held stack names `effigy container up --detach`
+  and `EFFIGY_DISABLE_HOST_CONTAINER_LEASE=1` as the ways to keep it running
+- `effigy container status` and `effigy doctor` show each environment's
+  backend, why that backend was chosen, and its record
 
 The goal is one warm-runtime contract for non-shell tasks instead of separate
 behavior for deferred versus explicit container routing.

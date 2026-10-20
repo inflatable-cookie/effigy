@@ -241,111 +241,6 @@ fn exec_group_marker_count(runtime_dir: &Path) -> usize {
         .unwrap_or(0)
 }
 
-/// Gates establish liveness; a matching session only narrows the
-/// environment. Missing records cannot grant destructive authority, so
-/// unbound holders protect every environment in this checkout until they
-/// settle.
-pub(in crate::runner) fn environment_lock_holders(
-    repo_root: &Path,
-    environment: &str,
-) -> Vec<LiveHolder> {
-    let sessions = effigy_managed::runtime::live_headless_sessions(repo_root);
-    live_holders(repo_root)
-        .into_iter()
-        .filter(|holder| {
-            sessions
-                .iter()
-                .find(|session| {
-                    holder.pid == Some(session.supervisor_pid)
-                        && session
-                            .run_token
-                            .as_deref()
-                            .is_some_and(|token| holder.carries_managed_run(token))
-                })
-                .and_then(|session| session.container_environment.as_deref())
-                .is_none_or(|bound| bound == environment)
-        })
-        .collect()
-}
-
-/// Only the run's own stop may mutate its environment under its live gates.
-/// Pre-spawn recovery may exempt its newly acquired local owner lock; a
-/// handover may exempt the incoming run, whose environment is not the target.
-pub(in crate::runner) fn refuse_environment_mutation(
-    repo_root: &Path,
-    environment: &str,
-    exempt_pid: Option<u32>,
-    exempt_token: Option<&str>,
-) -> Result<(), RunnerError> {
-    let holders = environment_lock_holders(repo_root, environment)
-        .into_iter()
-        .filter(|holder| {
-            !exempt_pid.is_some_and(|caller| {
-                holder.pid.is_some_and(|pid| {
-                    caller == pid
-                        || (holder.managed_run.is_none()
-                            && effigy_process::process_is_descendant_of(caller, pid))
-                })
-            })
-        })
-        .filter(|holder| exempt_token.is_none_or(|token| !holder.carries_managed_run(token)))
-        .map(|holder| format!("`{}` ({})", holder.scope_label(), holder_pid_text(&holder)))
-        .collect::<Vec<_>>();
-    if holders.is_empty() {
-        return Ok(());
-    }
-    Err(RunnerError::task_invocation(format!(
-        "refused to stop, restart or recreate environment `{environment}` while live task runs hold their gates: {}. End the bound run through its own stop first",
-        holders.join(", ")
-    )))
-}
-
-/// Mount reconciliation runs before the incoming task's container workload.
-/// Its own ordinary task gate is admitted, but is not a bound workload yet.
-/// Exempt only that exact process, never an ancestor, managed run or unknown
-/// holder. Explicit CLI up has no such ordinary gate of its own.
-pub(in crate::runner) fn refuse_pre_spawn_mount_reconcile(
-    repo_root: &Path,
-    environment: &str,
-) -> Result<(), RunnerError> {
-    if environment_lock_holders(repo_root, environment)
-        .iter()
-        .all(|holder| holder.pid == Some(std::process::id()) && holder.managed_run.is_none())
-    {
-        return Ok(());
-    }
-    refuse_environment_mutation(repo_root, environment, None, None)
-}
-
-/// Refuse a judged-failed generation's recovery teardown while a live
-/// process of that run still holds a task gate: the owner may have been
-/// misjudged dead through a stale or missing record, and tearing the
-/// environment down would SIGKILL everything it is exec'ing into.
-pub(in crate::runner) fn refuse_recovery_while_token_live(
-    repo_root: &Path,
-    token: &str,
-) -> Result<(), RunnerError> {
-    // An unreadable journal is an unknown holder: it never authorises the
-    // teardown (R3).
-    let holders = live_holders(repo_root)
-        .into_iter()
-        .filter(|holder| {
-            matches!(holder.kind, HolderKind::Unreadable(_)) || holder.carries_managed_run(token)
-        })
-        .collect::<Vec<_>>();
-    if holders.is_empty() {
-        return Ok(());
-    }
-    let named = holders
-        .iter()
-        .map(|holder| format!("`{}` ({})", holder.scope_label(), holder_pid_text(holder)))
-        .collect::<Vec<_>>()
-        .join(", ");
-    Err(RunnerError::task_invocation(format!(
-        "managed run token `{token}` is judged failed, but its task gates are still held by live process(es) {named}; the recovery teardown was refused because the run may still be live. Stop it with `effigy <task> stop` first"
-    )))
-}
-
 /// One process row of a missing-record status/logs view, named by its log
 /// file (`NN-<name>.log`) because the record that carried its PID is gone.
 struct LockViewProcess {
@@ -525,88 +420,6 @@ mod tests {
         TaskRun::hold_for_tests(repo_root, "dev", token)
     }
 
-    /// A judged-failed generation whose task gates are still held by a live
-    /// process must not be torn down: the dead-owner judgment can be wrong
-    /// through a stale or missing record.
-    #[test]
-    fn recovery_teardown_refuses_while_token_gates_are_live() {
-        let private = tempfile::tempdir().expect("recovery refusal fixture");
-        let held = hold_task(private.path(), Some("managedrun-live"));
-        let error = refuse_recovery_while_token_live(private.path(), "managedrun-live")
-            .expect_err("live holder must refuse the recovery teardown");
-        let rendered = error.to_string();
-        assert!(rendered.contains("managedrun-live"), "{rendered}");
-        assert!(rendered.contains("task:dev"), "{rendered}");
-        assert!(rendered.contains("refused"), "{rendered}");
-
-        // A different token's live holder does not block this recovery.
-        refuse_recovery_while_token_live(private.path(), "managedrun-other")
-            .expect("another token's holder is not this generation");
-        held.close(WorkloadOutcome::Succeeded);
-    }
-
-    #[test]
-    fn recovery_teardown_proceeds_once_the_holder_has_exited() {
-        let private = tempfile::tempdir().expect("dead holder fixture");
-        hold_task(private.path(), Some("managedrun-dead")).abandon_for_tests();
-        refuse_recovery_while_token_live(private.path(), "managedrun-dead")
-            .expect("a free gate is no holder, whatever its row says");
-    }
-
-    #[test]
-    fn environment_recovery_refuses_a_different_live_successor_token() {
-        let private = tempfile::tempdir().expect("successor fixture");
-        let held = hold_task(private.path(), Some("managedrun-successor"));
-        // The old token alone appears recoverable, but the task's gate
-        // belongs to a live successor. No down is allowed.
-        refuse_recovery_while_token_live(private.path(), "managedrun-old")
-            .expect("old holder ended");
-        let error = refuse_environment_mutation(private.path(), "stack", None, None)
-            .expect_err("successor protects environment");
-        assert!(error.to_string().contains("task:dev"));
-        held.close(WorkloadOutcome::Succeeded);
-    }
-
-    #[test]
-    fn isolated_dirs_pre_spawn_exemption_never_exempts_a_managed_holder() {
-        let private = tempfile::tempdir().expect("mount preparation fixture");
-        let held = hold_task(private.path(), None);
-        refuse_pre_spawn_mount_reconcile(private.path(), "stack")
-            .expect("own ordinary preparation gate");
-        refuse_environment_mutation(private.path(), "stack", None, None)
-            .expect_err("general teardown keeps its stricter guard");
-        held.close(WorkloadOutcome::Succeeded);
-        let managed = hold_task(private.path(), Some("managedrun-bound"));
-        refuse_pre_spawn_mount_reconcile(private.path(), "stack")
-            .expect_err("even a same-process managed holder remains protected");
-        managed.close(WorkloadOutcome::Succeeded);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn explicit_stop_exempts_its_calling_host_task_but_not_a_managed_ancestor() {
-        let private = tempfile::tempdir().expect("calling task fixture");
-        // This process holds the gate; a child of it stands in for the
-        // explicit `down` running inside that task.
-        let mut caller = std::process::Command::new("sleep")
-            .arg("30")
-            .spawn()
-            .expect("caller fixture");
-        let held = hold_task(private.path(), Some("managedrun-parent"));
-        refuse_environment_mutation(private.path(), "stack", Some(caller.id()), None)
-            .expect_err("a managed ancestor must use its own stop token");
-        held.close(WorkloadOutcome::Succeeded);
-
-        let held = hold_task(private.path(), None);
-        refuse_environment_mutation(private.path(), "stack", Some(caller.id()), None)
-            .expect("an explicit down may finish its own calling host task");
-        refuse_environment_mutation(private.path(), "stack", None, None)
-            .expect_err("a reaper cannot borrow the calling-task exemption");
-        held.close(WorkloadOutcome::Succeeded);
-        let _ = caller.kill();
-        let _ = caller.wait();
-    }
-
     /// The live-owner discovery sees a live holder through its run token even
     /// when its session record is missing.
     #[test]
@@ -628,7 +441,7 @@ mod tests {
         let holders = managed(private.path());
         assert_eq!(holders.len(), 1);
         assert_eq!(holders[0].scope_label(), "task:dev");
-        assert!(holders[0].carries_managed_run("managedrun-live"));
+        assert!(holders[0].managed_run.is_some());
         assert_eq!(holders[0].pid, Some(std::process::id()));
         held.close(WorkloadOutcome::Succeeded);
     }

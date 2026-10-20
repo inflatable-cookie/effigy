@@ -1475,6 +1475,192 @@ fn gateway_store_latest_run_tracks_generation_and_absence() {
     assert_eq!(reader.latest_run(&resource).verified().unwrap().0, id(64));
     run.settle(&cleanup(&cx), &mut fake).unwrap();
 }
+#[test]
+fn environment_record_is_fenced_bounded_and_read_without_migration() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut fake = Fake::new(home.path());
+    let mut run = begin(&cx, &root, env(), 90, &mut fake);
+    let record = serde_json::json!({"retention": "persistent"});
+    run.set_engine_record(&record).unwrap();
+    let oversized = Value::String("x".repeat(20 << 10));
+    assert!(matches!(
+        run.set_engine_record(&oversized),
+        Err(RunError::Store(StoreError::TooLarge { .. }))
+    ));
+    // A size refusal writes nothing and leaves the run usable.
+    run.set_engine_record(&record).unwrap();
+    run.settle(&cleanup(&cx), &mut fake).unwrap();
+    let view = reader(&cx, &root);
+    match view.resource(&env()) {
+        Observed::Verified(resource, _) => assert_eq!(resource.engine, Some(record)),
+        other => panic!("{other:?}"),
+    }
+    assert!(matches!(view.object_refs(&env()), Observed::Verified(refs, _) if refs.is_empty()));
+    // A run writes only its own owner's record: a task run never reaches
+    // the environment row.
+    let mut stale = begin(&cx, &root, owner(), 1, &mut fake);
+    stale
+        .set_engine_record(&serde_json::json!({"foreign": true}))
+        .unwrap();
+    stale.settle(&cleanup(&cx), &mut fake).unwrap();
+    match reader(&cx, &root).resource(&env()) {
+        Observed::Verified(resource, _) => {
+            assert_eq!(
+                resource.engine,
+                Some(serde_json::json!({"retention": "persistent"}))
+            )
+        }
+        other => panic!("{other:?}"),
+    }
+}
+#[test]
+fn environment_stopped_publication_needs_a_permit_and_blocks_attach() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut fake = Fake::new(home.path());
+    let active = active_environment(&cx, &root, &mut fake);
+    let mut holder = begin(&cx, &root, owner(), 1, &mut fake);
+    Attachments::attach(&mut holder, &active, AttachMode::Borrow, Wait::FailFast).unwrap();
+    let mut down = begin(&cx, &root, env(), 91, &mut fake);
+    assert!(matches!(
+        Attachments::permit(&mut down),
+        Err(RunError::HeldBy(_))
+    ));
+    down.settle(&cleanup(&cx), &mut fake).unwrap();
+    holder.settle(&cleanup(&cx), &mut fake).unwrap();
+    let mut down = begin(&cx, &root, env(), 92, &mut fake);
+    let stopped = down.fence().clone();
+    Attachments::permit(&mut down)
+        .unwrap()
+        .publish_stopped()
+        .unwrap();
+    down.finish(WorkloadOutcome::Succeeded).unwrap();
+    down.settle(&cleanup(&cx), &mut fake).unwrap();
+    match reader(&cx, &root).resource(&env()) {
+        Observed::Verified(resource, _) => assert_eq!(resource.state.as_deref(), Some("stopped")),
+        other => panic!("{other:?}"),
+    }
+    let mut late = begin(&cx, &root, owner(), 2, &mut fake);
+    assert!(matches!(
+        Attachments::attach(&mut late, &stopped, AttachMode::Borrow, Wait::FailFast),
+        Err(RunError::EnvNotActive)
+    ));
+    late.settle(&cleanup(&cx), &mut fake).unwrap();
+}
+#[test]
+fn environment_apply_run_attaches_requesting_holder_in_its_final_transaction() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut fake = Fake::new(home.path());
+    let mut holder = begin(&cx, &root, owner(), 1, &mut fake);
+    let mut apply = begin(&cx, &root, env(), 90, &mut fake);
+    let mode = AttachMode::Exclusive {
+        stop_on_release: true,
+    };
+    Attachments::publish_active_for(&mut apply, &[(holder.id(), mode)]).unwrap();
+    // Idempotent for a holder already attached.
+    Attachments::publish_active_for(&mut apply, &[(holder.id(), mode)]).unwrap();
+    apply.finish(WorkloadOutcome::Succeeded).unwrap();
+    apply.settle(&cleanup(&cx), &mut fake).unwrap();
+    let view = reader(&cx, &root);
+    let observed = cx.operation().observe().unwrap();
+    assert!(
+        matches!(Attachments::holders(&observed,&root,&view,&env()),Observed::Verified(ref holders,_) if holders.len() == 1 && holders[0].run == holder.id())
+    );
+    assert_eq!(
+        holder
+            .effects()
+            .unwrap()
+            .iter()
+            .filter(|e| e.state == EffectState::Applied)
+            .count(),
+        1
+    );
+    let mut down = begin(&cx, &root, env(), 91, &mut fake);
+    assert!(matches!(
+        Attachments::permit(&mut down),
+        Err(RunError::HeldBy(_))
+    ));
+    holder.finish(WorkloadOutcome::Succeeded).unwrap();
+    assert_eq!(
+        holder.settle(&cleanup(&cx), &mut fake).unwrap().cleanup(),
+        CleanupOutcome::Complete
+    );
+    assert!(Attachments::permit(&mut down).is_ok());
+    down.settle(&cleanup(&cx), &mut fake).unwrap();
+    // A settling run can no longer be attached on its behalf.
+    let mut late = begin(&cx, &root, owner(), 2, &mut fake);
+    late.finish(WorkloadOutcome::Succeeded).unwrap();
+    let mut apply = begin(&cx, &root, env(), 92, &mut fake);
+    assert!(Attachments::publish_active_for(&mut apply, &[(late.id(), mode)]).is_err());
+    apply.settle(&cleanup(&cx), &mut fake).unwrap();
+    late.settle(&cleanup(&cx), &mut fake).unwrap();
+}
+#[test]
+fn environment_exempt_permit_admits_only_the_settling_holder_own_stop() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut fake = Fake::new(home.path());
+    let active = active_environment(&cx, &root, &mut fake);
+    let mut holder = begin(&cx, &root, owner(), 1, &mut fake);
+    Attachments::attach(&mut holder, &active, AttachMode::Borrow, Wait::FailFast).unwrap();
+    let mut other = begin(
+        &cx,
+        &root,
+        TaskId::new(checkout(), "", Surface::Published, "other", None)
+            .unwrap()
+            .resource(),
+        2,
+        &mut fake,
+    );
+    Attachments::attach(&mut other, &active, AttachMode::Borrow, Wait::FailFast).unwrap();
+    let mut down = begin(&cx, &root, env(), 91, &mut fake);
+    // A live, not-yet-settling holder is never exempt.
+    assert!(matches!(
+        Attachments::permit_exempt(&mut down, holder.id()),
+        Err(RunError::HeldBy(_))
+    ));
+    holder.finish(WorkloadOutcome::Succeeded).unwrap();
+    // Another live holder still protects the environment from the own stop.
+    assert!(matches!(
+        Attachments::permit_exempt(&mut down, holder.id()),
+        Err(RunError::HeldBy(_))
+    ));
+    other.finish(WorkloadOutcome::Succeeded).unwrap();
+    other.settle(&cleanup(&cx), &mut fake).unwrap();
+    let mut permit = Attachments::permit_exempt(&mut down, holder.id()).unwrap();
+    let ticket = permit
+        .intend(EffectSpec {
+            target: permit.fence().clone(),
+            kind: "fake".into(),
+            payload: Value::String("stop".into()),
+            settlement: Settlement::Irreversible,
+            required: true,
+        })
+        .unwrap();
+    permit.applied(&ticket, Value::Bool(true)).unwrap();
+    permit
+        .completed(&ticket, crate::outcome::RequiredObligation::Applied)
+        .unwrap();
+    permit.publish_stopped().unwrap();
+    down.finish(WorkloadOutcome::Succeeded).unwrap();
+    // The holder still has its attachment while the stop records its
+    // irreversible effect: recording calls no adapter, so cleanup completes.
+    assert_eq!(
+        down.settle(&cleanup(&cx), &mut fake).unwrap().cleanup(),
+        CleanupOutcome::Complete
+    );
+    assert!(fake.calls().is_empty());
+    assert_eq!(
+        holder.settle(&cleanup(&cx), &mut fake).unwrap().cleanup(),
+        CleanupOutcome::Complete
+    );
+}
 
 #[test]
 fn run_children_recover_and_require_positive_completion() {

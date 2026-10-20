@@ -2,17 +2,15 @@ use super::{
     activate_container_runtime_plan_for_task_using, candidate_host_mount_paths,
     ensure_exec_container_running_with, ensure_primary_service_exec_ready_with_recovery_using,
     ensure_runtime_exec_readiness_stage_using, ensure_runtime_gateway_readiness_stage_using,
-    ensure_runtime_running_stage, live_managed_exec_note, parse_bind_mount_host_path,
-    prepare_host_bind_mount_dirs, prepare_runtime_mounts_stage, readiness_attempt_open,
-    reconcile_runtime_aliases_stage_using, refresh_changed_cargo_inputs_using,
-    refresh_runtime_lease_stage, restart_primary_service_using, run_runtime_compose_up_stage,
-    run_runtime_prep_steps, runtime_activation_plan_from_request,
+    ensure_runtime_running_stage, parse_bind_mount_host_path, prepare_host_bind_mount_dirs,
+    prepare_runtime_mounts_stage, readiness_attempt_open, reconcile_runtime_aliases_stage_using,
+    refresh_changed_cargo_inputs_using, restart_primary_service_using,
+    run_runtime_compose_up_stage, run_runtime_prep_steps, runtime_activation_plan_from_request,
     runtime_activation_report_for_result, service_depends_on_primary, validate_policy_runtime,
     validate_runtime_activation_stage, verify_live_checkout_mount_using, ActivationRequest,
 };
 use crate::runner::error::RunnerError;
 use crate::runner::runtime_session_context::{LeaseRefreshPolicy, RuntimeSessionContext};
-use effigy_cli::{ContainerArgs, ContainerSubcommand};
 use effigy_containers::{EffectiveComposeSource, EffectiveContainerPolicy, EffectiveDnsRoute};
 use effigy_runtime_plan::{
     RuntimeActivationRoute, RuntimeActivationStage, RuntimeCleanupResult, RuntimeLeasePolicy,
@@ -400,6 +398,7 @@ fn runtime_prep_runs_sibling_service_recovery_before_exec_and_alias_reconciliati
             let events = Arc::clone(&events);
             move || {
                 events.lock().expect("events lock").push("compose-up");
+                Ok(())
             }
         },
         {
@@ -534,6 +533,7 @@ fn runtime_prep_reconciles_container_local_tcp_aliases_after_exec_readiness() {
             let events = Arc::clone(&events);
             move || {
                 events.lock().expect("events lock").push("compose-up");
+                Ok(())
             }
         },
         {
@@ -684,42 +684,6 @@ fn runtime_gateway_readiness_stage_starts_gateway_before_registration() {
 }
 
 #[test]
-fn runtime_lease_refresh_stage_runs_when_policy_requests_refresh() {
-    let repo_root = Path::new("/tmp/demo-repo");
-    let policy = test_policy(PathBuf::from("docker-compose.yml"));
-    let plan = runtime_activation_plan_from_request(
-        repo_root,
-        &policy,
-        ActivationRequest {
-            container_name: Some("web"),
-            repo_override: Some(repo_root.to_path_buf()),
-            route: RuntimeActivationRoute::Task,
-            session_context: RuntimeSessionContext::default(),
-        },
-    );
-    let calls = Arc::new(Mutex::new(Vec::<(PathBuf, String, bool)>::new()));
-
-    let refreshed = refresh_runtime_lease_stage(&plan, &policy, true, {
-        let calls = Arc::clone(&calls);
-        move |repo_root, policy, system_was_running| {
-            calls.lock().expect("calls lock").push((
-                repo_root.to_path_buf(),
-                policy.name.clone(),
-                system_was_running,
-            ));
-            Ok(true)
-        }
-    })
-    .expect("refresh lease");
-
-    assert!(refreshed);
-    assert_eq!(
-        *calls.lock().expect("calls lock"),
-        vec![(repo_root.to_path_buf(), "web".to_owned(), true)]
-    );
-}
-
-#[test]
 fn runtime_activation_plan_from_request_preserves_non_task_route() {
     let repo_root = Path::new("/tmp/demo-repo");
     let policy = test_policy(PathBuf::from("docker-compose.yml"));
@@ -739,38 +703,6 @@ fn runtime_activation_plan_from_request_preserves_non_task_route() {
 }
 
 #[test]
-fn runtime_lease_refresh_stage_skips_when_policy_requests_skip() {
-    let repo_root = Path::new("/tmp/demo-repo");
-    let policy = test_policy(PathBuf::from("docker-compose.yml"));
-    let plan = runtime_activation_plan_from_request(
-        repo_root,
-        &policy,
-        ActivationRequest {
-            container_name: Some("web"),
-            repo_override: Some(repo_root.to_path_buf()),
-            route: RuntimeActivationRoute::Task,
-            session_context: RuntimeSessionContext {
-                lease_refresh_policy: LeaseRefreshPolicy::SkipRefresh,
-                ..RuntimeSessionContext::default()
-            },
-        },
-    );
-    let calls = Arc::new(Mutex::new(0usize));
-
-    let refreshed = refresh_runtime_lease_stage(&plan, &policy, true, {
-        let calls = Arc::clone(&calls);
-        move |_, _, _| {
-            *calls.lock().expect("calls lock") += 1;
-            Ok(true)
-        }
-    })
-    .expect("refresh lease");
-
-    assert!(!refreshed);
-    assert_eq!(*calls.lock().expect("calls lock"), 0);
-}
-
-#[test]
 fn runtime_prep_surfaces_alias_reconciliation_failure_after_exec_recovery() {
     let events = Arc::new(Mutex::new(Vec::<&'static str>::new()));
 
@@ -786,6 +718,7 @@ fn runtime_prep_surfaces_alias_reconciliation_failure_after_exec_recovery() {
             let events = Arc::clone(&events);
             move || {
                 events.lock().expect("events lock").push("compose-up");
+                Ok(())
             }
         },
         {
@@ -1163,7 +1096,7 @@ fn validate_runtime_activation_stage_preserves_policy_error_phase() {
 
 #[test]
 fn ensure_runtime_running_stage_skips_up_when_runtime_is_already_running() {
-    let calls = Arc::new(Mutex::new(Vec::<ContainerArgs>::new()));
+    let calls = Arc::new(Mutex::new(Vec::<(Option<String>, Option<PathBuf>)>::new()));
 
     ensure_runtime_running_stage(
         true,
@@ -1171,8 +1104,11 @@ fn ensure_runtime_running_stage_skips_up_when_runtime_is_already_running() {
         Some(PathBuf::from("/tmp/repo")),
         {
             let calls = Arc::clone(&calls);
-            move |args| {
-                calls.lock().expect("calls lock").push(args);
+            move |name, repo_override| {
+                calls
+                    .lock()
+                    .expect("calls lock")
+                    .push((name, repo_override));
                 Ok(String::new())
             }
         },
@@ -1184,7 +1120,7 @@ fn ensure_runtime_running_stage_skips_up_when_runtime_is_already_running() {
 
 #[test]
 fn ensure_runtime_running_stage_uses_plan_identity_when_runtime_is_stopped() {
-    let calls = Arc::new(Mutex::new(Vec::<ContainerArgs>::new()));
+    let calls = Arc::new(Mutex::new(Vec::<(Option<String>, Option<PathBuf>)>::new()));
 
     ensure_runtime_running_stage(
         false,
@@ -1192,8 +1128,11 @@ fn ensure_runtime_running_stage_uses_plan_identity_when_runtime_is_stopped() {
         Some(PathBuf::from("/tmp/repo")),
         {
             let calls = Arc::clone(&calls);
-            move |args| {
-                calls.lock().expect("calls lock").push(args);
+            move |name, repo_override| {
+                calls
+                    .lock()
+                    .expect("calls lock")
+                    .push((name, repo_override));
                 Ok(String::new())
             }
         },
@@ -1201,24 +1140,10 @@ fn ensure_runtime_running_stage_uses_plan_identity_when_runtime_is_stopped() {
     .expect("ensure running");
 
     let calls = calls.lock().expect("calls lock");
-    assert_eq!(calls.len(), 1);
     assert_eq!(
-        calls[0].repo_override.as_deref(),
-        Some(Path::new("/tmp/repo"))
+        *calls,
+        [(Some("web".to_owned()), Some(PathBuf::from("/tmp/repo")))]
     );
-    assert!(!calls[0].output_json);
-    match &calls[0].subcommand {
-        ContainerSubcommand::Up {
-            name,
-            attach,
-            detach,
-        } => {
-            assert_eq!(name.as_deref(), Some("web"));
-            assert!(!attach);
-            assert!(*detach);
-        }
-        other => panic!("expected container up command, got {other:?}"),
-    }
 }
 
 #[test]
@@ -1242,7 +1167,7 @@ fn task_activation_side_effects_skip_gateway_for_plain_task_route() {
         &policy,
         {
             let events = Arc::clone(&events);
-            move |repo_root, policy, route, container_name, repo_override| {
+            move |repo_root, policy, route, container_name, repo_override, _start| {
                 events.lock().expect("events lock").push(format!(
                     "prepare:{route:?}:{container_name:?}:{repo_override:?}:{}:{}",
                     repo_root.display(),
@@ -1273,17 +1198,6 @@ fn task_activation_side_effects_skip_gateway_for_plain_task_route() {
                 Ok(())
             }
         },
-        {
-            let events = Arc::clone(&events);
-            move |repo_root, policy, system_was_running| {
-                events.lock().expect("events lock").push(format!(
-                    "lease:{}:{}:{system_was_running}",
-                    repo_root.display(),
-                    policy.name
-                ));
-                Ok(true)
-            }
-        },
     )
     .expect("activate container runtime");
 
@@ -1301,14 +1215,10 @@ fn task_activation_side_effects_skip_gateway_for_plain_task_route() {
                 repo_root.display(),
                 policy.name
             ),
-            format!("lease:{}:{}:false", repo_root.display(), policy.name),
         ]
     );
     assert_eq!(
-        (
-            activation.system_was_running,
-            activation.refreshed_host_container_lease
-        ),
+        (activation.system_was_running, activation.started_held),
         (false, true)
     );
     let report = runtime_activation_report_for_result(plan, activation);
@@ -1334,7 +1244,7 @@ fn exec_preparation_stopped_runtime_gate_returns_explicit_start_guidance() {
 }
 
 #[test]
-fn task_activation_can_skip_lease_refresh_without_running_task_gateway_readiness() {
+fn task_activation_in_a_managed_workspace_keeps_its_stack_without_gateway_readiness() {
     let repo_root = Path::new("/tmp/demo-repo");
     let policy = test_policy(PathBuf::from("docker-compose.yml"));
     let events = Arc::new(Mutex::new(Vec::<&'static str>::new()));
@@ -1357,7 +1267,7 @@ fn task_activation_can_skip_lease_refresh_without_running_task_gateway_readiness
         &policy,
         {
             let events = Arc::clone(&events);
-            move |_, _, _, _, _| {
+            move |_, _, _, _, _, _| {
                 events.lock().expect("events lock").push("prepare");
                 Ok(true)
             }
@@ -1376,13 +1286,6 @@ fn task_activation_can_skip_lease_refresh_without_running_task_gateway_readiness
                 Ok(())
             }
         },
-        {
-            let events = Arc::clone(&events);
-            move |_, _, _| {
-                events.lock().expect("events lock").push("lease");
-                Ok(true)
-            }
-        },
     )
     .expect("activate container runtime");
 
@@ -1391,22 +1294,19 @@ fn task_activation_can_skip_lease_refresh_without_running_task_gateway_readiness
         vec!["prepare", "permissions"]
     );
     assert_eq!(
-        (
-            activation.system_was_running,
-            activation.refreshed_host_container_lease
-        ),
+        (activation.system_was_running, activation.started_held),
         (true, false)
     );
     assert_eq!(plan.lease.policy, RuntimeLeasePolicy::Skip);
 }
 
 #[test]
-fn reused_task_activation_matrix_keeps_gateway_skipped_across_lease_modes() {
-    for (lease_refresh_policy, expected_events, expected_refreshed_lease) in [
+fn reused_task_activation_matrix_keeps_gateway_skipped_across_retention_modes() {
+    for (lease_refresh_policy, expected_events, expected_started_held) in [
         (
             LeaseRefreshPolicy::RefreshOnActivation,
-            vec!["prepare", "permissions", "lease"],
-            true,
+            vec!["prepare", "permissions"],
+            false,
         ),
         (
             LeaseRefreshPolicy::SkipRefresh,
@@ -1436,7 +1336,7 @@ fn reused_task_activation_matrix_keeps_gateway_skipped_across_lease_modes() {
             &policy,
             {
                 let events = Arc::clone(&events);
-                move |_, _, _, _, _| {
+                move |_, _, _, _, _, _| {
                     events.lock().expect("events lock").push("prepare");
                     Ok(true)
                 }
@@ -1455,13 +1355,6 @@ fn reused_task_activation_matrix_keeps_gateway_skipped_across_lease_modes() {
                     Ok(())
                 }
             },
-            {
-                let events = Arc::clone(&events);
-                move |_, _, _| {
-                    events.lock().expect("events lock").push("lease");
-                    Ok(true)
-                }
-            },
         )
         .expect("activate container runtime");
 
@@ -1471,17 +1364,14 @@ fn reused_task_activation_matrix_keeps_gateway_skipped_across_lease_modes() {
             "unexpected reused-runtime side-effect order for {lease_refresh_policy:?}"
         );
         assert_eq!(
-            (
-                activation.system_was_running,
-                activation.refreshed_host_container_lease
-            ),
-            (true, expected_refreshed_lease)
+            (activation.system_was_running, activation.started_held),
+            (true, expected_started_held)
         );
     }
 }
 
 #[test]
-fn task_activation_surfaces_workspace_permission_failure_before_lease_refresh() {
+fn task_activation_surfaces_workspace_permission_failure() {
     let repo_root = Path::new("/tmp/demo-repo");
     let policy = test_policy(PathBuf::from("docker-compose.yml"));
     let events = Arc::new(Mutex::new(Vec::<&'static str>::new()));
@@ -1501,7 +1391,7 @@ fn task_activation_surfaces_workspace_permission_failure_before_lease_refresh() 
         &policy,
         {
             let events = Arc::clone(&events);
-            move |_, _, _, _, _| {
+            move |_, _, _, _, _, _| {
                 events.lock().expect("events lock").push("prepare");
                 Ok(false)
             }
@@ -1522,13 +1412,6 @@ fn task_activation_surfaces_workspace_permission_failure_before_lease_refresh() 
                 Ok(())
             }
         },
-        {
-            let events = Arc::clone(&events);
-            move |_, _, _| {
-                events.lock().expect("events lock").push("lease");
-                Ok(true)
-            }
-        },
     )
     .expect_err("workspace permission failure should surface");
 
@@ -1540,10 +1423,10 @@ fn task_activation_surfaces_workspace_permission_failure_before_lease_refresh() 
 }
 
 #[test]
-fn task_activation_surfaces_dependency_volume_failure_before_lease_refresh() {
+fn task_activation_surfaces_dependency_volume_failure() {
     // A nonrepairable dependency volume (Composer vendor / JS node_modules)
     // that the resolved workspace user cannot write must block task readiness
-    // at the permission stage; lease refresh and the task child never run.
+    // at the permission stage; the task child never runs.
     let repo_root = Path::new("/tmp/demo-repo");
     let policy = test_policy(PathBuf::from("docker-compose.yml"));
     let events = Arc::new(Mutex::new(Vec::<&'static str>::new()));
@@ -1563,7 +1446,7 @@ fn task_activation_surfaces_dependency_volume_failure_before_lease_refresh() {
         &policy,
         {
             let events = Arc::clone(&events);
-            move |_, _, _, _, _| {
+            move |_, _, _, _, _, _| {
                 events.lock().expect("events lock").push("prepare");
                 Ok(false)
             }
@@ -1584,13 +1467,6 @@ fn task_activation_surfaces_dependency_volume_failure_before_lease_refresh() {
                 Ok(())
             }
         },
-        {
-            let events = Arc::clone(&events);
-            move |_, _, _| {
-                events.lock().expect("events lock").push("lease");
-                Ok(true)
-            }
-        },
     )
     .expect_err("dependency volume failure should surface");
 
@@ -1600,53 +1476,7 @@ fn task_activation_surfaces_dependency_volume_failure_before_lease_refresh() {
     assert_eq!(
         *events.lock().expect("events lock"),
         vec!["prepare", "permissions"],
-        "lease refresh must not run after a dependency volume permission failure"
-    );
-}
-
-/// A live managed owner whose session record is missing is still visible
-/// through its run's gate. Attempt B's actual state: the record was gone
-/// while the owner was live, and a guard that only reads records would have
-/// failed open. Gate-discovered owners carry no recorded environment, so they
-/// refuse the restart for this checkout's environments.
-#[test]
-fn live_managed_exec_note_discovers_owners_without_a_session_record() {
-    let private = tempfile::tempdir().expect("live holder fixture");
-    let repo_root = private.path();
-    let held = crate::runner::task_engine::TaskRun::hold_for_tests(
-        repo_root,
-        "dev",
-        Some("managedrun-live-1"),
-    );
-
-    let policy = test_policy(PathBuf::from("docker-compose.yml"));
-    let note = live_managed_exec_note(repo_root, &policy).expect("live owner without a record");
-    assert!(
-        note.contains("task:dev") && note.contains("session record missing"),
-        "got: {note}"
-    );
-    assert!(
-        note.contains(&format!("pid {}", std::process::id())),
-        "got: {note}"
-    );
-    held.close(effigy_kernel::outcome::WorkloadOutcome::Succeeded);
-}
-
-/// Without any live holder, the recovery restart keeps its ordinary
-/// authority: a run that ended, or whose owner died, holds no gate.
-#[test]
-fn live_managed_exec_note_ignores_dead_holders() {
-    let private = tempfile::tempdir().expect("dead holder fixture");
-    crate::runner::task_engine::TaskRun::hold_for_tests(
-        private.path(),
-        "dev",
-        Some("managedrun-dead-1"),
-    )
-    .abandon_for_tests();
-    let policy = test_policy(PathBuf::from("docker-compose.yml"));
-    assert!(
-        live_managed_exec_note(private.path(), &policy).is_none(),
-        "a dead holder grants no live-run refusal"
+        "nothing runs after a dependency volume permission failure"
     );
 }
 
@@ -1694,7 +1524,7 @@ fn activation_returns_the_published_snapshot_for_its_exec_caller() {
         let activation = activate_container_runtime_plan_for_task_using(
             &plan,
             &prepared,
-            |_, policy, _, _, _| {
+            |_, policy, _, _, _, _| {
                 effigy_containers::policy::render::verify(policy).unwrap();
                 // Editing source after activation must not replace the caller's snapshot.
                 fs::write(
@@ -1706,7 +1536,6 @@ fn activation_returns_the_published_snapshot_for_its_exec_caller() {
             },
             |_, _, _, _| Ok(()),
             |_, _| Ok(()),
-            |_, _, _| Ok(false),
         )
         .unwrap();
         let caller = activation.policy;

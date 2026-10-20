@@ -1,0 +1,40 @@
+[
+  {
+    "Config": {
+      "Labels": {
+        "com.docker.compose.config-hash": "4d1963c66c4ad262f0761b6841d940e6bea679083a78b3d1f165f363d0fd0780",
+        "com.docker.compose.project": "acowtancy-decodelabs",
+        "com.docker.compose.service": "mysql",
+        "io.containerd.image.config.stop-signal": "SIGTERM",
+        "org.opencontainers.image.authors": "MariaDB Community",
+        "org.opencontainers.image.base.name": "docker.io/library/ubuntu:jammy",
+        "org.opencontainers.image.description": "MariaDB Database for relational SQL",
+        "org.opencontainers.image.documentation": "https://hub.docker.com/_/mariadb/",
+        "org.opencontainers.image.licenses": "GPL-2.0",
+        "org.opencontainers.image.source": "https://github.com/MariaDB/mariadb-docker",
+        "org.opencontainers.image.title": "MariaDB Database",
+        "org.opencontainers.image.url": "https://github.com/MariaDB/mariadb-docker",
+        "org.opencontainers.image.vendor": "MariaDB Community",
+        "org.opencontainers.image.version": "10.11.18"
+      }
+    },
+    "Id": "2e6f268f33e58a4b39c51aa99fa9973740be426b89978994d95b681b51760c80",
+    "Mounts": [
+      {
+        "Destination": "/var/lib/mysql",
+        "Source": "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-decodelabs-mysql-data/_data",
+        "Type": "volume"
+      },
+      {
+        "Destination": "/docker-entrypoint-initdb.d/10-extra-databases.sql",
+        "Source": "/Users/tom/Dev/legacy/sites/acowtancy/.effigy/runtime/compose/mysql.conf",
+        "Type": "bind"
+      }
+    ],
+    "Name": "acowtancy-decodelabs-mysql-1",
+    "State": {
+      "Running": false,
+      "Status": ""
+    }
+  }
+]

@@ -72,12 +72,6 @@ pub enum RunnerError {
         detail: String,
         details_json: String,
     },
-    HostContainerLeaseEncode {
-        detail: String,
-    },
-    HostContainerLeaseReaperBootstrap {
-        detail: String,
-    },
     GatewayRouteTable {
         phase: &'static str,
         path: PathBuf,
@@ -339,20 +333,6 @@ impl RunnerError {
         Self::WorkspaceSessionCleanup {
             shell_error: shell_error.into(),
             cleanup_error: cleanup_error.into(),
-        }
-    }
-
-    pub(in crate::runner) fn host_container_lease_encode(detail: impl Into<String>) -> Self {
-        Self::HostContainerLeaseEncode {
-            detail: detail.into(),
-        }
-    }
-
-    pub(in crate::runner) fn host_container_lease_reaper_bootstrap(
-        detail: impl Into<String>,
-    ) -> Self {
-        Self::HostContainerLeaseReaperBootstrap {
-            detail: detail.into(),
         }
     }
 

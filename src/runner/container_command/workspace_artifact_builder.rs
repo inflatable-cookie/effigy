@@ -13,11 +13,27 @@ use effigy_containers::exec::{
 };
 use effigy_containers::{load_container_policy, ContainerAction};
 
+use super::admission::AdmissionContext;
+use crate::runner::environment;
 use crate::runner::error::RunnerError;
-use crate::runner::host_container_lease::{
-    capture_workspace_builder_context, workspace_builder_admission_retained,
-};
 use crate::runner::task_engine::TaskRun;
+
+/// The builder's admitted generation as its environment record names it:
+/// identity changes between inventory and exec refuse the build.
+fn retained_admission(
+    policy: &effigy_containers::EffectiveContainerPolicy,
+) -> Option<(u64, Option<String>, Option<String>)> {
+    environment::record(policy).and_then(|record| {
+        let stopped = record.state == effigy_containers::environment::EnvState::Stopped;
+        (!stopped && (record.last_applied.is_some() || record.partial().is_some())).then(|| {
+            (
+                record.generation.get(),
+                record.last_applied.clone(),
+                record.partial().map(str::to_owned),
+            )
+        })
+    })
+}
 
 pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(), RunnerError> {
     // The maintained task already holds its ordinary task lock. This shared
@@ -53,7 +69,7 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
     verify_workspace_artifact_builder_declaration(&policy)?;
     effigy_containers::validate_container_policy(repo_root, &policy)?;
     effigy_containers::validate_compose_backend_runtime(repo_root, &policy)?;
-    let mut context = capture_workspace_builder_context(repo_root, &policy)?;
+    let mut context = AdmissionContext::workspace_builder(&policy)?;
     // Preserve the existing runtime drift guard; this operation grants no
     // authority to change backend or profile, start a VM, or repair runtime.
     let mut deadline = Instant::now() + Duration::from_secs(15);
@@ -67,7 +83,12 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
     {
         return Err(RunnerError::task_invocation(message));
     }
-    let mut retained = workspace_builder_admission_retained(repo_root, &policy)?;
+    // The first Mutate imports v0.14.1 markers into the record (M6). The
+    // import's inventory is not the build's: the build's inventory gets a
+    // fresh budget afterwards, as it does after a bring-up below.
+    environment::import_legacy(repo_root, &policy)?;
+    deadline = Instant::now() + Duration::from_secs(15);
+    let mut retained = retained_admission(&policy);
     let mut rows = list_compose_containers_for_policy_including_stopped_with_deadline(
         repo_root,
         &policy,
@@ -79,12 +100,20 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
         }
         // No recovery is needed on first activation. Use the maintained
         // lifecycle path and its existing readiness/deadline/ownership checks.
-        context.verify(repo_root, &policy, false)?;
+        context.verify(repo_root, &policy)?;
         check_interruption()?;
-        super::lifecycle::run_container_up(repo_root, Some("linux-release"), false, true, false)?;
+        super::lifecycle::run_container_up(
+            repo_root,
+            Some("linux-release"),
+            false,
+            true,
+            false,
+            effigy_containers::environment::Retention::Persistent,
+            &[],
+        )?;
         policy = load_container_policy(repo_root, Some("linux-release"))?;
-        retained = workspace_builder_admission_retained(repo_root, &policy)?;
-        context = capture_workspace_builder_context(repo_root, &policy)?;
+        retained = retained_admission(&policy);
+        context = AdmissionContext::workspace_builder(&policy)?;
         deadline = Instant::now() + Duration::from_secs(15);
         rows = list_compose_containers_for_policy_including_stopped_with_deadline(
             repo_root,
@@ -112,8 +141,16 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
         ContainerAction::Exec,
         "workspace artifact build",
     )?;
-    context.verify(repo_root, &policy, false)?;
-    if workspace_builder_admission_retained(repo_root, &policy)? != retained {
+    // The build holds its environment: no transition stops the builder
+    // while it executes (R4).
+    // A builder started outside the reconciler has no active record yet; the
+    // build then runs unheld, exactly as before.
+    let mut held = environment::Held::begin(repo_root, &policy, "workspace-artifact-build");
+    if let Some(held) = held.as_mut() {
+        held.attach_active()?;
+    }
+    context.verify(repo_root, &policy)?;
+    if retained_admission(&policy) != retained {
         return Err(RunnerError::task_invocation(
             "workspace artifact builder admission changed before build; no exec attempted",
         ));

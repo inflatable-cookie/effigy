@@ -110,23 +110,31 @@ impl Run<'_> {
             } else if effect.spec.kind == claims::KIND {
                 self.settle_claims(effect, &cx)?;
             } else {
-                let (state, reason) =
-                    if effect.spec.target.resource.kind() == crate::id::ResourceKind::Env {
-                        match attachments::ensure_no_holders(
-                            self.store.conn(),
-                            &effect.spec.target.resource,
-                        ) {
-                            Ok(()) if self.guard.covers(&effect.spec.target.resource) => {
-                                resolve(adapter, effect, cleanup)
-                            }
-                            _ => (
-                                EffectState::Residue,
-                                Some("environment holders or missing environment gate".into()),
-                            ),
+                // Recording a retained or irreversible disposition calls no
+                // adapter, so holder protection (R4) has nothing to guard.
+                let records_only = matches!(
+                    effect.spec.settlement,
+                    Settlement::Retain | Settlement::Irreversible
+                );
+                let (state, reason) = if effect.spec.target.resource.kind()
+                    == crate::id::ResourceKind::Env
+                    && !records_only
+                {
+                    match attachments::ensure_no_holders(
+                        self.store.conn(),
+                        &effect.spec.target.resource,
+                    ) {
+                        Ok(()) if self.guard.covers(&effect.spec.target.resource) => {
+                            resolve(adapter, effect, cleanup)
                         }
-                    } else {
-                        resolve(adapter, effect, cleanup)
-                    };
+                        _ => (
+                            EffectState::Residue,
+                            Some("environment holders or missing environment gate".into()),
+                        ),
+                    }
+                } else {
+                    resolve(adapter, effect, cleanup)
+                };
                 self.store.transaction(&cx, |txn| {
                     journal::write_effect(
                         txn,

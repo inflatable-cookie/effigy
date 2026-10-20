@@ -199,7 +199,7 @@ fs::write_file(
     "fn bypass() { let _ = resolve_compose_backend_for_repo(root, policy); }\n",
 );
 fs::write_file(
-    path::join(runner, "host_container_lease.rs"),
+    path::join(runner, "environment.rs"),
     "fn bypass() { let _ = ComposeBackend::Docker; }\n",
 );
 fs::write_file(
@@ -221,7 +221,7 @@ expect_allowed("backend", backend_hits, "src/runner/doctor_ports.rs");
 expect_allowed("backend", backend_hits, "src/runner/exec_command/transport.rs");
 expect_rejected("backend", backend_hits, "src/runner/execute/pipeline/standard.rs");
 expect_rejected("backend", backend_hits, "src/runner/container_command/shell_prep.rs");
-expect_rejected("backend", backend_hits, "src/runner/host_container_lease.rs");
+expect_rejected("backend", backend_hits, "src/runner/environment.rs");
 
 let raw_hits = unexpected_matches(fixture, shared_roots, raw_pattern, glob, raw_allow);
 expect_allowed("raw runtime", raw_hits, "src/runner/doctor_ports.rs");

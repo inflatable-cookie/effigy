@@ -5,6 +5,8 @@ use effigy_runtime::EffigyRuntimeError;
 
 use crate::runner::command_context::resolve_active_command_context;
 use effigy_cli::{ContainerArgs, ContainerSubcommand};
+use effigy_containers::environment::Retention;
+use effigy_kernel::id::RunId;
 
 use super::error::RunnerError;
 use cache::run_container_cache_command;
@@ -30,6 +32,7 @@ pub(in crate::runner) use lifecycle::{
 };
 pub(in crate::runner) use secret_env::container_secret_runtime_env_path;
 
+mod admission;
 mod bounded_exec;
 mod cache;
 mod closeout;
@@ -60,36 +63,42 @@ pub(super) fn render_container_report(report: ContainerCommandReport, output_jso
     }
 }
 
-/// CLI entry for `effigy container`. An explicit `up` that leaves the stack
-/// running makes it persistent, so later task activations never attach an
-/// idle-shutdown lease to it. Task activation calls [`run_container`] directly.
+/// CLI entry for `effigy container`. An explicit `up` owns its
+/// environment persistently: no run's end idle-stops it until `down`.
+/// Task activation brings environments up through [`run_container_up_held`].
 pub(in crate::runner) fn run_container_command(args: ContainerArgs) -> Result<String, RunnerError> {
-    let explicit_up = match &args.subcommand {
-        ContainerSubcommand::Up { name, .. } => Some((name.clone(), args.repo_override.clone())),
-        _ => None,
-    };
-    let output = run_container(args)?;
-    if let Some((name, repo_override)) = explicit_up {
-        // Best effort: the bring-up already succeeded.
-        let _ = mark_persistent_owner_if_running(name.as_deref(), repo_override);
-    }
-    Ok(output)
+    run_container(args)
 }
 
-fn mark_persistent_owner_if_running(
-    name: Option<&str>,
+/// A task's ensure: the environment it starts is held, and `holders` are
+/// attached by its activation so no idle stop can intervene.
+pub(in crate::runner) fn run_container_up_held(
     repo_override: Option<std::path::PathBuf>,
-) -> Result<(), RunnerError> {
+    name: Option<String>,
+    retention: Retention,
+    holders: &[RunId],
+) -> Result<String, RunnerError> {
     let context = resolve_active_command_context(repo_override)?;
-    let repo_root = &context.resolved.resolved_root;
-    let policy = effigy_containers::load_container_policy(repo_root, name)?;
-    if crate::runner::system_command::is_primary_service_running(repo_root, &policy)? {
-        crate::runner::host_container_lease::mark_persistent_container_owner(repo_root, &policy)?;
-    }
-    Ok(())
+    run_container_up(
+        &context.resolved.resolved_root,
+        name.as_deref(),
+        false,
+        true,
+        false,
+        retention,
+        holders,
+    )
 }
 
 pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, RunnerError> {
+    run_container_with(args, Retention::Persistent, &[])
+}
+
+fn run_container_with(
+    args: ContainerArgs,
+    retention: Retention,
+    holders: &[RunId],
+) -> Result<String, RunnerError> {
     match args.subcommand {
         ContainerSubcommand::Up {
             name,
@@ -103,6 +112,8 @@ pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, Ru
                 attach,
                 detach,
                 args.output_json,
+                retention,
+                holders,
             )
         }
         ContainerSubcommand::Down {

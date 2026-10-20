@@ -76,10 +76,10 @@ fn resolution_is_a_pure_complete_closure_and_prepare_seals_it() {
 }
 #[test]
 fn admission_pins_immutable_inputs_and_refuses_a_new_desired_generation() {
-    let (fixture, checkout, home) = fixture();
+    let (_fixture, checkout, home) = fixture();
     crate::with_test_effigy_home(&home, || {
         let policy = prepare_container_policy(&checkout, Some("one")).unwrap();
-        let admission = PolicyAdmission::capture(&policy, &fixture.path().join("markers")).unwrap();
+        let admission = PolicyAdmission::capture(&policy).unwrap();
         let frozen = std::fs::read(&policy.compose_files[0]).unwrap();
         std::fs::write(
             checkout.join("compose.yml"),
@@ -180,11 +180,9 @@ fn legacy_admission_import_verifies_inputs_and_rewrites_only_in_prepare() {
             current
         );
         assert_eq!(std::fs::read(&marker).unwrap(), original);
-        PolicyAdmission::capture(&policy, &markers).unwrap();
-        assert_eq!(
-            serde_json::from_slice::<serde_json::Value>(&std::fs::read(&marker).unwrap()).unwrap(),
-            current
-        );
+        PolicyAdmission::capture(&policy).unwrap();
+        // Admission never rewrites a legacy receipt (contract 052 M3).
+        assert_eq!(std::fs::read(&marker).unwrap(), original);
         std::fs::write(source, "services: {}\n").unwrap();
         assert!(crate::policy::admission::normalize_context(legacy, &policy).is_err());
     });
@@ -208,7 +206,7 @@ fn declaration_bytes_are_part_of_the_generation() {
 }
 
 #[test]
-fn retained_admission_refusal_preserves_the_desired_generation() {
+fn retained_admission_refuses_once_a_changed_declaration_is_admitted() {
     let (fixture, checkout, home) = fixture();
     crate::with_test_effigy_home(&home, || {
         let policy = prepare_container_policy(&checkout, Some("one")).unwrap();
@@ -220,26 +218,21 @@ fn retained_admission_refusal_preserves_the_desired_generation() {
         std::fs::create_dir_all(marker.parent().unwrap()).unwrap();
         let context = crate::policy::admission::generation_context(&policy).unwrap();
         std::fs::write(&marker, serde_json::to_vec(&context).unwrap()).unwrap();
-        let mut admission = PolicyAdmission::capture(&policy, &markers).unwrap();
+        let mut admission = PolicyAdmission::capture(&policy).unwrap();
         std::fs::write(
             checkout.join("compose.yml"),
             "services:\n  app:\n    image: changed\n",
         )
         .unwrap();
-        assert!(crate::policy::load::load_admitted_container_policy(
-            &checkout,
-            Some("one"),
-            &markers
-        )
-        .is_err());
-        verify(&policy).unwrap();
+        // A changed declaration admits a new generation; the earlier
+        // admission refuses to adopt it.
+        crate::policy::load::load_admitted_container_policy(&checkout, Some("one")).unwrap();
         assert!(crate::policy::load::refresh_admitted_container_policy(
             &checkout,
             "one",
             &mut admission
         )
         .is_err());
-        verify(&policy).unwrap();
         assert_eq!(
             serde_json::from_slice::<serde_json::Value>(&std::fs::read(marker).unwrap()).unwrap(),
             context
@@ -300,8 +293,7 @@ fn prepare_establishes_owned_cache_paths_before_admission() {
         assert!(!home.join("shared/composer-cache").exists());
         let prepared = prepare_container_policy(&checkout, None).unwrap();
         assert!(home.join("shared/composer-cache").exists());
-        let admission =
-            PolicyAdmission::capture(&prepared, &fixture.path().join("markers")).unwrap();
+        let admission = PolicyAdmission::capture(&prepared).unwrap();
         crate::policy::mounts::prepare_container_mount_sources(&prepared).unwrap();
         let fresh = load_container_policy(&checkout, None).unwrap();
         admission.context_for_policy(&fresh).unwrap();

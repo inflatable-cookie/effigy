@@ -291,12 +291,7 @@ pub fn list_compose_containers_for_policy_including_stopped_with_deadline(
     let output = run_runtime_command_capture_with_repair(
         repo_root,
         policy,
-        &[
-            OsString::from("ps"),
-            OsString::from("--all"),
-            OsString::from("--format"),
-            OsString::from(DOCKER_PS_FORMAT),
-        ],
+        &project_ps_args(policy.project_name.as_str(), true),
         "runtime ps --all",
         None,
         deadline,
@@ -1474,6 +1469,23 @@ fn runtime_failure_should_repair(error: &ContainerExecError) -> bool {
         }
         ContainerExecError::Launch { .. } => false,
     }
+}
+
+/// Runs one invocation an environment backend adapter resolved for its exact
+/// selection. Detached Compose activation never inherits a capture pipe.
+pub fn run_backend_invocation(
+    workdir: &Path,
+    program: &OsStr,
+    args: &[OsString],
+    label: &str,
+    env: &[(String, OsString)],
+) -> Result<Output, ContainerExecError> {
+    let program = program.to_string_lossy();
+    if args.iter().any(|arg| arg == "up") && args.iter().any(|arg| arg == "-d" || arg == "--detach")
+    {
+        return run_detached_command_with_env(workdir, &program, args, label, env);
+    }
+    run_command_capture_os_with_env(workdir, &program, args, label, env)
 }
 
 pub fn run_compose_invocation_capture(

@@ -1,0 +1,44 @@
+[
+  {
+    "Config": {
+      "Labels": {
+        "com.docker.compose.config-hash": "5e3590bb4e129b004c0d848bfc17eae3d2eb40a93591dd97a5a6bd59ca9d60d5",
+        "com.docker.compose.project": "acowtancy-dev-wt-bovine-deck-preview-fd4b9a3b-runner-1b1f74c7-wt-4677bfcb81da",
+        "com.docker.compose.service": "mysql",
+        "com.effigy.checkout": "/Users/tom/.paseo/worktrees/25ojb7u5/bovine-deck-preview-fd4b9a3b-runner",
+        "com.effigy.managed": "true",
+        "com.effigy.project": "acowtancy-dev-wt-bovine-deck-preview-fd4b9a3b-runner-1b1f74c7-wt-4677bfcb81da",
+        "com.effigy.scope": "4677bfcb81da18054ef32e71aa3f3c29",
+        "io.containerd.image.config.stop-signal": "SIGTERM",
+        "org.opencontainers.image.authors": "MariaDB Community",
+        "org.opencontainers.image.base.name": "docker.io/library/ubuntu:jammy",
+        "org.opencontainers.image.description": "MariaDB Database for relational SQL",
+        "org.opencontainers.image.documentation": "https://hub.docker.com/_/mariadb/",
+        "org.opencontainers.image.licenses": "GPL-2.0",
+        "org.opencontainers.image.source": "https://github.com/MariaDB/mariadb-docker",
+        "org.opencontainers.image.title": "MariaDB Database",
+        "org.opencontainers.image.url": "https://github.com/MariaDB/mariadb-docker",
+        "org.opencontainers.image.vendor": "MariaDB Community",
+        "org.opencontainers.image.version": "10.11.18"
+      }
+    },
+    "Id": "d202408fa613c4242f8b7c3ae5d7b1e6501e0382cf40d33d89b3cec7da5565d1",
+    "Mounts": [
+      {
+        "Destination": "/var/lib/mysql",
+        "Source": "/var/lib/nerdctl/1935db59/volumes/default/acowtancy-dev-wt-bovine-deck-preview-fd4b9a3b-runner-1b1f74c7-wt-4677bfcb81da-mysql-data/_data",
+        "Type": "volume"
+      },
+      {
+        "Destination": "/docker-entrypoint-initdb.d/10-extra-databases.sql",
+        "Source": "/Users/tom/.paseo/worktrees/25ojb7u5/bovine-deck-preview-fd4b9a3b-runner/.effigy/runtime/compose/mysql.conf",
+        "Type": "bind"
+      }
+    ],
+    "Name": "acowtancy-dev-wt-bovine-deck-preview-fd4b9a3b-runner-1b1f74c7-wt-4677bfcb81da-mysql-1",
+    "State": {
+      "Running": true,
+      "Status": "running"
+    }
+  }
+]

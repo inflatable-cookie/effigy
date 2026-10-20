@@ -35,7 +35,12 @@ pub(super) fn run_workspace_container_session(
             session_context: workspace_activation_session_context(),
         },
     )?;
-    let policy = activation.policy;
+    let crate::runner::container_runtime_prep::ContainerTaskActivation {
+        policy,
+        system_was_running,
+        hold,
+        ..
+    } = activation;
     workspace::finish_workspace_handoff_after_activation(
         repo_root,
         &policy,
@@ -46,7 +51,7 @@ pub(super) fn run_workspace_container_session(
     )?;
     let ownership = classify_workspace_session_ownership(
         session_intent,
-        activation.system_was_running,
+        system_was_running,
         routes_were_ready_before_handoff,
         cleanup_override,
     );
@@ -55,6 +60,10 @@ pub(super) fn run_workspace_container_session(
         container_name.as_deref(),
         initial_command,
     );
+    // The session's use of the environment ends with its shell. Settle the
+    // hold first, so the closeout stop is not refused by this command's own
+    // session (contract 053 §4).
+    drop(hold);
     let cleanup_result = workspace::cleanup_workspace_session(
         ownership,
         shell_result.is_ok(),
