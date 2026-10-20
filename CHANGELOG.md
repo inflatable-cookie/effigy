@@ -555,6 +555,10 @@ During v0.x, MINOR bumps may include breaking changes.
   1.2.0.
 
 ### Fixed
+- The operator gateway can start from an Effigy-managed task without inheriting
+  its parent's custody or probe nonce. Startup reports refused spawns and early
+  daemon exits; status retains the exit code and bounded stderr tail from the
+  run journal instead of hiding the failure behind a readiness timeout.
 - Reset drops only the selected environment's render references.
 - Task and step admission no longer fails intermittently with `helper pipe
   closed` reported as a `kernel.db` store error when the running `effigy`

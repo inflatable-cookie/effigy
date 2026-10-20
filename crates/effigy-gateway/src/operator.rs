@@ -11,7 +11,7 @@ use effigy_kernel::custody::{EnvValue, Lifetime, ProcessSpec, Terminal};
 use effigy_kernel::gate::OwnerState;
 use effigy_kernel::id::*;
 use effigy_kernel::observe::*;
-use effigy_kernel::outcome::Invocation;
+use effigy_kernel::outcome::{Invocation, WorkloadOutcome};
 use effigy_kernel::probe::{HttpReadMethod, ObservationTarget, ProbeIo, StatusSet};
 use effigy_kernel::root::StateRoot;
 use effigy_kernel::run::{
@@ -239,7 +239,14 @@ fn status_once(config: &GatewayConfig, op: &OperationContext) -> io::Result<Opti
         reason: None,
     };
     match state {
-        RunStatus::Closed { complete: true, .. } => result.status = "stopped",
+        RunStatus::Closed {
+            complete: true,
+            workload,
+            effects,
+        } => {
+            result.status = "stopped";
+            result.reason = closed_reason(&cx, &root, id, &workload, &effects);
+        }
         RunStatus::Closed { .. } | RunStatus::Interrupted { .. } => {
             result.reason =
                 Some("gateway cleanup is incomplete; run `effigy gateway up` to reconcile".into())
@@ -315,6 +322,50 @@ fn status_once(config: &GatewayConfig, op: &OperationContext) -> io::Result<Opti
     }
     Ok(Some(result))
 }
+/// Project the kernel's persisted outcome and bounded, redacted stderr log.
+/// Missing diagnostics never change a positively settled run's status.
+fn closed_reason(
+    cx: &ObserveContext,
+    root: &StateRoot,
+    id: RunId,
+    workload: &WorkloadOutcome,
+    effects: &[run::Effect],
+) -> Option<String> {
+    let process = effects
+        .iter()
+        .find(|effect| effect.spec.kind == "kernel:process")?;
+    let mut reason = match workload {
+        WorkloadOutcome::Cancelled {
+            cause: StopCause::Requested,
+            ..
+        } => return None,
+        WorkloadOutcome::Succeeded => "gateway daemon exited with code 0".to_owned(),
+        WorkloadOutcome::Failed { code } => format!("gateway daemon exited with code {code}"),
+        other => format!("gateway daemon stopped: {other:?}"),
+    };
+    use effigy_kernel::custody::Stream;
+    let Observed::Verified(log, _) =
+        run::read_log(cx, root, id, process.sequence, Stream::Stderr, 0, 0)
+    else {
+        return Some(reason);
+    };
+    if let Observed::Verified(tail, _) = run::read_log(
+        cx,
+        root,
+        id,
+        process.sequence,
+        Stream::Stderr,
+        log.end.saturating_sub(4096),
+        4096,
+    ) {
+        let tail = String::from_utf8_lossy(&tail.bytes);
+        if !tail.trim().is_empty() {
+            reason.push_str(": ");
+            reason.push_str(tail.trim());
+        }
+    }
+    Some(reason)
+}
 /// Probe HTTP, HTTPS acceptance, and a DNS answer; every wait shares one budget.
 pub fn self_test(config: &GatewayConfig, budget: Duration) -> io::Result<()> {
     let op = context(budget, EffectClass::Observe);
@@ -373,6 +424,10 @@ pub fn up_with_executable(config: &GatewayConfig, executable_path: &Path) -> io:
         "SUDO_GID",
         "SUDO_USER",
         "EFFIGY_GATEWAY_OPERATOR_UID",
+        // Custody assigns a fresh nonce to this daemon, even when its caller
+        // is itself running under Effigy custody or a guarded probe.
+        "EFFIGY_CUSTODY_NONCE",
+        "EFFIGY_PROBE_NONCE",
     ] {
         env.remove(std::ffi::OsStr::new(key));
     }
@@ -396,7 +451,7 @@ pub fn up_with_executable(config: &GatewayConfig, executable_path: &Path) -> io:
         terminal: Terminal::None,
         label: "operator gateway".into(),
     };
-    let client = supervise::start_detached(
+    let mut client = supervise::start_detached(
         &cx,
         home,
         &invocation(owner()),
@@ -407,12 +462,25 @@ pub fn up_with_executable(config: &GatewayConfig, executable_path: &Path) -> io:
         ClientMode::Owning,
     )
     .map_err(error)?;
+    // Admission precedes child spawn. Consume its result so a refused spawn
+    // reports its cause instead of waiting for the readiness deadline.
+    match client.event(&op).map_err(error)? {
+        supervise::Event::Active => {}
+        event => return Err(error(format!("gateway daemon failed to start: {event:?}"))),
+    }
     loop {
         if op.check("gateway readiness").is_err() {
             let _ = client.stop(&cx, run_id()?);
             return Err(error("gateway did not accept its self-test before the startup deadline; inspect `effigy gateway status`"));
         }
         if let Ok(result) = status(config) {
+            if result.run == Some(client.run) && result.status == "stopped" {
+                let reason = result
+                    .reason
+                    .unwrap_or_else(|| "gateway daemon stopped during startup".into());
+                client.wait(&op).map_err(error)?;
+                return Err(error(reason));
+            }
             if result.ready {
                 client.detach(&cx, run_id()?).map_err(error)?;
                 return Ok(result);
