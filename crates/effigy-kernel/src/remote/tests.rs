@@ -1229,6 +1229,31 @@ fn intent_still_binds_the_current_environment_generation() {
     ));
     assert_eq!(run.effects().unwrap().len(), before);
     a.0.tape.assert_finished();
+    // The refusal wrote nothing and poisons nothing: re-reading the fence
+    // and launching again succeeds on the same run.
+    for step in launch_steps(home.path(), true) {
+        a.0.tape.expect(step);
+    }
+    let mut spec = launch_spec();
+    spec.env.generation = Generation::new(2);
+    let current = expected(&run);
+    let remote = RemoteCustody::launch(&mut run, spec, &cx, &mut a.0).unwrap();
+    assert_eq!(remote.registration.nonce, current.nonce);
+    assert_eq!(remote.registration.env.generation, Generation::new(2));
+    a.0.tape.expect(step(
+        RemoteCall::Observe(remote.registration.clone()),
+        session(SessionState::Closed),
+    ));
+    let mut remote = remote;
+    let _ = remote
+        .client()
+        .wait(&cx.operation().child(Duration::from_secs(1)));
+    run.settle(
+        &cx.operation().cleanup(Duration::from_secs(3)).unwrap(),
+        &mut a,
+    )
+    .unwrap();
+    a.0.tape.assert_finished();
 }
 #[test]
 fn a_replaced_container_or_rebooted_vm_is_refused_whatever_the_generation() {

@@ -24,12 +24,12 @@ use super::environment::emit_held_notice;
 use super::error::RunnerError;
 use super::runtime_session_context::{current_runtime_session_context, RuntimeSessionContext};
 use super::system_command::ensure_workspace_effigy_available_for_policy;
+use super::task_engine::{PlainExit, RemoteTask, TaskRun};
 use surface::{
     build_alias_table, build_raw_exec_args, ensure_container_running, exec_alias_surface_absent,
     resolve_default_exec_surface, resolve_exec_working_dir, resolve_running_named_exec_surface,
     RawExecOptions, ResolvedExecSurface,
 };
-use transport::build_routed_task_exec_args;
 
 mod bounded;
 mod surface;
@@ -150,70 +150,6 @@ pub(in crate::runner) struct RoutedTaskExecRequest<'a> {
     pub command: &'a str,
     pub task_env: Option<&'a BTreeMap<String, String>>,
     pub secret_env: Option<&'a [(&'a str, &'a SecretString)]>,
-}
-
-pub(in crate::runner) fn run_routed_task_container_exec(
-    request: RoutedTaskExecRequest<'_>,
-    container_name: &str,
-    policy: &EffectiveContainerPolicy,
-) -> Result<String, RunnerError> {
-    let output = run_routed_task_container_exec_variant(
-        &request,
-        RoutedTaskExecSurface::Named {
-            container_name,
-            policy,
-        },
-        false,
-    )?;
-
-    finish_routed_task_exec(request.command, output)
-}
-
-pub(in crate::runner) fn capture_routed_task_container_exec(
-    request: RoutedTaskExecRequest<'_>,
-    container_name: &str,
-    policy: &EffectiveContainerPolicy,
-) -> Result<Output, RunnerError> {
-    run_routed_task_container_exec_variant(
-        &request,
-        RoutedTaskExecSurface::Named {
-            container_name,
-            policy,
-        },
-        true,
-    )
-}
-
-pub(in crate::runner) fn run_routed_task_container_exec_with_policy(
-    request: RoutedTaskExecRequest<'_>,
-    policy: &EffectiveContainerPolicy,
-    working_dir: &Path,
-) -> Result<String, RunnerError> {
-    let output = run_routed_task_container_exec_variant(
-        &request,
-        RoutedTaskExecSurface::ResolvedPolicy {
-            policy,
-            working_dir,
-        },
-        false,
-    )?;
-
-    finish_routed_task_exec(request.command, output)
-}
-
-pub(in crate::runner) fn capture_routed_task_container_exec_with_policy(
-    request: RoutedTaskExecRequest<'_>,
-    policy: &EffectiveContainerPolicy,
-    working_dir: &Path,
-) -> Result<Output, RunnerError> {
-    run_routed_task_container_exec_variant(
-        &request,
-        RoutedTaskExecSurface::ResolvedPolicy {
-            policy,
-            working_dir,
-        },
-        true,
-    )
 }
 
 /// Run an `effigy exec` command where the caller already is when inside
@@ -432,7 +368,7 @@ fn run_raw_exec(request: RawExecRequest<'_>) -> Result<String, RunnerError> {
     )
 }
 
-enum RoutedTaskExecSurface<'a> {
+pub(in crate::runner) enum RoutedTaskExecSurface<'a> {
     Named {
         container_name: &'a str,
         policy: &'a EffectiveContainerPolicy,
@@ -443,14 +379,17 @@ enum RoutedTaskExecSurface<'a> {
     },
 }
 
-fn run_routed_task_container_exec_variant(
+/// A routed task's command in its service container, under the run's
+/// remote custody (052 §5.10). Text relays output as it arrives; JSON
+/// captures it. Both run the same way (K11).
+pub(in crate::runner) fn run_routed_task_remote(
     request: &RoutedTaskExecRequest<'_>,
     surface: RoutedTaskExecSurface<'_>,
+    run: &mut TaskRun,
     capture: bool,
-) -> Result<Output, RunnerError> {
+) -> Result<PlainExit, RunnerError> {
     let repo_root = request.repo_root;
-    let invocation_cwd = request.invocation_cwd;
-    match surface {
+    let (policy, mapped_cwd) = match surface {
         RoutedTaskExecSurface::Named {
             container_name,
             policy,
@@ -458,11 +397,11 @@ fn run_routed_task_container_exec_variant(
             let surface = resolve_running_named_exec_surface(repo_root, container_name)?;
             let mapped_cwd = map_host_cwd(
                 repo_root,
-                invocation_cwd,
+                request.invocation_cwd,
                 &surface.container_name,
                 &surface.config,
             )?;
-            run_routed_task_exec_internal_with_mapped_cwd(request, policy, &mapped_cwd, capture)
+            (policy, mapped_cwd)
         }
         RoutedTaskExecSurface::ResolvedPolicy {
             policy,
@@ -471,76 +410,149 @@ fn run_routed_task_container_exec_variant(
             let mapper =
                 effigy_exec::CwdMapper::new(repo_root.to_path_buf(), working_dir.to_path_buf());
             let mapped_cwd = mapper
-                .host_to_container(invocation_cwd)
+                .host_to_container(request.invocation_cwd)
                 .map(|path| path.to_string_lossy().into_owned())
                 .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-            run_routed_task_exec_internal_with_mapped_cwd(request, policy, &mapped_cwd, capture)
+            (policy, mapped_cwd)
         }
-    }
-}
-
-fn run_routed_task_exec_internal_with_mapped_cwd(
-    request: &RoutedTaskExecRequest<'_>,
-    policy: &EffectiveContainerPolicy,
-    mapped_cwd: &str,
-    capture: bool,
-) -> Result<Output, RunnerError> {
-    let RoutedTaskExecRequest {
-        repo_root,
-        selector,
-        task_args,
-        service,
-        command,
-        task_env,
-        secret_env,
-        ..
-    } = request;
-    let raw_command = vec!["sh".to_owned(), "-lc".to_owned(), (*command).to_owned()];
+    };
+    let service = request.service;
+    let raw_command = vec![
+        "sh".to_owned(),
+        "-lc".to_owned(),
+        request.command.to_owned(),
+    ];
     if routed_task_exec_requires_workspace_effigy(policy, service) {
         ensure_workspace_effigy_available_for_policy(repo_root, policy, None)?;
     }
     let capabilities = transport::probe_container_capabilities(repo_root, policy, service)?;
-    let selector_name = render_task_selector(selector);
+    let selector_name = render_task_selector(request.selector);
     let strategy = determine_strategy(
         &capabilities,
         &selector_name,
-        task_args,
-        mapped_cwd,
+        request.task_args,
+        &mapped_cwd,
         &raw_command,
     );
     if strategy_requires_workspace_effigy_install(&strategy) {
         ensure_workspace_effigy_available_for_policy(repo_root, policy, None)?;
     }
-    let workspace_identity = if *service == policy.primary_service {
+    let workspace_identity = workspace_identity(policy, service);
+    let exec = transport::routed_task_exec(
+        &strategy,
+        request.task_env,
+        request.secret_env,
+        workspace_identity,
+        &mapped_cwd,
+        crate::runner::task_engine::remote_tty(capture),
+    );
+    run_in_service(
+        repo_root,
+        policy,
+        service,
+        exec,
+        run,
+        capture,
+        request.command,
+    )
+}
+
+/// A built-in `exec` step of a sequence: the same surface, activation and
+/// working-directory mapping as `effigy exec`, under the step's remote
+/// custody. The activation's hold lasts until the workload has ended.
+pub(in crate::runner) fn run_exec_step(
+    args: &ExecArgs,
+    run: &mut TaskRun,
+    capture: bool,
+) -> Result<PlainExit, RunnerError> {
+    let context = resolve_active_command_context(args.repo_override.clone())?;
+    let repo_root = context.resolved.resolved_root.as_path();
+    let invocation_cwd = context.invocation_cwd.as_path();
+    if args.command.is_empty() {
+        return Err(RunnerError::task_invocation(
+            "`effigy exec` requires a command to run",
+        ));
+    }
+    let surface = resolve_default_exec_surface(repo_root)?;
+    let service = args
+        .service
+        .as_deref()
+        .unwrap_or(surface.policy.primary_service.as_str());
+    let activation = activate_exec_surface(repo_root, &surface)?;
+    let policy = &activation.policy;
+    ensure_container_running(repo_root, policy, &surface.container_name)?;
+    let mut env = Vec::new();
+    let user = workspace_identity(policy, service).map(|(user, home)| {
+        if let Some(home) = home {
+            env.push((
+                "HOME".to_owned(),
+                crate::runner::task_engine::EnvOverride::Plain(home.to_owned()),
+            ));
+        }
+        user.to_owned()
+    });
+    let exec = transport::RoutedExec {
+        argv: args.command.clone(),
+        env,
+        user,
+        workdir: map_host_cwd(
+            repo_root,
+            invocation_cwd,
+            &surface.container_name,
+            &surface.config,
+        )?,
+    };
+    let label = args.command.join(" ");
+    let exit = run_in_service(repo_root, policy, service, exec, run, capture, &label);
+    maybe_emit_exec_activation_notice(&surface, activation);
+    exit
+}
+
+fn workspace_identity<'a>(
+    policy: &'a EffectiveContainerPolicy,
+    service: &str,
+) -> Option<(&'a str, Option<&'a str>)> {
+    if service == policy.primary_service {
         policy
             .workspace_user
             .as_deref()
             .map(|user| (user, policy.workspace_home.as_deref()))
     } else {
         None
-    };
-    let args = build_routed_task_exec_args(
-        &strategy,
-        *task_env,
-        *secret_env,
-        workspace_identity,
-        service,
-        mapped_cwd,
-    );
-
-    run_compose_exec(repo_root, policy, &args, capture, "docker compose exec")
+    }
 }
 
-fn finish_routed_task_exec(command: &str, output: Output) -> Result<String, RunnerError> {
-    if !output.status.success() {
-        return Err(RunnerError::TaskCommandFailure {
-            command: command.to_owned(),
-            code: output.status.code(),
-            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-        });
-    }
-    Ok(String::new())
+fn run_in_service(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    service: &str,
+    exec: transport::RoutedExec,
+    run: &mut TaskRun,
+    capture: bool,
+    label: &str,
+) -> Result<PlainExit, RunnerError> {
+    let binding = crate::runner::container_runtime_prep::verify_service_exec_ready(
+        repo_root,
+        policy,
+        service,
+        Path::new(&exec.workdir),
+        None,
+    )?;
+    crate::runner::task_engine::run_remote(
+        run,
+        policy,
+        RemoteTask {
+            repo_root,
+            container_id: binding.id(),
+            argv: exec.argv,
+            env: exec.env,
+            user: exec.user,
+            workdir: Some(exec.workdir),
+            capture,
+            timeout_ms: None,
+            label: label.to_owned(),
+        },
+    )
 }
 
 pub(super) fn strategy_requires_workspace_effigy_install(

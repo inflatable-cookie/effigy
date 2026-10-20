@@ -480,7 +480,13 @@ impl<'a> Run<'a> {
                 sequence,
             })
         })();
-        if result.is_err() {
+        // A stale target is refused inside the transaction before any row is
+        // written: the caller may re-read the fence and intend again, as an
+        // attach retries. Every other failure is ambiguous and poisons.
+        if result
+            .as_ref()
+            .is_err_and(|error| !matches!(error, RunError::StaleGeneration { .. }))
+        {
             self.poisoned = true;
         }
         result
