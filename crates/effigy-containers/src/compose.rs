@@ -66,7 +66,7 @@ pub(crate) fn resolve_declared_backend(
 ) -> ComposeBackend {
     let mut detection = compose_backend_detection();
     if detection.backend_override.is_none() {
-        detection.backend_override = load_runtime_backend_override(repo_root, Some(name));
+        detection.backend_override = recorded_or_legacy_backend(repo_root, name);
     }
     if detection.backend_override.is_none() {
         detection.backend_override = crate::user_global_backend_preference();
@@ -224,8 +224,7 @@ fn compose_backend_detection_for_policy(
 ) -> ContainerBackendDetection {
     let mut detection = compose_backend_detection();
     if detection.backend_override.is_none() {
-        detection.backend_override =
-            load_runtime_backend_override(repo_root, Some(policy.name.as_str()));
+        detection.backend_override = recorded_or_legacy_backend(repo_root, &policy.name);
     }
     if detection.backend_override.is_none() {
         detection.backend_override = crate::user_global_backend_preference();
@@ -234,6 +233,13 @@ fn compose_backend_detection_for_policy(
         detection.backend_override = Some(backend_id_for_policy(policy));
     }
     detection
+}
+
+/// The environment record's backend, else the v0.14.1 per-checkout
+/// metadata file, read only, until the first bring-up records it.
+pub fn recorded_or_legacy_backend(repo_root: &Path, name: &str) -> Option<BackendId> {
+    crate::environment::recorded_backend(repo_root, name)
+        .or_else(|| load_runtime_backend_override(repo_root, Some(name)))
 }
 
 fn backend_id_for_policy(policy: &EffectiveContainerPolicy) -> BackendId {

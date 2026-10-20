@@ -362,6 +362,8 @@ pub(super) fn ensure_shared_services_running(
         run_shared_compose_capture(
             workdir,
             &policy.profile,
+            // Shared services run on the dependent environment's own backend.
+            crate::runner::environment::backend(&policy.repo_root, policy).engine,
             &shared_compose_args(service, ["up", "-d"]),
             &format!("docker compose up (shared {})", service.service_name),
         )?;
@@ -530,16 +532,15 @@ fn shared_compose_args<'a>(
 fn run_shared_compose_capture(
     repo_root: &Path,
     profile: &str,
+    engine: BackendId,
     args: &[OsString],
     label: &str,
 ) -> Result<std::process::Output, RunnerError> {
     let request = ContainerManagerRequest::new(repo_root)
-        .backend_override(BackendId::colima_nerdctl())
+        .backend_override(engine.clone())
         .interrupt_policy(ContainerInterruptPolicy::Forward);
     let mut detection = ContainerBackendDetection::from_env_and_path();
-    if detection.backend_override.is_none() {
-        detection.backend_override = Some(BackendId::colima_nerdctl());
-    }
+    detection.backend_override = Some(engine);
     let plan = ContainerManager::defaults()
         .compose_invocation_plan(
             &request,
@@ -596,7 +597,7 @@ pub(super) fn run_runtime_volume_capture(
         ContainerManagerRequest::new(repo_root).interrupt_policy(ContainerInterruptPolicy::Forward);
     let mut detection = ContainerBackendDetection::from_env_and_path();
     if detection.backend_override.is_none() {
-        detection.backend_override = Some(detect_profile_backend(profile)?);
+        detection.backend_override = Some(volume_backend(repo_root, profile)?);
     }
     let plan = ContainerManager::defaults()
         .runtime_invocation_plan(
@@ -649,7 +650,7 @@ fn run_runtime_volume_usage_capture(
             "runtime volume usage command requires one mount-point argument",
         ));
     };
-    let backend_id = detect_profile_backend(profile)?;
+    let backend_id = volume_backend(repo_root, profile)?;
     let (program, args) = if backend_id == BackendId::docker_compose() {
         (
             OsString::from("du"),
@@ -712,7 +713,7 @@ fn run_runtime_volume_usage_batch_capture(
             "runtime volume usage batch command requires one or more mount-point arguments",
         ));
     }
-    let backend_id = detect_profile_backend(profile)?;
+    let backend_id = volume_backend(repo_root, profile)?;
     let (program, args) = if backend_id == BackendId::docker_compose() {
         let mut args = vec![OsString::from("-sk")];
         args.extend(command.args.iter().map(OsString::from));
@@ -776,7 +777,7 @@ fn run_runtime_volume_cache_kind_batch_capture(
         ));
     }
     let script = render_volume_cache_kind_script(&command.args);
-    let backend_id = detect_profile_backend(profile)?;
+    let backend_id = volume_backend(repo_root, profile)?;
     let (program, args) = if backend_id == BackendId::docker_compose() {
         (
             OsString::from("sh"),
@@ -852,7 +853,36 @@ classify_cache_volume() {
     script
 }
 
-fn detect_profile_backend(profile: &str) -> Result<BackendId, RunnerError> {
+/// The exact backend for a volume or data action on `profile` in
+/// `repo_root`: the recorded (else policy-selected) backend of the
+/// environments that use the profile, never the profile's name (D3-25).
+/// Environments on different backends refuse rather than guess.
+fn volume_backend(repo_root: &Path, profile: &str) -> Result<BackendId, RunnerError> {
+    if let Ok(policies) = effigy_containers::load_all_container_policies(repo_root) {
+        let engines = policies
+            .iter()
+            .filter(|policy| policy.profile == profile)
+            .map(|policy| crate::runner::environment::backend(repo_root, policy).engine)
+            .collect::<std::collections::BTreeSet<_>>();
+        let mut engines = engines.into_iter();
+        match (engines.next(), engines.next()) {
+            (Some(engine), None) => return Ok(engine),
+            (Some(first), Some(second)) => {
+                return Err(RunnerError::task_invocation(format!(
+                    "volume action on profile `{profile}` is ambiguous: its environments run on `{first}` and `{second}`. Nothing was changed; run it per environment"
+                )))
+            }
+            (None, _) => {}
+        }
+    }
+    // A retired scope's checkout may no longer declare its environments:
+    // the invocation's explicit backend, else the scope's profile name.
+    if let Some(engine) = std::env::var("EFFIGY_COMPOSE_BACKEND")
+        .ok()
+        .and_then(|value| effigy_containers::backend_override_from_env_value(&value))
+    {
+        return Ok(engine);
+    }
     if profile == "docker" {
         return Ok(BackendId::docker_compose());
     }
@@ -928,9 +958,14 @@ mod tests {
             "up".into(),
             "-d".into(),
         ];
-        let output =
-            super::run_shared_compose_capture(&root, "effigy", &args, "shared render proof")
-                .unwrap();
+        let output = super::run_shared_compose_capture(
+            &root,
+            "effigy",
+            effigy_containers::BackendId::docker_compose(),
+            &args,
+            "shared render proof",
+        )
+        .unwrap();
         assert_eq!(
             String::from_utf8(output.stdout).unwrap().trim(),
             "shared asset available"

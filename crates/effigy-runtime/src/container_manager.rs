@@ -2,7 +2,7 @@ use std::path::Path;
 
 use effigy_containers::{
     compose::{compose_args, compose_up_args, normalize_compose_command_args},
-    load_runtime_backend_override, EffectiveContainerPolicy,
+    EffectiveContainerPolicy,
 };
 use effigy_containers::{
     BackendId, ContainerAction, ContainerBackendDetection, ContainerCleanupResult,
@@ -157,7 +157,7 @@ fn backend_detection_for_policy(
     let mut detection = ContainerBackendDetection::from_env_and_path();
     if detection.backend_override.is_none() {
         detection.backend_override =
-            load_runtime_backend_override(repo_root, Some(policy.name.as_str()));
+            effigy_containers::compose::recorded_or_legacy_backend(repo_root, &policy.name);
     }
     if detection.backend_override.is_none() {
         detection.backend_override = Some(backend_id_for_policy(policy));

@@ -111,8 +111,8 @@ pub(crate) fn test_env_lock() -> std::sync::MutexGuard<'static, ()> {
 }
 
 use std::collections::BTreeMap;
+use std::fs;
 use std::path::{Path, PathBuf};
-use std::{fs, io};
 
 use effigy_catalog::pack::{layered_resolver, CatalogLayers, PackStore};
 use effigy_catalog::CatalogResolver;
@@ -236,11 +236,14 @@ pub fn load_runtime_backend_override(
     parsed.backend.map(BackendId::new)
 }
 
-pub fn write_runtime_backend_override(
+/// Writes the v0.14.1 metadata file, for tests of its one-minor read path.
+/// No production writer remains: the environment record holds the backend.
+#[cfg(test)]
+pub(crate) fn write_runtime_backend_override(
     repo_root: &Path,
     container_name: Option<&str>,
     backend_id: &BackendId,
-) -> Result<(), io::Error> {
+) -> Result<(), std::io::Error> {
     let path = repo_root.join(RUNTIME_BACKEND_METADATA_FILE);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -263,7 +266,7 @@ pub fn write_runtime_backend_override(
     } else {
         metadata.backend = Some(backend_id.as_str().to_owned());
     }
-    let rendered = toml::to_string_pretty(&metadata).map_err(io::Error::other)?;
+    let rendered = toml::to_string_pretty(&metadata).map_err(std::io::Error::other)?;
     fs::write(path, rendered)
 }
 

@@ -170,14 +170,19 @@ fn with_owner(
 pub(crate) fn checkout(
     policy: &EffectiveContainerPolicy,
 ) -> Result<CheckoutId, ContainerPolicyError> {
-    let token = effigy_core::worktree_scope::checkout_token(&policy.repo_root)
+    checkout_for_root(&policy.repo_root)
+}
+
+/// The checkout identity Prepare minted for `repo_root`; never mints one.
+pub(crate) fn checkout_for_root(repo_root: &Path) -> Result<CheckoutId, ContainerPolicyError> {
+    let token = effigy_core::worktree_scope::checkout_token(repo_root)
         .map_err(error)?
         .ok_or_else(|| error("no checkout runtime state; Prepare must establish identity first"))?;
     let mut bytes = [0; 16];
     for (index, byte) in bytes.iter_mut().enumerate() {
         *byte = u8::from_str_radix(&token[index * 2..index * 2 + 2], 16).map_err(error)?;
     }
-    let kind = match effigy_core::worktree_scope::scope_kind(&policy.repo_root).map_err(error)? {
+    let kind = match effigy_core::worktree_scope::scope_kind(repo_root).map_err(error)? {
         Some(effigy_core::worktree_scope::ScopeKind::LinkedWorktree) => {
             CheckoutKind::LinkedWorktree
         }
