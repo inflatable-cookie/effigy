@@ -1587,7 +1587,7 @@ qa = { visibility = "public", group = "Validation", run = [{ task = "test" }, { 
 
 "test:fixtures:hygiene:recovery-regression" = { visibility = "internal", admission = "heavy", run = [
   { task = "test:fixtures:hygiene:prepare" },
-  { run = "EFFIGY_EXECUTABLE=$PWD/target/discovery-proof/effigy EFFIGY_TEST_PROCESS_HELPER=target/debug/effigy-fixture-process python3 tests/scripts/fixture_hygiene.py --timeout 1800 -- cargo nextest run --cargo-profile discovery-proof --config-file .config/nextest.toml --user-config-file none -p effigy --lib --test task_engine_kill_matrix -E 'test(managed_namespace_builds_without_adopting_any_legacy_shape)' --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail -j 1", timeout_ms = 1900000 },
+  { run = "EFFIGY_EXECUTABLE=$PWD/target/fixture-proof/effigy EFFIGY_TEST_PROCESS_HELPER=target/debug/effigy-fixture-process python3 tests/scripts/fixture_hygiene.py --timeout 1800 -- cargo nextest run --cargo-profile fixture-proof --config-file .config/nextest.toml --user-config-file none -p effigy --lib --test task_engine_kill_matrix -E 'test(both_handoffs_automatically_build_through_changed_input_partial_recovery) | test(changed_input_partial_builder_recovers_through_the_maintained_artifact_task) | test(interrupted_successful_backend_cannot_publish_task_success)' --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail -j 1", timeout_ms = 1900000 },
 ] }
 
 "test:fixtures:hygiene:doctor-git" = { visibility = "internal", run = [

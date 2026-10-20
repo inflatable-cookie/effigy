@@ -183,3 +183,10 @@ before isolating its fixture HOME, and all writes remain inside the new director
 The placement proof requires the shared fixture to pass and an OS-temp control
 to remain rejected, adapting the saved #233 fixture-isolation patch without
 restoring its replaced sealed-tree guard or changing production validation.
+
+Builder fixtures load their private backend with its harmless `info` operation,
+and private host shims with `--version`, before the real command or signal
+readiness deadline starts. These bounded launches use the shared process owner.
+Setup traces are retained as `state/setup-*`; product call oracles still begin
+empty. This follows the kill-matrix candidate-image setup boundary and leaves
+the production budgets, input-admission checks and interruption assertions intact.

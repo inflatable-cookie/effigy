@@ -3,6 +3,7 @@
 use super::*;
 use crate::runner::execute::api::run_manifest_task_with_cwd;
 use effigy_cli::TaskInvocation;
+use effigy_test_support::process::FixtureCommandExt;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
@@ -91,6 +92,28 @@ if cmd == 'exec':
     sys.exit(0)
 raise SystemExit('unauthorized backend operation: ' + repr(args))
 "#;
+
+// Establish the private shims before testing production command deadlines.
+// Fresh executable loading is setup, as in the kill-matrix candidate fixture.
+fn initialize_backend(root: &Path, backend: &str) {
+    let mut command = std::process::Command::new(root.join("bin").join(backend));
+    command.current_dir(root);
+    if backend == "colima" {
+        command.args(["nerdctl", "--"]);
+    }
+    let output = command
+        .arg("info")
+        .output_owned()
+        .expect("load private backend");
+    assert!(output.status.success(), "private backend setup: {output:?}");
+    // Preserve setup evidence separately; product refusal oracles start empty.
+    for name in ["calls", "timing", "colima-calls"] {
+        let source = root.join("state").join(name);
+        if source.exists() {
+            std::fs::rename(source, root.join("state").join(format!("setup-{name}"))).unwrap();
+        }
+    }
+}
 
 struct Fixture {
     _temp: effigy_test_support::Fixture,
@@ -271,6 +294,7 @@ esac
             effigy_containers::load_container_policy(&root, Some("linux-release")).unwrap();
         std::env::set_var("EFFIGY_RECOVERY_PROJECT", &policy.project_name);
         std::fs::write(root.join("state/mode"), "success").unwrap();
+        initialize_backend(&root, backend);
         if retained {
             let mut labels = json!({"com.effigy.checkout": root, "com.docker.compose.project": policy.project_name, "com.docker.compose.service": "builder", "com.docker.compose.oneoff": "False"});
             if let Some(scope) = effigy_core::worktree_scope::resolve(&root).unwrap() {
@@ -420,6 +444,13 @@ esac
                 effigy_core::shell::shell_quote(&binary.display().to_string())
             ),
         );
+        // Load this fresh shim before a handoff or signal readiness deadline.
+        let version = std::process::Command::new(&host)
+            .arg("--version")
+            .current_dir(&self.root)
+            .output_owned()
+            .expect("load private host executable");
+        assert!(version.status.success(), "private host setup: {version:?}");
         host
     }
 
@@ -866,7 +897,6 @@ fn interrupted_successful_backend_cannot_publish_task_success() {
         .root
         .join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
     write_linux_artifact(&artifact, "stale bytes", Some(STALE_IDENTITY));
-    use effigy_test_support::process::FixtureCommandExt;
     let output_path = fixture.root.join("state/signal-client-output");
     let output = std::fs::File::create(&output_path).unwrap();
     let mut child = std::process::Command::new(host)
