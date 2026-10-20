@@ -304,6 +304,13 @@ impl<'a> Case<'a> {
         fs::write(self.state.join(marker), "prior owned state").expect("prior state");
     }
     fn spawn(&self, tui: bool, name: &str) -> Owner {
+        let prior_run_token = fs::read(
+            self.root
+                .join(".effigy/runtime/managed/serve-default/session.json"),
+        )
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        .and_then(|state| state["run_token"].as_str().map(str::to_owned));
         let output = self.root.join(format!("{name}.out"));
         let file = fs::File::create(&output).expect("owner log");
         let mut command = self.command(if tui {
@@ -354,6 +361,7 @@ impl<'a> Case<'a> {
                 child: ManagedSupervisor(child),
                 reader: Some(reader),
                 output,
+                prior_run_token,
             }
         } else {
             command
@@ -364,6 +372,7 @@ impl<'a> Case<'a> {
                 child: ManagedSupervisor(command.spawn().expect("headless owner")),
                 reader: None,
                 output,
+                prior_run_token,
             }
         }
     }
@@ -405,6 +414,14 @@ impl<'a> Case<'a> {
                 .root
                 .join(".effigy/runtime/managed-lifecycle/serve-stack.state");
             if fs::read_to_string(lifecycle).unwrap_or_default().trim() == "ready"
+                // Failed cleanup can leave the preceding ready record and
+                // workload files. Only this spawned owner's new run counts.
+                && state.as_ref().is_some_and(|state| {
+                    state["supervisor_pid"].as_u64() == Some(owner.child.0.id() as u64)
+                        && state["run_token"].as_str().is_some_and(|token| {
+                            Some(token) != owner.prior_run_token.as_deref()
+                        })
+                })
                 && self.root.join("work-api.pid").exists()
                 && self.root.join("work-jobs.pid").exists()
                 && recorded_failures == failures
@@ -622,6 +639,7 @@ struct Owner {
     child: ManagedSupervisor,
     reader: Option<JoinHandle<()>>,
     output: PathBuf,
+    prior_run_token: Option<String>,
 }
 impl Owner {
     fn finish(mut self, success: bool) {
