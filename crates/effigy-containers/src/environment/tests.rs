@@ -176,10 +176,7 @@ impl Fake {
     }
 
     pub(super) fn with_log(log: Option<PathBuf>) -> Self {
-        let running = log
-            .as_deref()
-            .map(|log| Self::log_running(log))
-            .unwrap_or(false);
+        let running = log.as_deref().map(Self::log_running).unwrap_or(false);
         Self {
             selection: selection(),
             state: Rc::new(RefCell::new(FakeState {

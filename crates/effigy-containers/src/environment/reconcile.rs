@@ -641,8 +641,8 @@ impl<'r> EnvRun<'r> {
                 }
             }
         };
-        // The permit borrows the run; callbacks go through the run itself.
-        drop(permit);
+        // The permit's borrow of the run ends with its last use above;
+        // callbacks go through the run itself.
         let recorded = match &outcome {
             Ok(()) => self
                 .run

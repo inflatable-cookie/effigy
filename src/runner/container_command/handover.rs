@@ -1125,9 +1125,12 @@ run = "printf reverse-ok"
     }
 
     #[cfg(unix)]
-    fn handover_target_for(_repo_root: &Path, environment: &str) -> PendingHandover {
+    fn handover_target_for(repo_root: &Path, environment: &str) -> PendingHandover {
+        let mut policy = claim_policy(repo_root, None);
+        policy.name = environment.to_owned();
         PendingHandover {
             environment: environment.to_owned(),
+            policy,
             domains: Vec::new(),
             data_from: false,
         }

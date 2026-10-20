@@ -200,16 +200,13 @@ fn selection_reasons_follow_policy_precedence() {
     assert!(explicit
         .describe()
         .contains("EFFIGY_COMPOSE_BACKEND=docker"));
-    match previous {
-        (home, backend) => {
-            match home {
-                Some(home) => std::env::set_var("HOME", home),
-                None => std::env::remove_var("HOME"),
-            }
-            match backend {
-                Some(backend) => std::env::set_var("EFFIGY_COMPOSE_BACKEND", backend),
-                None => std::env::remove_var("EFFIGY_COMPOSE_BACKEND"),
-            }
-        }
+    let (home, backend) = previous;
+    match home {
+        Some(home) => std::env::set_var("HOME", home),
+        None => std::env::remove_var("HOME"),
+    }
+    match backend {
+        Some(backend) => std::env::set_var("EFFIGY_COMPOSE_BACKEND", backend),
+        None => std::env::remove_var("EFFIGY_COMPOSE_BACKEND"),
     }
 }
