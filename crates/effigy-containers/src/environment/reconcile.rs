@@ -294,6 +294,8 @@ pub struct EnvRun<'r> {
     began: EnvRecord,
     published: bool,
     failed: bool,
+    /// A backend effect was journalled: the run changed the environment.
+    transitioned: bool,
 }
 
 impl<'r> EnvRun<'r> {
@@ -362,6 +364,7 @@ impl<'r> EnvRun<'r> {
             began,
             published: false,
             failed: false,
+            transitioned: false,
         })
     }
 
@@ -596,7 +599,10 @@ impl<'r> EnvRun<'r> {
             .intend(spec)
             .map_err(|error| EnvError::from_run(&env, error));
         let ticket = match ticket {
-            Ok(ticket) => ticket,
+            Ok(ticket) => {
+                self.transitioned = true;
+                ticket
+            }
             Err(error) => {
                 self.failed = true;
                 return Err(error);
@@ -691,7 +697,12 @@ impl<'r> EnvRun<'r> {
     /// Ends the run. A run that changed nothing republishes the state it
     /// found, so an inspection never makes an active environment inactive.
     pub fn finish(mut self, ok: bool) -> Result<CleanupOutcome, EnvError> {
-        if ok && !self.published && !self.failed && self.began.state == EnvState::Active {
+        if ok
+            && !self.published
+            && !self.failed
+            && !self.transitioned
+            && self.began.state == EnvState::Active
+        {
             let result = Attachments::publish_active(&mut self.run);
             self.kernel(result)?;
         }

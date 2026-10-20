@@ -23,8 +23,6 @@ pub struct Up<'a> {
     pub project: &'a str,
     pub backend: &'a BackendSelection,
     pub retention: Retention,
-    /// Runs that asked for this ensure; attached in the final transaction.
-    pub holders: &'a [(RunId, AttachMode)],
     /// Whether the environment's primary workload is running now, from an
     /// exact-identity inventory. `Unknown` grants no recreation (R3).
     pub running: Observed<bool>,
@@ -45,34 +43,57 @@ pub enum Applied {
     KeptForHolders,
 }
 
-/// Brings `env` to its desired generation. `apply` performs the backend
-/// effect (the seam adapter, or the caller's own Compose invocation);
-/// `ready` runs after it, inside the run, before promotion.
+/// A reconciled generation awaiting activation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Pending {
+    pub applied: Applied,
+    digest: Option<String>,
+}
+
+/// Brings `env` to its desired generation in two gated runs. `apply`
+/// performs the backend effect; `ready` runs the command's own integration
+/// steps between them, outside `Gate(Env)`; `holders` are attached in the
+/// activation's final transaction (§5.9).
 pub fn up(
     ctx: &EnvContext<'_>,
     env: &EnvRef,
     request: Up<'_>,
+    holders: &[(RunId, AttachMode)],
     apply: impl FnOnce() -> Result<(), BackendError>,
     ready: impl FnOnce(Applied) -> Result<(), EnvError>,
 ) -> Result<Applied, EnvError> {
+    let pending = reconcile(ctx, env, request, apply)?;
+    ready(pending.applied)?;
+    activate(ctx, env, &pending, holders)?;
+    Ok(pending.applied)
+}
+
+/// The apply run: publishes the desired generation, records the backend and
+/// retention, and reconciles the backend only when the running stack is not
+/// already that generation. Leaves the generation partial until activation.
+pub fn reconcile(
+    ctx: &EnvContext<'_>,
+    env: &EnvRef,
+    request: Up<'_>,
+    apply: impl FnOnce() -> Result<(), BackendError>,
+) -> Result<Pending, EnvError> {
     let mut run = EnvRun::begin(
         ctx,
         env,
         Operation::Up,
         Wait::Until(Instant::now() + GATE_WAIT),
     )?;
-    let result = up_in(&mut run, request, apply, ready);
+    let result = reconcile_in(&mut run, request, apply);
     let ok = result.is_ok();
     run.finish(ok)?;
     result
 }
 
-fn up_in(
+fn reconcile_in(
     run: &mut EnvRun<'_>,
     request: Up<'_>,
     apply: impl FnOnce() -> Result<(), BackendError>,
-    ready: impl FnOnce(Applied) -> Result<(), EnvError>,
-) -> Result<Applied, EnvError> {
+) -> Result<Pending, EnvError> {
     let digest = match request.render {
         Some(closure) => Some(run.publish_desired(closure)?),
         None => None,
@@ -109,7 +130,7 @@ fn up_in(
         // ready; a crash before its `active` publication leaves it current.
         && (last_applied == digest || record.applying == digest || request.adopt);
     let applied = if running && current {
-        if request.adopt && record.applying != digest {
+        if request.adopt && record.applying != digest && last_applied != digest {
             // An imported stack whose v0.14.1 admission matches the current
             // inputs is this generation: promote it without a backend call.
             record.applying = digest.clone();
@@ -128,14 +149,52 @@ fn up_in(
         )?;
         Applied::Reconciled
     };
-    ready(applied)?;
-    if applied == Applied::KeptForHolders {
-        // The desired generation stays pending; holders keep the running one.
-        run.activate_without_promotion(request.holders)?;
-    } else {
-        run.activate(request.holders)?;
-    }
-    Ok(applied)
+    Ok(Pending {
+        applied,
+        digest: if applied == Applied::KeptForHolders {
+            None
+        } else {
+            digest
+        },
+    })
+}
+
+/// The activation run: promotes the reconciled generation and publishes
+/// `active`, attaching requesting holders. Refuses when a transition stopped
+/// the environment or replaced its desired generation since `reconcile`.
+pub fn activate(
+    ctx: &EnvContext<'_>,
+    env: &EnvRef,
+    pending: &Pending,
+    holders: &[(RunId, AttachMode)],
+) -> Result<(), EnvError> {
+    let mut run = EnvRun::begin(
+        ctx,
+        env,
+        Operation::Up,
+        Wait::Until(Instant::now() + GATE_WAIT),
+    )?;
+    let result = (|| {
+        let changed = run.record().state == super::record::EnvState::Stopped
+            || pending
+                .digest
+                .as_ref()
+                .is_some_and(|digest| run.record().desired.as_ref() != Some(digest));
+        if changed {
+            return Err(EnvError::Invalid(format!(
+                "environment `{}` was stopped or changed by another transition during this bring-up; nothing was published. Run `effigy container up` again",
+                env.name
+            )));
+        }
+        if pending.digest.is_some() {
+            run.activate(holders)
+        } else {
+            run.activate_without_promotion(holders)
+        }
+    })();
+    let ok = result.is_ok();
+    run.finish(ok)?;
+    result
 }
 
 fn holders_remain(run: &EnvRun<'_>) -> bool {

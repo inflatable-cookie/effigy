@@ -282,10 +282,10 @@ pub(super) fn bring_up(
             project: PROJECT,
             backend: &selection(),
             retention,
-            holders,
             running: fake.running(),
             adopt: false,
         },
+        holders,
         || fake.apply(),
         |_| Ok(()),
     )
@@ -432,10 +432,10 @@ fn failed_readiness_leaves_a_partial_generation_reused_without_recreation() {
             project: PROJECT,
             backend: &selection(),
             retention: Retention::Persistent,
-            holders: &[],
             running: fake.running(),
             adopt: false,
         },
+        &[],
         || fake.apply(),
         |_| Err(EnvError::Invalid("route registration failed".into())),
     );
@@ -497,10 +497,10 @@ fn an_unknown_inventory_never_authorises_recreation() {
             project: PROJECT,
             backend: &selection(),
             retention: Retention::Held,
-            holders: &[],
             running: Observed::Unknown(UnknownReason::Injected),
             adopt: false,
         },
+        &[],
         || fake.apply(),
         |_| Ok(()),
     );
@@ -911,4 +911,46 @@ fn backend_selection_records_its_reason_and_unknown_engines_refuse() {
         BackendSelection::from_metadata(&torn),
         Observed::Unknown(_)
     ));
+}
+
+#[test]
+fn a_reconciled_generation_is_not_attachable_until_activation() {
+    let home = home();
+    let root = root(home.path());
+    let ctx = EnvContext::new(&root, CancelToken::default()).unwrap();
+    let stack = env("stack");
+    let fake = Fake::new();
+    bring_up(&ctx, &stack, &fake, &closure("one"), Retention::Held, &[]).unwrap();
+    let mut task = holder(&ctx, "dev", 1);
+    // Between the apply run and activation, the command's integrations run
+    // outside the gate: the new generation is partial, not attachable.
+    up(
+        &ctx,
+        &stack,
+        Up {
+            render: Some(&closure("two")),
+            project: PROJECT,
+            backend: &selection(),
+            retention: Retention::Held,
+            running: fake.running(),
+            adopt: false,
+        },
+        &[],
+        || fake.apply(),
+        |applied| {
+            assert_eq!(applied, Applied::Reconciled);
+            assert!(matches!(
+                hold(&mut task, &ctx, &stack, Wait::FailFast),
+                Err(HoldError::NotActive)
+            ));
+            // A concurrent down during integrations makes activation refuse.
+            take_down(&ctx, &stack, Operation::Down, &fake, None).unwrap();
+            Ok(())
+        },
+    )
+    .expect_err("activation after a concurrent stop");
+    assert_eq!(record(&ctx, &stack).state, EnvState::Stopped);
+    assert_eq!(fake.calls(), ["apply", "apply", "stop"]);
+    task.settle(&ctx.cleanup, &mut EnvSettlement).unwrap();
+    assert_store_sound(&ctx);
 }
