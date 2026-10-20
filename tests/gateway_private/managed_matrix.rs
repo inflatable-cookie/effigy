@@ -797,8 +797,10 @@ fn matrix(front: Front, stop: Stop) {
             });
             let closed = case.closed();
             assert_eq!(
-                closed["run"]["cleanup"], "complete",
-                "settled truthfully: {closed}"
+                closed["run"]["cleanup"],
+                "complete",
+                "settled truthfully: {closed} lifecycle={}",
+                case.lifecycle_log()
             );
             assert_eq!(
                 case.down_count(),
@@ -925,8 +927,10 @@ fn client_death(front: Front, death: Death) {
     }
     let _ = fs::remove_file(case.state.join("hold-exec"));
     assert_eq!(
-        closed["run"]["cleanup"], "complete",
-        "settled truthfully: {closed}"
+        closed["run"]["cleanup"],
+        "complete",
+        "settled truthfully: {closed} lifecycle={}",
+        case.lifecycle_log()
     );
     assert_eq!(
         case.down_count(),

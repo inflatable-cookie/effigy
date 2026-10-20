@@ -57,8 +57,9 @@ pub(in crate::runner) enum NotReady {
     Failed(String),
 }
 
-/// Records the environment effect, brings the environment up and observes
-/// its readiness. `stop` is polled at every wait boundary.
+/// Brings the environment up, records the run's obligation to stop it (or
+/// leave a borrowed one running) and observes its readiness. `stop` is
+/// polled at every wait boundary.
 pub(in crate::runner) fn bring_up(
     run: &mut TaskRun,
     plan: &EnvironmentPlan,
@@ -73,8 +74,24 @@ pub(in crate::runner) fn bring_up(
         borrowed: plan.borrowed,
         run: Some(run.id().to_string()),
     };
-    // K3: the intent commits before `up`. A borrowed environment is retained:
-    // this run never brings down what it did not start.
+    println!(
+        "[environment] {} `{}`: bringing it up (deadline {}s)",
+        if plan.borrowed {
+            "borrowing"
+        } else {
+            "starting"
+        },
+        plan.name,
+        plan.up_budget.as_secs()
+    );
+    // The bring-up is the reconciler's own journalled effect, and `up` runs
+    // as this run's custody child. What this run owes from here on, whether
+    // or not `up` finished, is the environment's stop at its settle, or, for
+    // a borrowed environment, leaving it running. That obligation is recorded
+    // after the activation's attachment, so the reverse-order settle (K4)
+    // stops the environment before it releases the attachment, which the
+    // kernel releases only once nothing else of the run is open.
+    let up = run_up(run, plan, stop);
     let ticket = {
         let mut kernel = run.run_mut();
         let target = kernel.fence().clone();
@@ -93,20 +110,15 @@ pub(in crate::runner) fn bring_up(
             })
             .map_err(|error| NotReady::Failed(format!("environment intent: {error}")))?
     };
-    println!(
-        "[environment] {} `{}`: bringing it up (deadline {}s)",
-        if plan.borrowed {
-            "borrowing"
-        } else {
-            "starting"
-        },
-        plan.name,
-        plan.up_budget.as_secs()
-    );
-    let up = run_up(run, plan, stop)?;
+    let receipt = match &up {
+        Ok(code) => serde_json::json!({ "up": code }),
+        Err(NotReady::Failed(reason)) => serde_json::json!({ "up_failed": reason }),
+        Err(NotReady::Stopped(_)) => serde_json::json!({ "up_stopped": true }),
+    };
     run.run_mut()
-        .applied(&ticket, serde_json::json!({ "up": up }))
+        .applied(&ticket, receipt)
         .map_err(|error| NotReady::Failed(format!("environment receipt: {error}")))?;
+    up?;
     if let Some((service, working_dir)) = &plan.exec_probe {
         exec_ready(run, plan, service, working_dir, stop)?;
     }

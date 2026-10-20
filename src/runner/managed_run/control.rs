@@ -62,6 +62,10 @@ pub(in crate::runner) struct ManagedStatus {
     pub(in crate::runner) environment: Option<EnvironmentView>,
     pub(in crate::runner) processes: Vec<ProcessView>,
     pub(in crate::runner) next: Vec<String>,
+    /// Effects the run's settle could not prove released: what `cleanup
+    /// incomplete` refers to, as `kind: reason`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(in crate::runner) residue: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(in crate::runner) warnings: Vec<String>,
 }
@@ -110,6 +114,7 @@ pub(in crate::runner) fn status_view(addressed: &Addressed<'_>) -> ManagedStatus
         environment: None,
         processes: Vec::new(),
         next: Vec::new(),
+        residue: Vec::new(),
         warnings: view.warnings.clone(),
     };
     if let Some(run) = &status.run {
@@ -118,6 +123,16 @@ pub(in crate::runner) fn status_view(addressed: &Addressed<'_>) -> ManagedStatus
                 Observed::Verified(effects, _) => {
                     status.processes = processes(&effects, run.state == "running");
                     status.environment = environment(&effects);
+                    status.residue = effects
+                        .iter()
+                        .filter(|effect| {
+                            matches!(effect.state, EffectState::Residue | EffectState::Unknown)
+                        })
+                        .map(|effect| match &effect.reason {
+                            Some(reason) => format!("{}: {reason}", effect.spec.kind),
+                            None => effect.spec.kind.clone(),
+                        })
+                        .collect();
                 }
                 Observed::Absent(_) => {}
                 Observed::Unknown(reason) => status
@@ -271,6 +286,9 @@ pub(in crate::runner) fn render(status: &ManagedStatus) -> String {
             line.push_str(&format!("  starts {}", process.starts));
         }
         lines.push(line);
+    }
+    for residue in &status.residue {
+        lines.push(format!("  residue: {residue}"));
     }
     for warning in &status.warnings {
         lines.push(format!("  warning: {warning}"));

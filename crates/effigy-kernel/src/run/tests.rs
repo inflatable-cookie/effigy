@@ -515,6 +515,34 @@ fn attachments_live_interrupted_and_unknown_holders_block_every_transition() {
     assert!(fake.calls().is_empty());
     transition.settle(&cleanup(&cx), &mut fake).unwrap();
 }
+/// A holder whose own effects precede its attachment (a detached run's
+/// socket, a gateway, the `up` that attached it) settles them first and then
+/// releases the attachment: settle visits attachments last, so the release
+/// never meets an open effect of the same run.
+#[test]
+fn attachments_release_last_after_effects_intended_before_attaching() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut fake = Fake::new(home.path());
+    let env_fence = active_environment(&cx, &root, &mut fake);
+    let mut holder = begin(&cx, &root, owner(), 1, &mut fake);
+    apply(&mut holder, &fake, "before-attach");
+    Attachments::attach(&mut holder, &env_fence, AttachMode::Borrow, Wait::FailFast).unwrap();
+    apply(&mut holder, &fake, "after-attach");
+    holder.finish(WorkloadOutcome::Succeeded).unwrap();
+    let outcome = holder.settle(&cleanup(&cx), &mut fake).unwrap();
+    assert_eq!(outcome.cleanup(), CleanupOutcome::Complete);
+    let view = reader(&cx, &root);
+    let observed = cx.operation().observe().unwrap();
+    assert!(matches!(
+        Attachments::holders(&observed, &root, &view, &env()),
+        Observed::Verified(ref holders, _) if holders.is_empty()
+    ));
+    let mut transition = begin(&cx, &root, env(), 91, &mut fake);
+    assert!(Attachments::permit(&mut transition).is_ok());
+    transition.settle(&cleanup(&cx), &mut fake).unwrap();
+}
 #[test]
 fn attachments_residue_keeps_holder_and_claim_protection_even_when_acknowledged() {
     let home = home();
