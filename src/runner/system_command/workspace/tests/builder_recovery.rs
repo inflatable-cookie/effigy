@@ -798,27 +798,19 @@ fn interrupted_successful_backend_cannot_publish_task_success() {
         .root
         .join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
     write_linux_artifact(&artifact, "stale bytes", Some(STALE_IDENTITY));
-    struct ChildGuard(std::process::Child);
-    impl Drop for ChildGuard {
-        fn drop(&mut self) {
-            let _ = self.0.kill();
-            let _ = self.0.wait();
-        }
-    }
+    use effigy_test_support::process::FixtureCommandExt;
     let stderr_path = fixture.root.join("interrupted-child.stderr");
-    let mut child = ChildGuard(
-        std::process::Command::new(host)
-            .arg("workspace:linux:artifact")
-            .current_dir(&fixture.root)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::fs::File::create(&stderr_path).unwrap())
-            .spawn()
-            .unwrap(),
-    );
+    let mut child = std::process::Command::new(host)
+        .arg("workspace:linux:artifact")
+        .current_dir(&fixture.root)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::fs::File::create(&stderr_path).unwrap())
+        .spawn_owned()
+        .unwrap();
     // Startup includes kernel admission and several real backend captures.
     let ready_deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
     while !fixture.root.join("state/await-signal").exists() {
-        if let Some(exit) = child.0.try_wait().unwrap() {
+        if let Some(exit) = child.try_wait().unwrap() {
             panic!(
                 "private build exited before signal boundary: {exit}; {}",
                 std::fs::read_to_string(&stderr_path).unwrap()
@@ -831,14 +823,14 @@ fn interrupted_successful_backend_cannot_publish_task_success() {
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
     nix::sys::signal::kill(
-        nix::unistd::Pid::from_raw(child.0.id() as i32),
+        nix::unistd::Pid::from_raw(child.id() as i32),
         nix::sys::signal::Signal::SIGTERM,
     )
     .unwrap();
     // Preserve the 10s stop bound independently of startup time.
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     let exit = loop {
-        if let Some(exit) = child.0.try_wait().unwrap() {
+        if let Some(exit) = child.try_wait().unwrap() {
             break exit;
         }
         assert!(

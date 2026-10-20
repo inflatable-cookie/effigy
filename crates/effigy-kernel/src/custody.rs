@@ -3,6 +3,8 @@ pub(crate) mod capture;
 pub(crate) mod platform;
 pub use capture::Stream;
 pub(crate) mod spawn;
+#[cfg(feature = "test-support")]
+pub mod test_support;
 use crate::ctx::{CleanupContext, EffectContext, OperationContext};
 use crate::ident::ProcessIdentity;
 use crate::observe::{AbsenceProof, Evidence, Observed, UnknownReason};

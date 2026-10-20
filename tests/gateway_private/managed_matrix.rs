@@ -40,7 +40,7 @@ impl MatrixProxy {
             .stdout(log.try_clone().expect("proxy stdout"))
             .stderr(log)
             .process_group(0);
-        let mut owner = ManagedSupervisor(command.spawn().expect("private Docker proxy"));
+        let mut owner = ManagedSupervisor(command.spawn_owned().expect("private Docker proxy"));
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
             assert!(
@@ -251,6 +251,14 @@ impl<'a> Case<'a> {
             .env("FOREIGN_CAROOT", self.foreign_ca)
             .env("FAKE_DOCKER_LOG", &self.log)
             .env("FAKE_OWNED_STATE", &self.state)
+            .env(
+                "EFFIGY_TEST_FIXTURE_LEDGER",
+                process::ledger().expect("matrix process ledger"),
+            )
+            .env(
+                "MATRIX_TEST_BINARY",
+                std::env::current_exe().expect("matrix helper image"),
+            )
             .env("MATRIX_EXEC", "1")
             .env("MATRIX_ADAPTER", self.root.join("matrix-adapter.py"))
             .env("MATRIX_ROOT", &self.root)
@@ -335,7 +343,7 @@ impl<'a> Case<'a> {
                 .stdout(slave.try_clone().expect("PTY stdout"))
                 .stderr(slave);
             command.env("EFFIGY_MANAGED_TUI", "1");
-            let child = command.spawn().expect("TUI owner");
+            let child = command.spawn_owned().expect("TUI owner");
             let mut master = fs::File::from(pair.master);
             let reader = thread::spawn(move || {
                 let mut file = file;
@@ -367,7 +375,7 @@ impl<'a> Case<'a> {
                 .stdout(file.try_clone().expect("stdout"))
                 .stderr(file);
             Owner {
-                child: ManagedSupervisor(command.spawn().expect("headless owner")),
+                child: ManagedSupervisor(command.spawn_owned().expect("headless owner")),
                 reader: None,
                 output,
                 prior_run_token,
@@ -557,7 +565,7 @@ fn managed_matrix_process_liveness_distinguishes_live_and_unreaped_children() {
     );
     let mut child = Command::new("sh")
         .args(["-c", "exit 0"])
-        .spawn()
+        .spawn_owned()
         .expect("short child");
     let deadline = Instant::now() + Duration::from_secs(5);
     while owned_process_is_live(child.id()) && Instant::now() < deadline {
@@ -587,7 +595,7 @@ fn managed_matrix_down_ends_recorded_non_group_leader_workload() {
         ])
         .current_dir(root)
         .process_group(0);
-    let owner = ManagedSupervisor(command.spawn().expect("private process group"));
+    let owner = ManagedSupervisor(command.spawn_owned().expect("private process group"));
     let marker = root.join("work.pid");
     let deadline = Instant::now() + Duration::from_secs(5);
     while !marker.exists() && Instant::now() < deadline {
@@ -605,10 +613,14 @@ fn managed_matrix_down_ends_recorded_non_group_leader_workload() {
             .as_raw(),
         pid as i32
     );
+    process::register_detached(owner.0.id(), &root.join("engine"))
+        .expect("fake workload group registration");
     let down = Command::new("python3")
         .arg(root.join("matrix-adapter.py"))
         .args(["down", "matrix-stack"])
         .env("MATRIX_ROOT", root)
+        .env("MATRIX_TEST_BINARY", std::env::current_exe().unwrap())
+        .env("EFFIGY_TEST_FIXTURE_LEDGER", process::ledger().unwrap())
         .output()
         .expect("fake down");
     assert!(down.status.success(), "{:?}", down);
@@ -651,6 +663,10 @@ impl Owner {
             success,
             "owner status {exit}: {}",
             fs::read_to_string(&self.output).unwrap_or_default()
+        );
+        assert!(
+            self.child.0.group_closed(),
+            "managed owner exited with surviving group members"
         );
         if let Some(reader) = self.reader.take() {
             reader.join().expect("PTY output drained");
@@ -1023,7 +1039,7 @@ fn authority_matrix(authority: Authority) {
                 case.shell(&script)
                     .stdout(output.try_clone().expect("log"))
                     .stderr(output)
-                    .spawn()
+                    .spawn_owned()
                     .expect("prior parent"),
             );
             let marker = case
@@ -1107,19 +1123,19 @@ fn managed_matrix_missing_record_handover_preserves_live_holder() {
 
 const ADAPTER: &str = r#"import sys,os,json,pathlib,subprocess,time,signal
 root=pathlib.Path(os.environ['MATRIX_ROOT']);state=root/'engine';args=sys.argv[2:];op=sys.argv[1]
+def fixture_process(action,pid=None):
+ helper=os.environ.get('EFFIGY_TEST_PROCESS_HELPER')
+ owner=str(root/'engine')
+ if helper:
+  command=[helper,action]+([str(pid),owner] if action=='register' else [owner])
+  subprocess.run(command,check=True,stdout=subprocess.DEVNULL)
+ else:
+  env=dict(os.environ,EFFIGY_REGISTER_OWNER=owner,EFFIGY_REGISTER_ACTION=action)
+  if pid is not None: env['EFFIGY_REGISTER_PID']=str(pid)
+  subprocess.run([env['MATRIX_TEST_BINARY'],'--ignored','--exact','register_fixture_process_child'],env=env,check=True,stdout=subprocess.DEVNULL)
 def kill_recorded():
- records=list(root.glob('*.pid'))
- # A real container down ends every workload, including non-group leaders.
- # Keep group termination for descendants, but always signal the PID too.
- for sig in (signal.SIGTERM,signal.SIGKILL):
-  for p in records:
-   try: pid=int(p.read_text())
-   except (FileNotFoundError,ValueError): continue
-   for send in (os.killpg,os.kill):
-    try: send(pid,sig)
-    except ProcessLookupError: pass
-  if sig==signal.SIGTERM: time.sleep(.1)
- for p in records: p.unlink(missing_ok=True)
+ fixture_process('stop-root')
+ for p in root.glob('*.pid'): p.unlink(missing_ok=True)
 if op=='down':
  with (state/'down-events').open('a') as events: events.write(args[0]+'\n')
  if (state/'deny-down').exists(): sys.exit(71)
@@ -1131,6 +1147,12 @@ if op=='payload' or (op=='exec' and '.pgid' in args[-1]):
  payload=args[-1].replace('/usr/local/bin/effigy',str(root/'effigy-wrapper'))
  with open(root/('remote-'+str(os.getpid())+'.out'),'wb') as log:
   child=subprocess.Popen(['sh','-c',payload],start_new_session=True,stdout=log,stderr=log)
+  try: fixture_process('register',child.pid)
+  except BaseException:
+   # This exact unreaped child created the dedicated group; rollback before reaping.
+   os.killpg(child.pid,signal.SIGKILL)
+   child.wait()
+   raise
   pid_file=root/('remote-'+str(os.getpid())+'.pid')
   pending=pid_file.with_suffix('.pid.tmp')
   pending.write_text(str(child.pid))

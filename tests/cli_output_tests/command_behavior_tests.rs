@@ -48,62 +48,12 @@ jobs:
 "#
 }
 
-struct CliProcessTestGuard {
-    _thread_guard: std::sync::MutexGuard<'static, ()>,
-    lock_path: PathBuf,
-}
-
-impl Drop for CliProcessTestGuard {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.lock_path);
-    }
-}
-
-fn lock_cli_process_tests() -> CliProcessTestGuard {
-    let thread_guard = CLI_PROCESS_TEST_LOCK
+// Fixtures now own distinct roots and child groups; only process-global test
+// state in the shared libtest process needs serialization.
+fn lock_cli_process_tests() -> std::sync::MutexGuard<'static, ()> {
+    CLI_PROCESS_TEST_LOCK
         .lock()
-        .unwrap_or_else(|poison| poison.into_inner());
-    let lock_path = std::env::temp_dir().join("effigy-cli-process-tests.lock");
-    let started = Instant::now();
-
-    loop {
-        match fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&lock_path)
-        {
-            Ok(mut file) => {
-                writeln!(file, "{}", std::process::id()).expect("write cli process test lock pid");
-                return CliProcessTestGuard {
-                    _thread_guard: thread_guard,
-                    lock_path,
-                };
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                if let Ok(metadata) = fs::metadata(&lock_path) {
-                    if metadata
-                        .modified()
-                        .ok()
-                        .and_then(|modified| modified.elapsed().ok())
-                        .is_some_and(|elapsed| elapsed > Duration::from_secs(120))
-                    {
-                        let _ = fs::remove_file(&lock_path);
-                        continue;
-                    }
-                }
-                assert!(
-                    started.elapsed() < Duration::from_secs(120),
-                    "timed out waiting for cross-process CLI process test lock: {}",
-                    lock_path.display()
-                );
-                std::thread::sleep(Duration::from_millis(50));
-            }
-            Err(error) => panic!(
-                "failed to create cross-process CLI process test lock {}: {error}",
-                lock_path.display()
-            ),
-        }
-    }
+        .unwrap_or_else(|poison| poison.into_inner())
 }
 
 fn install_rejecting_pre_receive_hook(remote: &std::path::Path) {
@@ -4011,7 +3961,11 @@ fn doctor_git_cli_readiness_proof(arrangement: &str) {
     let mut sentinel_command = Command::new("/bin/sleep");
     use std::os::unix::process::CommandExt;
     sentinel_command.arg("30").process_group(0);
-    let mut sentinel = DoctorGitSentinel(sentinel_command.spawn().expect("spawn foreign sentinel"));
+    let mut sentinel = DoctorGitSentinel(
+        sentinel_command
+            .spawn_owned()
+            .expect("spawn foreign sentinel"),
+    );
     let sentinel_pid = sentinel.0.id();
     let sentinel_generation =
         effigy_process::process_start_identity(sentinel_pid).expect("foreign sentinel generation");
@@ -4198,7 +4152,7 @@ fn run_doctor_git_cli(
     if invocation == "json" {
         command.arg("--json");
     }
-    let mut child = command.spawn().expect("spawn bounded deep doctor");
+    let mut child = command.spawn_owned().expect("spawn bounded deep doctor");
     fixture_guard.track_process(child.id(), "doctor CLI");
     // The budget is 4s; this independent bound only force-exits a doctor that
     // leaked past its own cleanup. Seven times the budget leaves room for
@@ -4279,17 +4233,9 @@ exec "{real}" "$@"
 }
 
 #[cfg(unix)]
-struct DoctorGitSentinel(std::process::Child);
+struct DoctorGitSentinel(OwnedCliChild);
 
 #[cfg(unix)]
-impl Drop for DoctorGitSentinel {
-    fn drop(&mut self) {
-        // The unreaped Child retains this exact PID generation.
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
-
 #[cfg(unix)]
 struct DoctorGitReceiptGuard {
     paths: Vec<PathBuf>,
@@ -10135,7 +10081,7 @@ mounts = ["./app:/workspace"]
             .envs(extra_env.iter().copied())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .spawn()
+            .spawn_owned()
             .expect("spawn headless run");
         let deadline = Instant::now() + Duration::from_secs(240);
         loop {
@@ -10365,7 +10311,7 @@ detach_timeout_secs = 1
         )
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
+        .spawn_owned()
         .expect("spawn first headless run");
     let session_dir = root.join(".effigy/runtime/managed/dev-default");
     let marker = session_dir.join("exec/api.pgid");
@@ -10413,6 +10359,8 @@ detach_timeout_secs = 1
         .trim()
         .parse()
         .expect("session leader pgid");
+    effigy_test_support::process::register_detached(pgid, &root)
+        .expect("retain the fake remote generation for unwind cleanup");
     wait_for(
         &|| hold_state().as_deref() == Some("running"),
         "the remote holder's run to hold its gate",
@@ -10528,7 +10476,7 @@ detach_timeout_secs = 1
         )
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
+        .spawn_owned()
         .expect("spawn restart headless run");
     let restart_deadline = Instant::now() + Duration::from_secs(60);
     while hold_state().as_deref() != Some("running") {
@@ -10771,7 +10719,7 @@ detach_timeout_secs = 1
             .envs(extra_env.iter().copied())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .spawn()
+            .spawn_owned()
             .expect("spawn headless run")
     };
 

@@ -55,3 +55,36 @@ fixture. The negative control requires the wrapper to fail and identify the
 leak. `test:fixtures:hygiene:guards:shared` runs the same proofs with shared
 libtest processes. Nextest retains its forced-exit and leak timeout policy; the
 wrapper bounds the complete shared-process invocation.
+
+## Process ownership
+
+`effigy-test-support::process::FixtureCommandExt::spawn_owned` creates a dedicated
+child group and records its kernel `ProcessReceipt` in the private ledger.
+The guard stops the entire group and reaps the direct child on drop, including
+unwind. Exited direct leaders remain unreaped until group closure, using `waitid`
+with `WNOWAIT`. Detached recovery uses the kernel generation and nonce checks;
+unknown evidence fails cleanup and retains the registration. Output collection has a
+bounded deadline. The CLI fixtures use a process-local mutex for shared libtest state; they no
+longer create or stale-reclaim a fixed lock file in the system temporary root.
+The old CLI, gateway and private-startup guard implementations
+are replaced by this shared owner.
+
+A fake backend's newly spawned detached child, and each newly launched private
+gateway, are registered while their launch receipt is available. Registration
+observes the live kernel identity; a PID file is not later treated as kill
+authority. A directory guard settles its registered processes before unsealing
+or removing files. The suite wrapper invokes `effigy-fixture-process sweep`
+before its directory sweep, fails for surviving registrations even when cleanup
+succeeds, and retains normal nextest timeout/leak policy.
+
+The kernel's feature-gated `custody::test_support` adapter exposes its existing
+identity observation and bounded group recovery for native fixture `Child`
+handles. It does not replace journalled production `Custody::spawn`.
+`test:fixtures:hygiene:kernel` proves closure after direct-leader exit, registration-failure rollback and
+refusal of an inconsistent receipt. Guard proofs additionally cover unwind, foreign-child
+preservation, deliberately leaked processes and an exit that skips destructors.
+
+The kill-matrix reclaim proof holds the first `serial` workload at an explicit
+barrier, selected only for that holder. It cannot complete before SIGKILL;
+successors still have to produce alternating start/end records under the real
+Task gate. `test:fixtures:hygiene:reclaim` runs that proof with the suite assertion.

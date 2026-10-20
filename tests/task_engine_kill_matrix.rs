@@ -9,10 +9,11 @@
 
 #![cfg(unix)]
 
+use effigy_test_support::process::{FixtureCommandExt, OwnedChild as Child};
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
@@ -20,7 +21,7 @@ const TASK: &str = r#"[tasks.hold]
 run = "sleep 300 & echo $! > grandchild.pid; echo $$ > leader.pid; wait"
 
 [tasks.serial]
-run = "echo start >> runs.log; sleep 1; echo end >> runs.log"
+run = "echo start >> runs.log; if [ \"${EFFIGY_FIXTURE_HOLD_SERIAL:-0}\" = 1 ]; then echo ready > holder.ready; while :; do sleep 1; done; fi; sleep 1; echo end >> runs.log"
 "#;
 
 /// Cargo doc/check invocations can relink the shared target while this matrix
@@ -196,7 +197,7 @@ fn wait_state(
 
 fn kill_case(signal: i32, expected_state: &str) {
     let fixture = Fixture::new();
-    let mut owner = fixture.effigy(&["hold"]).spawn().expect("owner");
+    let mut owner = fixture.effigy(&["hold"]).spawn_owned().expect("owner");
     let grandchild = fixture.read_pid("grandchild.pid", Duration::from_secs(15));
     let leader = fixture.read_pid("leader.pid", Duration::from_secs(15));
     let live = wait_state(&fixture, "hold", &["running"], Duration::from_secs(10));
@@ -267,10 +268,14 @@ fn task_engine_kill_matrix_kill_is_settled_by_the_sentinel_and_records_interrupt
 #[test]
 fn task_engine_reclaim_race_after_holder_kill_never_overlaps_runs() {
     let fixture = Fixture::new();
-    let mut holder = fixture.effigy(&["serial"]).spawn().expect("holder");
+    let mut holder = fixture
+        .effigy(&["serial"])
+        .env("EFFIGY_FIXTURE_HOLD_SERIAL", "1")
+        .spawn_owned()
+        .expect("holder");
     let log = fixture.repo.join("runs.log");
     let started = Instant::now();
-    while !fs::read_to_string(&log).is_ok_and(|text| text.contains("start")) {
+    while !fixture.repo.join("holder.ready").exists() {
         assert!(
             started.elapsed() < Duration::from_secs(15),
             "holder never started"
@@ -281,12 +286,23 @@ fn task_engine_reclaim_race_after_holder_kill_never_overlaps_runs() {
         .map(|_| {
             fixture
                 .effigy(&["--lock-wait-ms", "30000", "serial"])
-                .spawn()
+                .spawn_owned()
                 .expect("waiter")
         })
         .collect::<Vec<_>>();
     std::thread::sleep(Duration::from_millis(200));
-    // SAFETY: our own direct child.
+    assert_eq!(
+        fs::read_to_string(&log)
+            .unwrap()
+            .lines()
+            .collect::<Vec<_>>(),
+        ["start"]
+    );
+    assert!(
+        holder.try_wait().unwrap().is_none(),
+        "first holder remains at its barrier"
+    );
+    // SAFETY: our own direct child, still held at the explicit barrier.
     assert_eq!(unsafe { libc::kill(holder.id() as i32, libc::SIGKILL) }, 0);
     let _ = holder.wait();
 
@@ -337,7 +353,7 @@ fn task_engine_equivalent_spellings_from_two_processes_serialize() {
         "[catalog]\nalias = \"api\"\n\n[tasks.hold]\nrun = \"sleep 5\"\n",
     )
     .expect("catalog manifest");
-    let mut first = fixture.effigy(&["api/hold"]).spawn().expect("first");
+    let mut first = fixture.effigy(&["api/hold"]).spawn_owned().expect("first");
     let started = Instant::now();
     loop {
         let output = fixture
@@ -451,7 +467,7 @@ fn sequence_signal_matrix_each_step_text_and_json_settles_the_entire_tree() {
                 } else {
                     vec!["hold"]
                 };
-                let mut owner = fixture.effigy(&args).spawn().unwrap();
+                let mut owner = fixture.effigy(&args).spawn_owned().unwrap();
                 let cell = format!("step={step}, signal={signal}, json={json}");
                 eprintln!("sequence matrix {cell}");
                 let grandchild = fixture.read_sequence_pid("grandchild.pid", &mut owner, &cell);
@@ -569,7 +585,7 @@ fn sequence_reference_cycles_fail_before_waiting_on_ancestor_gate() {
     .unwrap();
     let mut child = fixture
         .effigy(&["--lock-wait-ms", "600000", "hold"])
-        .spawn()
+        .spawn_owned()
         .unwrap();
     assert!(
         wait_exit(&mut child, Duration::from_secs(20)).is_some(),
@@ -601,7 +617,7 @@ run = "sleep 300 & echo $! > grandchild.pid; echo $$ > leader.pid; wait"
         } else {
             vec!["hold"]
         };
-        let mut owner = fixture.effigy(&args).spawn().unwrap();
+        let mut owner = fixture.effigy(&args).spawn_owned().unwrap();
         let grandchild = fixture.read_pid("grandchild.pid", Duration::from_secs(20));
         let exit = wait_exit(&mut owner, Duration::from_secs(30)).unwrap();
         assert_eq!(exit.code(), Some(124));

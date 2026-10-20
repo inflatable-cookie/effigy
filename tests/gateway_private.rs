@@ -1,6 +1,7 @@
 #[path = "support/gateway_legacy.rs"]
 mod gateway_legacy_fixture;
 use gateway_legacy_fixture::LegacyRegistryFixture;
+use effigy_test_support::process::{self, FixtureCommandExt, OwnedChild};
 #[path = "support/scoped_env.rs"]
 mod env_test_support;
 
@@ -213,11 +214,9 @@ fn spawn_private_gateway_daemon(root: &Path, inherit_ignored_term: bool) -> Priv
             Ok(())
         });
     }
-    PrivateGatewayChild(
-        command
-            .spawn()
-            .expect("spawn private production gateway daemon"),
-    )
+    command
+        .spawn_owned()
+        .expect("spawn private production gateway daemon")
 }
 
 #[cfg(unix)]
@@ -257,28 +256,7 @@ fn wait_for_private_gateway_http_ready(
 }
 
 #[cfg(unix)]
-struct PrivateGatewayChild(std::process::Child);
-
-#[cfg(unix)]
-impl PrivateGatewayChild {
-    fn id(&self) -> u32 {
-        self.0.id()
-    }
-
-    fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
-        self.0.try_wait()
-    }
-}
-
-#[cfg(unix)]
-impl Drop for PrivateGatewayChild {
-    fn drop(&mut self) {
-        if matches!(self.0.try_wait(), Ok(None)) {
-            let _ = self.0.kill();
-            let _ = self.0.wait();
-        }
-    }
-}
+type PrivateGatewayChild = OwnedChild;
 
 #[cfg(unix)]
 fn private_gateway_http_response(address: SocketAddr) -> Option<String> {
@@ -2747,7 +2725,7 @@ impl Drop for ManagedContainerCleanup {
                     .args(["down", "--json"])
                     .stdout(Stdio::null())
                     .stderr(Stdio::null());
-                if let Ok(mut child) = child.spawn() {
+                if let Ok(mut child) = child.spawn_owned() {
                     let _ = child.wait();
                 }
             }
@@ -2820,12 +2798,12 @@ fn spawn_container_cli(
     checkout: &Path,
     cleanup: &ManagedContainerCleanup,
     args: &[&str],
-) -> std::process::Child {
+) -> OwnedChild {
     container_command(checkout, cleanup)
         .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
+        .spawn_owned()
         .expect("spawn public container CLI")
 }
 
@@ -3138,7 +3116,25 @@ fn run_gateway(
         command.env("CAROOT", foreign_ca_root);
         command.env("FOREIGN_CAROOT", foreign_ca_root);
     }
-    command.output().expect("run public effigy CLI")
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let previous_pid = fs::read_to_string(root.join("gateway.pid")).ok();
+    let output = command
+        .spawn_owned()
+        .expect("public gateway CLI")
+        .wait_with_output()
+        .expect("run public effigy CLI");
+    if subcommand == "up" && output.status.success() {
+        if let Ok(pid) = fs::read_to_string(root.join("gateway.pid")) {
+            if previous_pid.as_ref() != Some(&pid) {
+                process::register_detached(pid.trim().parse().expect("gateway PID"), root)
+                    .expect("register launched private gateway");
+            }
+        }
+    }
+    output
 }
 
 fn parse_json_success(output: Output) -> Value {
@@ -4565,7 +4561,7 @@ fn container_headless_managed_lifecycle_publishes_routes_in_scoped_data_from_clo
         .stderr(managed_err);
     let mut managed_guard = ManagedSupervisor(
         managed
-            .spawn()
+            .spawn_owned()
             .expect("spawn headless managed dev:container supervisor"),
     );
     let managed = &mut managed_guard.0;
@@ -4696,21 +4692,7 @@ fn container_headless_managed_lifecycle_publishes_routes_in_scoped_data_from_clo
 /// The headless managed supervisor stays alive while its session runs and its
 /// lifecycle child outlives the test on panic, so the guard stops the whole
 /// owned process tree on drop.
-struct ManagedSupervisor(std::process::Child);
-
-impl Drop for ManagedSupervisor {
-    fn drop(&mut self) {
-        if self.0.try_wait().ok().flatten().is_none() {
-            let pid = nix::unistd::Pid::from_raw(self.0.id() as i32);
-            if nix::unistd::getpgid(Some(pid)).ok() == Some(pid) {
-                effigy_process::terminate_process_tree(self.0.id(), true);
-            } else {
-                let _ = self.0.kill();
-            }
-        }
-        let _ = self.0.wait();
-    }
-}
+struct ManagedSupervisor(OwnedChild);
 
 /// A per-project fake Docker adapter: each environment's containers are live
 /// only while its `active-<project>` marker exists, `compose up`/`down`
@@ -4853,5 +4835,20 @@ exit 0
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(path, fs::Permissions::from_mode(0o700))
             .expect("make switch fake Docker executable");
+    }
+}
+
+#[test]
+#[ignore = "fake backend process registration helper"]
+fn register_fixture_process_child() {
+    let owner = std::env::var_os("EFFIGY_REGISTER_OWNER").expect("registration owner");
+    if std::env::var("EFFIGY_REGISTER_ACTION").as_deref() == Ok("stop-root") {
+        process::close_root(Path::new(&owner)).expect("stop registered fake workloads");
+    } else {
+        let pid = std::env::var("EFFIGY_REGISTER_PID")
+            .expect("registration PID")
+            .parse()
+            .unwrap();
+        process::register_detached(pid, Path::new(&owner)).expect("register fake backend child");
     }
 }

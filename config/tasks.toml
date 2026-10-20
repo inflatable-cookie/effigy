@@ -1485,5 +1485,25 @@ qa = { visibility = "public", group = "Validation", run = [{ task = "test" }, { 
 # shared-process test binaries, including nextest timeout/forced exits.
 "check:fixtures:hygiene" = { visibility = "internal", run = [{ run = "cargo check -p effigy -p effigy-bootstrap -p effigy-containers -p effigy-kernel -p effigy-test-support --all-targets --features effigy-kernel/fault-injection --profile test", timeout_ms = 900000 }] }
 "lint:fixtures:hygiene" = { visibility = "internal", run = [{ run = "cargo clippy -p effigy -p effigy-bootstrap -p effigy-containers -p effigy-kernel -p effigy-test-support --lib --tests --bins --features effigy-kernel/fault-injection -- -D warnings", timeout_ms = 900000 }] }
-"test:fixtures:hygiene:guards" = { visibility = "internal", run = [{ run = "python3 tests/scripts/fixture_hygiene.py -- cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-test-support --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 }] }
-"test:fixtures:hygiene:guards:shared" = { visibility = "internal", run = [{ run = "RUSTFLAGS='--cfg effigy_shared_process' python3 tests/scripts/fixture_hygiene.py -- cargo test -p effigy-test-support -- --test-threads=8", timeout_ms = 900000 }] }
+"test:fixtures:hygiene:guards" = { visibility = "internal", run = [{ task = "test:fixtures:hygiene:prepare" }, { run = "EFFIGY_TEST_PROCESS_HELPER=target/debug/effigy-fixture-process python3 tests/scripts/fixture_hygiene.py -- cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-test-support --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 }] }
+"test:fixtures:hygiene:guards:shared" = { visibility = "internal", run = [{ task = "test:fixtures:hygiene:prepare" }, { run = "EFFIGY_TEST_PROCESS_HELPER=target/debug/effigy-fixture-process RUSTFLAGS='--cfg effigy_shared_process' python3 tests/scripts/fixture_hygiene.py -- cargo test -p effigy-test-support -- --test-threads=8", timeout_ms = 900000 }] }
+
+"test:fixtures:hygiene:prepare" = { visibility = "internal", run = [{ run = "cargo build -p effigy-test-support --bin effigy-fixture-process", timeout_ms = 600000 }] }
+"test:fixtures:hygiene:kernel" = { visibility = "internal", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features test-support --lib -E 'test(custody::test_support::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 }] }
+"test:fixtures:hygiene:reclaim" = { visibility = "internal", run = [{ task = "test:fixtures:hygiene:prepare" }, { run = "EFFIGY_TEST_PROCESS_HELPER=target/debug/effigy-fixture-process python3 tests/scripts/fixture_hygiene.py -- cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test task_engine_kill_matrix -E 'test(task_engine_reclaim_race_after_holder_kill_never_overlaps_runs)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 }] }
+"test:fixtures:hygiene:process-fixtures" = { visibility = "internal", run = [
+  { task = "test:fixtures:hygiene:prepare" },
+  { run = "EFFIGY_TEST_PROCESS_HELPER=target/debug/effigy-fixture-process python3 tests/scripts/fixture_hygiene.py -- cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --test gateway_private --test cli_output_tests -E 'test(private_gateway_shutdown_handles_owned_term_int_and_inherited_ignore) | test(managed_matrix_proxy_keeps_its_published_port_during_a_concurrent_claim) | test(managed_matrix_down_ends_recorded_non_group_leader_workload) | test(owned_cli_guard_reaps_on_unwind_and_preserves_foreign_child) | test(private_builder_fixture_removes_sealed_object_directories)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 },
+] }
+"test:fixtures:hygiene:gateway-shutdown" = { visibility = "internal", run = [
+  { task = "test:fixtures:hygiene:prepare" },
+  { run = "EFFIGY_TEST_PROCESS_HELPER=target/debug/effigy-fixture-process python3 tests/scripts/fixture_hygiene.py -- cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test gateway_private -E 'test(private_gateway_shutdown_handles_owned_term_int_and_inherited_ignore)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 },
+] }
+"test:fixtures:hygiene:matrix-owner" = { visibility = "internal", run = [
+  { task = "test:fixtures:hygiene:prepare" },
+  { run = "EFFIGY_TEST_PROCESS_HELPER=target/debug/effigy-fixture-process python3 tests/scripts/fixture_hygiene.py -- cargo nextest run --config-file tests/config/managed-matrix-nextest.toml --user-config-file none -p effigy --test gateway_private -E 'test(managed_matrix_reaper_under_live_holder)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 },
+] }
+"lint:fixtures:hygiene:closeout" = { visibility = "internal", run = [
+  { task = "lint:fixtures:hygiene" },
+  { task = "fmt:check" },
+] }

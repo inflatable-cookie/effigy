@@ -1,4 +1,5 @@
 //! Test-only fixture ownership. All ordinary fixtures live outside the checkout.
+pub mod process;
 use std::cell::RefCell;
 use std::fs;
 use std::io;
@@ -63,7 +64,7 @@ impl Fixture {
             registration: None,
         };
         if let Some(ledger) = std::env::var_os("EFFIGY_TEST_FIXTURE_LEDGER") {
-            let record = tempfile::NamedTempFile::new_in(Path::new(&ledger).join("directories"))?;
+            let record = tempfile::NamedTempFile::new_in(&ledger)?;
             let metadata = fs::symlink_metadata(fixture.path())?;
             serde_json::to_writer(
                 record.as_file(),
@@ -72,7 +73,14 @@ impl Fixture {
                     "device": metadata.dev(), "inode": metadata.ino(),
                 }),
             )?;
-            fixture.registration = Some(record.into_temp_path());
+            let destination = Path::new(&ledger).join("directories").join(
+                record
+                    .path()
+                    .file_name()
+                    .expect("directory registration name"),
+            );
+            record.persist(&destination).map_err(io::Error::other)?;
+            fixture.registration = Some(tempfile::TempPath::try_from_path(destination)?);
         }
         Ok(fixture)
     }
@@ -85,6 +93,7 @@ impl Fixture {
         let Some(directory) = self.directory.as_ref() else {
             return Ok(());
         };
+        process::close_root(directory.path())?;
         unseal(directory.path())?;
         self.directory.take().expect("live fixture").close()?;
         self.registration.take();

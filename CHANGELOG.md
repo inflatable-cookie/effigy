@@ -598,7 +598,10 @@ During v0.x, MINOR bumps may include breaking changes.
 - Gateway parser and descriptorless-process controls now run on Linux and
   macOS; idle shutdown proofs wait for completion instead of fixed sleeps.
 - Test fixture guards remove sealed kernel object trees on success and unwind;
-  ordinary fixture roots live outside the checkout, with a suite leak assertion and documented workspace exceptions.
+  ordinary fixture roots live outside the checkout, with documented workspace
+  exceptions and a suite leak assertion. Shared process guards stop registered
+  child groups and detached fake workloads before fixture removal. The kill-matrix
+  reclaim proof holds its first run at a barrier until SIGKILL.
 - Container preparation detects missing or changed named-volume mounts before
   reusing a running stack, including worktree `isolated_dirs`. Status and doctor
   report drift, guarded `up` applies the current render, and permission repair

@@ -65,9 +65,12 @@ def main():
         root = Path(temporary).resolve()
         (root / 'directories').mkdir()
         (root / 'fixtures').mkdir()
+        (root / 'processes').mkdir()
         env = dict(os.environ, PYTHONDONTWRITEBYTECODE='1',
                    EFFIGY_TEST_FIXTURE_ROOT=str(root / 'fixtures'),
                    EFFIGY_TEST_FIXTURE_LEDGER=str(root))
+        if env.get('EFFIGY_TEST_PROCESS_HELPER'):
+            env['EFFIGY_TEST_PROCESS_HELPER'] = str(Path(env['EFFIGY_TEST_PROCESS_HELPER']).resolve(strict=True))
         child = subprocess.Popen(command, env=env, start_new_session=True)
         try:
             result = child.wait(timeout=args.timeout)
@@ -77,6 +80,12 @@ def main():
             child.wait()
             result = 124
         leaked = False
+        if any((root / 'processes').iterdir()):
+            helper = env.get('EFFIGY_TEST_PROCESS_HELPER')
+            if not helper:
+                raise RuntimeError('process registrations require EFFIGY_TEST_PROCESS_HELPER')
+            sweep = subprocess.run([helper, 'sweep', str(root)])
+            leaked = sweep.returncode != 0
         for record in (root / 'directories').iterdir():
             registration = json.loads(record.read_text())
             fixture = Path(registration['path'])

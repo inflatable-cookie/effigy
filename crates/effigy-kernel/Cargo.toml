@@ -9,6 +9,8 @@ description = "Synchronous runtime foundation for Effigy engines"
 [features]
 # Injection hooks are absent from ordinary builds; no production default.
 fault-injection = []
+# Native Child adapters for repository fixture harnesses only.
+test-support = []
 
 [dependencies]
 libc = "0.2"
