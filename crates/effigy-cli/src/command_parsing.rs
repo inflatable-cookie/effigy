@@ -103,11 +103,11 @@ where
         "runs" => parse_runs(None, args),
         "run" => {
             let mut args = args;
+            // Bare `effigy run` is the run-control panel, so a root task named
+            // `run` (routed here by deferral) still validates as a selector.
             match args.next() {
                 Some(action) => parse_runs(Some(action), args),
-                None => Err(CliParseError::InvalidArguments(
-                    "`effigy run` requires `status`, `logs` or `stop` and a run id".to_owned(),
-                )),
+                None => Ok(Command::Help(HelpTopic::Runs)),
             }
         }
         "drafts" => parse_drafts(args),

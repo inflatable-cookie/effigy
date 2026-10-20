@@ -318,6 +318,37 @@ fn nested_heavy_task_steps_run_inside_the_sequence_admission() {
 }
 
 #[test]
+fn a_root_task_named_run_still_owns_the_word() {
+    let fixture = Fixture::new();
+    fs::write(
+        fixture.repo.join("effigy.toml"),
+        "[tasks.run]\nrun = \"echo ran >> run-task.txt\"\n",
+    )
+    .expect("manifest");
+    let output = fixture.run(&["run"]);
+    assert!(output.status.success(), "{}", text(&output));
+    let keyed = fixture.run(&["--run-id", "own-run-1", "run"]);
+    assert!(keyed.status.success(), "{}", text(&keyed));
+    assert_eq!(
+        fixture.read("run-task.txt"),
+        "ran\nran\n",
+        "the root task ran twice"
+    );
+    let runs = fixture.run(&["--json", "runs"]);
+    let envelope: serde_json::Value = serde_json::from_slice(&runs.stdout).expect("runs");
+    let tasks: Vec<_> = envelope["result"]["runs"]
+        .as_array()
+        .expect("runs")
+        .iter()
+        .map(|run| run["task"].clone())
+        .collect();
+    assert_eq!(
+        tasks,
+        vec![serde_json::json!("run"), serde_json::json!("run")]
+    );
+}
+
+#[test]
 fn heavy_and_qa_ci_selectors_need_no_admission_without_a_hook_or_a_class() {
     let fixture = Fixture::new();
     let output = fixture.run(&["heavy"]);

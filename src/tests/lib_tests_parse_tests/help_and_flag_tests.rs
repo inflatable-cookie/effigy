@@ -313,6 +313,11 @@ fn parse_command_parses_run_control() {
     );
     assert!(parse_command(["run".to_owned(), "status".to_owned()]).is_err());
     assert_eq!(
+        parse_command(["run".to_owned()]).expect("bare run"),
+        Command::Help(HelpTopic::Runs),
+        "bare `run` is the panel, so a root task named `run` stays a valid selector"
+    );
+    assert_eq!(
         parse_command(["run".to_owned(), "--help".to_owned()]).expect("help"),
         Command::Help(HelpTopic::Runs)
     );
