@@ -32,12 +32,16 @@ fn unavailable(reason: impl std::fmt::Display) -> ContainerExecError {
 fn named_mounts(policy: &EffectiveContainerPolicy) -> Result<Vec<NamedMount>, ContainerExecError> {
     let mut mounts = BTreeMap::new();
     let mut names = BTreeMap::new();
+    let mut external = BTreeMap::new();
     for file in &policy.compose_files {
         let text = policy.read_compose(file).map_err(unavailable)?;
         let document: Value = serde_yaml::from_str(&text).map_err(unavailable)?;
         if let Some(volumes) = document.get("volumes").and_then(Value::as_mapping) {
             for (key, volume) in volumes {
                 if let Some(key) = key.as_str() {
+                    if let Some(value) = volume.get("external").and_then(Value::as_bool) {
+                        external.insert(key.to_owned(), value);
+                    }
                     let name = volume
                         .get("name")
                         .and_then(Value::as_str)
@@ -108,7 +112,13 @@ fn named_mounts(policy: &EffectiveContainerPolicy) -> Result<Vec<NamedMount>, Co
             let name = names
                 .get(&source)
                 .and_then(Clone::clone)
-                .unwrap_or_else(|| format!("{}_{source}", policy.project_name));
+                .unwrap_or_else(|| {
+                    if external.get(&source) == Some(&true) {
+                        source
+                    } else {
+                        format!("{}_{source}", policy.project_name)
+                    }
+                });
             Some(NamedMount {
                 service,
                 target,
@@ -136,6 +146,8 @@ pub fn probe_mount_drift(
         Some(deadline),
     )?;
     let ownership = OwnershipContext::resolve(repo_root, policy)?;
+    let working_dir = crate::load_container_exec_working_dir(repo_root, Some(&policy.name))
+        .map_err(unavailable)?;
     observe_mounts(&mounts, &rows, |row| {
         let remaining =
             super::process::remaining_until_deadline(deadline, "inspect rendered mounts")?;
@@ -150,7 +162,13 @@ pub fn probe_mount_drift(
             deadline,
             remaining,
         )?;
-        ownership.verify_inspected(repo_root, policy, row, &output.stdout)?;
+        if let Err(error) = ownership.verify_inspected(repo_root, policy, row, &output.stdout) {
+            // Use the same positive checkout-bind proof as reactivation. This
+            // does not relax immutable identity or admit an unlabelled scope.
+            if !ownership.admits_legacy_unlabelled(policy, &working_dir, row, &output.stdout) {
+                return Err(error);
+            }
+        }
         serde_json::from_slice(&output.stdout).map_err(unavailable)
     })
 }
@@ -236,7 +254,9 @@ fn observe_mounts(
                 && super::compose_status_is_running(&row.status)
                 && row.service.as_deref() == Some(service)
         }) {
-            drift.push(format!("service `{service}` has no running container for its rendered named mounts. Run `effigy container up --detach` to reconcile"));
+            return Err(unavailable(format!(
+                "service `{service}` has no running container whose mounts can be observed"
+            )));
         }
     }
     Ok(drift)
@@ -309,6 +329,7 @@ mod tests {
 
     #[test]
     fn isolated_dirs_unavailable_inventory_never_becomes_clean_or_drift() {
+        assert!(observe_mounts(&expected(), &[], |_| panic!("no container to inspect")).is_err());
         for invalid in [
             serde_json::json!([]),
             serde_json::json!([{}]),
@@ -318,6 +339,25 @@ mod tests {
             assert!(observe_mounts(&expected(), &[row()], |_| Ok(invalid.clone())).is_err());
         }
         assert!(observe_mounts(&expected(), &[row()], |_| Err(unavailable("deadline"))).is_err());
+    }
+
+    #[test]
+    fn isolated_dirs_external_volumes_use_bare_keys_or_explicit_names() {
+        let fixture = tempfile::tempdir().unwrap();
+        let mut policy = crate::policy::model::test_policy(fixture.path());
+        let first = fixture.path().join("first.yml");
+        let second = fixture.path().join("override.yml");
+        std::fs::write(&first, "services:\n  workspace:\n    volumes: ['cache:/a', 'alias:/b', 'local:/c']\nvolumes:\n  cache: {external: true}\n  alias: {external: true, name: physical}\n  local: {}\n").unwrap();
+        std::fs::write(
+            &second,
+            "volumes:\n  cache: {labels: {example: preserved}}\n",
+        )
+        .unwrap();
+        policy.compose_files = vec![first, second];
+        let required = named_mounts(&policy).unwrap();
+        assert_eq!(required[0].name, "cache");
+        assert_eq!(required[1].name, "physical");
+        assert_eq!(required[2].name, format!("{}_local", policy.project_name));
     }
 
     #[test]

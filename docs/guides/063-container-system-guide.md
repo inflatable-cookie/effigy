@@ -34,7 +34,9 @@ doctor also report mismatches. Running alone does not establish mount readiness.
 The next routed-task preparation or `container up --detach` applies the current
 render when verified live mounts differ. Live task holders still prevent
 recreation. Finish those runs before reconciling. An unavailable observation
-does not authorize recreation, and permission preparation refuses mismatched
+preserves reuse and checks permissions without ownership or mode repair; an
+actual access failure still blocks readiness. It does not authorize recreation,
+and permission preparation refuses mismatched
 named mounts before any ownership repair. Effigy never repairs a host bind by
 recursively changing its ownership.
 

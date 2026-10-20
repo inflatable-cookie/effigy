@@ -246,13 +246,21 @@ struct PreparedTarget {
 pub(super) fn ensure_workspace_permissions_ready_with(
     policy: &EffectiveContainerPolicy,
     container_name: Option<&str>,
+    allow_repair: bool,
     backend: &mut impl WorkspaceAccessBackend,
 ) -> Result<(), RunnerError> {
     let Some(user) = policy.workspace_user.as_deref() else {
         return Ok(());
     };
-    let plan = load_workspace_ownership_plan(policy)
+    let mut plan = load_workspace_ownership_plan(policy)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    if !allow_repair {
+        for target in &mut plan.targets {
+            if target.repair_authority == WorkspaceRepairAuthority::OwnedDisposable {
+                target.repair_authority = WorkspaceRepairAuthority::VerifyOnly;
+            }
+        }
+    }
     let context = PermissionPrepContext {
         profile: policy.profile.clone(),
         project_name: policy.project_name.clone(),
@@ -3021,7 +3029,7 @@ mod tests {
         let root = tempfile::tempdir().expect("fresh private fixture root");
         let policy = nested_composer_policy(root.path());
 
-        ensure_workspace_permissions_ready_with(&policy, None, &mut backend)
+        ensure_workspace_permissions_ready_with(&policy, None, true, &mut backend)
             .expect("root-owned host bind is usable by the numeric workspace user");
 
         assert_eq!(
@@ -3049,7 +3057,7 @@ mod tests {
         let root = tempfile::tempdir().expect("fresh private fixture root");
         let policy = nested_composer_policy(root.path());
 
-        let error = ensure_workspace_permissions_ready_with(&policy, None, &mut backend)
+        let error = ensure_workspace_permissions_ready_with(&policy, None, true, &mut backend)
             .expect_err("the numeric user cannot write to this host bind");
         let error = error.to_string();
 
@@ -3079,7 +3087,7 @@ mod tests {
         let root = tempfile::tempdir().expect("fresh private fixture root");
         let policy = nested_composer_policy(root.path());
 
-        let error = ensure_workspace_permissions_ready_with(&policy, None, &mut backend)
+        let error = ensure_workspace_permissions_ready_with(&policy, None, true, &mut backend)
             .expect_err("a missing declared child bind fails closed");
         let error = error.to_string();
 
@@ -3474,7 +3482,7 @@ services:
         // Production plan path: classification comes from the compose source,
         // with the read-only web consumer as real input.
         let mut backend = root0700_dependency_fixture();
-        ensure_workspace_permissions_ready_with(&policy, None, &mut backend)
+        ensure_workspace_permissions_ready_with(&policy, None, true, &mut backend)
             .expect("app-writer/web-reader dependency volumes must be prepared");
 
         assert_eq!(backend.owner_of("/var/www/cbs/vendor"), Some((501, 20)));
@@ -3499,16 +3507,38 @@ services:
     }
 
     #[test]
+    fn isolated_dirs_unavailable_mounts_verify_access_without_repair() {
+        let root = tempfile::tempdir().expect("private fixture");
+        let policy = dependency_volume_policy(root.path(), "ro");
+        let mut backend = root0700_dependency_fixture();
+        ensure_workspace_permissions_ready_with(&policy, None, false, &mut backend)
+            .expect_err("unverified mounts cannot authorize repairs of root-owned paths");
+        assert!(backend.chown_log.is_empty());
+        assert!(backend.created_locks.is_empty());
+        assert_eq!(backend.mode_of("/var/www/cbs/vendor"), Some(0o700));
+
+        ensure_workspace_permissions_ready_with(&policy, None, true, &mut backend)
+            .expect("verified mounts can repair the volume");
+        backend.chown_log.clear();
+        backend.created_locks.clear();
+        ensure_workspace_permissions_ready_with(&policy, None, false, &mut backend)
+            .expect("usable paths remain usable when mount observation is unavailable");
+        assert!(backend.chown_log.is_empty());
+        assert!(backend.created_locks.is_empty());
+    }
+
+    #[test]
     fn dependency_volume_prep_is_idempotent_without_repair() {
         let root = tempfile::tempdir().expect("fresh private fixture root");
         let policy = dependency_volume_policy(root.path(), "ro");
         let mut backend = root0700_dependency_fixture();
-        ensure_workspace_permissions_ready_with(&policy, None, &mut backend).expect("first prep");
+        ensure_workspace_permissions_ready_with(&policy, None, true, &mut backend)
+            .expect("first prep");
         let chowns_after_first = backend.chown_log.len();
         let bulk_after_first = backend.bulk_calls;
         assert!(chowns_after_first > 0);
 
-        ensure_workspace_permissions_ready_with(&policy, None, &mut backend)
+        ensure_workspace_permissions_ready_with(&policy, None, true, &mut backend)
             .expect("clean repeat prep must stay ready");
         assert_eq!(
             backend.chown_log.len(),
@@ -3523,7 +3553,7 @@ services:
         let root = tempfile::tempdir().expect("fresh private fixture root");
         let policy = dependency_volume_policy(root.path(), "rw");
         let mut backend = root0700_dependency_fixture();
-        let error = ensure_workspace_permissions_ready_with(&policy, None, &mut backend)
+        let error = ensure_workspace_permissions_ready_with(&policy, None, true, &mut backend)
             .expect_err("a two-writer dependency volume must not be repaired");
         let error = error.to_string();
         assert!(error.contains("cannot read/write `/var/www/cbs/"));
@@ -3559,7 +3589,7 @@ services:
         policy.workspace_user = Some("dev".to_owned());
         policy.workspace_home = Some("/home/dev".to_owned());
         let mut backend = root0700_dependency_fixture();
-        let error = ensure_workspace_permissions_ready_with(&policy, None, &mut backend)
+        let error = ensure_workspace_permissions_ready_with(&policy, None, true, &mut backend)
             .expect_err("read-only primary vendor must fail closed");
         let error = error.to_string();
         assert!(error.contains("cannot read/write `/var/www/cbs/vendor`"));
@@ -3589,7 +3619,7 @@ services:
 
         // After the actual numeric-user repair the same fixture reads clean.
         let mut repaired = root0700_dependency_fixture();
-        ensure_workspace_permissions_ready_with(&policy, None, &mut repaired)
+        ensure_workspace_permissions_ready_with(&policy, None, true, &mut repaired)
             .expect("prep repairs the sole-writer volumes");
         let clean = diagnose_workspace_ownership(&policy, Ok(true), &[], &mut repaired);
         assert_eq!(clean.status, WorkspaceOwnershipProbeStatus::Clean);

@@ -498,12 +498,12 @@ fn run_container_up_compose(
     if !crate::runner::managed_settle::environment_lock_holders(repo_root, &plan.policy.name)
         .is_empty()
     {
-        if !effigy_containers::exec::probe_mount_drift(
+        if effigy_containers::exec::probe_mount_drift(
             repo_root,
             &plan.policy,
             std::time::Instant::now() + std::time::Duration::from_secs(15),
-        )?
-        .is_empty()
+        )
+        .is_ok_and(|drift| !drift.is_empty())
         {
             crate::runner::managed_settle::refuse_pre_spawn_mount_reconcile(
                 repo_root,
@@ -832,7 +832,10 @@ fn partial_activation_reconcile_pending(
     if !effigy_containers::exec::compose_stack_is_running(&plan.policy, &running)? {
         return Ok(false);
     }
-    if !effigy_containers::exec::probe_mount_drift(repo_root, &plan.policy, deadline)?.is_empty() {
+    // Unknown mounts cannot authorize recreation of this running stack.
+    if effigy_containers::exec::probe_mount_drift(repo_root, &plan.policy, deadline)
+        .is_ok_and(|drift| !drift.is_empty())
+    {
         crate::runner::managed_settle::refuse_pre_spawn_mount_reconcile(
             repo_root,
             &plan.policy.name,
