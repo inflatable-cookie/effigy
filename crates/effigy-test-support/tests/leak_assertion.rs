@@ -289,3 +289,22 @@ fn unknown_kernel_state_preserves_fixture_files() {
     // Only this proof's exact retained tree; its ledger observes absence later.
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn immediate_exit_and_failed_start_preserve_reusable_command_custody() {
+    use effigy_test_support::process::FixtureCommandExt;
+    let fixture = Fixture::new("effigy-fast-child-").unwrap();
+    let mut command = Command::new("sh");
+    command.args(["-c", "printf registered; exit 23"]);
+    command.current_dir(fixture.path().join("missing"));
+    assert_eq!(
+        command.spawn_owned().unwrap_err().kind(),
+        std::io::ErrorKind::NotFound
+    );
+    command.current_dir(fixture.path());
+    for _ in 0..16 {
+        let output = command.output_owned().unwrap();
+        assert_eq!(output.status.code(), Some(23));
+        assert_eq!(output.stdout, b"registered");
+    }
+}

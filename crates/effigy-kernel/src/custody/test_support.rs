@@ -6,9 +6,15 @@ use crate::ctx::{
 };
 use crate::ident;
 use crate::observe::Observed;
-use std::io;
+use std::io::{self, Read, Write};
+use std::os::fd::AsRawFd;
+use std::os::unix::net::UnixStream;
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use std::time::{Duration, Instant};
 
 pub fn spawn(command: &mut Command, nonce: &str) -> io::Result<(Child, ProcessReceipt)> {
@@ -18,11 +24,69 @@ pub fn spawn(command: &mut Command, nonce: &str) -> io::Result<(Child, ProcessRe
 fn spawn_registered(
     command: &mut Command,
     nonce: &str,
-    registration: impl FnOnce(u32, &str) -> io::Result<ProcessReceipt>,
+    registration: impl FnOnce(u32, &str) -> io::Result<ProcessReceipt> + Send,
 ) -> io::Result<(Child, ProcessReceipt)> {
     command.process_group(0).env("EFFIGY_CUSTODY_NONCE", nonce);
-    let mut child = command.spawn()?;
-    match registration(child.id(), nonce) {
+    let (ready, barrier) = UnixStream::pair()?;
+    let barrier = UnixStream::from(super::spawn::high(barrier.into())?);
+    ready.set_read_timeout(Some(Duration::from_secs(15)))?;
+    ready.set_write_timeout(Some(Duration::from_secs(15)))?;
+    barrier.set_read_timeout(Some(Duration::from_secs(15)))?;
+    let armed = Arc::new(AtomicBool::new(true));
+    let hook_armed = armed.clone();
+    let fd = barrier.as_raw_fd();
+    // SAFETY: after fork, only a lock-free load, getpid/read/write and the
+    // nonallocating raw-errno constructor run. The four PID bytes are readable;
+    // the separate initialized release byte is exclusively writable, and both
+    // exact stack-array extents fit isize. No locks or environment access run.
+    // The live CLOEXEC socket is above stdio and remains owned until spawn
+    // returns. Disarming before dropping it makes reused Command hooks inert.
+    unsafe {
+        command.pre_exec(move || {
+            if !hook_armed.load(Ordering::Relaxed) {
+                return Ok(());
+            }
+            let pid = libc::getpid().to_ne_bytes();
+            let mut release = [0u8];
+            if libc::write(fd, pid.as_ptr().cast(), pid.len()) != pid.len() as isize
+                || libc::read(fd, release.as_mut_ptr().cast(), 1) != 1
+                || release != [1]
+            {
+                return Err(io::Error::from_raw_os_error(libc::ECANCELED));
+            }
+            Ok(())
+        });
+    }
+    let (spawned, registered) = std::thread::scope(|scope| {
+        let observer = scope.spawn(|| {
+            let mut channel = &ready;
+            let mut pid = [0u8; 4];
+            channel.read_exact(&mut pid)?;
+            let result = registration(u32::from_ne_bytes(pid), nonce);
+            channel.write_all(&[u8::from(result.is_ok())])?;
+            result
+        });
+        let spawned = command.spawn();
+        armed.store(false, Ordering::Relaxed);
+        if spawned.is_err() {
+            let _ = ready.shutdown(std::net::Shutdown::Both);
+        }
+        let registered = observer
+            .join()
+            .unwrap_or_else(|_| Err(io::Error::other("fixture registration observer panicked")));
+        (spawned, registered)
+    });
+    let mut child = match spawned {
+        Ok(child) => child,
+        Err(error) => {
+            return Err(if error.raw_os_error() == Some(libc::ECANCELED) {
+                registered.err().unwrap_or(error)
+            } else {
+                error
+            })
+        }
+    };
+    match registered {
         Ok(receipt) => Ok((child, receipt)),
         Err(error) => {
             // The unreaped direct child pins this PID; partial startup rolls back.
@@ -112,14 +176,16 @@ pub fn stop_child(child: &mut Child, receipt: &ProcessReceipt) -> io::Result<()>
     if child.id() != receipt.identity.pid || receipt.pgid != child.id() {
         return Err(io::Error::other("invalid direct fixture receipt"));
     }
-    let exited = poll(child)?.is_some(); // ECHILD refuses a released direct-child handle.
-                                         // macOS may stop exposing the start identity of a zombie. WNOWAIT still
-                                         // proves the owned child is unreaped, so its original group remains pinned.
+    // ECHILD refuses a released direct-child handle. macOS may stop exposing
+    // zombie identity; WNOWAIT still proves the original group remains pinned.
+    let exited = poll(child)?.is_some();
+    // Generation lookup can race exit; the second WNOWAIT must prove that exit.
     if !exited
         && !matches!(
             platform::generation(&receipt.identity),
             Observed::Verified(..)
         )
+        && poll(child)?.is_none()
     {
         return Err(io::Error::other("direct fixture generation changed"));
     }
@@ -165,9 +231,23 @@ pub fn stop(receipt: &ProcessReceipt) -> io::Result<()> {
     let cleanup = cleanup_context()?;
     match platform::recover(receipt, &cleanup, &mut || false) {
         Observed::Verified(..) | Observed::Absent(_) => Ok(()),
-        Observed::Unknown(reason) => Err(io::Error::other(format!(
-            "fixture process residue: {reason:?}"
-        ))),
+        Observed::Unknown(reason) => {
+            // TERM can retire the leader between generation and member probes.
+            // Observe closure within the SAME budget; uncertainty grants no
+            // further signals and live foreign/opaque groups still fail.
+            while cleanup.operation().check("fixture retirement").is_ok() {
+                if matches!(
+                    closed(receipt),
+                    Observed::Verified(..) | Observed::Absent(_)
+                ) {
+                    return Ok(());
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            Err(io::Error::other(format!(
+                "fixture process residue: {reason:?}"
+            )))
+        }
     }
 }
 
@@ -209,17 +289,23 @@ mod tests {
 
     #[test]
     fn registration_failure_rolls_back_the_owned_child() {
+        let fixture = effigy_test_support::Fixture::new("effigy-registration-fault-").unwrap();
+        let marker = fixture.path().join("payload-ran");
+        let mut command = Command::new("sh");
+        command
+            .args(["-c", "printf ran > \"$1\"", "sh"])
+            .arg(&marker);
         let mut pid = 0;
-        let error = spawn_registered(
-            Command::new("sleep").arg("60"),
-            "fixture-rollback",
-            |child, _| {
-                pid = child;
-                Err(io::Error::other("injected registration failure"))
-            },
-        )
+        let error = spawn_registered(&mut command, "fixture-rollback", |child, _| {
+            pid = child;
+            Err(io::Error::other("injected registration failure"))
+        })
         .unwrap_err();
         assert!(error.to_string().contains("injected registration failure"));
+        assert!(
+            !marker.exists(),
+            "refused registration must not execute payload"
+        );
         assert!(matches!(ident::process_identity(pid), Observed::Absent(_)));
     }
 
@@ -255,5 +341,7 @@ mod tests {
         assert!(stop(&stale).is_err());
         assert!(child.0.try_wait().unwrap().is_none());
         assert!(other.0.try_wait().unwrap().is_none());
+        stop_child(&mut child.0, &child.1).unwrap();
+        stop_child(&mut other.0, &other.1).unwrap();
     }
 }

@@ -1490,6 +1490,17 @@ qa = { visibility = "public", group = "Validation", run = [{ task = "test" }, { 
 
 "test:fixtures:hygiene:prepare" = { visibility = "internal", run = [{ run = "cargo build -p effigy-test-support --bin effigy-fixture-process", timeout_ms = 600000 }] }
 "test:fixtures:hygiene:kernel" = { visibility = "internal", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features test-support --lib -E 'test(custody::test_support::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 }] }
+"test:fixtures:hygiene:environment" = { visibility = "internal", run = [
+  { task = "test:fixtures:hygiene:prepare" },
+  { run = "EFFIGY_TEST_PROCESS_HELPER=target/debug/effigy-fixture-process python3 tests/scripts/fixture_hygiene.py -- cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --features fault-injection --lib -E 'test(environment::)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 900000 },
+] }
+"test:fixtures:hygiene:revision" = { visibility = "internal", run = [
+  { task = "test:fixtures:hygiene:kernel" },
+  { task = "test:fixtures:hygiene:guards:both" },
+  { task = "test:fixtures:hygiene:environment" },
+  { task = "test:fixtures:hygiene:reclaim" },
+  { task = "qa:kernel-ratchet" },
+] }
 "test:fixtures:hygiene:reclaim" = { visibility = "internal", run = [{ task = "test:fixtures:hygiene:prepare" }, { run = "EFFIGY_TEST_PROCESS_HELPER=target/debug/effigy-fixture-process python3 tests/scripts/fixture_hygiene.py -- cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test task_engine_kill_matrix -E 'test(task_engine_reclaim_race_after_holder_kill_never_overlaps_runs)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 }] }
 "test:fixtures:hygiene:process-fixtures" = { visibility = "internal", run = [
   { task = "test:fixtures:hygiene:prepare" },
@@ -1617,4 +1628,4 @@ qa = { visibility = "public", group = "Validation", run = [{ task = "test" }, { 
   { run = "EFFIGY_TEST_PROCESS_HELPER=target/debug/effigy-fixture-process python3 tests/scripts/fixture_hygiene.py -- cargo nextest run --cargo-profile fixture-proof --config-file .config/nextest.toml --user-config-file none -p effigy --test gateway_private -E 'test(managed_matrix_down_ends_recorded_non_group_leader_workload) | test(managed_matrix_exit_trap_on_parent_death)' --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail -j 1", timeout_ms = 900000 },
 ] }
 
-"fmt:fixtures:hygiene" = { visibility = "internal", run = "rustfmt --edition 2021 --config skip_children=true crates/effigy-test-support/src/process.rs crates/effigy-test-support/tests/fixtures/process.rs crates/effigy-test-support/tests/leak_assertion.rs tests/gateway_private.rs tests/gateway_private/managed_matrix.rs src/runner/system_command/workspace/tests/builder_recovery.rs" }
+"fmt:fixtures:hygiene" = { visibility = "internal", run = "rustfmt --edition 2021 --config skip_children=true crates/effigy-test-support/src/process.rs crates/effigy-test-support/tests/fixtures/process.rs crates/effigy-test-support/tests/leak_assertion.rs tests/gateway_private.rs tests/gateway_private/managed_matrix.rs src/runner/system_command/workspace/tests/builder_recovery.rs crates/effigy-kernel/src/custody/test_support.rs crates/effigy-kernel/src/custody/spawn.rs crates/effigy-containers/src/environment/tests.rs crates/effigy-containers/src/environment/tests/adapters.rs tests/support/mod.rs" }

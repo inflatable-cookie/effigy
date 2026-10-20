@@ -8,7 +8,7 @@ use std::os::unix::fs::PermissionsExt;
 const ID: &str = "87c434af41df6f447bfb13218637f97b211098ffe97573a00c766c56f5008cdd";
 
 struct FakeTools {
-    _dir: tempfile::TempDir,
+    _dir: effigy_test_support::Fixture,
     bin: PathBuf,
     logs: PathBuf,
     previous_path: Option<std::ffi::OsString>,

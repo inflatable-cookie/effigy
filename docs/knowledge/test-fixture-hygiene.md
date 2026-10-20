@@ -23,8 +23,8 @@ drained at process exit because Rust statics do not run destructors.
 There are currently no in-repository fixture exceptions. Scheduler retirement
 removed the authenticated-parent CWD restriction. `Fixture::workspace` allocates
 externally, using `/Users/Shared` on macOS because public container paths enforce
-Colima's share boundary even with a fake transport. Unit workspace, bootstrap,
-CLI, gateway, builder and kill-matrix helpers all use this owner. The Python
+Colima's share boundary even with a fake transport. Environment reconciler, unit
+workspace, bootstrap, CLI, gateway, builder and kill-matrix helpers all use this owner. The Python
 catalog adapter also allocates externally. Production catalog staging remains
 runtime-owned rather than a test fixture.
 
@@ -48,8 +48,21 @@ wrapper bounds the complete shared-process invocation.
 
 `effigy-test-support::process::FixtureCommandExt::spawn_owned` creates a dedicated
 child group and records its kernel `ProcessReceipt` in the private ledger.
+The kernel test adapter holds a bounded pre-exec socket barrier while a parent
+observer captures the child's identity and group. Payload execution starts only
+after registration succeeds, so even an immediate exit has a generation receipt.
+The child hook uses only lock-free state and async-signal-safe syscalls, owns no
+stdio descriptors, and becomes inert before its sockets are dropped. Failed
+launches wake the observer; failed registration rejects exec. Reusing a `Command`
+keeps previous hooks inert. The rollback and immediate-exit/reuse controls cover
+these boundaries in the kernel and ordinary/shared guard selectors.
 The guard stops the entire group and reaps the direct child on drop, including
-unwind. Exited direct leaders remain unreaped until group closure, using `waitid`
+unwind. A leader can exit between generation observations after TERM; cleanup
+uses the remaining existing 15-second budget to observe verified group closure.
+Uncertainty never authorizes another signal or deletion, and a group that remains
+live or unobservable still fails and retains its files. Direct-child cleanup
+rechecks WNOWAIT exit evidence if generation lookup races exit. Exited direct
+leaders remain unreaped until group closure, using `waitid`
 with `WNOWAIT`; once the whole group is closed, `wait` reaps immediately so
 parent-death observers see the native process lifetime. Detached recovery uses the kernel generation and nonce checks;
 unknown evidence fails cleanup and retains the registration. Output collection has a
@@ -191,3 +204,8 @@ readiness deadline starts. These bounded launches use the shared process owner.
 Setup traces are retained as `state/setup-*`; product call oracles still begin
 empty. This follows the kill-matrix candidate-image setup boundary and leaves
 the production budgets, input-admission checks and interruption assertions intact.
+
+`test:fixtures:hygiene:environment` runs the environment reconciler fixture family
+with the shared directory/process ledger. `test:fixtures:hygiene:revision` groups
+kernel registration, ordinary/shared guards, environment fixtures, reclaim
+proofs and the kernel ratchet for the registration-barrier change.

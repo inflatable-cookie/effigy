@@ -16,8 +16,8 @@ pub(crate) fn temp_workspace(prefix: &str, name: &str) -> PathBuf {
         .expect("time")
         .as_nanos();
     let seq = TEMP_WORKSPACE_COUNTER.fetch_add(1, Ordering::Relaxed);
-    // The thread owns all nested workspaces, clones and remotes. Authenticated
-    // nested selectors use the central in-repository exception (contract 049).
+    // The thread owns all nested workspaces, clones and remotes beneath one
+    // external, container-shared fixture root.
     let fixture_root = FIXTURE_ROOT.with(|owner| {
         let mut owner = owner.borrow_mut();
         if owner.is_none() {

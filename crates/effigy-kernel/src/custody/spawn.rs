@@ -1,4 +1,4 @@
-//! The only post-fork path: async-signal-safe syscalls over prepared buffers.
+//! The production post-fork path: async-signal-safe syscalls over prepared buffers.
 use super::*;
 use crate::fs::{DirFd, Trust};
 use std::ffi::CString;
@@ -22,7 +22,7 @@ pub(super) fn pipe() -> io::Result<(OwnedFd, OwnedFd)> {
     }
     Ok(pair)
 }
-fn high(fd: OwnedFd) -> io::Result<OwnedFd> {
+pub(super) fn high(fd: OwnedFd) -> io::Result<OwnedFd> {
     // SAFETY: duplicates a live fd above the child's reserved descriptors.
     let copy = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 10) };
     if copy < 0 {
