@@ -4,9 +4,11 @@ use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 use effigy_catalog::{assembly::ServiceDeclaration, volumes::ManagedVolume, ComposeAssembler};
-use effigy_gateway::loopback::{project_loopback_identity, reserved_loopback_ips_for_other_projects};
 #[cfg(test)]
 use effigy_gateway::loopback::LoopbackRegistry;
+use effigy_gateway::loopback::{
+    project_loopback_identity, reserved_loopback_ips_for_other_projects,
+};
 use effigy_gateway::ports::PortRegistry;
 use effigy_manifest::{ManifestContainerConfig, ManifestContainerServiceConfig};
 use serde::{Deserialize, Serialize};
@@ -1238,8 +1240,8 @@ fn read_loopback_ip(
     let Some(home) = effigy_home_dir() else {
         return Ok(None);
     };
-    let snapshot = effigy_gateway::endpoint_store::EndpointStore::for_effigy_home(&home)
-        .read_compatible()?;
+    let snapshot =
+        effigy_gateway::endpoint_store::EndpointStore::for_effigy_home(&home).read_compatible()?;
     let registry = snapshot.loopback()?;
     let routes = snapshot.routes()?;
     let mut reserved = reserved_loopback_ips_for_other_projects(&routes, source);
@@ -1255,7 +1257,7 @@ fn read_loopback_ip(
         })
     });
     Ok(assignment
-        .filter(|assignment| !reserved.contains(&assignment.ip))
+        .filter(|assignment| assignment.scope == source && !reserved.contains(&assignment.ip))
         .map(|assignment| assignment.ip))
 }
 
@@ -1841,6 +1843,14 @@ mod tests {
             let migrated = LoopbackRegistry::load(&path).expect("migrated registry");
             assert!(migrated.get("old-project").is_none());
             assert_eq!(migrated.get(&identity).map(|value| value.ip), Some(ip));
+            let store = effigy_gateway::endpoint_store::EndpointStore::for_effigy_home(home.path());
+            let committed = std::fs::read(store.database_path()).unwrap();
+            assert_eq!(
+                read_loopback_ip(&identity, None, &source).unwrap(),
+                Some(ip)
+            );
+            assert_eq!(read_loopback_ip(&identity, None, "foreign").unwrap(), None);
+            assert_eq!(std::fs::read(store.database_path()).unwrap(), committed);
         });
     }
 

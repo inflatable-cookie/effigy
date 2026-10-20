@@ -2246,6 +2246,7 @@ fn with_private_port_prepare_fixture(run: impl FnOnce(PathBuf, PathBuf)) {
     let root = fixture.path().join("repo");
     fs::create_dir_all(&home).unwrap();
     fs::create_dir(&root).unwrap();
+    let root = root.canonicalize().expect("canonical fixture owner");
     crate::policy_support::with_test_effigy_home(&home, || run(root, home.clone()));
 }
 
@@ -2352,6 +2353,7 @@ catalog = "node"
         let prepared = load_prepared_policy(&root, None).unwrap();
         // The existing allocator gives port 3000 its preferred +30 offset.
         assert_eq!(prepared.declared_ports, ["8100:3000", "8130:3000"]);
+        assert_eq!(fs::read(home.join("ports.json")).unwrap(), before);
         let registry = effigy_gateway::ports::PortRegistry::load(&home.join("ports.json")).unwrap();
         assert_eq!(
             registry.assigned_port("legacy-ports", "first", 3000),
@@ -2394,7 +2396,14 @@ catalog = "node"
                 crate::policy::ports::prepare_container_policy_ports(&policy).expect("prepare");
             });
         assert_eq!(probes, 0, "empty registry needs no runtime inventory");
-        let before = fs::read(&registry_path).expect("prepared loopback");
+        let store = effigy_gateway::endpoint_store::EndpointStore::for_effigy_home(&home);
+        let snapshot = store.read_compatible().unwrap();
+        assert!(
+            !snapshot.loopback().unwrap().is_empty(),
+            "Prepare retained the loopback assignment"
+        );
+        let before = snapshot.document("loopback").unwrap().clone();
+        assert!(!registry_path.exists(), "new state has no JSON writer");
         let (_, probes) =
             crate::policy_support::with_test_loopback_inventory(fixture_inventory(&[]), || {
                 let policy = load_container_policy(&root, None).expect("read prepared policy");
@@ -2404,8 +2413,12 @@ catalog = "node"
             });
         assert_eq!(probes, 0, "reads and stable Prepare must not inventory");
         assert_eq!(
-            fs::read(&registry_path).expect("unchanged registry"),
-            before
+            store
+                .read_compatible()
+                .unwrap()
+                .document("loopback")
+                .unwrap(),
+            &before
         );
         assert!(
             !home.join("ports.json").exists(),
