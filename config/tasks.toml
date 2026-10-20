@@ -157,11 +157,21 @@
 # Environment CI regressions in both isolated and genuinely shared test processes.
 # Nextest bounds individual tests and leaked handles; shared libtest keeps eight
 # concurrent threads and a bounded task lifetime, matching hosted CI's cfg.
-"test:environment:ci:isolated" = { visibility = "internal", group = "Maintenance", admission = "heavy", run = [
-  { run = "cargo build --bin effigy", timeout_ms = 600000 },
-  { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-containers -p effigy-host-run --lib --features effigy-host-run/test-support -E 'test(runtime::dns::tests::) | test(tests::compose::) | test(policy::admission::) | test(policy::render::tests::) | test(workspace::tests::host_git_mount_tests::) | test(exec::healthcheck_timer::) | test(exec::restart_recovery::) | test(bounded_exec::tests::) | test(builder_recovery::) | test(host_container_lease::tests::) | test(container_removal_state_is_false_or_unknown_and_never_assumed) | test(handover_end_owner_releases_lock_for_reverse_handover) | test(test_support::tests::)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 1200000 },
+# Light composition calls heavy runner leaves through a new CLI boundary so
+# scheduler submission never tries to reacquire the composing task's gate.
+# Two isolated processes keep this family within the existing global timeout;
+# each test still runs in its own process with the same timeout/leak controls.
+"test:environment:ci:isolated" = { visibility = "internal", group = "Maintenance", run = [
+  { run = "cargo run --bin effigy -- test:environment:ci:isolated:runner", timeout_ms = 7200000 },
 ] }
-"test:environment:ci:shared" = { visibility = "internal", group = "Maintenance", admission = "heavy", run = [
+"test:environment:ci:isolated:runner" = { visibility = "internal", group = "Maintenance", admission = "heavy", run = [
+  { run = "cargo build --bin effigy", timeout_ms = 600000 },
+  { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-containers -p effigy-host-run --lib --features effigy-host-run/test-support -E 'test(runtime::dns::tests::) | test(tests::compose::) | test(policy::admission::) | test(policy::render::tests::) | test(workspace::tests::host_git_mount_tests::) | test(exec::healthcheck_timer::) | test(exec::restart_recovery::) | test(bounded_exec::tests::) | test(builder_recovery::) | test(host_container_lease::tests::) | test(container_removal_state_is_false_or_unknown_and_never_assumed) | test(handover_end_owner_releases_lock_for_reverse_handover) | test(test_support::tests::)' --no-fail-fast --retries 0 --no-tests fail -j 2", timeout_ms = 1200000 },
+] }
+"test:environment:ci:shared" = { visibility = "internal", group = "Maintenance", run = [
+  { run = "cargo run --bin effigy -- test:environment:ci:shared:runner", timeout_ms = 7200000 },
+] }
+"test:environment:ci:shared:runner" = { visibility = "internal", group = "Maintenance", admission = "heavy", run = [
   { run = "RUSTFLAGS='--cfg effigy_shared_process' cargo build --bin effigy", timeout_ms = 600000 },
   { run = "RUSTFLAGS='--cfg effigy_shared_process' cargo test -p effigy -p effigy-containers -p effigy-host-run --lib --features effigy-host-run/test-support --no-fail-fast -- --test-threads=8 runtime::dns::tests:: tests::compose:: policy::admission:: policy::render::tests:: workspace::tests::host_git_mount_tests:: exec::healthcheck_timer:: exec::restart_recovery:: bounded_exec::tests:: builder_recovery:: host_container_lease::tests:: container_removal_state_is_false_or_unknown_and_never_assumed handover_end_owner_releases_lock_for_reverse_handover test_support::tests::", timeout_ms = 1200000 },
 ] }
