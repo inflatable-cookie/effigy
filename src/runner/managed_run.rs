@@ -13,6 +13,9 @@ mod client;
 mod control;
 mod engine;
 mod environment;
+#[cfg(all(test, feature = "fault-injection"))]
+#[path = "managed_run/tests/faults.rs"]
+mod faults;
 mod legacy;
 mod settlement;
 mod tui;
@@ -21,7 +24,7 @@ mod wire;
 pub(in crate::runner) use client::{attach_text, detach, start, ClientStart};
 pub(in crate::runner) use control::{logs, status, stop, stop_run, Addressed};
 pub(in crate::runner) use engine::{
-    own, record_gateway, supervise, take_owner, workload_env, ExecGroupSpec, OwnedRun,
+    own, record_gateway, take_owner, workload_env, ExecGroupSpec, OwnedRun,
     OwnerSession, WorkloadSpec, EXEC_NONCE,
 };
 pub(in crate::runner) use environment::EnvironmentPlan;
@@ -31,7 +34,16 @@ pub(in crate::runner) use wire::Front;
 
 use effigy_kernel::ctx::CleanupContext;
 use effigy_kernel::observe::Observed;
-use effigy_kernel::run::{Effect, Fence, Reconciled};
+use effigy_kernel::run::{Effect, Fence, Reconciled, RunError};
+use effigy_kernel::supervise::EngineSession;
+
+/// The managed engine's entry in its detached supervisor process.
+pub(in crate::runner) fn supervise(session: EngineSession) -> Result<(), RunError> {
+    #[cfg(all(test, feature = "fault-injection"))]
+    return faults::armed(|| engine::supervise(session));
+    #[cfg(not(all(test, feature = "fault-injection")))]
+    engine::supervise(session)
+}
 
 /// Whether this engine settles effects of `kind`.
 pub(in crate::runner) fn owns_effect(kind: &str) -> bool {

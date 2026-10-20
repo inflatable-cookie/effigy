@@ -1054,7 +1054,9 @@ fn custody_engine_owning_client_kill_stops_and_settles() {
     );
     eventually(|| workload_gone(home.path()));
     // The engine got its client's cwd and explicit environment, and its own
-    // output reached the run log redacted.
+    // output reached the run log redacted. The journal closes before the
+    // engine flushes its capture, so wait for the tail.
+    eventually(|| engine_output(home.path()).ends_with('\n'));
     let output = engine_output(home.path());
     assert!(output.contains("engine output [REDACTED]"), "{output:?}");
     assert!(output.contains("env=present"), "{output:?}");
