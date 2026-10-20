@@ -277,10 +277,14 @@ fn docker_config_dir() -> Option<PathBuf> {
 /// `currentContext`. `None` when the config cannot be read or is invalid, so a
 /// caller never mistakes a hidden remote context for the default (fail closed).
 pub(crate) fn docker_config_current_context() -> Option<String> {
-    let Some(dir) = docker_config_dir() else {
+    current_context_in(docker_config_dir().as_deref())
+}
+
+fn current_context_in(config_dir: Option<&Path>) -> Option<String> {
+    let Some(dir) = config_dir else {
         return Some("default".to_owned());
     };
-    match config_context(&dir) {
+    match config_context(dir) {
         DockerConfigContext::Absent | DockerConfigContext::Named(None) => {
             Some("default".to_owned())
         }
@@ -782,6 +786,37 @@ mod tests {
             }),
             RuntimeParticipation::Participating
         );
+    }
+
+    /// Remote custody targets the context this resolves (effigy#236): an
+    /// absent config or context is `default`, a named one is kept, and an
+    /// unreadable or invalid config refuses instead of guessing.
+    #[test]
+    fn current_context_resolves_the_cli_context_and_refuses_an_invalid_config() {
+        assert_eq!(current_context_in(None).as_deref(), Some("default"));
+        let dir = tempfile::tempdir().expect("create docker config fixture");
+        assert_eq!(
+            current_context_in(Some(dir.path())).as_deref(),
+            Some("default")
+        );
+        for (raw, expected) in [
+            ("{}", Some("default")),
+            ("{\"currentContext\": \"\"}", Some("default")),
+            (
+                "{\"currentContext\": \"desktop-linux\"}",
+                Some("desktop-linux"),
+            ),
+            ("{\"currentContext\": 42}", None),
+            ("[1, 2, 3]", None),
+            ("not json", None),
+        ] {
+            std::fs::write(dir.path().join("config.json"), raw).expect("write config");
+            assert_eq!(
+                current_context_in(Some(dir.path())).as_deref(),
+                expected,
+                "{raw}"
+            );
+        }
     }
 
     #[test]
