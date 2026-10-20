@@ -1,4 +1,0 @@
-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-sh
--lc
-export PATH='/usr/local/bin':$PATH; printf builder-shell

@@ -1,7 +1,0 @@
-1792475196 status --profile dev
-1792475196 start --profile dev --runtime containerd --ssh-agent --dns 1.1.1.1 --dns 8.8.8.8
-1792475196 nerdctl --profile dev -- info
-1792475196 ssh --profile dev -- sudo buildctl debug workers
-1792475196 nerdctl --profile dev -- compose -f /Users/tom/.paseo/northstar-queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-f46c8c06-9987-4d11-98ee-bb7774761157/crates/effigy-158-private-x12Ghq/.effigy/state/objects/7daf9151bcef9830e90c1f81d4270b11697808d278f8dcc527abcf9ab64a676d/checkout/.effigy/runtime/compose/web.generated.compose.yml -f /Users/tom/.paseo/northstar-queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-f46c8c06-9987-4d11-98ee-bb7774761157/crates/effigy-158-private-x12Ghq/.effigy/state/objects/7daf9151bcef9830e90c1f81d4270b11697808d278f8dcc527abcf9ab64a676d/checkout/.effigy/runtime/dns/web.compose.override.yml -p fixture-web-dev up -d --build --force-recreate
-1792475196 nerdctl --profile dev -- ps --filter label=com.docker.compose.project=fixture-web-dev --format {{.Names}}	{{.Status}}	{{.Ports}}	{{.Label "com.docker.compose.project"}}	{{.Label "com.docker.compose.project.working_dir"}}	{{.Label "com.docker.compose.service"}}	{{.Label "com.docker.compose.oneoff"}}
-1792475196 nerdctl --profile dev -- inspect fixture-web-dev-app-1

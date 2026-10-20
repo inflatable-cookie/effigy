@@ -1,6 +1,0 @@
-[service]
-name = "private-builder"
-description = "Private no-port builder fixture"
-[capabilities]
-exec_target = true
-shell = "/bin/sh"

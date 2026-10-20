@@ -1,4 +1,0 @@
-services:
-  builder:
-    image: example
-    working_dir: /workspace

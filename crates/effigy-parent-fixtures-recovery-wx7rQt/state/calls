@@ -1,1 +1,0 @@
-["ps", "--filter", "label=com.docker.compose.project=effigy-artifact-builder-v1", "--format", "{{.Names}}\t{{.Status}}\t{{.Ports}}\t{{.Label \"com.docker.compose.project\"}}\t{{.Label \"com.docker.compose.project.working_dir\"}}\t{{.Label \"com.docker.compose.service\"}}\t{{.Label \"com.docker.compose.oneoff\"}}"]

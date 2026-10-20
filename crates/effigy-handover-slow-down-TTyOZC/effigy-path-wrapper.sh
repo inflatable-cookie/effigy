@@ -1,6 +1,0 @@
-#!/bin/sh
-FAKEBIN='/Users/tom/.paseo/northstar-queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-f46c8c06-9987-4d11-98ee-bb7774761157/crates/effigy-handover-slow-down-TTyOZC/bin'
-REAL='/Users/tom/.paseo/northstar-queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-f46c8c06-9987-4d11-98ee-bb7774761157/target/debug/effigy'
-PATH="$FAKEBIN:$PATH"
-export PATH
-exec "$REAL" "$@"

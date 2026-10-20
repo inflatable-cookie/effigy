@@ -1,2 +1,0 @@
-[ok] container `builder` is ready in detached mode
-[next] inspect state with `effigy container builder status`
