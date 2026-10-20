@@ -34,6 +34,12 @@ pub use record::{
     RECORD_SCHEMA,
 };
 
+/// The Effigy home whose `.effigy/state` holds environment records and
+/// render objects: `$HOME`, or the crate's private fixture home in tests.
+pub fn state_home() -> Result<std::path::PathBuf, EnvError> {
+    crate::policy::render::state_home().map_err(|error| EnvError::Invalid(error.to_string()))
+}
+
 /// The host state root for environment records. Library tests use the
 /// crate's private fixture home, never the operator's.
 pub fn state_root(

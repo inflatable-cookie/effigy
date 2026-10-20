@@ -1355,20 +1355,18 @@ fn emit_ssh_agent_socket_warning(policy: &EffectiveContainerPolicy, repo_root: &
 #[cfg(test)]
 mod tests {
     use super::{
-        annotate_workspace_extra_mount_decisions, clear_partial_activation,
-        detached_partial_activation_error, ensure_up_workspace_permissions, exec_operation_plan,
-        gateway_registration_failure, lifecycle_operation_plan, partial_activation_recorded,
-        partial_reconcile_skips_compose_up, primary_service_is_running,
-        reconcile_partial_activation, refresh_workspace_mounts_for_creation,
-        resolve_workspace_mounts_for_creation, run_container_down_command, run_container_eject,
-        start_runtime_after_scope_registration, RunnerError,
+        annotate_workspace_extra_mount_decisions, detached_partial_activation_error,
+        ensure_up_workspace_permissions, exec_operation_plan, gateway_registration_failure,
+        lifecycle_operation_plan, primary_service_is_running,
+        refresh_workspace_mounts_for_creation, resolve_workspace_mounts_for_creation,
+        run_container_down_command, run_container_eject, start_runtime_after_scope_registration,
+        RunnerError,
     };
     use crate::runner::container_command::handover::hand_over_conflicting_environments;
     use crate::runner::container_command::support::{
         annotate_left_running_shared_services, annotate_shared_service_notes,
     };
     use crate::runner::container_command::test_support::temp_repo;
-    use crate::runner::host_container_lease::record_partial_activation;
     use effigy_containers::EffectiveAttachMode;
     use effigy_containers::{
         down_report, load_container_policy, up_detached_report, ContainerAction,
@@ -1952,6 +1950,7 @@ primary_service = "app"
             false,
             |_| Ok(Vec::new()),
             |_, _, _| Ok(()),
+            |_, _, effect| effect(),
         )
         .expect_err("should fail");
         assert!(error
@@ -2004,13 +2003,9 @@ primary_service = "app"
     fn detached_gateway_registration_failure_keeps_started_scope() {
         let (temp, _lease_home) = isolated_lease_home();
         let policy = prepared_marker_policy(temp.path());
-        record_partial_activation(temp.path(), &policy).expect("admit before publication");
-        let admitted = crate::runner::host_container_lease::retained_detached_activation_context(
-            temp.path(),
-            &policy,
-        )
-        .unwrap()
-        .unwrap();
+        let admitted =
+            crate::runner::container_command::admission::AdmissionContext::capture(&policy)
+                .unwrap();
         let cleaned = std::cell::Cell::new(false);
         let error = gateway_registration_failure(
             EffectiveAttachMode::Detached,
@@ -2035,10 +2030,6 @@ primary_service = "app"
         assert!(rendered.contains("No teardown ran"));
         assert!(rendered.contains("effigy container up --detach"));
         assert!(rendered.contains("does not recreate the running services"));
-        assert!(
-            partial_activation_recorded(temp.path(), &policy).expect("read partial mark"),
-            "detached registration failure records the reconcile mark"
-        );
     }
 
     #[test]
@@ -2060,7 +2051,6 @@ primary_service = "app"
 
         assert!(cleaned.get(), "attached bring-up keeps its cleanup path");
         assert_eq!(error.to_string(), "gateway registration failed");
-        assert!(!partial_activation_recorded(temp.path(), &policy).expect("read partial mark"));
     }
 
     #[test]
@@ -2080,38 +2070,6 @@ primary_service = "app"
             error.to_string(),
             "gateway registration failed\ncontainer up cleanup also failed: docker compose down failed"
         );
-    }
-
-    #[test]
-    fn partial_activation_mark_round_trips_and_clears() {
-        let (temp, _lease_home) = isolated_lease_home();
-        let policy = prepared_marker_policy(temp.path());
-
-        assert!(!partial_activation_recorded(temp.path(), &policy).expect("read mark"));
-        record_partial_activation(temp.path(), &policy).expect("record mark");
-        assert!(partial_activation_recorded(temp.path(), &policy).expect("read mark"));
-        clear_partial_activation(temp.path(), &policy).expect("clear mark");
-        assert!(!partial_activation_recorded(temp.path(), &policy).expect("read mark"));
-        clear_partial_activation(temp.path(), &policy).expect("clearing an absent mark is ok");
-    }
-
-    #[test]
-    fn partial_activation_reconcile_skips_compose_up_only_for_running_primary() {
-        let policy = test_policy(Vec::new());
-
-        assert!(partial_reconcile_skips_compose_up(
-            &policy,
-            &[running_row("app", false)]
-        ));
-        assert!(
-            !partial_reconcile_skips_compose_up(&policy, &[running_row("worker", false)]),
-            "a running sibling is not the primary service"
-        );
-        assert!(
-            !partial_reconcile_skips_compose_up(&policy, &[running_row("app", true)]),
-            "a one-off run of the primary service is not the running primary"
-        );
-        assert!(!partial_reconcile_skips_compose_up(&policy, &[]));
     }
 
     #[test]
@@ -2142,68 +2100,6 @@ primary_service = "app"
         assert!(
             effigy_containers::exec::compose_stack_is_running(&policy, &[primary, sibling])
                 .expect("complete stack")
-        );
-    }
-
-    #[test]
-    fn reconcile_restarts_an_environment_a_handover_stopped() {
-        let (temp, _lease_home) = isolated_lease_home();
-        let policy = prepared_marker_policy(temp.path());
-        let stopped = [running_row("db", false), running_row("app", false)]
-            .into_iter()
-            .map(|mut row| {
-                row.status = "Exited (0) 3 minutes ago".to_owned();
-                row
-            })
-            .collect::<Vec<_>>();
-
-        assert!(
-            !reconcile_partial_activation(temp.path(), &policy, &stopped)
-                .expect("an ownership-verified stopped partial stack restarts")
-        );
-
-        record_partial_activation(temp.path(), &policy).expect("record partial activation");
-        crate::runner::host_container_lease::record_environment_handover(
-            temp.path(),
-            &policy,
-            "stack",
-            "shared data services (data_from)",
-        )
-        .expect("record handover");
-        // The recorded handover makes the stopped state known: restart.
-        assert!(
-            !reconcile_partial_activation(temp.path(), &policy, &stopped)
-                .expect("a handover-stopped state restarts"),
-            "restart means compose up runs"
-        );
-    }
-
-    #[test]
-    fn a_healthy_reconcile_resolves_a_recorded_handover_stop() {
-        let (temp, _lease_home) = isolated_lease_home();
-        let policy = prepared_marker_policy(temp.path());
-        record_partial_activation(temp.path(), &policy).expect("record partial activation");
-        crate::runner::host_container_lease::record_environment_handover(
-            temp.path(),
-            &policy,
-            "stack",
-            "gateway domains app.test",
-        )
-        .expect("record handover");
-
-        assert!(
-            reconcile_partial_activation(temp.path(), &policy, &[running_row("app", false)])
-                .expect("healthy reconcile"),
-            "a running primary reconciles without compose up"
-        );
-        assert!(
-            crate::runner::host_container_lease::environment_handover_recorded(
-                temp.path(),
-                &policy,
-            )
-            .expect("handover record readable")
-            .is_none(),
-            "the resolved handover stop is cleared"
         );
     }
 
@@ -2312,20 +2208,17 @@ primary_service = "app"
             load_container_policy(&self.repo_root, None).expect("fixture policy")
         }
 
-        fn marker_path(&self, policy: &EffectiveContainerPolicy) -> PathBuf {
-            crate::runner::host_container_lease::detached_admission_marker_root(&self.repo_root)
-                .join(&policy.profile)
-                .join(&policy.project_name)
-                .join(format!("{}.persistent", policy.name))
-        }
-
-        fn mark_owned(&self, policy: &EffectiveContainerPolicy) {
-            crate::runner::host_container_lease::mark_persistent_container_owner(
-                &self.repo_root,
-                policy,
-            )
-            .expect("mark explicit owner");
-            assert!(self.marker_path(policy).exists());
+        /// The environment record after a stop: stopped and no longer
+        /// persistent, so a later task-started stack idle-stops again.
+        fn assert_stopped(&self, policy: &EffectiveContainerPolicy) {
+            let record = crate::runner::environment::record(policy)
+                .unwrap_or_else(|| panic!("down records the environment: {}", self.docker_log()));
+            assert_eq!(
+                record.state,
+                effigy_containers::environment::EnvState::Stopped,
+                "{}",
+                self.docker_log()
+            );
         }
 
         fn docker_log(&self) -> String {
@@ -2334,18 +2227,13 @@ primary_service = "app"
     }
 
     #[test]
-    fn global_container_down_clears_persistent_owner_marker() {
+    fn global_container_down_is_one_stop_transition_per_environment() {
         let fixture = FakeDownFixture::new();
         let policy = fixture.policy();
-        fixture.mark_owned(&policy);
 
         run_container_down_command(None, None, true, false).expect("global down succeeds");
 
-        assert!(
-            !fixture.marker_path(&policy).exists(),
-            "global down must end persistent ownership: {}",
-            fixture.docker_log()
-        );
+        fixture.assert_stopped(&policy);
         assert!(
             fixture.docker_log().contains("compose"),
             "the fake stack was actually torn down: {}",
@@ -2355,21 +2243,16 @@ primary_service = "app"
     }
 
     #[test]
-    fn cwd_scoped_container_down_clears_persistent_owner_marker() {
+    fn cwd_scoped_container_down_is_one_stop_transition() {
         let fixture = FakeDownFixture::new();
         let policy = fixture.policy();
-        fixture.mark_owned(&policy);
 
         crate::contract_test_support::with_cwd(&fixture.parent, || {
             run_container_down_command(None, None, false, false)
         })
         .expect("cwd-scoped down succeeds");
 
-        assert!(
-            !fixture.marker_path(&policy).exists(),
-            "cwd-scoped down must end persistent ownership: {}",
-            fixture.docker_log()
-        );
+        fixture.assert_stopped(&policy);
         assert!(
             fixture.docker_log().contains("compose"),
             "the fake stack was actually torn down: {}",
@@ -2558,16 +2441,12 @@ catalog = "postgres"
         );
         assert!(rendered.contains("failed"), "{rendered}");
         assert!(rendered.contains("recovers from"), "{rendered}");
-        // The handover record lands before the effect, so the stopped-at
-        // environment restarts with a plain `up`.
-        assert!(
-            crate::runner::host_container_lease::environment_handover_recorded(
-                &fixture.repo_root,
-                &dev,
-            )
-            .expect("handover record readable")
-            .is_some(),
-            "the failed handover records the stop for recovery"
+        // The failed stop is journalled as an unknown backend effect; the
+        // peer's record is not published stopped, and its own `up` reconciles.
+        let record = crate::runner::environment::record(&dev).expect("peer record");
+        assert_ne!(
+            record.state,
+            effigy_containers::environment::EnvState::Stopped
         );
     }
 

@@ -441,7 +441,7 @@ mod tests {
         let holders = managed(private.path());
         assert_eq!(holders.len(), 1);
         assert_eq!(holders[0].scope_label(), "task:dev");
-        assert!(holders[0].carries_managed_run("managedrun-live"));
+        assert!(holders[0].managed_run.is_some());
         assert_eq!(holders[0].pid, Some(std::process::id()));
         held.close(WorkloadOutcome::Succeeded);
     }

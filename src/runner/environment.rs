@@ -37,8 +37,44 @@ pub(in crate::runner) fn context() -> Result<EnvContext<'static>, RunnerError> {
     if inside_guest() {
         return Err(error(EnvError::HostAuthorityRequired));
     }
-    let root = crate::runner::task_engine::effects_root()?;
-    EnvContext::new(root, CancelToken::default()).map_err(error)
+    EnvContext::new(root()?, CancelToken::default()).map_err(error)
+}
+
+/// The state root beside the render objects (`$HOME/.effigy/state`, the
+/// task engine's too). One root per home is opened once per process.
+fn root() -> Result<&'static effigy_kernel::root::StateRoot, RunnerError> {
+    use std::collections::BTreeMap;
+    use std::sync::{Mutex, OnceLock};
+    static ROOTS: OnceLock<Mutex<BTreeMap<PathBuf, &'static effigy_kernel::root::StateRoot>>> =
+        OnceLock::new();
+    let home = engine::state_home().map_err(error)?;
+    let mut roots = ROOTS
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(root) = roots.get(&home) {
+        return Ok(root);
+    }
+    let operation = effigy_kernel::ctx::OperationContext::new(
+        effigy_kernel::ctx::Deadline::At(Instant::now() + Duration::from_secs(30)),
+        CancelToken::default(),
+        effigy_kernel::ctx::Limits {
+            capture_tail: 1024,
+            log_rotate: 4096,
+            log_keep: 2,
+            line_max: 512,
+            queue_bytes: 2048,
+            probe_concurrency: 2,
+        },
+        effigy_kernel::ctx::EffectClass::Mutate,
+        effigy_kernel::ctx::Placement::Host,
+    );
+    let cx = operation
+        .effects()
+        .map_err(|_| RunnerError::task_invocation("Mutate capability refused"))?;
+    let root: &'static _ = Box::leak(Box::new(engine::state_root(&cx).map_err(error)?));
+    roots.insert(home, root);
+    Ok(root)
 }
 
 fn inside_guest() -> bool {
@@ -516,7 +552,8 @@ impl Held {
         if inside_guest() {
             return None;
         }
-        let env = env_ref(policy).ok()?;
+        // Prepare already minted the checkout identity; a hold never does.
+        let env = EnvRef::for_policy(policy).ok()?;
         let ctx = context().ok()?;
         let session = Session::begin(&ctx, &env, label).ok()?;
         Some(Self {

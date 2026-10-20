@@ -83,13 +83,14 @@ impl LegacyMarkers {
         (expires > now_ms).then(|| Duration::from_millis((expires - now_ms) as u64))
     }
 
-    /// The retention the markers imply: an explicit `container up` left a
-    /// persistent marker; anything else was task-started and held.
+    /// The retention the markers imply. v0.14.1 idle-stopped only a stack
+    /// with a lease and no persistent owner; every other stack stayed up
+    /// until an explicit `down`, so it imports as persistent.
     pub fn retention(&self) -> Retention {
-        if self.persistent.is_some() {
-            Retention::Persistent
-        } else {
+        if self.lease.is_some() && self.persistent.is_none() {
             Retention::Held
+        } else {
+            Retention::Persistent
         }
     }
 
@@ -256,6 +257,14 @@ pub fn import(ctx: &EnvContext<'_>, request: ImportRequest<'_>) -> Result<Import
     }
     let retention = request.markers.retention();
     let mut record = EngineRecord::new(retention, request.project);
+    // Contract 052 §11: a partial without its complete mark imports as a
+    // failed-unknown generation. Only an admission matching the current
+    // inputs may later adopt it; anything else reconciles.
+    if request.markers.complete.is_none() {
+        if let Some((marker, _)) = &request.markers.partial {
+            record.applying = Some(format!("legacy-partial:{}", marker.sha256));
+        }
+    }
     record.imported = Some(LegacyImport {
         markers: request.markers.list(),
         labels: labels.clone(),

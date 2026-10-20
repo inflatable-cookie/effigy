@@ -1255,7 +1255,8 @@ mod tests {
                 Ok(ContainerTaskActivation {
                     policy: policy.clone(),
                     system_was_running: false,
-                    refreshed_host_container_lease: true,
+                    started_held: true,
+                    _hold: None,
                 })
             },
         )
@@ -1338,7 +1339,8 @@ mod tests {
                 Ok(ContainerTaskActivation {
                     policy: policy.clone(),
                     system_was_running: false,
-                    refreshed_host_container_lease: false,
+                    started_held: false,
+                    _hold: None,
                 })
             },
         )

@@ -227,7 +227,7 @@ esac
             }
             let identity = json!([{"Id": "a".repeat(64), "Name": format!("/{}-builder-1", policy.project_name), "State": {"Running": true, "Status": "running"}, "Config": {"Labels": labels}, "Mounts": [{"Type": "bind", "Source": root, "Destination": "/workspace", "RW": true}], "NetworkSettings": {"Ports": {}}}]);
             std::fs::write(root.join("state/identity.json"), identity.to_string()).unwrap();
-            crate::runner::host_container_lease::record_partial_activation(&root, &policy).unwrap();
+            write_legacy_partial_marker(&root, &policy);
         }
         if changed {
             let manifest = root.join("effigy.toml");
@@ -275,8 +275,7 @@ esac
         .unwrap();
         let legacy =
             effigy_containers::load_container_policy(&self.root, Some("linux-release")).unwrap();
-        crate::runner::host_container_lease::record_partial_activation(&self.root, &legacy)
-            .unwrap();
+        write_legacy_partial_marker(&self.root, &legacy);
         // The old admission really predates the shipped declaration change.
         std::fs::write(&manifest, current).unwrap();
         preserve_tree(
@@ -470,6 +469,20 @@ fn preserve_tree(dir: &Path, files: &mut Vec<(PathBuf, Vec<u8>)>) {
     }
 }
 
+/// A v0.14.1 partial-activation receipt, exactly as that release left it.
+/// The builder never reads or rewrites it (contract 052 M3).
+fn write_legacy_partial_marker(root: &Path, policy: &effigy_containers::EffectiveContainerPolicy) {
+    let dir = crate::runner::environment::legacy_marker_dir(root, policy);
+    std::fs::create_dir_all(&dir).unwrap();
+    let context = effigy_containers::policy::admission::generation_context(policy)
+        .unwrap_or_else(|_| json!({"schema": "effigy.container-partial-activation.v2"}));
+    std::fs::write(
+        dir.join(format!("{}.partial.json", policy.name)),
+        serde_json::to_vec_pretty(&context).unwrap(),
+    )
+    .unwrap();
+}
+
 fn write_executable(path: &Path, text: &str) {
     use std::os::unix::fs::PermissionsExt;
     std::fs::write(path, text).unwrap();
@@ -481,16 +494,6 @@ fn changed_input_partial_builder_recovers_through_the_maintained_artifact_task()
     let _lock = crate::contract_test_support::lock_test();
     for backend in ["docker", "colima"] {
         let fixture = Fixture::new(true, true, backend);
-        let error = crate::runner::host_container_lease::retire_stale_detached_admission(
-            &fixture.root,
-            &fixture.policy,
-        )
-        .unwrap_err()
-        .to_string();
-        assert!(
-            error.contains("partial detached activation recorded against different inputs"),
-            "{error}"
-        );
         fixture
             .task()
             .expect("automatic build with original admission retained");
@@ -506,13 +509,6 @@ fn unchanged_partial_completed_and_absent_builders_use_supported_task() {
     let _lock = crate::contract_test_support::lock_test();
     for state in ["partial", "complete", "absent"] {
         let fixture = Fixture::new(state != "absent", false, "docker");
-        if state == "complete" {
-            crate::runner::host_container_lease::mark_detached_activation_complete(
-                &fixture.root,
-                &fixture.policy,
-            )
-            .unwrap();
-        }
         fixture
             .task()
             .unwrap_or_else(|error| panic!("{state}: {error}"));
@@ -710,7 +706,7 @@ fn first_activation_failure_retains_old_output_without_destructive_recovery() {
 }
 
 #[test]
-fn extra_declared_service_and_malformed_retained_admission_refuse() {
+fn extra_declared_service_refuses_and_legacy_receipts_stay_inert() {
     let _lock = crate::contract_test_support::lock_test();
     for mode in ["sibling", "malformed_marker", "foreign_marker"] {
         let mut fixture = Fixture::new(true, true, "docker");
@@ -744,8 +740,17 @@ fn extra_declared_service_and_malformed_retained_admission_refuse() {
                 .unwrap()
                 .1 = content.into_bytes();
         }
-        fixture.task().expect_err(mode);
-        assert!(!fixture.root.join("state/build-effect").exists());
+        if mode == "sibling" {
+            fixture.task().expect_err(mode);
+            assert!(!fixture.root.join("state/build-effect").exists());
+        } else {
+            // A v0.14.1 receipt is inert history: the environment record,
+            // not a marker, retains admission, and the receipt stays as it
+            // was found (contract 052 M3).
+            fixture
+                .task()
+                .unwrap_or_else(|error| panic!("{mode}: {error}"));
+        }
         fixture.assert_preserved();
     }
 }
@@ -753,20 +758,13 @@ fn extra_declared_service_and_malformed_retained_admission_refuse() {
 #[test]
 fn concurrent_admission_or_source_change_refuses_before_exec() {
     let _lock = crate::contract_test_support::lock_test();
-    for mode in ["remove_marker", "change_inputs"] {
-        let mut fixture = Fixture::new(true, true, "docker");
-        fixture.mode(mode);
-        fixture
-            .task()
-            .expect_err("a changing context cannot authorize a build");
-        assert!(!fixture.root.join("state/build-effect").exists());
-        if mode == "remove_marker" {
-            fixture
-                .preserved
-                .retain(|(path, _)| !path.to_string_lossy().ends_with("partial.json"));
-        }
-        fixture.assert_preserved();
-    }
+    let fixture = Fixture::new(true, true, "docker");
+    fixture.mode("change_inputs");
+    fixture
+        .task()
+        .expect_err("a changing context cannot authorize a build");
+    assert!(!fixture.root.join("state/build-effect").exists());
+    fixture.assert_preserved();
 }
 
 #[test]

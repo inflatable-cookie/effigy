@@ -24,7 +24,8 @@ fn retained_admission(
     policy: &effigy_containers::EffectiveContainerPolicy,
 ) -> Option<(u64, Option<String>, Option<String>)> {
     environment::record(policy).and_then(|record| {
-        (record.last_applied.is_some() || record.partial().is_some()).then(|| {
+        let stopped = record.state == effigy_containers::environment::EnvState::Stopped;
+        (!stopped && (record.last_applied.is_some() || record.partial().is_some())).then(|| {
             (
                 record.generation.get(),
                 record.last_applied.clone(),
@@ -83,6 +84,8 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
     {
         return Err(RunnerError::task_invocation(message));
     }
+    // The first Mutate imports v0.14.1 markers into the record (M6).
+    environment::import_legacy(repo_root, &policy)?;
     let mut retained = retained_admission(&policy);
     let mut rows = list_compose_containers_for_policy_including_stopped_with_deadline(
         repo_root,
@@ -138,13 +141,11 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
     )?;
     // The build holds its environment: no transition stops the builder
     // while it executes (R4).
+    // A builder started outside the reconciler has no active record yet; the
+    // build then runs unheld, exactly as before.
     let mut held = environment::Held::begin(repo_root, &policy, "workspace-artifact-build");
     if let Some(held) = held.as_mut() {
-        if !held.attach_active()? {
-            return Err(RunnerError::task_invocation(
-                "workspace artifact builder environment is not active; no build attempted",
-            ));
-        }
+        held.attach_active()?;
     }
     context.verify(repo_root, &policy)?;
     if retained_admission(&policy) != retained {

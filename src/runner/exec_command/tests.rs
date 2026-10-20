@@ -918,7 +918,8 @@ fn activate_exec_surface_uses_repo_root_as_repo_override() {
             Ok(ContainerTaskActivation {
                 policy: surface.policy.clone(),
                 system_was_running: false,
-                refreshed_host_container_lease: true,
+                started_held: true,
+                _hold: None,
             })
         })
         .expect("activation");
@@ -936,7 +937,7 @@ fn activate_exec_surface_uses_repo_root_as_repo_override() {
             effigy_runtime_plan::RuntimeLeasePolicy::RefreshOnActivation,
         ))
     );
-    assert!(activation.refreshed_host_container_lease);
+    assert!(activation.started_held);
 }
 
 #[test]
@@ -968,7 +969,8 @@ fn activate_exec_surface_preserves_skip_lease_policy_for_handoff_sessions() {
                 Ok(ContainerTaskActivation {
                     policy: surface.policy.clone(),
                     system_was_running: true,
-                    refreshed_host_container_lease: false,
+                    started_held: false,
+                    _hold: None,
                 })
             })
             .expect("activation");

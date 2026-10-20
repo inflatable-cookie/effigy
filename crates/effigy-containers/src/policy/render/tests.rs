@@ -77,7 +77,7 @@ fn resolution_is_a_pure_complete_closure_and_prepare_seals_it() {
 }
 #[test]
 fn admission_pins_immutable_inputs_and_refuses_a_new_desired_generation() {
-    let (fixture, checkout, home) = fixture();
+    let (_fixture, checkout, home) = fixture();
     crate::with_test_effigy_home(&home, || {
         let policy = prepare_container_policy(&checkout, Some("one")).unwrap();
         let admission = PolicyAdmission::capture(&policy).unwrap();

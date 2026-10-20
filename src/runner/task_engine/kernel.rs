@@ -90,7 +90,7 @@ pub(super) fn observe() -> ObserveContext {
 }
 
 /// The writable state root, opened once per process for its first run.
-pub(in crate::runner) fn effects_root() -> Result<&'static StateRoot, RunnerError> {
+pub(super) fn effects_root() -> Result<&'static StateRoot, RunnerError> {
     static ROOT: OnceLock<Result<StateRoot, String>> = OnceLock::new();
     ROOT.get_or_init(|| {
         let home = state_home().ok_or_else(|| {

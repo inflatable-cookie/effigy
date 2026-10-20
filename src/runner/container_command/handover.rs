@@ -507,7 +507,7 @@ fn execute_handover(
     )
     .map_err(|error| {
         RunnerError::task_invocation(format!(
-            "{note} failed: {error}. Environment `{}` stays in a state its own `effigy container up` or `effigy container down` recovers",
+            "{note} failed: {error}. Environment `{}` stays in a state its own `effigy container up` or `effigy container down` recovers from",
             target.environment
         ))
     })?;
@@ -1103,12 +1103,9 @@ run = "printf reverse-ok"
     }
 
     #[cfg(unix)]
-    fn handover_target_for(repo_root: &Path, environment: &str) -> PendingHandover {
-        let mut policy = claim_policy(repo_root, None);
-        policy.name = environment.to_owned();
+    fn handover_target_for(_repo_root: &Path, environment: &str) -> PendingHandover {
         PendingHandover {
             environment: environment.to_owned(),
-            policy,
             domains: Vec::new(),
             data_from: false,
         }

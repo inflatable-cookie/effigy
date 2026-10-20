@@ -306,13 +306,12 @@ fn activate_container_runtime_plan_for_task_using(
     if plan.aliases.register_gateway_routes {
         ensure_gateway_ready(repo_root, policy)?;
     }
-    // A stack that was already running needed no bring-up: attach to it.
+    // A stack that was already running needed no bring-up: attach to it. A
+    // stack the reconciler never recorded (a plain exec target started
+    // elsewhere) runs unheld until a bring-up records it.
     if let Some(held) = hold.as_mut() {
-        if !held.holds() && !held.attach_active()? {
-            return Err(RunnerError::task_invocation(format!(
-                "container `{}` is not active after activation; nothing holds it. Run `effigy container up --detach`",
-                policy.name
-            )));
+        if !held.holds() {
+            held.attach_active()?;
         }
     }
     Ok(ContainerTaskActivation {
