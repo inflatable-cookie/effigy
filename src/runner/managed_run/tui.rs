@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use effigy_kernel::ctx::{Deadline, EffectClass};
+use effigy_kernel::ctx::Deadline;
 use effigy_kernel::custody::Stream;
 use effigy_kernel::id::RunId;
 use effigy_kernel::observe::Observed;
@@ -101,10 +101,9 @@ impl RunSource {
 impl Shared {
     /// One turn: supervisor events, then new log bytes for every tab.
     fn pump(&mut self) {
-        let op = task_engine::operation_context(
-            EffectClass::Observe,
-            Deadline::At(Instant::now() + Duration::from_millis(5)),
-        );
+        let op = task_engine::reading_context(Deadline::At(
+            Instant::now() + Duration::from_millis(5),
+        ));
         loop {
             match self.client.event(&op) {
                 Ok(Event::Engine(bytes)) => match wire::decode::<EngineEvent>(&bytes) {

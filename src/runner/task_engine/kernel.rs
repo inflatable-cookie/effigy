@@ -96,13 +96,12 @@ pub(super) fn cleanup() -> Result<CleanupContext, RunnerError> {
         .map_err(|_| RunnerError::task_invocation("task cleanup budget overflow"))
 }
 
+/// A bounded pure read. A signal this process received does not cancel it:
+/// a client that requested a stop keeps reading the run it is settling.
 pub(super) fn observe() -> ObserveContext {
-    operation(
-        EffectClass::Observe,
-        Deadline::At(std::time::Instant::now() + OBSERVE_BUDGET),
-    )
-    .observe()
-    .expect("observe context")
+    reading_context(Deadline::At(std::time::Instant::now() + OBSERVE_BUDGET))
+        .observe()
+        .expect("observe context")
 }
 
 /// A Mutate context for an engine's effects, with the process's own cancel.
@@ -169,12 +168,17 @@ pub(in crate::runner) fn startup_executable() -> Result<Executable, RunnerError>
     executable()
 }
 
-/// An operation context with this process's cancellation.
-pub(in crate::runner) fn operation_context(
-    class: EffectClass,
-    deadline: Deadline,
-) -> OperationContext {
-    operation(class, deadline)
+/// A bounded read that a signal this process received does not cancel: a
+/// front end keeps reading its run's events while the run settles a stop
+/// that the signal requested.
+pub(in crate::runner) fn reading_context(deadline: Deadline) -> OperationContext {
+    OperationContext::new(
+        deadline,
+        CancelToken::default(),
+        LIMITS,
+        EffectClass::Observe,
+        Placement::Host,
+    )
 }
 
 pub(super) fn executable() -> Result<Executable, RunnerError> {

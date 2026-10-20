@@ -170,6 +170,7 @@ pub(in crate::runner) fn own(
     let admitted = session.admitted(&mut run.run_mut());
     if let Err(error) = admitted {
         let message = format!("the managed run could not open its control socket: {error}");
+        session.refused(&message);
         let (_, warnings) = run.close_settled(WorkloadOutcome::NotStarted, SETTLE_BUDGET);
         warn(&warnings);
         return Err(RunnerError::task_invocation(message));

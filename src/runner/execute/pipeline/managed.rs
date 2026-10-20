@@ -421,39 +421,51 @@ fn own_managed_run(
     let preflight = context.preflight;
     let selection = context.selection;
     let token = generate_managed_run_token();
-    let secrets = context.task_secrets()?;
-    let env_schema_resolved = super::standard::resolve_env_schema_if_present(
-        &selection.catalog.catalog_root,
-        preflight.runtime_args_raw.env_schema_override.as_deref(),
-        selection.catalog.manifest.env_schema.as_ref(),
-        None,
-    )?;
-    let role_schema_env = managed_role_schema_env(
-        &preflight.catalogs,
-        &selection.catalog.catalog_root,
-        preflight.runtime_args_raw.env_schema_override.as_deref(),
-    )?;
-    let container_repo_root = context
-        .binding_resolution
-        .exec_working_dir(context.repo())?;
-    let environment = environment_plan(context, &plan, &token, &role_schema_env)?;
-    let target = context.target(&plan.profile);
-    refuse_live_legacy_holder(&target)?;
-    let owned = OwnedRun {
-        target,
-        lock_wait_ms: resolve_lock_wait_ms(preflight.runtime_args_raw.lock_wait_ms)?,
-        admission: selection.task.admission,
-        cwd: preflight.invocation_cwd.clone(),
-        args: preflight.runtime_args_exec.passthrough.clone(),
-        token: token.clone(),
-        task: preflight.selector.task_name.clone(),
-        profile: plan.profile.clone(),
-        environment,
-        fail_on_non_zero: plan.fail_on_non_zero,
-        secrets: secrets
-            .iter()
-            .map(|(_, value)| value.expose().to_owned())
-            .collect(),
+    // Anything that fails before admission is the supervisor's refusal: the
+    // client reports it, and nothing ran.
+    let inputs = (|| -> Result<_, RunnerError> {
+        let secrets = context.task_secrets()?;
+        let env_schema_resolved = super::standard::resolve_env_schema_if_present(
+            &selection.catalog.catalog_root,
+            preflight.runtime_args_raw.env_schema_override.as_deref(),
+            selection.catalog.manifest.env_schema.as_ref(),
+            None,
+        )?;
+        let role_schema_env = managed_role_schema_env(
+            &preflight.catalogs,
+            &selection.catalog.catalog_root,
+            preflight.runtime_args_raw.env_schema_override.as_deref(),
+        )?;
+        let container_repo_root = context
+            .binding_resolution
+            .exec_working_dir(context.repo())?;
+        let environment = environment_plan(context, &plan, &token, &role_schema_env)?;
+        let target = context.target(&plan.profile);
+        refuse_live_legacy_holder(&target)?;
+        let owned = OwnedRun {
+            target,
+            lock_wait_ms: resolve_lock_wait_ms(preflight.runtime_args_raw.lock_wait_ms)?,
+            admission: selection.task.admission,
+            cwd: preflight.invocation_cwd.clone(),
+            args: preflight.runtime_args_exec.passthrough.clone(),
+            token: token.clone(),
+            task: preflight.selector.task_name.clone(),
+            profile: plan.profile.clone(),
+            environment,
+            fail_on_non_zero: plan.fail_on_non_zero,
+            secrets: secrets
+                .iter()
+                .map(|(_, value)| value.expose().to_owned())
+                .collect(),
+        };
+        Ok((secrets, env_schema_resolved, container_repo_root, owned))
+    })();
+    let (secrets, env_schema_resolved, container_repo_root, owned) = match inputs {
+        Ok(inputs) => inputs,
+        Err(error) => {
+            owner.session.refused(&error.to_string());
+            return Err(error);
+        }
     };
     let prepare = |run: &mut TaskRun| -> Result<Vec<WorkloadSpec>, RunnerError> {
         {

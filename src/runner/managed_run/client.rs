@@ -14,7 +14,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use effigy_kernel::ctx::{Deadline, EffectClass, OpenReason};
+use effigy_kernel::ctx::{Deadline, OpenReason};
 use effigy_kernel::custody::Stream;
 use effigy_kernel::id::RunId;
 use effigy_kernel::observe::Observed;
@@ -288,10 +288,7 @@ pub(in crate::runner) fn detach(
 }
 
 fn next_event(client: &mut SupervisorClient) -> Result<Option<Event>, String> {
-    let op = task_engine::operation_context(
-        EffectClass::Observe,
-        Deadline::At(Instant::now() + TURN),
-    );
+    let op = task_engine::reading_context(Deadline::At(Instant::now() + TURN));
     match client.event(&op) {
         Ok(event) => Ok(Some(event)),
         Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => Err(error.to_string()),

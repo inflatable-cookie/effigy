@@ -1343,9 +1343,16 @@ impl EngineSession {
         release_helper_log();
         Ok(())
     }
-    /// Admission refused: the client reports `reason`; nothing ran.
+    /// Admission refused: the client reports `reason`; nothing ran. The
+    /// reason also reaches the client's helper log tail, so a refusal too
+    /// long for one event frame still names itself.
     pub fn refused(&self, reason: &str) {
-        self.emit(&Event::Refused(reason.into()));
+        let _ = writeln!(io::stderr(), "{reason}");
+        let mut end = reason.len().min(3072);
+        while !reason.is_char_boundary(end) {
+            end -= 1;
+        }
+        self.emit(&Event::Refused(reason[..end].into()));
     }
     pub fn active(&self) {
         self.emit(&Event::Active);
