@@ -30,6 +30,11 @@ impl SecretValue {
     pub(crate) fn bytes(&self) -> &[u8] {
         &self.0
     }
+    /// Whether the value is one line: line-framed transports (an env file)
+    /// cannot carry a newline. Reveals nothing else about the value.
+    pub fn is_single_line(&self) -> bool {
+        !self.0.contains(&b'\n')
+    }
     pub fn new(bytes: Vec<u8>) -> io::Result<Self> {
         if bytes.is_empty() || bytes.contains(&0) {
             return Err(io::Error::new(
