@@ -71,10 +71,7 @@ pub(in crate::runner) fn run_remote(
     let selection = crate::runner::environment::backend(task.repo_root, policy);
     let mut adapter =
         ComposeRemote::<effigy_containers::environment::HostCli>::launcher(exec_options(&task));
-    let target = adapter
-        .resolve(&selection, task.container_id, Instant::now() + CALL_TIMEOUT)
-        .map_err(|error| launch_error(&task.label, &error))?
-        .target();
+    let target = adapter.resolve(&selection, task.container_id).target();
     run_remote_with(run, task, &mut adapter, target, &mut || fence(policy))
 }
 

@@ -502,22 +502,47 @@ impl RemoteExecAdapter for Engine {
             "ENGINE_DIR".into(),
             EnvValue::Plain(self.dir.clone().into()),
         );
-        env.insert(
-            "MODEL_WORKLOAD".into(),
-            EnvValue::Plain(cmd.argv.last().cloned().unwrap_or_default()),
-        );
+        // The engine runs the workload apart from its client: in a process
+        // group of its own, holding none of the client's descriptors, reaped
+        // by the engine (a thread here), never by the client.
+        use std::os::unix::process::CommandExt;
+        let mut workload = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg(format!(
+                "{}\necho $? > \"$ENGINE_DIR/exit\"",
+                cmd.argv
+                    .last()
+                    .cloned()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+            ))
+            .env("ENGINE_DIR", &self.dir)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .process_group(0)
+            .spawn()
+            .map_err(|error| {
+                AdapterError(effigy_kernel::observe::UnknownReason::Inconsistent(
+                    error.to_string(),
+                ))
+            })?;
+        std::fs::write(self.dir.join("leader"), workload.id().to_string())
+            .expect("record the workload group");
+        std::thread::spawn(move || {
+            let _ = workload.wait();
+        });
         Ok(ProcessSpec {
+            // The exec client ends with the workload, with its status, or 137
+            // when the engine killed it.
             argv: vec![
                 "/bin/sh".into(),
                 "-c".into(),
                 concat!(
                     "printf '\\036EFFIGY-CUSTODY v1 %s 4242 4242 100 boot-model 401\\n' \"$MODEL_NONCE\" >&2; ",
-                    "echo $$ > \"$ENGINE_DIR/client\"; set -m; ",
-                    // The engine runs the workload apart from the client: it holds none
-                    // of the client's descriptors, so a dead client closes its streams.
-                    "eval \"$MODEL_WORKLOAD\" </dev/null >/dev/null 2>&1 & leader=$!; ",
-                    "echo $leader > \"$ENGINE_DIR/leader.tmp\"; mv \"$ENGINE_DIR/leader.tmp\" \"$ENGINE_DIR/leader\"; ",
-                    "wait $leader"
+                    "echo $$ > \"$ENGINE_DIR/client\"; leader=$(cat \"$ENGINE_DIR/leader\"); ",
+                    "while [ ! -f \"$ENGINE_DIR/exit\" ] && kill -0 \"$leader\" 2>/dev/null; do sleep 0.02; done; ",
+                    "[ -f \"$ENGINE_DIR/exit\" ] && exit \"$(cat \"$ENGINE_DIR/exit\")\"; exit 137"
                 )
                 .into(),
             ],
@@ -720,6 +745,13 @@ fn matrix_owner_death_is_settled_by_the_next_run() {
     });
     assert_eq!(exit.workload, WorkloadOutcome::Interrupted);
     task_run.abandon_for_tests();
+    // A dead owner's killed client is reaped by init; this owner lives on in
+    // the test process, so reap it here as init would.
+    if let Some(client) = matrix.engine.pid("client") {
+        let mut status = 0;
+        // SAFETY: the model's own client, a child of this process.
+        unsafe { libc::waitpid(client, &mut status, 0) };
+    }
     assert!(matrix.engine.alive());
     let successor = begin(&matrix.root, "remote:matrix:owner");
     assert!(!matrix.engine.alive(), "the predecessor's settle stops it");

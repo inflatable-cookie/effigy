@@ -210,14 +210,10 @@ impl<C: BackendCli> ComposeRemote<C> {
     }
 
     /// The exact target for `full_id` on `selection`. Docker's ambient
-    /// default context is resolved to its name once, here, so every later
-    /// call (including recovery in another process) targets the same engine.
-    pub fn resolve(
-        &mut self,
-        selection: &BackendSelection,
-        full_id: &str,
-        deadline: Instant,
-    ) -> Result<RemoteContainer, String> {
+    /// context is resolved to its name once, here, the way the CLI resolves
+    /// it, so every later call (recovery in another process included)
+    /// targets the same engine.
+    pub fn resolve(&self, selection: &BackendSelection, full_id: &str) -> RemoteContainer {
         let ambient = matches!(
             selection.kind,
             BackendKind::DockerDesktop | BackendKind::DockerEngine
@@ -225,24 +221,11 @@ impl<C: BackendCli> ComposeRemote<C> {
             && std::env::var_os("DOCKER_CONTEXT").is_none_or(|value| value.is_empty())
             && std::env::var_os("DOCKER_HOST").is_none_or(|value| value.is_empty());
         let context = if ambient {
-            let output = self.cli.run(
-                "docker",
-                &["context", "show"].map(OsString::from),
-                &[],
-                deadline,
-            )?;
-            let name = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-            if output.code != Some(0) || name.is_empty() || name.contains(char::is_whitespace) {
-                return Err(format!(
-                    "cannot resolve the current Docker context: {}",
-                    String::from_utf8_lossy(&output.stderr).trim()
-                ));
-            }
-            name
+            current_docker_context()
         } else {
             selection.context.clone()
         };
-        Ok(RemoteContainer::new(selection, context, full_id))
+        RemoteContainer::new(selection, context, full_id)
     }
 
     fn inspect(&mut self, container: &RemoteContainer, cx: &OperationContext) -> Observed<State> {
@@ -824,6 +807,23 @@ impl<C: BackendCli> RemoteExecAdapter for ComposeRemote<C> {
             evidence("nonce inventory"),
         )
     }
+}
+
+/// The Docker CLI's current context when neither `DOCKER_CONTEXT` nor
+/// `DOCKER_HOST` names one: `currentContext` in its config, else `default`.
+/// Read from the file the CLI reads, so no engine call is needed.
+fn current_docker_context() -> String {
+    let config = std::env::var_os("DOCKER_CONFIG")
+        .filter(|dir| !dir.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".docker")))
+        .map(|dir| dir.join("config.json"));
+    config
+        .and_then(|path| std::fs::read(path).ok())
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .and_then(|value| value["currentContext"].as_str().map(str::to_owned))
+        .filter(|name| !name.is_empty() && !name.contains(char::is_whitespace))
+        .unwrap_or_else(|| "default".to_owned())
 }
 
 fn host_program(program: &str) -> OsString {
