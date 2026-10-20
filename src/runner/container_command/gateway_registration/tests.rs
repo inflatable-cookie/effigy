@@ -1994,6 +1994,7 @@ else:sys.exit('unexpected private backend operation')
     let lsof = bin.join("lsof");
     std::fs::write(&lsof, "#!/bin/sh\nexit 1\n").unwrap();
     std::fs::set_permissions(&lsof, std::fs::Permissions::from_mode(0o700)).unwrap();
+    std::fs::create_dir(root.join("home")).expect("existing private operator home");
     let _env = crate::contract_test_support::EnvGuard::set_many(&[
         (
             "PATH",
@@ -2101,7 +2102,14 @@ else:sys.exit('unexpected private backend operation')
         });
     }
     baseline.save(&path).unwrap();
-    let persisted = std::fs::read(&path).unwrap();
+    let endpoint_store = effigy_gateway::endpoint_store::EndpointStore::for_routes(&path);
+    let persisted = endpoint_store
+        .read_compatible()
+        .unwrap()
+        .document("routes")
+        .unwrap()
+        .clone();
+    assert!(!path.exists(), "new endpoint state has no JSON writer");
     for (phase, mutation) in [
         (PublicationStage::AfterProbe, "manifest"),
         (PublicationStage::AfterProbe, "compose"),
@@ -2197,9 +2205,17 @@ else:sys.exit('unexpected private backend operation')
             "{error}"
         );
         assert_eq!(
-            std::fs::read(&path).unwrap(),
-            persisted,
-            "own and foreign persisted table must remain byte-exact"
+            endpoint_store
+                .read_compatible()
+                .unwrap()
+                .document("routes")
+                .unwrap(),
+            &persisted,
+            "own and foreign committed route document must remain exact"
+        );
+        assert!(
+            !path.exists(),
+            "refusal must not create a legacy JSON registry"
         );
         // Refusal cannot overwrite the mutated marker or mint a new baseline.
         if mutation == "marker" {

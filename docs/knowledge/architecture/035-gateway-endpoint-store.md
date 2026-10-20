@@ -79,6 +79,10 @@ a SQLite file alone is not proof that its schema is ready. Existing verified
 payloads need no import run, and pure policy observation remains effect-free.
 Unknown state enters the admitted writer's verification/recovery path and never
 falls back to an empty registry.
+Private gateway startup uses the existing 15-second gateway operation budget
+while waiting for verified listener publication, allowing durable import before
+bind/publish. Unverified refusals still fail immediately; the status budget is
+unchanged.
 Policy reads observe routes and loopback assignments from one snapshot without
 admitting writer runs; before import, the same pure read accepts the original
 legacy mapping. Generated Compose allocates only during Prepare. Certificate preparation creates only its directories and

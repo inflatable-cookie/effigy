@@ -4,6 +4,53 @@ use effigy_gateway::loopback::LoopbackRegistry;
 use effigy_gateway::routes::{Route, RouteSource};
 
 #[test]
+fn private_gateway_publication_can_finish_after_the_old_one_second_window() {
+    let operation = effigy_gateway::operator::context(
+        std::time::Duration::from_secs(15),
+        effigy_kernel::ctx::EffectClass::Observe,
+    );
+    let started = std::time::Instant::now();
+    daemon::wait_for_private_gateway_ready_with_probe(&operation, || {
+        if started.elapsed() < std::time::Duration::from_millis(1100) {
+            Err(effigy_gateway::GatewayError::NotRunning)
+        } else {
+            Ok(())
+        }
+    })
+    .expect("durable initialization may exceed one second before verified publication");
+}
+
+#[test]
+fn private_gateway_publication_obeys_its_finite_kernel_budget() {
+    let operation = effigy_gateway::operator::context(
+        std::time::Duration::from_millis(20),
+        effigy_kernel::ctx::EffectClass::Observe,
+    );
+    let error = daemon::wait_for_private_gateway_ready_with_probe(&operation, || {
+        Err(effigy_gateway::GatewayError::NotRunning)
+    })
+    .unwrap_err();
+    assert!(error.to_string().contains("TimedOut"), "{error}");
+}
+
+#[test]
+fn private_gateway_publication_never_retries_an_unverified_permission_refusal() {
+    let operation = effigy_gateway::operator::context(
+        std::time::Duration::from_secs(15),
+        effigy_kernel::ctx::EffectClass::Observe,
+    );
+    let mut probes = 0;
+    let result = daemon::wait_for_private_gateway_ready_with_probe(&operation, || {
+        probes += 1;
+        Err(effigy_gateway::GatewayError::Io(
+            std::io::ErrorKind::PermissionDenied.into(),
+        ))
+    });
+    assert!(result.is_err());
+    assert_eq!(probes, 1);
+}
+
+#[test]
 fn gateway_dir_uses_an_isolated_default_during_unit_tests() {
     let path = gateway_dir().expect("gateway dir");
     assert_eq!(path.file_name().unwrap(), "gateway");

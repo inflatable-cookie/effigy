@@ -378,6 +378,8 @@ During v0.x, MINOR bumps may include breaking changes.
 - Gateway HTTP requests reuse upstream connections with low-latency TCP settings.
   Managed listener ownership is verified at publication and off the request path;
   stopped or replaced generations still refuse traffic, including reused connections.
+- Private gateway startup waits within the 15-second gateway budget for verified
+  listener publication, allowing durable endpoint import on slower filesystems.
 - Concurrent cold container startup initializes endpoint authority before
   Prepare reads policy, avoiding a transient uninitialized kernel-store error.
 - Detached container startup JSON identifies the preparation step and safe
