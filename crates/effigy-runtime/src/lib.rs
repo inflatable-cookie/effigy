@@ -21,6 +21,7 @@ pub(crate) mod test_support {
 
     pub(crate) fn generated_policy(name: &str) -> EffectiveContainerPolicy {
         EffectiveContainerPolicy {
+            render: None,
             repo_root: std::path::PathBuf::from("/tmp"),
             name: name.to_owned(),
             driver: ManifestContainerDriver::Colima,

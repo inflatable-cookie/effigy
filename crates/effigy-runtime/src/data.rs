@@ -580,7 +580,7 @@ where
     ) -> Result<Vec<RegisteredGatewayRoute>, EffigyRuntimeError>,
     FHook: Fn(&Path, &EffectiveContainerPolicy, &str) -> Result<(), EffigyRuntimeError>,
 {
-    let mut policy = load_container_policy(repo_root, name)
+    let mut policy = effigy_containers::prepare_container_policy(repo_root, name)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     let _operation_plan = data_operation_plan(
         repo_root,
@@ -614,7 +614,7 @@ where
     let (creation_policy, workspace_mount_decisions) =
         load_container_policy_for_creation(repo_root, Some(policy.name.as_str()))
             .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
-    policy.compose_files = creation_policy.compose_files;
+    policy = creation_policy;
     validate_container_policy(repo_root, &policy)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     validate_compose_backend_runtime(repo_root, &policy)

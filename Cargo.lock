@@ -924,6 +924,7 @@ dependencies = [
  "effigy-catalog",
  "effigy-core",
  "effigy-gateway",
+ "effigy-kernel",
  "effigy-manifest",
  "nix 0.31.3",
  "serde",

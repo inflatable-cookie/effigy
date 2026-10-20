@@ -141,19 +141,22 @@ catalog = "memcached"
 2. Load matching catalog fragments (project-local > active pack > bundled baseline).
 3. Substitute parameters into fragment templates.
 4. Assemble into a complete compose file.
-5. Write to `.effigy/runtime/compose/<container>.generated.compose.yml`
-   (gitignored). The generated payload and its checksum are per environment,
-   so resolving one environment never rewrites another environment's
-   generated Compose inputs.
-6. If `.effigy/runtime/compose/compose.override.yml` exists, pass both files
-   to Docker Compose (`-f generated.yml -f override.yml`).
-7. Regenerate on manifest change (checksum comparison).
+5. Collect generated Compose, Dockerfiles/configs, shared-service renders,
+   workspace/DNS rewrites, and user overrides in one in-memory kernel closure.
+6. Observe returns the closure's digest and prospective immutable object path;
+   it performs no runtime or Git writes. Prepare publishes through kernel
+   Objects and the backend receives the generation root for asset references.
+7. A changed render creates a new immutable generation. Admission pins the
+   desired object reference; reset drops only its environment's references.
+
+The [container runtime contract](../contracts/005-container-runtime-contract.md)
+owns rendering, migration, export and reset semantics.
 
 ### Catalog distribution
 
 The baseline catalog fragments are **embedded in the Effigy binary**. The
-assembler reads the selected layer and writes the generated Compose file plus
-rendered assets under `.effigy/runtime/compose/.effigy-catalog/`. A consumer
+assembler reads the selected layer and contributes Compose and rendered assets
+to the in-memory closure. Prepare publishes the complete immutable generation. A consumer
 does not need a separate catalog checkout or network access for the baseline.
 
 User customization layers on top:

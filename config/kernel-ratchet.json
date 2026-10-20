@@ -19,10 +19,6 @@
       "std.process.Command.new": 1,
       "std.process.Command.spawn": 1
     },
-    "crates/effigy-catalog/src/output.rs": {
-      "std::fs::remove_file": 2,
-      "std::fs::write": 2
-    },
     "crates/effigy-catalog/src/pack/install.rs": {
       "std::fs::rename": 4
     },
@@ -72,9 +68,6 @@
     "crates/effigy-containers/src/lib.rs": {
       "std::fs::write": 1
     },
-    "crates/effigy-containers/src/policy/inline_workspace.rs": {
-      "std::fs::write": 1
-    },
     "crates/effigy-containers/src/runtime/scope.rs": {
       "std::fs::remove_file": 2,
       "std::fs::rename": 1,
@@ -102,6 +95,9 @@
       "std.process.Command.output": 1
     },
     "crates/effigy-core/src/runtime_dir.rs": {
+      "std.fs.OpenOptions.write": 2
+    },
+    "crates/effigy-core/src/worktree_scope.rs": {
       "std.fs.OpenOptions.write": 2
     },
     "crates/effigy-demo/src/active.rs": {
@@ -574,17 +570,18 @@
       "std::env::remove_var": 4,
       "std::env::set_var": 3
     },
-    "crates/effigy-containers/src/policy/admission.rs": {
-      "std::fs::write": 5
+    "crates/effigy-containers/src/policy/mounts.rs": {
+      "std::fs::write": 1
     },
     "crates/effigy-containers/src/policy/project.rs": {
       "std::fs::write": 5
     },
-    "crates/effigy-containers/src/policy_support/generated_compose.rs": {
-      "std::fs::write": 2
+    "crates/effigy-containers/src/policy/render/tests.rs": {
+      "std::fs::write": 3
     },
-    "crates/effigy-containers/src/runtime/dns.rs": {
-      "std::fs::write": 1
+    "crates/effigy-containers/src/policy_support/generated_compose.rs": {
+      "std.fs.OpenOptions.write": 2,
+      "std::fs::write": 3
     },
     "crates/effigy-containers/src/runtime/port_recovery/tests.rs": {
       "std::fs::write": 3
@@ -638,6 +635,9 @@
       "std.process.Command.output": 6,
       "std.process.Command.status": 1,
       "std::fs::write": 28
+    },
+    "crates/effigy-core/src/worktree_scope.rs": {
+      "std::fs::write": 5
     },
     "crates/effigy-demo/src/tests.rs": {
       "std::fs::write": 1
@@ -813,7 +813,7 @@
       "std::fs::write": 8
     },
     "src/runner/container_command/lifecycle.rs": {
-      "std::fs::write": 20
+      "std::fs::write": 22
     },
     "src/runner/container_command/retire.rs": {
       "std::fs::write": 7

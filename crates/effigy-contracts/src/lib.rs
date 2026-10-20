@@ -770,6 +770,20 @@ fn assert_required_json_contract_keys(schema: &str, payload: &Value) -> Result<(
             }
             Ok(())
         }
+        "effigy.container.render.v1" => {
+            if ["environment", "path", "digest"]
+                .iter()
+                .any(|key| !payload.get(key).is_some_and(Value::is_string))
+                || !payload.get("compose_files").is_some_and(Value::is_array)
+                || !payload
+                    .get("environment_variables")
+                    .is_some_and(Value::is_object)
+                || !payload.get("files").is_some_and(Value::is_array)
+            {
+                return Err(format!("required keys missing for {schema}"));
+            }
+            Ok(())
+        }
         _ => {
             if payload.get("schema").is_none() || payload.get("schema_version").is_none() {
                 return Err(format!("required keys missing for {schema}"));
@@ -857,6 +871,19 @@ fn expand_contract_fixture_tokens(
         replace_contract_token(
             &mut args,
             "<fixture_docs_context>",
+            &fixture.to_string_lossy(),
+        );
+    }
+    if args
+        .iter()
+        .any(|arg| arg.contains("<fixture_container_render>"))
+    {
+        let fixture = create_contract_fixture(fixtures,
+            "[containers]\ndefault='web'\n[containers.web]\nprimary_service='app'\n[containers.web.services.app]\ncatalog='redis'\n")
+            .map_err(|error| error.to_string())?;
+        replace_contract_token(
+            &mut args,
+            "<fixture_container_render>",
             &fixture.to_string_lossy(),
         );
     }

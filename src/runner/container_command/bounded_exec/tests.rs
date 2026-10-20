@@ -518,7 +518,8 @@ fn run_guarded_public_case(
         .env("FAKE_BOUNDED_STDOUT_LIMIT", stdout_limit.to_string())
         .env("FAKE_BOUNDED_DEADLINE_MS", deadline_ms.to_string())
         .env("PATH", path)
-        .env("HOME", home)
+        .env("HOME", &home)
+        .env("EFFIGY_TEST_CONTAINERS_HOME", home.join(".effigy"))
         .env("EFFIGY_COMPOSE_BACKEND", backend)
         .env(
             "EFFIGY_ACTIVE_VERSION",
@@ -610,7 +611,10 @@ fn guarded_public_entry_child() {
                 output_json: mode != "inner-nonzero-secret",
             })
         });
-    assert!(!trace.is_empty(), "public proof must reach a real capture");
+    assert!(
+        !trace.is_empty(),
+        "public proof must reach a real capture: {result:?}"
+    );
     let deadline = trace[0].1.deadline;
     let origin = trace[0].1.origin;
     assert!(

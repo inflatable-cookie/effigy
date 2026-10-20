@@ -17,6 +17,16 @@ Use:
 - [`067-catalog-services-reference.md`](067-catalog-services-reference.md)
   for the shipped service catalog inputs
 
+## Inspect the exact environment render
+
+Run `effigy container render <NAME>` (or add `--json`) to inspect the exact
+Compose files and generated assets, generation path and digest without changing
+runtime state. The reported path is prospective until `container up` prepares
+and publishes that immutable generation. Unassigned ports stay explicit in the
+render. Existing generated files migrate automatically on the next Prepare.
+Reset removes only that environment's references; sibling renders are preserved.
+
+
 ## Start Here
 
 Shortest path:
@@ -619,13 +629,12 @@ Compose spec, not proof that the runtime created or recreated a container or
 applied a mount. Unreadable sources and sources that disappear during
 resolution fail before Compose up.
 
-Effigy generates runtime-owned compose output under:
+Effigy assembles runtime Compose and assets in memory. `container render <env>`
+prints their exact paths under `~/.effigy/state/objects/<digest>`. Prepare
+publishes that complete immutable generation. The former mutable output under
+`.effigy/runtime/compose` is replaced automatically on the next Prepare.
 
-- `.effigy/runtime/compose/<env>.generated.compose.yml` (one payload per
-  environment, with its own regeneration checksum)
-- `.effigy/runtime/compose/.effigy-catalog/<service>/...`
-
-Treat that directory as runtime output, not repo-owned source.
+Treat the object directory as runtime output, not repo-owned source.
 
 Runtime-scoped checkouts — linked Git worktrees and full clones whose local
 Git config sets `effigy.runtimeScope = ephemeral` — get a stable generation
@@ -675,8 +684,9 @@ a foreign owner stays.
 Archive callers that need the identity before the checkout disappears should
 run `effigy container scope --json`. It reports the absolute checkout path,
 scope kind and full generation token without loading a container policy or
-contacting a backend. A scoped checkout with no token yet creates it in the
-private Git directory; a primary checkout or unmarked clone returns kind
+contacting a backend or writing state. A scoped checkout with no prepared
+runtime returns its scope kind and a null token; Prepare establishes the token
+in its private Git directory. A primary checkout or unmarked clone returns kind
 `none` and a null token. Persist the token before archive, then pass it to
 `effigy container retire --scope <token> --yes` if cleanup must be retried
 after the checkout is gone.

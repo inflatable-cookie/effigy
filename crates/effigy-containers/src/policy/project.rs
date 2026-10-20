@@ -63,15 +63,21 @@ pub(crate) fn scope_project_name(
     if share_runtime_identity {
         return Ok(project_name);
     }
-    let Some((kind, scope)) =
-        worktree_scope::load_or_create_scoped(repo_root).map_err(|error| {
-            ContainerPolicyError::TaskInvocation(format!(
-                "cannot establish checkout runtime scope for {}: {error}",
-                repo_root.display()
-            ))
-        })?
+    let Some((kind, scope)) = worktree_scope::load_scoped(repo_root).map_err(|error| {
+        ContainerPolicyError::TaskInvocation(format!(
+            "cannot establish checkout runtime scope for {}: {error}",
+            repo_root.display()
+        ))
+    })?
     else {
-        return Ok(project_name);
+        return Ok(
+            match worktree_scope::scope_kind(repo_root)
+                .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))?
+            {
+                Some(kind) => format!("{project_name}-{}-unprepared", kind.project_tag()),
+                None => project_name,
+            },
+        );
     };
     Ok(format!(
         "{project_name}-{}-{}",
@@ -198,6 +204,7 @@ mod tests {
             )
             .unwrap();
             std::fs::write(private.join("commondir"), "../..\n").unwrap();
+            worktree_scope::prepare_checkout_token(&checkout).unwrap();
             let value = resolve_project_name(&config, "app", "dev", 1, &checkout).unwrap();
             assert_eq!(
                 value,
@@ -236,6 +243,7 @@ mod tests {
             "[effigy]\n\truntimeScope = ephemeral\n",
         )
         .unwrap();
+        worktree_scope::prepare_checkout_token(&marked).unwrap();
         let first = resolve_project_name(&config, "app", "dev", 1, &marked).unwrap();
         assert_eq!(
             first,

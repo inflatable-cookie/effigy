@@ -20,7 +20,7 @@ pub fn validate_container_policy(
         )));
     }
     for compose_file in &policy.compose_files {
-        if !compose_file.is_file() {
+        if policy.read_compose(compose_file).is_err() {
             return Err(ContainerPolicyError::TaskInvocation(format!(
                 "container `{}` compose_file not found: {}",
                 policy.name,
@@ -86,6 +86,7 @@ fn validate_compose_backend_mount_budget(
         return Ok(());
     }
     let Some(estimate) = estimate_primary_service_mount_label_size(
+        policy,
         &policy.compose_files[0],
         &policy.primary_service,
     )?
@@ -136,14 +137,11 @@ struct MountBudgetEntry {
 }
 
 fn estimate_primary_service_mount_label_size(
+    policy: &EffectiveContainerPolicy,
     compose_file: &Path,
     primary_service: &str,
 ) -> Result<Option<PrimaryServiceMountEstimate>, ContainerPolicyError> {
-    let content =
-        std::fs::read_to_string(compose_file).map_err(|error| ContainerPolicyError::Read {
-            path: compose_file.to_path_buf(),
-            error,
-        })?;
+    let content = policy.read_compose(compose_file)?;
     let parsed: serde_yaml::Value = serde_yaml::from_str(&content).map_err(|error| {
         ContainerPolicyError::TaskInvocation(format!(
             "failed to parse compose file {} while estimating nerdctl mount budget: {error}",

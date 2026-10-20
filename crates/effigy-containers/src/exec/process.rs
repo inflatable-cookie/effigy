@@ -32,7 +32,9 @@ pub fn run_command_capture_allow_failure(
     args: &[&str],
 ) -> Result<Output, ContainerExecError> {
     let resolved_program = resolve_host_cli_program(program);
-    Command::new(&resolved_program)
+    let mut command = Command::new(&resolved_program);
+    crate::policy::render::apply_environment(&mut command, args);
+    command
         .current_dir(repo_root)
         .args(args)
         .output()
@@ -64,6 +66,7 @@ pub(super) fn run_command_capture_os_with_env(
     for (key, value) in env {
         command.env(key, value);
     }
+    crate::policy::render::apply_environment(&mut command, args);
     let output = capture_output_after_exit(command, PIPE_EOF_GRACE).map_err(|error| {
         ContainerExecError::Launch {
             command: format!("{program} {}", format_args(args)),
@@ -104,6 +107,7 @@ pub(super) fn run_detached_command_with_env(
     for (key, value) in env {
         command.env(key, value);
     }
+    crate::policy::render::apply_environment(&mut command, args);
     let status = command
         .status()
         .map_err(|error| ContainerExecError::Launch {
@@ -574,6 +578,7 @@ fn spawn_capture_child(
     }
     let resolved_program = resolve_host_cli_program(program);
     let mut command = Command::new(&resolved_program);
+    crate::policy::render::apply_environment(&mut command, args);
     command
         .current_dir(repo_root)
         .args(args)
@@ -603,6 +608,7 @@ fn spawn_stream_child(
 ) -> Result<std::process::Child, std::io::Error> {
     let resolved_program = resolve_host_cli_program(program);
     let mut command = Command::new(&resolved_program);
+    crate::policy::render::apply_environment(&mut command, args);
     command
         .current_dir(repo_root)
         .args(args)

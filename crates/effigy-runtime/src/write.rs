@@ -17,7 +17,7 @@ use crate::signals::run_compose_plan_capture;
 use crate::EffigyRuntimeError;
 pub use planning::select_generated_service_image_refs;
 use planning::{
-    remove_generated_runtime_artifacts, remove_generated_service_images,
+    can_prepare_shutdown, remove_generated_runtime_artifacts, remove_generated_service_images,
     shutdown_container_with_manager_plan,
 };
 use report::{
@@ -221,6 +221,13 @@ where
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     let runtime_running = runtime_backend_is_running(&policy, repo_root)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+    let can_reset = can_prepare_shutdown(repo_root, &policy)?;
+    let policy = if can_reset {
+        effigy_containers::policy::render::prepare_resolved(&policy)
+            .map_err(|e| EffigyRuntimeError::task_invocation(e.to_string()))?
+    } else {
+        policy
+    };
     let preserve_persistent_data = !wipe_data;
     let volume_actions = if policy.compose_source == EffectiveComposeSource::Generated {
         Some(classify_for_reset(
@@ -230,7 +237,7 @@ where
     } else {
         None
     };
-    if runtime_running {
+    if runtime_running && can_reset {
         if preserve_persistent_data {
             let plan = compose_invocation_plan(
                 repo_root,
@@ -254,9 +261,13 @@ where
             run_compose_plan_capture(&policy, &plan)?;
         }
     }
-    remove_generated_runtime_artifacts(repo_root, &policy)?;
-    remove_generated_service_images(repo_root, &policy)?;
-    let removed_gateway_domains = deregister_gateway_routes(&policy)?;
+    let removed_gateway_domains = if can_reset {
+        remove_generated_runtime_artifacts(repo_root, &policy)?;
+        remove_generated_service_images(repo_root, &policy)?;
+        deregister_gateway_routes(&policy)?
+    } else {
+        Vec::new()
+    };
     let mut report = reset_report(
         &policy,
         runtime_running,

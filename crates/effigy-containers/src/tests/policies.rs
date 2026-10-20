@@ -48,13 +48,14 @@ primary_service = "app"
     assert_eq!(policy.dns_domain, None);
     assert!(!policy.dns_tls);
     assert_eq!(policy.dns_port, None);
+    let render = policy.render.as_ref().unwrap();
     assert_eq!(
         policy.compose_files,
         vec![
-            root.join("infra/dev/docker-compose.yml"),
-            root.canonicalize()
-                .expect("canonical fixture checkout")
-                .join(".effigy/runtime/compose/web.ownership.compose.yml"),
+            render.path.join("checkout/infra/dev/docker-compose.yml"),
+            render
+                .path
+                .join("checkout/.effigy/runtime/compose/web.ownership.compose.yml"),
         ]
     );
 }
@@ -96,8 +97,9 @@ mounts = [
     .expect("write compose");
 
     let initially_loaded = load_container_policy(&root, Some("web")).expect("initial policy");
-    let initial_compose =
-        fs::read_to_string(&initially_loaded.compose_files[0]).expect("initial workspace compose");
+    let initial_compose = initially_loaded
+        .read_compose(&initially_loaded.compose_files[0])
+        .expect("initial workspace compose");
     assert!(!initial_compose.contains("/workspace-root/late"));
     assert!(!initial_compose.contains("/workspace-root/absolute-extra"));
 
@@ -106,8 +108,9 @@ mounts = [
 
     let (creation_policy, decisions) =
         load_container_policy_for_creation(&root, Some("web")).expect("creation policy");
-    let created_compose =
-        fs::read_to_string(&creation_policy.compose_files[0]).expect("creation workspace compose");
+    let created_compose = creation_policy
+        .read_compose(&creation_policy.compose_files[0])
+        .expect("creation workspace compose");
     let canonical_late = root.join("late").canonicalize().expect("canonical late");
     let canonical_absolute = absolute_source.canonicalize().expect("canonical absolute");
 
@@ -169,8 +172,9 @@ mounts = ["early:/workspace-root/early:ro"]
 
     let (creation_policy, decisions) =
         load_container_policy_for_creation(&root, Some("web")).expect("creation policy");
-    let created_compose =
-        fs::read_to_string(&creation_policy.compose_files[0]).expect("creation workspace compose");
+    let created_compose = creation_policy
+        .read_compose(&creation_policy.compose_files[0])
+        .expect("creation workspace compose");
 
     assert!(
         !source.exists(),
@@ -182,7 +186,17 @@ mounts = ["early:/workspace-root/early:ro"]
         decisions[0].decision,
         WorkspaceExtraMountDecisionKind::SkippedSourceAbsent
     );
-    assert_eq!(decisions[0].source, source.display().to_string());
+    assert_eq!(
+        decisions[0].source,
+        source
+            .parent()
+            .unwrap()
+            .canonicalize()
+            .unwrap()
+            .join(source.file_name().unwrap())
+            .display()
+            .to_string()
+    );
     assert_eq!(decisions[0].target, "/workspace-root/early");
 }
 
@@ -224,7 +238,9 @@ mounts = ["linked-source:/workspace-root/linked:ro"]
 
     let (policy, decisions) =
         load_container_policy_for_creation(&root, Some("web")).expect("creation policy");
-    let compose = fs::read_to_string(&policy.compose_files[0]).expect("read compose");
+    let compose = policy
+        .read_compose(&policy.compose_files[0])
+        .expect("read compose");
     let canonical = real_source.canonicalize().expect("canonical source");
 
     assert!(compose.contains(&format!(
@@ -311,7 +327,8 @@ mounts = ["late:/var/www/late:ro"]
 
         let (creation_policy, decisions) =
             load_container_policy_for_creation(&root, Some("web")).expect("creation policy");
-        let compose = fs::read_to_string(&creation_policy.compose_files[0])
+        let compose = creation_policy
+            .read_compose(&creation_policy.compose_files[0])
             .expect("creation workspace compose");
         let canonical = root.join("late").canonicalize().expect("canonical source");
         let backend = crate::ContainerManager::defaults();
@@ -434,7 +451,9 @@ mounts = [{ member = "underlay", target = "/workspace-root/underlay" }]
         load_container_policy(&root, Some("stack")).expect("policy")
     };
 
-    let rewritten = fs::read_to_string(&policy.compose_files[0]).expect("rewritten compose");
+    let rewritten = policy
+        .read_compose(&policy.compose_files[0])
+        .expect("rewritten compose");
     assert!(
         rewritten.contains(
             &root
@@ -777,9 +796,9 @@ fn load_inline_workspace_container_policy_writes_compose_and_derives_exec_dir() 
     let policy =
         load_inline_workspace_container_policy(&root, "dev__app", &inline, None).expect("policy");
     assert!(!root.join(".gitignore").exists());
-    assert_eq!(
-        fs::read_to_string(root.join(".git/info/exclude")).expect("exclude"),
-        ".effigy\n"
+    assert!(
+        !root.join(".git/info/exclude").exists(),
+        "resolution must not edit Git exclusions"
     );
     let working_dir =
         resolve_inline_workspace_exec_working_dir(&root, "dev__app", &inline, None).expect("cwd");
@@ -788,18 +807,25 @@ fn load_inline_workspace_container_policy_writes_compose_and_derives_exec_dir() 
     assert_eq!(policy.primary_service, "workspace");
     assert_eq!(policy.compose_source, EffectiveComposeSource::Direct);
     assert_eq!(working_dir, PathBuf::from("/workspace"));
-    assert!(policy.compose_files[0].is_file(), "compose file missing");
-    let compose = fs::read_to_string(&policy.compose_files[0]).expect("read compose");
-    assert!(compose.contains("image: \"node:22\""), "compose: {compose}");
     assert!(
-        compose.contains("working_dir: \"/workspace\""),
+        !policy.compose_files[0].exists(),
+        "inline resolution must not publish files"
+    );
+    let compose = policy
+        .read_compose(&policy.compose_files[0])
+        .expect("read compose");
+    assert!(compose.contains("image: node:22"), "compose: {compose}");
+    assert!(
+        compose.contains("working_dir: /workspace"),
         "compose: {compose}"
     );
     assert!(
-        compose.contains(&root.display().to_string()),
+        compose.contains(&root.canonicalize().unwrap().display().to_string()),
         "compose should use absolute host path: {compose}"
     );
-    let dns_override = fs::read_to_string(&policy.compose_files[1]).expect("read dns override");
+    let dns_override = policy
+        .read_compose(&policy.compose_files[1])
+        .expect("read dns override");
     assert!(
         dns_override.contains("workspace:\n    dns:"),
         "dns override should target workspace service: {dns_override}"

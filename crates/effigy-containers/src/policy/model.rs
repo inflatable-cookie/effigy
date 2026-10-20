@@ -20,6 +20,7 @@ pub enum EffectiveComposeSource {
 
 #[derive(Debug, Clone)]
 pub struct EffectiveContainerPolicy {
+    pub render: Option<super::render::Rendered>,
     pub repo_root: PathBuf,
     pub name: String,
     pub driver: ManifestContainerDriver,
@@ -269,6 +270,7 @@ pub(crate) fn test_policy(repo_root: &std::path::Path) -> EffectiveContainerPoli
     };
 
     EffectiveContainerPolicy {
+        render: None,
         repo_root: repo_root.to_path_buf(),
         name: "hybrid".to_owned(),
         driver: ManifestContainerDriver::Colima,

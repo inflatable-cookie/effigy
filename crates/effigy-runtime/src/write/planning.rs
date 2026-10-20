@@ -11,10 +11,36 @@ use crate::container_manager::{compose_invocation_plan_from_args, runtime_invoca
 use crate::signals::{run_compose_plan_capture, run_runtime_plan_capture};
 use crate::EffigyRuntimeError;
 
+/// An uninitialized scoped checkout has nothing it may stop or reset.
+pub(super) fn can_prepare_shutdown(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<bool, EffigyRuntimeError> {
+    if policy.render.is_some()
+        && effigy_core::worktree_scope::is_runtime_scoped(repo_root)
+            .map_err(|e| EffigyRuntimeError::task_invocation(e.to_string()))?
+        && effigy_core::worktree_scope::load(repo_root)
+            .map_err(|e| EffigyRuntimeError::task_invocation(e.to_string()))?
+            .is_none()
+    {
+        return Ok(false);
+    }
+    Ok(true)
+}
+
 pub(super) fn shutdown_container_with_manager_plan(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> Result<(), EffigyRuntimeError> {
+    if !can_prepare_shutdown(repo_root, policy)? {
+        return Ok(());
+    }
+    if policy.render.is_some() {
+        effigy_core::worktree_scope::prepare_checkout_token(repo_root)
+            .map_err(|e| EffigyRuntimeError::task_invocation(e.to_string()))?;
+        effigy_containers::policy::render::prepare(policy)
+            .map_err(|e| EffigyRuntimeError::task_invocation(e.to_string()))?;
+    }
     for (args, label) in shutdown_compose_commands(policy) {
         let plan = compose_invocation_plan_from_args(
             repo_root,
@@ -32,21 +58,9 @@ pub(super) fn remove_generated_runtime_artifacts(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> Result<(), EffigyRuntimeError> {
-    if policy.compose_source != EffectiveComposeSource::Generated {
-        return Ok(());
-    }
-
-    let runtime_dir = repo_root.join(".effigy/runtime/compose");
-    if !runtime_dir.exists() {
-        return Ok(());
-    }
-
-    std::fs::remove_dir_all(&runtime_dir).map_err(|error| {
-        EffigyRuntimeError::task_invocation(format!(
-            "failed to remove generated runtime directory {}: {error}",
-            runtime_dir.display()
-        ))
-    })
+    let _ = repo_root;
+    effigy_containers::policy::render::reset(policy)
+        .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))
 }
 
 pub(super) fn remove_generated_service_images(

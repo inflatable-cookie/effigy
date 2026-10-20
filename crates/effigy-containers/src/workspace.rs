@@ -16,6 +16,7 @@ mod library_mounts;
 mod ownership;
 #[cfg(test)]
 use compose_rewrite::inject_workspace_service_environment;
+pub(crate) use compose_rewrite::normalize_runtime_rewrite_paths;
 use compose_rewrite::rewrite_workspace_mounts_for_direct_compose;
 pub(crate) use host_integration::{
     build_host_composer_home_mount, build_host_git_config_mount, build_host_mkcert_ca_mount,
@@ -47,7 +48,7 @@ pub(crate) fn materialize_runtime_workspace_mount_rewrite(
     request: WorkspaceComposeRewrite<'_>,
     compose_files: &mut [PathBuf],
     record_optional_extra_mount_decisions: bool,
-    admission: Option<&mut crate::policy::admission::PolicyAdmission>,
+    draft: &mut crate::policy::render::Draft,
 ) -> Result<Vec<WorkspaceExtraMountDecision>, ContainerPolicyError> {
     let Some(source_compose) = compose_files.first().cloned() else {
         return Ok(Vec::new());
@@ -56,7 +57,7 @@ pub(crate) fn materialize_runtime_workspace_mount_rewrite(
         request,
         &source_compose,
         record_optional_extra_mount_decisions,
-        admission,
+        draft,
     )?;
     compose_files[0] = rewritten;
     Ok(decisions)

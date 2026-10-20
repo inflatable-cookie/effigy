@@ -57,6 +57,7 @@ pub(super) fn create_linked_worktree_fixture(
                     checkout.to_str().expect("fixture path is UTF-8"),
                 ],
             );
+            effigy_core::worktree_scope::prepare_checkout_token(&checkout).unwrap();
             checkout
         })
         .collect();
@@ -171,7 +172,7 @@ host_ports = ["41001:41001"]
         for (name, checkout) in ["one", "two"].into_iter().zip(&checkouts) {
             assert_linked_worktree_git_layout(&primary, checkout, name);
             let policy = load_prepared_policy(checkout, None).unwrap();
-            let compose = fs::read_to_string(&policy.compose_files[0]).unwrap();
+            let compose = policy.read_compose(&policy.compose_files[0]).unwrap();
             assert!(
                 compose.contains(&checkout.display().to_string()),
                 "{compose}"
@@ -218,7 +219,7 @@ routes = [
 catalog = "workspace-rust-bun"
 "#;
         let (primary, checkouts) = create_linked_worktree_fixture(&root, manifest, &["one", "two"]);
-        let primary_policy = load_container_policy(&primary, None).unwrap();
+        let primary_policy = load_prepared_policy(&primary, None).unwrap();
         assert_eq!(primary_policy.dns_domain.as_deref(), Some("app.test"));
         assert_eq!(primary_policy.dns_routes[0].declared(), "app.test");
         assert_eq!(primary_policy.dns_routes[0].domain, "app.test");
@@ -228,7 +229,7 @@ catalog = "workspace-rust-bun"
             assert_linked_worktree_git_layout(&primary, checkout, name);
             let (policy, inventory_calls) = crate::policy_support::with_test_loopback_inventory(
                 fixture_inventory(&preceding_policies),
-                || load_container_policy(checkout, None).unwrap(),
+                || load_prepared_policy(checkout, None).unwrap(),
             );
             assert_eq!(
                 inventory_calls, 1,
@@ -238,8 +239,8 @@ catalog = "workspace-rust-bun"
             assert_ne!(policy.dns_routes[0].domain, "app.test");
             assert!(policy.dns_routes[0].domain.contains("-w"));
             assert!(policy.dns_routes[1].domain.starts_with("mail.app-w"));
-            assert!(policy.compose_files[0].is_file());
-            let compose = fs::read_to_string(&policy.compose_files[0]).unwrap();
+            assert!(policy.read_compose(&policy.compose_files[0]).is_ok());
+            let compose = policy.read_compose(&policy.compose_files[0]).unwrap();
             assert!(compose.contains("com.effigy.scope"), "{compose}");
             effective.push(policy.dns_routes[0].domain.clone());
             preceding_policies.push(policy);
@@ -379,6 +380,7 @@ tls = true
             &clone,
             &["config", "--local", "effigy.runtimeScope", "ephemeral"],
         );
+        effigy_core::worktree_scope::prepare_checkout_token(&clone).unwrap();
         let (clone_policy, _) = crate::policy_support::with_test_loopback_inventory(
             fixture_inventory(&preceding_policies),
             || load_container_policy(&clone, None).unwrap(),
@@ -504,7 +506,7 @@ host_ports = ["41001:41001"]
                 .managed_volumes
                 .iter()
                 .all(|volume| volume.name.starts_with(&policy.project_name)));
-            let compose = fs::read_to_string(&policy.compose_files[0]).unwrap();
+            let compose = policy.read_compose(&policy.compose_files[0]).unwrap();
             assert!(compose.contains("com.effigy.scope"), "{compose}");
             identities.push((policy.project_name.clone(), policy.declared_ports.clone()));
         }
@@ -609,13 +611,14 @@ catalog = "workspace-rust-bun"
             )
             .unwrap();
             fs::write(checkout.join("effigy.toml"), manifest).unwrap();
+            effigy_core::worktree_scope::prepare_checkout_token(&checkout).unwrap();
             let policy = load_container_policy(&checkout, None).unwrap();
             assert_eq!(policy.dns_routes[0].declared(), "app.test");
             assert_ne!(policy.dns_routes[0].domain, "app.test");
             assert!(policy.dns_routes[0].domain.contains("-w"));
             assert!(policy.dns_routes[1].domain.starts_with("mail.app-w"));
-            assert!(policy.compose_files[0].is_file());
-            let compose = fs::read_to_string(&policy.compose_files[0]).unwrap();
+            assert!(policy.read_compose(&policy.compose_files[0]).is_ok());
+            let compose = policy.read_compose(&policy.compose_files[0]).unwrap();
             assert!(compose.contains("com.effigy.scope"), "{compose}");
             effective.push(policy.dns_routes[0].domain.clone());
         }
@@ -718,7 +721,6 @@ primary_service = "app"
 }
 
 #[test]
-#[ignore = "known v0.15 rebuild defect: papercut 1a8e71ca-e3ee-4017-91b2-bd3085304d3f; owner lane v015-environment; must-fix (all platforms and lanes)"]
 fn load_container_policy_generates_compose_from_catalog_services() {
     with_temp_effigy_home("catalog-services", |_| {
         let _lock = crate::test_env_lock();
@@ -762,10 +764,12 @@ variant = "default"
             policy.compose_file_display
         );
 
-        let compose_path = root.join(".effigy/runtime/compose/web.generated.compose.yml");
+        let compose_path = policy.compose_files[0].clone();
         assert_eq!(policy.compose_files[0], compose_path);
         assert!(compose_path.exists(), "generated compose file should exist");
-        let dns_override = fs::read_to_string(&policy.compose_files[1]).expect("read dns override");
+        let dns_override = policy
+            .read_compose(&policy.compose_files[1])
+            .expect("read dns override");
         assert!(
             dns_override.contains("app:\n    dns:"),
             "dns override should target app service: {dns_override}"
@@ -779,11 +783,13 @@ variant = "default"
             "dns override should include route parity hosts: {dns_override}"
         );
         assert!(
-            dns_override.contains("\"clientname.test:192.168.5.2\""),
+            dns_override.contains("clientname.test:192.168.5.2"),
             "dns override should route project hostnames to the Colima gateway: {dns_override}"
         );
 
-        let compose = fs::read_to_string(compose_path).expect("read generated compose");
+        let compose = policy
+            .read_compose(&compose_path)
+            .expect("read generated compose");
         assert!(compose.contains("services:"));
         assert!(compose.contains("app:"));
         assert!(compose.contains("web:"));
@@ -900,17 +906,24 @@ variant = "default"
             let _lock = crate::test_env_lock();
             load_container_policy(&root, None).expect("policy")
         };
-        let compose = fs::read_to_string(&policy.compose_files[0]).expect("read compose");
+        let compose = policy
+            .read_compose(&policy.compose_files[0])
+            .expect("read compose");
         let canonical_root = root.canonicalize().expect("canonical root");
         let canonical_platform = platform.canonicalize().expect("canonical platform");
-        let runtime_compose_dir = root.join(".effigy/runtime/compose");
+        let runtime_compose_dir = policy
+            .render
+            .as_ref()
+            .unwrap()
+            .path
+            .join("checkout/.effigy/runtime/compose");
 
         assert_eq!(policy.compose_source, EffectiveComposeSource::Generated);
         assert_eq!(policy.project_name, "workspace-app-reference-web-dev");
         assert!(policy.compose_files[0].starts_with(&runtime_compose_dir));
         assert!(
-            policy.compose_files[0].exists(),
-            "runtime compose path should exist"
+            !policy.compose_files[0].exists(),
+            "observed runtime compose path is not published"
         );
         assert!(
             policy
@@ -968,9 +981,9 @@ variant = "default"
         .expect("write manifest");
 
         let policy = load_container_policy(&root, None).expect("policy");
-        let compose =
-            fs::read_to_string(root.join(".effigy/runtime/compose/web.generated.compose.yml"))
-                .expect("compose");
+        let compose = policy
+            .read_compose(&policy.compose_files[0])
+            .expect("compose");
 
         assert!(compose.contains("127.0.0.1:18080:80"), "{compose}");
         assert!(compose.contains("127.0.0.1:13306:3306"), "{compose}");
@@ -1016,9 +1029,9 @@ variant = "default"
         .expect("write manifest");
 
         let policy = load_prepared_policy(&root, None).expect("policy");
-        let compose =
-            fs::read_to_string(root.join(".effigy/runtime/compose/web.generated.compose.yml"))
-                .expect("compose");
+        let compose = policy
+            .read_compose(&policy.compose_files[0])
+            .expect("compose");
 
         assert!(compose.contains("0.0.0.0:18080:80"), "{compose}");
         assert!(
@@ -1183,9 +1196,9 @@ catalog = "phpmyadmin"
         .expect("write manifest");
 
         let policy = load_prepared_policy(&root, None).expect("policy");
-        let compose =
-            fs::read_to_string(root.join(".effigy/runtime/compose/web.generated.compose.yml"))
-                .expect("read generated compose");
+        let compose = policy
+            .read_compose(&policy.compose_files[0])
+            .expect("read generated compose");
 
         let http_ports = policy
             .declared_ports
@@ -1242,9 +1255,9 @@ catalog = "minio"
         .expect("write manifest");
 
         let policy = load_prepared_policy(&root, None).expect("policy");
-        let compose =
-            fs::read_to_string(root.join(".effigy/runtime/compose/stack.generated.compose.yml"))
-                .expect("compose");
+        let compose = policy
+            .read_compose(&policy.compose_files[0])
+            .expect("compose");
 
         assert!(!compose.contains("127.1.0.1:5432:5432"), "{compose}");
         assert!(!compose.contains("127.1.0.1:1025:1025"), "{compose}");
@@ -1378,7 +1391,9 @@ container = "web"
         .expect("write manifest");
 
         let policy = load_container_policy(&root, Some("web")).expect("policy");
-        let compose = fs::read_to_string(&policy.compose_files[0]).expect("read compose");
+        let compose = policy
+            .read_compose(&policy.compose_files[0])
+            .expect("read compose");
 
         assert!(
             compose.contains("working_dir: /var/www/html")
@@ -1436,7 +1451,9 @@ working_dir = "/var/www/html"
         let policy = with_test_host_composer_home(Some(&host_composer_home), || {
             load_container_policy(&root, Some("web")).expect("policy")
         });
-        let rewritten = fs::read_to_string(&policy.compose_files[0]).expect("read compose");
+        let rewritten = policy
+            .read_compose(&policy.compose_files[0])
+            .expect("read compose");
 
         assert!(
             rewritten.contains(&format!(
@@ -1484,7 +1501,9 @@ working_dir = "/var/www/html"
         assert!(!home.join("shared/composer-cache").exists());
         crate::policy::mounts::prepare_container_mount_sources(&policy).expect("prepare cache");
         assert!(home.join("shared/composer-cache").is_dir());
-        let rewritten = fs::read_to_string(&policy.compose_files[0]).expect("read compose");
+        let rewritten = policy
+            .read_compose(&policy.compose_files[0])
+            .expect("read compose");
 
         assert!(
             !rewritten.contains(&format!(
@@ -1535,7 +1554,9 @@ working_dir = "/var/www/html"
         .expect("write manifest");
 
         let policy = load_container_policy(&root, Some("web")).expect("policy");
-        let rewritten = fs::read_to_string(&policy.compose_files[0]).expect("read compose");
+        let rewritten = policy
+            .read_compose(&policy.compose_files[0])
+            .expect("read compose");
 
         assert!(
             !rewritten.contains(":/home/dev/.config/composer"),
@@ -1608,7 +1629,9 @@ working_dir = "/var/www/html"
         let policy = with_test_host_composer_home(Some(&host_composer_home), || {
             load_prepared_policy(&root, Some("web")).expect("policy")
         });
-        let rewritten = fs::read_to_string(&policy.compose_files[0]).expect("read compose");
+        let rewritten = policy
+            .read_compose(&policy.compose_files[0])
+            .expect("read compose");
 
         assert!(
             rewritten.contains(&format!(
@@ -1688,20 +1711,22 @@ variant = "default"
         assert_eq!(shared.catalog, "mariadb");
         assert_eq!(shared.container_port, 3306);
 
-        let compose =
-            fs::read_to_string(root.join(".effigy/runtime/compose/web.generated.compose.yml"))
-                .expect("compose");
+        let compose = policy
+            .read_compose(&policy.compose_files[0])
+            .expect("compose");
         assert!(!compose.contains("\n  db:\n"));
         assert!(compose.contains("DB_HOST: host.docker.internal"));
         assert!(compose.contains(&format!("DB_PORT: '{}'", shared.host_port)));
 
         assert!(shared.compose_file.exists());
-        let shared_compose = fs::read_to_string(&shared.compose_file).expect("read shared compose");
+        let shared_compose = policy
+            .read_compose(&shared.compose_file)
+            .expect("read shared compose");
         assert!(
             shared_compose.contains(&format!("127.0.0.1:{}:3306", shared.host_port)),
             "shared compose should bind the runtime host port to loopback: {shared_compose}"
         );
-        assert!(home
+        assert!(!home
             .join("shared-services")
             .join(&shared.project_name)
             .join(format!("{}.generated.compose.yml", shared.project_name))
@@ -1769,7 +1794,9 @@ variant = "default"
 
         let policy = load_prepared_policy(&root, None).expect("policy");
         let shared = &policy.shared_services[0];
-        let shared_compose = fs::read_to_string(&shared.compose_file).expect("read shared compose");
+        let shared_compose = policy
+            .read_compose(&shared.compose_file)
+            .expect("read shared compose");
 
         assert!(
             !shared_compose.contains("127.1.0.1:3306:3306"),
@@ -1845,7 +1872,9 @@ services:
     assert!(policy.compose_files[0].ends_with("infra/dev/docker-compose.yml"));
     assert!(policy.compose_files[1].ends_with(".effigy/runtime/compose/web.ownership.compose.yml"));
     assert!(policy.compose_files[2].ends_with(".effigy/runtime/dns/web.compose.override.yml"));
-    let dns_override = fs::read_to_string(&policy.compose_files[2]).expect("read dns override");
+    let dns_override = policy
+        .read_compose(&policy.compose_files[2])
+        .expect("read dns override");
     assert!(
         dns_override.contains("app:\n    dns:"),
         "dns override should target app service: {dns_override}"
@@ -1855,11 +1884,11 @@ services:
         "dns override should target db service: {dns_override}"
     );
     assert!(
-        dns_override.contains("\"1.1.1.1\""),
+        dns_override.contains("1.1.1.1"),
         "dns override: {dns_override}"
     );
     assert!(
-        dns_override.contains("\"8.8.8.8\""),
+        dns_override.contains("8.8.8.8"),
         "dns override: {dns_override}"
     );
     assert!(
@@ -1869,7 +1898,6 @@ services:
 }
 
 #[test]
-#[ignore = "known v0.15 rebuild defect: papercut 1a8e71ca-e3ee-4017-91b2-bd3085304d3f; owner lane v015-environment; must-fix (all platforms and lanes)"]
 fn generated_compose_runtime_dns_override_uses_explicit_alias_base_domain() {
     let _lock = crate::test_env_lock();
     let root = temp_repo("generated-compose-route-parity");
@@ -1905,30 +1933,31 @@ catalog = "mailpit"
     let policy = load_container_policy(&root, None).expect("policy");
 
     assert_eq!(policy.compose_files.len(), 2);
-    let dns_override = fs::read_to_string(&policy.compose_files[1]).expect("read dns override");
+    let dns_override = policy
+        .read_compose(&policy.compose_files[1])
+        .expect("read dns override");
     assert!(
-        dns_override.contains("\"s3.acme.test:192.168.5.2\""),
+        dns_override.contains("s3.acme.test:192.168.5.2"),
         "dns override should include first route domain: {dns_override}"
     );
     assert!(
-        dns_override.contains("\"api.s3.acme.test:192.168.5.2\""),
+        dns_override.contains("api.s3.acme.test:192.168.5.2"),
         "dns override should include explicit subdomain routes: {dns_override}"
     );
     assert!(
-        dns_override.contains("postgres:\n    dns:")
-            && dns_override.contains("\"postgres.acme.test\""),
+        dns_override.contains("postgres:\n    dns:") && dns_override.contains("postgres.acme.test"),
         "dns override should use the configured alias base domain for postgres: {dns_override}"
     );
     assert!(
-        dns_override.contains("mailpit:\n    dns:") && dns_override.contains("\"smtp.acme.test\""),
+        dns_override.contains("mailpit:\n    dns:") && dns_override.contains("smtp.acme.test"),
         "dns override should include mailpit network alias domains: {dns_override}"
     );
     assert!(
-        !dns_override.contains("\"postgres.acme.test:192.168.5.2\""),
+        !dns_override.contains("postgres.acme.test:192.168.5.2"),
         "TCP service aliases must not point back at the host gateway: {dns_override}"
     );
     assert!(
-        !dns_override.contains("\"smtp.acme.test:192.168.5.2\""),
+        !dns_override.contains("smtp.acme.test:192.168.5.2"),
         "TCP service aliases must not point back at the host gateway: {dns_override}"
     );
 }
@@ -1999,13 +2028,22 @@ volumes:
     .expect("compose");
 
     let policy = load_container_policy(&root, None).expect("policy");
-    let rewritten =
-        fs::read_to_string(&policy.compose_files[0]).expect("read rewritten workspace compose");
-    let expected_rewrite_path = root.join(".effigy/runtime/compose/stack.workspace.compose.yml");
+    let rewritten = policy
+        .read_compose(&policy.compose_files[0])
+        .expect("read rewritten workspace compose");
+    let expected_rewrite_path = policy
+        .render
+        .as_ref()
+        .unwrap()
+        .path
+        .join("checkout/.effigy/runtime/compose/stack.workspace.compose.yml");
     let canonical_root = root.canonicalize().expect("canonical repo root");
 
     assert_eq!(policy.compose_files[0], expected_rewrite_path);
-    assert!(expected_rewrite_path.exists(), "rewrite path should exist");
+    assert!(
+        !expected_rewrite_path.exists(),
+        "observation does not publish the rewrite"
+    );
     assert!(
         rewritten.contains(":/workspace-root/workspace-app-reference"),
         "rewritten compose: {rewritten}"
@@ -2097,8 +2135,9 @@ working_dir = "/var/www/html"
     .expect("write manifest");
 
     let policy = load_container_policy(&root, Some("web")).expect("policy");
-    let rewritten =
-        fs::read_to_string(&policy.compose_files[0]).expect("read rewritten workspace compose");
+    let rewritten = policy
+        .read_compose(&policy.compose_files[0])
+        .expect("read rewritten workspace compose");
 
     assert!(
         rewritten.contains("efv-"),
@@ -2153,7 +2192,7 @@ catalog = "node"
             .declared_ports
             .iter()
             .any(|port| port.starts_with(crate::policy::ports::UNASSIGNED_PORT_LABEL)));
-        let compose = fs::read_to_string(&read.compose_files[0]).unwrap();
+        let compose = read.read_compose(&read.compose_files[0]).unwrap();
         assert!(compose.contains(crate::policy::ports::UNASSIGNED_PORT_EXPRESSION));
         let again = load_container_policy(&root, None).unwrap();
         assert_eq!(read.declared_ports, again.declared_ports);
@@ -2220,6 +2259,56 @@ catalog = "node"
         assert_eq!(
             registry.assigned_port("legacy-ports", "second", 3000),
             Some(8130)
+        );
+    });
+}
+
+#[test]
+fn loopback_reads_do_not_allocate_and_explicit_ports_still_prepare() {
+    with_temp_effigy_home("loopback-read-prepare", |home| {
+        let _lock = crate::test_env_lock();
+        let fixture = tempfile::tempdir().expect("private checkout");
+        let root = fixture.path().canonicalize().expect("canonical checkout");
+        fs::write(
+            root.join("effigy.toml"),
+            r#"
+[containers]
+default = "web"
+[containers.web]
+primary_service = "app"
+[containers.web.host]
+ports = ["41001:3000"]
+[containers.web.services.app]
+catalog = "node"
+"#,
+        )
+        .expect("manifest");
+        let registry_path = home.join("gateway/loopback-ips.json");
+        let (_, probes) =
+            crate::policy_support::with_test_loopback_inventory(fixture_inventory(&[]), || {
+                let policy = load_container_policy(&root, None).expect("read policy");
+                assert_eq!(policy.declared_ports, ["41001:3000"]);
+                assert!(!registry_path.exists());
+                assert!(!home.join("gateway/loopback-ips.lock").exists());
+                crate::policy::ports::prepare_container_policy_ports(&policy).expect("prepare");
+            });
+        assert_eq!(probes, 0, "empty registry needs no runtime inventory");
+        let before = fs::read(&registry_path).expect("prepared loopback");
+        let (_, probes) =
+            crate::policy_support::with_test_loopback_inventory(fixture_inventory(&[]), || {
+                let policy = load_container_policy(&root, None).expect("read prepared policy");
+                crate::policy::ports::prepare_container_policy_ports(&policy)
+                    .expect("repeat prepare");
+                load_container_policy(&root, None).expect("repeat read");
+            });
+        assert_eq!(probes, 0, "reads and stable Prepare must not inventory");
+        assert_eq!(
+            fs::read(&registry_path).expect("unchanged registry"),
+            before
+        );
+        assert!(
+            !home.join("ports.json").exists(),
+            "explicit ports need no allocation"
         );
     });
 }

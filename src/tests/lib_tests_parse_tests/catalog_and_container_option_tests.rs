@@ -1784,3 +1784,23 @@ fn parse_service_pack_workspace_preparation_requires_a_local_candidate() {
     )
     .is_err());
 }
+
+#[test]
+fn parse_container_render_supports_action_first_and_named_forms() {
+    for args in [
+        vec!["container", "render", "web", "--json"],
+        vec!["container", "web", "render", "--json"],
+    ] {
+        assert_eq!(
+            parse_command(args.into_iter().map(str::to_owned)).unwrap(),
+            Command::Container(ContainerArgs {
+                subcommand: ContainerSubcommand::Render {
+                    name: Some("web".into())
+                },
+                repo_override: None,
+                output_json: true,
+            })
+        );
+    }
+    assert!(parse_command(["container", "render", "web", "other"].map(str::to_owned)).is_err());
+}

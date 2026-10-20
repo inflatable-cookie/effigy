@@ -16,9 +16,9 @@ pub(super) fn parse_container_command<I>(args: I) -> Result<Command, CliParseErr
 where
     I: IntoIterator<Item = String>,
 {
-    const ACTIONS: [&str; 16] = [
+    const ACTIONS: [&str; 17] = [
         "up", "down", "status", "stats", "logs", "shell", "reset", "cache", "volume", "data",
-        "profile", "eject", "hosts", "retire", "scope", "ports",
+        "profile", "eject", "hosts", "retire", "scope", "ports", "render",
     ];
 
     let mut args = args.into_iter();
@@ -40,6 +40,7 @@ where
     };
 
     match action.as_str() {
+        "render" => parse_container_render(name, args),
         "up" => parse_container_up(name, args),
         "down" => parse_container_down(name, args),
         "status" => parse_container_status(name, args),
@@ -229,6 +230,29 @@ where
 
     Ok(Command::Container(ContainerArgs {
         subcommand: ContainerSubcommand::Stats { global },
+        repo_override,
+        output_json,
+    }))
+}
+
+fn parse_container_render<I>(mut name: Option<String>, args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_override = None;
+    let mut output_json = false;
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
+            other if !other.starts_with('-') && name.is_none() => name = Some(arg),
+            _ => return Err(unknown_argument(arg)),
+        }
+    }
+    Ok(Command::Container(ContainerArgs {
+        subcommand: ContainerSubcommand::Render { name },
         repo_override,
         output_json,
     }))

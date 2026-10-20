@@ -55,8 +55,10 @@ use crate::runner::runtime_session_context::{LeaseRefreshPolicy, RuntimeSessionC
 // deadlines still bound both phases without being extended.
 pub(in crate::runner) const OWNED_EXEC_VERIFICATION_TIMEOUT: Duration = Duration::from_secs(15);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug)]
 pub(in crate::runner) struct ContainerTaskActivation {
+    /// The immutable snapshot used by every activation stage and its exec caller.
+    pub(in crate::runner) policy: EffectiveContainerPolicy,
     pub(in crate::runner) system_was_running: bool,
     pub(in crate::runner) refreshed_host_container_lease: bool,
 }
@@ -116,6 +118,8 @@ pub(in crate::runner) fn activate_container_runtime_for_task(
     policy: &EffectiveContainerPolicy,
     request: ActivationRequest<'_>,
 ) -> Result<ContainerTaskActivation, RunnerError> {
+    let prepared = effigy_containers::policy::render::prepare_resolved(policy)?;
+    let policy = &prepared;
     let plan = runtime_activation_plan_from_request(repo_root, policy, request);
     activate_container_runtime_plan_for_task_using(
         &plan,
@@ -275,6 +279,7 @@ fn activate_container_runtime_plan_for_task_using(
         refresh_host_container_lease,
     )?;
     Ok(ContainerTaskActivation {
+        policy: policy.clone(),
         system_was_running,
         refreshed_host_container_lease,
     })
@@ -911,7 +916,7 @@ fn load_services_depending_on_primary(
 ) -> Result<Vec<String>, RunnerError> {
     let mut services = Vec::new();
     for compose_file in &policy.compose_files {
-        let raw = match std::fs::read_to_string(compose_file) {
+        let raw = match policy.read_compose(compose_file) {
             Ok(text) => text,
             Err(_) => continue,
         };
@@ -968,7 +973,7 @@ fn prepare_host_bind_mount_dirs(
 ) -> Result<(), RunnerError> {
     let runtime_data_root = repo_root.join(".effigy/runtime/data");
     for compose_file in &policy.compose_files {
-        let raw = match std::fs::read_to_string(compose_file) {
+        let raw = match policy.read_compose(compose_file) {
             Ok(text) => text,
             Err(_) => continue,
         };

@@ -10,7 +10,6 @@ use effigy_containers::EffectiveContainerPolicy;
 use effigy_ui::style_text;
 use effigy_ui::theme::{resolve_color_enabled, Theme};
 use effigy_ui::OutputMode;
-use sha2::{Digest, Sha256};
 use std::io::IsTerminal;
 
 use super::error::RunnerError;
@@ -21,7 +20,6 @@ const HOST_CONTAINER_LEASE_FALLBACK_DIR: &str = ".effigy/runtime/host-container-
 const HOST_CONTAINER_LEASE_SCHEMA: &str = "effigy.host-container-lease.v1";
 const DEFAULT_HOST_CONTAINER_LEASE_TIMEOUT_SECS: u64 = 300;
 const DISABLE_HOST_CONTAINER_LEASE_ENV: &str = "EFFIGY_DISABLE_HOST_CONTAINER_LEASE";
-const PARTIAL_ACTIVATION_SCHEMA: &str = "effigy.container-partial-activation.v2";
 const HANDOVER_RECORD_SCHEMA: &str = "effigy.container-handover.v1";
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -175,15 +173,31 @@ pub(super) fn clear_host_container_lease(
 #[derive(Debug)]
 pub(in crate::runner) struct DetachedActivationContext {
     value: serde_json::Value,
+    published: bool,
     pub(in crate::runner) marker_required: bool,
 }
 
+#[cfg(test)]
 pub(in crate::runner) fn capture_detached_activation_context(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> Result<DetachedActivationContext, RunnerError> {
     Ok(DetachedActivationContext {
         value: partial_activation_context(repo_root, policy)?,
+        published: true,
+        marker_required: false,
+    })
+}
+
+/// Execution-only recovery compares current source render references while
+/// retaining the stack's original admitted generation.
+pub(in crate::runner) fn capture_workspace_builder_context(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<DetachedActivationContext, RunnerError> {
+    Ok(DetachedActivationContext {
+        value: partial_activation_context(repo_root, policy)?,
+        published: false,
         marker_required: false,
     })
 }
@@ -201,7 +215,8 @@ pub(in crate::runner) fn retained_detached_activation_context(
     let value = serde_json::from_str(&raw)
         .map_err(|error| RunnerError::task_invocation_failed_parse(&path, error))?;
     let context = DetachedActivationContext {
-        value,
+        value: effigy_containers::policy::admission::normalize_context(value, policy)?,
+        published: true,
         marker_required: true,
     };
     context.verify(repo_root, policy, true)?;
@@ -215,6 +230,7 @@ impl DetachedActivationContext {
     ) -> Result<Self, RunnerError> {
         Ok(Self {
             value: admission.context_for_policy(policy)?,
+            published: true,
             marker_required: admission.marker_required(),
         })
     }
@@ -225,6 +241,18 @@ impl DetachedActivationContext {
         require_marker: bool,
     ) -> Result<(), RunnerError> {
         let verified = (|| -> Result<bool, RunnerError> {
+            if self.published {
+                effigy_containers::policy::render::verify(policy)?;
+            } else {
+                // Execution-only builder recovery may observe new source inputs
+                // while retaining its original stack admission. Compare fresh
+                // render references without changing the desired generation.
+                let current =
+                    effigy_containers::load_container_policy(repo_root, Some(&policy.name))?;
+                if self.value != partial_activation_context(repo_root, &current)? {
+                    return Ok(false);
+                }
+            }
             if self.value != partial_activation_context(repo_root, policy)? {
                 return Ok(false);
             }
@@ -234,7 +262,9 @@ impl DetachedActivationContext {
                     .map_err(|error| RunnerError::task_invocation_failed_read(&path, error))?;
                 let recorded: serde_json::Value = serde_json::from_str(&raw)
                     .map_err(|error| RunnerError::task_invocation_failed_parse(&path, error))?;
-                return Ok(recorded == self.value);
+                return Ok(effigy_containers::policy::admission::normalize_context(
+                    recorded, policy,
+                )? == self.value);
             }
             Ok(true)
         })();
@@ -307,10 +337,14 @@ pub(in crate::runner) fn workspace_builder_admission_retained(
     let mut recorded: serde_json::Value = serde_json::from_str(&raw)
         .map_err(|error| RunnerError::task_invocation_failed_parse(&path, error))?;
     let original = recorded.clone();
-    if !recorded
-        .get("inputs")
-        .and_then(|inputs| inputs.as_array())
-        .is_some_and(|inputs| !inputs.is_empty())
+    if recorded
+        .get("generation")
+        .and_then(serde_json::Value::as_str)
+        .is_none()
+        && !recorded
+            .get("inputs")
+            .and_then(|inputs| inputs.as_array())
+            .is_some_and(|inputs| !inputs.is_empty())
     {
         return Err(RunnerError::task_invocation("workspace artifact builder retained admission inputs are malformed; no build attempted"));
     }
@@ -319,7 +353,15 @@ pub(in crate::runner) fn workspace_builder_admission_retained(
         // Only input digests may differ. This is execution authority, never a
         // replacement admission or evidence that current Compose was applied.
         recorded.remove("inputs");
-        current.remove("inputs");
+        for key in ["generation", "path"] {
+            recorded.remove(key);
+            current.remove(key);
+        }
+        if recorded.get("schema").and_then(serde_json::Value::as_str)
+            == Some("effigy.container-partial-activation.v2")
+        {
+            recorded.insert("schema".into(), current["schema"].clone());
+        }
     }
     if recorded != current {
         return Err(RunnerError::task_invocation(
@@ -347,7 +389,11 @@ pub(in crate::runner) fn retire_stale_detached_admission(
             ))
         }
     };
-    let recorded = serde_json::from_str::<serde_json::Value>(&raw).ok();
+    let recorded = serde_json::from_str::<serde_json::Value>(&raw)
+        .ok()
+        .and_then(|value| {
+            effigy_containers::policy::admission::normalize_context(value, policy).ok()
+        });
     if recorded.is_some() && recorded == partial_activation_context(repo_root, policy).ok() {
         return Ok(());
     }
@@ -398,7 +444,9 @@ pub(in crate::runner) fn partial_activation_recorded(
         Ok(raw) => {
             let marker: serde_json::Value = serde_json::from_str(&raw)
                 .map_err(|error| RunnerError::task_invocation_failed_parse(&marker_path, error))?;
-            if marker != partial_activation_context(repo_root, policy)? {
+            if effigy_containers::policy::admission::normalize_context(marker, policy)?
+                != partial_activation_context(repo_root, policy)?
+            {
                 return Err(RunnerError::task_invocation(
                     "partial activation context changed or is unverified; reconciliation refused without compose up, restart or teardown. Restore the admitted checkout/Compose inputs before retrying, or explicitly stop the scope with `effigy container down`",
                 ));
@@ -417,60 +465,8 @@ fn partial_activation_context(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> Result<serde_json::Value, RunnerError> {
-    let canonical_root = fs::canonicalize(repo_root)
-        .map_err(|error| RunnerError::task_invocation_failed_read(repo_root, error))?;
-    let loaded =
-        effigy_manifest::load_task_manifest_with_inspection(&repo_root.join("effigy.toml"))
-            .map_err(|_| RunnerError::task_invocation("original declaration unavailable"))?;
-    let mut paths = loaded
-        .evaluation_order
-        .into_iter()
-        .collect::<std::collections::BTreeSet<_>>();
-    if let Some(config) = loaded
-        .manifest
-        .containers
-        .as_ref()
-        .and_then(|containers| containers.environments.get(&policy.name))
-    {
-        if let Some(path) = &config.compose_file {
-            paths.insert(repo_root.join(path));
-        }
-    }
-    paths.extend(policy.compose_files.iter().map(|path| repo_root.join(path)));
-    let mut inputs = Vec::new();
-    for path in paths {
-        let canonical = fs::canonicalize(&path)
-            .map_err(|error| RunnerError::task_invocation_failed_read(&path, error))?;
-        let bytes = fs::read(&canonical)
-            .map_err(|error| RunnerError::task_invocation_failed_read(&canonical, error))?;
-        inputs.push(serde_json::json!({"path":canonical,"sha256":Sha256::digest(&bytes).iter().map(|byte| format!("{byte:02x}")).collect::<String>()}));
-    }
-    let scope = effigy_core::worktree_scope::resolve(repo_root)
-        .map_err(|error| RunnerError::task_invocation_failed_read(repo_root, error))?
-        .map(|scope| {
-            fs::read_to_string(
-                scope
-                    .token_dir
-                    .join(effigy_core::worktree_scope::SCOPE_FILE),
-            )
-        })
-        .transpose()
-        .map_err(|error| RunnerError::task_invocation_failed_read(repo_root, error))?;
-    Ok(serde_json::json!({
-        "schema": PARTIAL_ACTIVATION_SCHEMA,
-        "scope_token": scope,
-        "repo_root": canonical_root,
-        "container_name": policy.name,
-        "profile": policy.profile,
-        "project_name": policy.project_name,
-        "primary_service": policy.primary_service,
-        "backend": super::exec_command::runtime_backend_identity_for_policy(repo_root, policy),
-        "compose_source": match policy.compose_source {
-            effigy_containers::EffectiveComposeSource::Direct => "direct",
-            effigy_containers::EffectiveComposeSource::Generated => "generated",
-        },
-        "inputs": inputs,
-    }))
+    let _ = repo_root;
+    effigy_containers::policy::admission::generation_context(policy).map_err(Into::into)
 }
 
 pub(in crate::runner) fn clear_partial_activation(
@@ -1287,7 +1283,7 @@ variant = "default"
             Some(containers_home.display().to_string()),
         )]);
         effigy_containers::with_test_effigy_home(&containers_home, || {
-            let policy = effigy_containers::load_container_policy(&repo_root, None)
+            let policy = effigy_containers::prepare_container_policy(&repo_root, None)
                 .expect("admission policy resolution");
             let context = super::capture_detached_activation_context(&repo_root, &policy)
                 .expect("capture admitted activation context");

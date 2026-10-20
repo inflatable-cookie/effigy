@@ -314,6 +314,12 @@ fn run_standard_task_inner(
     }
 
     if let Some((container, service)) = routed_container_target(&routed.decision) {
+        let activated_policy = &task_activation
+            .as_ref()
+            .ok_or_else(|| {
+                RunnerError::task_invocation("container route missing its activation snapshot")
+            })?
+            .policy;
         let task_execution_cwd = preflight.task_execution_root(&selection.catalog.catalog_root);
         if preflight.output_json {
             let output = capture_routed_task_container_exec(
@@ -328,6 +334,7 @@ fn run_standard_task_inner(
                     secret_env: secret_ref,
                 },
                 container,
+                activated_policy,
             )?;
             let stdout =
                 redact_task_secret_values(&String::from_utf8_lossy(&output.stdout), secret_ref);
@@ -343,6 +350,7 @@ fn run_standard_task_inner(
             )?;
             if output.status.success() {
                 if task_activation
+                    .as_ref()
                     .is_some_and(|activation| activation.refreshed_host_container_lease)
                 {
                     emit_host_container_lease_notice(container);
@@ -364,8 +372,12 @@ fn run_standard_task_inner(
                 secret_env: secret_ref,
             },
             container,
+            activated_policy,
         )?;
-        if task_activation.is_some_and(|activation| activation.refreshed_host_container_lease) {
+        if task_activation
+            .as_ref()
+            .is_some_and(|activation| activation.refreshed_host_container_lease)
+        {
             emit_host_container_lease_notice(container);
         }
         if preflight.runtime_args_raw.verbose_root {
@@ -817,7 +829,8 @@ fn run_inline_workspace_standard_task(
     let working_dir = binding_resolution
         .exec_working_dir(repo_root)?
         .ok_or_else(|| RunnerError::task_invocation("missing inline workspace exec working dir"))?;
-    let _ = activate_inline_workspace_container_runtime(repo_root, &policy)?;
+    let activation = activate_inline_workspace_container_runtime(repo_root, &policy)?;
+    let policy = activation.policy;
     let teardown_plan = inline_workspace_teardown_plan(repo_root, &policy);
 
     let exec_result = if preflight.output_json {
@@ -1087,6 +1100,7 @@ mod tests {
             "web",
             |_repo_root, _container_name| {
                 Ok(EffectiveContainerPolicy {
+                    render: None,
                     repo_root: std::path::PathBuf::from("/tmp"),
                     name: "web".to_owned(),
                     driver: effigy_manifest::ManifestContainerDriver::Colima,
@@ -1126,7 +1140,7 @@ mod tests {
                     host_processes: Vec::new(),
                 })
             },
-            |repo_root, _policy, request, plan| {
+            |repo_root, policy, request, plan| {
                 activation_call = Some((
                     repo_root.to_path_buf(),
                     request.container_name.map(str::to_owned),
@@ -1137,6 +1151,7 @@ mod tests {
                     plan.lease.policy,
                 ));
                 Ok(ContainerTaskActivation {
+                    policy: policy.clone(),
                     system_was_running: false,
                     refreshed_host_container_lease: true,
                 })
@@ -1163,6 +1178,7 @@ mod tests {
     fn inline_workspace_activation_skips_host_container_lease_refresh() {
         let repo_root = Path::new("/tmp/demo-repo");
         let policy = EffectiveContainerPolicy {
+            render: None,
             repo_root: std::path::PathBuf::from("/tmp"),
             name: "dev__app".to_owned(),
             driver: effigy_manifest::ManifestContainerDriver::Colima,
@@ -1218,6 +1234,7 @@ mod tests {
                     plan.lease.policy,
                 ));
                 Ok(ContainerTaskActivation {
+                    policy: policy.clone(),
                     system_was_running: false,
                     refreshed_host_container_lease: false,
                 })

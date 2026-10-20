@@ -248,7 +248,7 @@ pub fn scope_token(
     if share_runtime_identity {
         return Ok(None);
     }
-    worktree_scope::load_or_create(repo_root).map_err(|error| {
+    worktree_scope::load(repo_root).map_err(|error| {
         super::model::ContainerPolicyError::TaskInvocation(format!(
             "cannot establish checkout runtime scope for {}: {error}",
             repo_root.display()

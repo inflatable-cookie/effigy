@@ -481,18 +481,6 @@ pub(in crate::runner) fn verified_target_exec_args(
     Ok(args)
 }
 
-/// Preserve the legacy partial-activation identity strings independently of
-/// presentation labels (Colima is displayed as "containerd" to operators).
-pub(in crate::runner) fn runtime_backend_identity_for_policy(
-    repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
-) -> &'static str {
-    match resolve_compose_backend_for_repo(repo_root, policy) {
-        ComposeBackend::Docker => "docker",
-        ComposeBackend::ColimaNerdctl => "colima-nerdctl",
-    }
-}
-
 fn active_backend_id_for_policy(repo_root: &Path, policy: &EffectiveContainerPolicy) -> BackendId {
     match resolve_compose_backend_for_repo(repo_root, policy) {
         ComposeBackend::Docker => BackendId::docker_compose(),

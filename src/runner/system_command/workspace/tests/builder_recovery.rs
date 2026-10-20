@@ -94,6 +94,37 @@ struct Fixture {
     preserved: Vec<(PathBuf, Vec<u8>)>,
 }
 
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        // Only our private temporary tree: never follow a fixture symlink.
+        fn unlock(path: &Path) -> std::io::Result<()> {
+            use std::os::unix::fs::PermissionsExt;
+            if !std::fs::symlink_metadata(path)?.is_dir() {
+                return Ok(());
+            }
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))?;
+            for entry in std::fs::read_dir(path)? {
+                unlock(&entry?.path())?;
+            }
+            Ok(())
+        }
+        if let Err(error) = unlock(&self.root) {
+            eprintln!("private builder fixture cleanup failed: {error}");
+        }
+    }
+}
+
+#[test]
+fn private_builder_fixture_removes_sealed_object_directories() {
+    let _lock = crate::contract_test_support::lock_test();
+    let root = {
+        let fixture = Fixture::new(false, false, "docker");
+        effigy_containers::prepare_container_policy(&fixture.root, Some("linux-release")).unwrap();
+        fixture.root.clone()
+    };
+    assert!(!root.exists());
+}
+
 impl Fixture {
     fn new(retained: bool, changed: bool, backend: &str) -> Self {
         Self::with_declaration(retained, changed, backend, true)
@@ -171,6 +202,10 @@ esac
                 Some(effigy_core::build_info::active_version()),
             ),
             ("EFFIGY_TEST_HOST_CONTAINER_LEASE_HOME", None),
+            (
+                "EFFIGY_TEST_CONTAINERS_HOME",
+                Some(root.join("host-home/.effigy").display().to_string()),
+            ),
             ("HOME", Some(root.join("host-home").display().to_string())),
             ("EFFIGY_RECOVERY_PROJECT", None),
             ("EFFIGY_DISABLE_HOST_CONTAINER_LEASE", Some("1".to_owned())),
@@ -217,6 +252,10 @@ esac
         if retained {
             preserve_tree(&lease_root, &mut preserved);
         }
+        // A generation snapshot stays frozen; observe the edited declaration
+        // explicitly before asking whether its retained admission is stale.
+        let policy =
+            effigy_containers::load_container_policy(&root, Some("linux-release")).unwrap();
         Self {
             _temp: temp,
             root,

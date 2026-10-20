@@ -954,6 +954,9 @@ pub enum ContainerSubcommand {
         name: Option<String>,
         subcommand: ContainerDataSubcommand,
     },
+    Render {
+        name: Option<String>,
+    },
     Eject {
         name: Option<String>,
     },

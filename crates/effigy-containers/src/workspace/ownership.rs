@@ -90,11 +90,7 @@ pub fn load_workspace_ownership_plan(
     let mut named_volume_writers = named_volume_writers_from_managed(&policy.managed_volumes);
     let mut parsed_compose = Vec::new();
     for compose_file in &policy.compose_files {
-        let content =
-            std::fs::read_to_string(compose_file).map_err(|error| ContainerPolicyError::Read {
-                path: compose_file.clone(),
-                error,
-            })?;
+        let content = policy.read_compose(compose_file)?;
         let parsed: serde_yaml::Value = serde_yaml::from_str(&content).map_err(|error| {
             ContainerPolicyError::TaskInvocation(format!(
                 "failed to parse compose file {} for workspace ownership targets: {error}",
@@ -553,6 +549,7 @@ mod tests {
         .expect("manifest");
         fs::write(&compose_file, compose).expect("compose");
         EffectiveContainerPolicy {
+            render: None,
             repo_root: root.to_path_buf(),
             name: "stack".to_owned(),
             driver: ManifestContainerDriver::Colima,

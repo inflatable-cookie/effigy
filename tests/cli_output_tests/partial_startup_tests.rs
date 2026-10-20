@@ -25,7 +25,7 @@ struct Stack {
     port: u16,
 }
 struct Fixture {
-    root: tempfile::TempDir,
+    root: super::sealed_fixture::SealedFixture,
     stacks: Vec<Stack>,
 }
 impl Drop for Fixture {
@@ -65,7 +65,7 @@ impl Fixture {
         )
         .expect("mode");
         let mut fixture = Self {
-            root,
+            root: super::sealed_fixture::SealedFixture(root),
             stacks: Vec::new(),
         };
         for i in 0..3 {
@@ -401,12 +401,16 @@ fn private_generated_preparation_must_not_adopt_probe_time_drift() {
         // unchanged cold retry, while an unsafe accepted launch remains marked.
         fs::write(fixture.stacks[0].root.join("effigy.toml"), before).unwrap();
         let changed_path = PathBuf::from(witness["path"].as_str().unwrap());
-        assert!(changed_path.starts_with(&fixture.stacks[0].root));
+        assert!(changed_path.starts_with(fixture.root.path()));
+        fs::set_permissions(&changed_path, fs::Permissions::from_mode(0o600)).unwrap();
         fs::write(
-            changed_path,
+            &changed_path,
             fs::read(fixture.stacks[0].root.join("probe-original-input")).unwrap(),
         )
         .unwrap();
+        if mode == "probe-compose-drift" {
+            fs::set_permissions(&changed_path, fs::Permissions::from_mode(0o400)).unwrap();
+        }
         fixture.set(0, "mode", json!("ready"));
         let retry = fixture.run(0, &["container", "up", "--detach", "--json"]);
         assert!(
@@ -1128,8 +1132,14 @@ sys.excepthook=failed
 sfile=cwd/'state.json'; state=json.load(open(sfile)); mode=state['mode']
 if args==['ps'] and mode in ['probe-manifest-drift','probe-compose-drift'] and not (cwd/'probe-drift.json').exists():
  import hashlib
- path=cwd/'effigy.toml' if mode=='probe-manifest-drift' else cwd/'.effigy/runtime/compose/web.generated.compose.yml'
+ if mode=='probe-manifest-drift': path=cwd/'effigy.toml'
+ else:
+  candidates=[p for p in (root/'home/.effigy/state/objects').rglob('web.generated.compose.yml') if str(cwd) in p.read_text()]
+  assert candidates, 'admitted immutable Compose is required for the corruption control'
+  path=max(candidates,key=lambda p:p.stat().st_mtime_ns)
+  path.chmod(0o600)
  before=path.read_bytes();(cwd/'probe-original-input').write_bytes(before);after=before+b'\n# original input changed during owned runtime probe\n';path.write_bytes(after)
+ if mode=='probe-compose-drift': path.chmod(0o400)
  (cwd/'probe-drift.json').write_text(json.dumps({'command':'ps','path':str(path),'before_sha256':hashlib.sha256(before).hexdigest(),'after_sha256':hashlib.sha256(after).hexdigest()}))
 def save():
  payload=json.dumps(state)
