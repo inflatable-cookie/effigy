@@ -10105,7 +10105,8 @@ mounts = ["./app:/workspace"]
         ("HOME".to_owned(), home.path().display().to_string()),
         (
             "EFFIGY_TEST_CONTAINERS_HOME".to_owned(),
-            root.join(".effigy").display().to_string(),
+            // Sealed environment objects live here; the sealed home removes them.
+            home.path().join(".effigy").display().to_string(),
         ),
         ("PATH".to_owned(), path.clone()),
         (
@@ -10355,7 +10356,8 @@ detach_timeout_secs = 1
         ("HOME".to_owned(), home.path().display().to_string()),
         (
             "EFFIGY_TEST_CONTAINERS_HOME".to_owned(),
-            root.join(".effigy").display().to_string(),
+            // Sealed environment objects live here; the sealed home removes them.
+            home.path().join(".effigy").display().to_string(),
         ),
         ("PATH".to_owned(), path.clone()),
         (
@@ -10783,7 +10785,8 @@ detach_timeout_secs = 1
         ("HOME".to_owned(), home.path().display().to_string()),
         (
             "EFFIGY_TEST_CONTAINERS_HOME".to_owned(),
-            root.join(".effigy").display().to_string(),
+            // Sealed environment objects live here; the sealed home removes them.
+            home.path().join(".effigy").display().to_string(),
         ),
         ("PATH".to_owned(), path.clone()),
         (
