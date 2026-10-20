@@ -181,6 +181,10 @@
   { run = "RUSTFLAGS='--cfg effigy_shared_process' cargo test -p effigy --lib --features effigy-host-run/test-support --no-fail-fast -- --test-threads=8 runtime::dns::tests:: tests::compose:: policy::admission:: policy::render::tests:: workspace::tests::host_git_mount_tests:: exec::healthcheck_timer:: exec::restart_recovery:: bounded_exec::tests:: builder_recovery:: host_container_lease::tests:: container_removal_state_is_false_or_unknown_and_never_assumed handover_end_owner_releases_lock_for_reverse_handover test_support::tests::", timeout_ms = 1200000 },
 ] }
 "check:environment:ci" = { visibility = "internal", group = "Maintenance", admission = "heavy", run = [{ run = "cargo check -p effigy -p effigy-containers -p effigy-host-run --all-targets --features effigy-host-run/test-support --profile test", timeout_ms = 900000 }] }
+"test:environment:ci:recovery" = { visibility = "internal", group = "Maintenance", admission = "heavy", run = [
+  { run = "RUSTFLAGS='--cfg effigy_shared_process' cargo build --bin effigy", timeout_ms = 600000 },
+  { run = "RUSTFLAGS='--cfg effigy_shared_process' cargo test -p effigy --lib --features effigy-host-run/test-support -- --test-threads=8 builder_recovery::", timeout_ms = 1200000 },
+] }
 "lint:environment:ci" = { visibility = "internal", group = "Maintenance", admission = "heavy", run = [
   { run = "cargo clippy -p effigy -p effigy-containers -p effigy-host-run --all-targets --features effigy-host-run/test-support -- -D warnings", timeout_ms = 900000 },
   { task = "fmt:check" },

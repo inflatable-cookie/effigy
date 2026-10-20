@@ -98,6 +98,14 @@ struct Fixture {
 
 impl Drop for Fixture {
     fn drop(&mut self) {
+        if std::thread::panicking() {
+            for name in ["mode", "calls", "colima-calls"] {
+                eprintln!(
+                    "private backend {name}: {}",
+                    std::fs::read_to_string(self.root.join("state").join(name)).unwrap_or_default()
+                );
+            }
+        }
         // Only our private temporary tree: never follow a fixture symlink.
         fn unlock(path: &Path) -> std::io::Result<()> {
             use std::os::unix::fs::PermissionsExt;
