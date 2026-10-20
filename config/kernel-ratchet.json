@@ -881,10 +881,6 @@
     "src/runner/execute/pipeline/managed.rs": {
       "std::fs::write": 4
     },
-    "src/runner/execute/pipeline/standard.rs": {
-      "std.process.Command.new": 1,
-      "std.process.Command.output": 1
-    },
     "src/runner/gateway_command/daemon.rs": {
       "nix::sys::signal::kill": 3,
       "std.process.Command.new": 2,

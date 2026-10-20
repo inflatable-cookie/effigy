@@ -145,7 +145,6 @@ rpassword = "7"
 tempfile = "3"
 
 [dev-dependencies]
-effigy-host-run = { path = "crates/effigy-host-run", features = ["test-support"] }
 base64 = "0.22"
 # Ordinary HTTP/1 server fixture for the managed listener readiness probe.
 bytes = "1"

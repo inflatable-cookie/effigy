@@ -1022,8 +1022,6 @@ domain = "switch.test"
         use std::time::{Duration, Instant};
 
         let temp = tempfile::tempdir().expect("reverse handover fixture");
-        let parent = effigy_host_run::test_support::ParentFixture::new(temp.path())
-            .expect("private authenticated handover parent");
         let owner_stderr = temp.path().join("owner.stderr");
         let repo_root = temp.path().join("repo");
         fs::create_dir_all(&repo_root).expect("mkdir repo");
@@ -1052,9 +1050,6 @@ run = "printf reverse-ok"
             std::process::Command::new(&binary)
                 .current_dir(&repo_root)
                 .env("HOME", &home)
-                .env("EFFIGY_HOST_RUN_ROOT", parent.state_root())
-                .env("HOST_RUN_TOKEN", parent.token())
-                .env("HOST_RUN_ID", "private-fixture-parent")
                 .args(["--repo", &repo_arg, "dev", "--headless"])
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::null())
@@ -1106,9 +1101,6 @@ run = "printf reverse-ok"
         let refused = std::process::Command::new(&binary)
             .current_dir(&repo_root)
             .env("HOME", &home)
-            .env("EFFIGY_HOST_RUN_ROOT", parent.state_root())
-            .env("HOST_RUN_TOKEN", parent.token())
-            .env("HOST_RUN_ID", "private-fixture-parent")
             .args(["--repo", &repo_arg, "rev"])
             .output()
             .expect("reverse attempt");
@@ -1151,9 +1143,6 @@ run = "printf reverse-ok"
         let reverse = std::process::Command::new(&binary)
             .current_dir(&repo_root)
             .env("HOME", &home)
-            .env("EFFIGY_HOST_RUN_ROOT", parent.state_root())
-            .env("HOST_RUN_TOKEN", parent.token())
-            .env("HOST_RUN_ID", "private-fixture-parent")
             .args(["--repo", &repo_arg, "rev"])
             .output()
             .expect("reverse run");
