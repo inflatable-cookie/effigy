@@ -33,6 +33,8 @@ pub struct Attachments;
 #[derive(Debug)]
 pub struct TransitionPermit<'r, 'root> {
     run: &'r mut Run<'root>,
+    /// The one holder allowed to remain: a run settling itself (R4).
+    exempt: Option<RunId>,
 }
 impl TransitionPermit<'_, '_> {
     pub fn intend(&mut self, spec: EffectSpec) -> Result<EffectTicket, RunError> {
@@ -47,7 +49,7 @@ impl TransitionPermit<'_, '_> {
             let sequence = self.run.store.transaction(&self.run.cx, |txn| {
                 journal::check_fence(txn.conn(), &self.run.owner)?;
                 // Atomic with intent, even after a long adapter preparation.
-                ensure_no_holders(txn.conn(), &self.run.owner.resource)?;
+                ensure_no_holders_except(txn.conn(), &self.run.owner.resource, self.exempt)?;
                 journal::insert_effect(txn, self.run.id, &spec)
             })?;
             crate::fault_point!(IntendAfter)?;
@@ -86,7 +88,7 @@ impl TransitionPermit<'_, '_> {
                 &self.run.cx.child(std::time::Duration::from_secs(30)),
                 |txn| {
                     journal::check_fence(txn.conn(), &self.run.owner)?;
-                    ensure_no_holders(txn.conn(), &self.run.owner.resource)?;
+                    ensure_no_holders_except(txn.conn(), &self.run.owner.resource, self.exempt)?;
                     txn.conn().execute(
                         "UPDATE resources SET state='stopped',updated_at=?2 WHERE name=?1",
                         params![self.run.owner.resource.name().to_string(), txn.now()],
@@ -208,7 +210,100 @@ impl Attachments {
         }
         journal::check_fence(run.store.conn(), &run.owner)?;
         ensure_no_holders(run.store.conn(), &run.owner.resource)?;
-        Ok(TransitionPermit { run })
+        Ok(TransitionPermit { run, exempt: None })
+    }
+    /// The permit for a holder's own stop (R4): issued when the only holder
+    /// left is `exempt` and that run has already entered its settle. Its
+    /// attachment keeps protecting against every other transition.
+    pub fn permit_exempt<'r, 'root>(
+        run: &'r mut Run<'root>,
+        exempt: RunId,
+    ) -> Result<TransitionPermit<'r, 'root>, RunError> {
+        run.can_effect()?;
+        if run.owner.resource.kind() != ResourceKind::Env {
+            return Err(RunError::Invalid("permit needs environment owner".into()));
+        }
+        journal::check_fence(run.store.conn(), &run.owner)?;
+        ensure_no_holders_except(run.store.conn(), &run.owner.resource, Some(exempt))?;
+        Ok(TransitionPermit {
+            run,
+            exempt: Some(exempt),
+        })
+    }
+    /// The ensure path for a holder that found its environment inactive
+    /// (§5.9 `EnvNotActive`): the environment's apply run publishes `active`
+    /// and inserts each requesting run's attachment in the same transaction,
+    /// as an `Applied` effect of that holder's own journal. The holder's
+    /// settle releases it exactly as if it had attached itself.
+    pub fn publish_active_for(
+        run: &mut Run<'_>,
+        holders: &[(RunId, AttachMode)],
+    ) -> Result<(), RunError> {
+        run.can_effect()?;
+        if run.owner.resource.kind() != ResourceKind::Env
+            || run
+                .effects()?
+                .iter()
+                .any(|e| e.spec.required && e.state != EffectState::Applied)
+        {
+            return Err(RunError::Invalid("environment is not ready".into()));
+        }
+        let result = (|| {
+            crate::fault_point!(AttachBefore)?;
+            run.store
+                .transaction(&run.cx.child(std::time::Duration::from_secs(30)), |txn| {
+                    journal::check_fence(txn.conn(), &run.owner)?;
+                    let env = run.owner.resource.name().to_string();
+                    txn.conn().execute(
+                        "UPDATE resources SET state='active',last_applied=?2,updated_at=?3 WHERE name=?1",
+                        params![env, run.owner.generation.get().to_string(), txn.now()],
+                    )?;
+                    for (holder, mode) in holders {
+                        let record = journal::run(txn.conn(), *holder)?;
+                        let owner: Vec<u8> = txn.conn().query_row(
+                            "SELECT canonical FROM resources WHERE name=?1",
+                            [&record.owner],
+                            |r| r.get(0),
+                        )?;
+                        if matches!(record.phase, Phase::Stopping | Phase::Closed)
+                            || owner >= run.owner.resource.canonical()
+                        {
+                            return Err(RunError::Invalid(
+                                "requesting holder is settling or out of gate order".into(),
+                            ));
+                        }
+                        let exists: bool = txn.conn().query_row(
+                            "SELECT EXISTS(SELECT 1 FROM attachments WHERE environment=?1 AND run_id=?2 AND state<>'released')",
+                            params![env, holder.to_string()],
+                            |r| r.get(0),
+                        )?;
+                        if exists {
+                            continue;
+                        }
+                        let spec = EffectSpec {
+                            target: run.owner.clone(),
+                            kind: KIND.into(),
+                            payload: serde_json::to_value(mode)?,
+                            settlement: Settlement::Reconcile(Value::Null),
+                            required: true,
+                        };
+                        let sequence = journal::insert_effect(txn, *holder, &spec)?;
+                        txn.conn().execute(
+                            "INSERT INTO attachments(environment,run_id,env_generation,mode,state) VALUES (?1,?2,?3,?4,'attached') \
+                             ON CONFLICT(environment,run_id) DO UPDATE SET env_generation=excluded.env_generation,mode=excluded.mode,state='attached'",
+                            params![env, holder.to_string(), run.owner.generation.get() as i64, serde_json::to_string(mode)?],
+                        )?;
+                        journal::write_effect(txn, *holder, sequence, EffectState::Applied, Some(&Value::Bool(true)), None)?;
+                    }
+                    Ok::<_, RunError>(())
+                })?;
+            crate::fault_point!(AttachAfter)?;
+            Ok(())
+        })();
+        if result.is_err() {
+            run.poisoned = true;
+        }
+        result
     }
     /// Failed reads remain Unknown; a free holder gate means interrupted, never
     /// absent. Only the atomic release row removes holder protection.
@@ -262,7 +357,24 @@ pub(super) fn ensure_no_holders(
     conn: &rusqlite::Connection,
     env: &ResourceId,
 ) -> Result<(), RunError> {
-    let ids = attached(conn, env)?;
+    ensure_no_holders_except(conn, env, None)
+}
+/// An exempt holder is skipped only once its own run has entered settle.
+fn ensure_no_holders_except(
+    conn: &rusqlite::Connection,
+    env: &ResourceId,
+    exempt: Option<RunId>,
+) -> Result<(), RunError> {
+    let mut ids = attached(conn, env)?;
+    if let Some(exempt) = exempt {
+        let settling = matches!(
+            journal::run(conn, exempt).map(|record| record.phase),
+            Ok(Phase::Stopping | Phase::Closed)
+        );
+        if settling {
+            ids.retain(|id| *id != exempt);
+        }
+    }
     // Even an interrupted holder protects until its own gated settle releases.
     // No liveness guess can turn an attachment into permission (R3/R4).
     if !ids.is_empty() {
