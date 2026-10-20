@@ -181,6 +181,23 @@
   { task = "test:environment:ci:shared" },
 ] }
 
+# Focused requalification after a builder/kernel prerequisite changes.
+"check:environment:builder-recovery" = { visibility = "internal", group = "Maintenance", admission = "heavy", run = [
+  { run = "cargo test -p effigy --lib --no-run", timeout_ms = 900000 },
+] }
+"test:environment:builder-recovery" = { visibility = "internal", group = "Maintenance", run = [
+  { run = "cargo run --bin effigy -- test:environment:builder-recovery:isolated", timeout_ms = 1800000 },
+  { run = "cargo run --bin effigy -- test:environment:builder-recovery:shared", timeout_ms = 1800000 },
+] }
+"test:environment:builder-recovery:isolated" = { visibility = "internal", group = "Maintenance", admission = "heavy", run = [
+  { run = "cargo build --bin effigy", timeout_ms = 600000 },
+  { run = "cargo nextest run --config-file tests/config/environment-nextest.toml --user-config-file none -p effigy --lib -E 'test(builder_recovery::)' --no-fail-fast --retries 0 --no-tests fail -j 2", timeout_ms = 1200000 },
+] }
+"test:environment:builder-recovery:shared" = { visibility = "internal", group = "Maintenance", admission = "heavy", run = [
+  { run = "RUSTFLAGS='--cfg effigy_shared_process' cargo build --bin effigy", timeout_ms = 600000 },
+  { run = "RUSTFLAGS='--cfg effigy_shared_process' cargo test -p effigy --lib --no-fail-fast -- --test-threads=8 builder_recovery::", timeout_ms = 1200000 },
+] }
+
 "check:environment:ci" = { visibility = "internal", group = "Maintenance", admission = "heavy", run = [{ run = "cargo check -p effigy -p effigy-containers --all-targets --profile test", timeout_ms = 900000 }] }
 "lint:environment:ci" = { visibility = "internal", group = "Maintenance", admission = "heavy", run = [
   { run = "cargo clippy -p effigy -p effigy-containers --all-targets -- -D warnings", timeout_ms = 900000 },
