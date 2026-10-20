@@ -1,0 +1,10 @@
+services:
+  builder:
+    image: example
+    working_dir: /workspace
+  dbgate:
+    image: example
+  mailpit:
+    image: example
+  silo:
+    image: example

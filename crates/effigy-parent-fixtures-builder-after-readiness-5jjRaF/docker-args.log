@@ -1,0 +1,11 @@
+ps
+ps --all --filter label=com.docker.compose.project=fixture-builder-dev --format {{.Names}}	{{.Status}}	{{.Ports}}	{{.Label "com.docker.compose.project"}}	{{.Label "com.docker.compose.project.working_dir"}}	{{.Label "com.docker.compose.service"}}	{{.Label "com.docker.compose.oneoff"}}
+compose -f /Users/tom/.paseo/northstar-queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-da34736c-c2a0-4d19-bf5e-909794feb584/crates/effigy-parent-fixtures-builder-after-readiness-5jjRaF/home/.effigy/state/objects/b527bf949ba70742c55fe4763b28ad5ffd6f381bbb5b84d654cf17993e1ca0f5/checkout/.effigy/runtime/compose/builder.generated.compose.yml -f /Users/tom/.paseo/northstar-queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-da34736c-c2a0-4d19-bf5e-909794feb584/crates/effigy-parent-fixtures-builder-after-readiness-5jjRaF/home/.effigy/state/objects/b527bf949ba70742c55fe4763b28ad5ffd6f381bbb5b84d654cf17993e1ca0f5/checkout/.effigy/runtime/dns/builder.compose.override.yml -p fixture-builder-dev up -d --build --force-recreate
+ps --all --filter label=com.docker.compose.project=fixture-builder-dev --format {{.Names}}	{{.Status}}	{{.Ports}}	{{.Label "com.docker.compose.project"}}	{{.Label "com.docker.compose.project.working_dir"}}	{{.Label "com.docker.compose.service"}}	{{.Label "com.docker.compose.oneoff"}}
+ps --filter label=com.docker.compose.project=fixture-builder-dev --format {{.Names}}	{{.Status}}	{{.Ports}}	{{.Label "com.docker.compose.project"}}	{{.Label "com.docker.compose.project.working_dir"}}	{{.Label "com.docker.compose.service"}}	{{.Label "com.docker.compose.oneoff"}}
+inspect fixture-builder-dev-builder-1
+inspect fixture-builder-dev-builder-1
+exec -w /workspace aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa true
+ps --filter label=com.docker.compose.project=fixture-builder-dev --format {{.Names}}	{{.Status}}	{{.Ports}}	{{.Label "com.docker.compose.project"}}	{{.Label "com.docker.compose.project.working_dir"}}	{{.Label "com.docker.compose.service"}}	{{.Label "com.docker.compose.oneoff"}}
+inspect fixture-builder-dev-builder-1
+inspect fixture-builder-dev-builder-1

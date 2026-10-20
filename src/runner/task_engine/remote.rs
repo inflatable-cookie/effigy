@@ -72,11 +72,7 @@ pub(in crate::runner) fn run_remote(
     let mut adapter =
         ComposeRemote::<effigy_containers::environment::HostCli>::launcher(exec_options(&task));
     let target = adapter
-        .resolve(
-            &selection,
-            task.container_id,
-            Instant::now() + CALL_TIMEOUT,
-        )
+        .resolve(&selection, task.container_id, Instant::now() + CALL_TIMEOUT)
         .map_err(|error| launch_error(&task.label, &error))?
         .target();
     run_remote_with(run, task, &mut adapter, target, &mut || fence(policy))
@@ -239,7 +235,10 @@ pub(in crate::runner) fn run_remote_with(
             // Natural completion: the backend reports the registered
             // leader's own exit. The session's closure is observed by settle.
             let _ = remote.client().complete(&mut run.run_mut(), exit);
-            let _ = remote.complete(&mut run.run_mut(), RequiredObligation::ProcessExit(exit.code));
+            let _ = remote.complete(
+                &mut run.run_mut(),
+                RequiredObligation::ProcessExit(exit.code),
+            );
             super::process::workload(Some(exit.code), None)
         }
         (None, None) => WorkloadOutcome::Interrupted,

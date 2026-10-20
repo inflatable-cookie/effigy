@@ -373,7 +373,14 @@ impl TaskRun {
                     &cleanup,
                     &mut TaskSettlement::default(),
                 ),
-            None => Run::begin(&cx, root, &invocation, opts, &cleanup, &mut TaskSettlement::default()),
+            None => Run::begin(
+                &cx,
+                root,
+                &invocation,
+                opts,
+                &cleanup,
+                &mut TaskSettlement::default(),
+            ),
         }
         .map_err(|error| match request.key {
             // The racing first invocation with this key holds the gate, or

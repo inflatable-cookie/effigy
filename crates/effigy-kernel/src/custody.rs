@@ -638,7 +638,10 @@ impl ProcessCore {
         }
     }
     /// The registration stream when `index` is the stream that carries it.
-    fn framed(&self, index: usize) -> Option<Arc<Mutex<crate::remote::stream::RegistrationStream>>> {
+    fn framed(
+        &self,
+        index: usize,
+    ) -> Option<Arc<Mutex<crate::remote::stream::RegistrationStream>>> {
         self.registration
             .as_ref()
             .filter(|registration| {

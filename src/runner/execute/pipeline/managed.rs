@@ -1,6 +1,4 @@
-use super::super::super::container_command::{
-    support::validate_running_container_runtime_match,
-};
+use super::super::super::container_command::support::validate_running_container_runtime_match;
 use super::super::super::gateway_command::gateway_up_for_managed_task;
 use super::super::super::managed_shell::{
     managed_readiness_probe_urls, render_handoff_managed_lifecycle_command,
@@ -27,21 +25,19 @@ use crate::runner::task_engine::{
 };
 use effigy_containers::compose::compose_args;
 use effigy_containers::session::{
-    managed_gateway_command, managed_lifecycle_command,
-    managed_lifecycle_shutdown_command, managed_shell_command, managed_standard_exec_command,
-    resolve_effigy_invocation_prefix, ManagedLifecycleRequest, ManagedStandardExecRequest,
+    managed_gateway_command, managed_lifecycle_command, managed_lifecycle_shutdown_command,
+    managed_shell_command, managed_standard_exec_command, resolve_effigy_invocation_prefix,
+    ManagedLifecycleRequest, ManagedStandardExecRequest,
 };
-use effigy_containers::{
-    load_container_policy, EffectiveContainerPolicy,
-};
+use effigy_containers::{load_container_policy, EffectiveContainerPolicy};
 use effigy_env::secret::SecretString;
 use effigy_execution::{ExecutionBindingInput, ExecutionSelectionPlan};
 use effigy_managed::command::resolve_managed_task_plan;
 use effigy_managed::presentation::run_or_render_managed_task;
 use effigy_managed::ManagedProcessRole;
 use effigy_managed::{
-    managed_execution_mode, parse_managed_invocation,
-    wrap_command_with_env, ManagedExecutionMode, ManagedInvocation,
+    managed_execution_mode, parse_managed_invocation, wrap_command_with_env, ManagedExecutionMode,
+    ManagedInvocation,
 };
 use effigy_manifest::ManifestTaskSecretsMode;
 use effigy_manifest::TaskSelection;

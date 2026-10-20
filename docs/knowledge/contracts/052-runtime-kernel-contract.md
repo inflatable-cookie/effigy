@@ -156,7 +156,7 @@ names the rule or invariant it relies on.
 | K4 | **One settle.** One settle implementation, run only by the owner gate's holder, in reverse effect order. It is idempotent and resumable. | Two teardown authorities for one effect; cleanup only on the success path; settle reconstructed from directory scans. |
 | K5 | **One unresolved run per owner.** `Run::begin` admits a run only when every earlier run of its owner is settled, or that run's remaining residue was explicitly acknowledged. A non-closed predecessor is settled first; a `Closed` predecessor with `Incomplete` cleanup gets a settle retry first. | A successor running beside a predecessor's unsettled record or unacknowledged residue. |
 | K6 | **Custody closure.** No Effigy-spawned process outlives its run's settle. No probe process with generation evidence outlives its deadline plus grace while its observer or its guard lives (§5.11). The owner exists before the first spawn. A spawn barrier prevents an unrecorded workload. Partial spawns roll back. Process groups are retained through stream close. Signals need positive generation evidence (I-P4). | Orphans after SIGTERM, SIGHUP or owner SIGKILL; leader exit read as group closure; client exit read as remote closure; a group or session signalled because its number is in use. |
-| K7 | **Fencing.** Every effect, request and callback carries `(ResourceId, Generation)`. A stale generation is refused. | A stale stop stopping a successor; a late callback deleting a successor's route. |
+| K7 | **Fencing.** Every effect, request and callback carries `(ResourceId, Generation)`. A stale generation is refused. A remote workload binds its environment's generation at intent; its acknowledgement and completion check the owner fence and the environment's identity, because every bring-up advances that generation, while container identity and VM boot (I-RC2) and holder protection (R4) keep it off a replacement (planner ruling, 2026-10-20). A stale-target intent writes nothing and leaves the run usable, so the caller re-reads and retries, as an attach does. | A stale stop stopping a successor; a late callback deleting a successor's route; a concurrent reuse bring-up failing a running remote step. |
 | K8 | **Bounded.** Every kernel wait takes a deadline. Expiry cancels at a safe boundary and never detaches a writer. Only declared workload lifetimes are open-ended. | A `starting` loop that skips its deadline; curl without a time limit; a detached writer killed mid-transaction. |
 | K9 | **One signal router.** One router per process, installed in `main` before any spawn. Libraries take a cancel token and never install handlers. HUP, INT and TERM are handled. | A library swallowing INT or TERM; HUP killing an owner with no cascade. |
 | K10 | **Observability is not outcome.** A failed status, log or report write never changes a workload's outcome or exit code. | A succeeded task turned into an error by a status write; ENOSPC on a log failing the workload. |
@@ -1117,8 +1117,12 @@ pub trait RemoteExecAdapter {
         -> Observed<Option<RemoteRegistration>>;
 }
 
+pub enum RemoteTerminal { None, Stdin, Tty }  // how the exec client meets the operator
+
+pub struct RemoteCommand { argv, env /* private, never argv */, terminal: RemoteTerminal }
+
 pub struct RemoteRegistration {
-    env: (ResourceId, Generation),       // fencing (K7)
+    env: (ResourceId, Generation),       // bound at intent (K7)
     container_id: FullContainerId, vm_boot_id: String, pid_ns: u64,
     sid: u32, leader_pid: u32, leader_start_ticks: u64, nonce: Nonce,
     session_isolated: bool,
@@ -1179,14 +1183,60 @@ is gone or shows different start ticks. Exec failure is `Unknown`, never
 | Perm in the guest | `Unknown`; residue. |
 | Clock drift between host and VM | No cross-boundary time comparison. |
 
+#### Rulings (planner, 2026-10-20, effigy#236)
+
+- **Fence.** Intent binds the environment generation current at launch.
+  Acknowledgement and completion check the run's owner fence and the
+  environment's identity, not its transition generation (K7). A concurrent
+  reuse bring-up therefore leaves a running step's outcome truthful; a
+  replaced container or a VM reboot is still refused by I-RC2.
+- **Nonce recovery.** `find_by_nonce` never receives the fence: the kernel
+  binds the intent's own fence to what it returns. `Verified(None)` is the
+  adapter's positive proof that the known, live container on the registered
+  boot was inventoried completely and no process carries the nonce, so the
+  workload never started (R5): the effect is `Released` and reruns are not
+  blocked. A stopped container proves the same. Anything unobservable is
+  `Unknown` and stays residue under K5.
+- **Terminal.** `Stdin` and `Tty` inherit the owner's stdin with both client
+  streams captured; `Tty` asks the backend for a terminal, which merges the
+  workload's streams, so its frame arrives on stdout ending `\r\n`. `None`
+  keeps EOF stdin. The wrapper keeps an exec that is already a session
+  leader (a backend terminal makes it one) and never lets `setsid(1)` fork a
+  group leader, so the exec client waits on the registered leader.
+
+#### Implemented (effigy#236)
+
+- The production adapter is `effigy_containers::environment::ComposeRemote`
+  for Colima and Docker (Desktop on macOS, Engine on Linux). A container's
+  identity names its exact engine, context and full id
+  (`engine:full-id@context`), so settlement during sentinel recovery reaches
+  the same backend; Docker's ambient default context is resolved to its name
+  at launch.
+- Forwarded values never enter argv (K12). A fixed host relay sends them as
+  `KEY=value` lines from its own private environment: Docker reads them as an
+  env file on a private descriptor, leaving stdin to the operator; Colima's
+  VM shell reads them from stdin, exports them and passes them to `nerdctl` by
+  name. Values that span lines are refused. Colima cannot carry a terminal
+  while its stdin carries the values, so `Tty` there attaches stdin only.
+- A fixed POSIX helper runs as root in the registered container: it lists
+  `/proc` with session facts and nonce evidence, and rechecks boot,
+  namespace, start ticks and nonce immediately before each signal.
+- The task engine's `TaskSettlement` settles remote sessions through the same
+  adapter, inline and in sentinel recovery.
+
 #### Proof
 
 - A conformance suite every backend adapter must pass: kill at each step,
   container replaced, VM restarted, image without `setsid`, exec client
   killed with the remote still running, and a recorded session number reused
-  by a foreign session without the nonce, which is never signalled.
+  by a foreign session without the nonce, which is never signalled. The
+  production adapter passes it over a strict container model
+  (`test:containers:environment`); the helper itself is proven against a real
+  `/proc` on Linux.
 - Real-engine qualification on Colima (docker and containerd), Docker Desktop
-  and Linux Docker. Apple Containers must pass before it is supported.
+  and Linux Docker. Apple Containers must pass before it is supported. This
+  is a qualification-lane step: the relays, helper and identity resolution
+  above have not yet run against a live engine.
 
 ### 5.11 `Observed<T>` and `Probe`
 
@@ -1864,8 +1914,8 @@ Task engine adoption (effigy#217, 2026-10-19):
 | Lock key, lease lock, `tasks unlock`, hostname as namespace | Done. `TaskId` from the one resolver; `Gate(Task)` per run; shared locks are `Store(task-lock:<name>)` runs; holders are host gates only. `tasks unlock` refuses for one minor. |
 | Status rows | Done. `effigy.tasks-status.v2` projects run rows plus a gate probe ([018](018-task-status-query-surface-and-read-model-contract.md)). |
 | Status write failure | Done. Journal failures are warnings; the task's exit code stands (K10). |
-| Process group always; owned-children stop | Done for plain host commands: `Custody::spawn` with `Terminal::Inherit`, a per-run sentinel, the router installed before the first custody spawn. Host sequence steps also use child-run custody (effigy#226). Container exec and managed processes keep their current spawners until remote custody and the supervisor adopt custody. |
-| Generated sequence script | Host sequences use one typed engine and child Runs in text and JSON (effigy#226). Container task steps remain behind `legacy_container_step` until #236 after #232. Container setup embedded in lifecycle-managed commands keeps its existing renderer and process-level outcome to preserve readiness and startup order; its per-step journals are deferred to #236 by the operator on 2026-10-19. |
+| Process group always; owned-children stop | Done for plain host commands: `Custody::spawn` with `Terminal::Inherit`, a per-run sentinel, the router installed before the first custody spawn. Host sequence steps also use child-run custody (effigy#226). Container task routes, inline workspace tasks, sequence container steps, built-in `exec` steps and named-container managed setup run under remote custody (§5.10, effigy#236). Top-level `effigy exec`, aliases, shells and managed processes keep their current spawners until their owners adopt custody. |
+| Generated sequence script | One typed engine with child Runs for every placement, in text and JSON: host steps (effigy#226) and container steps under remote custody (effigy#236); the `legacy_container_step` seam and the generated named-container setup script are gone. Container setup embedded in a lifecycle-managed process command still runs inside that managed process, so its per-step journals need the run supervisor's custody of managed processes; not done in #236. |
 | Env-schema commands | Done. Resolved after `Admitted`; each `exec()` is a custody effect of the run with bounded capture. |
 | `set_var` | Done for the vault passphrase, the local-dev marker and the managed run token. Sequence environments use lexical spawn inputs, never process-global mutation (effigy#226). The external task source isolation marker remains. |
 | Task cache | Done: removed. |

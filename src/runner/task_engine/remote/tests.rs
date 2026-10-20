@@ -62,7 +62,11 @@ impl RemoteExecAdapter for Model {
         cmd: RemoteCommand,
         _: &EffectContext,
     ) -> Result<ProcessSpec, AdapterError> {
-        assert_ne!(cmd.terminal, RemoteTerminal::None, "stdin reaches the workload");
+        assert_ne!(
+            cmd.terminal,
+            RemoteTerminal::None,
+            "stdin reaches the workload"
+        );
         let mut env = client_env();
         for (key, value) in cmd.env {
             // The exec client and the guest have distinct custody nonces.
@@ -73,8 +77,14 @@ impl RemoteExecAdapter for Model {
             };
             env.insert(key, value);
         }
-        env.insert("MODEL_DONE".into(), EnvValue::Plain(self.dir.join("done").into()));
-        env.insert("MODEL_STOP".into(), EnvValue::Plain(self.dir.join("stop").into()));
+        env.insert(
+            "MODEL_DONE".into(),
+            EnvValue::Plain(self.dir.join("done").into()),
+        );
+        env.insert(
+            "MODEL_STOP".into(),
+            EnvValue::Plain(self.dir.join("stop").into()),
+        );
         env.insert(
             "MODEL_WORKLOAD".into(),
             EnvValue::Plain(cmd.argv.last().cloned().unwrap_or_default()),
@@ -231,7 +241,12 @@ fn begin(root: &Path, task: &str) -> TaskRun {
     .expect("admitted")
 }
 
-fn task<'a>(root: &'a Path, workload: &str, capture: bool, timeout_ms: Option<u64>) -> RemoteTask<'a> {
+fn task<'a>(
+    root: &'a Path,
+    workload: &str,
+    capture: bool,
+    timeout_ms: Option<u64>,
+) -> RemoteTask<'a> {
     RemoteTask {
         repo_root: root,
         container_id: CONTAINER,

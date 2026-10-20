@@ -482,9 +482,7 @@ pub fn run_input_capture_until(
     let _ = writer.join();
     match output {
         Ok(output) => Ok(output),
-        Err(error) if error.kind() == std::io::ErrorKind::TimedOut => {
-            Err(timeout_error(program))
-        }
+        Err(error) if error.kind() == std::io::ErrorKind::TimedOut => Err(timeout_error(program)),
         Err(error) => Err(launch(error)),
     }
 }

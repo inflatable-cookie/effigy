@@ -273,7 +273,9 @@ fn recovery_adapter() -> Box<dyn effigy_kernel::remote::RemoteExecAdapter> {
     if let Some(factory) = TEST_REMOTE.with(|factory| factory.borrow().clone()) {
         return factory();
     }
-    Box::new(effigy_containers::environment::ComposeRemote::<effigy_containers::environment::HostCli>::recovery())
+    Box::new(effigy_containers::environment::ComposeRemote::<
+        effigy_containers::environment::HostCli,
+    >::recovery())
 }
 impl SettlementAdapter for TaskSettlement {
     fn remote(&mut self) -> Option<&mut dyn effigy_kernel::remote::RemoteExecAdapter> {

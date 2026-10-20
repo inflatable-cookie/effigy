@@ -1,0 +1,3 @@
+[service]
+name = "linux-release-builder"
+description = "Service `builder` migrated from infra/release/linux/docker-compose.yml by `effigy container migrate`."

@@ -35,9 +35,7 @@ pub use record::{
     EngineRecord, EnvRecord, EnvState, ImportedMarker, LabelEvidence, LegacyImport, Retention,
     RECORD_SCHEMA,
 };
-pub use remote::{
-    BackendCli, CliOutput, ComposeRemote, ExecOptions, HostCli, RemoteContainer,
-};
+pub use remote::{BackendCli, CliOutput, ComposeRemote, ExecOptions, HostCli, RemoteContainer};
 pub use view::EnvironmentView;
 
 /// The Effigy home whose `.effigy/state` holds environment records and

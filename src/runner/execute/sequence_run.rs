@@ -307,7 +307,8 @@ fn execute_step(
             let Command::Exec(args) = parsed.as_ref() else {
                 unreachable!("matched exec")
             };
-            let exit = crate::runner::exec_command::run_exec_step(args, run, preflight.output_json)?;
+            let exit =
+                crate::runner::exec_command::run_exec_step(args, run, preflight.output_json)?;
             Ok((
                 exit.code,
                 String::from_utf8_lossy(&exit.stdout).into_owned(),

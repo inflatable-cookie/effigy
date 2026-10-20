@@ -969,7 +969,6 @@ pub(in crate::runner) fn resolve_env_schema_if_present(
         .map_err(map_schema_support_error)
 }
 
-
 fn schema_config(config: Option<&ManifestEnvSchemaConfig>) -> SchemaSupportConfig<'_> {
     SchemaSupportConfig {
         config_schema: config.and_then(|c| c.schema.as_deref()),

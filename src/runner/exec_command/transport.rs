@@ -129,9 +129,11 @@ pub(super) fn routed_task_exec(
             EnvOverride::Secret(value.expose().to_owned()),
         ));
     }
-    let color = CONTAINER_COLOR_ENV
-        .iter()
-        .chain(tty.then_some(&CONTAINER_TTY_COLOR_ENV).into_iter().flatten());
+    let color = CONTAINER_COLOR_ENV.iter().chain(
+        tty.then_some(&CONTAINER_TTY_COLOR_ENV)
+            .into_iter()
+            .flatten(),
+    );
     for (key, value) in color {
         env.push(((*key).to_owned(), EnvOverride::Plain((*value).to_owned())));
     }

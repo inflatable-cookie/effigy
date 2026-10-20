@@ -1,0 +1,2 @@
+[ok] container `web` is ready in detached mode
+[next] inspect state with `effigy container web status`

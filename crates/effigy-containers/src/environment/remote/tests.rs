@@ -416,12 +416,26 @@ fn docker_launch_forwards_values_privately_and_keeps_the_operator_terminal() {
         assert_eq!(argv[..3], ["/bin/sh", "-c", DOCKER_RELAY]);
         assert_eq!(
             argv[3..8],
-            ["effigy-remote", "3", "APP_ENV", "DB_PASSWORD", "EFFIGY_CUSTODY_NONCE"]
+            [
+                "effigy-remote",
+                "3",
+                "APP_ENV",
+                "DB_PASSWORD",
+                "EFFIGY_CUSTODY_NONCE"
+            ]
         );
         assert!(argv[8].ends_with("docker"));
         let mut expected = vec!["--context", "ctx", "exec"];
         expected.extend(flags);
-        expected.extend(["-u", "dev", "-w", "/workspace/app", "--env-file", "/dev/fd/4", ID]);
+        expected.extend([
+            "-u",
+            "dev",
+            "-w",
+            "/workspace/app",
+            "--env-file",
+            "/dev/fd/4",
+            ID,
+        ]);
         assert_eq!(argv[9..9 + expected.len()], expected);
         assert_eq!(argv[9 + expected.len()..], wrapper);
         // No value enters argv; each one is private and keeps its class.
@@ -519,10 +533,7 @@ fn host_relays_deliver_values_by_name_and_pass_stdin_through() {
         path
     };
     // docker: shows the env file it was given, its argv, then its stdin.
-    let docker = write(
-        "docker",
-        "cat /dev/fd/4; printf 'argv:%s\\n' \"$*\"; cat",
-    );
+    let docker = write("docker", "cat /dev/fd/4; printf 'argv:%s\\n' \"$*\"; cat");
     // colima ssh --profile P -- <cmd...>: runs the VM command locally.
     let colima = write("colima", "shift 4; exec \"$@\"");
     write(
@@ -655,7 +666,12 @@ fn nonce_search_proves_never_started_only_from_a_complete_inventory() {
     let found = a.find_by_nonce(&identity(), &nonce(), &cx);
     let found = found.verified().unwrap().as_ref().unwrap();
     assert_eq!(
-        (found.leader_pid, found.sid, found.leader_start_ticks, found.pid_ns),
+        (
+            found.leader_pid,
+            found.sid,
+            found.leader_start_ticks,
+            found.pid_ns
+        ),
         (42, 42, 100, 401)
     );
     assert!(found.session_isolated);
@@ -802,7 +818,10 @@ fn production_adapter_passes_the_remote_conformance_suite() {
         .cleanup(Duration::from_secs(30))
         .unwrap();
     let results = run(&mut model, &cleanup).unwrap();
-    assert_eq!(results.len(), effigy_kernel::remote::conformance::CASES.len());
+    assert_eq!(
+        results.len(),
+        effigy_kernel::remote::conformance::CASES.len()
+    );
 }
 
 /// The helper as written, against this host's real `/proc`.
@@ -845,22 +864,46 @@ fn linux_helper_inventories_and_signals_only_identified_processes() {
     let stale = (me.start + 1).to_string();
     let pid_text = pid.to_string();
     assert_eq!(
-        helper(&["kill", &boot, &ns, "TERM", "member", &pid_text, &stale], NONCE).trim(),
+        helper(
+            &["kill", &boot, &ns, "TERM", "member", &pid_text, &stale],
+            NONCE
+        )
+        .trim(),
         "gone"
     );
     // Another nonce: never signalled.
     let start = me.start.to_string();
     assert_eq!(
-        helper(&["kill", &boot, &ns, "TERM", "member", &pid_text, &start], "b").trim(),
+        helper(
+            &["kill", &boot, &ns, "TERM", "member", &pid_text, &start],
+            "b"
+        )
+        .trim(),
         "gone"
     );
     assert!(workload.try_wait().unwrap().is_none());
     assert_eq!(
-        helper(&["kill", "other-boot", &ns, "TERM", "member", &pid_text, &start], NONCE).trim(),
+        helper(
+            &[
+                "kill",
+                "other-boot",
+                &ns,
+                "TERM",
+                "member",
+                &pid_text,
+                &start
+            ],
+            NONCE
+        )
+        .trim(),
         "moved"
     );
     assert_eq!(
-        helper(&["kill", &boot, &ns, "TERM", "member", &pid_text, &start], NONCE).trim(),
+        helper(
+            &["kill", &boot, &ns, "TERM", "member", &pid_text, &start],
+            NONCE
+        )
+        .trim(),
         "sent"
     );
     let status = workload.wait().unwrap();

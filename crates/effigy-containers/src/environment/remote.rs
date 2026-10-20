@@ -250,8 +250,10 @@ impl<C: BackendCli> ComposeRemote<C> {
             Ok(deadline) => deadline,
             Err(reason) => return Observed::Unknown(reason),
         };
-        let (program, args) =
-            container.runtime(vec![OsString::from("inspect"), OsString::from(&container.id)]);
+        let (program, args) = container.runtime(vec![
+            OsString::from("inspect"),
+            OsString::from(&container.id),
+        ]);
         let output = match self.cli.run(program, &args, &[], deadline) {
             Ok(output) => output,
             Err(error) => return Observed::Unknown(UnknownReason::Inconsistent(error)),
@@ -686,11 +688,11 @@ impl<C: BackendCli> RemoteExecAdapter for ComposeRemote<C> {
         cmd: RemoteCommand,
         cx: &EffectContext,
     ) -> Result<ProcessSpec, AdapterError> {
-        cx.operation()
-            .check("remote launch")
-            .map_err(|_| AdapterError(UnknownReason::TimedOut {
+        cx.operation().check("remote launch").map_err(|_| {
+            AdapterError(UnknownReason::TimedOut {
                 phase: "remote launch".into(),
-            }))?;
+            })
+        })?;
         let container = RemoteContainer::parse(&id.id)
             .ok_or_else(|| inconsistent("not an exact container identity"))?;
         self.launch_spec(&container, cmd)
@@ -811,7 +813,7 @@ impl<C: BackendCli> RemoteExecAdapter for ComposeRemote<C> {
 }
 
 fn host_program(program: &str) -> OsString {
-    crate::compose::resolve_host_cli_program(program).into()
+    crate::compose::resolve_host_cli_program(program)
 }
 
 fn valid_name(name: &str) -> bool {
