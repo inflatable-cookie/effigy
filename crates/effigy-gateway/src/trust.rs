@@ -109,6 +109,17 @@ pub fn inspect_route_table_trust(path: &Path) -> RouteTableTrust {
 /// `None` when it is untrusted — the caller keeps its last-known-good in-memory
 /// table (fail-closed). A rejection is logged with its reason.
 pub fn load_trusted(path: &Path) -> Result<Option<RouteTable>, GatewayError> {
+    match crate::endpoint_store::EndpointStore::for_routes(path).read() {
+        effigy_kernel::observe::Observed::Verified(snapshot, _) => {
+            return snapshot.routes().map(Some)
+        }
+        effigy_kernel::observe::Observed::Unknown(reason) => {
+            return Err(crate::endpoint_store::error(format!(
+                "endpoint observation unknown: {reason:?}"
+            )))
+        }
+        effigy_kernel::observe::Observed::Absent(_) => {}
+    }
     match inspect_route_table_trust(path) {
         RouteTableTrust::Absent | RouteTableTrust::Trusted => Ok(Some(RouteTable::load(path)?)),
         RouteTableTrust::Untrusted { reason } => {

@@ -9,9 +9,8 @@
 //!   project port, so `http://myproject.test` reaches `localhost:8080`.
 //!
 //! The gateway runs as a host-native background process, not a container.
-//! Route registration is file-based: container lifecycle events update a
-//! JSON route table at `~/.effigy/gateway/routes.json`, and the gateway
-//! watches for changes.
+//! Container and managed-listener registration publish transactional endpoint
+//! claims in the kernel Store. The gateway reloads committed snapshots.
 //!
 //! ## Architecture
 //!
@@ -33,6 +32,7 @@ mod macos_socket;
 #[cfg(any(target_os = "macos", test))]
 pub mod bind_broker;
 pub mod dns;
+pub mod endpoint_store;
 pub mod error;
 pub mod identity;
 pub mod listener_handoff;
@@ -61,3 +61,10 @@ pub use server::{GatewayConfig, GatewayMode, PrivateGatewayPolicy};
 #[cfg(test)]
 #[path = "../../../tests/support/scoped_env.rs"]
 mod env_test_support;
+
+#[cfg(test)]
+#[path = "../../../tests/support/gateway_legacy.rs"]
+mod gateway_legacy_fixture;
+
+#[cfg(test)]
+extern crate self as effigy_gateway;

@@ -1,4 +1,4 @@
-//! Port and loopback resolution is read-only; Prepare calls the legacy gateway allocators.
+//! Port and loopback resolution is read-only; Prepare retains gateway-owned reservations.
 use std::path::Path;
 
 use effigy_gateway::ports::{prepare_ports, PortRegistry, PortRequest};
@@ -10,28 +10,66 @@ pub const UNASSIGNED_PORT_LABEL: &str = "unassigned (assigned on first prepare)"
 pub const UNASSIGNED_PORT_EXPRESSION: &str =
     "${EFFIGY_UNASSIGNED_PORT:?unassigned (assigned on first prepare)}";
 
+/// Initialize/import endpoint authority before an effectful Prepare observes
+/// policy. Other engines may have created the shared SQLite file but not yet
+/// committed its schema; the gateway's admitted writer waits for that bootstrap.
+/// Pure policy readers never call this seam. A verified payload needs no write.
+/// With no configured home, the caller's existing storage validation applies.
+/// Import/refusal errors are preserved; unreadable state is never replaced.
+pub fn prepare_endpoint_store() -> Result<(), ContainerPolicyError> {
+    let Some(home) = crate::policy_support::effigy_home_dir() else {
+        return Ok(());
+    };
+    let store = effigy_gateway::endpoint_store::EndpointStore::for_effigy_home(&home);
+    match store.read() {
+        effigy_kernel::observe::Observed::Verified(_, _) => Ok(()),
+        effigy_kernel::observe::Observed::Absent(_)
+        | effigy_kernel::observe::Observed::Unknown(_) => {
+            // Admission verifies/reconciles state; Unknown never becomes an
+            // empty registry or permission to replace an existing assignment.
+            store.import()?;
+            Ok(())
+        }
+    }
+}
+
 /// Effectful Prepare seam. Returns whether the caller must resolve again to
 /// include newly assigned ports before admitting or publishing the render.
 pub fn prepare_container_policy_ports(
     policy: &EffectiveContainerPolicy,
 ) -> Result<bool, ContainerPolicyError> {
     let loopbacks_changed = crate::policy_support::prepare_container_policy_loopbacks(policy)?;
-    if !policy
+    let needs_assignment = policy
         .declared_ports
         .iter()
         .any(|port| port.starts_with(UNASSIGNED_PORT_LABEL))
-        && !policy
+        || policy
             .shared_services
             .iter()
-            .any(|service| service.host_port == 0)
-    {
-        return Ok(loopbacks_changed);
-    }
+            .any(|service| service.host_port == 0);
     let home = crate::policy_support::effigy_home_dir().ok_or_else(|| {
         ContainerPolicyError::TaskInvocation("HOME is required to prepare container ports".into())
     })?;
     let registry = PortRegistry::load(&home.join("ports.json"))
         .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))?;
+    if !needs_assignment {
+        let store = effigy_gateway::endpoint_store::EndpointStore::for_effigy_home(&home);
+        if registry.get(&policy.project_name).is_some() {
+            store.retain_ports(
+                &policy.project_name,
+                &policy.repo_root.display().to_string(),
+            )?;
+        }
+        for shared in &policy.shared_services {
+            if registry.get(&shared.project_name).is_some() {
+                let root = shared.compose_file.parent().ok_or_else(|| {
+                    ContainerPolicyError::TaskInvocation("shared Compose file has no parent".into())
+                })?;
+                store.retain_ports(&shared.project_name, &root.display().to_string())?;
+            }
+        }
+        return Ok(loopbacks_changed);
+    }
     let mut requests = Vec::new();
     // Preserve the old shared-before-local allocation order.
     for shared in &policy.shared_services {

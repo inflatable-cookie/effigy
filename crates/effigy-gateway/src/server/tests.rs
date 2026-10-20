@@ -1,5 +1,7 @@
 use super::*;
 use crate::dns::DnsCache;
+#[cfg(test)]
+use crate::gateway_legacy_fixture::LegacyRegistryFixture;
 use crate::routes::{Route, RouteSource, RouteTable};
 use std::sync::{Arc, RwLock};
 use tokio::sync::watch;

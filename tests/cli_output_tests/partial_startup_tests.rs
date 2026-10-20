@@ -233,11 +233,18 @@ version = "16"
             .expect("publish complete private control");
     }
     fn routes(&self) -> Value {
-        serde_json::from_slice(
-            &fs::read(self.root.path().join("home/.effigy/gateway/routes.json"))
-                .expect("private routes"),
-        )
-        .expect("JSON")
+        effigy_gateway::endpoint_store::EndpointStore::new(self.root.path().join("home"))
+            .read_compatible()
+            .expect("private endpoint snapshot")
+            .document("routes")
+            .expect("private routes")
+            .clone()
+    }
+    fn save_routes(&self, document: Value) {
+        let table = serde_json::from_value(document).expect("private route table");
+        effigy_gateway::endpoint_store::EndpointStore::new(self.root.path().join("home"))
+            .edit(None, |snapshot| snapshot.set_routes(&table))
+            .expect("publish private route claims");
     }
     fn probe(&mut self, i: usize) {
         writeln!(self.stacks[i].session.get_mut(), "still-running").expect("existing exec stream");
@@ -345,12 +352,8 @@ fn private_generated_preparation_must_not_adopt_probe_time_drift() {
             foreign[field] = Value::Null;
         }
         table["routes"]["foreign-admission.fixture.test"] = foreign;
-        fs::write(
-            fixture.root.path().join("home/.effigy/gateway/routes.json"),
-            table.to_string(),
-        )
-        .unwrap();
-        let before_table = table;
+        fixture.save_routes(table);
+        let before_table = fixture.routes();
         // The sibling's admitted generation lives in its environment record.
         let sibling_admission = environment_record(&fixture, 1);
         fixture.set(0, "mode", json!(mode));
@@ -819,11 +822,7 @@ fn private_three_scopes_partial_resume_replacement_and_cli_refusals() {
         route["tcp_target"] = Value::Null;
         table["routes"][name] = route;
     }
-    fs::write(
-        fixture.root.path().join("home/.effigy/gateway/routes.json"),
-        table.to_string(),
-    )
-    .unwrap();
+    fixture.save_routes(table);
     let mut siblings = fixture.routes();
     // Route::scope serializes None as absent, including a loaded JSON null.
     // Canonicalize only that field; all ownership and foreign fields stay exact.

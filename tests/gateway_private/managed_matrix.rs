@@ -124,6 +124,15 @@ impl<'a> Case<'a> {
     ) -> Self {
         fs::create_dir_all(base).expect("case root");
         let root = base.canonicalize().expect("canonical case");
+        // A down retains persistent domain ownership. Different checkout
+        // cases sharing one private gateway need distinct domains; each
+        // case still reuses its domain across restart and handover.
+        let domain = format!(
+            "{}.matrix.test",
+            root.file_name()
+                .expect("case directory name")
+                .to_string_lossy()
+        );
         let proxy = MatrixProxy::bind(&root);
         let port = proxy.address.port();
         let state = root.join("engine");
@@ -177,7 +186,7 @@ impl<'a> Case<'a> {
         }
         manifest.push_str("[systems]\ndefault = \"dev\"\n[systems.dev]\ndefault_workspace = \"app\"\n[systems.dev.workspaces.app]\ncontainer = \"stack\"\n[containers]\ndefault = \"stack\"\n");
         for environment in ["stack", "other"] {
-            manifest.push_str(&format!("[containers.{environment}]\ndriver = \"colima\"\nstartup = \"detached\"\nprofile = \"matrix\"\ncompose_file = \"compose.yml\"\nproject_name = \"matrix-{environment}\"\nprimary_service = \"app\"\nworking_dir = {}\n[containers.{environment}.host]\nports = [\"{port}:8080\"]\n[containers.{environment}.dns]\nroutes = [{{ domain = \"matrix.test\", tls = false, service = \"app\", port = {port} }}]\n[containers.{environment}.lifecycle]\non_task_exit = \"stop\"\ndetach_timeout_secs = 1\n", toml_quote(&root.display().to_string())));
+            manifest.push_str(&format!("[containers.{environment}]\ndriver = \"colima\"\nstartup = \"detached\"\nprofile = \"matrix\"\ncompose_file = \"compose.yml\"\nproject_name = \"matrix-{environment}\"\nprimary_service = \"app\"\nworking_dir = {}\n[containers.{environment}.host]\nports = [\"{port}:8080\"]\n[containers.{environment}.dns]\nroutes = [{{ domain = \"{domain}\", tls = false, service = \"app\", port = {port} }}]\n[containers.{environment}.lifecycle]\non_task_exit = \"stop\"\ndetach_timeout_secs = 1\n", toml_quote(&root.display().to_string())));
             let project = format!("matrix-{environment}");
             let mut rows = String::new();
             for (service, id) in [("app", "a".repeat(64)), ("db", "b".repeat(64))] {
@@ -294,6 +303,13 @@ impl<'a> Case<'a> {
         fs::write(self.state.join(marker), "prior owned state").expect("prior state");
     }
     fn spawn(&self, tui: bool, name: &str) -> Owner {
+        let prior_run_token = fs::read(
+            self.root
+                .join(".effigy/runtime/managed/serve-default/session.json"),
+        )
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        .and_then(|state| state["run_token"].as_str().map(str::to_owned));
         let output = self.root.join(format!("{name}.out"));
         let file = fs::File::create(&output).expect("owner log");
         let mut command = self.command(if tui {
@@ -344,6 +360,7 @@ impl<'a> Case<'a> {
                 child: ManagedSupervisor(child),
                 reader: Some(reader),
                 output,
+                prior_run_token,
             }
         } else {
             command
@@ -354,6 +371,7 @@ impl<'a> Case<'a> {
                 child: ManagedSupervisor(command.spawn().expect("headless owner")),
                 reader: None,
                 output,
+                prior_run_token,
             }
         }
     }
@@ -395,6 +413,14 @@ impl<'a> Case<'a> {
                 .root
                 .join(".effigy/runtime/managed-lifecycle/serve-stack.state");
             if fs::read_to_string(lifecycle).unwrap_or_default().trim() == "ready"
+                // Failed cleanup can leave the preceding ready record and
+                // workload files. Only this spawned owner's new run counts.
+                && state.as_ref().is_some_and(|state| {
+                    state["supervisor_pid"].as_u64() == Some(owner.child.0.id() as u64)
+                        && state["run_token"].as_str().is_some_and(|token| {
+                            Some(token) != owner.prior_run_token.as_deref()
+                        })
+                })
                 && self.root.join("work-api.pid").exists()
                 && self.root.join("work-jobs.pid").exists()
                 && recorded_failures == failures
@@ -612,6 +638,7 @@ struct Owner {
     child: ManagedSupervisor,
     reader: Option<JoinHandle<()>>,
     output: PathBuf,
+    prior_run_token: Option<String>,
 }
 impl Owner {
     fn finish(mut self, success: bool) {

@@ -278,3 +278,7 @@ pub fn driver_label(driver: ManifestContainerDriver) -> &'static str {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "../../../tests/support/gateway_legacy.rs"]
+mod gateway_legacy_fixture;

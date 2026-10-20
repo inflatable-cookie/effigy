@@ -2,6 +2,48 @@ use super::*;
 use crate::error::GatewayError;
 use crate::ports::PortRegistry;
 
+// Model generation/fence cases inject only the boundary observation. The
+// public writer always performs the real process/socket proof.
+fn register_managed_listener_route(
+    path: &Path,
+    project: &str,
+    domain: &str,
+    target: &str,
+    tls: bool,
+    owner: ManagedListenerRouteOwner,
+    expected: Option<&str>,
+) -> Result<ManagedListenerRoutePublication, GatewayError> {
+    register_managed_listener_route_verified(
+        path,
+        project,
+        domain,
+        target,
+        tls,
+        (owner, expected),
+        |_| Ok(()),
+    )
+}
+
+#[test]
+fn publication_refuses_an_unverified_listener_and_keeps_the_route_absent() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("routes.json");
+    assert!(super::register_managed_listener_route(
+        &path,
+        "/fixture",
+        "refused.test",
+        "127.0.0.1:43123",
+        false,
+        synthetic_owner("child", "127.0.0.1:43123"),
+        None
+    )
+    .is_err());
+    assert!(RouteTable::load(&path)
+        .unwrap()
+        .lookup("refused.test")
+        .is_none());
+}
+
 #[test]
 fn register_and_deregister_roundtrip() {
     let dir = tempfile::tempdir().unwrap();
@@ -145,7 +187,19 @@ fn managed_listener_routes_require_exact_generation_and_hand_over_container_rout
         .lookup("app.example.test")
         .cloned()
         .unwrap();
-    let conflict = check_container_claim_with(&live, &project, None, |_| true).unwrap_err();
+    assert!(check_container_claim_with(&live, &project, None, |_| {
+        effigy_kernel::observe::Observed::Unknown(
+            effigy_kernel::observe::UnknownReason::PermissionDenied,
+        )
+    })
+    .is_err());
+    let conflict = check_container_claim_with(&live, &project, None, |_| {
+        effigy_kernel::observe::Observed::Verified(
+            true,
+            effigy_kernel::observe::Evidence::new("fixture live".into(), None).unwrap(),
+        )
+    })
+    .unwrap_err();
     assert!(matches!(
         &conflict,
         GatewayError::ManagedListenerRouteConflict { pid: 10, .. }
@@ -159,7 +213,12 @@ fn managed_listener_routes_require_exact_generation_and_hand_over_container_rout
     );
 
     // A generation that is no longer live is a handover, not a conflict.
-    assert!(check_container_claim_with(&live, &project, None, |_| false).is_ok());
+    assert!(check_container_claim_with(&live, &project, None, |_| {
+        effigy_kernel::observe::Observed::Absent(
+            effigy_kernel::observe::AbsenceProof::NoSuchProcess { pid: 11 },
+        )
+    })
+    .is_ok());
 
     // Replacement of the same managed owner still requires the exact expected
     // predecessor generation, and a stale stop callback cannot remove it.
@@ -341,6 +400,22 @@ fn live_managed_listener_route_blocks_container_registration() {
     ));
     let rendered = error.to_string();
     assert!(rendered.contains("effigy container down"), "{rendered}");
+    std::fs::remove_file(&availability).unwrap();
+    let table = RouteTable::load(&path).unwrap();
+    let owner = table
+        .lookup("app.example.test")
+        .unwrap()
+        .managed_listener
+        .as_ref()
+        .unwrap();
+    assert!(
+        matches!(
+            crate::managed_listener::observe_managed_listener_owner(owner),
+            effigy_kernel::observe::Observed::Unknown(_)
+        ),
+        "a missing readiness record does not prove the live owner absent"
+    );
+    assert!(register_route(&path, &container_registration(&project, "127.0.0.1:8080")).is_err());
     drop(listener);
 }
 
@@ -757,7 +832,7 @@ fn deregister_owned_routes_matching_leaves_unlisted_owned_routes() {
 fn cleanup_owned_routes_and_certs_skips_foreign_owner() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("routes.json");
-    let (ours, _private) = linked_checkout(root.path(), "worker");
+    let (ours, private) = linked_checkout(root.path(), "worker");
     let (theirs, _theirs_private) = linked_checkout(root.path(), "sibling");
     let ours_path = ours.display().to_string();
     register_route(
@@ -772,7 +847,7 @@ fn cleanup_owned_routes_and_certs_skips_foreign_owner() {
         .scope
         .clone()
         .expect("scope");
-    deregister_owned_routes(&path, &ours_path, Some(&our_token)).unwrap();
+    std::fs::remove_dir_all(private).unwrap();
     register_route(
         &path,
         &build_registration(

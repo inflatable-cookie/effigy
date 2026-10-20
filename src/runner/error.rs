@@ -790,3 +790,9 @@ fn map_container_exec_failure(
 #[cfg(test)]
 #[path = "error/tests.rs"]
 mod tests;
+
+impl From<effigy_gateway::GatewayError> for RunnerError {
+    fn from(error: effigy_gateway::GatewayError) -> Self {
+        Self::task_invocation(error.to_string())
+    }
+}

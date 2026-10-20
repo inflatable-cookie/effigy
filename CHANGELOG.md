@@ -405,6 +405,21 @@ During v0.x, MINOR bumps may include breaking changes.
   endpoints, or trust behavior change.
 
 ### Changed
+- Gateway HTTP requests reuse upstream connections with low-latency TCP settings.
+  Managed listener ownership is verified at publication and off the request path;
+  stopped or replaced generations still refuse traffic, including reused connections.
+  An unchanged route obtains a fresh proof when concurrent endpoint publication
+  retires its connection pool, avoiding a wait on an exited worker.
+- Private gateway startup waits within the 15-second gateway budget for verified
+  listener publication, allowing durable endpoint import on slower filesystems.
+- Concurrent cold container startup initializes endpoint authority before
+  Prepare reads policy, avoiding a transient uninitialized kernel-store error.
+- Detached container startup JSON identifies the preparation step and safe
+  failure family without exposing backend output, argv or environment.
+- Gateway routes, loopback addresses and generated host-port ranges now share
+  one transactional endpoint store. Existing JSON registries import automatically
+  and remain as backups, preserving URLs, IPs and pinned ports. Stopped stacks
+  retain their assignments; explicit retirement releases them through quarantine.
 - Container inspection and validation no longer create declared media directories or the shared Composer cache; activation prepares those bind sources.
 - Graph now has six commands: `index`, `status`, `search`, `node`, `affected`
   and `explore`. Node accepts file paths and incoming/outgoing relationships;

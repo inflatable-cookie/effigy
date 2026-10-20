@@ -1,4 +1,6 @@
 use super::*;
+#[cfg(test)]
+use crate::gateway_legacy_fixture::LegacyRegistryFixture;
 
 // ── PortAllocation ───────────────────────────────────────────────
 

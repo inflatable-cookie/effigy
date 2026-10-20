@@ -1,3 +1,5 @@
+#[cfg(test)]
+use crate::gateway_legacy_fixture::LegacyRegistryFixture;
 use std::path::PathBuf;
 
 use effigy_catalog::volumes::{
@@ -10,10 +12,11 @@ use effigy_containers::{
     volume_has_ownership_proof, ObservedKind, ObservedResource, ScopeComposeKind, ScopeRecord,
     COMPOSE_PROJECT_LABEL, PROJECT_LABEL, SCOPE_LABEL,
 };
+use effigy_gateway::endpoint_store::EndpointStore;
 use effigy_gateway::loopback::LoopbackRegistry;
 use effigy_gateway::ports::PortRegistry;
 use effigy_gateway::registration::{cleanup_owned_routes_and_certs, owned_by};
-use effigy_gateway::routes::{RouteTable, RouteTableLock};
+use effigy_gateway::routes::RouteTable;
 
 use super::data::maybe_confirm_destructive_container_action;
 use super::support::run_runtime_volume_capture;
@@ -533,23 +536,15 @@ fn container_ps_args(label: &str) -> Vec<String> {
 
 fn observe_routes(record: &ScopeRecord) -> Result<Vec<ObservedResource>, RunnerError> {
     let path = super::gateway_registration::gateway_route_table_path()?;
-    if !path.is_file() {
-        return Ok(Vec::new());
-    }
-    let table = effigy_gateway::routes::RouteTable::load(&path)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    Ok(table
-        .all_routes()
+    let snapshot = EndpointStore::for_routes(&path).read_compatible()?;
+    Ok(snapshot
+        .owned_domains(&record.checkout, Some(&record.token))?
         .into_iter()
-        .filter(|route| {
-            route.project == record.checkout
-                && route.scope.as_deref() == Some(record.token.as_str())
-        })
-        .map(|route| ObservedResource {
+        .map(|domain| ObservedResource {
             kind: ObservedKind::Route,
-            name: route.domain.clone(),
-            scope_label: route.scope.clone(),
-            project_label: Some(route.project.clone()),
+            name: domain,
+            scope_label: Some(record.token.clone()),
+            project_label: Some(record.checkout.clone()),
             persist: false,
             external: false,
             profile: None,
@@ -562,9 +557,6 @@ fn observe_ports(record: &ScopeRecord) -> Result<Vec<ObservedResource>, RunnerEr
         return Ok(Vec::new());
     };
     let path = home.join("ports.json");
-    if !path.is_file() {
-        return Ok(Vec::new());
-    }
     let registry = PortRegistry::load(&path)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     Ok(record
@@ -585,9 +577,6 @@ fn observe_ports(record: &ScopeRecord) -> Result<Vec<ObservedResource>, RunnerEr
 
 fn observe_loopbacks(record: &ScopeRecord) -> Result<Vec<ObservedResource>, RunnerError> {
     let path = gateway_dir()?.join("loopback-ips.json");
-    if !path.is_file() {
-        return Ok(Vec::new());
-    }
     let registry = LoopbackRegistry::load(&path)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let mut identities = record
@@ -628,11 +617,7 @@ fn observe_tls_certs(record: &ScopeRecord) -> Result<Vec<ObservedResource>, Runn
     }
     let certs_dir = gateway_dir()?.join("certs");
     let path = super::gateway_registration::gateway_route_table_path()?;
-    let table = if path.is_file() {
-        RouteTable::load(&path).map_err(|error| RunnerError::task_invocation(error.to_string()))?
-    } else {
-        RouteTable::new()
-    };
+    let table = RouteTable::load(&path)?;
     Ok(record
         .pending_tls_certs
         .iter()
@@ -662,7 +647,7 @@ fn observe_tls_certs(record: &ScopeRecord) -> Result<Vec<ObservedResource>, Runn
 fn remember_pending_tls(record: &ScopeRecord) -> Result<ScopeRecord, RunnerError> {
     let mut domains = record.pending_tls_certs.clone();
     let path = super::gateway_registration::gateway_route_table_path()?;
-    if path.is_file() {
+    {
         let table = RouteTable::load(&path)
             .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
         for route in table.all_routes() {
@@ -752,7 +737,7 @@ fn delete_routes_and_owned_certs(record: &ScopeRecord) -> Result<bool, RunnerErr
         &path,
         &record.checkout,
         Some(&record.token),
-        Some(&record.routes),
+        None,
         &record.pending_tls_certs,
         |domain| match delete_tls_cert(domain) {
             Ok(true) => Ok(()),
@@ -767,6 +752,9 @@ fn delete_routes_and_owned_certs(record: &ScopeRecord) -> Result<bool, RunnerErr
         },
     )
     .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    EndpointStore::for_routes(&path).edit(None, |snapshot| {
+        snapshot.release_domains(&record.checkout, Some(&record.token))
+    })?;
     Ok(true)
 }
 
@@ -774,60 +762,42 @@ fn delete_ports(record: &ScopeRecord) -> Result<bool, RunnerError> {
     let Some(home) = effigy_containers::effigy_home() else {
         return Ok(true);
     };
-    let path = home.join("ports.json");
-    if !path.is_file() {
-        return Ok(true);
-    }
-    let _lock = RouteTableLock::acquire(&path)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    let mut registry = PortRegistry::load(&path)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    for project in &record.project_names {
-        registry.deallocate(project);
-    }
-    registry
-        .save(&path)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    Ok(true)
+    let store = EndpointStore::for_effigy_home(&home);
+    store.transaction(None, |snapshot| -> Result<_, RunnerError> {
+        let mut registry = snapshot.ports()?;
+        for project in &record.project_names {
+            if registry
+                .get(project)
+                .is_some_and(|allocation| allocation.project == record.checkout)
+            {
+                registry.deallocate(project);
+            }
+        }
+        snapshot.set_ports(&registry)?;
+        Ok(true)
+    })
 }
 
 fn delete_loopbacks(record: &ScopeRecord) -> Result<bool, RunnerError> {
-    let path = gateway_dir()?.join("loopback-ips.json");
-    if !path.is_file() {
-        return Ok(true);
-    }
-    let _lock = RouteTableLock::acquire(&path)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    let mut registry = LoopbackRegistry::load(&path)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    let mut identities = record
-        .loopback_identities
-        .iter()
-        .filter(|identity| {
-            registry
+    let store =
+        EndpointStore::for_routes(&super::gateway_registration::gateway_route_table_path()?);
+    store.transaction(None, |snapshot| -> Result<_, RunnerError> {
+        let mut registry = snapshot.loopback()?;
+        for identity in record
+            .loopback_identities
+            .iter()
+            .chain(record.project_names.iter())
+        {
+            if registry
                 .get(identity)
                 .is_some_and(|assignment| assignment.scope == record.checkout)
-        })
-        .cloned()
-        .collect::<std::collections::BTreeSet<_>>();
-    identities.extend(
-        record
-            .project_names
-            .iter()
-            .filter(|identity| {
-                registry
-                    .get(identity)
-                    .is_some_and(|assignment| assignment.scope == record.checkout)
-            })
-            .cloned(),
-    );
-    for identity in identities {
-        registry.deallocate(&identity);
-    }
-    registry
-        .save(&path)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    Ok(true)
+            {
+                registry.deallocate(identity);
+            }
+        }
+        snapshot.set_loopback(&registry)?;
+        Ok(true)
+    })
 }
 
 fn observation_cwd(record: &ScopeRecord) -> PathBuf {
@@ -842,6 +812,29 @@ fn observation_cwd(record: &ScopeRecord) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retirement_observes_and_releases_a_withdrawn_domain() {
+        let root = tempfile::tempdir().unwrap();
+        let _home = crate::runner::gateway_command::set_test_gateway_home(root.path());
+        let path = super::super::gateway_registration::gateway_route_table_path().unwrap();
+        let store = EndpointStore::for_routes(&path);
+        let record = sample_record();
+        store
+            .edit(None, |snapshot| {
+                snapshot.reserve_domain("dormant.test", &record.checkout, Some(&record.token), None)
+            })
+            .unwrap();
+        assert_eq!(observe_routes(&record).unwrap().len(), 1);
+        assert!(delete_routes_and_owned_certs(&record).unwrap());
+        assert!(observe_routes(&record).unwrap().is_empty());
+        assert!(store
+            .read_compatible()
+            .unwrap()
+            .quarantined
+            .values()
+            .any(|q| q.kind == "domain"));
+    }
 
     #[test]
     fn retirement_releases_only_the_scope_port_allocation_in_the_isolated_home() {

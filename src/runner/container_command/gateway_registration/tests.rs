@@ -1,4 +1,6 @@
 use super::*;
+#[cfg(test)]
+use crate::gateway_legacy_fixture::LegacyRegistryFixture;
 use effigy_containers::exec::{
     ContainerExecError, RunningComposeContainerInventory, RunningComposeContainerProfiled,
     RuntimeInventoryFailure,
@@ -1078,9 +1080,7 @@ fn foreign_teardown_preserves_tls_material_and_tcp_alias() {
 fn container_down_after_listener_handover_preserves_the_successor_route() {
     with_test_home("container-down-after-handover", || {
         use effigy_gateway::identity::GatewayStartIdentity;
-        use effigy_gateway::registration::{
-            deregister_managed_listener_route, register_managed_listener_route,
-        };
+        use effigy_gateway::registration::deregister_managed_listener_route;
         use effigy_gateway::routes::ManagedListenerRouteOwner;
 
         let root = tempfile::tempdir().unwrap();
@@ -1122,16 +1122,18 @@ fn container_down_after_listener_handover_preserves_the_successor_route() {
             route_tls: false,
             availability_file: root.path().join("app.listener.json").display().to_string(),
         };
-        register_managed_listener_route(
-            &table_path,
-            &project,
-            "clientname.test",
-            "127.0.0.1:43123",
-            false,
-            owner,
-            None,
-        )
-        .expect("handover route publication");
+        // Seed a previously committed generation; this test exercises teardown,
+        // not the public writer's live-listener publication proof.
+        effigy_gateway::endpoint_store::EndpointStore::for_routes(&table_path)
+            .routes::<_, effigy_gateway::GatewayError>(|table| {
+                let mut route = table.lookup("clientname.test").unwrap().clone();
+                route.target = Some(owner.address.clone());
+                route.source = RouteSource::Task;
+                route.managed_listener = Some(owner);
+                table.upsert(route);
+                Ok(())
+            })
+            .expect("previously committed successor fixture");
 
         // `container down` must not remove the live successor route.
         assert!(deregister_gateway_routes_for_container(&policy)
@@ -1741,10 +1743,8 @@ fn load_or_allocate_project_loopback_ip_avoids_live_route_table_ips_missing_from
 }
 
 #[test]
-fn load_or_allocate_project_loopback_ip_reassigns_conflicting_saved_ip() {
+fn load_or_allocate_project_loopback_ip_refuses_conflicting_saved_ip() {
     with_test_home("loopback-reassign-conflicting-saved-ip", || {
-        let policy = test_policy();
-        let repo_root = PathBuf::from("/tmp/repo");
         let route_table_path = gateway_route_table_path().expect("route table path");
         std::fs::create_dir_all(route_table_path.parent().expect("route table parent"))
             .expect("mkdir route table parent");
@@ -1770,20 +1770,10 @@ fn load_or_allocate_project_loopback_ip_reassigns_conflicting_saved_ip() {
         registry
             .allocate("project:demo-web-dev:/tmp/repo", "/tmp/repo")
             .expect("seed conflicting assignment");
-        registry.save(&loopback_path).expect("save registry");
-
-        let ip = load_or_allocate_project_loopback_ip(&repo_root, &policy, true)
-            .expect("allocate")
-            .expect("loopback ip");
-        let reloaded = LoopbackRegistry::load(&loopback_path).expect("reload registry");
-
-        assert_eq!(ip, std::net::Ipv4Addr::new(127, 1, 0, 2));
-        assert_eq!(
-            reloaded
-                .get("project:demo-web-dev:/tmp/repo")
-                .map(|entry| entry.ip),
-            Some(std::net::Ipv4Addr::new(127, 1, 0, 2))
-        );
+        let error = registry
+            .save(&loopback_path)
+            .expect_err("the Store refuses a second recorded owner for the same address");
+        assert!(error.to_string().contains("conflicting endpoint owners"));
     });
 }
 
@@ -2000,6 +1990,7 @@ else:sys.exit('unexpected private backend operation')
     let lsof = bin.join("lsof");
     std::fs::write(&lsof, "#!/bin/sh\nexit 1\n").unwrap();
     std::fs::set_permissions(&lsof, std::fs::Permissions::from_mode(0o700)).unwrap();
+    std::fs::create_dir(root.join("home")).expect("existing private operator home");
     let _env = crate::contract_test_support::EnvGuard::set_many(&[
         (
             "PATH",
@@ -2101,7 +2092,14 @@ else:sys.exit('unexpected private backend operation')
         });
     }
     baseline.save(&path).unwrap();
-    let persisted = std::fs::read(&path).unwrap();
+    let endpoint_store = effigy_gateway::endpoint_store::EndpointStore::for_routes(&path);
+    let persisted = endpoint_store
+        .read_compatible()
+        .unwrap()
+        .document("routes")
+        .unwrap()
+        .clone();
+    assert!(!path.exists(), "new endpoint state has no JSON writer");
     for (phase, mutation) in [
         (PublicationStage::AfterProbe, "manifest"),
         (PublicationStage::AfterProbe, "compose"),
@@ -2186,9 +2184,17 @@ else:sys.exit('unexpected private backend operation')
             "{error}"
         );
         assert_eq!(
-            std::fs::read(&path).unwrap(),
-            persisted,
-            "own and foreign persisted table must remain byte-exact"
+            endpoint_store
+                .read_compatible()
+                .unwrap()
+                .document("routes")
+                .unwrap(),
+            &persisted,
+            "own and foreign committed route document must remain exact"
+        );
+        assert!(
+            !path.exists(),
+            "refusal must not create a legacy JSON registry"
         );
         if mutation == "checkout" {
             std::fs::remove_file(&checkout).unwrap();

@@ -12,6 +12,8 @@ pub(super) const KIND: &str = "kernel:claims";
 struct Reservation {
     resources: Vec<ResourceId>,
     quarantine: Duration,
+    #[serde(default)]
+    retained: bool,
 }
 #[derive(Debug, Clone)]
 pub struct ReservationToken {
@@ -49,6 +51,7 @@ impl Claims {
         let reservation = Reservation {
             resources,
             quarantine,
+            retained: false,
         };
         let clock = ident::boot_clock();
         let result = (|| {
@@ -116,6 +119,106 @@ impl Claims {
             Ok::<_,RunError>(())
         })
     }
+    /// Atomically publishes an engine's complete persistent conflict set and
+    /// opaque payload. New resources must already be reserved by `token`;
+    /// existing resources must be retained by this exact owner resource.
+    /// Missing engine inventory never grants ownership of a foreign claim.
+    ///
+    /// Publication records retention intent. Settle transfers new claims from
+    /// the reserving run to its resource owner, so a later run can update or
+    /// release them. Omitted claims are quarantined, never silently reclaimed.
+    pub fn publish_retained(
+        run: &mut Run<'_>,
+        token: Option<&ReservationToken>,
+        desired: &[(ResourceId, Value)],
+        payload: &Value,
+        quarantine: Duration,
+    ) -> Result<(), RunError> {
+        run.can_effect()?;
+        run.cx
+            .require(crate::ctx::Capability::AdapterEffect)
+            .map_err(|_| RunError::Invalid("persistent claims require Mutate".into()))?;
+        if let Some(token) = token {
+            check_token(run, token)?;
+        }
+        let wanted = desired
+            .iter()
+            .map(|(id, _)| id.name().to_string())
+            .collect::<std::collections::BTreeSet<_>>();
+        if wanted.len() != desired.len()
+            || desired
+                .iter()
+                .any(|(id, _)| id.kind() != crate::id::ResourceKind::Endpoint)
+        {
+            return Err(RunError::Invalid(
+                "persistent conflict set requires unique endpoints".into(),
+            ));
+        }
+        let clock = ident::boot_clock();
+        let result = (|| {
+            crate::fault_point!(ClaimPublishBefore)?;
+            run.store.transaction(&run.cx.child(Duration::from_secs(30)), |txn| {
+                journal::check_fence(txn.conn(), &run.owner)?;
+                let owner = run.owner.resource.name().to_string();
+                let revision = run.owner.generation.get() as i64;
+                let reservation_name = token.map(|t| format!("{}:{}", run.id, t.effect.sequence));
+                for (resource, details) in desired {
+                    txn.resource(resource, "claims")?;
+                    let row = txn.conn().query_row("SELECT holder,run_id,reservation_token,state FROM claims WHERE resource=?1",
+                        [resource.name().to_string()], |r| Ok((r.get::<_,Option<String>>(0)?,r.get::<_,Option<String>>(1)?,r.get::<_,Option<String>>(2)?,r.get::<_,String>(3)?))).optional()?;
+                    let valid = row.is_some_and(|(holder, id, name, state)| {
+                        holder.as_deref() == Some(&owner) && (
+                            (id.is_none() && state == "live") ||
+                            (reservation_name.is_some() && name == reservation_name && id.as_deref() == Some(&run.id.to_string()) && matches!(state.as_str(), "reserved" | "live")))
+                    });
+                    if !valid { return Err(RunError::Conflict(resource.clone())); }
+                    txn.conn().execute("UPDATE claims SET state='live',revision=?2,details=?3 WHERE resource=?1",
+                        params![resource.name().to_string(),revision,serde_json::to_string(details)?])?;
+                }
+                let mut stmt = txn.conn().prepare("SELECT resource FROM claims WHERE holder=?1 AND (run_id IS NULL OR run_id=?2) AND state='live'")?;
+                let omitted = stmt.query_map(params![owner,run.id.to_string()], |r| r.get::<_,String>(0))?.collect::<Result<Vec<_>,_>>()?;
+                drop(stmt);
+                for resource in omitted.into_iter().filter(|name| !wanted.contains(name)) {
+                    let Observed::Verified(now, _) = &clock else {
+                        return Err(RunError::Invalid("unknown quarantine clock".into()));
+                    };
+                    let deadline = BootDeadline::after(now, quarantine);
+                    let nanos = i64::try_from(deadline.nanos).map_err(|_| RunError::Invalid("quarantine overflow".into()))?;
+                    txn.conn().execute("UPDATE claims SET state='quarantined',run_id=NULL,revision=?2,quarantine_boot=?3,quarantine_nanos=?4 WHERE resource=?1",
+                        params![resource,revision,deadline.boot,nanos])?;
+                }
+                if let Some(token) = token {
+                    let mut effect = journal::effect(txn.conn(), run.id, token.effect.sequence)?;
+                    let mut reservation: Reservation = serde_json::from_value(effect.spec.payload.clone())?;
+                    if reservation.resources.iter().any(|r| !wanted.contains(&r.name().to_string())) {
+                        return Err(RunError::Invalid("publication omits a reserved endpoint".into()));
+                    }
+                    reservation.retained = true;
+                    effect.spec.payload = serde_json::to_value(reservation)?;
+                    txn.conn().execute("UPDATE events SET target=?3 WHERE run_id=?1 AND seq=?2",
+                        params![run.id.to_string(),token.effect.sequence,serde_json::to_string(&effect.spec)?])?;
+                }
+                txn.conn().execute("UPDATE resources SET state=?2,updated_at=?3 WHERE name=?1",
+                    params![owner,serde_json::to_string(payload)?,txn.now()])?;
+                // Existing reservations and releases also need a durable
+                // publication event when there is no new reservation ticket.
+                let publication = EffectSpec {
+                    target: run.owner.clone(), kind: "kernel:claim-publication".into(),
+                    payload: serde_json::json!({"revision":revision}),
+                    settlement: Settlement::Retain, required: false,
+                };
+                let sequence = journal::insert_effect(txn, run.id, &publication)?;
+                journal::write_effect(txn, run.id, sequence, EffectState::Retained, None, None)?;
+                Ok::<_,RunError>(())
+            })?;
+            crate::fault_point!(ClaimPublishAfter)?;
+            Ok(())
+        })();
+        if result.is_err() {
+            run.poisoned = true;
+        }
+        result
+    }
     /// Releases the entire reservation in one transaction with its journal
     /// result. Quarantine is measured from this commit's boot-clock sample.
     pub fn release(
@@ -143,7 +246,7 @@ impl Run<'_> {
         effect: &Effect,
         cx: &EffectContext,
     ) -> Result<(), RunError> {
-        if effect.state == EffectState::Released {
+        if effect.state.terminal() {
             return Ok(());
         }
         let reservation: Reservation = serde_json::from_value(effect.spec.payload.clone())?;
@@ -161,6 +264,16 @@ impl Run<'_> {
                     None,
                     Some("unresolved effects retain claims"),
                 );
+            }
+            if reservation.retained {
+                crate::fault_point!(ClaimRetainBefore)?;
+                for resource in &reservation.resources {
+                    txn.conn().execute("UPDATE claims SET run_id=NULL WHERE resource=?1 AND reservation_token=?2 AND state='live'",
+                        params![resource.name().to_string(),format!("{}:{}",self.id,effect.sequence)])?;
+                }
+                journal::write_effect(txn, self.id, effect.sequence, EffectState::Retained, None, None)?;
+                crate::fault_point!(ClaimRetainAfter)?;
+                return Ok(());
             }
             let deadline = if reservation.quarantine.is_zero() {
                 None

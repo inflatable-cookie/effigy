@@ -81,16 +81,8 @@ thread_local! {
     static TEST_GATEWAY_HOME: std::cell::RefCell<Option<PathBuf>> = const {
         std::cell::RefCell::new(None)
     };
-    static DEFAULT_TEST_GATEWAY_HOME: PathBuf = std::env::temp_dir().join(format!(
-        "effigy-runner-test-gateway-home-{}-{}",
-        std::process::id(),
-        NEXT_TEST_GATEWAY_HOME_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
-    ));
+    static DEFAULT_TEST_GATEWAY_HOME: tempfile::TempDir = tempfile::tempdir().expect("private gateway test home");
 }
-
-#[cfg(test)]
-static NEXT_TEST_GATEWAY_HOME_ID: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);
 
 #[cfg(test)]
 pub(in crate::runner) struct TestGatewayHomeGuard {
@@ -864,10 +856,13 @@ fn run_gateway_repair_with_config(
     yes: bool,
     output_json: bool,
 ) -> Result<String, RunnerError> {
-    let _lock = effigy_gateway::routes::RouteTableLock::acquire(&config.route_table_path)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    let mut route_table = RouteTable::load(&config.route_table_path)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let store = effigy_gateway::endpoint_store::EndpointStore::for_routes(&config.route_table_path);
+    let snapshot = if yes {
+        store.import()?
+    } else {
+        store.read_compatible()?
+    };
+    let mut route_table = snapshot.routes()?;
     let plan = gateway_repair_plan(&route_table, detect_active_gateway_projects());
     let mut removed = Vec::new();
 
@@ -880,9 +875,12 @@ fn run_gateway_repair_with_config(
         for domain in &plan.repairable_domains {
             let _ = route_table.deregister(domain);
         }
-        route_table
-            .save(&config.route_table_path)
-            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+        store.edit(Some(snapshot.revision), |current| {
+            for route in &removed_routes {
+                current.release_route(route)?;
+            }
+            Ok(())
+        })?;
         for route in &removed_routes {
             if route.tls {
                 remove_gateway_tls_cert(&route.domain)?;
@@ -1562,7 +1560,7 @@ pub(in crate::runner) fn standard_gateway_dir() -> Result<PathBuf, RunnerError> 
     {
         let home = TEST_GATEWAY_HOME
             .with(|home| home.borrow().clone())
-            .unwrap_or_else(|| DEFAULT_TEST_GATEWAY_HOME.with(Clone::clone));
+            .unwrap_or_else(|| DEFAULT_TEST_GATEWAY_HOME.with(|home| home.path().to_owned()));
         Ok(home.join(GATEWAY_DIR_NAME))
     }
 

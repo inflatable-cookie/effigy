@@ -1,10 +1,6 @@
-//! Capacity reporting and locked, allocation-only edits to the port registry.
-//!
-//! Every write goes through `RouteTableLock` on `ports.json`, the same lock
-//! generated-compose allocation takes, so a reclaim decision and its removal
-//! cannot interleave with a concurrent allocation. Removal edits only the named
-//! `allocations` entries inside the raw JSON document, so unknown fields and
-//! non-candidate entries survive byte-for-byte in meaning.
+//! Explicit allocation removal under the gateway Store's owner gate.
+//! The raw pre-edit document is retained as a journaled backup; removal and
+//! endpoint quarantine commit in one publication, preserving unknown fields.
 
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -14,9 +10,8 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use super::{PortAllocation, PortRegistry, DEFAULT_BASE, DEFAULT_RANGE, MAX_PORT_EXCLUSIVE};
-use crate::atomic_write;
+use crate::endpoint_store::EndpointStore;
 use crate::error::GatewayError;
-use crate::routes::RouteTableLock;
 
 /// Free-range capacity for the default generated-container range size.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -110,52 +105,45 @@ pub fn edit_locked<T, E: From<GatewayError>>(
     path: &Path,
     decide: impl FnOnce(&PortRegistry) -> Result<PortRegistryEdit<T>, E>,
 ) -> Result<PortRegistryEditOutcome<T>, E> {
-    let _lock = RouteTableLock::acquire(path)?;
-    let before = read_optional(path)?;
-    let registry = PortRegistry::load(path)?;
-    let edit = decide(&registry)?;
-    let sha256_before = before
-        .as_deref()
-        .map(|content| sha256_hex(content.as_bytes()));
-    if edit.remove.is_empty() {
-        return Ok(PortRegistryEditOutcome {
-            value: edit.value,
-            backup: None,
-            sha256_before,
-            sha256_after: None,
-        });
-    }
-
-    let content = before.ok_or_else(|| GatewayError::RouteTableReadError {
-        path: path.to_path_buf(),
-        reason: "port registry: nothing to remove from a missing file".to_owned(),
-    })?;
-    let backup = backup_path(path);
-    std::fs::write(&backup, &content).map_err(|error| GatewayError::RouteTableWriteError {
-        path: backup.clone(),
-        reason: format!("port registry backup: {error}"),
-    })?;
-    let rewritten = remove_entries(path, &content, &registry, &edit.remove)?;
-    let sha256_after = Some(sha256_hex(rewritten.as_bytes()));
-    write_atomically(path, rewritten.as_bytes())?;
-
-    Ok(PortRegistryEditOutcome {
-        value: edit.value,
-        backup: Some(backup),
-        sha256_before,
-        sha256_after,
+    EndpointStore::for_ports(path).transaction_with_backup(None, |snapshot| {
+        let mut content =
+            serde_json::to_string_pretty(snapshot.document("ports")?).map_err(|error| {
+                GatewayError::EndpointStore {
+                    reason: error.to_string(),
+                }
+            })?;
+        content.push('\n');
+        let registry = snapshot.ports()?;
+        let edit = decide(&registry)?;
+        let sha256_before = Some(sha256_hex(content.as_bytes()));
+        if edit.remove.is_empty() {
+            return Ok((
+                PortRegistryEditOutcome {
+                    value: edit.value,
+                    backup: None,
+                    sha256_before,
+                    sha256_after: None,
+                },
+                None,
+            ));
+        }
+        let backup = backup_path(path);
+        let rewritten = remove_entries(path, &content, &registry, &edit.remove)?;
+        let ports: PortRegistry =
+            serde_json::from_str(&rewritten).map_err(|error| GatewayError::EndpointStore {
+                reason: error.to_string(),
+            })?;
+        snapshot.set_ports(&ports)?;
+        Ok((
+            PortRegistryEditOutcome {
+                value: edit.value,
+                backup: Some(backup.clone()),
+                sha256_before,
+                sha256_after: Some(sha256_hex(rewritten.as_bytes())),
+            },
+            Some((backup, content.into_bytes())),
+        ))
     })
-}
-
-fn read_optional(path: &Path) -> Result<Option<String>, GatewayError> {
-    match std::fs::read_to_string(path) {
-        Ok(content) => Ok(Some(content)),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(GatewayError::RouteTableReadError {
-            path: path.to_path_buf(),
-            reason: format!("port registry: {error}"),
-        }),
-    }
 }
 
 fn remove_entries(
@@ -210,21 +198,6 @@ fn backup_path(path: &Path) -> PathBuf {
         .and_then(|value| value.to_str())
         .unwrap_or("ports.json");
     path.with_file_name(format!("{filename}.reclaim-backup-{nanos}"))
-}
-
-fn write_atomically(path: &Path, bytes: &[u8]) -> Result<(), GatewayError> {
-    let temp = atomic_write::temp_path(path, "ports");
-    std::fs::write(&temp, bytes).map_err(|error| GatewayError::RouteTableWriteError {
-        path: temp.clone(),
-        reason: error.to_string(),
-    })?;
-    std::fs::rename(&temp, path).map_err(|error| {
-        let _ = std::fs::remove_file(&temp);
-        GatewayError::RouteTableWriteError {
-            path: path.to_path_buf(),
-            reason: format!("atomic rename: {error}"),
-        }
-    })
 }
 
 /// Lowercase hex SHA-256 digest, used for registry and plan evidence.

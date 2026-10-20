@@ -1,4 +1,6 @@
 use super::*;
+#[cfg(test)]
+use crate::gateway_legacy_fixture::LegacyRegistryFixture;
 use std::process::Command;
 
 fn run_git(repo: &Path, args: &[&str]) {
@@ -301,8 +303,8 @@ catalog = "workspace-rust-bun"
                 || load_prepared_policy(checkout, None).unwrap(),
             );
             assert_eq!(
-                inventory_calls, 1,
-                "loopback reclamation must use the fixture inventory exactly once"
+                inventory_calls, 0,
+                "persistent loopback claims never consult runtime inventory for reclamation"
             );
             assert_eq!(policy.dns_routes[0].declared(), "app.test");
             assert_ne!(policy.dns_routes[0].domain, "app.test");
@@ -1875,7 +1877,14 @@ variant = "default"
             shared_compose.contains(&format!("127.0.0.1:{}:3306", shared.host_port)),
             "shared compose should bind the runtime host port to loopback: {shared_compose}"
         );
-        assert!(home.join("gateway").join("loopback-ips.json").exists());
+        assert!(
+            !effigy_gateway::endpoint_store::EndpointStore::for_effigy_home(&home)
+                .read_compatible()
+                .unwrap()
+                .loopback()
+                .unwrap()
+                .is_empty()
+        );
     });
 }
 
@@ -2237,6 +2246,7 @@ fn with_private_port_prepare_fixture(run: impl FnOnce(PathBuf, PathBuf)) {
     let root = fixture.path().join("repo");
     fs::create_dir_all(&home).unwrap();
     fs::create_dir(&root).unwrap();
+    let root = root.canonicalize().expect("canonical fixture owner");
     crate::policy_support::with_test_effigy_home(&home, || run(root, home.clone()));
 }
 
@@ -2266,19 +2276,42 @@ catalog = "node"
         let again = load_container_policy(&root, None).unwrap();
         assert_eq!(read.declared_ports, again.declared_ports);
         assert!(!home.join("ports.json").exists());
-        assert!(!home.join("ports.lock").exists());
+        let store = effigy_gateway::endpoint_store::EndpointStore::for_effigy_home(&home);
+        assert!(
+            store.read_ports().unwrap().allocations.is_empty(),
+            "resolution must not allocate host ports"
+        );
         let prepared = load_prepared_policy(&root, None).unwrap();
         assert!(prepared
             .declared_ports
             .iter()
             .all(|port| !port.contains("unassigned")));
-        let bytes = fs::read(home.join("ports.json")).unwrap();
+        let bytes = store
+            .read_compatible()
+            .unwrap()
+            .document("ports")
+            .unwrap()
+            .clone();
         let after = load_container_policy(&root, None).unwrap();
         assert_eq!(after.declared_ports, prepared.declared_ports);
-        assert_eq!(fs::read(home.join("ports.json")).unwrap(), bytes);
+        assert_eq!(
+            store.read_compatible().unwrap().document("ports").unwrap(),
+            &bytes
+        );
+        assert!(
+            !home.join("ports.json").exists(),
+            "new state has no JSON writer"
+        );
         let repeated = load_prepared_policy(&root, None).unwrap();
         assert_eq!(repeated.declared_ports, prepared.declared_ports);
-        assert_eq!(fs::read(home.join("ports.json")).unwrap(), bytes);
+        assert_eq!(
+            store.read_compatible().unwrap().document("ports").unwrap(),
+            &bytes
+        );
+        assert!(
+            !home.join("ports.json").exists(),
+            "new state has no JSON writer"
+        );
     });
 }
 
@@ -2320,6 +2353,7 @@ catalog = "node"
         let prepared = load_prepared_policy(&root, None).unwrap();
         // The existing allocator gives port 3000 its preferred +30 offset.
         assert_eq!(prepared.declared_ports, ["8100:3000", "8130:3000"]);
+        assert_eq!(fs::read(home.join("ports.json")).unwrap(), before);
         let registry = effigy_gateway::ports::PortRegistry::load(&home.join("ports.json")).unwrap();
         assert_eq!(
             registry.assigned_port("legacy-ports", "first", 3000),
@@ -2362,7 +2396,14 @@ catalog = "node"
                 crate::policy::ports::prepare_container_policy_ports(&policy).expect("prepare");
             });
         assert_eq!(probes, 0, "empty registry needs no runtime inventory");
-        let before = fs::read(&registry_path).expect("prepared loopback");
+        let store = effigy_gateway::endpoint_store::EndpointStore::for_effigy_home(&home);
+        let snapshot = store.read_compatible().unwrap();
+        assert!(
+            !snapshot.loopback().unwrap().is_empty(),
+            "Prepare retained the loopback assignment"
+        );
+        let before = snapshot.document("loopback").unwrap().clone();
+        assert!(!registry_path.exists(), "new state has no JSON writer");
         let (_, probes) =
             crate::policy_support::with_test_loopback_inventory(fixture_inventory(&[]), || {
                 let policy = load_container_policy(&root, None).expect("read prepared policy");
@@ -2372,8 +2413,12 @@ catalog = "node"
             });
         assert_eq!(probes, 0, "reads and stable Prepare must not inventory");
         assert_eq!(
-            fs::read(&registry_path).expect("unchanged registry"),
-            before
+            store
+                .read_compatible()
+                .unwrap()
+                .document("loopback")
+                .unwrap(),
+            &before
         );
         assert!(
             !home.join("ports.json").exists(),
