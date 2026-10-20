@@ -84,8 +84,11 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
     {
         return Err(RunnerError::task_invocation(message));
     }
-    // The first Mutate imports v0.14.1 markers into the record (M6).
+    // The first Mutate imports v0.14.1 markers into the record (M6). The
+    // import's inventory is not the build's: the build's inventory gets a
+    // fresh budget afterwards, as it does after a bring-up below.
     environment::import_legacy(repo_root, &policy)?;
+    deadline = Instant::now() + Duration::from_secs(15);
     let mut retained = retained_admission(&policy);
     let mut rows = list_compose_containers_for_policy_including_stopped_with_deadline(
         repo_root,
