@@ -18,7 +18,6 @@ pub mod assembly;
 pub mod atomic_write;
 pub mod error;
 pub mod fragment;
-pub mod output;
 pub mod pack;
 pub mod schema;
 pub mod starter;
@@ -29,7 +28,6 @@ pub mod volumes;
 pub use assembly::ComposeAssembler;
 pub use error::CatalogError;
 pub use fragment::{CatalogFragment, CatalogResolver, FragmentSource, InstalledPackLayer};
-pub use output::ComposeOutput;
 pub use pack::{
     install_pack, resolve_catalog_layers, select_pack, CatalogLayers, InstalledPackRecord,
     OfficialPackChannel, PackCandidateAcquirer, PackCandidateSource, PackError, PackManifest,

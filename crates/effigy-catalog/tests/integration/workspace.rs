@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
 use effigy_catalog::assembly::{ComposeAssembler, ServiceDeclaration};
-use effigy_catalog::output::ComposeOutput;
 
 use super::{bundled_resolver, validate_compose_structure, validate_service};
 
@@ -557,17 +556,13 @@ fn workspace_app_style_stack_assembles_with_bundled_fragments_only() {
 
 // --- End-to-end: full pipeline write to disk and validate ─────────────
 
-/// End-to-end test: assemble a realistic PHP stack, write all artifacts
-/// to disk, and verify the compose file is structurally valid and the
-/// supporting files (Dockerfiles, nginx configs) all exist.
+/// Assemble a realistic PHP stack and verify its complete in-memory inputs.
 #[test]
-fn end_to_end_php_stack_written_to_disk() {
+fn end_to_end_php_stack_assembles_all_assets_without_writing() {
     let dir = tempfile::tempdir().unwrap();
-    let output_dir = dir.path().join("infra/dev");
 
     let resolver = bundled_resolver();
     let assembler = ComposeAssembler::new(resolver);
-    let output = ComposeOutput::new(output_dir.clone(), "web");
 
     // Simulate a real PHP client project with the full service stack.
     let services = vec![
@@ -681,40 +676,6 @@ fn end_to_end_php_stack_written_to_disk() {
         },
     ];
 
-    let manifest_content = r#"
-[containers.web]
-driver = "colima"
-primary_service = "app"
-
-[containers.web.services.app]
-catalog = "php-fpm"
-version = "8.3"
-extensions = ["pdo_mysql", "gd", "redis", "memcached", "intl", "exif", "zip", "bcmath"]
-document_root = "."
-node_version = "20"
-isolated_dirs = ["vendor", "node_modules"]
-
-[containers.web.services.web]
-catalog = "nginx"
-document_root = "."
-rewrite_all_to = "/vendor/genesis.php"
-asset_fallback = ""
-error_page_404 = "/vendor/genesis.php"
-
-[containers.web.services.db]
-catalog = "mariadb"
-version = "10.11"
-database = "client_app"
-password = "localdev"
-
-[containers.web.services.cache]
-catalog = "redis"
-
-[containers.web.services.sessions]
-catalog = "memcached"
-memory = 128
-"#;
-
     // 1. Assemble.
     let assembly = assembler
         .assemble(
@@ -727,15 +688,8 @@ memory = 128
         )
         .unwrap();
 
-    // 2. Write to disk.
-    let write_result = output.write(&assembly, manifest_content).unwrap();
-    assert!(write_result.regenerated);
-
-    // 3. Verify compose file exists and is valid YAML.
-    let compose_path = write_result.compose_path;
-    assert!(compose_path.exists());
-    let compose_content = std::fs::read_to_string(&compose_path).unwrap();
-    let doc = validate_compose_structure(&compose_content);
+    let compose_content = &assembly.compose_yaml;
+    let doc = validate_compose_structure(compose_content);
     let app = validate_service(&doc, "app");
     let app_volumes = app.get("volumes").unwrap().as_sequence().unwrap();
     let app_volume_strings: Vec<&str> = app_volumes
@@ -778,10 +732,7 @@ memory = 128
     }
 
     // 5. Verify Dockerfile was written.
-    assert!(write_result.dockerfile_paths.contains_key("app"));
-    let dockerfile_path = &write_result.dockerfile_paths["app"];
-    assert!(dockerfile_path.exists());
-    let dockerfile_content = std::fs::read_to_string(dockerfile_path).unwrap();
+    let dockerfile_content = &assembly.dockerfiles["app"];
     assert!(
         dockerfile_content.contains("install-php-extensions"),
         "Dockerfile should use install-php-extensions"
@@ -814,10 +765,7 @@ memory = 128
     );
 
     // 6. Verify nginx config was written.
-    assert!(write_result.config_paths.contains_key("web.conf"));
-    let config_path = &write_result.config_paths["web.conf"];
-    assert!(config_path.exists());
-    let config_content = std::fs::read_to_string(config_path).unwrap();
+    let config_content = &assembly.config_files["web.conf"];
     assert!(
         config_content.contains("fastcgi_pass"),
         "nginx config should have fastcgi_pass"
@@ -892,69 +840,9 @@ memory = 128
         == "client-project-app-var-www-html-node-modules"
         && !volume.persist));
 
-    // 8. Verify second write is cached.
-    let write2 = output.write(&assembly, manifest_content).unwrap();
-    assert!(!write2.regenerated);
-
-    // 9. Verify changed manifest triggers regeneration.
-    let write3 = output
-        .write(&assembly, "# changed manifest content")
-        .unwrap();
-    assert!(write3.regenerated);
-}
-
-/// End-to-end test: eject from catalog and verify standalone compose file.
-#[test]
-fn end_to_end_eject_produces_standalone_compose() {
-    let dir = tempfile::tempdir().unwrap();
-    let output_dir = dir.path().join("infra/dev");
-
-    let resolver = bundled_resolver();
-    let assembler = ComposeAssembler::new(resolver);
-    let output = ComposeOutput::new(output_dir.clone(), "web");
-
-    let services = vec![
-        ServiceDeclaration {
-            name: "app".to_string(),
-            catalog: "php-fpm".to_string(),
-            params: HashMap::new(),
-            variant: None,
-            config: None,
-        },
-        ServiceDeclaration {
-            name: "db".to_string(),
-            catalog: "mariadb".to_string(),
-            params: HashMap::new(),
-            variant: None,
-            config: None,
-        },
-    ];
-
-    let assembly = assembler
-        .assemble(&services, "test", ".", ".effigy-catalog", 1000, 1000)
-        .unwrap();
-    output.write(&assembly, "manifest").unwrap();
-
-    // Eject.
-    let eject_result = output.eject().unwrap();
-
-    // The permanent docker-compose.yml should be valid.
-    let content = std::fs::read_to_string(&eject_result.compose_path).unwrap();
-    let doc = validate_compose_structure(&content);
-    validate_service(&doc, "app");
-    validate_service(&doc, "db");
-
-    // Generated files should be cleaned up.
-    assert!(!output.generated_compose_path().exists());
-
-    // Permanent file should be at docker-compose.yml.
     assert_eq!(
-        eject_result
-            .compose_path
-            .file_name()
-            .unwrap()
-            .to_str()
-            .unwrap(),
-        "docker-compose.yml"
+        std::fs::read_dir(dir.path()).unwrap().count(),
+        0,
+        "assembly stays pure"
     );
 }

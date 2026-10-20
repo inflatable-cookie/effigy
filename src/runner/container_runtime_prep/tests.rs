@@ -9,7 +9,6 @@ use super::{
     run_runtime_prep_steps, runtime_activation_plan_from_request,
     runtime_activation_report_for_result, service_depends_on_primary, validate_policy_runtime,
     validate_runtime_activation_stage, verify_live_checkout_mount_using, ActivationRequest,
-    ContainerTaskActivation,
 };
 use crate::runner::error::RunnerError;
 use crate::runner::runtime_session_context::{LeaseRefreshPolicy, RuntimeSessionContext};
@@ -29,6 +28,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 fn test_policy(compose_file: PathBuf) -> EffectiveContainerPolicy {
     EffectiveContainerPolicy {
+        render: None,
         repo_root: std::path::PathBuf::from("/tmp"),
         name: "web".to_owned(),
         driver: effigy_manifest::ManifestContainerDriver::Colima,
@@ -1304,11 +1304,11 @@ fn task_activation_side_effects_skip_gateway_for_plain_task_route() {
         ]
     );
     assert_eq!(
-        activation,
-        ContainerTaskActivation {
-            system_was_running: false,
-            refreshed_host_container_lease: true,
-        }
+        (
+            activation.system_was_running,
+            activation.refreshed_host_container_lease
+        ),
+        (false, true)
     );
     let report = runtime_activation_report_for_result(plan, activation);
     assert_eq!(report.repo_root, repo_root);
@@ -1390,11 +1390,11 @@ fn task_activation_can_skip_lease_refresh_without_running_task_gateway_readiness
         vec!["prepare", "permissions"]
     );
     assert_eq!(
-        activation,
-        ContainerTaskActivation {
-            system_was_running: true,
-            refreshed_host_container_lease: false,
-        }
+        (
+            activation.system_was_running,
+            activation.refreshed_host_container_lease
+        ),
+        (true, false)
     );
     assert_eq!(plan.lease.policy, RuntimeLeasePolicy::Skip);
 }
@@ -1470,11 +1470,11 @@ fn reused_task_activation_matrix_keeps_gateway_skipped_across_lease_modes() {
             "unexpected reused-runtime side-effect order for {lease_refresh_policy:?}"
         );
         assert_eq!(
-            activation,
-            ContainerTaskActivation {
-                system_was_running: true,
-                refreshed_host_container_lease: expected_refreshed_lease,
-            }
+            (
+                activation.system_was_running,
+                activation.refreshed_host_container_lease
+            ),
+            (true, expected_refreshed_lease)
         );
     }
 }
@@ -1654,4 +1654,88 @@ fn shared_process_container_prep_waits_for_path_mutator() {
     crate::contract_test_support::assert_waits_for_path_mutator(|after_serial| {
         host_edit_refreshes_cargo_input_before_container_check_using(after_serial)
     });
+}
+
+#[test]
+fn activation_returns_the_published_snapshot_for_its_exec_caller() {
+    let _env = crate::contract_test_support::lock_test();
+    let owner = tempfile::tempdir().unwrap();
+    struct Cleanup<'a>(&'a Path);
+    impl Drop for Cleanup<'_> {
+        fn drop(&mut self) {
+            unlock(self.0);
+        }
+    }
+    let _cleanup = Cleanup(owner.path());
+    let repo = owner.path().join("repo");
+    let home = owner.path().join("home/.effigy");
+    fs::create_dir_all(&repo).unwrap();
+    fs::create_dir_all(&home).unwrap();
+    fs::write(repo.join("effigy.toml"), "[containers]\ndefault='web'\n[containers.web]\ncompose_file='compose.yml'\nprimary_service='app'\n").unwrap();
+    fs::write(
+        repo.join("compose.yml"),
+        "services:\n  app:\n    image: original\n",
+    )
+    .unwrap();
+    effigy_containers::with_test_effigy_home(&home, || {
+        let observed = effigy_containers::load_container_policy(&repo, None).unwrap();
+        let prepared = effigy_containers::policy::render::prepare_resolved(&observed).unwrap();
+        let plan = runtime_activation_plan_from_request(
+            &repo,
+            &prepared,
+            ActivationRequest {
+                container_name: Some("web"),
+                repo_override: None,
+                route: RuntimeActivationRoute::Task,
+                session_context: RuntimeSessionContext::default(),
+            },
+        );
+        let activation = activate_container_runtime_plan_for_task_using(
+            &plan,
+            &prepared,
+            |_, policy, _, _, _| {
+                effigy_containers::policy::render::verify(policy).unwrap();
+                // Editing source after activation must not replace the caller's snapshot.
+                fs::write(
+                    repo.join("compose.yml"),
+                    "services:\n  app:\n    image: changed\n",
+                )
+                .unwrap();
+                Ok(true)
+            },
+            |_, _, _, _| Ok(()),
+            |_, _| Ok(()),
+            |_, _, _| Ok(false),
+        )
+        .unwrap();
+        let caller = activation.policy;
+        effigy_containers::policy::render::verify(&caller).unwrap();
+        assert_eq!(caller.compose_files, prepared.compose_files);
+        assert!(caller.compose_files.iter().all(|path| path.exists()));
+        assert!(caller
+            .read_compose(&caller.compose_files[0])
+            .unwrap()
+            .contains("original"));
+        assert_ne!(
+            caller.render.as_ref().unwrap().closure.digest(),
+            effigy_containers::load_container_policy(&repo, None)
+                .unwrap()
+                .render
+                .unwrap()
+                .closure
+                .digest()
+        );
+    });
+    // Only this fixture owns these sealed object directories.
+    fn unlock(path: &Path) {
+        use std::os::unix::fs::PermissionsExt;
+        if fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_dir()) {
+            let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o700));
+            if let Ok(children) = fs::read_dir(path) {
+                for child in children.flatten() {
+                    unlock(&child.path());
+                }
+            }
+        }
+    }
 }

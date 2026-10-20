@@ -91,8 +91,8 @@ variant = "default"
     let policy = load_container_policy(&root, None).expect("policy");
     let generated = root.join(".effigy/runtime/compose/web.generated.compose.yml");
     assert!(
-        generated.exists(),
-        "generated compose should exist before eject"
+        !generated.exists(),
+        "pure resolution should leave legacy output absent"
     );
 
     let result = eject_generated_compose(&root, &policy).expect("eject");
@@ -104,7 +104,15 @@ variant = "default"
         result.compose_path.exists(),
         "permanent compose should exist"
     );
-    assert!(!generated.exists(), "generated compose should be removed");
+    assert!(
+        !generated.exists(),
+        "export does not recreate legacy output"
+    );
+    assert!(root.join("infra/dev/catalog/app/Dockerfile").is_file());
+    assert!(root.join("infra/dev/web.conf").is_file());
+    assert!(fs::read_to_string(&result.compose_path)
+        .unwrap()
+        .contains("catalog/app/Dockerfile"));
 }
 
 #[test]
@@ -364,7 +372,9 @@ catalog = "mariadb"
     crate::policy::mounts::prepare_container_mount_sources(&policy).expect("prepare media");
     assert!(root.join("storage/uploads").is_dir());
 
-    let compose = fs::read_to_string(&policy.compose_files[0]).expect("read compose");
+    let compose = policy
+        .read_compose(&policy.compose_files[0])
+        .expect("read compose");
     let expected = format!(
         "{}:/var/www/html/storage/uploads",
         root.join("storage/uploads").display()
@@ -419,7 +429,9 @@ catalog = "mariadb"
     );
     assert_eq!(policy.declared_mounts, vec![expected.clone()]);
 
-    let compose = fs::read_to_string(&policy.compose_files[0]).expect("read compose");
+    let compose = policy
+        .read_compose(&policy.compose_files[0])
+        .expect("read compose");
     assert_eq!(compose.matches(&expected).count(), 2, "compose: {compose}");
 }
 

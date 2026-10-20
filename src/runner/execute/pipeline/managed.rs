@@ -1982,6 +1982,7 @@ mod tests {
 
     fn test_policy() -> EffectiveContainerPolicy {
         EffectiveContainerPolicy {
+            render: None,
             repo_root: std::path::PathBuf::from("/tmp"),
             name: "stack".to_owned(),
             driver: ManifestContainerDriver::Colima,

@@ -40,6 +40,7 @@ mod hosts;
 mod lifecycle;
 mod ports;
 mod profile;
+mod render;
 mod retire;
 mod scope;
 mod secret_env;
@@ -211,6 +212,11 @@ pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, Ru
         ContainerSubcommand::Profile { subcommand } => {
             run_container_profile_command(args.repo_override.clone(), &subcommand, args.output_json)
         }
+        ContainerSubcommand::Render { name } => render::run(
+            args.repo_override.clone(),
+            name.as_deref(),
+            args.output_json,
+        ),
         ContainerSubcommand::Eject { name } => {
             let context = resolve_active_command_context(args.repo_override.clone())?;
             run_container_eject(

@@ -15,7 +15,7 @@ use effigy_containers::{load_container_policy, ContainerAction, EffectiveCompose
 
 use crate::runner::error::RunnerError;
 use crate::runner::host_container_lease::{
-    capture_detached_activation_context, workspace_builder_admission_retained,
+    capture_workspace_builder_context, workspace_builder_admission_retained,
 };
 use crate::runner::task_engine::TaskRun;
 
@@ -54,7 +54,7 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
     verify_workspace_artifact_builder_declaration(&policy)?;
     effigy_containers::validate_container_policy(repo_root, &policy)?;
     effigy_containers::validate_compose_backend_runtime(repo_root, &policy)?;
-    let mut context = capture_detached_activation_context(repo_root, &policy)?;
+    let mut context = capture_workspace_builder_context(repo_root, &policy)?;
     // Preserve the existing runtime drift guard; this operation grants no
     // authority to change backend or profile, start a VM, or repair runtime.
     let mut deadline = Instant::now() + Duration::from_secs(15);
@@ -85,7 +85,7 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
         super::lifecycle::run_container_up(repo_root, Some("linux-release"), false, true, false)?;
         policy = load_container_policy(repo_root, Some("linux-release"))?;
         retained = workspace_builder_admission_retained(repo_root, &policy)?;
-        context = capture_detached_activation_context(repo_root, &policy)?;
+        context = capture_workspace_builder_context(repo_root, &policy)?;
         deadline = Instant::now() + Duration::from_secs(15);
         rows = list_compose_containers_for_policy_including_stopped_with_deadline(
             repo_root,

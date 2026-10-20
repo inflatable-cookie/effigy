@@ -1772,7 +1772,7 @@ fn service_port_bindings(
     service: &str,
 ) -> Result<Vec<(u16, u16)>, RunnerError> {
     for compose_file in &policy.compose_files {
-        let content = match std::fs::read_to_string(compose_file) {
+        let content = match policy.read_compose(compose_file) {
             Ok(content) => content,
             Err(_) => continue,
         };

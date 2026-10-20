@@ -1,10 +1,7 @@
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
-use effigy_catalog::{
-    assembly::ServiceDeclaration, volumes::ManagedVolume, ComposeAssembler, ComposeOutput,
-};
-use effigy_core::runtime_dir::{ensure_effigy_ignored_in_git_root, git_local_exclude_path};
+use effigy_catalog::{assembly::ServiceDeclaration, volumes::ManagedVolume, ComposeAssembler};
 use effigy_gateway::loopback::{
     project_loopback_identity, reserved_loopback_ips_for_other_projects, LoopbackRegistry,
 };
@@ -34,9 +31,7 @@ fn runtime_scope_token(repo_root: &Path, config: &ManifestContainerConfig) -> Op
     if config.share_runtime_identity {
         return None;
     }
-    effigy_core::worktree_scope::load_or_create(repo_root)
-        .ok()
-        .flatten()
+    effigy_core::worktree_scope::load(repo_root).ok().flatten()
 }
 
 fn apply_runtime_scope_labels(
@@ -398,9 +393,9 @@ pub(crate) fn resolve_compose_source(
     container_name: &str,
     config: &ManifestContainerConfig,
     project_name: &str,
-    effective_manifest: &str,
+    _effective_manifest: &str,
     volume_borrow: Option<&crate::policy::model::ComposeVolumeBorrow>,
-    admission: Option<&mut crate::policy::admission::PolicyAdmission>,
+    draft: &mut crate::policy::render::Draft,
 ) -> Result<ResolvedComposeSource, ContainerPolicyError> {
     if config.compose_file.is_some() && !config.services.is_empty() {
         return Err(ContainerPolicyError::TaskInvocation(format!(
@@ -428,7 +423,7 @@ pub(crate) fn resolve_compose_source(
         let compose_file =
             repo_relative_path(repo_root, compose_file, "containers.*.compose_file")?;
         if runtime_scoped {
-            validate_scoped_direct_compose(&compose_file, config)?;
+            validate_scoped_direct_compose(&compose_file, config, draft)?;
         }
         let display = path_relative_to_repo(repo_root, &compose_file);
         let effective_ports = if config
@@ -438,14 +433,14 @@ pub(crate) fn resolve_compose_source(
         {
             configured_host_ports(config)
         } else {
-            infer_direct_compose_host_ports(&compose_file, project_name)?
+            infer_direct_compose_host_ports(&compose_file, project_name, draft)?
         };
         let ownership_override = render_direct_compose_ownership_override(
             repo_root,
             container_name,
             &compose_file,
             config,
-            admission,
+            draft,
         )?;
         return Ok((
             vec![compose_file, ownership_override],
@@ -464,7 +459,8 @@ pub(crate) fn resolve_compose_source(
     }
 
     let publish_address = resolve_publish_address(container_name, config)?;
-    let shared_services = resolve_shared_service_bindings(repo_root, config, publish_address)?;
+    let shared_services =
+        resolve_shared_service_bindings(repo_root, config, publish_address, draft)?;
     let local_services = config
         .services
         .iter()
@@ -571,42 +567,12 @@ pub(crate) fn resolve_compose_source(
         "typed assembly policy application",
         &mut assembly,
     )?;
-    let output = ComposeOutput::new(
-        repo_root.join(GENERATED_RUNTIME_COMPOSE_DIR),
-        container_name,
-    );
-    ensure_effigy_ignored_in_git_root(repo_root).map_err(|error| ContainerPolicyError::Read {
-        path: git_local_exclude_path(repo_root),
-        error,
-    })?;
-    let manifest_cache_key = if effective_ports.is_empty() {
-        effective_manifest.to_owned()
-    } else {
-        format!(
-            "{effective_manifest}\n# effective_ports={}\n# shared_services={}",
-            effective_ports.join(","),
-            shared_services
-                .iter()
-                .map(|service| format!(
-                    "{}:{}:{}",
-                    service.catalog, service.project_name, service.host_port
-                ))
-                .collect::<Vec<_>>()
-                .join(",")
-        )
-    };
-    let output_path = output.generated_compose_path();
-    if let Some(guard) = &admission {
-        guard.before_render_write(&output_path, assembly.compose_yaml.as_bytes())?;
-    }
-    let write = output.write(&assembly, &manifest_cache_key)?;
-    if let Some(guard) = admission {
-        guard.record_rendered(&write.compose_path, assembly.compose_yaml.as_bytes())?;
-    }
-
-    let mut compose_files = vec![write.compose_path];
-    if output.has_override() {
-        compose_files.push(output.override_compose_path());
+    let output_dir = repo_root.join(GENERATED_RUNTIME_COMPOSE_DIR);
+    let output_path = draft.assembly(&output_dir, container_name, &assembly);
+    let mut compose_files = vec![output_path];
+    let override_path = output_dir.join("compose.override.yml");
+    if override_path.is_file() {
+        compose_files.push(override_path);
     }
     let display = compose_files
         .iter()
@@ -642,13 +608,9 @@ fn render_direct_compose_ownership_override(
     container_name: &str,
     compose_file: &Path,
     config: &ManifestContainerConfig,
-    admission: Option<&mut crate::policy::admission::PolicyAdmission>,
+    draft: &mut crate::policy::render::Draft,
 ) -> Result<PathBuf, ContainerPolicyError> {
-    let source =
-        std::fs::read_to_string(compose_file).map_err(|error| ContainerPolicyError::Read {
-            path: compose_file.to_path_buf(),
-            error,
-        })?;
+    let source = draft.read(compose_file)?;
     let value: YamlValue = serde_yaml::from_str(&source).map_err(|error| {
         ContainerPolicyError::TaskInvocation(format!(
             "compose file {} is invalid YAML: {error}",
@@ -690,42 +652,19 @@ fn render_direct_compose_ownership_override(
             "failed to serialize direct compose ownership override for `{container_name}`: {error}"
         ))
     })?;
-    // Admission keys derived artifacts by the canonical checkout (the policy
-    // load canonicalizes its root), so write under that path. A symlinked
-    // temp or checkout root would otherwise never match its recorded key.
-    let dir = checkout.join(GENERATED_RUNTIME_COMPOSE_DIR);
-    std::fs::create_dir_all(&dir).map_err(|error| ContainerPolicyError::Read {
-        path: dir.clone(),
-        error,
-    })?;
-    let path = dir.join(format!("{container_name}.ownership.compose.yml"));
-    if let Some(guard) = admission.as_deref() {
-        guard.before_render_write(&path, rendered.as_bytes())?;
-    }
-    // Atomic replacement: this override is an admitted Compose input that
-    // concurrent policy resolutions rewrite and strict publication verifies
-    // read.
-    effigy_catalog::atomic_write::write_atomic(&path, rendered.as_bytes()).map_err(|error| {
-        ContainerPolicyError::Read {
-            path: path.clone(),
-            error,
-        }
-    })?;
-    if let Some(guard) = admission {
-        guard.record_rendered(&path, rendered.as_bytes())?;
-    }
+    let path = checkout
+        .join(GENERATED_RUNTIME_COMPOSE_DIR)
+        .join(format!("{container_name}.ownership.compose.yml"));
+    draft.insert(path.clone(), rendered.into_bytes());
     Ok(path)
 }
 
 fn validate_scoped_direct_compose(
     compose_file: &Path,
     config: &ManifestContainerConfig,
+    draft: &mut crate::policy::render::Draft,
 ) -> Result<(), ContainerPolicyError> {
-    let source =
-        std::fs::read_to_string(compose_file).map_err(|error| ContainerPolicyError::Read {
-            path: compose_file.to_path_buf(),
-            error,
-        })?;
+    let source = draft.read(compose_file)?;
     let value: YamlValue = serde_yaml::from_str(&source).map_err(|error| {
         ContainerPolicyError::TaskInvocation(format!(
             "compose file {} is invalid YAML: {error}",
@@ -912,6 +851,7 @@ fn resolve_shared_service_bindings(
     repo_root: &Path,
     config: &ManifestContainerConfig,
     publish_address: std::net::Ipv4Addr,
+    draft: &mut crate::policy::render::Draft,
 ) -> Result<Vec<SharedServiceBinding>, ContainerPolicyError> {
     let mut bindings = Vec::new();
     for (service_name, service) in &config.services {
@@ -986,17 +926,13 @@ fn resolve_shared_service_bindings(
         // Shared services live outside any one environment's generated
         // payload; key their output by the shared project so every renderer
         // of the same shared project converges on one file.
-        let output = ComposeOutput::new(output_dir, &shared_project_name);
-        let write = output.write(
-            &assembly,
-            &format!("{shared_project_name}\n# publish_address={publish_address}"),
-        )?;
+        let compose_path = draft.assembly(&output_dir, &shared_project_name, &assembly);
         bindings.push(SharedServiceBinding {
             service_name: service_name.clone(),
             catalog: service.catalog.clone(),
             domain_label: contract.domain_label,
             project_name: shared_project_name,
-            compose_file: write.compose_path,
+            compose_file: compose_path,
             host: SHARED_SERVICE_HOST.to_owned(),
             host_port: binding.host,
             container_port: binding.container,
@@ -1078,7 +1014,9 @@ fn shared_service_project_name(service: &ManifestContainerServiceConfig) -> Stri
     )
 }
 
-fn shared_service_output_dir(project_name: &str) -> Result<PathBuf, ContainerPolicyError> {
+pub(crate) fn shared_service_output_dir(
+    project_name: &str,
+) -> Result<PathBuf, ContainerPolicyError> {
     let Some(home) = effigy_home_dir() else {
         return Err(ContainerPolicyError::TaskInvocation(
             "`HOME` is not set; cannot resolve shared service state directory".to_owned(),
@@ -1243,7 +1181,7 @@ fn project_loopback_port_rules(
     config: &ManifestContainerConfig,
 ) -> Result<Vec<LoopbackPortRule>, ContainerPolicyError> {
     let source = repo_root.display().to_string();
-    let Some(loopback_ip) = load_or_allocate_loopback_ip(
+    let Some(loopback_ip) = read_loopback_ip(
         &project_loopback_identity(project_name, repo_root),
         Some(project_name),
         &source,
@@ -1282,7 +1220,7 @@ fn shared_service_loopback_port_rules(
     let Some(container_port) = capabilities.loopback_alias_port else {
         return Ok(Vec::new());
     };
-    let Some(loopback_ip) = load_or_allocate_loopback_ip(
+    let Some(loopback_ip) = read_loopback_ip(
         &format!("shared:{project_name}"),
         None,
         &output_dir.display().to_string(),
@@ -1296,6 +1234,65 @@ fn shared_service_loopback_port_rules(
         container_port,
         keep_runtime_host_binding: true,
     }])
+}
+
+/// Policy reads neither allocate nor migrate loopback identities. The legacy
+/// project-only key remains readable until Prepare imports it for this checkout.
+fn read_loopback_ip(
+    identity: &str,
+    legacy_identity: Option<&str>,
+    source: &str,
+) -> Result<Option<std::net::Ipv4Addr>, ContainerPolicyError> {
+    let Some(home) = effigy_home_dir() else {
+        return Ok(None);
+    };
+    let registry = LoopbackRegistry::load(&home.join("gateway/loopback-ips.json"))
+        .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))?;
+    let routes = RouteTable::load(&home.join("gateway/routes.json"))
+        .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))?;
+    let reserved = reserved_loopback_ips_for_other_projects(&routes, source);
+    let assignment = registry.get(identity).or_else(|| {
+        legacy_identity.and_then(|legacy| {
+            registry.get(legacy).filter(|assignment| {
+                assignment.scope == source
+                    && !registry.assignments.iter().any(|(other_identity, other)| {
+                        other_identity != legacy && other.ip == assignment.ip
+                    })
+            })
+        })
+    });
+    Ok(assignment
+        .filter(|assignment| !reserved.contains(&assignment.ip))
+        .map(|assignment| assignment.ip))
+}
+
+/// Allocate only at the host Prepare seam, including environments whose ports
+/// are already assigned or entirely explicit. Reuse the existing allocator and
+/// its pre-lock inventory rather than introducing a second allocation path.
+pub(crate) fn prepare_container_policy_loopbacks(
+    policy: &crate::EffectiveContainerPolicy,
+) -> Result<bool, ContainerPolicyError> {
+    if policy.compose_source != crate::EffectiveComposeSource::Generated {
+        return Ok(false);
+    }
+    let mut changed = false;
+    for shared in &policy.shared_services {
+        let fragment = layered_catalog_resolver(None).resolve(&shared.catalog)?;
+        if fragment.schema.capabilities.loopback_alias_port.is_none() {
+            continue;
+        }
+        let root = shared_service_output_dir(&shared.project_name)?;
+        let identity = format!("shared:{}", shared.project_name);
+        let source = root.display().to_string();
+        let before = read_loopback_ip(&identity, None, &source)?;
+        let after = load_or_allocate_loopback_ip(&identity, None, &source)?;
+        changed |= before != after;
+    }
+    let identity = project_loopback_identity(&policy.project_name, &policy.repo_root);
+    let source = policy.repo_root.display().to_string();
+    let before = read_loopback_ip(&identity, Some(&policy.project_name), &source)?;
+    let after = load_or_allocate_loopback_ip(&identity, Some(&policy.project_name), &source)?;
+    Ok(changed || before != after)
 }
 
 fn load_or_allocate_loopback_ip(
@@ -1583,12 +1580,9 @@ fn configured_host_ports(config: &ManifestContainerConfig) -> Vec<String> {
 fn infer_direct_compose_host_ports(
     compose_file: &Path,
     project_name: &str,
+    draft: &mut crate::policy::render::Draft,
 ) -> Result<Vec<String>, ContainerPolicyError> {
-    let content =
-        std::fs::read_to_string(compose_file).map_err(|error| ContainerPolicyError::Read {
-            path: compose_file.to_path_buf(),
-            error,
-        })?;
+    let content = draft.read(compose_file)?;
     let parsed: YamlValue = serde_yaml::from_str(&content).map_err(|error| {
         ContainerPolicyError::TaskInvocation(format!(
             "compose file for `{project_name}` is invalid YAML: {error}"
@@ -1922,6 +1916,46 @@ mod tests {
                 .expect("fill private loopback pool");
         }
         registry
+    }
+
+    #[test]
+    fn loopback_read_preserves_legacy_assignment_until_prepare() {
+        let home = tempfile::tempdir().expect("private state");
+        with_test_effigy_home(home.path(), || {
+            let source = home.path().join("checkout").display().to_string();
+            let path = home.path().join("gateway/loopback-ips.json");
+            let mut registry = LoopbackRegistry::new();
+            let ip = registry
+                .allocate("old-project", &source)
+                .expect("legacy assignment")
+                .ip;
+            registry.save(&path).expect("legacy registry");
+            let before = std::fs::read(&path).expect("registry bytes");
+            let identity = project_loopback_identity("old-project", Path::new(&source));
+            let (_, probes) =
+                with_test_loopback_inventory(RunningComposeContainerInventory::default(), || {
+                    assert_eq!(
+                        read_loopback_ip(&identity, Some("old-project"), &source).unwrap(),
+                        Some(ip)
+                    );
+                    assert_eq!(
+                        read_loopback_ip(&identity, Some("old-project"), "foreign").unwrap(),
+                        None
+                    );
+                    assert_eq!(std::fs::read(&path).unwrap(), before);
+                    assert!(!path.with_extension("lock").exists());
+                });
+            assert_eq!(probes, 0);
+            let (prepared, _) =
+                with_test_loopback_inventory(RunningComposeContainerInventory::default(), || {
+                    load_or_allocate_loopback_ip(&identity, Some("old-project"), &source)
+                        .expect("prepare legacy assignment")
+                });
+            assert_eq!(prepared, Some(ip));
+            let migrated = LoopbackRegistry::load(&path).expect("migrated registry");
+            assert!(migrated.get("old-project").is_none());
+            assert_eq!(migrated.get(&identity).map(|value| value.ip), Some(ip));
+        });
     }
 
     #[test]
@@ -2524,17 +2558,17 @@ services:
         let config: ManifestContainerConfig =
             serde_yaml::from_str("compose_file: infra/docker-compose.yml").expect("config");
 
+        let mut draft = crate::policy::render::Draft::default();
         let path = render_direct_compose_ownership_override(
             &root,
             "linux-release",
             &compose,
             &config,
-            None,
+            &mut draft,
         )
         .expect("render override");
-        let rendered: YamlValue =
-            serde_yaml::from_str(&std::fs::read_to_string(&path).expect("read override"))
-                .expect("parse override");
+        let rendered: YamlValue = serde_yaml::from_str(&draft.read(&path).expect("read override"))
+            .expect("parse override");
         let checkout = root
             .canonicalize()
             .expect("canonical root")

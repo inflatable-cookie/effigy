@@ -1,8 +1,6 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use effigy_core::runtime_dir::{ensure_effigy_ignored_in_git_root, git_local_exclude_path};
-
 use crate::{ContainerPolicyError, EffectiveDnsRoute, EffectiveServiceAlias};
 
 const RUNTIME_DNS_FALLBACK_SERVERS: [&str; 2] = ["1.1.1.1", "8.8.8.8"];
@@ -13,9 +11,9 @@ pub(crate) fn materialize_runtime_dns_override(
     profile: &str,
     routes: &RuntimeDnsOverrideRoutes,
     compose_files: &mut Vec<PathBuf>,
-    admission: Option<&mut crate::policy::admission::PolicyAdmission>,
+    draft: &mut crate::policy::render::Draft,
 ) -> Result<(), ContainerPolicyError> {
-    let services = collect_compose_service_names(compose_files)?;
+    let services = collect_compose_service_names(compose_files, draft)?;
     if services.is_empty() {
         return Ok(());
     }
@@ -25,46 +23,21 @@ pub(crate) fn materialize_runtime_dns_override(
         return Ok(());
     }
     let override_dir = repo_root.join(".effigy").join("runtime").join("dns");
-    ensure_effigy_ignored_in_git_root(repo_root).map_err(|error| ContainerPolicyError::Read {
-        path: git_local_exclude_path(repo_root),
-        error,
-    })?;
-    std::fs::create_dir_all(&override_dir).map_err(|error| ContainerPolicyError::Read {
-        path: override_dir.clone(),
-        error,
-    })?;
     let override_path = override_dir.join(format!("{container_name}.compose.override.yml"));
     let override_yaml =
         render_runtime_dns_override(&services, &dns_servers, gateway_address.as_deref(), routes);
-    if let Some(guard) = &admission {
-        guard.before_render_write(&override_path, override_yaml.as_bytes())?;
-    }
-    // Atomic replacement: the managed shell/exec readiness probes resolve the
-    // policy once per second and strict publication verifies read this file
-    // concurrently, so a truncating rewrite would tear an admitted input.
-    effigy_catalog::atomic_write::write_atomic(&override_path, override_yaml.as_bytes()).map_err(
-        |error| ContainerPolicyError::Read {
-            path: override_path.clone(),
-            error,
-        },
-    )?;
-    if let Some(guard) = admission {
-        guard.record_rendered(&override_path, override_yaml.as_bytes())?;
-    }
+    draft.insert(override_path.clone(), override_yaml.into_bytes());
     compose_files.push(override_path);
     Ok(())
 }
 
 fn collect_compose_service_names(
     compose_files: &[PathBuf],
+    draft: &mut crate::policy::render::Draft,
 ) -> Result<Vec<String>, ContainerPolicyError> {
     let mut names = std::collections::BTreeSet::new();
     for compose_file in compose_files {
-        let content =
-            std::fs::read_to_string(compose_file).map_err(|error| ContainerPolicyError::Read {
-                path: compose_file.clone(),
-                error,
-            })?;
+        let content = draft.read(compose_file)?;
         let parsed: serde_yaml::Value = serde_yaml::from_str(&content).map_err(|error| {
             ContainerPolicyError::TaskInvocation(format!(
                 "failed to parse compose file {} for runtime DNS override generation: {error}",
@@ -134,18 +107,20 @@ fn resolve_runtime_dns_servers(profile: &str) -> Vec<String> {
 }
 
 fn resolve_runtime_gateway_address(profile: &str) -> Option<String> {
-    let colima_home = colima_home_dir()?;
-    let config_path = colima_home.join(profile).join("colima.yaml");
-    let content = std::fs::read_to_string(&config_path).ok()?;
-    let parsed = serde_yaml::from_str::<serde_yaml::Value>(&content).ok()?;
-    parsed
-        .get("network")
-        .and_then(|network| network.get("gatewayAddress"))
-        .and_then(serde_yaml::Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned)
-        .or_else(|| Some("192.168.5.2".to_owned()))
+    // Rendering precedes profile startup. Its default gateway must not depend
+    // on whether Colima has written colima.yaml yet (also true on Linux).
+    colima_home_dir()
+        .and_then(|home| std::fs::read_to_string(home.join(profile).join("colima.yaml")).ok())
+        .and_then(|text| serde_yaml::from_str::<serde_yaml::Value>(&text).ok())
+        .and_then(|value| {
+            value
+                .get("network")?
+                .get("gatewayAddress")?
+                .as_str()
+                .map(str::to_owned)
+        })
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| Some("192.168.5.2".into()))
 }
 
 pub(crate) fn colima_home_dir() -> Option<PathBuf> {
@@ -312,85 +287,30 @@ mod tests {
         );
     }
 
-    /// The override is an admitted Compose input that every policy resolution
-    /// rewrites while strict detached-activation publication verifies read it
-    /// concurrently (the managed shell/exec readiness probes resolve the
-    /// policy once per second during a headless `dev:container` startup). A
-    /// truncating rewrite let such a verify observe a torn or empty file and
-    /// refuse publication (#197), so replacement must be atomic: a concurrent
-    /// reader always sees one complete generation.
     #[test]
-    #[ignore = "known v0.15 rebuild defect: papercut b4c31570-64bd-4707-91ac-5613efcf167d; owner lane v015-environment; must-fix (all platforms and lanes)"]
-    fn runtime_dns_override_replacement_never_tears_concurrent_readers() {
-        let root = tempfile::tempdir().expect("temporary fixture");
-        let compose_dir = root.path().join(".effigy").join("runtime").join("compose");
-        std::fs::create_dir_all(&compose_dir).expect("compose dir");
-        let compose = compose_dir.join("web.generated.compose.yml");
-        std::fs::write(
-            &compose,
-            "services:\n  workspace:\n    image: example\n  postgres:\n    image: example\n  dbgate:\n    image: example\n  mailpit:\n    image: example\n  minio:\n    image: example\n",
-        )
-        .expect("write compose");
-        let compose_files = vec![compose];
-
-        let dns_routes: Vec<EffectiveDnsRoute> = (0..300)
-            .map(|index| route(&format!("r{index}.teardown.test")))
+    fn runtime_dns_render_is_complete_without_host_configuration() {
+        let routes: Vec<_> = (0..300)
+            .map(|n| route(&format!("r{n}.teardown.test")))
             .collect();
-        let runtime_routes = runtime_route_domains(&dns_routes, &[alias()], Some("teardown.test"));
-        let override_dir = root.path().join(".effigy").join("runtime").join("dns");
-        let override_path = override_dir.join("web.compose.override.yml");
-
-        materialize_runtime_dns_override(
-            root.path(),
-            "web",
-            "effigy",
-            &runtime_routes,
-            &mut compose_files.clone(),
-            None,
-        )
-        .expect("initial override render");
-        let expected = std::fs::read_to_string(&override_path).expect("rendered override");
-        assert!(
-            expected.len() > 32_000,
-            "the fixture override stays large enough to expose a truncating rewrite: {}",
-            expected.len()
+        let routes = runtime_route_domains(&routes, &[alias()], Some("teardown.test"));
+        let rendered = render_runtime_dns_override(
+            &["workspace".into(), "postgres".into(), "web".into()],
+            &["1.1.1.1".into()],
+            Some("192.168.5.2"),
+            &routes,
         );
-
-        const WRITER_ITERATIONS: usize = 120;
-        let done = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let writer_done = done.clone();
-        let writer_root = root.path().to_path_buf();
-        let writer_routes = runtime_routes;
-        let writer_compose = compose_files.clone();
-        let writer = std::thread::spawn(move || {
-            for iteration in 0..WRITER_ITERATIONS {
-                materialize_runtime_dns_override(
-                    &writer_root,
-                    "web",
-                    "effigy",
-                    &writer_routes,
-                    &mut writer_compose.clone(),
-                    None,
-                )
-                .expect("concurrent override render");
-                writer_done.store(iteration + 1, std::sync::atomic::Ordering::Relaxed);
-            }
-        });
-        let mut reads = 0usize;
-        while done.load(std::sync::atomic::Ordering::Relaxed) < WRITER_ITERATIONS {
-            let observed = std::fs::read_to_string(&override_path).unwrap_or_else(|error| {
-                panic!("override unreadable after {reads} clean reads: {error}")
-            });
-            assert_eq!(
-                observed, expected,
-                "a reader observed a torn override after {reads} clean reads"
-            );
-            reads += 1;
-        }
-        writer.join().expect("writer joins");
+        let parsed: serde_yaml::Value =
+            serde_yaml::from_str(&rendered).expect("complete DNS document");
+        assert_eq!(
+            parsed["services"]["workspace"]["extra_hosts"]
+                .as_sequence()
+                .unwrap()
+                .len(),
+            300
+        );
         assert!(
-            reads >= WRITER_ITERATIONS,
-            "the reader must share the writer's window: {reads} reads for {WRITER_ITERATIONS} rewrites"
+            rendered.len() > 32000,
+            "large fixture must exercise the complete DNS payload"
         );
     }
 }

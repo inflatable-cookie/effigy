@@ -18,11 +18,8 @@ pub fn prepare_container_mount_sources(
         let cache = home.join("shared/composer-cache");
         let expected = format!("{}:/home/dev/.cache/composer", cache.display());
         for file in &policy.compose_files {
-            let bytes = std::fs::read(file).map_err(|error| ContainerPolicyError::Read {
-                path: file.clone(),
-                error,
-            })?;
-            let compose: serde_yaml::Value = serde_yaml::from_slice(&bytes).map_err(|error| {
+            let content = policy.read_compose(file)?;
+            let compose: serde_yaml::Value = serde_yaml::from_str(&content).map_err(|error| {
                 ContainerPolicyError::TaskInvocation(format!(
                     "cannot read mount sources from {}: {error}",
                     file.display()

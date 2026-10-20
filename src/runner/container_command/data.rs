@@ -889,6 +889,7 @@ mod tests {
 
     fn test_policy() -> EffectiveContainerPolicy {
         EffectiveContainerPolicy {
+            render: None,
             repo_root: std::path::PathBuf::from("/tmp"),
             name: "web".to_owned(),
             driver: ManifestContainerDriver::Colima,

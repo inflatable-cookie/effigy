@@ -6,7 +6,7 @@ use std::path::Path;
 
 use effigy_containers::{
     exec::{
-        capture_running_container_stats_for_profile, colima_is_running, colima_profile_warnings,
+        capture_running_container_stats_for_profile, colima_profile_warnings,
         compose_status_is_running, list_compose_containers_for_policy_including_stopped,
         list_compose_containers_for_project_including_stopped, run_compose_invocation_capture,
         runtime_backend_is_running, selected_backend_label, ContainerExecError,
@@ -25,8 +25,12 @@ use effigy_containers::{
     ContainerReadOperation,
 };
 
-use crate::container_manager::{compose_invocation_plan, lifecycle_operation_report};
-use crate::signals::{run_compose_plan_capture, spawn_compose_plan_inherit};
+use crate::container_manager::{
+    compose_invocation_plan, lifecycle_operation_report, runtime_invocation_plan,
+};
+use crate::signals::{
+    run_compose_plan_capture, run_runtime_plan_capture, spawn_runtime_plan_inherit,
+};
 use crate::EffigyRuntimeError;
 pub(crate) use discovery::{
     discover_effigy_repos_under, discover_running_environments,
@@ -66,7 +70,7 @@ pub fn run_container_status(
     } else {
         Vec::new()
     };
-    let compose_ps = if runtime_running && services.is_empty() {
+    let compose_ps = if runtime_running && services.is_empty() && policy.render.is_none() {
         let plan = compose_invocation_plan(
             repo_root,
             &policy,
@@ -135,12 +139,13 @@ pub fn run_container_logs(
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     validate_compose_backend_runtime(repo_root, &policy)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
-    if !colima_is_running(&policy, repo_root)
+    if !runtime_backend_is_running(&policy, repo_root)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?
     {
         return Err(EffigyRuntimeError::task_invocation(format!(
-            "Colima profile `{}` is not running for container `{}`",
-            policy.profile, policy.name
+            "{} is not running for container `{}`",
+            selected_backend_label(&policy, repo_root),
+            policy.name
         )));
     }
     let service = service.unwrap_or(policy.primary_service.as_str());
@@ -152,21 +157,45 @@ pub fn run_container_logs(
         None,
     )?;
 
+    // Log discovery is label-based on the selected backend. It must not open
+    // the prospective render, which may never have been published.
+    let rows = list_compose_containers_for_policy_including_stopped(repo_root, &policy)?;
+    let names = rows
+        .iter()
+        .filter(|row| !row.oneoff && row.service.as_deref() == Some(service))
+        .map(|row| row.container_name.as_str())
+        .collect::<Vec<_>>();
+    let [container] = names.as_slice() else {
+        return Err(EffigyRuntimeError::task_invocation(format!(
+            "expected one container for service `{service}`, found {}",
+            names.len()
+        )));
+    };
+    let args = if follow {
+        vec!["logs", "--follow", *container]
+    } else {
+        vec!["logs", "--tail", "100", *container]
+    };
+    let args = args
+        .iter()
+        .map(std::ffi::OsString::from)
+        .collect::<Vec<_>>();
+    let plan = runtime_invocation_plan(
+        repo_root,
+        &policy,
+        "docker",
+        &args,
+        ContainerAction::Logs,
+        "container logs",
+    )?;
     if follow {
-        let plan = compose_invocation_plan(
-            repo_root,
-            &policy,
-            ["logs", "--follow", service],
-            ContainerAction::Logs,
-            "docker compose logs --follow",
-        )?;
-        let mut child = spawn_compose_plan_inherit(&plan)?;
+        let mut child = spawn_runtime_plan_inherit(&plan)?;
         let status = child
             .wait()
             .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
         if !status.success() {
             return Err(EffigyRuntimeError::task_invocation(format!(
-                "docker compose logs --follow exited with status {status}"
+                "container logs --follow exited with status {status}"
             )));
         }
         return Ok(format!(
@@ -174,15 +203,13 @@ pub fn run_container_logs(
             policy.name
         ));
     }
-
-    let plan = compose_invocation_plan(
-        repo_root,
-        &policy,
-        ["logs", "--tail", "100", service],
-        ContainerAction::Logs,
-        "docker compose logs",
-    )?;
-    let output = run_compose_plan_capture(&policy, &plan)?;
+    let output = run_runtime_plan_capture(&plan)?;
+    if !output.status.success() {
+        return Err(EffigyRuntimeError::task_invocation(format!(
+            "container logs failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )));
+    }
     let rendered = String::from_utf8_lossy(&output.stdout).trim().to_owned();
     Ok(render_container_report(
         logs_report(&policy, service, &rendered),

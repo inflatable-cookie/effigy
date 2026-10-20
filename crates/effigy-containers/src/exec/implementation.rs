@@ -403,6 +403,7 @@ mod legacy_admission_tests {
 
     fn policy(project: &str) -> EffectiveContainerPolicy {
         EffectiveContainerPolicy {
+            render: None,
             repo_root: PathBuf::from("/repo"),
             name: "web".to_owned(),
             driver: ManifestContainerDriver::Colima,
@@ -729,12 +730,16 @@ pub fn verify_workspace_artifact_builder_declaration(
     policy: &EffectiveContainerPolicy,
 ) -> Result<(), ContainerExecError> {
     for file in &policy.compose_files {
-        let bytes = std::fs::read(file).map_err(|error| ContainerExecError::Launch {
-            command: "read workspace builder declaration".to_owned(),
-            error,
-        })?;
+        let content = policy
+            .read_compose(file)
+            .map_err(|error| ContainerExecError::Failure {
+                command: "read workspace builder declaration".to_owned(),
+                code: None,
+                stdout: String::new(),
+                stderr: error.to_string(),
+            })?;
         let compose: serde_yaml::Value =
-            serde_yaml::from_slice(&bytes).map_err(|error| ContainerExecError::Failure {
+            serde_yaml::from_str(&content).map_err(|error| ContainerExecError::Failure {
                 command: "parse workspace builder declaration".to_owned(),
                 code: None,
                 stdout: String::new(),
@@ -756,7 +761,7 @@ pub fn verify_workspace_artifact_builder_declaration(
             });
         }
     }
-    let services = super::restart_recovery::declared_service_names(&policy.compose_files)?;
+    let services = super::restart_recovery::declared_service_names(policy, &policy.compose_files)?;
     if services.len() != 1 || !services.contains("builder") {
         return Err(ContainerExecError::Failure {
             command: "verify workspace builder declaration".to_owned(),
@@ -858,7 +863,8 @@ pub fn compose_stack_is_running(
     policy: &EffectiveContainerPolicy,
     rows: &[RunningComposeContainer],
 ) -> Result<bool, ContainerExecError> {
-    let mut declared = super::restart_recovery::declared_service_names(&policy.compose_files)?;
+    let mut declared =
+        super::restart_recovery::declared_service_names(policy, &policy.compose_files)?;
     declared.insert(policy.primary_service.clone());
     Ok(declared.iter().all(|service| {
         rows.iter().any(|row| {
@@ -1008,7 +1014,8 @@ impl OwnershipContext {
         repo_root: &Path,
         policy: &EffectiveContainerPolicy,
     ) -> Result<Self, ContainerExecError> {
-        let declared = super::restart_recovery::declared_service_names(&policy.compose_files)?;
+        let declared =
+            super::restart_recovery::declared_service_names(policy, &policy.compose_files)?;
         let canonical = repo_root
             .canonicalize()
             .map_err(|error| ContainerExecError::Launch {

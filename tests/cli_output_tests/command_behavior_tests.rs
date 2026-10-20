@@ -9390,9 +9390,25 @@ fn cli_generated_container_status_json_reports_media_mounts() {
         parsed["result"]["media_mounts"][0],
         "storage/uploads:/var/www/html/storage/uploads"
     );
-    let compose =
-        fs::read_to_string(root.join(".effigy/runtime/compose/web.generated.compose.yml"))
-            .expect("read compose");
+    assert!(
+        !root.join(".effigy/runtime/compose").exists(),
+        "status must not publish"
+    );
+    let rendered = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .args(["container", "render", "web", "--json", "--repo"])
+        .arg(&root)
+        .env("HOME", &root)
+        .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
+        .output()
+        .unwrap();
+    assert!(rendered.status.success(), "{rendered:?}");
+    let payload = parse_stdout_json(&rendered);
+    let files = payload["result"]["files"].as_array().unwrap();
+    let compose = files
+        .iter()
+        .map(|file| file["content"].as_str().unwrap())
+        .collect::<Vec<_>>()
+        .join("\n");
     let expected = format!(
         "{}:/var/www/html/storage/uploads",
         root.join("storage/uploads").display()

@@ -35,6 +35,7 @@ pub(super) fn run_workspace_container_session(
             session_context: workspace_activation_session_context(),
         },
     )?;
+    let policy = activation.policy;
     workspace::finish_workspace_handoff_after_activation(
         repo_root,
         &policy,

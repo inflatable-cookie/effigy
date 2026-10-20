@@ -87,8 +87,9 @@ way that could recreate the running service just to apply an optional mount.
 No creation-time mount decision is reported for that existing service.
 
 Direct `compose_file` containers get the same checkout identity as generated
-ones. Effigy renders a Compose override next to the repo-owned file, at
-`.effigy/runtime/compose/<container>.ownership.compose.yml`. It labels each
+ones. Effigy includes an ownership override in the immutable closure, at
+`checkout/.effigy/runtime/compose/<container>.ownership.compose.yml` relative to
+the generation root. It labels each
 service the file declares with `com.effigy.checkout` (the canonical checkout)
 and, when the checkout has a runtime scope token, `com.effigy.scope`. The repo
 file is not edited, and the override adds labels to no service the file does not
@@ -258,16 +259,81 @@ start after that listener is ready. A dependent process receives
 restarts or loses readiness, Effigy stops the dependent generation and starts
 it with the current endpoint values.
 
-Detached activation records admitted context after a successful Compose launch.
-Detached policy loading now seals the original declaration sources and selected
-checkout/scope/backend/profile/project/primary identity before generation's
-inventory probes, warning/runtime preparation or workspace refresh. Generated,
-workspace and DNS renderers contribute expected-byte receipts to that same
-snapshot: original inputs and existing artifacts must still match before a
-write, and the resulting file must match its renderer bytes afterward. Creation
-refresh verifies the retained declaration rather than capturing a new baseline.
-Marked reconciliation also verifies its original marker inputs before any
-materialization. Attached and unrelated data preparation retain legacy behavior.
+After manifest resolution, host policy rendering builds one in-memory kernel
+`objects::Closure` containing
+Original and effective declarations, Compose inputs, generated Dockerfiles/configs,
+shared-service Compose, workspace
+and DNS rewrites, and inline workspaces. It writes no files, Git exclusions,
+scope tokens, ports or loopback assignments. The render's digest determines its
+prospective `~/.effigy/state/objects/<digest>` path. An unprepared scoped checkout
+uses an explicit `-wt-unprepared` or `-ec-unprepared` project suffix and never
+queries its primary checkout's project. Prepare establishes its persistent token
+and resolves the final isolated identity.
+
+Manifest resolution reads per-checkout source pins and immutable bundle source
+generations (contract 020). Observe never acquires the source cache lock or
+fetches a bundle. Existing materialized bytes remain readable during migration;
+Prepare imports them and `effigy bundle sync` explicitly updates selected pins.
+
+The Prepare stage of `up` and other Mutate commands publishes through kernel
+Objects under the environment owner gate. Files are sealed 0400 and directories
+0500. Compose receives `EFFIGY_RENDER_ROOT` for references to generated assets;
+this adapter-owned value overrides a caller's environment without changing the
+process-global environment. Internal policy readers expand this reserved root
+before parsing bind syntax or estimating mount budgets; the immutable file bytes
+retain Compose interpolation. Prepare establishes owned mount directories before
+admission, so creating a cache cannot change canonical bind paths afterward.
+Relative generated asset paths, including `./` spellings, name files in that
+same generation. Relative user build contexts and Dockerfiles keep their
+Compose meaning. `compose.override.yml` and direct `compose_file` inputs
+are copied into the closure. Existing mutable generated files are not imported
+or rewritten; the next Prepare renders their replacement automatically.
+
+`effigy container render [<env>]` is read-only and prints every closure file,
+its generation path and digest. The path may not exist before Prepare. JSON
+uses `effigy.container.render.v1` with `environment`, `path`, `digest`,
+`compose_files`, `environment_variables`, and `files` (`name`, `path`, `content`).
+Missing allocated ports remain explicit placeholders until Prepare. Scope
+queries also leave an unprepared checkout's identity absent. Logs discover the
+selected backend's service container directly, including stopped containers,
+without opening an unpublished render. Activation stages share one prepared
+policy snapshot and return it to exec, deferred tasks and workspace handoff,
+so later commands, probes and leases use its final identity and paths.
+
+Detached admission records a v3 generation reference. Verification reads the
+kernel's desired object reference and verifies its complete immutable closure;
+it no longer fingerprints mutable declarations and renderer outputs. Canonical
+checkout identity and scope remain fenced, including a checkout moved behind a
+symlink. Source edits leave an admitted snapshot intact; a later Prepare publishes a new desired
+generation and supersedes that admission. One-release v2 receipt import checks
+its original identity and fingerprints once, then writes a v3 reference in
+Prepare. Retained admission is validated before moving the desired reference;
+a refusal leaves the prior reference intact. Attached workflows use the same
+immutable render path. Execution-only workspace builder recovery compares fresh
+source render references while retaining its original stack admission.
+
+Reset and bootstrap fresh-session teardown resolve Prepare inputs and publish
+the selected generation before planning Compose or removing generated images,
+including on fresh checkouts and after declaration changes. A scoped checkout without a runtime identity performs
+no reset effects and does not mint an identity. Every Compose spawn, including
+shared-service startup, supplies its immutable generation root to the child.
+
+Reset then drops only the selected environment's object references through kernel
+`Objects::reset`; physical reclamation is kernel retention's responsibility.
+Sibling environment references survive. Eject exports the resolved closure to
+`infra/dev` and does not require a previous `up` or remove admitted objects.
+
+The focused `test:containers:generations:cli` proof snapshots bytes and filesystem
+metadata around status, hosts, scope, plan, render and logs for direct Compose
+and pinned bundles. The operator-only `test:containers:generations:consumers`
+selector requires Python with PyYAML and the cbs/Acowtancy checkouts. It archives
+the pre-cutover main renderer into a private temporary fixture, copies the
+consumers' evaluated inputs, bundle bytes and host configuration, imports those
+bytes through source Prepare, then compares normalized Compose with the pure
+CLI's render of the same pins. It never updates a real consumer or its cache.
+Engine tests cover concurrent render/publication with admitted readers, refused
+admission preserving the desired reference, and reset preserving its sibling.
+
 A recorded *partial* activation reconciles only against its original admission;
 changed inputs refuse until `effigy container down`. With unchanged admitted
 inputs, a missing or stopped primary does not require operator intervention:
@@ -1285,6 +1351,18 @@ including detached admission and task preparation. Media sources are revalidated
 against the checkout at Prepare; other host mounts remain user-owned.
 
 ### Loopback inventory and registry exclusion
+
+Policy resolution reads existing loopback assignments without taking the
+registry lock, allocating, migrating or probing runtime inventory. A missing
+assignment stays absent until Prepare. Project-only legacy keys are read only
+when owned by the same checkout and uncontested; Prepare imports them to the
+checkout-qualified key while keeping the address. Assignments reserved by
+another project's gateway routes are not used.
+
+The host Prepare seam prepares loopbacks before ports, including shared
+services and environments with only explicit ports or no published ports.
+Existing activation, task preparation and data-workflow entry points all use
+this seam. No manifest change is required for existing consumers.
 
 Runtime inventory for loopback reclamation runs before the global registry
 lock is acquired (K14). Allocation reloads the registry under that lock and

@@ -2,7 +2,6 @@ use std::collections::HashMap;
 
 use effigy_catalog::assembly::{ComposeAssembler, ServiceDeclaration};
 use effigy_catalog::fragment::{CatalogResolver, FragmentSource};
-use effigy_catalog::output::ComposeOutput;
 
 use super::{bundled_resolver, validate_compose_structure, validate_service};
 
@@ -113,13 +112,11 @@ fn extract_nonexistent_fragment_fails() {
 // --- Batch 6: End-to-end compose output and eject ---
 
 #[test]
-fn full_pipeline_assemble_write_eject() {
+fn full_pipeline_assembles_assets_without_writing() {
     let dir = tempfile::tempdir().unwrap();
-    let output_dir = dir.path().join("infra/dev");
 
     let resolver = bundled_resolver();
     let assembler = ComposeAssembler::new(resolver);
-    let output = ComposeOutput::new(output_dir.clone(), "web");
 
     let services = vec![
         ServiceDeclaration {
@@ -145,38 +142,20 @@ fn full_pipeline_assemble_write_eject() {
         },
     ];
 
-    let manifest = "[containers.web]\nservices = [\"php-fpm\", \"mariadb\"]\n";
-
     // Assemble.
     let assembly = assembler
         .assemble(&services, "test-proj", ".", ".effigy-catalog", 1000, 1000)
         .unwrap();
 
-    // Write — should regenerate.
-    let write1 = output.write(&assembly, manifest).unwrap();
-    assert!(write1.regenerated);
-    assert!(write1.compose_path.exists());
-
-    // Write again — should be cached.
-    let write2 = output.write(&assembly, manifest).unwrap();
-    assert!(!write2.regenerated);
-
-    // Eject.
-    let eject = output.eject().unwrap();
-    assert!(eject.compose_path.exists());
-    assert!(eject
-        .compose_path
-        .to_str()
-        .unwrap()
-        .contains("docker-compose.yml"));
-
-    // Generated file should be gone.
-    assert!(!output.generated_compose_path().exists());
-
-    // Permanent file should contain the compose YAML.
-    let content = std::fs::read_to_string(&eject.compose_path).unwrap();
-    assert!(content.contains("app:"));
-    assert!(content.contains("db:"));
+    let doc = validate_compose_structure(&assembly.compose_yaml);
+    validate_service(&doc, "app");
+    validate_service(&doc, "db");
+    assert!(assembly.dockerfiles.contains_key("app"));
+    assert_eq!(
+        std::fs::read_dir(dir.path()).unwrap().count(),
+        0,
+        "assembly stays pure"
+    );
 }
 
 // --- Batch 7: Structural validation and edge cases ---

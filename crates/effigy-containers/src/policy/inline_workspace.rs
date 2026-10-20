@@ -1,7 +1,6 @@
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
-use effigy_core::runtime_dir::{ensure_effigy_ignored_in_git_root, git_local_exclude_path};
 use effigy_manifest::{
     ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerShutdownMode,
     ManifestContainerStartup, ManifestInlineWorkspaceContainerConfig,
@@ -18,6 +17,13 @@ pub fn load_inline_workspace_container_policy(
     container: &ManifestInlineWorkspaceContainerConfig,
     workdir: Option<&str>,
 ) -> Result<EffectiveContainerPolicy, ContainerPolicyError> {
+    let canonical_root = repo_root
+        .canonicalize()
+        .map_err(|error| ContainerPolicyError::Read {
+            path: repo_root.into(),
+            error,
+        })?;
+    let repo_root = canonical_root.as_path();
     let image = container.image.as_deref().ok_or_else(|| {
         ContainerPolicyError::TaskInvocation(format!(
             "inline workspace container `{synthetic_name}` must declare `image`"
@@ -27,14 +33,12 @@ pub fn load_inline_workspace_container_policy(
         .join(".effigy")
         .join("inline-workspaces")
         .join(synthetic_name);
-    ensure_effigy_ignored_in_git_root(repo_root).map_err(|error| ContainerPolicyError::Read {
-        path: git_local_exclude_path(repo_root),
-        error,
-    })?;
-    std::fs::create_dir_all(&compose_dir).map_err(|error| ContainerPolicyError::Read {
-        path: compose_dir.clone(),
-        error,
-    })?;
+    let mut draft = super::render::Draft::default();
+    let manifest = repo_root.join("effigy.toml");
+    if manifest.is_file() {
+        let loaded = effigy_manifest::load_task_manifest_with_inspection(&manifest)?;
+        draft.declarations(&loaded.evaluation_order)?;
+    }
     let compose_path = compose_dir.join("docker-compose.yml");
     let effective_workdir =
         resolve_inline_workspace_exec_working_dir(repo_root, synthetic_name, container, workdir)?;
@@ -48,10 +52,7 @@ pub fn load_inline_workspace_container_policy(
         effective_workdir.as_path(),
         volume_mount.as_deref(),
     );
-    std::fs::write(&compose_path, compose).map_err(|error| ContainerPolicyError::Read {
-        path: compose_path.clone(),
-        error,
-    })?;
+    draft.insert(compose_path.clone(), compose.into_bytes());
     let repo = repo_root
         .file_name()
         .and_then(OsStr::to_str)
@@ -64,9 +65,10 @@ pub fn load_inline_workspace_container_policy(
         DEFAULT_COLIMA_PROFILE,
         &RuntimeDnsOverrideRoutes::default(),
         &mut compose_files,
-        None,
+        &mut draft,
     )?;
-    Ok(EffectiveContainerPolicy {
+    let mut policy = EffectiveContainerPolicy {
+        render: None,
         repo_root: repo_root.to_path_buf(),
         name: synthetic_name.to_owned(),
         driver: ManifestContainerDriver::Colima,
@@ -112,7 +114,15 @@ pub fn load_inline_workspace_container_policy(
         shutdown: ManifestContainerShutdownMode::Graceful,
         detach_timeout_secs: DEFAULT_ATTACH_TIMEOUT_SECS,
         host_processes: Vec::new(),
-    })
+    };
+    draft.finish(&mut policy, &format!("{container:?}"))?;
+    if let Some(render) = &mut policy.render {
+        render.request = super::render::Request::Inline {
+            container: container.clone(),
+            workdir: workdir.map(str::to_owned),
+        };
+    }
+    Ok(policy)
 }
 
 pub fn resolve_inline_workspace_exec_working_dir(

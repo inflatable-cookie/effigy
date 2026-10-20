@@ -1,5 +1,7 @@
 #[path = "support/scoped_env.rs"]
 mod env_test_support;
+#[path = "support/sealed_fixture.rs"]
+mod sealed_fixture;
 
 #[path = "gateway_private/managed_matrix.rs"]
 mod managed_matrix;
@@ -22,17 +24,19 @@ use serde_json::Value;
 const EFFIGY: &str = env!("CARGO_BIN_EXE_effigy");
 
 // Managed CLI entrypoints inherit the authenticated checkout parent.
-fn managed_host_fixture() -> tempfile::TempDir {
+fn managed_host_fixture() -> sealed_fixture::SealedFixture {
     let checkout = fs::canonicalize(env!("CARGO_MANIFEST_DIR")).expect("checkout root");
     let parent = fs::canonicalize(checkout.join("crates")).expect("fixture parent");
     assert!(
         parent.starts_with(&checkout),
         "fixture parent escaped checkout"
     );
-    tempfile::Builder::new()
-        .prefix("effigy-parent-fixtures-gateway-")
-        .tempdir_in(parent)
-        .expect("owned contained managed host fixture")
+    sealed_fixture::SealedFixture(
+        tempfile::Builder::new()
+            .prefix("effigy-parent-fixtures-gateway-")
+            .tempdir_in(parent)
+            .expect("owned contained managed host fixture"),
+    )
 }
 
 fn copy_dir_all(src: &Path, dst: &Path) {
@@ -875,6 +879,7 @@ fn managed_host_dependent_replacement_preserves_routes_and_scope_teardown() {
         .collect::<Vec<_>>();
     for (index, result) in startup_results.iter().enumerate() {
         if !result.status.success() {
+            println!("private activation diagnostic: {result:?}");
             let (checkout, profile, ..) = &checkouts[index];
             let runtime = checkout
                 .join(".effigy/runtime/host-processes/web")
@@ -2699,6 +2704,9 @@ fn container_command_for_env(
     cleanup: &ManagedContainerCleanup,
     environment: &str,
 ) -> Command {
+    // These are fixture setup effects, before writing exact-owned backend proofs.
+    fs::create_dir_all(checkout.join(".effigy")).expect("private fake runtime state");
+    effigy_core::worktree_scope::prepare_checkout_token(checkout).expect("fixture identity");
     let policy = effigy_containers::load_container_policy(checkout, Some(environment))
         .expect("private declared container policy");
     let mut labels = serde_json::json!({
@@ -3974,6 +3982,7 @@ fn container_scoped_clone_first_listener_up_and_switch_round_trip_hands_over() {
     );
     fs::write(checkout.join("effigy.toml"), manifest).expect("write switch manifest");
 
+    effigy_core::worktree_scope::prepare_checkout_token(&checkout).expect("fixture identity");
     let stack_policy =
         effigy_containers::load_container_policy(&checkout, Some("stack")).expect("stack policy");
     let hybrid_policy =
@@ -4315,6 +4324,7 @@ fn container_headless_managed_lifecycle_publishes_routes_in_scoped_data_from_clo
 [tasks.\"dev:container\"]\nmode = \"tui\"\ncontainer_lifecycle = true\ngateway = true\nhealth_wait = false\nconcurrent = [\n  { role = \"shell\", service = \"workspace\", start = 2 },\n  { role = \"lifecycle\", start = 1 },\n]\n";
     fs::write(checkout.join("effigy.toml"), manifest).expect("write managed clone manifest");
 
+    effigy_core::worktree_scope::prepare_checkout_token(&checkout).expect("fixture identity");
     let stack_policy =
         effigy_containers::load_container_policy(&checkout, Some("stack")).expect("stack policy");
     let hybrid_policy = effigy_containers::load_container_policy(&checkout, Some("hybrid"))

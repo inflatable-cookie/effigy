@@ -80,7 +80,8 @@ pub fn recover_exited_owned_compose_services_for_project(
     project_name: &str,
 ) -> Result<OwnedServiceStartRecovery, ContainerExecError> {
     let backend = resolve_compose_backend_for_repo(repo_root, policy);
-    let declared = declared_service_names(&compose_files_for_project(policy, project_name))?;
+    let declared =
+        declared_service_names(policy, &compose_files_for_project(policy, project_name))?;
     let declared: Vec<&str> = declared.iter().map(String::as_str).collect();
     recover_exited_owned_services_with_stale_timer(
         project_name,
@@ -411,17 +412,20 @@ fn compose_files_for_project(
 }
 
 pub(super) fn declared_service_names(
+    policy: &EffectiveContainerPolicy,
     compose_files: &[PathBuf],
 ) -> Result<BTreeSet<String>, ContainerExecError> {
     let mut names = BTreeSet::new();
     for compose_file in compose_files {
         let content =
-            std::fs::read_to_string(compose_file).map_err(|error| ContainerExecError::Failure {
-                command: format!("read compose file {}", compose_file.display()),
-                code: None,
-                stdout: String::new(),
-                stderr: error.to_string(),
-            })?;
+            policy
+                .read_compose(compose_file)
+                .map_err(|error| ContainerExecError::Failure {
+                    command: format!("read compose file {}", compose_file.display()),
+                    code: None,
+                    stdout: String::new(),
+                    stderr: error.to_string(),
+                })?;
         let parsed: serde_yaml::Value =
             serde_yaml::from_str(&content).map_err(|error| ContainerExecError::Failure {
                 command: format!("parse compose file {}", compose_file.display()),

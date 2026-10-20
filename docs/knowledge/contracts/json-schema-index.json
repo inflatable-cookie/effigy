@@ -296,6 +296,13 @@
       "command": "effigy --json graph explore \"task build\" --excerpts-only --max-files 2 --max-bytes 2048 --repo <fixture_task_success>",
       "surface": "whole-checkout graph excerpts",
       "status": "active"
+    },
+    {
+      "schema": "effigy.container.render.v1",
+      "schema_version": 1,
+      "command": "effigy container render web --json --repo <fixture_container_render>",
+      "surface": "immutable container render",
+      "status": "active"
     }
   ]
 }

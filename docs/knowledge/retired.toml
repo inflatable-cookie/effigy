@@ -44,6 +44,26 @@ config_keys = []
 allow = ["CHANGELOG.md", "crates/effigy-manifest/src/bundles/source/prepare.rs", "tests/scripts/resolver-shadow-diff.py"]
 
 [[retired]]
+id = "effigy-mutable-compose-render-and-admission-fingerprints"
+retired = "2026-10-19"
+replacement = "Host resolution assembles a kernel Closure. Prepare publishes immutable objects and v3 admission pins their generation reference. V2 receipts import automatically once their original inputs verify. Reset drops one environment's references; eject exports the closure. compose_file remains accepted as a copied input."
+owner = "docs/knowledge/contracts/005-container-runtime-contract.md"
+terms = ["ComposeOutput", "generated Compose checksum"]
+paths = ["crates/effigy-catalog/src/output.rs"]
+config_keys = []
+allow = ["CHANGELOG.md"]
+
+[[retired]]
+id = "effigy-resolution-owned-loopback-allocation"
+retired = "2026-10-19"
+replacement = "Policy reads existing loopback assignments; host Prepare calls the existing allocator. Legacy project-only keys are imported automatically for the same checkout with their address preserved."
+owner = "docs/knowledge/contracts/005-container-runtime-contract.md"
+terms = ["resolution-owned loopback allocation"]
+paths = []
+config_keys = []
+allow = ["CHANGELOG.md"]
+
+[[retired]]
 id = "effigy-resolution-owned-port-and-mount-preparation"
 retired = "2026-10-19"
 replacement = "Host-port reads preserve existing ports.json assignments or report unassigned; Prepare uses gateway::ports::prepare_ports. Declared media and shared Composer cache directories are created only in Prepare. Existing port assignments and directory contents are retained automatically; no consumer configuration change is required. Host render purity and compose_file migration remain separate work."
