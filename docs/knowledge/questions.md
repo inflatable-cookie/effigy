@@ -167,3 +167,28 @@ Implemented by effigy#227 (2026-10-19): contract
 [049](contracts/049-heavy-validation-admission-contract.md) holds the hook
 protocol and run control, and `retired.toml` `effigy-host-run-client` the
 retirement.
+
+## Q-007 — Dev session shape
+
+Status: answered
+Asked: 2026-10-21
+Answered: 2026-10-21 by Tom
+
+Tom: "Python should not be needed. Minio should have been replaced with Silo.
+The TUI should work effectively the same way regardless of hybrid or
+container mode. We shouldn't need a `*:tui` selector at all."
+
+- **One dev session.** The managed dev TUI looks and behaves the same whether
+  the environment runs in hybrid or container mode. Placement is a property of
+  the environment, not of the selector. There are no `*:tui` selector
+  variants; the dev entry point itself is the session.
+- **No consumer glue scripts.** Projects and bundles don't need Python (or
+  other external-language) wrappers to run a dev environment. Resolved names,
+  ports, URLs and trust material reach processes from Effigy, readiness waits
+  and output following are Effigy's job, and bundle-specific setup steps are
+  Rhai.
+- **Object storage** in the Underlay bundle is Silo, not MinIO. That's a
+  bundle change, owned by the Underlay side.
+
+Implementation is planned in the v0.15 environment lane (the
+environment-owned host-process and unified-session work after effigy#235).
