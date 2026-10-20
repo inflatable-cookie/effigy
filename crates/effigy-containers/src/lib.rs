@@ -1,5 +1,6 @@
 pub mod colima;
 pub mod compose;
+pub mod environment;
 pub mod exec;
 pub mod health;
 pub mod manager;

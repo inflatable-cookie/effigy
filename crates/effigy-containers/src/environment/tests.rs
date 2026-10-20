@@ -1,0 +1,854 @@
+//! Engine proofs (contract 053 §8): strict-fake backends, the transition
+//! matrix against live, interrupted and unknown holders, fault injection at
+//! every acquisition and publication boundary, and the marker importer
+//! against copies of real stack metadata.
+
+use super::*;
+use effigy_kernel::ctx::{CancelToken, EffectClass, Placement};
+use effigy_kernel::gate::Wait;
+use effigy_kernel::id::{
+    CheckoutId, CheckoutKind, ExecutionTarget, InvocationSpec, ResolvedInvocation, Route, RunId,
+    Surface, TaskId,
+};
+use effigy_kernel::objects::Closure;
+use effigy_kernel::observe::{Evidence, Observed, UnknownReason};
+use effigy_kernel::outcome::{CleanupOutcome, Invocation, WorkloadOutcome};
+use effigy_kernel::root::StateRoot;
+use effigy_kernel::run::{AttachMode, BeginOpts, Liveness, Run};
+use effigy_kernel::store::Store;
+use std::cell::RefCell;
+use std::collections::{BTreeMap, VecDeque};
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+
+mod adapters;
+mod faults;
+mod importer;
+
+const PROJECT: &str = "acme-stack";
+
+pub(super) fn home() -> tempfile::TempDir {
+    tempfile::Builder::new()
+        .prefix("effigy-environment-")
+        .tempdir()
+        .expect("private home")
+}
+
+pub(super) fn root(home: &Path) -> StateRoot {
+    let operation = reconcile::operation(EffectClass::Mutate, CancelToken::default(), RUN_BUDGET);
+    StateRoot::effects(&operation.effects().expect("effects"), home).expect("state root")
+}
+
+pub(super) fn checkout() -> CheckoutId {
+    CheckoutId::new(CheckoutKind::EphemeralClone, [7; 16])
+}
+
+pub(super) fn env(name: &str) -> EnvRef {
+    EnvRef::new(checkout(), name).expect("environment identity")
+}
+
+pub(super) fn closure(tag: &str) -> Closure {
+    Closure::new(BTreeMap::from([(
+        "compose.yml".to_owned(),
+        format!("services: {{app: {{image: {tag}}}}}\n").into_bytes(),
+    )]))
+    .expect("closure")
+}
+
+pub(super) fn selection() -> BackendSelection {
+    BackendSelection {
+        kind: BackendKind::Colima,
+        engine: crate::BackendId::colima_nerdctl(),
+        context: "fixture".to_owned(),
+        reason: BackendReason::ManifestDriver("colima".to_owned()),
+    }
+}
+
+pub(super) fn policy(root: &Path) -> crate::EffectiveContainerPolicy {
+    use effigy_manifest::{
+        ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerShutdownMode,
+        ManifestContainerStartup,
+    };
+    crate::EffectiveContainerPolicy {
+        render: None,
+        repo_root: root.to_path_buf(),
+        name: "stack".to_owned(),
+        driver: ManifestContainerDriver::Colima,
+        startup: ManifestContainerStartup::Detached,
+        profile: "effigy".to_owned(),
+        compose_source: crate::EffectiveComposeSource::Generated,
+        compose_files: vec![root.join("compose.yml")],
+        compose_file_display: "compose.yml".to_owned(),
+        managed_volumes: vec![],
+        borrowed_volumes: vec![],
+        data_peers: Vec::new(),
+        data_from: None,
+        shared_services: vec![],
+        project_name: PROJECT.to_owned(),
+        primary_service: "app".to_owned(),
+        dns_domain: None,
+        dns_base_domain: None,
+        dns_tls: false,
+        dns_port: None,
+        dns_routes: vec![],
+        service_aliases: vec![],
+        declared_ports: vec![],
+        ports_declared_explicitly: false,
+        declared_mounts: vec![],
+        declared_media_mounts: vec![],
+        pull_production_hook: None,
+        health_check: None,
+        health_timeout_secs: 60,
+        secret_delivery: effigy_manifest::ManifestContainerSecretDelivery::ComposeEnv,
+        secret_runtime_dir: None,
+        source_secret_runtime_for_deferrals: false,
+        workspace_user: None,
+        workspace_home: None,
+        on_task_exit: ManifestContainerOnTaskExit::Stop,
+        shutdown: ManifestContainerShutdownMode::Graceful,
+        detach_timeout_secs: 10,
+        host_processes: vec![],
+    }
+}
+
+pub(super) fn verified<T>(value: T) -> Observed<T> {
+    Observed::Verified(
+        value,
+        Evidence::new("fixture".into(), None).expect("evidence"),
+    )
+}
+
+/// A holder: one task run of the same checkout, owned by its own gate.
+pub(super) fn holder<'r>(ctx: &EnvContext<'r>, task: &str, n: u8) -> Run<'r> {
+    let task = TaskId::new(checkout(), "", Surface::Published, task, None).expect("task id");
+    let invocation = ResolvedInvocation::new(InvocationSpec {
+        task: task.clone(),
+        route: Route::Task,
+        argv: vec![],
+        cwd: String::new(),
+        target: ExecutionTarget::Host,
+        env: BTreeMap::new(),
+        owner: task.resource(),
+        gates: vec![],
+        attachments: vec![],
+        class: EffectClass::Mutate,
+        placement: Placement::Host,
+        provenance: BTreeMap::new(),
+    })
+    .expect("invocation");
+    Run::begin(
+        &ctx.cx,
+        ctx.root,
+        &invocation,
+        BeginOpts {
+            id: RunId::new(2, [n; 10]).expect("run id"),
+            wait: Wait::FailFast,
+            acknowledge: vec![],
+            next: Invocation::validated(vec!["effigy".into(), "task".into()], |_| true)
+                .expect("next"),
+            custody: None,
+        },
+        &ctx.cleanup,
+        &mut EnvSettlement,
+    )
+    .expect("holder admitted")
+}
+
+/// A strict fake backend for one Compose project. It models running state,
+/// records every call, refuses any other project and replays queued
+/// outcomes. A shared log file lets a killed child's calls be audited.
+#[derive(Clone)]
+pub(super) struct Fake {
+    selection: BackendSelection,
+    state: Rc<RefCell<FakeState>>,
+}
+
+struct FakeState {
+    running: bool,
+    calls: Vec<String>,
+    outcomes: VecDeque<Result<(), BackendError>>,
+    log: Option<PathBuf>,
+}
+
+impl Fake {
+    pub(super) fn new() -> Self {
+        Self::with_log(None)
+    }
+
+    pub(super) fn with_log(log: Option<PathBuf>) -> Self {
+        let running = log
+            .as_deref()
+            .map(|log| Self::log_running(log))
+            .unwrap_or(false);
+        Self {
+            selection: selection(),
+            state: Rc::new(RefCell::new(FakeState {
+                running,
+                calls: vec![],
+                outcomes: VecDeque::new(),
+                log,
+            })),
+        }
+    }
+
+    /// The last modelled call in a log decides whether workloads run.
+    pub(super) fn log_running(log: &Path) -> bool {
+        std::fs::read_to_string(log)
+            .unwrap_or_default()
+            .lines()
+            .rev()
+            .find_map(|line| match line {
+                "apply" => Some(true),
+                "stop" => Some(false),
+                _ => None,
+            })
+            .unwrap_or(false)
+    }
+
+    pub(super) fn queue(&self, outcome: Result<(), BackendError>) {
+        self.state.borrow_mut().outcomes.push_back(outcome);
+    }
+
+    pub(super) fn calls(&self) -> Vec<String> {
+        self.state.borrow().calls.clone()
+    }
+
+    pub(super) fn running(&self) -> Observed<bool> {
+        verified(self.state.borrow().running)
+    }
+
+    fn call(&self, action: &str, project: &str) -> Result<(), BackendError> {
+        assert_eq!(project, PROJECT, "fake refuses an unmodelled project");
+        let mut state = self.state.borrow_mut();
+        let outcome = state.outcomes.pop_front().unwrap_or(Ok(()));
+        if !matches!(outcome, Err(BackendError::NotStarted(_))) {
+            state.calls.push(action.to_owned());
+            if let Some(log) = &state.log {
+                use std::io::Write;
+                let mut file = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(log)
+                    .expect("fake log");
+                writeln!(file, "{action}").expect("fake log write");
+                file.sync_all().expect("fake log sync");
+            }
+            match action {
+                "apply" => state.running = true,
+                "stop" => state.running = false,
+                _ => {}
+            }
+        }
+        outcome
+    }
+
+    pub(super) fn apply(&self) -> Result<(), BackendError> {
+        self.call("apply", PROJECT)
+    }
+
+    pub(super) fn stop(&self) -> Result<(), BackendError> {
+        self.call("stop", PROJECT)
+    }
+}
+
+impl EnvironmentBackend for Fake {
+    fn selection(&self) -> &BackendSelection {
+        &self.selection
+    }
+    fn reconcile(&mut self, render: &RenderRef<'_>) -> Result<(), BackendError> {
+        self.call("apply", render.project)
+    }
+    fn stop(&mut self, render: &RenderRef<'_>) -> Result<(), BackendError> {
+        self.call("stop", render.project)
+    }
+    fn inventory(&mut self, _: &Path, project: &str) -> Observed<Vec<Workload>> {
+        panic!("strict fake: unmodelled inventory of `{project}`")
+    }
+}
+
+pub(super) fn bring_up(
+    ctx: &EnvContext<'_>,
+    env: &EnvRef,
+    fake: &Fake,
+    render: &Closure,
+    retention: Retention,
+    holders: &[(RunId, AttachMode)],
+) -> Result<Applied, EnvError> {
+    up(
+        ctx,
+        env,
+        Up {
+            render: Some(render),
+            project: PROJECT,
+            backend: &selection(),
+            retention,
+            holders,
+            running: fake.running(),
+            adopt: false,
+        },
+        || fake.apply(),
+        |_| Ok(()),
+    )
+}
+
+pub(super) fn take_down(
+    ctx: &EnvContext<'_>,
+    env: &EnvRef,
+    op: Operation,
+    fake: &Fake,
+    exempt: Option<RunId>,
+) -> Result<(), EnvError> {
+    down(ctx, env, op, &selection(), PROJECT, exempt, || fake.stop())
+}
+
+pub(super) fn record(ctx: &EnvContext<'_>, env: &EnvRef) -> EnvRecord {
+    match EnvRecord::read(&ctx.observe(), ctx.root, &env.resource) {
+        Observed::Verified(record, _) => record,
+        other => panic!("record unreadable: {other:?}"),
+    }
+}
+
+/// O2, O3 and O6: at most one unresolved run per owner, each interrupted
+/// (no live holder of its gate) with a recovery command, and an intact store.
+pub(super) fn assert_store_sound(ctx: &EnvContext<'_>) {
+    let reader = match Store::read(&ctx.observe(), ctx.root) {
+        Observed::Verified(reader, _) => reader,
+        other => panic!("store unreadable: {other:?}"),
+    };
+    let runs =
+        match effigy_kernel::run::unclosed(&reader, effigy_kernel::id::Scope::Checkout(checkout()))
+        {
+            Observed::Verified(runs, _) => runs,
+            other => panic!("journal unreadable: {other:?}"),
+        };
+    let mut owners = std::collections::BTreeSet::new();
+    for run in &runs {
+        let owner = run
+            .invocation
+            .as_ref()
+            .expect("decodable invocation")
+            .spec()
+            .owner
+            .clone();
+        assert!(
+            owners.insert(owner.name().to_string()),
+            "two unresolved runs: {runs:?}"
+        );
+        assert!(
+            matches!(
+                effigy_kernel::gate::Gate::probe(&ctx.observe(), ctx.root, &owner),
+                Observed::Verified(effigy_kernel::gate::GateState::Free, _) | Observed::Absent(_)
+            ),
+            "an unclosed run still holds its gate: {run:?}"
+        );
+    }
+    Store::open(&ctx.cx.child(std::time::Duration::from_secs(10)), ctx.root)
+        .expect("store opens")
+        .check_integrity()
+        .expect("integrity");
+}
+
+#[test]
+fn record_read_is_pure_and_absent_without_a_store() {
+    let home = home();
+    let operation = reconcile::operation(
+        EffectClass::Observe,
+        CancelToken::default(),
+        std::time::Duration::from_secs(5),
+    );
+    let observe = operation.observe().expect("observe");
+    assert!(matches!(
+        StateRoot::observe(&observe, home.path()),
+        Observed::Absent(_)
+    ));
+    assert_eq!(std::fs::read_dir(home.path()).unwrap().count(), 0);
+    let root = root(home.path());
+    let ctx = EnvContext::new(&root, CancelToken::default()).unwrap();
+    assert!(matches!(
+        EnvRecord::read(&ctx.observe(), &root, &env("stack").resource),
+        Observed::Absent(_)
+    ));
+}
+
+#[test]
+fn up_publishes_applies_promotes_and_reuses_the_running_generation() {
+    let home = home();
+    let root = root(home.path());
+    let ctx = EnvContext::new(&root, CancelToken::default()).unwrap();
+    let stack = env("stack");
+    let fake = Fake::new();
+    let render = closure("one");
+    assert_eq!(
+        bring_up(&ctx, &stack, &fake, &render, Retention::Persistent, &[]).unwrap(),
+        Applied::Reconciled
+    );
+    let applied = record(&ctx, &stack);
+    assert!(applied.active());
+    assert_eq!(applied.desired.as_deref(), Some(render.digest()));
+    assert_eq!(applied.last_applied.as_deref(), Some(render.digest()));
+    assert_eq!(applied.partial(), None);
+    assert_eq!(applied.engine().unwrap().retention, Retention::Persistent);
+    assert_eq!(
+        applied.recorded_backend().unwrap().engine,
+        selection().engine
+    );
+    // Same render, running: no backend call, still active.
+    assert_eq!(
+        bring_up(&ctx, &stack, &fake, &render, Retention::Held, &[]).unwrap(),
+        Applied::Reused
+    );
+    assert_eq!(fake.calls(), ["apply"]);
+    // A task's ensure never demotes an explicit up's persistence.
+    assert_eq!(
+        record(&ctx, &stack).engine().unwrap().retention,
+        Retention::Persistent
+    );
+    // A changed render reconciles once and supersedes the old generation.
+    let next = closure("two");
+    assert_eq!(
+        bring_up(&ctx, &stack, &fake, &next, Retention::Held, &[]).unwrap(),
+        Applied::Reconciled
+    );
+    let applied = record(&ctx, &stack);
+    assert_eq!(applied.last_applied.as_deref(), Some(next.digest()));
+    assert_eq!(applied.superseded, [render.digest().to_owned()]);
+    assert_eq!(fake.calls(), ["apply", "apply"]);
+    assert_store_sound(&ctx);
+}
+
+#[test]
+fn failed_readiness_leaves_a_partial_generation_reused_without_recreation() {
+    let home = home();
+    let root = root(home.path());
+    let ctx = EnvContext::new(&root, CancelToken::default()).unwrap();
+    let stack = env("stack");
+    let fake = Fake::new();
+    let render = closure("one");
+    let refused = up(
+        &ctx,
+        &stack,
+        Up {
+            render: Some(&render),
+            project: PROJECT,
+            backend: &selection(),
+            retention: Retention::Persistent,
+            holders: &[],
+            running: fake.running(),
+            adopt: false,
+        },
+        || fake.apply(),
+        |_| Err(EnvError::Invalid("route registration failed".into())),
+    );
+    assert!(refused.is_err());
+    let partial = record(&ctx, &stack);
+    assert_eq!(partial.partial(), Some(render.digest()));
+    assert!(!partial.active());
+    // The partial generation reconciles without a second backend apply.
+    assert_eq!(
+        bring_up(&ctx, &stack, &fake, &render, Retention::Persistent, &[]).unwrap(),
+        Applied::Reused
+    );
+    assert_eq!(fake.calls(), ["apply"]);
+    assert!(record(&ctx, &stack).active());
+    assert_store_sound(&ctx);
+}
+
+#[test]
+fn backend_outcomes_are_journalled_without_manufacturing_success() {
+    for (outcome, retried_applies) in [
+        // The engine may have acted: retry reuses what is running (O5).
+        (BackendError::Uncertain("timed out".into()), 1),
+        // Verified non-occurrence: the retry applies once.
+        (BackendError::NotStarted("colima: not found".into()), 1),
+    ] {
+        let home = home();
+        let root = root(home.path());
+        let ctx = EnvContext::new(&root, CancelToken::default()).unwrap();
+        let stack = env("stack");
+        let fake = Fake::new();
+        fake.queue(Err(outcome));
+        let render = closure("one");
+        assert!(matches!(
+            bring_up(&ctx, &stack, &fake, &render, Retention::Held, &[]),
+            Err(EnvError::Backend(_))
+        ));
+        let partial = record(&ctx, &stack);
+        assert!(!partial.active());
+        assert_eq!(partial.partial(), Some(render.digest()));
+        bring_up(&ctx, &stack, &fake, &render, Retention::Held, &[]).unwrap();
+        assert_eq!(fake.calls().len(), retried_applies);
+        assert!(record(&ctx, &stack).active());
+        assert_store_sound(&ctx);
+    }
+}
+
+#[test]
+fn an_unknown_inventory_never_authorises_recreation() {
+    let home = home();
+    let root = root(home.path());
+    let ctx = EnvContext::new(&root, CancelToken::default()).unwrap();
+    let stack = env("stack");
+    let fake = Fake::new();
+    let refused = up(
+        &ctx,
+        &stack,
+        Up {
+            render: Some(&closure("one")),
+            project: PROJECT,
+            backend: &selection(),
+            retention: Retention::Held,
+            holders: &[],
+            running: Observed::Unknown(UnknownReason::Injected),
+            adopt: false,
+        },
+        || fake.apply(),
+        |_| Ok(()),
+    );
+    assert!(matches!(refused, Err(EnvError::Invalid(_))));
+    assert!(fake.calls().is_empty());
+    assert_store_sound(&ctx);
+}
+
+/// The matrix: every transition against a live, an interrupted and an
+/// unknown holder. Each refuses, and the strict fake records zero
+/// destructive calls (O11).
+#[test]
+fn transitions_refuse_against_live_interrupted_and_unknown_holders() {
+    for liveness in ["live", "interrupted", "unknown"] {
+        for transition in ["recreate", "down", "handover", "reset", "reap"] {
+            let home = home();
+            let root = root(home.path());
+            let ctx = EnvContext::new(&root, CancelToken::default()).unwrap();
+            let stack = env("stack");
+            let fake = Fake::new();
+            bring_up(&ctx, &stack, &fake, &closure("one"), Retention::Held, &[]).unwrap();
+            let mut task = holder(&ctx, "dev", 1);
+            hold(&mut task, &ctx, &stack, Wait::FailFast).unwrap();
+            let task = match liveness {
+                "live" => Some(task),
+                "interrupted" => {
+                    // The holder's process died: its gate is free, its row open.
+                    drop(task);
+                    None
+                }
+                _ => {
+                    // An effect the holder cannot prove settled keeps its
+                    // attachment as residue: liveness becomes unknown.
+                    let ticket = task
+                        .intend(effigy_kernel::run::EffectSpec {
+                            target: task.fence().clone(),
+                            kind: "fixture".into(),
+                            payload: serde_json::Value::Null,
+                            settlement: effigy_kernel::run::Settlement::Release(
+                                serde_json::Value::Null,
+                            ),
+                            required: false,
+                        })
+                        .unwrap();
+                    task.applied(&ticket, serde_json::Value::Bool(true))
+                        .unwrap();
+                    task.finish(WorkloadOutcome::Succeeded).unwrap();
+                    assert_eq!(
+                        task.settle(&ctx.cleanup, &mut EnvSettlement)
+                            .unwrap()
+                            .cleanup(),
+                        CleanupOutcome::Incomplete
+                    );
+                    None
+                }
+            };
+            let before = fake.calls().len();
+            let result = match transition {
+                "recreate" => bring_up(&ctx, &stack, &fake, &closure("two"), Retention::Held, &[])
+                    .map(|applied| assert_eq!(applied, Applied::KeptForHolders)),
+                "down" => take_down(&ctx, &stack, Operation::Down, &fake, None),
+                "handover" => take_down(&ctx, &stack, Operation::Handover, &fake, None),
+                "reset" => reset(&ctx, &stack, &selection(), PROJECT, || fake.stop()),
+                _ => reap_if_idle(&ctx, &stack, |run| {
+                    run.stop_with(&selection(), PROJECT, None, || fake.stop())
+                })
+                .map(|idle| assert!(matches!(idle, Idle::Kept(_)))),
+            };
+            if transition != "recreate" && transition != "reap" {
+                assert!(
+                    matches!(result, Err(EnvError::HeldBy { .. })),
+                    "{transition} against a {liveness} holder: {result:?}"
+                );
+            } else {
+                result.unwrap();
+            }
+            assert_eq!(
+                fake.calls().len(),
+                before,
+                "{transition} reached the backend against a {liveness} holder"
+            );
+            let held = record(&ctx, &stack);
+            assert!(held.protected(), "{liveness} holder lost protection");
+            drop(task);
+            assert_store_sound_except_holders(&ctx);
+        }
+    }
+}
+
+/// O3 holds for environment runs; a deliberately abandoned holder may stay.
+fn assert_store_sound_except_holders(ctx: &EnvContext<'_>) {
+    let reader = match Store::read(&ctx.observe(), ctx.root) {
+        Observed::Verified(reader, _) => reader,
+        other => panic!("store unreadable: {other:?}"),
+    };
+    match effigy_kernel::run::unclosed(&reader, effigy_kernel::id::Scope::Checkout(checkout())) {
+        Observed::Verified(runs, _) => assert!(runs.iter().all(|run| run
+            .invocation
+            .as_ref()
+            .is_some_and(|invocation| invocation.spec().owner.kind()
+                == effigy_kernel::id::ResourceKind::Task))),
+        other => panic!("journal unreadable: {other:?}"),
+    }
+}
+
+#[test]
+fn a_holder_s_own_stop_is_exempt_only_once_it_is_settling() {
+    let home = home();
+    let root = root(home.path());
+    let ctx = EnvContext::new(&root, CancelToken::default()).unwrap();
+    let stack = env("stack");
+    let fake = Fake::new();
+    let mut task = holder(&ctx, "dev", 1);
+    // The run asked for the ensure; the apply run attaches it.
+    bring_up(
+        &ctx,
+        &stack,
+        &fake,
+        &closure("one"),
+        Retention::Held,
+        &[(
+            task.id(),
+            AttachMode::Exclusive {
+                stop_on_release: true,
+            },
+        )],
+    )
+    .unwrap();
+    assert!(record(&ctx, &stack).protected());
+    assert!(matches!(
+        take_down(&ctx, &stack, Operation::Down, &fake, Some(task.id())),
+        Err(EnvError::HeldBy { .. })
+    ));
+    assert_eq!(fake.calls(), ["apply"]);
+    task.finish(WorkloadOutcome::Succeeded).unwrap();
+    take_down(&ctx, &stack, Operation::Down, &fake, Some(task.id())).unwrap();
+    assert_eq!(fake.calls(), ["apply", "stop"]);
+    assert_eq!(record(&ctx, &stack).state, EnvState::Stopped);
+    assert_eq!(
+        task.settle(&ctx.cleanup, &mut EnvSettlement)
+            .unwrap()
+            .cleanup(),
+        CleanupOutcome::Complete
+    );
+    assert!(!record(&ctx, &stack).protected());
+    assert_store_sound(&ctx);
+}
+
+#[test]
+fn idle_stop_is_holder_based() {
+    let home = home();
+    let root = root(home.path());
+    let ctx = EnvContext::new(&root, CancelToken::default()).unwrap();
+    let stack = env("stack");
+    let fake = Fake::new();
+    bring_up(&ctx, &stack, &fake, &closure("one"), Retention::Held, &[]).unwrap();
+    let reap = |fake: &Fake| {
+        reap_if_idle(&ctx, &stack, |run| {
+            run.stop_with(&selection(), PROJECT, None, || fake.stop())
+        })
+        .unwrap()
+    };
+    let mut first = holder(&ctx, "test", 1);
+    let held = hold(&mut first, &ctx, &stack, Wait::FailFast).unwrap();
+    assert!(matches!(
+        held.mode,
+        AttachMode::Exclusive {
+            stop_on_release: true
+        }
+    ));
+    let mut second = holder(&ctx, "lint", 2);
+    hold(&mut second, &ctx, &stack, Wait::FailFast).unwrap();
+    first.finish(WorkloadOutcome::Succeeded).unwrap();
+    first.settle(&ctx.cleanup, &mut EnvSettlement).unwrap();
+    assert_eq!(reap(&fake), Idle::Kept("holders remain"));
+    second.finish(WorkloadOutcome::Succeeded).unwrap();
+    second.settle(&ctx.cleanup, &mut EnvSettlement).unwrap();
+    assert_eq!(reap(&fake), Idle::Stopped);
+    assert_eq!(fake.calls(), ["apply", "stop"]);
+    assert_eq!(reap(&fake), Idle::Kept("not active"));
+    // A persistent environment is borrowed and left running.
+    let fake = Fake::new();
+    let other = env("persistent");
+    bring_up(
+        &ctx,
+        &other,
+        &fake,
+        &closure("one"),
+        Retention::Persistent,
+        &[],
+    )
+    .unwrap();
+    let mut borrower = holder(&ctx, "build", 3);
+    let held = hold(&mut borrower, &ctx, &other, Wait::FailFast).unwrap();
+    assert!(matches!(held.mode, AttachMode::Borrow));
+    borrower.finish(WorkloadOutcome::Succeeded).unwrap();
+    borrower.settle(&ctx.cleanup, &mut EnvSettlement).unwrap();
+    assert_eq!(
+        reap_if_idle(&ctx, &other, |_| panic!("persistent stack stopped")).unwrap(),
+        Idle::Kept("persistent")
+    );
+    assert_eq!(fake.calls(), ["apply"]);
+    assert_store_sound(&ctx);
+}
+
+#[test]
+fn a_stopped_or_unrecorded_environment_cannot_be_held() {
+    let home = home();
+    let root = root(home.path());
+    let ctx = EnvContext::new(&root, CancelToken::default()).unwrap();
+    let stack = env("stack");
+    let mut task = holder(&ctx, "dev", 1);
+    assert!(matches!(
+        hold(&mut task, &ctx, &stack, Wait::FailFast),
+        Err(HoldError::NotActive)
+    ));
+    let fake = Fake::new();
+    bring_up(&ctx, &stack, &fake, &closure("one"), Retention::Held, &[]).unwrap();
+    take_down(&ctx, &stack, Operation::Down, &fake, None).unwrap();
+    assert!(matches!(
+        hold(&mut task, &ctx, &stack, Wait::FailFast),
+        Err(HoldError::NotActive)
+    ));
+    task.settle(&ctx.cleanup, &mut EnvSettlement).unwrap();
+    assert_store_sound(&ctx);
+}
+
+#[test]
+fn reset_drops_only_its_own_render_references() {
+    let home = home();
+    let root = root(home.path());
+    let ctx = EnvContext::new(&root, CancelToken::default()).unwrap();
+    let stack = env("stack");
+    let sibling = env("hybrid");
+    let fake = Fake::new();
+    bring_up(&ctx, &stack, &fake, &closure("one"), Retention::Held, &[]).unwrap();
+    bring_up(&ctx, &sibling, &fake, &closure("two"), Retention::Held, &[]).unwrap();
+    reset(&ctx, &stack, &selection(), PROJECT, || fake.stop()).unwrap();
+    let reset_record = record(&ctx, &stack);
+    assert_eq!(reset_record.desired, None);
+    assert_eq!(reset_record.last_applied, None);
+    assert_eq!(reset_record.state, EnvState::Stopped);
+    let kept = record(&ctx, &sibling);
+    assert_eq!(kept.last_applied.as_deref(), Some(closure("two").digest()));
+    assert!(kept.active());
+    assert_store_sound(&ctx);
+}
+
+/// A transition stalled between permit and backend excludes a concurrent
+/// attach: the attacher waits on `Gate(Env)` and never sees the environment
+/// it is stopping as active.
+#[test]
+fn a_stalled_transition_excludes_a_concurrent_attach() {
+    let home = home();
+    let root = root(home.path());
+    let ctx = EnvContext::new(&root, CancelToken::default()).unwrap();
+    let stack = env("stack");
+    let fake = Fake::new();
+    bring_up(&ctx, &stack, &fake, &closure("one"), Retention::Held, &[]).unwrap();
+    let (inside_tx, inside_rx) = std::sync::mpsc::channel::<()>();
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let path = home.path().to_path_buf();
+    let attacher = std::thread::spawn(move || {
+        inside_rx.recv().unwrap();
+        let root = self::root(&path);
+        let ctx = EnvContext::new(&root, CancelToken::default()).unwrap();
+        let mut task = holder(&ctx, "late", 9);
+        let busy = hold(&mut task, &ctx, &env("stack"), Wait::FailFast);
+        assert!(matches!(busy, Err(HoldError::Run(_))), "{busy:?}");
+        release_tx.send(()).unwrap();
+        let waited = hold(
+            &mut task,
+            &ctx,
+            &env("stack"),
+            Wait::Until(std::time::Instant::now() + std::time::Duration::from_secs(20)),
+        );
+        assert!(matches!(waited, Err(HoldError::NotActive)), "{waited:?}");
+        task.settle(&ctx.cleanup, &mut EnvSettlement).unwrap();
+    });
+    down(
+        &ctx,
+        &stack,
+        Operation::Down,
+        &selection(),
+        PROJECT,
+        None,
+        || {
+            inside_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+            fake.stop()
+        },
+    )
+    .unwrap();
+    attacher.join().unwrap();
+    assert_eq!(fake.calls(), ["apply", "stop"]);
+    assert_store_sound(&ctx);
+}
+
+#[test]
+fn an_interrupted_holder_protects_until_its_successor_settles_it() {
+    let home = home();
+    let root = root(home.path());
+    let ctx = EnvContext::new(&root, CancelToken::default()).unwrap();
+    let stack = env("stack");
+    let fake = Fake::new();
+    bring_up(&ctx, &stack, &fake, &closure("one"), Retention::Held, &[]).unwrap();
+    let mut task = holder(&ctx, "dev", 1);
+    hold(&mut task, &ctx, &stack, Wait::FailFast).unwrap();
+    let id = task.id();
+    drop(task);
+    let observed = record(&ctx, &stack);
+    assert!(matches!(&observed.holders, Observed::Verified(holders, _)
+        if matches!(holders[0].liveness, Observed::Verified(Liveness::Interrupted, _))));
+    assert!(matches!(
+        take_down(&ctx, &stack, Operation::Down, &fake, None),
+        Err(EnvError::HeldBy { .. })
+    ));
+    // The task's next run settles its interrupted predecessor (K5).
+    let successor = holder(&ctx, "dev", 2);
+    assert_ne!(successor.id(), id);
+    successor.settle(&ctx.cleanup, &mut EnvSettlement).unwrap();
+    take_down(&ctx, &stack, Operation::Down, &fake, None).unwrap();
+    assert_eq!(fake.calls(), ["apply", "stop"]);
+    assert_store_sound(&ctx);
+}
+
+#[test]
+fn backend_selection_records_its_reason_and_unknown_engines_refuse() {
+    let recorded = selection();
+    let metadata = recorded.metadata();
+    assert_eq!(metadata.engine, "colima-nerdctl");
+    let Observed::Verified(read, _) = BackendSelection::from_metadata(&metadata) else {
+        panic!("recorded selection unreadable");
+    };
+    assert_eq!(read.kind, BackendKind::Colima);
+    assert_eq!(read.context, "fixture");
+    assert!(matches!(read.reason, BackendReason::Recorded(_)));
+    assert!(read.describe().contains("manifest driver `colima`"));
+    let mut foreign = metadata.clone();
+    foreign.engine = "podman".into();
+    assert!(matches!(
+        BackendSelection::from_metadata(&foreign),
+        Observed::Unknown(_)
+    ));
+    let mut torn = metadata;
+    torn.source = "{".into();
+    assert!(matches!(
+        BackendSelection::from_metadata(&torn),
+        Observed::Unknown(_)
+    ));
+}

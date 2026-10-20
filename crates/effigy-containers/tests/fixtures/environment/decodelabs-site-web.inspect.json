@@ -1,0 +1,41 @@
+[
+  {
+    "Config": {
+      "Labels": {
+        "com.docker.compose.config-hash": "2091d4b58eb3c2c2ff33c454e2fa30a0541bc02177253b4ed2062f01a5c6f1b8",
+        "com.docker.compose.project": "acowtancy-decodelabs",
+        "com.docker.compose.service": "web",
+        "io.containerd.image.config.stop-signal": "SIGQUIT",
+        "maintainer": "NGINX Docker Maintainers <docker-maint@nginx.com>"
+      }
+    },
+    "Id": "39af2784521bfd99e2631d5e45d0564a18a710f0122d1695cd394adb9b7301ea",
+    "Mounts": [
+      {
+        "Destination": "/var/www/acowtancy",
+        "Source": "/Users/tom/Dev/legacy/sites/acowtancy",
+        "Type": "bind"
+      },
+      {
+        "Destination": "/etc/nginx/conf.d/default.conf",
+        "Source": "/Users/tom/Dev/legacy/sites/acowtancy/.effigy/runtime/compose/web.conf",
+        "Type": "bind"
+      },
+      {
+        "Destination": "/var/www/acowtancy/vendor",
+        "Source": "/var/lib/nerdctl/1935db59/volumes/default/efv-ca7e47b2dcc61b18/_data",
+        "Type": "volume"
+      },
+      {
+        "Destination": "/var/www/acowtancy/node_modules",
+        "Source": "/var/lib/nerdctl/1935db59/volumes/default/efv-ada50ede9462f9f2/_data",
+        "Type": "volume"
+      }
+    ],
+    "Name": "acowtancy-decodelabs-web-1",
+    "State": {
+      "Running": false,
+      "Status": ""
+    }
+  }
+]

@@ -1476,6 +1476,23 @@ fn runtime_failure_should_repair(error: &ContainerExecError) -> bool {
     }
 }
 
+/// Runs one invocation an environment backend adapter resolved for its exact
+/// selection. Detached Compose activation never inherits a capture pipe.
+pub fn run_backend_invocation(
+    workdir: &Path,
+    program: &OsStr,
+    args: &[OsString],
+    label: &str,
+    env: &[(String, OsString)],
+) -> Result<Output, ContainerExecError> {
+    let program = program.to_string_lossy();
+    if args.iter().any(|arg| arg == "up") && args.iter().any(|arg| arg == "-d" || arg == "--detach")
+    {
+        return run_detached_command_with_env(workdir, &program, args, label, env);
+    }
+    run_command_capture_os_with_env(workdir, &program, args, label, env)
+}
+
 pub fn run_compose_invocation_capture(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,

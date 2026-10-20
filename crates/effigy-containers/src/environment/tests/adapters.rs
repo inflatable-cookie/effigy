@@ -1,0 +1,215 @@
+//! Strict-fake proofs for both backend adapters (§12.2): fake `colima` and
+//! `docker` executables record every invocation. The selected adapter must
+//! issue exactly the modelled calls; the unselected backend sees none.
+
+use super::*;
+use std::os::unix::fs::PermissionsExt;
+
+const ID: &str = "87c434af41df6f447bfb13218637f97b211098ffe97573a00c766c56f5008cdd";
+
+struct FakeTools {
+    _dir: tempfile::TempDir,
+    bin: PathBuf,
+    logs: PathBuf,
+    previous_path: Option<std::ffi::OsString>,
+}
+
+impl FakeTools {
+    fn install() -> Self {
+        let dir = home();
+        let bin = dir.path().join("bin");
+        let logs = dir.path().join("logs");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::create_dir_all(&logs).unwrap();
+        let inspect = dir.path().join("inspect.json");
+        std::fs::copy(
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/environment/underlay-workspace.inspect.json"
+            ),
+            &inspect,
+        )
+        .unwrap();
+        for tool in ["colima", "docker"] {
+            let script = bin.join(tool);
+            std::fs::write(
+                &script,
+                format!(
+                    "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}/{tool}'\ncase \" $* \" in\n  *' ps '*) echo {ID} ;;\n  *' inspect '*) cat '{}' ;;\nesac\nexit 0\n",
+                    logs.display(),
+                    inspect.display(),
+                ),
+            )
+            .unwrap();
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let previous_path = std::env::var_os("PATH");
+        let mut path = std::ffi::OsString::from(&bin);
+        if let Some(previous) = &previous_path {
+            path.push(":");
+            path.push(previous);
+        }
+        // nextest runs each test in its own process; no thread shares PATH.
+        std::env::set_var("PATH", path);
+        Self {
+            _dir: dir,
+            bin,
+            logs,
+            previous_path,
+        }
+    }
+
+    fn calls(&self, tool: &str) -> Vec<String> {
+        std::fs::read_to_string(self.logs.join(tool))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    }
+}
+
+impl Drop for FakeTools {
+    fn drop(&mut self) {
+        let _ = &self.bin;
+        match self.previous_path.take() {
+            Some(path) => std::env::set_var("PATH", path),
+            None => std::env::remove_var("PATH"),
+        }
+    }
+}
+
+fn exercise(selection: BackendSelection, tools: &FakeTools) -> Vec<Workload> {
+    let workdir = tools.logs.parent().unwrap().to_path_buf();
+    let files = [workdir.join("compose.yml")];
+    let render = RenderRef {
+        project: PROJECT,
+        workdir: &workdir,
+        compose_files: &files,
+        env: &[],
+    };
+    let mut adapter = selection.adapter();
+    adapter.reconcile(&render).expect("reconcile");
+    adapter.stop(&render).expect("stop");
+    match adapter.inventory(&workdir, PROJECT) {
+        Observed::Verified(rows, _) => rows,
+        other => panic!("inventory: {other:?}"),
+    }
+}
+
+#[test]
+fn colima_adapter_targets_only_its_profile() {
+    let tools = FakeTools::install();
+    let rows = exercise(selection(), &tools);
+    let compose = format!(
+        "-f {} -p {PROJECT}",
+        tools.logs.parent().unwrap().join("compose.yml").display()
+    );
+    assert_eq!(
+        tools.calls("colima"),
+        [
+            format!("nerdctl --profile fixture -- compose {compose} up -d --remove-orphans"),
+            format!("nerdctl --profile fixture -- compose {compose} stop"),
+            format!(
+                "nerdctl --profile fixture -- ps --all --no-trunc --filter label=com.docker.compose.project={PROJECT} --format {{{{.ID}}}}"
+            ),
+            format!("nerdctl --profile fixture -- inspect {ID}"),
+        ]
+    );
+    assert!(
+        tools.calls("docker").is_empty(),
+        "unselected backend was called"
+    );
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].id, ID);
+    assert!(rows[0].running);
+    assert_eq!(
+        rows[0].labels.get("com.effigy.scope").map(String::as_str),
+        Some("4677bfcb81da18054ef32e71aa3f3c29")
+    );
+}
+
+#[test]
+fn docker_adapter_targets_only_the_docker_cli() {
+    let tools = FakeTools::install();
+    let selection = BackendSelection {
+        kind: if cfg!(target_os = "macos") {
+            BackendKind::DockerDesktop
+        } else {
+            BackendKind::DockerEngine
+        },
+        engine: crate::BackendId::docker_compose(),
+        context: "default".into(),
+        reason: BackendReason::UserPreference,
+    };
+    let rows = exercise(selection, &tools);
+    let compose = format!(
+        "-f {} -p {PROJECT}",
+        tools.logs.parent().unwrap().join("compose.yml").display()
+    );
+    assert_eq!(
+        tools.calls("docker"),
+        [
+            format!("compose {compose} up -d --remove-orphans"),
+            format!("compose {compose} stop"),
+            format!(
+                "ps --all --no-trunc --filter label=com.docker.compose.project={PROJECT} --format {{{{.ID}}}}"
+            ),
+            format!("inspect {ID}"),
+        ]
+    );
+    assert!(
+        tools.calls("colima").is_empty(),
+        "unselected backend was called"
+    );
+    assert_eq!(rows.len(), 1);
+}
+
+#[test]
+fn selection_reasons_follow_policy_precedence() {
+    let home = home();
+    let previous = (
+        std::env::var_os("HOME"),
+        std::env::var_os("EFFIGY_COMPOSE_BACKEND"),
+    );
+    std::env::set_var("HOME", home.path());
+    std::env::remove_var("EFFIGY_COMPOSE_BACKEND");
+    let policy = super::policy(home.path());
+    let selected = select_backend(home.path(), &policy);
+    assert_eq!(selected.kind, BackendKind::Colima);
+    assert_eq!(selected.context, policy.profile);
+    assert_eq!(
+        selected.reason,
+        BackendReason::ManifestDriver("colima".into())
+    );
+    // The record outranks every other policy source …
+    let mut recorded = selected.clone();
+    recorded.context = "recorded".into();
+    recorded.reason = BackendReason::Recorded(Box::new(BackendReason::UserPreference));
+    assert_eq!(
+        effective_backend(home.path(), &policy, Some(&recorded)),
+        recorded
+    );
+    // … except an explicit backend for this invocation.
+    std::env::set_var("EFFIGY_COMPOSE_BACKEND", "docker");
+    let explicit = effective_backend(home.path(), &policy, Some(&recorded));
+    assert_eq!(explicit.engine, crate::BackendId::docker_compose());
+    assert_eq!(
+        explicit.reason,
+        BackendReason::EnvironmentVariable("docker".into())
+    );
+    assert!(explicit
+        .describe()
+        .contains("EFFIGY_COMPOSE_BACKEND=docker"));
+    match previous {
+        (home, backend) => {
+            match home {
+                Some(home) => std::env::set_var("HOME", home),
+                None => std::env::remove_var("HOME"),
+            }
+            match backend {
+                Some(backend) => std::env::set_var("EFFIGY_COMPOSE_BACKEND", backend),
+                None => std::env::remove_var("EFFIGY_COMPOSE_BACKEND"),
+            }
+        }
+    }
+}
