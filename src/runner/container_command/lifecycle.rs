@@ -2165,6 +2165,7 @@ primary_service = "app"
                     retention: effigy_containers::environment::Retention::Persistent,
                     running: effigy_kernel::observe::Observed::Verified(false, evidence),
                     adopt: false,
+                    drifted: false,
                 },
                 || Ok(()),
             )

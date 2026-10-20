@@ -266,14 +266,10 @@ pub(in crate::runner) fn running(
     if live.is_empty() {
         return Ok(Observed::Verified(false, evidence()));
     }
-    let verified = match effigy_containers::exec::verify_owned_running_compose_rows(
-        repo_root, policy, &live, deadline,
-    ) {
-        Ok(verified) => verified,
-        Err(error) => return Ok(unknown(error)),
-    };
+    // Every row's ownership, including the pre-label bind proof, was
+    // verified by the reactivation check above.
     Ok(
-        match effigy_containers::exec::compose_stack_is_running(policy, &verified) {
+        match effigy_containers::exec::compose_stack_is_running(policy, &live) {
             Ok(running) => Observed::Verified(running, evidence()),
             Err(error) => unknown(error),
         },
@@ -329,6 +325,15 @@ pub(in crate::runner) fn reconcile(
     let ctx = context()?;
     let existing = record(policy);
     let running = running(repo_root, policy)?;
+    let drift = match running {
+        Observed::Verified(true, _) => effigy_containers::exec::probe_mount_drift(
+            repo_root,
+            policy,
+            Instant::now() + INVENTORY_BUDGET,
+        )
+        .unwrap_or_default(),
+        _ => Vec::new(),
+    };
     let pending = engine::reconcile(
         &ctx,
         &env,
@@ -339,6 +344,7 @@ pub(in crate::runner) fn reconcile(
             retention,
             running,
             adopt: adopt(repo_root, policy, existing.as_ref()),
+            drifted: !drift.is_empty(),
         },
         apply,
     )
@@ -348,6 +354,9 @@ pub(in crate::runner) fn reconcile(
             "[warn] environment `{}` keeps its running generation: live runs hold it, so the changed configuration is applied after they end",
             policy.name
         );
+        for detail in &drift {
+            eprintln!("[warn] {detail}");
+        }
     }
     Ok(BringUp { env, pending })
 }

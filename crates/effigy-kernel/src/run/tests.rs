@@ -1354,3 +1354,115 @@ fn environment_exempt_permit_admits_only_the_settling_holder_own_stop() {
         CleanupOutcome::Complete
     );
 }
+
+#[test]
+fn run_children_recover_and_require_positive_completion() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut fake = Fake::new(home.path());
+    let mut parent = begin(&cx, &root, owner(), 220, &mut fake);
+    assert!(parent
+        .begin_child(&inv(owner()), opts(221), &cleanup(&cx), &mut fake)
+        .is_err());
+    let child_owner = ResourceId::store(Scope::Checkout(checkout()), "child").unwrap();
+    let mut child = parent
+        .begin_child(&inv(child_owner), opts(221), &cleanup(&cx), &mut fake)
+        .unwrap();
+    assert!(parent.finish(WorkloadOutcome::Succeeded).is_err());
+    child.finish(WorkloadOutcome::Succeeded).unwrap();
+    child.settle(&cleanup(&cx), &mut fake).unwrap();
+    parent.finish(WorkloadOutcome::Succeeded).unwrap();
+    assert_eq!(
+        parent.settle(&cleanup(&cx), &mut fake).unwrap().cleanup(),
+        CleanupOutcome::Complete
+    );
+    let reader = reader(&cx, &root);
+    let rows = children(&reader, id(220));
+    assert_eq!(rows.verified().unwrap()[0].parent, Some(id(220)));
+}
+
+#[test]
+fn run_children_interruption_cascades_through_the_one_settle() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut fake = Fake::new(home.path());
+    let mut parent = begin(&cx, &root, owner(), 222, &mut fake);
+    let child_owner = ResourceId::store(Scope::Checkout(checkout()), "child").unwrap();
+    let mut child = parent
+        .begin_child(
+            &inv(child_owner.clone()),
+            opts(223),
+            &cleanup(&cx),
+            &mut fake,
+        )
+        .unwrap();
+    let ticket = child
+        .intend(EffectSpec {
+            target: child.fence().clone(),
+            kind: "fixture".into(),
+            payload: Value::Null,
+            settlement: Settlement::Retain,
+            required: false,
+        })
+        .unwrap();
+    child.applied(&ticket, Value::Null).unwrap();
+    drop(child);
+    drop(parent);
+    let outcome = settle_interrupted(
+        &cx,
+        &root,
+        &owner(),
+        id(222),
+        next(),
+        &cleanup(&cx),
+        &mut fake,
+    )
+    .unwrap();
+    assert_eq!(outcome.cleanup(), CleanupOutcome::Complete);
+    let reader = Store::read(&cx.operation().observe().unwrap(), &root);
+    let rows = history(reader.verified().unwrap(), &child_owner, 1);
+    assert_eq!(
+        rows.verified().unwrap()[0].workload,
+        Some(WorkloadOutcome::Interrupted)
+    );
+    assert_eq!(rows.verified().unwrap()[0].cleanup_complete, Some(true));
+}
+
+#[cfg(feature = "fault-injection")]
+#[test]
+fn run_children_admission_faults_recover_both_sides() {
+    for point in [
+        crate::fault::Point::IntendBefore,
+        crate::fault::Point::IntendAfter,
+        crate::fault::Point::BeginBefore,
+        crate::fault::Point::BeginAdmitted,
+        crate::fault::Point::AppliedBefore,
+        crate::fault::Point::AppliedAfter,
+    ] {
+        let home = home();
+        let cx = context();
+        let root = StateRoot::effects(&cx, home.path()).unwrap();
+        let mut fake = Fake::new(home.path());
+        let mut parent = begin(&cx, &root, owner(), 224, &mut fake);
+        let child_owner = ResourceId::store(Scope::Checkout(checkout()), "child").unwrap();
+        crate::fault::arm_point(point, crate::fault::Fault::Enospc);
+        assert!(parent
+            .begin_child(&inv(child_owner), opts(225), &cleanup(&cx), &mut fake)
+            .is_err());
+        crate::fault::arm(None);
+        drop(parent);
+        let outcome = settle_interrupted(
+            &cx,
+            &root,
+            &owner(),
+            id(224),
+            next(),
+            &cleanup(&cx),
+            &mut fake,
+        )
+        .unwrap();
+        assert_eq!(outcome.cleanup(), CleanupOutcome::Complete, "{point:?}");
+    }
+}

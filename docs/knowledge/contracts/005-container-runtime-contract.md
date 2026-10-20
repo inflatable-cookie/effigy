@@ -63,6 +63,51 @@ routing, alter managed command mapping or interpret builtin `exec` raw argv as
 manifest placeholders. It transfers no scheduler credentials into a container
 and establishes no real Linux or remote cancellation proof.
 
+## Isolated directory mounts and reuse
+
+Catalog `isolated_dirs` entries belong to the immutable rendered closure in
+every checkout scope. Each entry is a distinct named volume layered over the
+source bind. Workspace rewriting preserves those entries; scope identity keeps
+worktree volume names separate from the primary checkout.
+
+Reuse compares each rendered named mount's service, destination, resolved
+volume name and read/write mode against a fresh selected-backend inspect.
+The comparison consumes the final Compose aliases after workspace compaction
+and `data_from` renaming, including destination overrides from later files.
+Inspects must prove the current full container identity, project, service,
+checkout and scope. Missing or unreadable inventories are unavailable, never
+clean and never recreation authority (kernel R2, R3 and K8).
+Pre-checkout-label stacks use the same legacy admission as reactivation: an
+unscoped checkout, matching immutable container identity and a positive bind of
+that checkout at the declared working directory. Foreign binds and scoped
+unlabelled stacks remain unavailable. External volumes without explicit names
+use their bare Compose keys.
+
+Task preparation no longer skips `up` solely because the primary runs. Observed
+mount drift means the running stack is not the desired generation, so the
+reconcile run applies the render instead of reusing it ([053](053-environment-reconciler-contract.md)
+§3). Holder exclusion and reactivation ownership checks remain mandatory (R4):
+under a live or unknown holder the running generation is kept with a warning
+naming the drift. The incoming task's own session attaches only at activation,
+after the reconcile, so it never blocks its own mount reconcile. Permission preflight
+checks the named mounts again before repair, including explicit exec paths:
+a declared volume absent from a live stack cannot grant chown authority over
+the host bind beneath it. Permission target metadata uses the most specific
+declared mount and retains its repair authority.
+An unavailable mount observation preserves the running stack's reuse path.
+Permission preparation then verifies access without creating directories,
+changing ownership or modes, or creating lock probes; paths that are already
+usable remain usable. A concrete access failure still blocks readiness. The
+unavailable observation itself cannot request reconciliation, and an up under
+live holders makes no backend call.
+An absent service has no live mount inventory; its absence does not prove mount
+drift or require recreation. Ordinary up may create it with `--no-recreate`.
+
+`container status` exposes `mount_drift` with a `state` and `details` in JSON
+and text; doctor reports drift or unavailable observations read-only. Legacy
+stacks need no manual marker removal or volume deletion: their next guarded
+`up` applies the rendered mounts. No kernel API or identity migration is added.
+
 ## Optional workspace mounts at creation
 
 The operator-authorized Acowtancy feedback on 2026-10-11 requests that optional

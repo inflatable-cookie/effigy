@@ -29,6 +29,10 @@ pub struct Up<'a> {
     /// The running stack was imported and its recorded v0.14.1 admission
     /// equals the current inputs: adopt it as this generation (M7).
     pub adopt: bool,
+    /// The running stack's named-volume mounts differ from the render. An
+    /// unavailable observation is not drift: it preserves reuse but grants
+    /// no recreation.
+    pub drifted: bool,
 }
 
 /// What a bring-up did to the backend.
@@ -130,6 +134,7 @@ fn reconcile_in(
     let current = digest.is_some()
         // A promoted generation is only ever one that applied and became
         // ready; a crash before its `active` publication leaves it current.
+        && !request.drifted
         && (last_applied == digest || record.applying == digest || request.adopt);
     let applied = if running && current {
         // Until activation completes the generation is partial, also when the

@@ -56,7 +56,7 @@ A transition waits up to 10 minutes for the gate; idle stop and import do not wa
   generation, records backend and retention, and reaches the backend only
   when needed:
 
-  | Running (exact inventory) | Desired is last applied, partial, or an adopted import | Holders | Result |
+  | Running (exact inventory) | Desired is last applied, partial, or an adopted import, with no observed mount drift | Holders | Result |
   | --- | --- | --- | --- |
   | yes | yes | any | `Reused`: no backend call |
   | yes | no | yes | `KeptForHolders`: running generation kept, a warning names the pending change |

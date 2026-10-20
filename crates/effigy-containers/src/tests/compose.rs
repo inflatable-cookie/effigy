@@ -17,6 +17,75 @@ fn run_git(repo: &Path, args: &[&str]) {
     );
 }
 
+#[test]
+fn isolated_dirs_survive_primary_and_linked_worktree_render_closures() {
+    let fixture = tempfile::tempdir().unwrap();
+    crate::with_test_effigy_home(&fixture.path().join("home"), || {
+        let manifest = r#"
+[containers]
+default = "stack"
+[containers.stack]
+project_name = "acowtancy-dev"
+primary_service = "workspace"
+working_dir = "/workspace-root/acowtancy"
+[containers.stack.services.workspace]
+catalog = "workspace-rust-bun"
+working_subdir = "acowtancy"
+isolated_dirs = ["node_modules", "packages/froyo/node_modules", "apps/farmyard/target", "platform/silo/target"]
+[systems.dev]
+container = "stack"
+working_dir = "/workspace-root/acowtancy"
+user = "dev"
+home = "/home/dev"
+"#;
+        let (primary, worktrees) =
+            create_linked_worktree_fixture(fixture.path(), manifest, &["task"]);
+        let mut volume_sets = Vec::new();
+        for checkout in [primary, worktrees[0].clone()] {
+            let policy = load_container_policy(&checkout, None).unwrap();
+            let render = policy.render.as_ref().unwrap();
+            assert!(!render.path.exists(), "render is pure");
+            let document: serde_yaml::Value =
+                serde_yaml::from_str(&policy.read_compose(&policy.compose_files[0]).unwrap())
+                    .unwrap();
+            let mounts = document["services"]["workspace"]["volumes"]
+                .as_sequence()
+                .unwrap();
+            let mut names = std::collections::BTreeSet::new();
+            for dir in [
+                "node_modules",
+                "packages/froyo/node_modules",
+                "apps/farmyard/target",
+                "platform/silo/target",
+            ] {
+                let target = format!(":/workspace-root/acowtancy/{dir}");
+                let matches = mounts
+                    .iter()
+                    .filter_map(serde_yaml::Value::as_str)
+                    .filter(|mount| mount.ends_with(&target))
+                    .collect::<Vec<_>>();
+                assert_eq!(matches.len(), 1, "{dir}: {mounts:?}");
+                let name = matches[0].split(':').next().unwrap();
+                assert!(
+                    names.insert(name.to_owned()),
+                    "one volume per isolated directory"
+                );
+                let declaration = &document["volumes"][name];
+                assert_eq!(declaration["name"].as_str(), Some(name));
+                assert_eq!(
+                    declaration["labels"]["com.effigy.managed"].as_str(),
+                    Some("true")
+                );
+            }
+            volume_sets.push(names);
+        }
+        assert!(
+            volume_sets[0].is_disjoint(&volume_sets[1]),
+            "worktree volumes are isolated from primary"
+        );
+    });
+}
+
 pub(super) fn create_linked_worktree_fixture(
     root: &Path,
     manifest: &str,

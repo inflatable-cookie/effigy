@@ -4,7 +4,7 @@
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
@@ -135,7 +135,7 @@ pub(super) fn executable() -> Result<Executable, RunnerError> {
 }
 
 static ROUTER: OnceLock<Mutex<RouterHandle>> = OnceLock::new();
-static CUSTODY_WAITING: AtomicBool = AtomicBool::new(false);
+static CUSTODY_WAITING: AtomicUsize = AtomicUsize::new(0);
 
 /// Installs the one process signal router before the first custody spawn
 /// (K9). Commands that never spawn under custody keep default dispositions.
@@ -167,11 +167,18 @@ pub(super) fn install_router() -> Result<(), RunnerError> {
         .name("effigy-signal-default".to_owned())
         .spawn(|| loop {
             std::thread::sleep(Duration::from_millis(20));
-            if CUSTODY_WAITING.load(Ordering::Acquire) {
-                continue;
-            }
-            if let Some(signal) = poll_router().first() {
-                std::process::exit(128 + signal.received);
+            if let Some(router) = ROUTER.get() {
+                let mut router = router
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                // Enter takes this same mutex: an idle observation cannot race
+                // a run's admission or custody start. Exit while holding it so
+                // no new custody scope can begin after this decision.
+                if CUSTODY_WAITING.load(Ordering::Acquire) == 0 {
+                    if let Some(signal) = router.poll().first() {
+                        std::process::exit(128 + signal.received);
+                    }
+                }
             }
         })
         .map_err(|error| {
@@ -209,16 +216,22 @@ pub(in crate::runner) fn interrupted_by() -> Option<i32> {
 }
 
 /// Marks a custody wait loop as the signal consumer while it lives.
-pub(super) struct CustodyWait;
+#[derive(Debug)]
+pub(in crate::runner) struct CustodyWait;
 impl CustodyWait {
-    pub(super) fn enter() -> Self {
-        CUSTODY_WAITING.store(true, Ordering::Release);
+    pub(in crate::runner) fn enter() -> Self {
+        let _router = ROUTER.get().map(|router| {
+            router
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+        });
+        CUSTODY_WAITING.fetch_add(1, Ordering::AcqRel);
         Self
     }
 }
 impl Drop for CustodyWait {
     fn drop(&mut self) {
-        CUSTODY_WAITING.store(false, Ordering::Release);
+        CUSTODY_WAITING.fetch_sub(1, Ordering::AcqRel);
     }
 }
 

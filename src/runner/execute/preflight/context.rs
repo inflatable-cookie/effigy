@@ -71,7 +71,7 @@ pub(in crate::runner) fn build_execution_preflight_from_input(
         invocation_cwd: discovery_plan.invocation_cwd.clone(),
         runtime_args_raw,
         runtime_args_exec,
-        output_json,
+        output_json: output_json || crate::runner::task_engine::nested_capture(),
         plan,
         output_mode: input.output_mode,
         resolved: discovery.resolved,

@@ -281,6 +281,7 @@ pub(super) fn bring_up(
             retention,
             running: fake.running(),
             adopt: false,
+            drifted: false,
         },
         holders,
         || fake.apply(),
@@ -414,6 +415,38 @@ fn up_publishes_applies_promotes_and_reuses_the_running_generation() {
 }
 
 #[test]
+fn mount_drift_reconciles_a_running_generation_it_would_otherwise_reuse() {
+    let home = home();
+    let root = root(home.path());
+    let ctx = EnvContext::new(&root, CancelToken::default()).unwrap();
+    let stack = env("stack");
+    let fake = Fake::new();
+    let render = closure("one");
+    bring_up(&ctx, &stack, &fake, &render, Retention::Persistent, &[]).unwrap();
+    let drifted = up(
+        &ctx,
+        &stack,
+        Up {
+            render: Some(&render),
+            project: PROJECT,
+            backend: &selection(),
+            retention: Retention::Persistent,
+            running: fake.running(),
+            adopt: false,
+            drifted: true,
+        },
+        &[],
+        || fake.apply(),
+        |_| Ok(()),
+    )
+    .unwrap();
+    assert_eq!(drifted, Applied::Reconciled);
+    assert_eq!(fake.calls(), ["apply", "apply"]);
+    assert!(record(&ctx, &stack).active());
+    assert_store_sound(&ctx);
+}
+
+#[test]
 fn failed_readiness_leaves_a_partial_generation_reused_without_recreation() {
     let home = home();
     let root = root(home.path());
@@ -431,6 +464,7 @@ fn failed_readiness_leaves_a_partial_generation_reused_without_recreation() {
             retention: Retention::Persistent,
             running: fake.running(),
             adopt: false,
+            drifted: false,
         },
         &[],
         || fake.apply(),
@@ -496,6 +530,7 @@ fn an_unknown_inventory_never_authorises_recreation() {
             retention: Retention::Held,
             running: Observed::Unknown(UnknownReason::Injected),
             adopt: false,
+            drifted: false,
         },
         &[],
         || fake.apply(),
@@ -931,6 +966,7 @@ fn a_reconciled_generation_is_not_attachable_until_activation() {
             retention: Retention::Held,
             running: fake.running(),
             adopt: false,
+            drifted: false,
         },
         &[],
         || fake.apply(),

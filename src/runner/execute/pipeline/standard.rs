@@ -95,6 +95,7 @@ pub(in crate::runner) fn run_standard_task(
     // value is an effect of this run, and a second spelling waits on the
     // gate instead of running them too.
     let result = (|| {
+        let _parent = run.enter();
         let env_schema_resolved = {
             let exec = RunExec::new(&mut run);
             resolve_env_schema_if_present(
@@ -126,12 +127,21 @@ pub(in crate::runner) fn run_standard_task(
     let result = match crate::runner::task_engine::interrupted_by() {
         Some(signal) if result.is_err() => {
             workload = crate::runner::task_engine::workload_for_exit(128 + signal);
-            Err(RunnerError::TaskCommandFailure {
-                command: preflight.selector.task_name.clone(),
-                code: Some(128 + signal),
-                stdout: String::new(),
-                stderr: String::new(),
-            })
+            if result
+                .as_ref()
+                .err()
+                .and_then(RunnerError::task_exit_status)
+                == Some(128 + signal)
+            {
+                result
+            } else {
+                Err(RunnerError::TaskCommandFailure {
+                    command: preflight.selector.task_name.clone(),
+                    code: Some(128 + signal),
+                    stdout: String::new(),
+                    stderr: String::new(),
+                })
+            }
         }
         _ => result,
     };
@@ -157,7 +167,10 @@ fn workload_for_result(result: &Result<String, RunnerError>) -> WorkloadOutcome 
 /// before admission, so custody (K6) exists before any spawn. Only a task
 /// the host routes into a container never spawns locally; inside a
 /// container handoff every task runs locally.
-fn runs_plain_host_command(preflight: &ExecutionPreflight, selection: &TaskSelection<'_>) -> bool {
+pub(in crate::runner) fn runs_plain_host_command(
+    preflight: &ExecutionPreflight,
+    selection: &TaskSelection<'_>,
+) -> bool {
     if inside_container_handoff() {
         return true;
     }
@@ -220,12 +233,14 @@ fn run_standard_task_inner(
     }
     let secret_ref = (!secret_pairs.is_empty()).then_some(secret_pairs.as_slice());
 
-    if let Some(output) = nested::maybe_run_fully_in_process_sequence(
+    if let Some(output) = nested::maybe_run_in_process_sequence(
         preflight,
         selection,
         context,
         env_schema_resolved,
         secret_ref,
+        run,
+        workload,
     )? {
         return Ok(output);
     }
@@ -394,16 +409,6 @@ fn run_standard_task_inner(
             return Ok(context.render_resolution_trace());
         }
         return Ok(String::new());
-    }
-
-    if let Some(output) = nested::maybe_run_in_process_sequence(
-        preflight,
-        selection,
-        context,
-        env_schema_resolved,
-        secret_ref,
-    )? {
-        return Ok(output);
     }
 
     process_run::run_task_process(
@@ -1065,6 +1070,45 @@ fn map_schema_support_error(error: SchemaSupportError) -> RunnerError {
         }
         SchemaSupportError::Schema(error) => RunnerError::EnvSchema(error),
     }
+}
+
+/// One legacy container command, selected by the typed sequence engine.
+pub(in crate::runner) fn run_sequence_container_command(
+    preflight: &ExecutionPreflight,
+    selection: &TaskSelection<'_>,
+    command_text: &str,
+    run: &mut TaskRun,
+) -> Result<String, RunnerError> {
+    let mut task = selection.task.clone();
+    task.run = Some(ManifestManagedRun::Command(command_text.to_owned()));
+    task.env
+        .extend(crate::runner::task_engine::spawn_plain_env());
+    let selected = TaskSelection {
+        task: &task,
+        catalog: selection.catalog,
+        mode: selection.mode,
+        evidence: selection.evidence.clone(),
+        surface: selection.surface,
+    };
+    let context = ExecutionTaskContext::new(
+        preflight,
+        &selected,
+        command::build_task_command(preflight, &selected, &None)?,
+        false,
+    );
+    // The canonical selection plan is rebuilt without effects by the resolver.
+    let invocation = effigy_cli::TaskInvocation {
+        name: effigy_tasks::render_task_selector(&preflight.selector),
+        args: preflight.runtime_args_exec.passthrough.clone(),
+    };
+    let super::super::selection::SelectionResolution::Selected { plan, .. } =
+        super::super::selection::resolve_task_selection(&invocation, preflight)?
+    else {
+        return Err(RunnerError::task_invocation(
+            "sequence selection disappeared",
+        ));
+    };
+    run_standard_task_inner(preflight, &selected, &plan, &context, &None, run, &mut None)
 }
 
 #[cfg(test)]

@@ -56,6 +56,7 @@ Single selector: `effigy.tasks-status.v2`.
 | `current` | the open run: `run_id`, `phase`, `pid`, `profile`, `started_at_epoch_ms` |
 | `latest` | the newest closed run: adds `exit_code`, `signal`, `cleanup`, `finished_at_epoch_ms`, `duration_ms` |
 | `history` | newest first, the same run shape |
+| run `steps` | additive v2 field: direct child runs, recursively with the same state/cleanup fields and `step` labels; absent for a run with no child rows |
 | `next` | the settling command for an interrupted run |
 | `legacy` | the v0.14 record when the task has no runs |
 | `warnings` | unreadable-state evidence |
@@ -71,7 +72,8 @@ Single selector: `effigy.tasks-status.v2`.
 
 One selector shows the task, state, catalog and root; the open run's id, phase,
 start and pid; the settling command for an interrupted run; and the last run's
-outcome, exit code, duration and cleanup. `--all` groups rows by catalog.
+outcome, exit code, duration and cleanup. Current and last-run step lists name
+each child, its outcome, exit code, cleanup and run ID. `--all` groups rows by catalog.
 
 ## Drift triggers
 

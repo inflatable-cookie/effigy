@@ -327,6 +327,18 @@ fn render_task_status_text(
         }
         let _ = renderer.key_values(&values);
     }
+    for (label, run) in [
+        ("current steps", view.current.as_ref()),
+        ("last-run steps", view.latest.as_ref()),
+    ] {
+        if let Some(run) = run {
+            let mut lines = Vec::new();
+            step_status_lines(&run.steps, "", &mut lines);
+            if !lines.is_empty() {
+                let _ = renderer.bullet_list(label, &lines);
+            }
+        }
+    }
     if view.history.is_empty() {
         let _ = renderer.text("");
         match legacy {
@@ -351,6 +363,22 @@ fn render_task_status_text(
         let _ = renderer.bullet_list("routing-evidence", evidence);
     }
     String::from_utf8_lossy(&renderer.into_inner()).to_string()
+}
+
+fn step_status_lines(steps: &[RunView], prefix: &str, lines: &mut Vec<String>) {
+    for step in steps {
+        let label = format!("{prefix}{}", step.step.as_deref().unwrap_or("step"));
+        lines.push(format!(
+            "{label}: {} (exit {}, cleanup {}, run {})",
+            step.state,
+            step.exit_code
+                .map(|code| code.to_string())
+                .unwrap_or_else(|| "pending".to_owned()),
+            step.cleanup.unwrap_or("pending"),
+            step.run_id
+        ));
+        step_status_lines(&step.steps, &format!("{label}/"), lines);
+    }
 }
 
 fn render_task_status_all_text(repo_root: &Path, rows: &[TaskStatusInventoryRow]) -> String {

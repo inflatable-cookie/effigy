@@ -420,27 +420,29 @@ container a second time. `effigy test --plan` reports each target's resolved
 ```toml
 [tasks.validate]
 run = [
-  { id = "lint", run = "bun run lint", retry = 1, retry_delay_ms = 200 },
-  { id = "unit", task = "test vitest", depends_on = ["lint"], timeout_ms = 180000 },
-  { id = "contract", run = "cargo run --bin effigy -- contracts check-json --fast --print-selected", depends_on = ["lint"] },
-  { id = "report", run = "printf validate-ok", depends_on = ["unit", "contract"], fail_fast = false }
+  { id = "lint", run = "bun run lint" },
+  { id = "unit", task = "test vitest", timeout_ms = 180000 },
+  { id = "report", run = "printf validate-ok" }
 ]
 ```
 
-Use when you need dependency-aware orchestration, retry policy, and per-step timeouts.
+Steps execute in order and stop at the first failure, timeout or cancellation.
+Host steps use the same kernel custody engine for text and JSON. See
+[ordered sequences and locks](020-dag-lock-policy-baseline.md) for lifecycle,
+reference cycles, shared locks and container migration limits.
 
-Run-array step fields (in-process executor):
-- `id = "<name>"` step identifier; required when other steps reference it through `depends_on`
-- `run = "<command>"` shell command for the step; mutually exclusive with `task` and `rhai`
-- `task = "<selector>"` invoke another task by selector (catalog-prefixed selectors are accepted)
-- `rhai = "<path>"` run a file-backed Rhai script (see [`061-rhai-script-steps-guide.md`](061-rhai-script-steps-guide.md))
-- `depends_on = ["<id>", ...]` block this step until the listed steps finish successfully
-- `timeout_ms = <n>` per-step timeout in milliseconds; the step is cancelled and reported as failed (exit `124`) when exceeded. On Unix the step runs in a new process group so expiry stops the leader and its descendants; non-Unix hosts kill only the direct child pid.
-- `retry = <n>` automatic retry count after a non-zero exit (in addition to the first attempt)
-- `retry_delay_ms = <n>` delay between retries in milliseconds; default `0`
-- `fail_fast = false` allow the array to keep running other independent branches when this step fails; default `true`
-- `env = "<name>" | { KEY = "value" }` apply env directives at this point in the chain (see §4b for full env-step semantics)
-- `env_file = "<path>"` update fallback dotenv sources for subsequent steps
+Run-array step fields:
+
+- `id = "<name>"`: optional non-empty, unique label for status and JSON.
+- `run = "<command>"`: shell command; mutually exclusive with `task` and `rhai`.
+- `task = "<selector>"`: invoke a task through the canonical resolver.
+- `rhai = "<path>"`: run a file-backed Rhai script ([guide](061-rhai-script-steps-guide.md)).
+- `timeout_ms = <n>`: host step lifetime in milliseconds; expiry settles custody and returns 124.
+- `env = "<name>" | { KEY = "value" }`: apply environment directives at this point in the chain.
+- `env_file = "<path>"`: update fallback dotenv sources for subsequent steps.
+
+The former sequence dependency and retry policy keys are rejected with removal
+instructions; declaration order defines the sequence.
 
 `[task_defaults]` (covered in §3) does not apply at the array-element level;
 it sets the default for whole tasks defined in the same manifest. Per-step

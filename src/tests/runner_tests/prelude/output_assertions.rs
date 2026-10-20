@@ -5,13 +5,6 @@ pub(in crate::runner::tests) fn assert_output_contains_all(output: &str, expecte
     assert_contains_all(output, expected);
 }
 
-pub(in crate::runner::tests) fn assert_output_contains_any(output: &str, expected_any: &[&str]) {
-    assert!(
-        expected_any.iter().any(|needle| output.contains(needle)),
-        "expected output to contain one of {expected_any:?}, got:\n{output}"
-    );
-}
-
 pub(in crate::runner::tests) fn assert_output_excludes_all(output: &str, excluded: &[&str]) {
     for needle in excluded {
         assert!(

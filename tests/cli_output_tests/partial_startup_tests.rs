@@ -1221,7 +1221,9 @@ if args and args[0]=='inspect':
  if mode=='foreign': labels['com.docker.compose.project']='foreign-project'
  if mode=='oneoff': labels['com.docker.compose.oneoff']='true'
  if mode=='drift': labels['com.docker.compose.project.working_dir']=str(root)
- print(json.dumps([{'Id':state['id'] if mode!='unknown' else 'short','Name':'/'+state['project']+'-db-1','State':{'Status':'running' if mode!='stopped' else 'exited','Running':mode!='stopped'},'Config':{'Labels':labels},'Mounts':[],'NetworkSettings':{'Ports':{str(state['container_port'])+'/tcp':[{'HostIp':'127.0.0.1','HostPort':str(state['port'])}]}}}]))
+ # This ownership/route transport does not model mounts. Omit the inventory
+ # rather than claim an empty mount set for a persistent database service.
+ print(json.dumps([{'Id':state['id'] if mode!='unknown' else 'short','Name':'/'+state['project']+'-db-1','State':{'Status':'running' if mode!='stopped' else 'exited','Running':mode!='stopped'},'Config':{'Labels':labels},'NetworkSettings':{'Ports':{str(state['container_port'])+'/tcp':[{'HostIp':'127.0.0.1','HostPort':str(state['port'])}]}}}]))
  sys.exit(0)
 if args and args[0]=='network': sys.exit(0)
 if args and args[0]=='volume':

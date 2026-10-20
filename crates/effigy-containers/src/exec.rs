@@ -2,6 +2,7 @@ mod colima_runtime;
 mod healthcheck_timer;
 mod implementation;
 mod managed_stop;
+mod mounts;
 mod parse;
 mod participation;
 mod process;
@@ -36,6 +37,7 @@ pub use implementation::{
     RuntimeInventoryFailure, VerifiedComposeContainer,
 };
 pub use managed_stop::{end_owned_container_process_group, verify_owned_stack_for_shutdown};
+pub use mounts::probe_mount_drift;
 pub use parse::{
     compose_status_is_running, parse_running_compose_containers, RunningComposeContainer,
     RunningComposeContainerProfiled, RunningContainerStats, RunningContainerStatsCapture,

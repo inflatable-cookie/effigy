@@ -1047,7 +1047,7 @@ impl OwnershipContext {
     /// The listed identity is still verified: absent ownership labels relax
     /// only the checkout/scope proof, never the container's identity or the
     /// positive bind-mount evidence.
-    fn admits_legacy_unlabelled(
+    pub(super) fn admits_legacy_unlabelled(
         &self,
         policy: &EffectiveContainerPolicy,
         working_dir: &Path,

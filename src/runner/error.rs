@@ -256,6 +256,15 @@ impl RunnerError {
             RunnerError::TaskCommandFailure {
                 code: Some(code), ..
             } if (1..=255).contains(code) => *code,
+            RunnerError::CommandJsonFailure { rendered }
+                if serde_json::from_str::<serde_json::Value>(rendered)
+                    .ok()
+                    .is_some_and(|value| value["schema"] == "effigy.task.run.v1") =>
+            {
+                self.task_exit_status()
+                    .filter(|code| (1..=255).contains(code))
+                    .unwrap_or(1)
+            }
             RunnerError::TaskLockConflict(_) => 75,
             _ => 1,
         }
@@ -424,7 +433,14 @@ impl RunnerError {
             | RunnerError::HostScheduler { code, .. }
             | RunnerError::HostRequestFailure { code, .. } => Some(*code),
             RunnerError::TaskCommandFailure { code, .. } => Some(code.unwrap_or(1)),
-            RunnerError::CommandJsonFailure { .. } => Some(1),
+            RunnerError::CommandJsonFailure { rendered } => Some(
+                serde_json::from_str::<serde_json::Value>(rendered)
+                    .ok()
+                    .and_then(|value| value["exit_code"].as_i64())
+                    .map(|code| code as i32)
+                    .filter(|code| *code != 0)
+                    .unwrap_or(1),
+            ),
             RunnerError::BoundedExecFailure { code, .. } => Some(*code),
             _ => None,
         }

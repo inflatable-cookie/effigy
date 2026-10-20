@@ -9658,7 +9658,12 @@ fn write_owned_runtime_inspect(root: &std::path::Path) -> std::path::PathBuf {
             "NetworkSettings": {"Ports": {
                 "80/tcp": [{"HostIp": "0.0.0.0", "HostPort": "8080"}]
             }},
-            "Mounts": []
+            "Mounts": [{
+                "Type": "volume",
+                "Name": "fixture-web-dev-app-pnpm-store",
+                "Destination": "/home/dev/.local/share/pnpm/store",
+                "RW": true
+            }]
         }])
         .to_string(),
     )

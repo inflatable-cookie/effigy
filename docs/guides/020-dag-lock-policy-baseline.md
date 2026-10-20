@@ -1,53 +1,41 @@
-# 020 - DAG Lock and Policy Baseline
+# 020 - Ordered Sequences and Task Locks
 
-This guide covers the compact DAG run schema, step policy controls, and lock behavior introduced for roadmap 010.
-
-
-## Vision Alignment
-
-- Primary tags: `MAINT`, `OPERATE`
-- Target movement: orchestration policy and lock behavior remain deterministic under concurrent workflows.
-
-## 1) DAG Run Steps
-
-Effigy supports linear sequences and DAG-style dependencies in `tasks.<name>.run`.
+Run arrays execute in declaration order. A failed, timed-out or stopped step
+prevents later steps from starting. The same engine runs host sequences in text
+and JSON modes; JSON only captures output and reports each step.
 
 ```toml
 [tasks.validate]
 run = [
   { id = "tests", task = "test vitest \"user service\"" },
-  { id = "report", run = "printf validate-ok", depends_on = ["tests"] }
+  { id = "report", run = "printf validate-ok", timeout_ms = 120000 }
 ]
 ```
 
-Rules:
-- `id` must be unique when present.
-- `depends_on` values must reference existing step `id`s.
-- cycles fail fast with cycle evidence.
-- if no `depends_on` values are used, the run remains linear.
+Each step is a child kernel run. Host shell, built-in and Rhai processes run
+under custody; nested task references acquire their canonical Task gate.
+References to an active ancestor fail with a cycle error before gate acquisition.
+A nested task inherits a shared lock already held by an ancestor; unrelated
+holders still exclude it. Nested admissions fail immediately on other busy gates,
+so opposing reference trees cannot wait on one another.
 
-## 2) Step Policy
+`id` labels a step and must be non-empty and unique when supplied. `timeout_ms`
+bounds host steps, including nested task commands. Expiry returns 124 and settles
+owned descendants before any later step can start. INT, TERM and HUP stop the
+active step and return 128 + signal. Owner SIGKILL triggers sentinel settlement.
+Rerunning starts at step one after settling an interrupted predecessor; it never
+resumes mutation steps silently.
 
-Each run-step table can define node-level policy:
+Sequence `depends_on`, `retry`, `retry_delay_ms` and `fail_fast` were removed in
+v0.15. Remove these keys and place steps in their required order. Use the invoked
+tool's retry policy when needed. Container steps retain legacy execution through
+one migration seam until remote custody and environment generations are available
+(effigy#236 after #232); guest re-entry remains unchanged. Container setup
+embedded in a lifecycle-managed process command retains its existing readiness
+and startup order and reports only its process exit. Its per-step journals are
+deferred to #236 (operator ruling, 2026-10-19).
 
-```toml
-[tasks.validate]
-run = [
-  { id = "tests", task = "test vitest \"user service\"", timeout_ms = 120000, retry = 1, retry_delay_ms = 250 },
-  { id = "report", run = "printf validate-ok", depends_on = ["tests"], fail_fast = false }
-]
-```
-
-Policy keys:
-- `timeout_ms`: hard timeout for a step (`124` timeout exit). On Unix the step
-  runs in a new process group; expiry stops that group and reaps the direct
-  child. The caller group is never signalled. Non-Unix hosts kill only the
-  direct child pid.
-- `retry`: retry attempts after the first failure.
-- `retry_delay_ms`: delay between retry attempts.
-- `fail_fast`: default `true`; set `false` to let sibling ready-steps continue in the current DAG level.
-
-## 3) Lock Scopes
+## Lock Scopes
 
 Every task run holds a kernel gate for its resolved task identity
 ([017](../knowledge/contracts/017-task-status-record-and-active-run-model-contract.md)):
@@ -76,10 +64,11 @@ or `EFFIGY_LOCK_WAIT_MS`. `0` (the default) fails immediately.
 
 ## Related Guides
 
-- Operator command walkthrough: [`021-quick-start-and-command-cookbook.md`](021-quick-start-and-command-cookbook.md)
-- Manifest patterns (including DAG and concurrent profiles): [`022-manifest-cookbook.md`](022-manifest-cookbook.md)
-- Failure remediation recipes: [`023-troubleshooting-and-failure-recipes.md`](023-troubleshooting-and-failure-recipes.md)
+- [Manifest cookbook](022-manifest-cookbook.md)
+- [Task routing](016-task-routing-precedence.md)
+- [JSON output](017-json-output-contracts.md)
 
 ## Next Step
 
-After introducing DAG policies or lock-scope changes, run lock conflict scenarios and document expected recovery steps in [`023-troubleshooting-and-failure-recipes.md`](023-troubleshooting-and-failure-recipes.md).
+Use `effigy --plan <task>` to inspect selection, then run the targeted task and
+inspect `effigy tasks status <task>` for child-run outcomes.

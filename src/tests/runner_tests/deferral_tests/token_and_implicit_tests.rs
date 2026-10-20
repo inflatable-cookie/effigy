@@ -37,15 +37,17 @@ fn setup_fake_docker_deferral_runtime(
     let inspect = bin_dir.join("inspect-proof.py");
     fs::write(&inspect, r#"import sys,os,json,hashlib
 name=sys.argv[1];project=name.removesuffix('-app-1')
-print(json.dumps([{'Id':hashlib.sha256(name.encode()).hexdigest(),'Name':'/'+name,
- 'State':{'Status':'running','Running':True},'Config':{'Labels':{'com.docker.compose.project':project,'com.docker.compose.service':'app','com.docker.compose.oneoff':'False','com.docker.compose.project.working_dir':os.getcwd()}},'NetworkSettings':{'Ports':{}}}]))
+record={'Id':hashlib.sha256(name.encode()).hexdigest(),'Name':'/'+name,
+ 'State':{'Status':'running','Running':True},'Config':{'Labels':{'com.docker.compose.project':project,'com.docker.compose.service':'app','com.docker.compose.oneoff':'False','com.docker.compose.project.working_dir':os.getcwd()}},'NetworkSettings':{'Ports':{}}}
+if os.path.isfile(sys.argv[2]): record['Mounts']=json.load(open(sys.argv[2]))
+print(json.dumps([record]))
 "#).expect("write private full-ID declaration/binding proof");
     write_executable(
         &bin_dir.join("docker"),
         &format!(
             r#"#!/bin/sh
 printf '%s\n' "$*" >> '{}'
-if [ "$1" = inspect ]; then python3 '{}' "$2"; exit $?; fi
+if [ "$1" = inspect ]; then python3 '{}' "$2" '{}'; exit $?; fi
 project_file='{}'
 saw_id=
 id_mode=
@@ -145,6 +147,7 @@ exit 0
 "#,
             docker_log.display(),
             inspect.display(),
+            root.join("fake-mounts.json").display(),
             root.join("fake-compose-project").display(),
             vendor_exists.display(),
             vendor_repaired.display(),
@@ -681,6 +684,51 @@ shared_root = "{}"
         ),
     );
     let (docker_log, _env) = setup_fake_docker_deferral_runtime(&root, false);
+    // This test exercises repair, so its inspect must positively prove the
+    // rendered volume mounts rather than leave their inventory unavailable.
+    let manifest = effigy_manifest::load_task_manifest(&repo.join("effigy.toml"))
+        .expect("composed permission fixture");
+    let task = effigy_manifest::ManifestTask {
+        run_in: Some(effigy_manifest::ManifestTaskRunIn::Container),
+        ..Default::default()
+    };
+    let Some(effigy_manifest::ResolvedTaskExecutionBinding::Workspace(binding)) =
+        effigy_manifest::resolve_task_execution_binding(&manifest, "defer", &task)
+            .expect("default workspace binding")
+    else {
+        panic!("permission fixture must declare a workspace");
+    };
+    let policy = effigy_containers::load_container_policy_with_workspace(
+        &repo,
+        Some("web"),
+        Some(&binding.workspace_config),
+    )
+    .expect("rendered workspace permission fixture");
+    let compose = policy.compose_files.first().expect("generated Compose");
+    let document: serde_yaml::Value =
+        serde_yaml::from_str(&policy.read_compose(compose).expect("rendered Compose"))
+            .expect("Compose YAML");
+    let mounts = document["services"]["app"]["volumes"]
+        .as_sequence()
+        .expect("app mounts")
+        .iter()
+        .filter_map(|mount| {
+            let mut parts = mount.as_str().expect("generated short mount").split(':');
+            let source = parts.next().expect("source");
+            let target = parts.next().expect("target");
+            let definition = document["volumes"].get(source)?;
+            let name = definition["name"].as_str().expect("final volume name");
+            Some(serde_json::json!({
+                "Type": "volume", "Name": name,
+                "Destination": target, "RW": parts.next() != Some("ro")
+            }))
+        })
+        .collect::<Vec<_>>();
+    fs::write(
+        root.join("fake-mounts.json"),
+        serde_json::to_vec(&mounts).expect("serialize mounts"),
+    )
+    .expect("write permission fixture inventory");
 
     run_task_expect_empty_output(
         &repo,

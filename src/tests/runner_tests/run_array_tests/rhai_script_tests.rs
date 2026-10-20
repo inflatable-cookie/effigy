@@ -10,6 +10,7 @@ use std::os::unix::fs::PermissionsExt;
 
 #[test]
 fn run_manifest_task_run_array_supports_file_backed_rhai_steps() {
+    let _guard = lock_test();
     let root = temp_workspace("run-array-file-rhai-step");
     fs::create_dir_all(root.join("scripts")).expect("mkdir script dir");
     fs::write(
@@ -47,6 +48,7 @@ run = [{ rhai = "scripts/validate.rhai" }]
 
 #[test]
 fn rhai_task_run_supports_prefixed_catalog_child_tasks_without_parent_lock_conflict() {
+    let _guard = lock_test();
     let root = temp_workspace("rhai-prefixed-catalog-child-task");
     fs::create_dir_all(root.join("scripts")).expect("mkdir script dir");
     fs::write(
@@ -83,6 +85,7 @@ run = [{ rhai = "scripts/hydrate.rhai" }]
 
 #[test]
 fn rhai_effigy_run_supports_prefixed_catalog_child_tasks_without_parent_lock_conflict() {
+    let _guard = lock_test();
     let root = temp_workspace("rhai-effigy-prefixed-catalog-child-task");
     fs::create_dir_all(root.join("scripts")).expect("mkdir script dir");
     fs::write(
@@ -122,6 +125,7 @@ run = [{ rhai = "scripts/hydrate.rhai" }]
 
 #[test]
 fn direct_rhai_task_run_supports_prefixed_catalog_child_tasks_without_parent_lock_conflict() {
+    let _guard = lock_test();
     let root = temp_workspace("direct-rhai-prefixed-catalog-child-task");
     fs::create_dir_all(root.join("scripts")).expect("mkdir script dir");
     fs::write(
@@ -159,6 +163,7 @@ hydrate = { rhai = "scripts/hydrate.rhai" }
 #[test]
 fn compact_run_object_rhai_task_run_supports_prefixed_catalog_child_tasks_without_parent_lock_conflict(
 ) {
+    let _guard = lock_test();
     let root = temp_workspace("compact-run-object-rhai-prefixed-catalog-child-task");
     fs::create_dir_all(root.join("scripts")).expect("mkdir script dir");
     fs::write(
@@ -196,6 +201,7 @@ hydrate = { run = { rhai = "scripts/hydrate.rhai" }, run_in = "host" }
 #[test]
 fn compact_run_object_rhai_task_run_supports_prefixed_colon_catalog_child_tasks_without_parent_lock_conflict(
 ) {
+    let _guard = lock_test();
     let root = temp_workspace("compact-run-object-rhai-prefixed-colon-child-task");
     fs::create_dir_all(root.join("scripts")).expect("mkdir script dir");
     fs::write(
@@ -241,6 +247,7 @@ run = "printf %s {args} > ../installed.txt"
 
 #[test]
 fn compact_run_object_rhai_task_run_inside_user_function_uses_requested_child_task_lock() {
+    let _guard = lock_test();
     let root = temp_workspace("compact-run-object-rhai-function-child-task");
     fs::create_dir_all(root.join("scripts")).expect("mkdir script dir");
     fs::write(
@@ -290,6 +297,7 @@ run = "printf %s {args} > ../installed.txt"
 
 #[test]
 fn run_manifest_task_run_array_rejects_conflicting_rhai_step_keys() {
+    let _guard = lock_test();
     let root = temp_workspace("run-array-invalid-rhai-step");
     write_manifest(
         &root.join("effigy.toml"),
@@ -311,6 +319,7 @@ run = [{ run = "printf invalid", rhai = "print(\"nope\")" }]
 
 #[test]
 fn run_manifest_task_run_array_rhai_steps_support_args_and_runtime_helpers() {
+    let _guard = lock_test();
     let root = temp_workspace("run-array-rhai-runtime-helpers");
     fs::create_dir_all(root.join("scripts")).expect("mkdir script dir");
     fs::write(
@@ -471,7 +480,18 @@ fn run_manifest_task_run_array_rhai_steps_support_container_helpers() {
         bin_dir.display(),
         std::env::var("PATH").expect("PATH")
     );
+    fs::create_dir_all(root.join("home")).expect("private subprocess HOME");
     let _env = EnvGuard::set_many(&[
+        ("HOME", Some(root.join("home").display().to_string())),
+        (
+            "EFFIGY_EXECUTABLE",
+            Some(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("target/debug/effigy")
+                    .display()
+                    .to_string(),
+            ),
+        ),
         ("PATH", Some(path)),
         ("EFFIGY_COMPOSE_BACKEND", Some("docker".to_owned())),
         (
@@ -531,6 +551,7 @@ fn run_manifest_task_run_array_rhai_steps_support_container_helpers() {
 
 #[test]
 fn run_manifest_task_run_array_rhai_steps_bypass_container_default_when_fully_in_process() {
+    let _guard = lock_test();
     let root = temp_workspace("run-array-rhai-in-process-container-default");
     fs::create_dir_all(root.join("scripts")).expect("mkdir script dir");
     fs::write(

@@ -54,7 +54,7 @@ fn run_manifest_task_builtin_config_schema_prints_canonical_template() {
             "ready_message = \"http://projectname.test\"",
             "role = \"shell\"",
             "task = \"test vitest \\\"user service\\\"\"",
-            "run = [{ id = \"tests\", task = \"test vitest \\\"user service\\\"\" }, { id = \"report\", run = \"printf validate-ok\", depends_on = [\"tests\"] }]",
+            "run = [{ id = \"tests\", task = \"test vitest \\\"user service\\\"\" }, { id = \"report\", run = \"printf validate-ok\" }]",
             "{ name = \"services\", role = \"lifecycle\", start = 1, tab = 1, shutdown_on_exit = true }",
         ],
     );
@@ -194,7 +194,7 @@ fn run_manifest_task_builtin_config_schema_target_tasks_includes_quoted_task_ref
             "(tasks target)",
             "[tasks]",
             "task = \"test vitest \\\"user service\\\"\"",
-            "run = [{ id = \"tests\", task = \"test vitest \\\"user service\\\"\" }, { id = \"report\", run = \"printf validate-ok\", depends_on = [\"tests\"] }]",
+            "run = [{ id = \"tests\", task = \"test vitest \\\"user service\\\"\" }, { id = \"report\", run = \"printf validate-ok\" }]",
         ],
     );
 }

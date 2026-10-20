@@ -19,6 +19,9 @@ During v0.x, MINOR bumps may include breaking changes.
   stacks running. The lease file, `EFFIGY_HOST_CONTAINER_LEASE_TIMEOUT_SECS`,
   `EFFIGY_DISABLE_HOST_CONTAINER_LEASE_REAPER` and the hidden
   `__container-lease-reaper` command are retired.
+- Only runs that hold an environment protect it. A live host task that does
+  not use a stack no longer blocks that stack's stop, recreation or mount
+  reconcile; container tasks, `exec`, shells and data commands hold theirs.
 - The exec-readiness restart refuses while a run holds the environment and
   reports the readiness failure instead. A changed configuration under live
   holders keeps the running generation until they end, with a warning.
@@ -38,6 +41,19 @@ During v0.x, MINOR bumps may include breaking changes.
   with a warning. Move their definitions under `[tasks]`, remove lifecycle
   metadata, and use ordinary task references. `effigy draft <name>` warns and
   runs the normal task; `effigy drafts` names `tasks --all` as its replacement.
+- Host task and setup sequences now use one typed engine in text and JSON.
+  Steps are child kernel runs; custody settles descendants on timeout, stop,
+  INT, TERM, HUP and owner loss. JSON adds per-step outcomes and preserves the
+  same exit code as text. Nested task cycles fail before gate acquisition;
+  shared locks held by an ancestor are inherited. Nested steps inherit the
+  top-level admission decision, so a direct sequence reaching `qa`, `ci`,
+  `ci:fresh` or an explicitly heavy step does not queue again.
+- Sequence `depends_on`, `retry`, `retry_delay_ms` and `fail_fast` are removed.
+  Delete these keys and order steps explicitly; sequences stop on the first
+  failure. Container task steps retain legacy execution and journal child
+  outcomes pending the remote-custody cutover (#236). Container setup embedded
+  in lifecycle-managed commands retains process-level outcomes until #236,
+  preserving its existing readiness and startup order.
 - Task runs are now kernel runs. Every invocation resolves once to a task
   identity (catalog path relative to the root, task name), so `build` from
   inside a catalog, `api/build` and `./apps/api/build` share one lock and one
@@ -472,6 +488,13 @@ During v0.x, MINOR bumps may include breaking changes.
   runs on instead of guessing from the profile name, and shared services run
   on the dependent environment's backend (D3-25).
 - Reset drops only the selected environment's render references.
+- Container preparation detects missing or changed named-volume mounts before
+  reusing a running stack, including worktree `isolated_dirs`. Status and doctor
+  report drift, guarded `up` applies the current render, and permission repair
+  refuses stale mounts instead of acting on the host bind beneath them.
+  Pre-checkout-label Colima stacks use the existing checkout-bind migration
+  proof. Unavailable mount observations preserve reuse while withholding
+  recreation and ownership-repair authority.
 - Stopping a managed run now ends the process group it started through
   container exec in containers whose shell is dash or busybox. The stop
   previously reached only the group's leader there, so an Effigy task running

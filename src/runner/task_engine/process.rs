@@ -37,11 +37,14 @@ pub(in crate::runner) struct PlainCommand<'a> {
     /// argv and are redacted from any capture (K12).
     pub(in crate::runner) env: Vec<(String, EnvOverride)>,
     pub(in crate::runner) capture: bool,
+    pub(in crate::runner) timeout_ms: Option<u64>,
 }
 
 /// A spawn-environment override carried as a secret: redacted from every
 /// capture and never placed in argv.
+#[derive(Clone)]
 pub(in crate::runner) enum EnvOverride {
+    Plain(String),
     Secret(String),
 }
 
@@ -58,6 +61,15 @@ pub(in crate::runner) fn run_plain(
     run: &mut TaskRun,
     command: PlainCommand<'_>,
 ) -> Result<PlainExit, RunnerError> {
+    let _waiting = CustodyWait::enter();
+    if let Some((code, workload)) = super::pending_stop(&run.target().label) {
+        return Ok(PlainExit {
+            code,
+            workload,
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        });
+    }
     let spec = ProcessSpec {
         argv: vec![
             OsString::from("/bin/sh"),
@@ -67,24 +79,54 @@ pub(in crate::runner) fn run_plain(
         cwd: command.cwd.to_path_buf(),
         env: environment(command.cwd, command.env)?,
         grace: GRACE,
-        lifetime: Lifetime::Open(OpenReason::Shell),
+        lifetime: match (
+            command.timeout_ms.map(Duration::from_millis),
+            super::spawn_env::remaining(),
+        ) {
+            (Some(local), Some(parent)) => Lifetime::Finite(local.min(parent)),
+            (Some(limit), None) | (None, Some(limit)) => Lifetime::Finite(limit),
+            (None, None) => Lifetime::Open(OpenReason::Shell),
+        },
         terminal: Terminal::Inherit {
             capture: command.capture,
         },
         label: run.target().label.clone(),
     };
-    let _waiting = CustodyWait::enter();
     let cx = kernel::effects();
-    let mut process = Custody::spawn(run.run_mut(), spec, &cx).map_err(|error| {
-        RunnerError::TaskCommandLaunch {
-            command: command.command.to_owned(),
-            error: std::io::Error::other(format!("{error:?}")),
+    let spawned = Custody::spawn(&mut run.run_mut(), spec, &cx);
+    let mut process = match spawned {
+        Ok(process) => process,
+        Err(error) => {
+            // Cancellation can win after the spawn barrier releases workload,
+            // before spawn returns. Settlement still owns that recorded effect.
+            if let Some((code, workload)) = super::pending_stop(&run.target().label) {
+                return Ok(PlainExit {
+                    code,
+                    workload,
+                    stdout: Vec::new(),
+                    stderr: Vec::new(),
+                });
+            }
+            return Err(RunnerError::TaskCommandLaunch {
+                command: command.command.to_owned(),
+                error: std::io::Error::other(format!("{error:?}")),
+            });
         }
-    })?;
+    };
     let mut stdout = Tail::default();
     let mut stderr = Tail::default();
     let mut signalled: Option<(i32, Instant)> = None;
+    let mut timed_out = false;
+    let mut requested = false;
     let exit = loop {
+        if process.expired() {
+            timed_out = true;
+            break None;
+        }
+        if super::run::stop_requested() {
+            requested = true;
+            break None;
+        }
         for routed in kernel::poll_router() {
             let _ = process.forward(routed.forward);
             if signalled.is_none() {
@@ -114,9 +156,20 @@ pub(in crate::runner) fn run_plain(
     let code = exit.map(|exit| exit.code);
     if let Some(exit) = exit {
         // Natural completion is recorded only from the verified exit (R5).
-        let _ = process.complete(run.run_mut(), exit);
+        let _ = process.complete(&mut run.run_mut(), exit);
     }
-    let workload = workload(code, signalled.map(|(signal, _)| signal));
+    let workload = if timed_out {
+        WorkloadOutcome::TimedOut {
+            phase: run.target().label.clone(),
+        }
+    } else if requested {
+        WorkloadOutcome::Cancelled {
+            cause: StopCause::Requested,
+            signal: None,
+        }
+    } else {
+        workload(code, signalled.map(|(signal, _)| signal))
+    };
     let code = match (&workload, code) {
         (
             WorkloadOutcome::Cancelled {
@@ -125,6 +178,7 @@ pub(in crate::runner) fn run_plain(
             },
             _,
         ) => 128 + signal,
+        (WorkloadOutcome::TimedOut { .. }, _) => 124,
         (_, Some(code)) => code,
         (_, None) => 1,
     };
@@ -178,7 +232,7 @@ impl effigy_env::ExecRunner for RunExec<'_> {
         };
         let _waiting = CustodyWait::enter();
         let cx = kernel::effects();
-        let mut process = Custody::spawn(run.run_mut(), spec, &cx)
+        let mut process = Custody::spawn(&mut run.run_mut(), spec, &cx)
             .map_err(|error| spawn_error(format!("{error:?}")))?;
         let mut stdout = Vec::new();
         let mut stderr = Tail::default();
@@ -216,7 +270,7 @@ impl effigy_env::ExecRunner for RunExec<'_> {
                 timeout,
             });
         };
-        let _ = process.complete(run.run_mut(), exit);
+        let _ = process.complete(&mut run.run_mut(), exit);
         if exit.code != 0 {
             let tail = &stderr.bytes[stderr
                 .bytes
@@ -276,8 +330,9 @@ fn environment(
             EnvValue::Plain(OsString::from(path)),
         );
     }
-    for (key, value) in overrides {
+    for (key, value) in super::spawn_env::entries().into_iter().chain(overrides) {
         let value = match value {
+            EnvOverride::Plain(value) => EnvValue::Plain(OsString::from(value)),
             EnvOverride::Secret(value) if value.is_empty() => EnvValue::Plain(OsString::new()),
             EnvOverride::Secret(value) => {
                 EnvValue::Secret(SecretValue::new(value.into_bytes()).map_err(|error| {

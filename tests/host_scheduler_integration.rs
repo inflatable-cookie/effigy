@@ -1057,6 +1057,55 @@ fn light_tasks_stay_direct_even_when_the_scheduler_is_unreachable() {
     assert_eq!(ws.lines("mark"), 1);
 }
 
+const NESTED_ADMISSION_MANIFEST: &str = r#"
+[tasks]
+health = [{ task = "baseline" }]
+baseline = [{ task = "validate" }]
+validate = [{ task = "qa" }, { task = "ci" }, { task = "ci:fresh" }, { task = "heavy" }]
+qa = "echo qa >> $MARK"
+ci = "echo ci >> $MARK"
+"ci:fresh" = "echo ci:fresh >> $MARK"
+
+[tasks.heavy]
+admission = "heavy"
+run = "echo heavy >> $MARK"
+"#;
+
+#[test]
+fn nested_heavy_steps_inherit_direct_admission_without_a_scheduler() {
+    for args in [vec!["health"], vec!["--json", "health"]] {
+        let ws = Workspace::new(NESTED_ADMISSION_MANIFEST);
+        let missing = ws.file("no-scheduler-here");
+        let output = ws
+            .command(Some(&missing), &args)
+            .env("HOME", ws.root())
+            .output()
+            .expect("run sequence");
+        assert_eq!(code(&output), 0, "{}", text(&output.stderr));
+        assert_eq!(
+            fs::read_to_string(ws.file("mark")).expect("step effects"),
+            "qa\nci\nci:fresh\nheavy\n"
+        );
+        assert!(!missing.exists(), "children never contact the scheduler");
+    }
+}
+
+#[test]
+fn top_level_heavy_steps_still_require_scheduler_admission() {
+    let ws = Workspace::new(NESTED_ADMISSION_MANIFEST);
+    let missing = ws.file("no-scheduler-here");
+    for selector in ["qa", "ci", "ci:fresh", "heavy"] {
+        let output = ws
+            .command(Some(&missing), &[selector])
+            .env("HOME", ws.root())
+            .output()
+            .expect("run heavy task");
+        assert_eq!(code(&output), 75, "{selector}");
+        assert!(text(&output.stderr).contains("scheduler_unreachable"));
+        assert_eq!(ws.lines("mark"), 0, "unadmitted task must not run");
+    }
+}
+
 #[test]
 fn unreachable_heavy_fails_closed_with_75_and_no_legacy_fallback() {
     let ws = Workspace::new(MANIFEST);
