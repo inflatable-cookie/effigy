@@ -133,7 +133,8 @@ descendant controls without extending budgets or weakening their assertions.
 The shared-process selector mirrors nextest's runner-slot reservation for CLI
 doctor timing proofs: that family runs in one serial libtest process; the
 disjoint remaining CLI family and gateway fixtures keep eight test threads.
-Every case remains selected. This preserves the existing deadline origins and
+`test:fixtures:hygiene:shared:recovery` exposes the final builder partition
+separately when an earlier partition fails. Every case remains selected. This preserves the existing deadline origins and
 process-leak assertions instead of oversubscribing the timing controls.
 
 The previous-generation authority matrix keeps unstarted children scheduled
