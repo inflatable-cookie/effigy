@@ -40,7 +40,7 @@ fn matrix_binary() -> &'static Path {
         let version = Command::new(&path)
             .arg("--version")
             .env("HOME", dir.as_path())
-            .output()
+            .output_owned()
             .expect("load candidate image");
         assert!(version.status.success(), "candidate load: {version:?}");
         path
@@ -57,7 +57,11 @@ struct Fixture {
 impl Fixture {
     fn new() -> Self {
         let home = effigy_test_support::Fixture::new("effigy-kill-matrix-home-").expect("home");
-        let repo = effigy_test_support::Fixture::new("effigy-kill-matrix-repo-").expect("repo");
+        let repo = effigy_test_support::Fixture::authenticated(
+            "effigy-kill-matrix-repo-",
+            Path::new(env!("CARGO_MANIFEST_DIR")),
+        )
+        .expect("authenticated task fixture");
         fs::write(repo.path().join("effigy.toml"), TASK).expect("manifest");
         Self {
             home: fs::canonicalize(home.path()).expect("home path"),
@@ -73,6 +77,7 @@ impl Fixture {
             .args(args)
             .current_dir(&self.repo)
             .env("HOME", &self.home)
+            .env("EFFIGY_HOST_RUN_ROOT", scheduler_state_root())
             .env_remove("EFFIGY_MANAGED_RUN_TOKEN")
             .env_remove("EFFIGY_CUSTODY_NONCE")
             .env_remove("EFFIGY_LOCK_WAIT_MS")
@@ -85,7 +90,7 @@ impl Fixture {
     fn status(&self, task: &str) -> serde_json::Value {
         let output = self
             .effigy(&["tasks", "status", task, "--json"])
-            .output()
+            .output_owned()
             .expect("status");
         let text = String::from_utf8_lossy(&output.stdout);
         let value: serde_json::Value = serde_json::from_str(&text)
@@ -143,6 +148,15 @@ impl Fixture {
             std::thread::sleep(Duration::from_millis(20));
         }
     }
+}
+
+fn scheduler_state_root() -> PathBuf {
+    std::env::var_os("EFFIGY_HOST_RUN_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(std::env::var_os("HOME").expect("original HOME"))
+                .join(".local/state/host-run")
+        })
 }
 
 fn alive(pid: i32) -> bool {
@@ -358,7 +372,7 @@ fn task_engine_equivalent_spellings_from_two_processes_serialize() {
     loop {
         let output = fixture
             .effigy(&["tasks", "status", "api/hold", "--json"])
-            .output()
+            .output_owned()
             .expect("status");
         if String::from_utf8_lossy(&output.stdout).contains("\"running\"") {
             break;
@@ -372,7 +386,7 @@ fn task_engine_equivalent_spellings_from_two_processes_serialize() {
     let second = fixture
         .effigy(&["hold"])
         .current_dir(fixture.repo.join("apps/api"))
-        .output()
+        .output_owned()
         .expect("second spelling");
     assert!(!second.status.success(), "the second spelling must not run");
     let stderr = String::from_utf8_lossy(&second.stderr);
@@ -409,11 +423,12 @@ run = "echo after >> runs.log"
         .arg("rebuild")
         .current_dir(&fixture.repo)
         .env("HOME", &fixture.home)
+        .env("EFFIGY_HOST_RUN_ROOT", scheduler_state_root())
         .env("EFFIGY_UNDER_TEST", &copy)
         .env_remove("EFFIGY_MANAGED_RUN_TOKEN")
         .env_remove("EFFIGY_CUSTODY_NONCE")
         .stdin(Stdio::null())
-        .output()
+        .output_owned()
         .expect("run rebuild");
     assert!(
         output.status.success(),
@@ -549,7 +564,7 @@ run = "printf '%s' \"$SEQUENCE_VALUE\" > effects"
         } else {
             vec!["hold"]
         };
-        let output = fixture.effigy(&args).output().unwrap();
+        let output = fixture.effigy(&args).output_owned().unwrap();
         assert_eq!(output.status.code(), Some(7), "{output:?}");
         assert_eq!(
             fs::read_to_string(fixture.repo.join("effects")).unwrap(),
@@ -639,7 +654,7 @@ concurrent = [{name = "api", setup = [{id = "prepare", run = "echo setup >> effe
         } else {
             vec!["dev", "--headless"]
         };
-        let output = fixture.effigy(&args).output().unwrap();
+        let output = fixture.effigy(&args).output_owned().unwrap();
         assert_eq!(output.status.code(), Some(7), "{output:?}");
         assert_eq!(
             fs::read_to_string(fixture.repo.join("effects")).unwrap(),

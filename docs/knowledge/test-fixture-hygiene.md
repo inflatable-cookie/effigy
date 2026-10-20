@@ -38,6 +38,7 @@ when the transport is fake. No token is removed, broadened or copied.
 | Gateway managed-host and managed matrix | Public managed lifecycle and container tasks |
 | CLI private startup, reset, headless, handover and attached cases | Actual CLI lifecycle entry and nested tasks |
 | Direct builder and builder recovery | Rhai execution through the real task engine |
+| Task-engine kill matrix | Real task execution under the inherited admission token |
 | Shared-render and gateway publication proofs | Nested container helper execution |
 | Python workspace catalog handoff | Host task and session execution through real CLI entry |
 
@@ -124,7 +125,8 @@ registered group. Killing and reaping the controller leaves the actor able to
 observe parent death and run its EXIT trap. Its host actor registration is
 outside the fake container's engine scope, so fake container down cannot kill
 its own host cleanup caller. Authenticated recovery and direct-builder fixtures
-retain the original scheduler state locator when isolating `HOME`.
+retain the original scheduler state locator when isolating `HOME`. The task-engine
+kill matrix retains that locator too, including its executable-replacement proof.
 
 The forked-workload gate proof retains its helper guard after observing leader
 exit, until it has checked gate release while the workload is still alive.
