@@ -879,23 +879,19 @@ fn apply_reloaded_route_table_cancels_idle_shutdown_when_route_returns() {
 }
 
 #[test]
-#[cfg_attr(
-    target_os = "macos",
-    ignore = "known v0.15 rebuild defect: papercut 9536eb29-a2bf-4ffb-af44-8f5739992bbf; owner lane v015-gateway"
-)]
 fn scheduled_idle_shutdown_stops_gateway_when_table_stays_empty() {
     let table = Arc::new(RwLock::new(RouteTable::new()));
     let generation = Arc::new(std::sync::atomic::AtomicU64::new(1));
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
-    schedule_idle_shutdown(
+    let shutdown = schedule_idle_shutdown(
         Arc::clone(&table),
         generation,
         shutdown_tx,
         1,
         std::time::Duration::from_millis(10),
     );
-    std::thread::sleep(std::time::Duration::from_millis(30));
+    shutdown.join().expect("idle shutdown completed");
 
     assert!(*shutdown_rx.borrow());
 }
@@ -906,7 +902,7 @@ fn scheduled_idle_shutdown_is_cancelled_when_generation_changes() {
     let generation = Arc::new(std::sync::atomic::AtomicU64::new(1));
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
-    schedule_idle_shutdown(
+    let shutdown = schedule_idle_shutdown(
         Arc::clone(&table),
         Arc::clone(&generation),
         shutdown_tx,
@@ -914,7 +910,7 @@ fn scheduled_idle_shutdown_is_cancelled_when_generation_changes() {
         std::time::Duration::from_millis(20),
     );
     generation.store(2, std::sync::atomic::Ordering::SeqCst);
-    std::thread::sleep(std::time::Duration::from_millis(40));
+    shutdown.join().expect("cancelled idle shutdown completed");
 
     assert!(!*shutdown_rx.borrow());
 }

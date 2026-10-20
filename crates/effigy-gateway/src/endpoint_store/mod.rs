@@ -1,4 +1,5 @@
-//! Gateway-owned endpoint authority. JSON registries are import inputs only.
+//! Gateway-owned endpoint authority. Legacy JSON changes only at explicit cutovers.
+mod downgrade;
 pub(crate) mod import;
 mod reservations;
 mod snapshot;
@@ -8,7 +9,7 @@ pub use snapshot::{EndpointSnapshot, Quarantine};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use effigy_kernel::ctx::EffectClass;
+use effigy_kernel::ctx::{EffectClass, OperationContext};
 use effigy_kernel::gate::Wait;
 use effigy_kernel::id::{ResourceId, Scope};
 use effigy_kernel::observe::{Evidence, Observed, UnknownReason};
@@ -70,7 +71,7 @@ impl EndpointStore {
             },
         }
     }
-    /// The path identifies an import source, never an independent writer.
+    /// The path identifies legacy cutover input/output, never a routine writer.
     pub fn for_routes(path: &Path) -> Self {
         let directory = path.parent().expect("route source has a parent");
         if directory.file_name().is_some_and(|name| name == "gateway") {
@@ -142,10 +143,15 @@ impl EndpointStore {
         }
     }
 
-    /// Before first mutation, legacy reads remain pure. Unknown kernel state
+    /// Before import and after explicit handback, legacy reads remain pure. Unknown kernel state
     /// never falls back to a legacy file or an empty registry.
     pub fn read_compatible(&self) -> Result<EndpointSnapshot, GatewayError> {
         match self.read() {
+            Observed::Verified(snapshot, _)
+                if snapshot.authority == snapshot::Authority::Legacy =>
+            {
+                self.sources.read()
+            }
             Observed::Verified(snapshot, _) => Ok(snapshot),
             Observed::Absent(_) => self.sources.read(),
             Observed::Unknown(reason) => Err(error(format!("observation unknown: {reason:?}"))),
@@ -185,30 +191,7 @@ impl EndpointStore {
         expected_revision: Option<u64>,
         edit: impl FnOnce(&mut EndpointSnapshot) -> Result<(T, Option<(PathBuf, Vec<u8>)>), E>,
     ) -> Result<T, E> {
-        let op = operator::context(OPERATION_BUDGET, EffectClass::Mutate);
-        let cx = op.effects().map_err(|e| error(format!("{e:?}")))?;
-        let recovery = op
-            .cleanup(OPERATION_BUDGET + CLEANUP_BUDGET)
-            .map_err(|e| error(format!("{e:?}")))?;
-        let root = StateRoot::effects(&cx, &self.home).map_err(error)?;
-        let mut adapter = operator::Adapter;
-        let mut run = Run::begin(
-            &cx,
-            &root,
-            &operator::invocation(owner()),
-            BeginOpts {
-                id: operator::run_id().map_err(error)?,
-                wait: Wait::Until(Instant::now() + OPERATION_BUDGET),
-                acknowledge: vec![],
-                next: operator::next(),
-                custody: None,
-            },
-            &recovery,
-            &mut adapter,
-        )
-        .map_err(error)?;
-        // All returns after admission pass through the kernel's one settle.
-        let result: Result<T, E> = (|| {
+        self.with_run(|run, op| {
             let state = run.resource_state().map_err(error)?;
             let importing = state.is_none();
             let _legacy_locks = if importing {
@@ -220,6 +203,9 @@ impl EndpointStore {
                 Some(value) => EndpointSnapshot::from_value(value)?,
                 None => self.sources.read()?,
             };
+            if snapshot.authority != snapshot::Authority::Store {
+                return Err(error("gateway endpoints were exported or export is incomplete; finish `effigy gateway setup --remove`, or run `effigy gateway setup` to re-import after stopping v0.14.1").into());
+            }
             if expected_revision.is_some_and(|revision| revision != snapshot.revision) {
                 return Err(error(format!(
                     "endpoint revision changed (current {}); read and retry",
@@ -250,7 +236,7 @@ impl EndpointStore {
                 // No external consumer sees these rows before publication.
                 // Failed unpublished reservations can therefore release at
                 // once; published releases use REUSE_QUARANTINE below.
-                Some(Claims::reserve(&mut run, &wanted, Duration::ZERO).map_err(error)?)
+                Some(Claims::reserve(run, &wanted, Duration::ZERO).map_err(error)?)
             };
             // Reserve before any journaled external publication, so settle
             // resolves file effects before transferring the claim reservation.
@@ -270,7 +256,7 @@ impl EndpointStore {
             }
             snapshot.revision = run.fence().generation.get();
             Claims::publish_retained(
-                &mut run,
+                run,
                 token.as_ref(),
                 &desired.into_values().collect::<Vec<_>>(),
                 &serde_json::to_value(snapshot).map_err(error)?,
@@ -278,8 +264,36 @@ impl EndpointStore {
             )
             .map_err(error)?;
             Ok(value)
-        })();
-        let result = result.and_then(|value| {
+        })
+    }
+
+    fn with_run<T, E: From<GatewayError>>(
+        &self,
+        work: impl FnOnce(&mut Run<'_>, &OperationContext) -> Result<T, E>,
+    ) -> Result<T, E> {
+        let op = operator::context(OPERATION_BUDGET, EffectClass::Mutate);
+        let cx = op.effects().map_err(|e| error(format!("{e:?}")))?;
+        let recovery = op
+            .cleanup(OPERATION_BUDGET + CLEANUP_BUDGET)
+            .map_err(|e| error(format!("{e:?}")))?;
+        let root = StateRoot::effects(&cx, &self.home).map_err(error)?;
+        let mut adapter = operator::Adapter;
+        let mut run = Run::begin(
+            &cx,
+            &root,
+            &operator::invocation(owner()),
+            BeginOpts {
+                id: operator::run_id().map_err(error)?,
+                wait: Wait::Until(Instant::now() + OPERATION_BUDGET),
+                acknowledge: vec![],
+                next: operator::next(),
+                custody: None,
+            },
+            &recovery,
+            &mut adapter,
+        )
+        .map_err(error)?;
+        let result = work(&mut run, &op).and_then(|value| {
             run.finish(WorkloadOutcome::Succeeded).map_err(error)?;
             Ok(value)
         });

@@ -449,3 +449,5 @@ fn reading_a_committed_loopback_assignment_does_not_admit_writer_runs() {
     store.release_loopback("policy-read", "/owner").unwrap();
     assert_ne!(store.reserve_loopback("replacement", "/other").unwrap(), ip);
 }
+
+mod downgrade;

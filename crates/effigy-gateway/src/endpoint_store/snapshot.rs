@@ -38,12 +38,24 @@ impl Quarantine {
     }
 }
 
+/// Explicit cutover; ordinary edits never write the legacy registries.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum Authority {
+    #[default]
+    Store,
+    Exporting,
+    Legacy,
+}
+
 /// One committed endpoint revision. Raw documents preserve unknown root and
 /// entry fields during import and subsequent edits, including existing pins.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EndpointSnapshot {
     schema: u32,
+    #[serde(default)]
+    pub(super) authority: Authority,
     pub revision: u64,
     documents: BTreeMap<String, Value>,
     #[serde(default)]
@@ -89,6 +101,7 @@ impl EndpointSnapshot {
             .or_insert_with(|| json!({"allocations":{}}));
         let snapshot = Self {
             schema: 1,
+            authority: Authority::Store,
             revision: 0,
             documents,
             domains: BTreeMap::new(),
@@ -107,6 +120,17 @@ impl EndpointSnapshot {
             return Err(error("unsupported endpoint store schema; update Effigy"));
         }
         Ok(snapshot)
+    }
+    pub(super) fn stamp_legacy_routes(&mut self) -> Result<(), GatewayError> {
+        self.documents
+            .get_mut("routes")
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| error("route export is not an object"))?
+            .insert(
+                "_managed_by".into(),
+                json!(crate::routes::ROUTE_TABLE_MANAGED_MARKER),
+            );
+        Ok(())
     }
     pub fn document(&self, family: &str) -> Result<&Value, GatewayError> {
         self.documents
@@ -286,6 +310,15 @@ impl EndpointSnapshot {
         value: Value,
         known: &[&str],
     ) -> Result<(), GatewayError> {
+        // Do not expand absent optional fields or discard legacy spellings in
+        // an unchanged mapping merely because another mapping was edited.
+        let normalized = match family {
+            "routes" => serde_json::to_value(self.routes()?),
+            "loopback" => serde_json::to_value(self.loopback()?),
+            "ports" => serde_json::to_value(self.ports()?),
+            _ => return Err(error("unknown endpoint family")),
+        }
+        .map_err(error)?;
         let root = self
             .documents
             .get_mut(family)
@@ -298,6 +331,12 @@ impl EndpointSnapshot {
             .cloned()
             .ok_or_else(|| error("endpoint entries are not an object"))?;
         for (name, entry) in &mut entries {
+            if normalized.get(key).and_then(|map| map.get(name)) == Some(entry) {
+                if let Some(previous) = old.and_then(|map| map.get(name)) {
+                    *entry = previous.clone();
+                    continue;
+                }
+            }
             if let (Some(previous), Some(next)) = (
                 old.and_then(|map| map.get(name)).and_then(Value::as_object),
                 entry.as_object_mut(),

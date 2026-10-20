@@ -316,15 +316,42 @@ mod macos_socket_layout_tests {
         }
     }
 
+    // Shell fixtures only closed stdio, leaving nextest/jobserver descriptors
+    // inherited on hosted runners. Close the complete descriptor table here,
+    // after exec and test-harness startup, then keep this owned child alive.
     #[test]
-    #[cfg_attr(
-        target_os = "macos",
-        ignore = "known v0.15 rebuild defect: papercut b7c0ef8d-78f4-4894-ba6d-dae46aa58a91; owner lane v015-gateway"
-    )]
+    #[ignore = "subprocess fixture invoked by the descriptorless-child proof"]
+    fn descriptorless_child_fixture() {
+        assert_eq!(
+            std::env::var("EFFIGY_DESCRIPTORLESS_FIXTURE").as_deref(),
+            Ok("1")
+        );
+        // SAFETY: getdtablesize has no preconditions. This isolated subprocess
+        // owns its descriptor table; close accepts any integer descriptor and
+        // pause takes no pointers. It does no further I/O and the parent kills
+        // and reaps this exact child after observing the empty native FD list.
+        unsafe {
+            libc::alarm(30);
+            for fd in 0..libc::getdtablesize() {
+                libc::close(fd);
+            }
+            loop {
+                libc::pause();
+            }
+        }
+    }
+
+    #[test]
     fn legacy_recovery_macos_live_descriptorless_child_has_no_listeners() {
         let child = OwnedChild(
-            Command::new("/bin/sh")
-                .args(["-c", "exec 0<&- 1>&- 2>&-; exec /bin/sleep 30"])
+            Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "macos_socket::macos_socket_layout_tests::descriptorless_child_fixture",
+                    "--ignored",
+                    "--nocapture",
+                ])
+                .env("EFFIGY_DESCRIPTORLESS_FIXTURE", "1")
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
