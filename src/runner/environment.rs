@@ -191,6 +191,15 @@ pub(in crate::runner) fn import_legacy(
     .map_err(error)
 }
 
+/// Whether an imported v0.14.1 partial generation is these inputs.
+pub(in crate::runner) fn adopts_legacy(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    record: &EnvRecord,
+) -> bool {
+    adopt(repo_root, policy, Some(record))
+}
+
 /// Whether the imported, never-applied running stack matches the current
 /// inputs exactly as its v0.14.1 admission recorded them (M7).
 fn adopt(repo_root: &Path, policy: &EffectiveContainerPolicy, record: Option<&EnvRecord>) -> bool {

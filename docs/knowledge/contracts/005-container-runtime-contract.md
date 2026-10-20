@@ -107,43 +107,31 @@ exec'd nor restarted; the up reports not exec-ready. The shell and task exec
 that follow are gated by that readiness boundary.
 
 No path may stop, restart or recreate an environment's containers while a
-live lock holder of a run bound to that environment exists, except that run's
-own stop.
+run holds that environment, except that run's own stop. The environment
+reconciler makes this structural ([053](053-environment-reconciler-contract.md)):
+every stop, restart, recreation, reset, handover and idle stop is a transition
+that owns the environment's gate and needs a permit, refused while any live or
+unknown holder remains. Runs hold an environment through the hold API: task
+activation, `exec`, shells and data commands hold through a session run; a
+managed run is attached by its lifecycle's bring-up. A holder's own stop is
+exempt only once that run is settling. Gates are host-only (R1): Effigy inside
+a workspace container holds no host gate and requests host authority through
+the channel of contract 052 §8.
 
-Task gates establish liveness (contract 052, task engine adoption): a run
-whose gate is held on this host, or whose gate probe is unreadable, is a
-holder. A matching owner PID and run token in a session record only narrow the
-environment binding; runs record the digest of their managed run token. A
-missing, unreadable or stale session record never grants mutation authority.
-A live holder whose binding cannot be established protects every environment
-in the checkout. Gates are host-only (R1): an Effigy task run inside a
-workspace container holds its container's own gate and is not a host holder;
-container-mode guests requesting host authority is environment-lane work
-(contract 052 §8).
+The exec-readiness restart is the environment's repair transition, so it
+refuses while any run holds the environment and reports the readiness failure
+instead. A bring-up under live holders keeps the running generation and applies
+a changed render once they end. Lifecycle EXIT traps, including inline-workspace
+traps, only write lifecycle state. Runner finish owns exactly one down per
+managed stop; parent death gives an orphaned lifecycle shell no teardown
+authority over a successor.
 
-The exec-readiness recovery restart therefore keeps probing with its
-post-restart window when a live holder exists, then reports any remaining
-readiness failure without restarting. Compose up under a live holder uses
-`--no-recreate`, preserving existing containers while starting missing siblings.
-Lifecycle EXIT traps, including inline-workspace traps, only write lifecycle
-state. Runner finish owns exactly one down per managed stop; parent death gives
-an orphaned lifecycle shell no teardown authority over a successor.
-
-Failed-generation recovery requires the environment's task/profile locks to
-be free of live holders, including a successor with a different run token.
-Pre-spawn managed recovery holds its newly acquired task/profile locks and
-exempts only that local owner; it refuses any other live holder before down.
-A nested `container up` cannot make that exemption. An expired lease reaper
-also refuses before any shutdown effect while a task or managed holder remains
-live, retaining its lease on refusal. Handover first ends known bound owners
-through `effigy <task> stop` and waits for their complete settle, then checks
-locks again before touching the losing environment. An unbound live holder
-refuses handover; the incoming run's own locks are exempt from that check.
-The runner's finish marks its cleanup command with its run token so only its
-own stop can down the environment under that run's locks. An unrelated explicit
-`container down` must wait for the run's own stop too. An ordinary host task
-that explicitly calls down may close out under its own ancestor lock; this
-does not exempt a managed ancestor or grant authority to a reaper.
+A judged-failed managed predecessor is settled by the kernel when its successor
+is admitted; its environment is not torn down, and the successor's bring-up
+reconciles whatever stack it left. Handover first ends known bound owners
+through `effigy <task> stop` and waits for their complete settle, then runs a
+handover transition of the losing environment, which refuses while any other
+run still holds it.
 
 An Effigy invocation that already runs inside its own workspace container
 (`EFFIGY_INTERNAL_CONTAINER_HANDOFF=1`) never calls host runtime commands.
@@ -1419,7 +1407,7 @@ Contract:
 - session shutdown ownership depends on whether Effigy completed runtime
   readiness for that shell
 
-This is not lease-managed task activation.
+This is not held task activation.
 
 ### Non-shell task activation ownership
 
@@ -1433,15 +1421,16 @@ This covers:
 Contract:
 
 - the runtime-prep phase runs before user command dispatch
-- if Effigy auto-started the runtime, or the runtime was already under an
-  active task lease, Effigy refreshes the host-container lease
-- default lease timeout is 5 minutes unless configured otherwise
-- a stack that an explicit `effigy container up` left running is persistently
-  owned: task activation never leases it, the reaper never shuts it down, and
-  only an explicit teardown ends that ownership - every `effigy container down`
-  form that stops the stack (`--global` and cwd-scoped included) and
-  `effigy container retire` once it removes the scope
-- lease reuse must not depend on whether the request came from deferral or
+- the command holds its environment through a session run for as long as it
+  uses it ([053](053-environment-reconciler-contract.md) §4)
+- a stack the activation starts is held: it stops when the last run using it
+  ends (holder-based idle stop, no timer); `EFFIGY_DISABLE_HOST_CONTAINER_LEASE=1`
+  makes task-started stacks persistent instead
+- a stack that an explicit `effigy container up` left running is persistent:
+  task activation borrows it and never stops it, and only an explicit teardown
+  ends that ownership - every `effigy container down` form that stops the stack
+  (`--global` and cwd-scoped included)
+- holding must not depend on whether the request came from deferral or
   explicit task routing
 
 This is the required shared contract for warm non-shell container reuse.

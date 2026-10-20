@@ -203,6 +203,13 @@ fn run_container_up_inner(
         &plan.policy,
     )?;
 
+    // Operator ruling (Tom, 2026-10-15): a partial activation reconciles only
+    // against its original inputs; changed inputs refuse until `down`.
+    if plan.attach_mode == EffectiveAttachMode::Detached {
+        environment::import_legacy(repo_root, &plan.policy)?;
+        refuse_changed_partial_activation(repo_root, &plan.policy)?;
+    }
+
     // The reconcile run journals the Compose activation under Gate(Env); it
     // runs only when the running stack is not already this generation.
     operation.stage = Some("compose_activation");
@@ -508,6 +515,31 @@ fn start_runtime_after_scope_registration<T>(
     effigy_containers::register_container_runtime_scope(policy)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     start()
+}
+
+/// The record's partial generation must be the one this `up` admits.
+fn refuse_changed_partial_activation(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<(), RunnerError> {
+    let Some(record) = environment::record(policy) else {
+        return Ok(());
+    };
+    let Some(partial) = record.partial() else {
+        return Ok(());
+    };
+    let current = policy.render.as_ref().map(|render| render.closure.digest());
+    // A v0.14.1 partial receipt is adopted only when its admission matches.
+    if current == Some(partial)
+        || (partial.starts_with("legacy-partial:")
+            && environment::adopts_legacy(repo_root, policy, &record))
+    {
+        return Ok(());
+    }
+    Err(RunnerError::task_invocation(format!(
+        "container `{}` has a partial detached activation recorded against different inputs; it is not reconciled with the current declaration. Nothing was started, recreated or published. Run `effigy container down`, then `effigy container up --detach` to activate the current inputs",
+        policy.name
+    )))
 }
 
 /// Runs the Compose activation. Attached interrupts and failures return
@@ -2101,6 +2133,46 @@ primary_service = "app"
             effigy_containers::exec::compose_stack_is_running(&policy, &[primary, sibling])
                 .expect("complete stack")
         );
+    }
+
+    #[test]
+    fn a_partial_activation_refuses_changed_inputs_until_down() {
+        let (temp, _lease_home) = isolated_lease_home();
+        let home = temp.path().join("state-home/.effigy");
+        fs::create_dir_all(&home).unwrap();
+        effigy_containers::with_test_effigy_home(&home, || {
+            let policy = prepared_marker_policy(temp.path());
+            let env = crate::runner::environment::env_ref(&policy).unwrap();
+            let ctx = crate::runner::environment::context().unwrap();
+            let evidence =
+                effigy_kernel::observe::Evidence::new("fixture".into(), None).unwrap();
+            // The apply ran; activation never did: a partial generation.
+            effigy_containers::environment::reconcile(
+                &ctx,
+                &env,
+                effigy_containers::environment::Up {
+                    render: policy.render.as_ref().map(|render| &render.closure),
+                    project: &policy.project_name,
+                    backend: &crate::runner::environment::backend(temp.path(), &policy),
+                    retention: effigy_containers::environment::Retention::Persistent,
+                    running: effigy_kernel::observe::Observed::Verified(false, evidence),
+                    adopt: false,
+                },
+                || Ok(()),
+            )
+            .unwrap();
+            super::refuse_changed_partial_activation(temp.path(), &policy)
+                .expect("the same inputs reconcile the partial generation");
+            fs::write(
+                temp.path().join("docker-compose.yml"),
+                "services:\n  app:\n    image: changed\n",
+            )
+            .unwrap();
+            let changed = effigy_containers::prepare_container_policy(temp.path(), None).unwrap();
+            let error = super::refuse_changed_partial_activation(temp.path(), &changed)
+                .expect_err("changed inputs refuse");
+            assert!(error.to_string().contains("effigy container down"), "{error}");
+        });
     }
 
     #[test]
