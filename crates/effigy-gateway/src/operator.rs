@@ -201,6 +201,17 @@ fn legacy_status(config: &GatewayConfig) -> io::Result<Status> {
 /// Pure, bounded observation: no repair, privilege request or exclusive gate.
 pub fn status(config: &GatewayConfig) -> io::Result<Status> {
     let op = context(Duration::from_secs(3), EffectClass::Observe);
+    loop {
+        match status_once(config, &op) {
+            Ok(result) => return Ok(result),
+            Err(err) if op.remaining().unwrap_or_default() <= Duration::from_millis(10) => {
+                return Ok(Status::simple("unknown", Some(err.to_string())));
+            }
+            Err(_) => std::thread::sleep(Duration::from_millis(10)),
+        }
+    }
+}
+fn status_once(config: &GatewayConfig, op: &OperationContext) -> io::Result<Status> {
     let cx = op.observe().map_err(error)?;
     let Some(root) = observed(StateRoot::observe(&cx, home(config)?))? else {
         return legacy_status(config);
@@ -227,7 +238,14 @@ pub fn status(config: &GatewayConfig) -> io::Result<Status> {
             result.reason =
                 Some("gateway cleanup is incomplete; run `effigy gateway up` to reconcile".into())
         }
+        RunStatus::Live(run::Phase::Admitted | run::Phase::Starting) => {
+            result.status = "starting";
+        }
+        RunStatus::Live(run::Phase::Stopping) => result.status = "stopping",
         RunStatus::Live(_) => {
+            // Proof seam for release/settle between the two owner observations.
+            #[cfg(feature = "endpoint-store-faults")]
+            effigy_kernel::fault_injection::point("gateway.status.after-owner-read")?;
             if !matches!(
                 reader.run_owner_state(&cx, &root, &id),
                 Observed::Verified(OwnerState::Held, _)
@@ -439,7 +457,7 @@ pub fn down(config: &GatewayConfig) -> io::Result<Status> {
         if result.status == "stopped" {
             return Ok(result);
         }
-        if result.run != Some(id) {
+        if result.run.is_some_and(|current| current != id) {
             return Err(error("gateway changed while stopping"));
         }
         std::thread::sleep(Duration::from_millis(25));
@@ -499,5 +517,89 @@ mod tests {
         let before = Instant::now();
         assert!(self_test(&config, Duration::from_millis(80)).is_err());
         assert!(before.elapsed() < Duration::from_secs(2));
+    }
+    #[cfg(feature = "endpoint-store-faults")]
+    fn owner_transition_during_status(close: bool) {
+        use std::sync::mpsc;
+        let home = tempfile::tempdir().unwrap();
+        let config = GatewayConfig::standard(home.path().join(".effigy/gateway"));
+        let path = home.path().to_owned();
+        let (ready_tx, ready_rx) = mpsc::channel();
+        let (change_tx, change_rx) = mpsc::channel();
+        let (changed_tx, changed_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let op = context(Duration::from_secs(15), EffectClass::Mutate);
+            let cx = op.effects().unwrap();
+            let cleanup = op.cleanup(Duration::from_secs(5)).unwrap();
+            let root = StateRoot::effects(&cx, &path).unwrap();
+            let mut adapter = Adapter;
+            let mut run = run::Run::begin(
+                &cx,
+                &root,
+                &invocation(owner()),
+                run::BeginOpts {
+                    id: run_id().unwrap(),
+                    wait: effigy_kernel::gate::Wait::FailFast,
+                    acknowledge: vec![],
+                    next: next(),
+                    custody: None,
+                },
+                &cleanup,
+                &mut adapter,
+            )
+            .unwrap();
+            let ticket = run
+                .intend(run::EffectSpec {
+                    target: run.fence().clone(),
+                    kind: "gateway:status-proof".into(),
+                    payload: serde_json::Value::Null,
+                    settlement: run::Settlement::Retain,
+                    required: false,
+                })
+                .unwrap();
+            run.applied(&ticket, serde_json::Value::Null).unwrap();
+            run.advance(run::Phase::Active).unwrap();
+            ready_tx.send(()).unwrap();
+            change_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            run.finish(effigy_kernel::outcome::WorkloadOutcome::Succeeded)
+                .unwrap();
+            if close {
+                run.settle(&cleanup, &mut adapter).unwrap();
+                changed_tx.send(()).unwrap();
+            } else {
+                changed_tx.send(()).unwrap();
+                release_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+                run.settle(&cleanup, &mut adapter).unwrap();
+            }
+        });
+        ready_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        let mut crossed = false;
+        let result = effigy_kernel::fault_injection::with_hook(
+            move |point| {
+                if point == "gateway.status.after-owner-read" && !crossed {
+                    crossed = true;
+                    change_tx.send(()).unwrap();
+                    changed_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+                }
+                Ok(())
+            },
+            || status(&config).unwrap(),
+        );
+        let _ = release_tx.send(());
+        worker.join().unwrap();
+        assert_eq!(result.status, if close { "stopped" } else { "stopping" });
+        assert!(!result.ready);
+        assert!(result.run.is_some());
+    }
+    #[test]
+    #[cfg(feature = "endpoint-store-faults")]
+    fn status_reobserves_owner_released_between_owner_reads() {
+        owner_transition_during_status(true);
+    }
+    #[test]
+    #[cfg(feature = "endpoint-store-faults")]
+    fn status_reports_retiring_generation_without_probing_dead_daemon() {
+        owner_transition_during_status(false);
     }
 }

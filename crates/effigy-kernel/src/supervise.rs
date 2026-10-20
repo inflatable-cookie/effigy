@@ -1127,9 +1127,15 @@ fn supervisor(
                 child.forward(event.forward);
             }
         }
+        // Observe EOF before reading durable requests: detach commits before
+        // closing the client pipe. Reading requests first can miss a detach
+        // committed between that read and EOF, spuriously stopping the run.
         let mut stop = op.cancel_token().cause().cloned();
+        let mut owner_eof = false;
         if stop.is_none() {
-            for request in run.requests()? {
+            let (eof, requests) = observe_client_requests(&mut input, detached, || run.requests())?;
+            owner_eof = eof;
+            for request in requests {
                 match request.action {
                     RequestAction::Detach => detached = true,
                     RequestAction::Escalate => {
@@ -1156,8 +1162,7 @@ fn supervisor(
                 Err(_) => break,
             }
         }
-        let mut byte = [0u8; 1];
-        if !detached && matches!(input.read(&mut byte), Ok(0)) {
+        if !detached && owner_eof {
             stop = Some(StopCause::OwnerLost);
         }
         if let Some(cause) = stop {
@@ -1234,3 +1239,59 @@ fn supervisor(
 
 #[cfg(all(test, feature = "fault-injection"))]
 mod tests;
+// EOF is causally after the client's last durable request. Keep the observation
+// and request ordering together so detach cannot be mistaken for owner death.
+fn observe_client_requests(
+    input: &mut dyn Read,
+    detached: bool,
+    requests: impl FnOnce() -> Result<Vec<Request>, RunError>,
+) -> Result<(bool, Vec<Request>), RunError> {
+    let mut byte = [0u8; 1];
+    let eof = !detached && matches!(input.read(&mut byte), Ok(0));
+    Ok((eof, requests()?))
+}
+
+#[cfg(test)]
+mod client_order_tests {
+    use super::*;
+    use std::cell::Cell;
+
+    #[test]
+    fn detach_committed_at_eof_is_included_before_owner_loss_decision() {
+        struct Eof<'a>(&'a Cell<bool>);
+        impl Read for Eof<'_> {
+            fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+                // The client commits detach immediately before closing its
+                // pipe, after any earlier request snapshot could have returned.
+                self.0.set(true);
+                Ok(0)
+            }
+        }
+        let committed = Cell::new(false);
+        let id = RunId::new(1, [1; 10]).unwrap();
+        let (eof, requests) = observe_client_requests(&mut Eof(&committed), false, || {
+            Ok(if committed.get() {
+                vec![Request {
+                    id,
+                    run: id,
+                    expected: Fence {
+                        resource: ResourceId::gateway("fixture").unwrap(),
+                        generation: crate::id::Generation::new(1),
+                    },
+                    action: RequestAction::Detach,
+                }]
+            } else {
+                vec![]
+            })
+        })
+        .unwrap();
+        assert!(eof);
+        assert!(matches!(
+            requests.as_slice(),
+            [Request {
+                action: RequestAction::Detach,
+                ..
+            }]
+        ));
+    }
+}

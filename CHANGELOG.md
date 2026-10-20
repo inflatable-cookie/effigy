@@ -563,6 +563,10 @@ During v0.x, MINOR bumps may include breaking changes.
   image. A kernel helper that still dies before acknowledging is reported as
   `kernel helper ... exited ... before acknowledging`, with its exit status
   and the tail of its own error output.
+- Gateway detach no longer races owning-client closure, and status reports
+  startup and retirement coherently within its observation deadline.
+- Gateway parser and descriptorless-process controls now run on Linux and
+  macOS; idle shutdown proofs wait for completion instead of fixed sleeps.
 - Container preparation detects missing or changed named-volume mounts before
   reusing a running stack, including worktree `isolated_dirs`. Status and doctor
   report drift, guarded `up` applies the current render, and permission repair
