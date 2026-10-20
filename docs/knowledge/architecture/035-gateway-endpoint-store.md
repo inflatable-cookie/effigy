@@ -120,6 +120,12 @@ Streaming bodies finish before a sender returns to the pool. WebSocket upgrades
 use a dedicated connection. Accepted HTTP/HTTPS and upstream sockets use
 `TCP_NODELAY`.
 
+Retiring a pool marks it retired and wakes its waiters. If another endpoint
+advanced the shared snapshot while a request was preparing, the exact unchanged
+route can obtain a new proof under the current fence. A changed or withdrawn
+route refuses the old request. Requests never wait for a retired worker to
+replenish a socket, and refreshing a fence never reuses its old ownership proof.
+
 Managed connections are prepared and fully verified by background workers before
 request code can acquire them. Request code never invokes the process table,
 ancestry or socket inventory. It checks the bounded supervisor readiness record

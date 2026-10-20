@@ -20,6 +20,7 @@ struct PreparedState {
     checked: Option<Instant>,
     refused: Option<String>,
     demand: bool,
+    retired: bool,
 }
 #[derive(Debug, Default)]
 struct Prepared {
@@ -81,7 +82,14 @@ impl Upstreams {
                     entries.retain(|(at, sender)| at.elapsed() < IDLE_TTL && !sender.is_closed());
                     active.contains(k) && !entries.is_empty()
                 });
-                crate::locks::write_tolerant(&pool.managed).retain(|k, _| active.contains(k));
+                crate::locks::write_tolerant(&pool.managed).retain(|k, prepared| {
+                    if active.contains(k) {
+                        return true;
+                    }
+                    crate::locks::write_tolerant(&prepared.state).retired = true;
+                    prepared.changed.notify_waiters();
+                    false
+                });
                 for route in routes {
                     let Some(owner) = route.managed_listener.clone() else {
                         continue;
@@ -171,21 +179,27 @@ impl Upstreams {
         (pool, worker)
     }
 
-    async fn prepared(&self, route: &Route, revision: u64) -> io::Result<Arc<Prepared>> {
-        let route_key = key(route, revision)?;
+    async fn prepared(&self, route: &Route, mut revision: u64) -> io::Result<Arc<Prepared>> {
+        let mut route_key = key(route, revision)?;
         tokio::time::timeout(self.connect_timeout, async {
             loop {
+                {
+                    let table = crate::locks::read_tolerant(&self.table);
+                    if table.lookup(&route.domain) != Some(route) {
+                        return Err(refused("route publication was withdrawn or replaced"));
+                    }
+                    // Another endpoint can advance the shared snapshot. Only
+                    // the exact unchanged route may seek the newer proof.
+                    if table.revision != revision {
+                        revision = table.revision;
+                        route_key = key(route, revision)?;
+                    }
+                }
                 let prepared = crate::locks::read_tolerant(&self.managed)
                     .get(&route_key)
                     .cloned();
                 if let Some(prepared) = prepared {
                     return Ok(prepared);
-                }
-                {
-                    let table = crate::locks::read_tolerant(&self.table);
-                    if table.revision != revision || table.lookup(&route.domain) != Some(route) {
-                        return Err(refused("route publication was withdrawn or replaced"));
-                    }
                 }
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
@@ -198,12 +212,15 @@ impl Upstreams {
         let Some(owner) = route.managed_listener.as_ref() else {
             return Ok(());
         };
-        let prepared = self.prepared(route, revision).await?;
         tokio::time::timeout(self.connect_timeout, async {
             loop {
+                let prepared = self.prepared(route, revision).await?;
                 let changed = prepared.changed.notified();
                 {
                     let state = crate::locks::read_tolerant(&prepared.state);
+                    if state.retired {
+                        continue;
+                    }
                     if let Some(reason) = &state.refused {
                         return Err(refused(reason));
                     }
@@ -233,13 +250,16 @@ impl Upstreams {
             )
             .await;
         }
-        let prepared = self.prepared(route, revision).await?;
         tokio::time::timeout(self.connect_timeout, async {
             loop {
+                let prepared = self.prepared(route, revision).await?;
                 let changed = prepared.changed.notified();
                 self.allowed(route, revision).await?;
                 {
                     let mut state = crate::locks::write_tolerant(&prepared.state);
+                    if state.retired {
+                        continue;
+                    }
                     if let Some(socket) = state.socket.take() {
                         // An upstream may close a prepared socket before the
                         // first request (header/idle timeout). Never hand that

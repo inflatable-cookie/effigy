@@ -190,7 +190,14 @@ async fn cached_managed_connection_refuses_revocation_and_changed_identity() {
         .unwrap();
     assert_eq!(response.text().await.unwrap(), "managed");
     assert!(count.load(Ordering::Relaxed) >= 2, "the first request must recover a prepared socket closed by the upstream before any request bytes");
+    let (refresh, maintenance) = Upstreams::start(table.clone(), Duration::from_secs(5));
+    drop(refresh.socket(&managed, 0).await.unwrap());
     crate::locks::write_tolerant(&table).revision = 1;
+    // A publication can advance while a request is preparing its connection.
+    // The unchanged route must use a proof for the new fence, not a retired
+    // worker's empty socket slot. A different route must still refuse below.
+    drop(refresh.socket(&managed, 0).await.unwrap());
+    maintenance.abort();
     let response = client
         .get(&url)
         .header(HOST, "pool.test")
@@ -229,8 +236,8 @@ async fn cached_managed_connection_refuses_revocation_and_changed_identity() {
         count.load(Ordering::Relaxed) <= connected + 1,
         "refused preparation may connect but must never send request bytes"
     );
-    // An in-flight request may have copied the previous fence just before
-    // reload. It must refuse promptly, not wait for a pool that cannot exist.
+    // A foreign identity must refuse promptly even when an in-flight request
+    // copied the preceding store fence before reload.
     let managed = crate::locks::read_tolerant(&table)
         .lookup("pool.test")
         .unwrap()
