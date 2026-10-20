@@ -602,7 +602,8 @@ During v0.x, MINOR bumps may include breaking changes.
   exceptions and a suite leak assertion. Shared process guards stop registered
   child groups and detached fake workloads before fixture removal. The kill-matrix
   reclaim proof holds its first run at a barrier until SIGKILL. Fixture child
-  identity is registered before exec, including immediate exits.
+  identity is registered before exec, including immediate exits. Fixture removal
+  shares native child custody with live guards until their groups close.
 - Container preparation detects missing or changed named-volume mounts before
   reusing a running stack, including worktree `isolated_dirs`. Status and doctor
   report drift, guarded `up` applies the current render, and permission repair

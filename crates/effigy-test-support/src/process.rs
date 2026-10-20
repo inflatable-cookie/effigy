@@ -3,14 +3,18 @@ pub use crate::kernel_helpers::wait_kernel_helpers;
 use effigy_kernel::custody::{test_support as custody, ProcessReceipt};
 use effigy_kernel::observe::Observed;
 use serde_json::Value;
+use std::collections::HashMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, ExitStatus, Output};
-use std::sync::{Mutex, OnceLock};
+use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus, Output};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
 static OWNER: OnceLock<Mutex<Option<tempfile::TempDir>>> = OnceLock::new();
+// A ledger receipt alone cannot recover the authority of an unreaped Child.
+// Weak entries let the suite share that exact owner without extending its life.
+static NATIVE: OnceLock<Mutex<HashMap<u32, Weak<Mutex<NativeChild>>>>> = OnceLock::new();
 
 fn fail_exit() -> ! {
     // SAFETY: _exit accepts any integer status and never returns. Cleanup has
@@ -177,7 +181,28 @@ fn settle_registration(path: &Path, owner: Option<&Path>) -> io::Result<bool> {
                 receipt.identity.pid
             );
         }
-        custody::stop(&receipt)?;
+        let native = NATIVE.get().and_then(|owners| {
+            owners
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .get(&receipt.identity.pid)
+                .and_then(Weak::upgrade)
+        });
+        let settled = match native {
+            Some(child) => {
+                let mut child = child.lock().unwrap_or_else(|p| p.into_inner());
+                if child.matches(&receipt) {
+                    child.stop()?;
+                    true
+                } else {
+                    false
+                }
+            }
+            None => false,
+        };
+        if !settled {
+            custody::stop(&receipt)?;
+        }
     }
     match fs::remove_file(path) {
         Ok(()) => (),
@@ -188,12 +213,60 @@ fn settle_registration(path: &Path, owner: Option<&Path>) -> io::Result<bool> {
 }
 
 #[derive(Debug)]
-pub struct OwnedChild {
+struct NativeChild {
     child: Child,
     receipt: ProcessReceipt,
     registration: Option<tempfile::TempPath>,
+    reaped: Option<ExitStatus>,
+}
+impl NativeChild {
+    fn matches(&self, receipt: &ProcessReceipt) -> bool {
+        self.receipt.identity == receipt.identity
+            && self.receipt.pgid == receipt.pgid
+            && self.receipt.nonce == receipt.nonce
+            && self.receipt.grace_millis == receipt.grace_millis
+    }
+    fn group_closed(&self) -> bool {
+        self.reaped.is_some()
+            || matches!(
+                custody::closed(&self.receipt),
+                Observed::Verified(..) | Observed::Absent(_)
+            )
+    }
+    fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
+        if self.reaped.is_some() {
+            return Ok(self.reaped);
+        }
+        let status = custody::poll(&self.child)?;
+        if status.is_some() && self.group_closed() {
+            // Revoke ledger authority before releasing the PID. The cached
+            // status also lets a fixture sweep reap while its guard stays live.
+            self.registration.take();
+            self.reaped = Some(self.child.wait()?);
+        }
+        Ok(status)
+    }
+    fn stop(&mut self) -> io::Result<ExitStatus> {
+        if let Some(status) = self.reaped {
+            return Ok(status);
+        }
+        custody::stop_child(&mut self.child, &self.receipt)?;
+        self.registration.take();
+        let status = self.child.wait()?;
+        self.reaped = Some(status);
+        Ok(status)
+    }
+}
+
+/// Native fixture ownership is shared with in-process fixture cleanup. Stdio
+/// stays on this guard; native wait/signal authority never escapes its mutex.
+#[derive(Debug)]
+pub struct OwnedChild {
+    native: Arc<Mutex<NativeChild>>,
+    pub stdin: Option<ChildStdin>,
+    pub stdout: Option<ChildStdout>,
+    pub stderr: Option<ChildStderr>,
     deadline: Instant,
-    reaped: bool,
 }
 
 pub trait FixtureCommandExt {
@@ -217,65 +290,78 @@ impl FixtureCommandExt for Command {
             .file_name()
             .expect("nonce name")
             .to_string_lossy();
-        let (child, receipt) = custody::spawn(self, &nonce_text)?;
-        let mut owned = OwnedChild {
-            child,
-            receipt,
-            registration: None,
+        let (mut child, receipt) = custody::spawn(self, &nonce_text)?;
+        let owned = OwnedChild {
+            stdin: child.stdin.take(),
+            stdout: child.stdout.take(),
+            stderr: child.stderr.take(),
+            native: Arc::new(Mutex::new(NativeChild {
+                child,
+                receipt,
+                registration: None,
+                reaped: None,
+            })),
             deadline: Instant::now() + Duration::from_secs(180),
-            reaped: false,
         };
         let owner = match self.get_current_dir() {
             Some(directory) => directory.to_path_buf(),
             None => std::env::current_dir()?,
         };
-        owned.registration = Some(record(&owned.receipt, &owner)?);
+        {
+            let mut native = owned.native.lock().unwrap_or_else(|p| p.into_inner());
+            {
+                let mut owners = NATIVE
+                    .get_or_init(|| Mutex::new(HashMap::new()))
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner());
+                owners.retain(|_, child| child.strong_count() != 0);
+                owners.insert(native.child.id(), Arc::downgrade(&owned.native));
+            }
+            // Publish only after a sweep can find this native owner. Keeping
+            // its lock until publication completes also serializes early cleanup.
+            native.registration = Some(record(&native.receipt, &owner)?);
+        }
         Ok(owned)
     }
 }
-impl std::ops::Deref for OwnedChild {
-    type Target = Child;
-    fn deref(&self) -> &Child {
-        &self.child
-    }
-}
-impl std::ops::DerefMut for OwnedChild {
-    fn deref_mut(&mut self) -> &mut Child {
-        &mut self.child
-    }
-}
 impl OwnedChild {
+    pub fn id(&self) -> u32 {
+        self.native
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .child
+            .id()
+    }
+    /// Signal only this retained native leader, matching std::process::Child.
+    pub fn kill(&mut self) -> io::Result<()> {
+        self.native
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .child
+            .kill()
+    }
     pub fn register_owner(&self, owner: &Path) -> io::Result<()> {
-        record(&self.receipt, owner)?
+        let native = self.native.lock().unwrap_or_else(|p| p.into_inner());
+        record(&native.receipt, owner)?
             .keep()
             .map_err(io::Error::other)?;
         Ok(())
     }
 
     pub fn group_closed(&self) -> bool {
-        self.reaped
-            || matches!(
-                custody::closed(&self.receipt),
-                Observed::Verified(..) | Observed::Absent(_)
-            )
+        self.native
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .group_closed()
     }
     pub fn deadline(&self) -> Instant {
         self.deadline
     }
     pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
-        if self.reaped {
-            return self.child.try_wait();
-        }
-        let status = custody::poll(&self.child)?;
-        if status.is_some() && self.group_closed() {
-            // Revoke the ledger authority before releasing the PID. An empty
-            // group needs no retained anchor, and wait keeps native reaping
-            // semantics for parent-death observers such as kill(pid, 0).
-            self.registration.take();
-            self.child.wait()?;
-            self.reaped = true;
-        }
-        Ok(status)
+        self.native
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .try_wait()
     }
     pub fn wait(&mut self) -> io::Result<ExitStatus> {
         loop {
@@ -292,10 +378,7 @@ impl OwnedChild {
         }
     }
     pub fn terminate_and_wait(&mut self) -> io::Result<ExitStatus> {
-        if !self.reaped {
-            custody::stop_child(&mut self.child, &self.receipt)?;
-        }
-        self.wait()
+        self.native.lock().unwrap_or_else(|p| p.into_inner()).stop()
     }
     pub fn wait_with_output(mut self) -> io::Result<Output> {
         use std::io::Read;
@@ -310,9 +393,9 @@ impl OwnedChild {
                 Ok(bytes)
             })
         }
-        drop(self.child.stdin.take());
-        let stdout = reader(self.child.stdout.take());
-        let stderr = reader(self.child.stderr.take());
+        drop(self.stdin.take());
+        let stdout = reader(self.stdout.take());
+        let stderr = reader(self.stderr.take());
         loop {
             if Instant::now() >= self.deadline {
                 return Err(io::Error::new(
@@ -345,13 +428,9 @@ impl OwnedChild {
 }
 impl Drop for OwnedChild {
     fn drop(&mut self) {
-        if self.reaped {
-            return;
-        }
-        let result = custody::stop_child(&mut self.child, &self.receipt)
-            .and_then(|_| self.child.wait().map(|_| ()));
-        if let Err(error) = result {
-            if let Some(record) = self.registration.take() {
+        let mut native = self.native.lock().unwrap_or_else(|p| p.into_inner());
+        if let Err(error) = native.stop() {
+            if let Some(record) = native.registration.take() {
                 let _ = record.keep();
             }
             if std::thread::panicking() {

@@ -207,8 +207,10 @@ fn wait_reaps_a_closed_group_before_the_guard_drops() {
         .unwrap();
     assert!(child.wait().unwrap().success());
     assert!(child.group_closed());
-    let error = effigy_kernel::custody::test_support::poll(&child).unwrap_err();
-    assert_eq!(error.raw_os_error(), Some(libc::ECHILD));
+    assert!(matches!(
+        effigy_kernel::ident::process_identity(child.id()),
+        effigy_kernel::observe::Observed::Absent(_)
+    ));
 }
 
 #[test]
@@ -307,4 +309,24 @@ fn immediate_exit_and_failed_start_preserve_reusable_command_custody() {
         assert_eq!(output.status.code(), Some(23));
         assert_eq!(output.stdout, b"registered");
     }
+}
+
+#[test]
+fn fixture_removal_retains_native_authority_over_an_exited_leader() {
+    use effigy_test_support::process::FixtureCommandExt;
+    let fixture = Fixture::new("effigy-native-root-cleanup-").unwrap();
+    let root = fixture.path().to_path_buf();
+    let mut child = Command::new("sh")
+        .args(["-c", "env -i PATH=/bin:/usr/bin sleep 60 >/dev/null 2>&1 &"])
+        .current_dir(&root)
+        .spawn_owned()
+        .unwrap();
+    assert!(child.wait().unwrap().success());
+    assert!(!child.group_closed());
+    // There is no descendant nonce: only the retained native Child can settle
+    // this group. Fixture removal must share it rather than detach the receipt.
+    drop(fixture);
+    assert!(!root.exists());
+    assert!(child.group_closed());
+    assert!(child.try_wait().unwrap().unwrap().success());
 }

@@ -56,6 +56,21 @@ stdio descriptors, and becomes inert before its sockets are dropped. Failed
 launches wake the observer; failed registration rejects exec. Reusing a `Command`
 keeps previous hooks inert. The rollback and immediate-exit/reuse controls cover
 these boundaries in the kernel and ordinary/shared guard selectors.
+The guard and in-process fixture sweep share the same native `Child` through a
+mutex. A weak registry is keyed by PID, but native cleanup requires the complete
+stored receipt to match (identity, group, nonce and grace). The registry grants
+no authority to a modified or detached receipt. The native owner is installed
+before its ledger receipt is published, with publication and reaping serialized
+by the same owner mutex. Cleanup uses the kernel's
+`stop_child` while this native owner pins its group; only a detached registration
+uses generation/nonce recovery. Native state caches reaping so a fixture can
+settle the child before its guard drops without double-waiting. Stdio remains
+on the guard; exposing the raw `Child` would allow callers to release the pin.
+The nonce-free background-member proof forces an exited leader and requires
+fixture removal to share this still-unreaped native authority. The foreign-
+generation proof still refuses its injected receipt while settling every known
+native owner, regardless of ledger iteration order.
+
 The guard stops the entire group and reaps the direct child on drop, including
 unwind. A leader can exit between generation observations after TERM; cleanup
 uses the remaining existing 15-second budget to observe verified group closure.
@@ -206,6 +221,13 @@ empty. This follows the kill-matrix candidate-image setup boundary and leaves
 the production budgets, input-admission checks and interruption assertions intact.
 
 `test:fixtures:hygiene:environment` runs the environment reconciler fixture family
-with the shared directory/process ledger. `test:fixtures:hygiene:revision` groups
+with the shared directory/process ledger. Its fault-boundary sweep has separate
+Up, Down, Reset and Import test cases, each retaining all traced crossings,
+EPERM/ENOSPC injections, SIGKILL and recovery oracles. Every scenario uses the
+unchanged 180-second nextest deadline instead of sharing one deadline across
+four complete sweeps. Fault children use `spawn_owned` and their exact private
+HOME; SIGKILL targets only the fault process itself without launching a kill
+helper. The suite wrapper still fails and cleans registered residue on timeout.
+`test:fixtures:hygiene:revision` groups
 kernel registration, ordinary/shared guards, environment fixtures, reclaim
 proofs and the kernel ratchet for the registration-barrier change.
