@@ -441,6 +441,10 @@ During v0.x, MINOR bumps may include breaking changes.
   1.2.0.
 
 ### Fixed
+- Container preparation detects missing or changed named-volume mounts before
+  reusing a running stack, including worktree `isolated_dirs`. Status and doctor
+  report drift, guarded `up` applies the current render, and permission repair
+  refuses stale mounts instead of acting on the host bind beneath them.
 - Stopping a managed run now ends the process group it started through
   container exec in containers whose shell is dash or busybox. The stop
   previously reached only the group's leader there, so an Effigy task running

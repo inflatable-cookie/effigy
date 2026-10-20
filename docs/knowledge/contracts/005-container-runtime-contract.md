@@ -63,6 +63,38 @@ routing, alter managed command mapping or interpret builtin `exec` raw argv as
 manifest placeholders. It transfers no scheduler credentials into a container
 and establishes no real Linux or remote cancellation proof.
 
+## Isolated directory mounts and reuse
+
+Catalog `isolated_dirs` entries belong to the immutable rendered closure in
+every checkout scope. Each entry is a distinct named volume layered over the
+source bind. Workspace rewriting preserves those entries; scope identity keeps
+worktree volume names separate from the primary checkout.
+
+Reuse compares each rendered named mount's service, destination, resolved
+volume name and read/write mode against a fresh selected-backend inspect.
+The comparison consumes the final Compose aliases after workspace compaction
+and `data_from` renaming, including destination overrides from later files.
+Inspects must prove the current full container identity, project, service,
+checkout and scope. Missing or unreadable inventories are unavailable, never
+clean and never recreation authority (kernel R2, R3 and K8).
+
+Task preparation no longer skips `up` solely because the primary runs. Mount
+drift enters ordinary owned-stack reconciliation; recorded detached activation
+also checks mounts before skipping Compose. Existing holder exclusion and
+reactivation ownership checks remain mandatory (R4). At this pre-spawn boundary,
+the incoming ordinary task's own exact-process gate is not yet a bound container
+workload and may reconcile its mounts. No ancestor, other process, managed-run
+gate or unknown holder receives that exemption. Permission preflight
+checks the named mounts again before repair, including explicit exec paths:
+a declared volume absent from a live stack cannot grant chown authority over
+the host bind beneath it. Permission target metadata uses the most specific
+declared mount and retains its repair authority.
+
+`container status` exposes `mount_drift` with a `state` and `details` in JSON
+and text; doctor reports drift or unavailable observations read-only. Legacy
+stacks need no manual marker removal or volume deletion: their next guarded
+`up` applies the rendered mounts. No kernel API or identity migration is added.
+
 ## Optional workspace mounts at creation
 
 The operator-authorized Acowtancy feedback on 2026-10-11 requests that optional

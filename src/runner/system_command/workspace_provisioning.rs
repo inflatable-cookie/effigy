@@ -100,6 +100,14 @@ pub(super) fn ensure_workspace_permissions_ready(
     if plan.targets.is_empty() {
         return Ok(());
     }
+    let drift = effigy_containers::exec::probe_mount_drift(
+        workspace_repo_root,
+        policy,
+        std::time::Instant::now() + std::time::Duration::from_secs(15),
+    )?;
+    if !drift.is_empty() {
+        return Err(RunnerError::task_invocation(drift.join("\n")));
+    }
     let perm_plan = plan_workspace_permission_prep(&plan.owned_disposable_paths());
     let progress_label = render_workspace_permission_progress_label(&perm_plan);
     let mut progress = workspace::WorkspaceTransientProgressReporter::new(
