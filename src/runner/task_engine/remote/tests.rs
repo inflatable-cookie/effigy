@@ -732,28 +732,3 @@ fn matrix_unreachable_engine_leaves_residue_until_the_next_run_settles_it() {
     assert!(!matrix.engine.alive(), "the predecessor's settle stops it");
     close(successor, WorkloadOutcome::Succeeded);
 }
-
-/// Owner death after its client died: the run is abandoned unsettled. The
-/// next run of the task settles the predecessor's remote session first.
-#[test]
-fn matrix_owner_death_is_settled_by_the_next_run() {
-    let matrix = matrix();
-    let (task_run, exit) = step_under(&matrix, "remote:matrix:owner", |engine| {
-        let client = engine.pid("client").expect("client pid");
-        // SAFETY: the model's own client process, recorded above.
-        unsafe { libc::kill(client, libc::SIGKILL) };
-    });
-    assert_eq!(exit.workload, WorkloadOutcome::Interrupted);
-    task_run.abandon_for_tests();
-    // A dead owner's killed client is reaped by init; this owner lives on in
-    // the test process, so reap it here as init would.
-    if let Some(client) = matrix.engine.pid("client") {
-        let mut status = 0;
-        // SAFETY: the model's own client, a child of this process.
-        unsafe { libc::waitpid(client, &mut status, 0) };
-    }
-    assert!(matrix.engine.alive());
-    let successor = begin(&matrix.root, "remote:matrix:owner");
-    assert!(!matrix.engine.alive(), "the predecessor's settle stops it");
-    close(successor, WorkloadOutcome::Succeeded);
-}

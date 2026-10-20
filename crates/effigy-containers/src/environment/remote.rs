@@ -213,7 +213,11 @@ impl<C: BackendCli> ComposeRemote<C> {
     /// context is resolved to its name once, here, the way the CLI resolves
     /// it, so every later call (recovery in another process included)
     /// targets the same engine.
-    pub fn resolve(&self, selection: &BackendSelection, full_id: &str) -> RemoteContainer {
+    pub fn resolve(
+        &self,
+        selection: &BackendSelection,
+        full_id: &str,
+    ) -> Result<RemoteContainer, String> {
         let ambient = matches!(
             selection.kind,
             BackendKind::DockerDesktop | BackendKind::DockerEngine
@@ -221,11 +225,16 @@ impl<C: BackendCli> ComposeRemote<C> {
             && std::env::var_os("DOCKER_CONTEXT").is_none_or(|value| value.is_empty())
             && std::env::var_os("DOCKER_HOST").is_none_or(|value| value.is_empty());
         let context = if ambient {
-            current_docker_context()
+            crate::exec::docker_config_current_context()
+                .filter(|name| !name.contains(char::is_whitespace))
+                .ok_or_else(|| {
+                    "the Docker CLI config cannot be read, so its current context is unknown"
+                        .to_owned()
+                })?
         } else {
             selection.context.clone()
         };
-        RemoteContainer::new(selection, context, full_id)
+        Ok(RemoteContainer::new(selection, context, full_id))
     }
 
     fn inspect(&mut self, container: &RemoteContainer, cx: &OperationContext) -> Observed<State> {
@@ -807,23 +816,6 @@ impl<C: BackendCli> RemoteExecAdapter for ComposeRemote<C> {
             evidence("nonce inventory"),
         )
     }
-}
-
-/// The Docker CLI's current context when neither `DOCKER_CONTEXT` nor
-/// `DOCKER_HOST` names one: `currentContext` in its config, else `default`.
-/// Read from the file the CLI reads, so no engine call is needed.
-fn current_docker_context() -> String {
-    let config = std::env::var_os("DOCKER_CONFIG")
-        .filter(|dir| !dir.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".docker")))
-        .map(|dir| dir.join("config.json"));
-    config
-        .and_then(|path| std::fs::read(path).ok())
-        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
-        .and_then(|value| value["currentContext"].as_str().map(str::to_owned))
-        .filter(|name| !name.is_empty() && !name.contains(char::is_whitespace))
-        .unwrap_or_else(|| "default".to_owned())
 }
 
 fn host_program(program: &str) -> OsString {

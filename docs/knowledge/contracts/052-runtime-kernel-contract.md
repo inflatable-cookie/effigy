@@ -1241,9 +1241,11 @@ is gone or shows different start ticks. Exec failure is `Unknown`, never
 - The task engine's remote matrix (`test:task-engine`) runs a container step
   whose workload is a real host process group apart from its client: client
   death (interrupted, then the session stopped), container stop (the
-  workload's own end), engine restart (absent by boot), an unreachable engine
-  (residue, never a kill, settled by the next run) and owner death (settled
-  by the next run), each ending with no surviving process.
+  workload's own end), engine restart (absent by boot) and an unreachable
+  engine (residue, never a kill, settled by the next run), each ending with
+  no surviving process. Owner death is proven out of process by the kernel's
+  `owner_sigkill_at_each_remote_step_recovers_from_the_durable_journal`: an
+  in-process owner never dies, so its sentinel would race its successor.
 - Real-engine qualification on Colima (docker and containerd), Docker Desktop
   and Linux Docker. Apple Containers must pass before it is supported. This
   is a qualification-lane step (planner ruling, 2026-10-20): the relays,

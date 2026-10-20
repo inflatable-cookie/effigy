@@ -272,6 +272,24 @@ fn docker_config_dir() -> Option<PathBuf> {
     std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".docker"))
 }
 
+/// The CLI's current context name from its config, as the CLI reads it, when
+/// no environment variable names one: `default` without a config or without a
+/// `currentContext`. `None` when the config cannot be read or is invalid, so a
+/// caller never mistakes a hidden remote context for the default (fail closed).
+pub(crate) fn docker_config_current_context() -> Option<String> {
+    let Some(dir) = docker_config_dir() else {
+        return Some("default".to_owned());
+    };
+    match config_context(&dir) {
+        DockerConfigContext::Absent | DockerConfigContext::Named(None) => {
+            Some("default".to_owned())
+        }
+        DockerConfigContext::Named(Some(name)) if name.is_empty() => Some("default".to_owned()),
+        DockerConfigContext::Named(Some(name)) => Some(name),
+        DockerConfigContext::Unreadable => None,
+    }
+}
+
 enum DockerConfigContext {
     /// No `config.json`, so Docker's default context is in effect.
     Absent,

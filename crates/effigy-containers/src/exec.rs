@@ -5,6 +5,7 @@ mod managed_stop;
 mod mounts;
 mod parse;
 mod participation;
+pub(crate) use participation::docker_config_current_context;
 mod process;
 mod restart_recovery;
 mod ssh_agent_preflight;
