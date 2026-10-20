@@ -99,8 +99,7 @@ fn main() {
     if let Some(result) = internal_entry(entry, &mut router, &mut Strict, |a| {
         a == [OsString::from("recover")]
     }) {
-        if let Err(e) = result {
-            eprintln!("{e}");
+        if result.is_err() {
             std::process::exit(1);
         }
         return;

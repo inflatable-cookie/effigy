@@ -525,6 +525,13 @@ During v0.x, MINOR bumps may include breaking changes.
   1.2.0.
 
 ### Fixed
+- Task and step admission no longer fails intermittently with `helper pipe
+  closed` reported as a `kernel.db` store error when the running `effigy`
+  binary's path is replaced (for example by `cargo run --bin effigy`) while a
+  run starts. The refusing sentinel is retried once from the unchanged startup
+  image. A kernel helper that still dies before acknowledging is reported as
+  `kernel helper ... exited ... before acknowledging`, with its exit status
+  and the tail of its own error output.
 - Container preparation detects missing or changed named-volume mounts before
   reusing a running stack, including worktree `isolated_dirs`. Status and doctor
   report drift, guarded `up` applies the current render, and permission repair

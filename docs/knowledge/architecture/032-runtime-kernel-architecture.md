@@ -417,6 +417,11 @@ sentinel identities, then Run takes the sole death-pipe writer. Closed commits
 before the writer closes and the owner gate releases. Pure metadata names missing,
 dead and replaced sentinels as gaps. Sentinel EOF uses the same Run settle writer
 with a bounded gate wait; SIGSTOP leaves the pipe and gate held.
+A helper that dies before acknowledging is a typed `HelperExited` with its exit
+and a bounded stderr tail from an unlinked private log; admission settles
+`Closed(NotStarted)`. A sentinel that refused because its path was replaced
+mid-handshake is retried once from the private startup image (effigy#239,
+`test:kernel:helpers`).
 
 Detached startup records socket intent before binding, then records the socket
 inode receipt. A bind fault starts no workload and settles `Closed(NotStarted)`;
