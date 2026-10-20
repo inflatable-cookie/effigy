@@ -265,7 +265,6 @@ impl<'a> Case<'a> {
             .env("EFFIGY_EXECUTABLE", self.root.join("effigy-wrapper"))
             .env("COLIMA_HOME", self.home.join("colima"))
             .env("EFFIGY_COMPOSE_BACKEND", "docker")
-            .env("EFFIGY_DISABLE_HOST_CONTAINER_LEASE_REAPER", "1")
             .env("EFFIGY_TEST_SKIP_WORKSPACE_EFFIGY_HANDOFF", "1")
             .env(
                 effigy_gateway::private_state::PRIVATE_STATE_ROOT_ENV,
@@ -1102,7 +1101,7 @@ fn authority_matrix(authority: Authority) {
             let down = case.run(&["container", "stack", "down"]);
             assert!(!down.status.success(), "down under a live holder");
             assert!(
-                String::from_utf8_lossy(&down.stderr).contains("live task runs hold their gates"),
+                String::from_utf8_lossy(&down.stderr).contains("while runs hold it"),
                 "{}",
                 String::from_utf8_lossy(&down.stderr)
             );
@@ -1124,11 +1123,15 @@ fn authority_matrix(authority: Authority) {
                 "--token",
                 "expired-prior",
             ]);
-            assert!(!reaper.status.success(), "reaper under the live run");
+            assert!(!reaper.status.success(), "the retired reaper entry refuses");
             assert!(
-                String::from_utf8_lossy(&reaper.stderr).contains("live task runs hold their gates"),
+                String::from_utf8_lossy(&reaper.stderr).contains("is retired"),
                 "{}",
                 String::from_utf8_lossy(&reaper.stderr)
+            );
+            assert!(
+                dir.join("stack.json").exists(),
+                "a v0.14.1 lease file is never changed"
             );
         }
     }

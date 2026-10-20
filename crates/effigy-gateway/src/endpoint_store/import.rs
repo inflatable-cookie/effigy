@@ -25,7 +25,7 @@ impl Sources {
             ports: root.join("ports.json"),
         }
     }
-    fn paths(&self) -> [(&'static str, &Path); 3] {
+    pub(super) fn paths(&self) -> [(&'static str, &Path); 3] {
         [
             ("routes", &self.routes),
             ("loopback", &self.loopback),

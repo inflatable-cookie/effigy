@@ -64,15 +64,6 @@ pub(super) fn fmt_runner_error(
             f,
             "{shell_error}\nworkspace cleanup also failed: {cleanup_error}"
         ),
-        RunnerError::HostContainerLeaseEncode { detail } => {
-            write!(f, "failed to encode container lease: {detail}")
-        }
-        RunnerError::HostContainerLeaseReaperBootstrap { detail } => {
-            write!(
-                f,
-                "failed to bootstrap host container lease reaper: {detail}"
-            )
-        }
         RunnerError::GatewayRouteTable {
             phase,
             path,

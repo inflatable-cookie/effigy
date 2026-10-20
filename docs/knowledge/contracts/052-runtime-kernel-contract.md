@@ -25,9 +25,11 @@ are not yet armed; architecture 032 records the limit. The managed-run
 supervisor is armed at every kernel crossing (`test:supervisor:faults`).
 The task engine has adopted the kernel (effigy#217; §10.1 records each row),
 and bundle-source preparation uses Prepare runs, source custody, store gating
-and atomic lock publication. Managed runs have one detached supervisor per
-run (effigy#235; §10.2 records each row). The other engines have not adopted
-it; their adoption-map rows (§10) remain current behavior. QA-group runs are kernel runs,
+and atomic lock publication. The environment reconciler has adopted it
+(effigy#232; contract [053](053-environment-reconciler-contract.md), §10.3).
+Managed runs have one detached supervisor per run (effigy#235; §10.2 records
+each row). The other engines have not adopted it; their adoption-map rows
+(§10) remain current behavior. QA-group runs are kernel runs,
 but `stop` and `hard_timeout_ms` stay unavailable: contract
 [051](051-bounded-qa-groups-contract.md) keeps refusing them until the task
 engine exposes them.
@@ -1089,6 +1091,16 @@ Holder liveness:
 - An address released and immediately requested is refused until
   quarantine ends.
 
+Implemented beyond the sketch above (effigy#232): `publish_active_for`
+inserts each requesting run's attachment in the environment apply run's
+final transaction (the `EnvNotActive` row); `permit_exempt` is the sketch's
+`exempt`, admitted only once that holder is `Stopping` or `Closed`;
+`TransitionPermit::publish_stopped` publishes `stopped` with a fresh holder
+check; `Run::set_engine_record` stores the authority engine's own record on
+its resource row (bounded, fenced); `StoreReader::object_refs` and
+`run::summary` are pure reads. Settle records a `Retain` or `Irreversible`
+environment effect without a holder check, because recording calls no adapter.
+
 ### 5.10 Remote custody
 
 #### API
@@ -1462,7 +1474,7 @@ them; the table governs new kernel-backed surfaces.
 | --- | --- | --- | --- |
 | `meta` | key | schema version, created by, last written by | kernel |
 | `checkouts` | token | kind, path hint, Git dir hint, state (live, tombstoned), first seen, last seen, tombstoned at | kernel, Mutate |
-| `resources` | resource name | canonical bytes, kind, scope, label, authority engine, generation, desired, last applied, state, updated at | authority, under the resource gate |
+| `resources` | resource name | canonical bytes, kind, scope, label, authority engine, generation, desired, last applied, state, backend, engine record, updated at | authority, under the resource gate |
 | `runs` (operations) | run id | owner, generation, kind, placement, phase, workload outcome, cleanup outcome, invocation and digest, owner, supervisor and sentinel identities, parent run, stop cause, residue acknowledgement, timestamps | owner gate holder |
 | `events` (journal) | run id, sequence | effect id, kind, target, settlement, state, receipt, error, deadline, wall time | owner gate holder |
 | `attachments` | environment, run | environment generation, mode, state | the attaching run; settle |
@@ -1965,6 +1977,14 @@ and `--detach` are front ends over the same run. Row by row:
 | Colima repair by `pkill -f` patterns | `crates/effigy-containers/src/exec/colima_runtime.rs:924-944` | retained identities only (I-P4, R3) |
 | Failed-run recovery downs inside `up` | `src/runner/container_command/lifecycle.rs:766` | predecessor settle (K5); permit (R4) |
 
+Adopted by effigy#232 ([053](053-environment-reconciler-contract.md)): the
+admission record, the lifecycle markers and lease, the reaper, admission
+hashing (kept only for the importer's adoption check), recreation under a
+permit, the exec-probe restart (a repair transition, refused while held), the
+per-environment reset and failed-run recovery. The backend record is #230's
+(below); the reconciler reads it and targets every transition at it. The
+allocator, runtime-scope and Colima-repair rows remain current behavior.
+
 Environment reconciler adoption, tranche 3 (effigy#230, 2026-10-20):
 
 | Row | State |
@@ -2015,6 +2035,14 @@ A v0.14.1 user updates and everything keeps working with no manual steps
 | M6 | Observe never imports. Until a scope is imported, status reads legacy files read-only for one minor. The first Mutate per scope imports. |
 | M7 | Running stacks survive. Containers keep running, labels prove ownership, nothing is recreated because of an import. |
 | M8 | Downgrade after a scope's cut-over is unsupported. The store records the writing build, and a binary that predates the schema refuses Mutate. |
+
+Gateway-only operator exception (Tom, 2026-10-19, effigy#237; reaffirmed in the
+2026-10-20 continuation): M3/M8 permit explicit export-on-remove to v0.14.1.
+The new writer freezes before journaled export and refuses ordinary mutation
+until setup quiesces the old writer and re-imports. No kernel primitive or
+other scope gains downgrade support. The owning protocol and proofs are in
+[architecture 035](../architecture/035-gateway-endpoint-store.md#explicit-downgrade-and-re-upgrade).
+
 
 | Legacy family | Location | Import | Quiesce condition | `Unknown` handling |
 | --- | --- | --- | --- | --- |

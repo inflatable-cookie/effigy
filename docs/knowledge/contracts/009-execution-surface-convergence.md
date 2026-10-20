@@ -91,7 +91,7 @@ Current shared ownership should converge around:
 | Interactive workspace/session ownership | shared session-ownership helper under `src/runner/system_command/workspace.rs` or adjacent shared runner module |
 | Gateway route reconciliation | `src/runner/container_command/gateway_registration.rs` |
 | Container-local alias reconciliation | `src/runner/container_command/support.rs` through shared runtime prep |
-| Host-container lease refresh and notices | `src/runner/host_container_lease.rs` |
+| Environment holds, idle stop and notices | `src/runner/environment.rs` (contract 053) |
 | Embedded Effigy command re-entry | one shared embedded-runner entry introduced after this contract |
 
 No new caller path should re-own one of these responsibilities locally unless

@@ -97,6 +97,14 @@ struct Fixture {
 
 impl Drop for Fixture {
     fn drop(&mut self) {
+        if std::thread::panicking() {
+            for name in ["mode", "calls", "colima-calls"] {
+                eprintln!(
+                    "private backend {name}: {}",
+                    std::fs::read_to_string(self.root.join("state").join(name)).unwrap_or_default()
+                );
+            }
+        }
         // Only our private temporary tree: never follow a fixture symlink.
         fn unlock(path: &Path) -> std::io::Result<()> {
             use std::os::unix::fs::PermissionsExt;
@@ -132,10 +140,16 @@ impl Fixture {
     }
 
     fn with_declaration(retained: bool, changed: bool, backend: &str, scoped: bool) -> Self {
-        let temp = tempfile::Builder::new()
-            .prefix("effigy-parent-fixtures-recovery-")
-            .tempdir_in(crate::contract_test_support::test_fixture_parent())
-            .unwrap();
+        let mut builder = tempfile::Builder::new();
+        builder.prefix("effigy-builder-recovery-");
+        // No retired parent-token authority requires fixtures in a checkout.
+        // Colima's macOS path contract still requires a host-shared directory.
+        let temp = if cfg!(target_os = "macos") {
+            builder.tempdir_in("/Users/Shared")
+        } else {
+            builder.tempdir()
+        }
+        .unwrap();
         let root = temp.path().canonicalize().unwrap();
         std::fs::create_dir_all(root.join(".git")).unwrap();
         std::fs::write(
@@ -236,7 +250,7 @@ esac
             }
             let identity = json!([{"Id": "a".repeat(64), "Name": format!("/{}-builder-1", policy.project_name), "State": {"Running": true, "Status": "running"}, "Config": {"Labels": labels}, "Mounts": [{"Type": "bind", "Source": root, "Destination": "/workspace", "RW": true}], "NetworkSettings": {"Ports": {}}}]);
             std::fs::write(root.join("state/identity.json"), identity.to_string()).unwrap();
-            crate::runner::host_container_lease::record_partial_activation(&root, &policy).unwrap();
+            write_legacy_partial_marker(&root, &policy);
         }
         if changed {
             let manifest = root.join("effigy.toml");
@@ -284,8 +298,7 @@ esac
         .unwrap();
         let legacy =
             effigy_containers::load_container_policy(&self.root, Some("linux-release")).unwrap();
-        crate::runner::host_container_lease::record_partial_activation(&self.root, &legacy)
-            .unwrap();
+        write_legacy_partial_marker(&self.root, &legacy);
         // The old admission really predates the shipped declaration change.
         std::fs::write(&manifest, current).unwrap();
         preserve_tree(
@@ -479,6 +492,20 @@ fn preserve_tree(dir: &Path, files: &mut Vec<(PathBuf, Vec<u8>)>) {
     }
 }
 
+/// A v0.14.1 partial-activation receipt, exactly as that release left it.
+/// The builder never reads or rewrites it (contract 052 M3).
+fn write_legacy_partial_marker(root: &Path, policy: &effigy_containers::EffectiveContainerPolicy) {
+    let dir = crate::runner::environment::legacy_marker_dir(root, policy);
+    std::fs::create_dir_all(&dir).unwrap();
+    let context = effigy_containers::policy::admission::generation_context(policy)
+        .unwrap_or_else(|_| json!({"schema": "effigy.container-partial-activation.v2"}));
+    std::fs::write(
+        dir.join(format!("{}.partial.json", policy.name)),
+        serde_json::to_vec_pretty(&context).unwrap(),
+    )
+    .unwrap();
+}
+
 fn write_executable(path: &Path, text: &str) {
     use std::os::unix::fs::PermissionsExt;
     std::fs::write(path, text).unwrap();
@@ -490,16 +517,6 @@ fn changed_input_partial_builder_recovers_through_the_maintained_artifact_task()
     let _lock = crate::contract_test_support::lock_test();
     for backend in ["docker", "colima"] {
         let fixture = Fixture::new(true, true, backend);
-        let error = crate::runner::host_container_lease::retire_stale_detached_admission(
-            &fixture.root,
-            &fixture.policy,
-        )
-        .unwrap_err()
-        .to_string();
-        assert!(
-            error.contains("partial detached activation recorded against different inputs"),
-            "{error}"
-        );
         fixture
             .task()
             .expect("automatic build with original admission retained");
@@ -515,13 +532,6 @@ fn unchanged_partial_completed_and_absent_builders_use_supported_task() {
     let _lock = crate::contract_test_support::lock_test();
     for state in ["partial", "complete", "absent"] {
         let fixture = Fixture::new(state != "absent", false, "docker");
-        if state == "complete" {
-            crate::runner::host_container_lease::mark_detached_activation_complete(
-                &fixture.root,
-                &fixture.policy,
-            )
-            .unwrap();
-        }
         fixture
             .task()
             .unwrap_or_else(|error| panic!("{state}: {error}"));
@@ -535,63 +545,74 @@ fn unchanged_partial_completed_and_absent_builders_use_supported_task() {
     }
 }
 
-#[test]
-fn foreign_missing_malformed_replaced_and_unbound_builders_refuse_before_build() {
+fn assert_invalid_builder_refuses_before_build(case: &str) {
     let _lock = crate::contract_test_support::lock_test();
-    for case in [
-        "foreign_checkout",
-        "foreign_scope",
-        "foreign_project",
-        "foreign_service",
-        "foreign_working_dir",
-        "oneoff",
-        "multiple_rows",
-        "multiple_inspect",
-        "malformed_list",
-        "change_name",
-        "unlabelled",
-        "bad_id",
-        "missing",
-        "bad_bind",
-        "readonly_bind",
-        "missing_bind",
-        "shadow_bind",
-        "replace",
-        "change_bind",
-        "list_fail",
-        "inspect_fail",
-        "malformed_inspect",
-        "missing_scope",
-        "stopped",
-        "ports",
-    ] {
-        let fixture = Fixture::new(true, true, "docker");
-        match case {
-            "foreign_checkout" => fixture.mutate(|row| row["Config"]["Labels"]["com.effigy.checkout"] = json!(fixture.root.join("state"))),
-            "foreign_scope" => fixture.mutate(|row| row["Config"]["Labels"]["com.effigy.scope"] = json!("foreign-scope")),
-            "foreign_project" => fixture.mutate(|row| row["Config"]["Labels"]["com.docker.compose.project"] = json!("foreign-project")),
-            "foreign_service" => fixture.mutate(|row| row["Config"]["Labels"]["com.docker.compose.service"] = json!("app")),
-            "foreign_working_dir" => fixture.mutate(|row| row["Config"]["Labels"]["com.docker.compose.project.working_dir"] = json!(fixture.root.join("state"))),
-            "oneoff" => fixture.mutate(|row| row["Config"]["Labels"]["com.docker.compose.oneoff"] = json!("True")),
-            "unlabelled" => fixture.mutate(|row| { row["Config"]["Labels"].as_object_mut().unwrap().remove("com.effigy.checkout"); }),
-            "missing_scope" => fixture.mutate(|row| { row["Config"]["Labels"].as_object_mut().unwrap().remove("com.effigy.scope"); }),
-            "stopped" => fixture.mutate(|row| { row["State"]["Running"] = json!(false); row["State"]["Status"] = json!("exited"); }),
-            "ports" => fixture.mutate(|row| row["NetworkSettings"]["Ports"] = json!({"80/tcp": [{"HostIp": "127.0.0.1", "HostPort": "12345"}]})),
-            "bad_id" => fixture.mutate(|row| row["Id"] = json!("abc")),
-            "missing" => std::fs::remove_file(fixture.root.join("state/identity.json")).unwrap(),
-            "bad_bind" => fixture.mutate(|row| row["Mounts"][0]["Source"] = json!(fixture.root.join("state"))),
-            "readonly_bind" => fixture.mutate(|row| row["Mounts"][0]["RW"] = json!(false)),
-            "missing_bind" => fixture.mutate(|row| row["Mounts"] = json!([])),
-            "shadow_bind" => fixture.mutate(|row| row["Mounts"].as_array_mut().unwrap().push(json!({"Type": "bind", "Source": fixture.root.join("state"), "Destination": "/workspace/src", "RW": true}))),
-            _ => fixture.mode(case),
-        }
-        let error = fixture.task().expect_err(case);
-        assert!(
-            !fixture.root.join("state/build-effect").exists(),
-            "{case}: {error}"
-        );
-        fixture.assert_preserved();
+    let fixture = Fixture::new(true, true, "docker");
+    match case {
+        "foreign_checkout" => fixture.mutate(|row| row["Config"]["Labels"]["com.effigy.checkout"] = json!(fixture.root.join("state"))),
+        "foreign_scope" => fixture.mutate(|row| row["Config"]["Labels"]["com.effigy.scope"] = json!("foreign-scope")),
+        "foreign_project" => fixture.mutate(|row| row["Config"]["Labels"]["com.docker.compose.project"] = json!("foreign-project")),
+        "foreign_service" => fixture.mutate(|row| row["Config"]["Labels"]["com.docker.compose.service"] = json!("app")),
+        "foreign_working_dir" => fixture.mutate(|row| row["Config"]["Labels"]["com.docker.compose.project.working_dir"] = json!(fixture.root.join("state"))),
+        "oneoff" => fixture.mutate(|row| row["Config"]["Labels"]["com.docker.compose.oneoff"] = json!("True")),
+        "unlabelled" => fixture.mutate(|row| { row["Config"]["Labels"].as_object_mut().unwrap().remove("com.effigy.checkout"); }),
+        "missing_scope" => fixture.mutate(|row| { row["Config"]["Labels"].as_object_mut().unwrap().remove("com.effigy.scope"); }),
+        "stopped" => fixture.mutate(|row| { row["State"]["Running"] = json!(false); row["State"]["Status"] = json!("exited"); }),
+        "ports" => fixture.mutate(|row| row["NetworkSettings"]["Ports"] = json!({"80/tcp": [{"HostIp": "127.0.0.1", "HostPort": "12345"}]})),
+        "bad_id" => fixture.mutate(|row| row["Id"] = json!("abc")),
+        "missing" => std::fs::remove_file(fixture.root.join("state/identity.json")).unwrap(),
+        "bad_bind" => fixture.mutate(|row| row["Mounts"][0]["Source"] = json!(fixture.root.join("state"))),
+        "readonly_bind" => fixture.mutate(|row| row["Mounts"][0]["RW"] = json!(false)),
+        "missing_bind" => fixture.mutate(|row| row["Mounts"] = json!([])),
+        "shadow_bind" => fixture.mutate(|row| row["Mounts"].as_array_mut().unwrap().push(json!({"Type": "bind", "Source": fixture.root.join("state"), "Destination": "/workspace/src", "RW": true}))),
+        _ => fixture.mode(case),
     }
+    let error = fixture.task().expect_err(case);
+    assert!(
+        !fixture.root.join("state/build-effect").exists(),
+        "{case}: {error}"
+    );
+    fixture.assert_preserved();
+}
+
+// Each adversarial identity gets its own nextest deadline and failure name.
+mod invalid_builders {
+    use super::*;
+    macro_rules! cases {
+        ($($case:ident),+ $(,)?) => { $(
+            #[test]
+            fn $case() {
+                assert_invalid_builder_refuses_before_build(stringify!($case));
+            }
+        )+ };
+    }
+    cases!(
+        foreign_checkout,
+        foreign_scope,
+        foreign_project,
+        foreign_service,
+        foreign_working_dir,
+        oneoff,
+        multiple_rows,
+        multiple_inspect,
+        malformed_list,
+        change_name,
+        unlabelled,
+        bad_id,
+        missing,
+        bad_bind,
+        readonly_bind,
+        missing_bind,
+        shadow_bind,
+        replace,
+        change_bind,
+        list_fail,
+        inspect_fail,
+        malformed_inspect,
+        missing_scope,
+        stopped,
+        ports,
+    );
 }
 
 #[test]
@@ -726,7 +747,7 @@ fn first_activation_failure_retains_old_output_without_destructive_recovery() {
 }
 
 #[test]
-fn extra_declared_service_and_malformed_retained_admission_refuse() {
+fn extra_declared_service_refuses_and_legacy_receipts_stay_inert() {
     let _lock = crate::contract_test_support::lock_test();
     for mode in ["sibling", "malformed_marker", "foreign_marker"] {
         let mut fixture = Fixture::new(true, true, "docker");
@@ -760,8 +781,17 @@ fn extra_declared_service_and_malformed_retained_admission_refuse() {
                 .unwrap()
                 .1 = content.into_bytes();
         }
-        fixture.task().expect_err(mode);
-        assert!(!fixture.root.join("state/build-effect").exists());
+        if mode == "sibling" {
+            fixture.task().expect_err(mode);
+            assert!(!fixture.root.join("state/build-effect").exists());
+        } else {
+            // A v0.14.1 receipt is inert history: the environment record,
+            // not a marker, retains admission, and the receipt stays as it
+            // was found (contract 052 M3).
+            fixture
+                .task()
+                .unwrap_or_else(|error| panic!("{mode}: {error}"));
+        }
         fixture.assert_preserved();
     }
 }
@@ -769,20 +799,13 @@ fn extra_declared_service_and_malformed_retained_admission_refuse() {
 #[test]
 fn concurrent_admission_or_source_change_refuses_before_exec() {
     let _lock = crate::contract_test_support::lock_test();
-    for mode in ["remove_marker", "change_inputs"] {
-        let mut fixture = Fixture::new(true, true, "docker");
-        fixture.mode(mode);
-        fixture
-            .task()
-            .expect_err("a changing context cannot authorize a build");
-        assert!(!fixture.root.join("state/build-effect").exists());
-        if mode == "remove_marker" {
-            fixture
-                .preserved
-                .retain(|(path, _)| !path.to_string_lossy().ends_with("partial.json"));
-        }
-        fixture.assert_preserved();
-    }
+    let fixture = Fixture::new(true, true, "docker");
+    fixture.mode("change_inputs");
+    fixture
+        .task()
+        .expect_err("a changing context cannot authorize a build");
+    assert!(!fixture.root.join("state/build-effect").exists());
+    fixture.assert_preserved();
 }
 
 #[test]
@@ -802,19 +825,27 @@ fn interrupted_successful_backend_cannot_publish_task_success() {
             let _ = self.0.wait();
         }
     }
+    let stderr_path = fixture.root.join("interrupted-child.stderr");
     let mut child = ChildGuard(
         std::process::Command::new(host)
             .arg("workspace:linux:artifact")
             .current_dir(&fixture.root)
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
+            .stderr(std::fs::File::create(&stderr_path).unwrap())
             .spawn()
             .unwrap(),
     );
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    // Startup includes kernel admission and several real backend captures.
+    let ready_deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
     while !fixture.root.join("state/await-signal").exists() {
+        if let Some(exit) = child.0.try_wait().unwrap() {
+            panic!(
+                "private build exited before signal boundary: {exit}; {}",
+                std::fs::read_to_string(&stderr_path).unwrap()
+            );
+        }
         assert!(
-            std::time::Instant::now() < deadline,
+            std::time::Instant::now() < ready_deadline,
             "private build did not reach signal boundary"
         );
         std::thread::sleep(std::time::Duration::from_millis(20));
@@ -824,6 +855,8 @@ fn interrupted_successful_backend_cannot_publish_task_success() {
         nix::sys::signal::Signal::SIGTERM,
     )
     .unwrap();
+    // Preserve the 10s stop bound independently of startup time.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     let exit = loop {
         if let Some(exit) = child.0.try_wait().unwrap() {
             break exit;
@@ -842,72 +875,89 @@ fn interrupted_successful_backend_cannot_publish_task_success() {
     fixture.assert_preserved();
 }
 
-#[test]
-fn managed_namespace_builds_without_adopting_any_legacy_shape() {
+fn assert_managed_namespace_preserves_legacy(scoped: bool, legacy: &str) {
     let _lock = crate::contract_test_support::lock_test();
-    for scoped in [false, true] {
-        for legacy in ["native", "named_oneoff", "labelled", "absent"] {
-            let mut fixture = Fixture::with_declaration(false, false, "colima", scoped);
-            fixture.retain_legacy(legacy);
-            assert_eq!(
-                fixture.policy.project_name,
-                if scoped {
-                    "effigy-artifact-builder-v1-ec-7288dc2b3e84"
-                } else {
-                    "effigy-artifact-builder-v1"
-                }
-            );
-            fixture
-                .task()
-                .unwrap_or_else(|error| panic!("scoped={scoped}, legacy={legacy}: {error}"));
-            assert_eq!(fixture.activation_count(), 1);
-            let identity = fixture.root.join("state/identity.json");
-            let original = std::fs::read(&identity).unwrap();
-            let current: Value = serde_json::from_slice(&original).unwrap();
-            assert_eq!(
-                current[0]["Config"]["Labels"]["com.effigy.checkout"],
-                json!(fixture.root)
-            );
-            assert!(
-                current[0]["Config"]["Labels"]
-                    .get("com.docker.compose.oneoff")
-                    .is_none(),
-                "native nerdctl omits this label"
-            );
-            preserve_tree(
-                &fixture
-                    .root
-                    .join("host-home/.effigy/runtime/host-container-leases"),
-                &mut fixture.preserved,
-            );
-            let manifest = fixture.root.join("effigy.toml");
-            let source = std::fs::read_to_string(&manifest).unwrap();
-            std::fs::write(
-                &manifest,
-                format!("{source}\n# subsequent source upgrade\n"),
-            )
-            .unwrap();
-            fixture.mode("next-upgrade");
-            fixture
-                .task()
-                .expect("future upgrades reuse the SAME managed project and native ID");
-            assert_eq!(fixture.activation_count(), 1);
-            assert_eq!(std::fs::read(&identity).unwrap(), original);
-            let artifact = fixture
-                .root
-                .join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
-            assert_eq!(
-                std::fs::read_to_string(artifact.with_extension("active-version"))
-                    .unwrap()
-                    .trim(),
-                effigy_core::build_info::active_version()
-            );
-            assert!(std::fs::read_to_string(&artifact)
-                .unwrap()
-                .contains("next-upgrade"));
-            fixture.assert_preserved();
+    let mut fixture = Fixture::with_declaration(false, false, "colima", scoped);
+    fixture.retain_legacy(legacy);
+    assert_eq!(
+        fixture.policy.project_name,
+        if scoped {
+            "effigy-artifact-builder-v1-ec-7288dc2b3e84"
+        } else {
+            "effigy-artifact-builder-v1"
         }
+    );
+    fixture
+        .task()
+        .unwrap_or_else(|error| panic!("scoped={scoped}, legacy={legacy}: {error}"));
+    assert_eq!(fixture.activation_count(), 1);
+    let identity = fixture.root.join("state/identity.json");
+    let original = std::fs::read(&identity).unwrap();
+    let current: Value = serde_json::from_slice(&original).unwrap();
+    assert_eq!(
+        current[0]["Config"]["Labels"]["com.effigy.checkout"],
+        json!(fixture.root)
+    );
+    assert!(
+        current[0]["Config"]["Labels"]
+            .get("com.docker.compose.oneoff")
+            .is_none(),
+        "native nerdctl omits this label"
+    );
+    preserve_tree(
+        &fixture
+            .root
+            .join("host-home/.effigy/runtime/host-container-leases"),
+        &mut fixture.preserved,
+    );
+    let manifest = fixture.root.join("effigy.toml");
+    let source = std::fs::read_to_string(&manifest).unwrap();
+    std::fs::write(
+        &manifest,
+        format!("{source}\n# subsequent source upgrade\n"),
+    )
+    .unwrap();
+    fixture.mode("next-upgrade");
+    fixture
+        .task()
+        .expect("future upgrades reuse the SAME managed project and native ID");
+    assert_eq!(fixture.activation_count(), 1);
+    assert_eq!(std::fs::read(&identity).unwrap(), original);
+    let artifact = fixture
+        .root
+        .join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
+    assert_eq!(
+        std::fs::read_to_string(artifact.with_extension("active-version"))
+            .unwrap()
+            .trim(),
+        effigy_core::build_info::active_version()
+    );
+    assert!(std::fs::read_to_string(&artifact)
+        .unwrap()
+        .contains("next-upgrade"));
+    fixture.assert_preserved();
+}
+
+mod managed_namespace {
+    use super::*;
+    macro_rules! cases {
+        ($(($name:ident, $scoped:literal, $legacy:literal)),+ $(,)?) => { $(
+            #[test]
+            fn $name() {
+                assert_managed_namespace_preserves_legacy($scoped, $legacy);
+            }
+        )+ };
     }
+    cases!(
+        (root_native, false, "native"),
+        (root_named_oneoff, false, "named_oneoff"),
+        (root_labelled, false, "labelled"),
+        (root_absent, false, "absent"),
+        (scoped_native, true, "native"),
+        (scoped_named_oneoff, true, "named_oneoff"),
+        (scoped_labelled, true, "labelled"),
+        (scoped_absent, true, "absent"),
+    );
 }
 
 #[test]

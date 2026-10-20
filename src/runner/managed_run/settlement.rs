@@ -44,6 +44,9 @@ pub(in crate::runner) struct EnvironmentEffect {
     /// The run's settle identity: the down exempts only this run's holders.
     pub(in crate::runner) token: String,
     pub(in crate::runner) borrowed: bool,
+    /// The run that holds the environment: its settle's own stop is exempt.
+    #[serde(default)]
+    pub(in crate::runner) run: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -123,19 +126,22 @@ fn unknown<T>(reason: String) -> Observed<T> {
     Observed::Unknown(UnknownReason::Inconsistent(reason))
 }
 
-/// The run's own `container down`: holders carrying its token are exempt,
-/// any other live holder refuses (R4).
+/// The run's own stop of the environment: only its own hold is exempt, any
+/// other holder refuses (R4).
 fn release_environment(env: &EnvironmentEffect) -> Result<(), UnknownReason> {
     let outcome = match &env.binding {
-        Binding::Named { selector } => {
-            crate::runner::container_command::release_managed_environment(
+        Binding::Named { selector } => match env.run.as_deref().map(str::parse) {
+            Some(Ok(run)) => crate::runner::container_command::release_managed_environment(
                 &env.repo,
                 selector.as_deref(),
-                &env.token,
-            )
-        }
+                run,
+            ),
+            _ => Err(crate::runner::error::RunnerError::task_invocation(
+                "the environment effect names no holding run",
+            )),
+        },
         Binding::Inline { task } => {
-            crate::runner::execute::release_inline_managed_environment(&env.repo, task, &env.token)
+            crate::runner::execute::release_inline_managed_environment(&env.repo, task)
         }
     };
     outcome.map(|_| ()).map_err(|error| {

@@ -23,6 +23,32 @@ During v0.x, MINOR bumps may include breaking changes.
   started. A run that holds an environment stays up when
   its workloads exit, until a stop. A live v0.14 headless session is refused
   with its stop command. `--run-id` is refused for managed tasks.
+- Container environments now have one kernel record each (contract 053).
+  Every stop, restart, recreation, reset, handover and idle stop is a
+  transition that refuses while any run holds the environment, except that
+  run's own stop. Container tasks, `exec`, shells and data commands hold their
+  environment while they run; `container down` under a live `dev` names the
+  holding run and changes nothing.
+- Idle stop is holder-based: a stack a task starts stops when the last run
+  using it ends, not 5 minutes later. `effigy container up --detach` keeps a
+  stack running; `EFFIGY_DISABLE_HOST_CONTAINER_LEASE=1` keeps task-started
+  stacks running. The lease file, `EFFIGY_HOST_CONTAINER_LEASE_TIMEOUT_SECS`,
+  `EFFIGY_DISABLE_HOST_CONTAINER_LEASE_REAPER` and the hidden
+  `__container-lease-reaper` command are retired.
+- Only runs that hold an environment protect it. A live host task that does
+  not use a stack no longer blocks that stack's stop, recreation or mount
+  reconcile; container tasks, `exec`, shells and data commands hold theirs.
+- The exec-readiness restart refuses while a run holds the environment and
+  reports the readiness failure instead. A changed configuration under live
+  holders keeps the running generation until they end, with a warning.
+- A failed managed run's environment is no longer torn down by its
+  successor's start; the kernel settles the failed run and the successor's
+  bring-up reconciles the stack.
+- Existing v0.14.1 stacks are imported automatically on their first bring-up
+  or stop: lifecycle markers and labels become the environment record, running
+  containers are adopted without a restart, and the marker files are never
+  changed. A stack whose ownership cannot be proven is not adopted and needs an
+  explicit `container down`.
 - Heavy tasks no longer go through the Queue/Nucleus host-run client
   (Q-006). `admission = "heavy"` is metadata only: with no hook set a heavy
   task runs like any other, CI runners included. When the launcher sets
@@ -162,6 +188,10 @@ During v0.x, MINOR bumps may include breaking changes.
   lists the families still present.
 
 ### Added
+- `effigy container status` and `effigy doctor` show each environment's
+  backend, why it was chosen, and its record: active or stopped, persistent or
+  held, the applied generation, a partial generation and its holders. Status
+  JSON gains an `environment` object.
 - Run control for every run (Q-006): `effigy --run-id <key> <task>` names a
   run with a caller key, and a repeat or a racing second invocation attaches
   to it and exits with its result instead of starting another. `effigy runs`
@@ -547,6 +577,11 @@ During v0.x, MINOR bumps may include breaking changes.
   later observation.
 - A run's control socket left unrecorded by an owner killed between bind and
   receipt is removed at settle instead of becoming residue.
+- The operator gateway can start from an Effigy-managed task without inheriting
+  its parent's custody or probe nonce. Startup reports refused spawns and early
+  daemon exits; status retains the exit code and bounded stderr tail from the
+  run journal instead of hiding the failure behind a readiness timeout.
+- Reset drops only the selected environment's render references.
 - Task and step admission no longer fails intermittently with `helper pipe
   closed` reported as a `kernel.db` store error when the running `effigy`
   binary's path is replaced (for example by `cargo run --bin effigy`) while a
@@ -554,6 +589,15 @@ During v0.x, MINOR bumps may include breaking changes.
   image. A kernel helper that still dies before acknowledging is reported as
   `kernel helper ... exited ... before acknowledging`, with its exit status
   and the tail of its own error output.
+- `gateway setup --remove` exports current routes, loopback IPs and port pins
+  for a v0.14.1 downgrade. Setup re-imports subsequent legacy edits on return.
+  Interrupted exports are resumable; changed foreign files and active managed
+  listener routes refuse with exact paths or domains. Teardown preserves
+  existing aliases and reads resolver inventory without root opening user state.
+- Gateway detach no longer races owning-client closure, and status reports
+  startup and retirement coherently within its observation deadline.
+- Gateway parser and descriptorless-process controls now run on Linux and
+  macOS; idle shutdown proofs wait for completion instead of fixed sleeps.
 - Container preparation detects missing or changed named-volume mounts before
   reusing a running stack, including worktree `isolated_dirs`. Status and doctor
   report drift, guarded `up` applies the current render, and permission repair
@@ -561,6 +605,10 @@ During v0.x, MINOR bumps may include breaking changes.
   Pre-checkout-label Colima stacks use the existing checkout-bind migration
   proof. Unavailable mount observations preserve reuse while withholding
   recreation and ownership-repair authority.
+- A failed Colima/nerdctl start that reports a stale health-check timer now
+  fails immediately even if the container appears running. The error names
+  the selected profile and exact recovery commands, instead of continuing
+  readiness and gateway setup with an unresolved health check.
 - Stopping a managed run now ends the process group it started through
   container exec in containers whose shell is dash or busybox. The stop
   previously reached only the group's leader there, so an Effigy task running

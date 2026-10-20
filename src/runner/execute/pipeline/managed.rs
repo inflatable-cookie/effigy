@@ -549,10 +549,11 @@ fn own_managed_run(
     managed_run::own(owner, owned, prepare)
 }
 
-/// Records the managed run's outcome and releases its gate. Journal
-/// failures are warnings; they never change the run's result (K10).
-fn close_task_run<T>(run: TaskRun, target: &TaskTarget, result: &Result<T, RunnerError>) {
-    let workload = match result {
+fn managed_workload<T>(
+    target: &TaskTarget,
+    result: &Result<T, RunnerError>,
+) -> effigy_kernel::outcome::WorkloadOutcome {
+    match result {
         Ok(_) => effigy_kernel::outcome::WorkloadOutcome::Succeeded,
         Err(error) => {
             let code = error.task_exit_status().unwrap_or(1);
@@ -564,7 +565,13 @@ fn close_task_run<T>(run: TaskRun, target: &TaskTarget, result: &Result<T, Runne
                 crate::runner::task_engine::workload_for_exit(code)
             }
         }
-    };
+    }
+}
+
+/// Records the managed run's outcome and releases its gate. Journal
+/// failures are warnings; they never change the run's result (K10).
+fn close_task_run<T>(run: TaskRun, target: &TaskTarget, result: &Result<T, RunnerError>) {
+    let workload = managed_workload(target, result);
     for warning in run.close(workload) {
         eprintln!("warning: {}: {warning}", target.label);
     }
@@ -917,7 +924,7 @@ fn environment_plan(
         binding,
         up,
         up_env,
-        borrowed: environment_borrowed(&repo, policy),
+        borrowed: inline.is_none() && environment_borrowed(policy),
         exec_probe: exec_workloads.then(|| (policy.primary_service.clone(), working_dir)),
         route_urls: if plan.readiness.health_wait {
             managed_readiness_probe_urls(Some(policy))
@@ -930,10 +937,17 @@ fn environment_plan(
     }))
 }
 
-/// A stack its own explicit `effigy container up` started is borrowed: the
-/// run leaves it running (Tom's ruling 5). Anything else this run starts.
-fn environment_borrowed(repo: &std::path::Path, policy: &EffectiveContainerPolicy) -> bool {
-    crate::runner::host_container_lease::persistent_container_owner_recorded(repo, policy)
+/// A stack an explicit `effigy container up` keeps running (its record is
+/// active and persistent) is borrowed: the run leaves it running (Tom's
+/// ruling 5; contract 053 §5). Anything else this run's ensure holds.
+fn environment_borrowed(policy: &EffectiveContainerPolicy) -> bool {
+    use effigy_containers::environment::{EnvState, Retention};
+    crate::runner::environment::record(policy).is_some_and(|record| {
+        record.state == EnvState::Active
+            && record
+                .engine()
+                .is_some_and(|engine| engine.retention == Retention::Persistent)
+    })
 }
 
 fn managed_environment_up_command(
@@ -1110,19 +1124,12 @@ fn marker_component(value: &str) -> String {
 pub(in crate::runner) fn release_inline_managed_environment(
     repo: &std::path::Path,
     task: &str,
-    token: &str,
 ) -> Result<String, RunnerError> {
     let policy = inline_managed_policy(repo, task)?.ok_or_else(|| {
         RunnerError::task_invocation(format!(
             "task `{task}` no longer resolves to an inline workspace container"
         ))
     })?;
-    crate::runner::managed_settle::refuse_environment_mutation(
-        repo,
-        &policy.name,
-        None,
-        Some(token),
-    )?;
     let plan = effigy_runtime::container_manager::compose_invocation_plan_from_tail_args(
         repo,
         &policy,

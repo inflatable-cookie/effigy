@@ -56,19 +56,31 @@ fn operator_daemon_binds_before_publish_and_settles_without_elevation() {
         .unwrap();
         std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o700)).unwrap();
     }
-    let old_path = std::env::var_os("PATH");
-    std::env::set_var("PATH", &bin);
-    struct Reset(Option<std::ffi::OsString>);
+    let inherited = [
+        ("PATH", bin.as_os_str().to_owned()),
+        ("EFFIGY_CUSTODY_NONCE", "parent-custody".into()),
+        ("EFFIGY_PROBE_NONCE", "parent-probe".into()),
+    ];
+    let previous = inherited
+        .iter()
+        .map(|(key, _)| (*key, std::env::var_os(key)))
+        .collect();
+    for (key, value) in &inherited {
+        std::env::set_var(key, value);
+    }
+    struct Reset(Vec<(&'static str, Option<std::ffi::OsString>)>);
     impl Drop for Reset {
         fn drop(&mut self) {
-            if let Some(path) = self.0.take() {
-                std::env::set_var("PATH", path);
-            } else {
-                std::env::remove_var("PATH");
+            for (key, value) in self.0.drain(..) {
+                if let Some(value) = value {
+                    std::env::set_var(key, value);
+                } else {
+                    std::env::remove_var(key);
+                }
             }
         }
     }
-    let _reset = Reset(old_path);
+    let _reset = Reset(previous);
     let executable = std::path::Path::new(env!("CARGO_BIN_EXE_effigy"));
     let ready = match operator::up_with_executable(&config, executable) {
         Ok(ready) => ready,
@@ -94,12 +106,44 @@ fn operator_daemon_binds_before_publish_and_settles_without_elevation() {
     assert!(operator::status(&config).unwrap().ready);
     let stopped = operator::down(&config).unwrap();
     assert_eq!(stopped.status, "stopped");
+    assert!(stopped.reason.is_none(), "{stopped:?}");
     assert!(!ready.control_socket.unwrap().exists());
     assert!(!evidence.exists());
     assert!(!config.pid_file_path.exists());
     // A bind collision produces a closed failed run and no advertised identity.
     let occupied = TcpListener::bind(config.proxy.bind_addr).unwrap();
-    assert!(operator::up_with_executable(&config, executable).is_err());
+    let failure = operator::up_with_executable(&config, executable)
+        .unwrap_err()
+        .to_string();
+    assert!(failure.contains("exited with code 1"), "{failure}");
+    assert!(failure.contains("ProxyBindError"), "{failure}");
+    let failed = operator::status(&config).unwrap();
+    assert_eq!(failed.status, "stopped");
+    assert!(!failed.ready);
+    assert!(!failed.control_socket.as_ref().unwrap().exists());
+    let reason = failed.reason.as_ref().unwrap();
+    assert!(reason.contains("exited with code 1"), "{failed:?}");
+    assert!(reason.contains("ProxyBindError"), "{failed:?}");
+    // A new status caller reads the persisted failure, not client pipe output.
+    let op = operator::context(
+        Duration::from_secs(1),
+        effigy_kernel::ctx::EffectClass::Observe,
+    );
+    let cx = op.observe().unwrap();
+    let root = effigy_kernel::root::StateRoot::observe(&cx, home.path());
+    let root = root.verified().unwrap();
+    let reader = effigy_kernel::store::Store::read(&cx, root);
+    let reader = reader.verified().unwrap();
+    let id = failed.run.unwrap();
+    let summary = effigy_kernel::run::summary(reader, id);
+    assert_eq!(
+        summary.verified().unwrap().workload,
+        Some(effigy_kernel::outcome::WorkloadOutcome::Failed { code: 1 })
+    );
     assert!(!config.pid_file_path.exists());
+    assert!(!evidence.exists());
+    for (key, value) in inherited {
+        assert_eq!(std::env::var_os(key), Some(value));
+    }
     drop(occupied);
 }

@@ -839,10 +839,14 @@ Use this with `effigy.local.toml` for per-machine mounts.
 
 These waits are bounded. A timeout names the runtime or gateway readiness
 stage; a stopped Compose service is reported with its exit status. After a
-Colima VM restart, a stale nerdctl health-check timer warning is recorded
-when an owned container actually starts. If it stays Exited with that
-collision, Effigy inspects the full container ID and, when the unit pair is
-an exact-owned transient health-check timer/service in the selected
+Colima VM restart, a successful owned-container start that reports a stale
+nerdctl health-check timer records a warning. If start fails with that collision
+but inspect reports the container running, Effigy fails immediately as stale
+backend state: running state does not prove health-check readiness. The error
+names the selected Colima profile and exact inspect/start recovery commands;
+Effigy does not continue readiness or gateway setup. If the container stays
+Exited with that collision, Effigy inspects the full container ID and, when
+the unit pair is an exact-owned transient health-check timer/service in the selected
 profile, stops `{id}.timer`, `reset-failed` `{id}.service`/`{id}.timer`,
 retries start once, and proves readiness by inspect. Persistent, foreign,
 one-off, running, or unverified units are left alone; the error then names
@@ -869,25 +873,25 @@ inventory, exec readiness or exposure verification leaves the scope in place.
 activation. It never treats an unavailable probe as an empty or ready stack.
 
 The supported reconciliation command is `effigy container up --detach`.
-Its private admitted-context marker binds the canonical checkout, selected
-backend/profile/project/service, source kind and SHA-256 hashes of the manifest
-and Compose inputs. It persists as the detached owner after successful
-reconciliation. Changed, unreadable, legacy or foreign marker contexts refuse;
-a missing primary also refuses instead of falling back to generated
-`up --force-recreate`. A warm owned stack reconciles fresh inspected bindings
-without Compose up or primary restart. Exec readiness failures and interrupts
-retain unverified state without teardown. Success transfers ownership from a
-temporary task lease to the retained detached context; sibling leases stay.
-`effigy container down` is the explicit stop and clears the admitted context
-while keeping volumes. Retirement removes owned mutable data and is not restart
-recovery.
+Each environment has one record (contract 053): the generation it applied,
+the backend it runs on and why, whether an explicit `up` owns it, and the
+runs holding it. A bring-up that applied its Compose change but did not finish
+leaves a partial generation; rerunning `up --detach` with the same inputs
+reconciles it without recreating running services, and changed inputs refuse
+until `effigy container down`. A warm owned stack reconciles fresh inspected
+bindings without Compose up or primary restart. Exec readiness failures and
+interrupts retain unverified state without teardown. Success makes the
+explicit `up` the persistent owner. `effigy container down` is the explicit
+stop: it ends that ownership and keeps volumes, and it refuses while a run
+(for example `dev`) still holds the environment. Retirement removes owned
+mutable data and is not restart recovery.
 
 JSON failure details expose `state` (`partial` or `unavailable`),
 `phase = "detached_activation"`, unverified readiness/exposure and supported
 recovery/stop commands. `activation_stage` uses the closed vocabulary
-`preparation`, `reconciliation_inventory`, `compose_activation`,
-`admission_record`, `stopped_service_recovery`, `readiness`,
-`runtime_integrations`, or `persistent_owner`. Manifest-declared detached mode
+`preparation`, `environment_handover`, `compose_activation`,
+`stopped_service_recovery`, `readiness`, `runtime_integrations`, or
+`persistent_owner`. Manifest-declared detached mode
 also reports preparation failures as unavailable with no recovery authority.
 These stages identify caller boundaries, not causes or readiness proof. Details
 contain no raw backend output, argv or environment.
@@ -982,7 +986,7 @@ in-container execution instead of failing on host-only runtime probes.
 The opt-in bounded shell (`--bounded`) takes the same local path: the
 absolute deadline and stdout/stderr caps still apply to the local
 execution and the same bounded-exec schema renders, with no discovery,
-lease, or workspace-user fallback phases.
+hold, or workspace-user fallback phases.
 
 ### Public Shell Sessions
 
@@ -1020,30 +1024,26 @@ These use shared task activation instead of session ownership:
 - sibling-service bring-up and exec-readiness recovery run before dispatch
 - a runtime-scoped checkout (linked worktree or marked ephemeral clone)
   proves its selected checkout is readable and writable in the primary
-  service before dispatch; a mismatched mount stops the task before lease
-  refresh. Changed Cargo inputs are touched inside the container so host edits
+  service before dispatch; a mismatched mount stops the task before it runs.
+  Changed Cargo inputs are touched inside the container so host edits
   invalidate stale build artifacts.
 - public gateway/runtime route registration is reconciled when the container
   declares a gateway surface
-- if the task had to start the runtime, or the runtime was already under an
-  active task lease, Effigy refreshes a temporary host-container lease
+- the task holds its environment while it runs: `container down`, a handover,
+  a reset or an idle stop refuses until the task ends
 
-Default lease behavior:
+Holder-based idle stop:
 
-- lease duration defaults to 5 minutes
-- the lease is refreshed on reuse
-- the runtime shuts down after the lease expires unless the user explicitly
-  keeps it up through `effigy container up`, `effigy dev`, or another owned
-  session
+- a stack a task had to start is held: it stops when the last run using it
+  ends. There is no timer.
 - an explicit `effigy container up` that leaves the stack running makes it
-  persistent: later tasks that reuse or restart it never attach a lease, and
-  any earlier lease is dropped. Every `effigy container down` that stops the
-  stack ends that ownership - the checkout form, `--global`, and the
-  cwd-scoped form - as does `effigy container retire` once it removes the
-  scope. A stale owner marker never blocks a later task-started stack from
-  being leased and reclaimed.
-- the notice that announces a lease names `effigy container up --detach` and
-  `EFFIGY_DISABLE_HOST_CONTAINER_LEASE=1` as the ways to keep the stack
+  persistent: tasks borrow it and never stop it. Every `effigy container down`
+  that stops the stack ends that ownership - the checkout form, `--global`,
+  and the cwd-scoped form.
+- the notice that announces a held stack names `effigy container up --detach`
+  and `EFFIGY_DISABLE_HOST_CONTAINER_LEASE=1` as the ways to keep it running
+- `effigy container status` and `effigy doctor` show each environment's
+  backend, why that backend was chosen, and its record
 
 The goal is one warm-runtime contract for non-shell tasks instead of separate
 behavior for deferred versus explicit container routing.
@@ -1391,14 +1391,54 @@ and directs you to `effigy gateway setup`. Setup verifies and stops only the
 recorded live v0.14.1 process generation, transfers the explicit legacy JSON
 registries and leaf certificates to your account without changing their bytes,
 and starts the operator daemon. Unknown process identity prevents migration.
-URLs, loopback IPs, generated 100-port ranges and pins remain unchanged. Routes,
-loopback allocations and port ranges still use their JSON files; endpoint-store
-migration is a separate change.
+URLs, loopback IPs, generated 100-port ranges and pins remain unchanged.
+The endpoint Store owns their imported state; the legacy JSON files remain
+unchanged until an explicit downgrade export.
 
-For explicit platform removal, first stop dependent consumers, then run
-`effigy gateway setup --remove`. This stops the operator daemon and removes
-only verified setup-owned platform output. Routes, leaf certificates and mkcert
-CA trust are preserved. This removal command is also an administrator action.
+For a reversible downgrade, stop dependent consumers first, then use the new
+binary to remove its setup and export its latest endpoint state:
+
+```sh
+/path/to/v0.15/effigy gateway setup --remove
+/path/to/v0.14.1/effigy gateway up
+```
+
+The first command stops the user daemon, freezes endpoint edits, and exports
+`~/.effigy/gateway/routes.json`, `~/.effigy/gateway/loopback-ips.json` and
+`~/.effigy/ports.json`. Original mappings and unknown fields are preserved,
+including routes, addresses and pins added under v0.15. Unchanged documents
+retain their exact bytes. There are no routine dual writes: the JSON files
+become authoritative again only at this explicit handoff. Do not run both
+versions' consumers during the transition.
+
+Removal is an administrator action. It removes only verified setup-owned
+resolver entries, the bind broker and boot jobs. Leaf certificates, mkcert CA
+trust and existing interface aliases are preserved. A live alias may predate
+setup, so owning the boot job does not authorize deleting that address. The
+v0.14.1 `gateway up` restores its normal resolver/alias behavior and starts the
+root gateway; use that binary's normal administrator prompt.
+
+If export reports a changed legacy file, it preserves the file and names its
+exact path; reconcile it before retrying. An interrupted export freezes v0.15
+edits: rerun `gateway setup --remove` to complete it. Retrying a completed
+export never overwrites edits subsequently made by v0.14.1. Active managed
+listener domains are listed and refused because v0.14.1 cannot enforce their
+generation fences; stop those v0.15 consumers to withdraw their routes first.
+Inactive persistent reservations are not published as active legacy routes.
+
+To return to v0.15, stop v0.14.1 consumers and run the new binary's
+`effigy gateway setup`. Setup authenticates and stops the old root daemon,
+restores its platform setup, and re-imports the current JSON files, including
+changes made while downgraded. Unknown ownership or a remaining PID record
+refuses re-import. Ordinary v0.15 endpoint edits and daemon startup remain
+blocked after export until setup completes this re-import.
+
+`proof:gateway:downgrade` prepares a fresh HOME, performs the Store round trip,
+then runs the checksum-pinned released v0.14.1 Linux root gateway inside a fresh
+Colima VM/container. It checks HTTP routes, a DNS/TCP alias and every exported
+mapping without using the host gateway. Artifacts and the stopped private VM
+remain under the printed temporary directory. This proof does not establish
+macOS launchd activation or cross-boot behavior on Tom's installation.
 
 Qualification on Tom's Mac remains a separate operator-run check: after setup,
 reboot, run `effigy gateway up`, start the CBS and Acowtancy workflows, and

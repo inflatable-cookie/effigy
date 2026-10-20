@@ -83,13 +83,13 @@ that checkout at the declared working directory. Foreign binds and scoped
 unlabelled stacks remain unavailable. External volumes without explicit names
 use their bare Compose keys.
 
-Task preparation no longer skips `up` solely because the primary runs. Mount
-drift enters ordinary owned-stack reconciliation; recorded detached activation
-also checks mounts before skipping Compose. Existing holder exclusion and
-reactivation ownership checks remain mandatory (R4). At this pre-spawn boundary,
-the incoming ordinary task's own exact-process gate is not yet a bound container
-workload and may reconcile its mounts. No ancestor, other process, managed-run
-gate or unknown holder receives that exemption. Permission preflight
+Task preparation no longer skips `up` solely because the primary runs. Observed
+mount drift means the running stack is not the desired generation, so the
+reconcile run applies the render instead of reusing it ([053](053-environment-reconciler-contract.md)
+§3). Holder exclusion and reactivation ownership checks remain mandatory (R4):
+under a live or unknown holder the running generation is kept with a warning
+naming the drift. The incoming task's own session attaches only at activation,
+after the reconcile, so it never blocks its own mount reconcile. Permission preflight
 checks the named mounts again before repair, including explicit exec paths:
 a declared volume absent from a live stack cannot grant chown authority over
 the host bind beneath it. Permission target metadata uses the most specific
@@ -99,7 +99,7 @@ Permission preparation then verifies access without creating directories,
 changing ownership or modes, or creating lock probes; paths that are already
 usable remain usable. A concrete access failure still blocks readiness. The
 unavailable observation itself cannot request reconciliation, and an up under
-live holders keeps `--no-recreate` unless observed drift passes holder exclusion.
+live holders makes no backend call.
 An absent service has no live mount inventory; its absence does not prove mount
 drift or require recreation. Ordinary up may create it with `--no-recreate`.
 
@@ -183,43 +183,31 @@ exec'd nor restarted; the up reports not exec-ready. The shell and task exec
 that follow are gated by that readiness boundary.
 
 No path may stop, restart or recreate an environment's containers while a
-live lock holder of a run bound to that environment exists, except that run's
-own stop.
+run holds that environment, except that run's own stop. The environment
+reconciler makes this structural ([053](053-environment-reconciler-contract.md)):
+every stop, restart, recreation, reset, handover and idle stop is a transition
+that owns the environment's gate and needs a permit, refused while any live or
+unknown holder remains. Runs hold an environment through the hold API: task
+activation, `exec`, shells and data commands hold through a session run; a
+managed run is attached by its lifecycle's bring-up. A holder's own stop is
+exempt only once that run is settling. Gates are host-only (R1): Effigy inside
+a workspace container holds no host gate and requests host authority through
+the channel of contract 052 §8.
 
-Task gates establish liveness (contract 052, task engine adoption): a run
-whose gate is held on this host, or whose gate probe is unreadable, is a
-holder. A matching owner PID and run token in a session record only narrow the
-environment binding; runs record the digest of their managed run token. A
-missing, unreadable or stale session record never grants mutation authority.
-A live holder whose binding cannot be established protects every environment
-in the checkout. Gates are host-only (R1): an Effigy task run inside a
-workspace container holds its container's own gate and is not a host holder;
-container-mode guests requesting host authority is environment-lane work
-(contract 052 §8).
+The exec-readiness restart is the environment's repair transition, so it
+refuses while any run holds the environment and reports the readiness failure
+instead. A bring-up under live holders keeps the running generation and applies
+a changed render once they end. Lifecycle EXIT traps, including inline-workspace
+traps, only write lifecycle state. Runner finish owns exactly one down per
+managed stop; parent death gives an orphaned lifecycle shell no teardown
+authority over a successor.
 
-The exec-readiness recovery restart therefore keeps probing with its
-post-restart window when a live holder exists, then reports any remaining
-readiness failure without restarting. Compose up under a live holder uses
-`--no-recreate`, preserving existing containers while starting missing siblings.
-Lifecycle EXIT traps, including inline-workspace traps, only write lifecycle
-state. Runner finish owns exactly one down per managed stop; parent death gives
-an orphaned lifecycle shell no teardown authority over a successor.
-
-Failed-generation recovery requires the environment's task/profile locks to
-be free of live holders, including a successor with a different run token.
-Pre-spawn managed recovery holds its newly acquired task/profile locks and
-exempts only that local owner; it refuses any other live holder before down.
-A nested `container up` cannot make that exemption. An expired lease reaper
-also refuses before any shutdown effect while a task or managed holder remains
-live, retaining its lease on refusal. Handover first ends known bound owners
-through `effigy <task> stop` and waits for their complete settle, then checks
-locks again before touching the losing environment. An unbound live holder
-refuses handover; the incoming run's own locks are exempt from that check.
-The runner's finish marks its cleanup command with its run token so only its
-own stop can down the environment under that run's locks. An unrelated explicit
-`container down` must wait for the run's own stop too. An ordinary host task
-that explicitly calls down may close out under its own ancestor lock; this
-does not exempt a managed ancestor or grant authority to a reaper.
+A judged-failed managed predecessor is settled by the kernel when its successor
+is admitted; its environment is not torn down, and the successor's bring-up
+reconciles whatever stack it left. Handover first ends known bound owners
+through `effigy <task> stop` and waits for their complete settle, then runs a
+handover transition of the losing environment, which refuses while any other
+run still holds it.
 
 An Effigy invocation that already runs inside its own workspace container
 (`EFFIGY_INTERNAL_CONTAINER_HANDOFF=1`) never calls host runtime commands.
@@ -234,7 +222,7 @@ Task routing, suite targeting, and workspace-shell handoff already stay
 local under the same marker; this closes the remaining exec surfaces.
 The opt-in bounded shell takes the same local path with its absolute
 deadline and stream caps intact, rendering the same bounded-exec schema
-without discovery, lease, or workspace-user fallback phases.
+without discovery, hold, or workspace-user fallback phases.
 
 Ordinary workload entry gives the selected service's owned-binding observation
 (runtime inventory followed by strict inspect) a bounded 15-second window.
@@ -373,17 +361,17 @@ queries also leave an unprepared checkout's identity absent. Logs discover the
 selected backend's service container directly, including stopped containers,
 without opening an unpublished render. Activation stages share one prepared
 policy snapshot and return it to exec, deferred tasks and workspace handoff,
-so later commands, probes and leases use its final identity and paths.
+so later commands, probes and holds use its final identity and paths.
 
-Detached admission records a v3 generation reference. Verification reads the
-kernel's desired object reference and verifies its complete immutable closure;
-it no longer fingerprints mutable declarations and renderer outputs. Canonical
-checkout identity and scope remain fenced, including a checkout moved behind a
-symlink. Source edits leave an admitted snapshot intact; a later Prepare publishes a new desired
-generation and supersedes that admission. One-release v2 receipt import checks
-its original identity and fingerprints once, then writes a v3 reference in
-Prepare. Retained admission is validated before moving the desired reference;
-a refusal leaves the prior reference intact. Attached workflows use the same
+Detached admission pins the kernel's desired object reference and verifies its
+complete immutable closure; it never fingerprints mutable declarations and
+renderer outputs, and it writes no receipt file. The environment record
+([053](053-environment-reconciler-contract.md)) keeps the admitted generation
+across invocations. Canonical checkout identity and scope remain fenced,
+including a checkout moved behind a symlink. Source edits leave an admitted
+snapshot intact; a later Prepare publishes a new desired generation and
+supersedes that admission. A v0.14.1 v2 or v3 receipt is read only by the
+marker importer's adoption check and is never rewritten. Attached workflows use the same
 immutable render path. Execution-only workspace builder recovery compares fresh
 source render references while retaining its original stack admission.
 
@@ -434,17 +422,17 @@ CLI's render of the same pins. It never updates a real consumer or its cache.
 Engine tests cover concurrent render/publication with admitted readers, refused
 admission preserving the desired reference, and reset preserving its sibling.
 
-A recorded *partial* activation reconciles only against its original admission;
-changed inputs refuse until `effigy container down`. With unchanged admitted
-inputs, a missing or stopped primary does not require operator intervention:
-verify every existing project container's checkout and scope ownership, including
-stopped siblings, then recover through ordinary Compose up. Unavailable inventory
-or foreign ownership still refuses and names the owning checkout's
-`effigy container down` command. A *completed* activation
-writes a completion marker beside its record. When its inputs later change, or
-when a running stack has no record at all (a stack started by an earlier
-release, by a container task, or whose record write failed), detached `up`
-first proves that every project container - running or stopped, because a
+A *partial* activation (the record's `applying` generation: the apply ran,
+activation did not) reconciles only against its original admission; changed
+inputs refuse until `effigy container down`. With unchanged admitted inputs, a
+missing or stopped primary does not require operator intervention: verify every
+existing project container's checkout and scope ownership, including stopped
+siblings, then recover through ordinary Compose up. Unavailable inventory or
+foreign ownership still refuses and names the owning checkout's
+`effigy container down` command. A *completed* activation is the record's
+promoted generation. When its inputs later change, or when a running stack has
+no record at all (a stack started by an earlier release whose markers did not
+prove ownership), detached `up` first proves that every project container - running or stopped, because a
 project-wide Compose up can start or recreate a stopped declared sibling -
 belongs to this checkout and scope, then retires the stale record and admits
 the current inputs with an ordinary Compose up. A container with no checkout,
@@ -475,15 +463,14 @@ state and do not tear down or restart running services. Reconciliation with
 fresh owned full-ID bindings before registering exposure. Unchanged admitted
 inputs and verified checkout/scope ownership allow Compose up when any declared
 service is missing or stopped, including the primary. A complete running stack
-reconciles exposure without Compose up. If its recorded managed owner died
-with failed or incomplete settling, the next managed run or detached `up`
-first verifies admission and checkout/scope labels, brings the environment
-down with volumes kept, and releases that generation's attributed locks.
-It then starts normally, even when the primary had remained running. Changed partial-admission inputs and
-unavailable ownership observations still refuse before Compose effects.
-The context persists as the detached owner after success, marked complete; only
-the selected temporary task lease is cleared. Explicit `container down` clears that context
-and keeps volumes. Attached bring-up keeps its existing cleanup policy.
+reconciles exposure without Compose up. A managed owner that died with failed
+or incomplete settling is settled by its successor's admission (contract 052
+K5); its environment is not torn down, and the successor's bring-up reconciles
+it. Changed partial-admission inputs and unavailable ownership observations
+still refuse before Compose effects. Activation promotes the generation and
+makes an explicit `up` the persistent owner. Explicit `container down` ends
+that ownership and keeps volumes. Attached bring-up keeps its existing cleanup
+policy, run as a stop transition after the bring-up's own runs close.
 
 `container up` runs workspace permission preparation as an integration stage
 once exec readiness is verified, before secrets, gateway exposure, and
@@ -917,13 +904,11 @@ environment and record its digest; a dead holder's gate is already free,
 and a genuinely live holder carrying the token, or a live foreign holder,
 still refuses.
 The handover refuses only when ending a bound managed owner or
-stopping that environment itself fails; it
-then names the failure and leaves the environment recoverable by its own
-`up` or `down`. The stop is recorded beside the environment's lease before
-the first effect, so its next `up` restarts it instead of refusing an
-unknown partial state; a recorded handover resolved by a healthy reconcile
-or a down is cleared. An unchanged, ownership-verified partial or stopped stack
-also restarts without a handover record; unattributable state still refuses. A
+stopping that environment itself fails, or when another run still holds it;
+it then names the failure and leaves the environment recoverable by its own
+`up` or `down`. The stop is a journalled transition of the losing environment,
+so its next `up` reconciles it. An unchanged, ownership-verified partial or
+stopped stack restarts; unattributable state still refuses. A
 managed listener claiming a domain held by a `source = container` route from
 the same checkout and scope replaces it with the listener route in the same
 locked transaction, and the container environment may keep running.
@@ -1205,10 +1190,10 @@ The runtime-prep phase owns:
 - reconciling runtime guarantees that the compose backend failed to materialize
   directly
 - reconciling gateway/runtime exposure needed by the selected execution target
-- refreshing non-shell task leases when Effigy owns warm-runtime reuse
+- holding the environment for the command through a session run (contract 053)
 - for scoped worktrees, proving a fresh host checkout marker is readable at
   the container working directory and a container write reaches the selected
-  checkout before dispatch or lease refresh
+  checkout before dispatch
 - refreshing changed Cargo input mtimes inside that mounted checkout before a
   container-routed check, so host edits invalidate stale container artifacts
 
@@ -1257,8 +1242,13 @@ Start exit 0 is not readiness. A nerdctl warning that
 `Unit <id>.timer was already loaded or has a fragment file` is recorded when
 inspect then shows the owned container running; systemd units are not
 deleted. A start that reports that collision while inspect shows the
-container running is recorded as an unresolved health check with the exact
-inspect/start commands rather than as a clean recovery. If the owned
+container running fails immediately as **stale backend state** with the selected
+Colima profile and exact inspect/start commands. A running process does not
+prove its health-check timer was installed. Effigy does not enter readiness
+polling or publish the environment as ready after this failure, and does not
+stop or mutate the now-running container or its systemd units. The operator
+inspects the named container and retries the exact start after the backend
+timer has unloaded. This applies to Colima/nerdctl only; Docker is unchanged. If the owned
 Colima/nerdctl container stays stopped with that collision, Effigy may
 recover once: inspect the container for a full 64-character hexadecimal ID,
 require stopped status and the selected project/service labels (not one-off,
@@ -1380,8 +1370,8 @@ consumer proof waivers and global installation remain separate boundaries.
 
 Runtime activation planning belongs to `effigy-runtime-plan`. The runner
 runtime-prep modules are side-effect adapters for that plan: they may start
-the runtime, perform readiness checks, reconcile aliases/routes, and refresh
-leases, but they must not invent a separate activation model.
+the runtime, perform readiness checks, reconcile aliases/routes, and hold the
+environment, but they must not invent a separate activation model.
 
 ## Port registry recovery
 
@@ -1526,7 +1516,7 @@ Contract:
 - session shutdown ownership depends on whether Effigy completed runtime
   readiness for that shell
 
-This is not lease-managed task activation.
+This is not held task activation.
 
 ### Non-shell task activation ownership
 
@@ -1540,15 +1530,16 @@ This covers:
 Contract:
 
 - the runtime-prep phase runs before user command dispatch
-- if Effigy auto-started the runtime, or the runtime was already under an
-  active task lease, Effigy refreshes the host-container lease
-- default lease timeout is 5 minutes unless configured otherwise
-- a stack that an explicit `effigy container up` left running is persistently
-  owned: task activation never leases it, the reaper never shuts it down, and
-  only an explicit teardown ends that ownership - every `effigy container down`
-  form that stops the stack (`--global` and cwd-scoped included) and
-  `effigy container retire` once it removes the scope
-- lease reuse must not depend on whether the request came from deferral or
+- the command holds its environment through a session run for as long as it
+  uses it ([053](053-environment-reconciler-contract.md) §4)
+- a stack the activation starts is held: it stops when the last run using it
+  ends (holder-based idle stop, no timer); `EFFIGY_DISABLE_HOST_CONTAINER_LEASE=1`
+  makes task-started stacks persistent instead
+- a stack that an explicit `effigy container up` left running is persistent:
+  task activation borrows it and never stops it, and only an explicit teardown
+  ends that ownership - every `effigy container down` form that stops the stack
+  (`--global` and cwd-scoped included)
+- holding must not depend on whether the request came from deferral or
   explicit task routing
 
 This is the required shared contract for warm non-shell container reuse.
@@ -1817,7 +1808,7 @@ repair.
 
 The same rule applies to task activation:
 
-- one non-shell caller path must not refresh leases while another caller path
+- one non-shell caller path must not hold its environment while another caller path
   tears the runtime down immediately
 - one caller path must not reconcile gateway/public routes while another
   caller path silently skips them for the same container policy
@@ -1845,6 +1836,19 @@ and failure. A sibling's live runtime and persistent data are left alone.
 This contract should be covered by targeted compatibility tests rather than
 large generic runtime smoke tests.
 
+Artifact-recovery and reverse-handover fixtures isolate `HOME`; compiled
+children also use the fixture cwd. Run identity and admission follow
+[contract 049](049-heavy-validation-admission-contract.md).
+Bounded-exec public children snapshot inherited handoff markers under the
+same test environment lock used by their mutators.
+`test:environment:ci` covers these fixtures, DNS and Compose generation,
+mkcert mounts, and health-check recovery in isolated and shared test processes.
+The environment snapshot proof checks the child-spawn boundary directly.
+Artifact identity and legacy-namespace matrices give each case its own test
+and per-test timeout. Semantic public-path fixtures allow kernel/process startup
+within their absolute operation budget; deadline-refusal cases still require
+refusal at the original deadline and preserve all byte/phase assertions.
+
 The minimum proof set should cover:
 
 - managed execution and standard execution reaching the same handoff semantics
@@ -1858,7 +1862,7 @@ The minimum proof set should cover:
 - container-targeted execution plans consuming captured runtime context instead
   of caller-local cwd/env probes
 - runtime activation plans preserving repo root, repo override, policy name,
-  container identity, and lease policy across `effigy exec`, workspace, and
+  container identity, and hold policy across `effigy exec`, workspace, and
   managed surfaces
 
 ## Drift triggers

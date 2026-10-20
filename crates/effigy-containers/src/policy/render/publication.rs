@@ -15,7 +15,7 @@ use effigy_kernel::run::{BeginOpts, Effect, Fence, Reconciled, Run, SettlementAd
 use std::io::Read;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-pub(super) fn state_home() -> Result<PathBuf, ContainerPolicyError> {
+pub(crate) fn state_home() -> Result<PathBuf, ContainerPolicyError> {
     let home = crate::effigy_home().ok_or_else(|| error("HOME is required"))?;
     // Test overrides may name a private directory directly. Never escape it.
     Ok(if home.file_name() == Some(OsStr::new(".effigy")) {
@@ -66,7 +66,7 @@ pub(crate) fn recorded_backend(
             name: "checkout token".into(),
         });
     };
-    let Ok(checkout) = checkout_at(repo_root) else {
+    let Ok(checkout) = checkout_for_root(repo_root) else {
         return Observed::Unknown(UnknownReason::Inconsistent("checkout identity".into()));
     };
     let Ok(id) = ResourceId::environment(checkout, name) else {
@@ -228,11 +228,14 @@ fn with_owner(
     result
 }
 
-fn checkout(policy: &EffectiveContainerPolicy) -> Result<CheckoutId, ContainerPolicyError> {
-    checkout_at(&policy.repo_root)
+pub(crate) fn checkout(
+    policy: &EffectiveContainerPolicy,
+) -> Result<CheckoutId, ContainerPolicyError> {
+    checkout_for_root(&policy.repo_root)
 }
 
-fn checkout_at(repo_root: &Path) -> Result<CheckoutId, ContainerPolicyError> {
+/// The checkout identity Prepare minted for `repo_root`; never mints one.
+fn checkout_for_root(repo_root: &Path) -> Result<CheckoutId, ContainerPolicyError> {
     let token = effigy_core::worktree_scope::checkout_token(repo_root)
         .map_err(error)?
         .ok_or_else(|| error("no checkout runtime state; Prepare must establish identity first"))?;

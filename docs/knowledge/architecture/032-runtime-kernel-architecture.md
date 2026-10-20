@@ -442,8 +442,10 @@ a failure to commit closure remains interrupted. This implements the 2026-10-19
 kernel-lane ruling recorded in contract 052 §5.8. Requests are durable before
 socket notices; only generation-fenced requests act, and peer credentials are
 checked. Owning-client EOF stops; secondary-client EOF does nothing; detach is a
-durable request. Front ends consume the same redacted log frames and typed final
-workload/exit outcome. No engine topology or command grammar lives in the kernel.
+durable request. The owner observes EOF before reading pending requests, so a
+detach committed before pipe closure is included before deciding owner loss.
+Front ends consume the same redacted log frames and typed final workload/exit
+outcome. No engine topology or command grammar lives in the kernel.
 
 ### Clause coverage (§5.7–§5.8)
 

@@ -1923,5 +1923,14 @@ fn run_linux_workspace_effigy_artifact_build_bounded(
         .map_err(|failure| {
             bounded_failure_error(policy, policy.primary_service.as_str(), budget, failure)
         })?;
+    #[cfg(test)]
+    if !output.status.success() {
+        // The public bounded error intentionally omits captured bytes. Keep
+        // private fixture failures diagnosable without changing that surface.
+        eprintln!(
+            "private artifact build stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
     Ok(output.status.success())
 }

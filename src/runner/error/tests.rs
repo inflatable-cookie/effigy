@@ -180,19 +180,6 @@ fn workspace_session_cleanup_constructor_preserves_shape() {
 }
 
 #[test]
-fn host_container_lease_variants_render_stably() {
-    assert_eq!(
-        RunnerError::host_container_lease_encode("encode failed").to_string(),
-        "failed to encode container lease: encode failed"
-    );
-    assert_eq!(
-        RunnerError::host_container_lease_reaper_bootstrap("resolve current executable failed")
-            .to_string(),
-        "failed to bootstrap host container lease reaper: resolve current executable failed"
-    );
-}
-
-#[test]
 fn gateway_route_variants_render_stably() {
     assert_eq!(
         RunnerError::gateway_route_table("load", "/tmp/routes.json", "invalid json").to_string(),

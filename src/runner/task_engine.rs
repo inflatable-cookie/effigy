@@ -23,7 +23,7 @@ pub(in crate::runner) use control::{
     request_stop, resolve as resolve_run, signal_owner, workload_process, Lookup, RunRecord,
     StopStarted, POLL as RUN_POLL,
 };
-pub(in crate::runner) use holders::{live_holders, HolderKind, LiveHolder};
+pub(in crate::runner) use holders::{live_holders, HolderKind};
 pub(in crate::runner) use identity::TaskTarget;
 pub use kernel::{adopt_signal_router, capture_startup_executable, run_internal_kernel_entry};
 pub(in crate::runner) use legacy::{legacy_families, refuse_live_legacy_holder};

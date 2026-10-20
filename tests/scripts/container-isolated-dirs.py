@@ -43,9 +43,9 @@ working_dir = "/workspace-root/acowtancy"
 [tasks.mount_probe]
 run = "true"
 run_in = "container"
-[tasks.host_holder]
-run = "touch holder-ready; sleep 30"
-run_in = "host"
+[tasks.env_holder]
+run = "sleep 30"
+run_in = "container"
 ''')
         engine = programs / "docker"
         engine.write_text('''#!''' + sys.executable + '''
@@ -106,7 +106,13 @@ elif args[0] == "compose" and "up" in args:
     else:
         assert "--no-recreate" in args or config["mounts"] == mounts, "ordinary task Compose apply must see the already-reconciled mounts"
 elif args[0] == "exec" or (args[0] == "compose" and "exec" in args):
-    pass  # Exec readiness only; this fixture declares no workspace user.
+    # Exec readiness only; this fixture declares no workspace user. The
+    # holder task's in-container handoff runs here, so its run holds the
+    # environment while it sleeps.
+    if args[-1] == "env_holder":
+        import time
+        (Path(config["checkout"]) / "holder-ready").touch()
+        time.sleep(30)
 elif args[0] in ["info", "version"] or (args[0] == "compose" and "version" in args):
     print("2.30.0")
 elif args[0] == "context":
@@ -197,7 +203,7 @@ esac
         assert run("container", "status", "--json")["mount_drift"]["state"] == "drift"
         holder_log = root / "holder.log"
         with holder_log.open("w") as log:
-            holder = subprocess.Popen([str(binary), "host_holder"], cwd=checkout, env=env,
+            holder = subprocess.Popen([str(binary), "env_holder"], cwd=checkout, env=env,
                                       stdout=log, stderr=log, start_new_session=True)
         print(f"owned holder pid={holder.pid}")
         try:
@@ -205,10 +211,13 @@ esac
             while not (checkout / "holder-ready").exists() and holder.poll() is None and time.monotonic() < until:
                 time.sleep(0.02)
             assert (checkout / "holder-ready").exists(), ("holder never entered its workload", holder_log.read_text())
+            # The holder's own preparation reconciled its mounts; drift again
+            # under the live holder.
+            lose_overlays()
             before_up = sum("up" in json.loads(line) for line in (root / "commands.jsonl").read_text().splitlines())
-            refused = subprocess.run([str(binary), "container", "up", "--detach", "--json"], cwd=checkout,
-                                     env=env, capture_output=True, text=True, timeout=90)
-            assert refused.returncode != 0, "a different live task must prevent recreation"
+            kept = subprocess.run([str(binary), "container", "up", "--detach", "--json"], cwd=checkout,
+                                  env=env, capture_output=True, text=True, timeout=90)
+            assert "keeps its running generation" in kept.stderr, (kept.returncode, kept.stdout, kept.stderr)
             assert sum("up" in json.loads(line) for line in (root / "commands.jsonl").read_text().splitlines()) == before_up
         finally:
             if holder.poll() is None:
@@ -225,6 +234,6 @@ esac
         assert (checkout / "effigy.toml").read_bytes() == before
         commands = [json.loads(line) for line in (root / "commands.jsonl").read_text().splitlines()]
         up_commands = [command for command in commands if "up" in command]
-        assert sum("--force-recreate" in command for command in up_commands) == 3, up_commands
+        assert sum("--force-recreate" in command for command in up_commands) == 4, up_commands
         assert all("chown" not in " ".join(command) for command in commands), commands
-        print(f"{scenario}: isolated_dirs: status and doctor detect drift; fresh/recorded up and routed preparation repair it; a different live task prevents recreation; transient inspect preserves reuse without recreation; no host chown")
+        print(f"{scenario}: isolated_dirs: status and doctor detect drift; fresh/recorded up and routed preparation repair it; a live holder of the environment keeps its running generation; transient inspect preserves reuse without recreation; no host chown")

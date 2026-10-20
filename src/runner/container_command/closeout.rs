@@ -3,7 +3,7 @@ use std::{
     path::Path,
 };
 
-use effigy_containers::{load_container_policy, EffectiveAttachMode, EffectiveContainerPolicy};
+use effigy_containers::{EffectiveAttachMode, EffectiveContainerPolicy};
 
 use crate::runner::error::RunnerError;
 
@@ -28,12 +28,6 @@ pub(super) fn maybe_confirm_container_reset_wipe_data(
         output_json,
         yes,
     )
-}
-
-pub(super) fn stop_host_processes_best_effort(repo_root: &Path, name: Option<&str>) {
-    if let Ok(policy) = load_container_policy(repo_root, name) {
-        let _ = crate::runner::host_process::stop_host_processes_for_container(repo_root, &policy);
-    }
 }
 
 pub(in crate::runner) fn maybe_confirm_container_shell_exit_cleanup(

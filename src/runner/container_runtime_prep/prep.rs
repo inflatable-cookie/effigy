@@ -26,14 +26,21 @@ pub(super) fn run_runtime_compose_up_stage(
         &str,
     ) -> Result<(), RunnerError>,
 ) {
-    let _ = run_compose(
+    // Best effort, as before: readiness below verifies the outcome. The
+    // environment record keeps the backend this ran on.
+    if let Err(error) = run_compose(
         repo_root,
         policy,
         // Reuse prep has no recreation authority, including when its mount
         // observation was unavailable. Guarded lifecycle up owns reconcile.
         &compose_args(policy, ["up", "-d", "--no-recreate"]),
         "docker compose up (idempotent)",
-    );
+    ) {
+        eprintln!(
+            "[warn] idempotent compose up for `{}` failed: {error}",
+            policy.name
+        );
+    }
 }
 
 pub(super) fn ensure_runtime_exec_readiness_stage(

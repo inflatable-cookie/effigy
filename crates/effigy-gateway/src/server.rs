@@ -1816,7 +1816,7 @@ fn schedule_idle_shutdown(
     shutdown_tx: watch::Sender<bool>,
     generation: u64,
     delay: Duration,
-) {
+) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         std::thread::sleep(delay);
         if idle_shutdown_generation.load(Ordering::SeqCst) != generation {
@@ -1826,7 +1826,7 @@ fn schedule_idle_shutdown(
             info!("route table stayed empty through idle timeout; stopping gateway");
             let _ = shutdown_tx.send(true);
         }
-    });
+    })
 }
 
 fn setup_tls_watcher(

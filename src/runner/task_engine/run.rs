@@ -462,7 +462,7 @@ impl TaskRun {
                         run: None,
                         shared: None,
                         target,
-                        ancestors: Vec::new(),
+                                ancestors: Vec::new(),
                         shared_owners: Vec::new(),
                         _custody_scope: None,
                         admission: None,
@@ -618,7 +618,11 @@ impl TaskRun {
     ) {
         let admission = self.admission.take();
         let result = match self.run.take() {
-            Some(run) => close_run_settled(owned(run), workload, kernel::cleanup_context(budget)),
+            Some(run) => close_run_settled(
+                owned(run),
+                workload,
+                kernel::cleanup_context(budget),
+            ),
             None => (None, Vec::new()),
         };
         drop(admission);
@@ -713,6 +717,16 @@ impl Drop for TaskRun {
     }
 }
 
+fn record_outcome(run: &mut Run<'static>, workload: WorkloadOutcome) -> Result<(), RunError> {
+    let cleanup = kernel::cleanup().map_err(|error| RunError::Invalid(error.to_string()))?;
+    match workload {
+        WorkloadOutcome::Cancelled { .. }
+        | WorkloadOutcome::TimedOut { .. }
+        | WorkloadOutcome::NotStarted => run.interrupt(&cleanup, workload),
+        other => run.finish(other),
+    }
+}
+
 fn close_run(run: Run<'static>, workload: WorkloadOutcome) -> Vec<String> {
     match kernel::cleanup() {
         Ok(cleanup) => close_run_settled(run, workload, cleanup).1,
@@ -720,6 +734,7 @@ fn close_run(run: Run<'static>, workload: WorkloadOutcome) -> Vec<String> {
     }
 }
 
+/// Records the outcome, then settles.
 fn close_run_settled(
     mut run: Run<'static>,
     workload: WorkloadOutcome,
@@ -729,13 +744,7 @@ fn close_run_settled(
     Vec<String>,
 ) {
     let mut warnings = Vec::new();
-    let recorded = match workload {
-        WorkloadOutcome::Cancelled { .. }
-        | WorkloadOutcome::TimedOut { .. }
-        | WorkloadOutcome::NotStarted => run.interrupt(&cleanup, workload),
-        other => run.finish(other),
-    };
-    if let Err(error) = recorded {
+    if let Err(error) = record_outcome(&mut run, workload) {
         warnings.push(format!(
             "run outcome was not recorded: {}",
             run_error(&error)

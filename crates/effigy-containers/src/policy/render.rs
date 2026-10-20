@@ -8,7 +8,7 @@ use effigy_kernel::objects::Closure;
 use crate::{ContainerPolicyError, EffectiveContainerPolicy};
 
 mod publication;
-pub(crate) use publication::recorded_backend;
+pub(crate) use publication::{checkout, recorded_backend, state_home};
 pub use publication::{prepare, reset, verify};
 
 pub const ROOT_VARIABLE: &str = "EFFIGY_RENDER_ROOT";

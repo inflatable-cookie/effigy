@@ -64,21 +64,3 @@ pub(in crate::runner) fn reconcile_effect(
 ) -> Observed<Reconciled> {
     settlement::reconcile(effect, cx)
 }
-
-/// The environment a live managed run of this checkout holds, from its
-/// journal. `None` when the run records none, which protects every
-/// environment (R3).
-pub(in crate::runner) fn bound_environment(run: effigy_kernel::id::RunId) -> Option<String> {
-    match crate::runner::task_engine::run_effects(run) {
-        Observed::Verified(effects, _) => effects
-            .iter()
-            .rev()
-            .find(|effect| effect.spec.kind == settlement::ENVIRONMENT)
-            .and_then(|effect| {
-                serde_json::from_value::<settlement::EnvironmentEffect>(effect.spec.payload.clone())
-                    .ok()
-            })
-            .map(|environment| environment.environment),
-        _ => None,
-    }
-}

@@ -102,7 +102,7 @@ if marker hang-secrets; then
     # channels, then a leader that never exits inside the budget.
     printf 'SECRET_STDOUT_MARKER_142'
     printf 'SECRET_STDERR_MARKER_142' >&2
-    exec /bin/sleep 30
+    exec /bin/sleep 120
 fi
 if marker pending-flood; then
     # Pending-reader progress fixture: a flood that cannot fit in any pipe,
@@ -530,7 +530,7 @@ fn run_guarded_public_case(
         .stdout(Stdio::from(child_stdout))
         .stderr(Stdio::from(child_stderr));
     command.process_group(0);
-    let child = command.spawn().expect("spawn guarded public-path test");
+    let child = spawn_public_child(&mut command);
     let mut cleanup = ProcessTreeCleanup {
         child,
         active: true,
@@ -552,11 +552,11 @@ fn run_guarded_public_case(
             );
             return GuardedPublicOutcome { stdout, stderr };
         }
-        if started.elapsed() >= Duration::from_secs(12) {
+        if started.elapsed() >= Duration::from_millis(deadline_ms) + Duration::from_secs(10) {
             effigy_process::terminate_process_tree(cleanup.child.id(), true);
             let _ = cleanup.child.wait();
             cleanup.active = false;
-            panic!("public-path child exceeded the independent 12s harness guard for {mode}");
+            panic!("public-path child exceeded its deadline plus 10s cleanup guard for {mode}");
         }
         thread::sleep(Duration::from_millis(10));
     }
@@ -780,6 +780,66 @@ fn guarded_public_entry_child() {
     }
 }
 
+// Only spawn snapshots inherited variables. Release the environment lock before
+// waiting for the private child: its environment can no longer be mutated by
+// another test, and unrelated fixture setup need not wait for its whole run.
+#[cfg(unix)]
+fn spawn_public_child(command: &mut Command) -> Child {
+    let _environment = lock_test();
+    command.spawn().expect("spawn guarded public child")
+}
+
+#[cfg(unix)]
+#[test]
+fn public_child_environment_snapshot_waits_for_handoff_mutator() {
+    use std::os::unix::process::CommandExt;
+    let dir = tempfile::tempdir().expect("private snapshot cwd");
+    let lock = lock_test();
+    let marker = crate::runner::container_runtime::CONTAINER_HANDOFF_ENV_NAME;
+    let original = std::env::var_os(marker).unwrap_or_default();
+    let env = EnvGuard::set_many(&[(marker, Some("1".to_owned()))]);
+    let mut command = Command::new("/bin/sh");
+    command
+        .args([
+            "-c",
+            "test \"${EFFIGY_INTERNAL_CONTAINER_HANDOFF-}\" = \"$1\"",
+            "snapshot",
+        ])
+        .arg(original)
+        .current_dir(dir.path())
+        .process_group(0);
+    let reader = thread::spawn(move || {
+        let mut child = ProcessTreeCleanup {
+            child: spawn_public_child(&mut command),
+            active: true,
+        };
+        let status = child.child.wait().expect("wait for snapshot child");
+        child.active = false;
+        assert!(
+            status.success(),
+            "child inherited the temporary handoff marker"
+        );
+    });
+    let queued = crate::contract_test_support::test_lock_waiter_position(
+        reader.thread().id(),
+        Duration::from_secs(30),
+    );
+    // Release before asserting/joining so a failed control cannot strand a child.
+    drop(env);
+    drop(lock);
+    let result = reader.join();
+    assert!(
+        queued.is_some(),
+        "child spawn must wait for the handoff mutator"
+    );
+    result.expect("child observes the restored environment");
+}
+
+// Semantic public-path cases make up to six real kernel-custodied captures.
+// They test phase/byte/exit accounting, not an 8s host-startup performance SLA.
+// Dedicated hang/expired cases below retain their short absolute deadlines.
+const PUBLIC_SEMANTIC_BUDGET_MS: u64 = 60_000;
+
 #[cfg(unix)]
 #[test]
 fn public_entry_bounds_discovery_preparation_and_fallback_on_the_full_path() {
@@ -794,7 +854,7 @@ fn public_entry_bounds_discovery_preparation_and_fallback_on_the_full_path() {
             mode: "valid-identity",
             backend: "docker",
             identity: &identity,
-            deadline_ms: 8_000,
+            deadline_ms: PUBLIC_SEMANTIC_BUDGET_MS,
             stdout_limit: 512,
         },
     );
@@ -811,7 +871,7 @@ fn public_entry_bounds_discovery_preparation_and_fallback_on_the_full_path() {
             mode: "valid-colima",
             backend: "colima",
             identity: &identity,
-            deadline_ms: 8_000,
+            deadline_ms: PUBLIC_SEMANTIC_BUDGET_MS,
             stdout_limit: 512,
         },
     );
@@ -848,11 +908,13 @@ fn public_failure_case(mode: &str) -> GuardedPublicOutcome {
             backend: "docker",
             identity: if stale { "release:vstale" } else { &identity },
             // Semantic proofs require their target phase, rather than racing a
-            // cold2s discovery budget. The independent12s guard remains fixed.
+            // cold2s discovery budget. Cleanup has its own bounded guard.
             deadline_ms: if matches!(mode, "runtime-hang" | "launch-blocked-discovery") {
                 2_000
-            } else {
+            } else if mode == "workspace-hang" {
                 8_000
+            } else {
+                PUBLIC_SEMANTIC_BUDGET_MS
             },
             stdout_limit: match mode {
                 "fallback-budget" => fallback_limit,
@@ -1561,8 +1623,8 @@ fn refusal_accounting_secret_partial_output_never_reaches_any_surface() {
             &repo,
             &policy,
             "hang-secrets",
-            &limits(REFUSAL_PROOF_BUDGET_MS, 64, 64),
-            REFUSAL_PROOF_BUDGET_MS,
+            &limits(PUBLIC_SEMANTIC_BUDGET_MS, 64, 64),
+            PUBLIC_SEMANTIC_BUDGET_MS,
         )
         .expect_err("the hanging secret command must hit the deadline");
         let human = error.to_string();

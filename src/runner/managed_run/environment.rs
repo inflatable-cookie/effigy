@@ -71,6 +71,7 @@ pub(in crate::runner) fn bring_up(
         binding: plan.binding.clone(),
         token: token.to_owned(),
         borrowed: plan.borrowed,
+        run: Some(run.id().to_string()),
     };
     // K3: the intent commits before `up`. A borrowed environment is retained:
     // this run never brings down what it did not start.
@@ -209,6 +210,14 @@ fn run_up(
         .map_err(|error| NotReady::Failed(error.to_string()))?;
     for (key, value) in &plan.up_env {
         env.insert(OsString::from(key), EnvValue::Plain(OsString::from(value)));
+    }
+    // The bring-up's activation attaches this run as the environment's
+    // holder (contract 053 §4); a named environment's ensure is then held.
+    if matches!(plan.binding, Binding::Named { .. }) {
+        env.insert(
+            OsString::from(crate::runner::environment::HOLDER_ENV),
+            EnvValue::Plain(OsString::from(run.id().to_string())),
+        );
     }
     let spec = ProcessSpec {
         argv: vec!["/bin/sh".into(), "-c".into(), plan.up.clone().into()],
