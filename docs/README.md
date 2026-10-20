@@ -10,7 +10,7 @@ Effigy runs manifest tasks and built-in workflows across monorepos. Linked workt
 - [Release procedure](knowledge/contracts/release.md)
 - [User and consumer guides](guides/README.md), including [managed task sessions](guides/012-dev-process-manager-tui.md)
 - [Bounded QA groups workflow](guides/081-bounded-qa-groups-workflow.md) (implemented through `tasks qa-group`; `stop`/`hard_timeout_ms` wait on owned-run supervision, contract 052)
-- [v0.15.0 consumer migration](guides/085-v0.15.0-consumer-migration.md) (catalog pack step, behavior changes and DecodeLabs checklist)
+- [v0.15.0 consumer migration](guides/085-v0.15.0-consumer-migration.md) (catalog sources and pack retirement, behavior changes and DecodeLabs checklist)
 - [v0.14.0 consumer migration](guides/083-v0.14.0-consumer-migration.md) (migration checklist and incremental first-parent change coverage)
 
 ## What's next

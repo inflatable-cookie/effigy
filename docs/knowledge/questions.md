@@ -113,6 +113,21 @@ back into the baseline. Architecture
 [026](architecture/026-feature-placement-and-command-surface.md) §Service
 Catalogs is superseded and is rewritten by the implementing change.
 
+Implementation notes (2026-10-20, #234), for Tom to confirm:
+
+- The project source stays at the committed `infra/dev/catalog/`, not
+  `.effigy/catalog/`. `.effigy/` is gitignored local state that Effigy writes
+  into its own ignore block, project fragments must be committed, and #230's
+  `container migrate` already writes there.
+- "`config` shows where each service came from" is met by
+  `effigy container render`, which lists each environment service's catalog
+  and source; Effigy has no per-service `config` command.
+- Declared sources resolve in handle order. Precedence between two declared
+  sources is visible in `service list` (`shadows`) and can be pinned with a
+  qualified name.
+- Archiving the pack repository is an operator action; Effigy no longer reads
+  it.
+
 ## Q-006 — Heavy tasks
 
 Status: answered

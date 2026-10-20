@@ -327,11 +327,11 @@ fn render_service_help_shows_extract_options() {
     assert!(rendered.contains("effigy service list"));
     assert!(rendered.contains("effigy service extract <SERVICE>"));
     assert!(rendered.contains("--dir <PATH>"));
-    assert!(rendered.contains("project-local"));
-    assert!(rendered.contains("effigy service pack update"));
-    assert!(rendered.contains("effigy service pack status"));
-    assert!(rendered.contains("active installed pack"));
+    assert!(rendered.contains("[catalog.sources.<name>]"));
+    assert!(rendered.contains("`<source>/<service>`"));
+    assert!(rendered.contains("effigy bundle sync"));
     assert!(rendered.contains("compiled baseline"));
+    assert!(!rendered.contains("service pack"));
     assert!(!rendered.contains("user override"));
 }
 

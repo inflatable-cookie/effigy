@@ -5,7 +5,7 @@
 # installed one on PATH. `setup` rebuilds and stages the binary; `teardown`
 # reuses the staged binary and fails closed when it is missing.
 #
-#   worktree-lifecycle.sh setup      build, prepare catalog sibling, link
+#   worktree-lifecycle.sh setup      build, link
 #   worktree-lifecycle.sh teardown   retire container scope, unlink
 #
 # The staged binary lives under .local-install/ (gitignored) so it survives
@@ -41,7 +41,6 @@ setup)
   cp "$built" "$staged.new" || die "failed to stage binary"
   chmod 0755 "$staged.new"
   mv "$staged.new" "$staged" || die "failed to activate staged binary"
-  skill prepare ../effigy-catalog-pack
   skill link
   ;;
 teardown)

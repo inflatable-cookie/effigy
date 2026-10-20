@@ -1,18 +1,12 @@
-# Effigy Catalog Integration
+# Effigy Catalog
 
-For current fragment resolution and catalog pack behavior, use the
-[Catalog Services Reference](../../docs/guides/067-catalog-services-reference.md).
+`catalog/` is Effigy's compiled baseline: the service fragments embedded in
+every binary and resolved last, after the project, bundle and declared catalog
+sources. It is ordinary Effigy-owned source; edit it like any other code. It
+began as the byte-identical v1.2.0 catalog-pack snapshot, which Q-005 folded
+back into Effigy when the catalog-pack runtime was retired.
 
-## Pinned Upstream Snapshot
-
-The `catalog/` directory is the generated upstream v1.2.0 pack snapshot
-identified by [catalog-pack.lock.toml](catalog-pack.lock.toml). Its bytes are
-covered by both the unpacked content identity and the OCI manifest digest.
-Preserve the snapshot unchanged; source updates require a deliberate pack
-refresh with matching provenance and offline verification.
-
-The [snapshot README](catalog/README.md) is historical documentation from that
-upstream publication. Its statement about user-global catalog overrides
-describes the publication's integration at that time. Current Effigy ignores
-that directory and warns when it exists. The maintained guide above defines
-the current layers: project override, active installed pack, compiled baseline.
+Source order, qualified names and pinning are in the
+[Catalog Services Reference](../../docs/guides/067-catalog-services-reference.md);
+authoring and `[requires]` are in the
+[Catalog Service Authoring guide](../../docs/guides/071-catalog-service-authoring.md).

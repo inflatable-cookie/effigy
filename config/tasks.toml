@@ -31,12 +31,12 @@
 "check:gateway:endpoints" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo check -p effigy-gateway --all-targets --features endpoint-store-faults", timeout_ms = 600000 }] }
 "lint:gateway:endpoints" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo clippy -p effigy-gateway --all-targets --features endpoint-store-faults -- -D warnings", timeout_ms = 600000 }] }
 "format:gateway:endpoints" = { visibility = "internal", group = "Maintenance", run = "rustfmt --edition 2021 --config skip_children=true crates/effigy-gateway/src/lib.rs crates/effigy-gateway/src/error.rs crates/effigy-gateway/src/ports.rs crates/effigy-gateway/src/routes.rs crates/effigy-gateway/src/routes/tests.rs crates/effigy-gateway/src/proxy.rs crates/effigy-gateway/src/proxy/performance.rs crates/effigy-gateway/src/endpoint_store/mod.rs crates/effigy-gateway/src/endpoint_store/snapshot.rs crates/effigy-gateway/src/endpoint_store/import.rs crates/effigy-gateway/src/endpoint_store/reservations.rs crates/effigy-gateway/src/endpoint_store/tests.rs" }
-"test:retirements:docs" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-catalog --lib -E 'test(render_service_help_shows_extract_options) | test(render_init_help_shows_phase_scope) | test(builtin_completion_json_contract_has_versioned_shape) | test(committed_snapshot_)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 900000 }] }
+"test:retirements:docs" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-catalog --lib -E 'test(render_service_help_shows_extract_options) | test(render_init_help_shows_phase_scope) | test(builtin_completion_json_contract_has_versioned_shape)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 900000 }] }
 # Wave-A retirement compatibility and retained lifecycle boundaries.
 "test:retirements:graph-fixture" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-codegraph --lib -E 'test(graph_manifest_indexer_skips_blank_unresolved_targets)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
 "test:retirements:ci-fixtures" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests -E 'test(documentation_graph_runtime_inventory_is_current) | test(cli_tasks_text_output_matches_canonical_fixture_tail) | test(cli_tasks_text_output_managed_profiles_matches_canonical_fixture_tail)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 900000 }] }
 "test:retirements:json-routing" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-cli --lib -E 'test(global_json::) | test(builtin_init_) | test(builtin_entrypoint_)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 900000 }] }
-"test:retirements:fixes" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-catalog --lib --test documentation_coverage_tests -E 'test(gateway_identity_legacy_active_record_refused) | test(builtin_init_checklist_json_contract) | test(builtin_entrypoint_help_json_contract_table) | test(builtin_help_topics_render_expected_content) | test(builtin_init_apply_actions_can_run_contextual_setup_jobs) | test(builtin_init_checklist_json_reports_setup_inventory) | test(builtin_init_checklist_reports_contextual_bundle_and_secrets_jobs) | test(public_builtin_registry_routes) | test(committed_snapshot_)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 900000 }] }
+"test:retirements:fixes" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-catalog --lib --test documentation_coverage_tests -E 'test(gateway_identity_legacy_active_record_refused) | test(builtin_init_checklist_json_contract) | test(builtin_entrypoint_help_json_contract_table) | test(builtin_help_topics_render_expected_content) | test(builtin_init_apply_actions_can_run_contextual_setup_jobs) | test(builtin_init_checklist_json_reports_setup_inventory) | test(builtin_init_checklist_reports_contextual_bundle_and_secrets_jobs) | test(public_builtin_registry_routes)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 900000 }] }
 "test:retirements:cli" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests -E 'test(retirement_tests::) | test(json_envelope_tests::)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 900000 }] }
 "test:retirements:gateway" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private -E 'test(managed_host_listener_) | test(container_hybrid_) | test(managed_host_dependent_replacement_)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 1800000 }] }
 "check:retirements" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo check -p effigy -p effigy-codegraph -p effigy-core -p effigy-cli -p effigy-builtin -p effigy-manifest -p effigy-managed -p effigy-catalog -p effigy-gateway -p effigy-containers --all-targets --profile test", timeout_ms = 900000 }] }
@@ -400,13 +400,6 @@
 "dist:preflight:smoke" = { visibility = "internal", group = "Maintenance", run = "cargo test --test cli_output_tests cli_distribution_artifact_pipeline_smoke_fixture_passes -- --nocapture" }
 "test:release:macos-checksums" = { visibility = "internal", group = "Maintenance", run = "bash tests/scripts/release-macos-checksums.sh" }
 
-# Release-profile catalog fixtures and both complete affected doctor modules.
-"test:release:catalog-fixtures" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(workspace_catalog::tests::) | test(doctor_command_tests::core::) | test(doctor_text_output_tests::snapshot_layout_tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 }] }
-"check:release:catalog-fixtures" = { visibility = "internal", group = "Maintenance", run = [
-  "cargo check -p effigy -p effigy-catalog --all-targets --profile test",
-  "cargo clippy -p effigy -p effigy-catalog --all-targets -- -D warnings",
-] }
-
 # Authorized in-place release preparation. Heavy admission wraps the WHOLE
 # operation (current-source build, prepared-tree gates, prepared state) before
 # any compile or file mutation. The entry point is argv-safe: it fixes the
@@ -447,16 +440,13 @@
 # simulated root identity. Any skip would mean a papercut 2f1b0df3
 # regression and fails the run.
 "test:catalog:non-root-entrypoint" = { visibility = "internal", group = "Maintenance", run = "bash tests/scripts/catalog-non-root-entrypoint.sh" }
-# Compiled-baseline provenance proof: the committed catalog snapshot and the
-# typed lock must agree with each other and with the pinned artifact
-# identities (crates/effigy-catalog/src/pack/baseline.rs).
-"test:catalog:baseline-lock" = { visibility = "internal", group = "Maintenance", run = [
-  { id = "catalog-baseline-lock", run = "cargo test -p effigy-catalog --lib committed_snapshot_ -- --nocapture", timeout_ms = 600000 },
+# Catalog sources (Q-005): source precedence, qualified names, fragment
+# requirements, checkout pins and read purity, plus the retired pack surface.
+"check:catalog:sources" = { visibility = "internal", group = "Maintenance", run = [
+  { run = "cargo check -p effigy -p effigy-catalog -p effigy-manifest -p effigy-containers -p effigy-release -p effigy-doctor -p effigy-cli --all-targets --profile test", timeout_ms = 900000 },
+  { run = "cargo clippy -p effigy -p effigy-catalog -p effigy-manifest -p effigy-containers -p effigy-release -p effigy-doctor -p effigy-cli --all-targets -- -D warnings", timeout_ms = 900000 },
 ] }
-"check:catalog:baseline" = { visibility = "internal", group = "Maintenance", run = [
-  "cargo check -p effigy-catalog --all-targets",
-  "cargo clippy -p effigy-catalog --all-targets -- -D warnings",
-] }
+"test:catalog:sources" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-catalog -p effigy-manifest -p effigy-containers -p effigy-release -p effigy-doctor -p effigy-cli -p effigy --lib --test integration --test catalog_sources --test service_list_cli_tests --test cli_output_tests -E 'package(effigy-catalog) | (package(effigy-manifest) & test(bundles::)) | package(effigy-containers) | (package(effigy-release) & (test(retired_catalog_pack_support_policy_key_is_refused) | test(release_preparation_without_catalog_policy_prepares_the_version) | test(load_release_config_reads_manifest_release_settings))) | (package(effigy-doctor) & test(manifest_schema::)) | (package(effigy-cli) & test(service)) | (package(effigy) & (test(service_command::) | test(parse_service_) | test(render_service_help) | test(doctor_command_tests::core::) | test(doctor_text_output_tests::snapshot_layout_tests::) | binary(catalog_sources) | binary(service_list_cli_tests) | test(retirement_user_catalog) | test(genuine_command_owned_subcommands_stay_nested) | test(genuine_subcommands_keep_nested_help)))' --no-fail-fast --retries 0 --no-tests fail -j 2", timeout_ms = 1800000 }] }
 "check:containers:scope-compile" = { visibility = "internal", group = "Maintenance", run = [
   "cargo check -p effigy-containers -p effigy-runtime -p effigy-managed -p effigy --all-targets",
   "cargo clippy -p effigy-containers -p effigy-runtime -p effigy-managed -p effigy --all-targets -- -D warnings",
@@ -822,29 +812,7 @@
 # private fake backends under a forced-exit nextest profile; no runtime,
 # Reference, Acow, gateway or service is started. No live Colima instance is
 # started.
-# Selected installed service-pack parity, entirely private fake transport.
-"test:workspace:catalog-handoff" = { visibility = "internal", group = "Maintenance", run = [
-  { id = "catalog-handoff-unit", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-catalog -p effigy-cli --lib --filterset 'test(workspace_catalog) | test(workspace_pack_) | test(parse_service_pack_) | test(workspace::tests::) | test(workspace_session::tests::) | test(exec_command::tests::) | test(bounded_exec::) | test(pack::tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
-  "cargo build --bin effigy",
-  { task = "test:workspace:catalog-handoff:private" },
-] }
-"test:workspace:catalog-handoff:selection" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(workspace_catalog)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 600000 }] }
-"test:workspace:catalog-handoff:build" = { visibility = "internal", group = "Maintenance", run = "cargo build --bin effigy" }
-"test:workspace:catalog-handoff:private" = { visibility = "internal", group = "Maintenance", run = [{ run = "python3 tests/scripts/workspace-catalog-handoff.py ./target/debug/effigy", timeout_ms = 600000 }] }
-
-"test:workspace:catalog-handoff:routes" = { visibility = "internal", group = "Maintenance", run = [{ run = "python3 tests/scripts/workspace-catalog-handoff.py ./target/debug/effigy --handoffs", timeout_ms = 600000 }] }
-
-"test:workspace:catalog-handoff:refusals" = { visibility = "internal", group = "Maintenance", run = [{ run = "python3 tests/scripts/workspace-catalog-handoff.py ./target/debug/effigy --refusals", timeout_ms = 600000 }] }
-"test:workspace:catalog-handoff:guard" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-catalog --lib --filterset 'test(workspace_pack_preparation_pins_content)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 600000 }] }
-
-"test:workspace:catalog-handoff:identity" = { visibility = "internal", group = "Maintenance", run = [{ run = "python3 tests/scripts/workspace-catalog-handoff.py ./target/debug/effigy home-after-copy user-after-copy", timeout_ms = 600000 }] }
-
-"fmt:workspace:catalog-handoff" = { visibility = "internal", group = "Maintenance", run = "rustfmt --edition 2021 --config skip_children=true crates/effigy-catalog/src/pack.rs crates/effigy-catalog/src/pack/error.rs crates/effigy-catalog/src/pack/install.rs crates/effigy-catalog/src/pack/tests.rs crates/effigy-cli/src/lib.rs crates/effigy-cli/src/command_parsing_runtime.rs crates/effigy-cli/src/help/topics/service.rs src/runner/service_command/pack.rs src/runner/system_command.rs src/runner/system_command/workspace_provisioning.rs src/runner/system_command/workspace_catalog.rs src/runner/system_command/workspace_catalog/tests.rs src/tests/lib_tests_parse_tests/catalog_and_container_option_tests.rs" }
-"check:workspace:catalog-handoff" = { visibility = "internal", group = "Maintenance", run = [
-  "cargo check -p effigy -p effigy-catalog -p effigy-cli --all-targets --profile test",
-  "cargo clippy -p effigy -p effigy-catalog -p effigy-cli --all-targets -- -D warnings",
-  { task = "fmt:check" },
-] }
+"test:workspace:effigy-build" = { visibility = "internal", group = "Maintenance", run = "cargo build --bin effigy" }
 "test:container:bounded-exec" = { visibility = "internal", group = "Maintenance", run = [
   { id = "bounded-exec-parser", run = "cargo test -p effigy-cli --lib command_parsing::container::tests:: -- --nocapture", timeout_ms = 600000 },
   { id = "bounded-exec-reader", run = "cargo test -p effigy --lib exec_command::bounded:: -- --nocapture", timeout_ms = 600000 },
@@ -929,19 +897,6 @@
   "cargo clippy -p effigy --all-targets -- -D warnings",
   "cargo clippy -p effigy-gateway -p effigy-rhai --all-targets -- -D warnings",
   "cargo clippy -p effigy-containers --all-targets -- -D warnings",
-] }
-# Release preparation atomically synchronizes the opt-in catalog support policy
-# before prepared-tree gates and restores all mutations when a gate fails.
-"test:release:catalog-preparation" = { visibility = "internal", group = "Maintenance", run = [
-  { id = "prepare-policy", run = "CARGO_NET_OFFLINE=true cargo test -p effigy-release --lib catalog_pack_support_preparation -- --nocapture", timeout_ms = 600000 },
-  { id = "catalog-current-policy", run = "CARGO_NET_OFFLINE=true cargo test -p effigy-catalog --lib committed_file_matches_this_crate_release_with_oldest_field -- --nocapture", timeout_ms = 600000 },
-  { id = "catalog-prepared-policy", run = "CARGO_NET_OFFLINE=true cargo test -p effigy-catalog --lib prepared_release_policy_preserves_catalog_update_capability_and_support_floor -- --nocapture", timeout_ms = 600000 },
-  { id = "release-manifest-schema", run = "CARGO_NET_OFFLINE=true cargo test -p effigy-doctor --lib validate_manifest_schema_accepts_docs_policy_bootstrap_container_distribution_and_release_sections -- --nocapture", timeout_ms = 600000 },
-] }
-"check:release:catalog-preparation" = { visibility = "internal", group = "Maintenance", run = [
-  "cargo build --bin effigy",
-  "cargo check -p effigy -p effigy-release -p effigy-manifest -p effigy-doctor -p effigy-catalog --all-targets --profile test",
-  "cargo clippy -p effigy -p effigy-release -p effigy-manifest -p effigy-doctor -p effigy-catalog --all-targets -- -D warnings",
 ] }
 # Remaining post-fork pre_exec conversions and the named containers
 # changed-test lint sites (task 100). Private errno/allocation/process
@@ -1086,7 +1041,7 @@
 # ownership override. Private fresh fixtures and fake builder hosts only; no
 # engine, VM, live artifact, or real builder container is touched.
 "test:workspace:artifact-freshness" = { visibility = "internal", group = "Maintenance", run = [
-  { task = "test:workspace:catalog-handoff:build" },
+  { task = "test:workspace:effigy-build" },
   { task = "test:workspace:artifact-provisioning" },
   { task = "test:workspace:artifact-builder-recovery" },
   { task = "test:workspace:artifact-admission" },
@@ -1099,7 +1054,7 @@
   { id = "workspace-artifact-provisioning", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(runner::system_command::workspace::tests::) - test(builder_recovery::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
 ] }
 "test:workspace:artifact-admission" = { visibility = "internal", group = "Maintenance", run = [
-  { id = "direct-compose-ownership-admission", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib --filterset 'test(tests::compose::) | test(tests::policies::) | test(tests::volumes_reports::) | test(tests::catalog_pack_fallback::) | test(policy_support::generated_compose::tests::) | test(policy::admission::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
+  { id = "direct-compose-ownership-admission", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib --filterset 'test(tests::compose::) | test(tests::policies::) | test(tests::volumes_reports::) | test(policy_support::generated_compose::tests::) | test(policy::admission::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
 ] }
 "test:workspace:artifact-readiness" = { visibility = "internal", group = "Maintenance", run = [
   { id = "readiness-and-affected-callers", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(nested_container_target_tests::) | test(container_runtime_prep::tests::) | test(exec_command::tests::) | test(exec_command::transport::colima::tests::) | test(exec_command::transport::capture_deadline_tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
@@ -1132,7 +1087,7 @@
   { id = "full-id-replacement", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(direct_builder_full_id_replacement_refuses_before_probe_or_restart)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
 ] }
 "test:workspace:artifact-builder-recovery" = { visibility = "internal", group = "Maintenance", run = [
-  { task = "test:workspace:catalog-handoff:build" },
+  { task = "test:workspace:effigy-build" },
   { id = "builder-recovery", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-rhai --lib --filterset 'test(builder_recovery::) | test(workspace_artifact_build_helper)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
 ] }
 "check:workspace:artifact-builder-recovery" = { visibility = "internal", group = "Maintenance", run = [
@@ -1425,7 +1380,6 @@
 "test:release:runtime-drift-routing" = { visibility = "internal", group = "Maintenance", run = [
   { task = "qa:architecture:runtime-container-drift" },
   { task = "test:architecture:runtime-container-drift-controls" },
-  { task = "test:workspace:catalog-handoff" },
   { id = "partial-activation-markers", run = "cargo nextest run --config-file tests/config/deadline-marker-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(container_command::lifecycle::tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
 ] }
 "qa:architecture:runtime-container-drift" = { visibility = "internal", group = "Maintenance", run = { rhai = "scripts/check-runtime-container-drift.rhai" } }

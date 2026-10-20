@@ -23,10 +23,13 @@ pub(super) fn run(
             Ok(serde_json::json!({"name":name,"path":render.path.join(name),"content":content}))
         })
         .collect::<Result<Vec<_>, RunnerError>>()?;
+    let services =
+        effigy_containers::catalog_service_sources(&context.resolved.resolved_root, &policy.name)?;
     if output_json {
         return Ok(serde_json::json!({"schema":"effigy.container.render.v1","schema_version":1,"ok":true,
             "environment":policy.name,"path":render.path,"digest":render.closure.digest(),
-            "compose_files":policy.compose_files,"environment_variables":{"EFFIGY_RENDER_ROOT":render.path},"files":files}).to_string());
+            "compose_files":policy.compose_files,"environment_variables":{"EFFIGY_RENDER_ROOT":render.path},
+            "services":services,"files":files}).to_string());
     }
     let mut output = format!(
         "environment: {}\npath: {}\ndigest: {}\n",
@@ -34,6 +37,12 @@ pub(super) fn run(
         render.path.display(),
         render.closure.digest()
     );
+    for service in &services {
+        output.push_str(&format!(
+            "service: {} catalog={} source={}\n",
+            service.service, service.catalog, service.source
+        ));
+    }
     for file in files {
         output.push_str(&format!(
             "\n--- {}\n{}",

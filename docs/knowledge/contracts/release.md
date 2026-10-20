@@ -69,7 +69,7 @@ publication, binary-workflow dispatch, workflow edits or live operations.
 1. Start from clean, pushed `main`. Record `candidate_sha=$(git rev-parse HEAD)`.
 2. Dispatch `gh workflow run ci.yml --ref main`. Select the `workflow_dispatch` run for that exact SHA with `gh run list --workflow ci.yml --branch main --commit "$candidate_sha" --event workflow_dispatch --limit 1 --json databaseId,headSha,status,conclusion,url`, verify `headSha`, and wait with `gh run watch <RUN_ID> --exit-status`. Missing, pending, red, cancelled, or different-commit evidence blocks release.
 3. Run `effigy release status --check-gates`, `effigy release simulate`, and `effigy release prepare --plan`. Confirm the target version with Tom. During `v0.x`, PATCH is for compatible fixes; MINOR may break behavior with explicit migration notes. Removing a public API is a break (a `Removed` changelog entry), so it proposes MINOR under `pre-1-0` rather than PATCH. CI installs should pin exact versions.
-4. Run `effigy release prepare --yes --check-gates`. It updates `Cargo.toml`, `Cargo.lock`, `CHANGELOG.md`, and prepared state. In the same release change, update `support/catalog-pack-update.toml` (`as_of_release`, `required_versions`, and, when needed, `oldest_update_capable_release`), `PackUpdateCapability::for_this_build` and its tests. Review versioned install examples in `README.md`.
+4. Run `effigy release prepare --yes --check-gates`. It updates `Cargo.toml`, `Cargo.lock`, `CHANGELOG.md`, and prepared state. Review versioned install examples in `README.md`.
 5. Draft release notes from `effigy changelog extract CHANGELOG.md --version X.Y.Z` for Tom's review. Keep the reviewed notes with the GitHub release; routine release logs are not repository knowledge.
 
 ## Execute
@@ -121,17 +121,10 @@ still require Tom's explicit release authorization.
 
 Use the [v0.14.0 consumer migration checklist](../../guides/083-v0.14.0-consumer-migration.md)
 for upgrade actions; the linked contracts remain the owners of each behavior.
-The current catalog-pack policy is checked against Effigy v0.14.0 and the
-embedded official pack is v1.1.1. Effigy's release configuration opts in with
-`sync-catalog-pack-support-policy = "support/catalog-pack-update.toml"`.
-Prepare validates the policy against the current version, then plans its
-`as_of_release` and `required_versions` update beside the release version,
-changelog, and lockfile mutations. The selected release is added at most once;
-existing supported versions, the update-capability marker, and the minimum
-support floor are retained. The policy file uses the normal prepare snapshots,
-so a failed gate restores it with the other mutations. The capability is
-already present in released Effigy, with v0.13.0 recorded as its oldest
-supported version today.
+The catalog-pack support policy and its prepare mutation are retired in
+v0.15 with the catalog-pack runtime (Q-005). Release preparation no longer
+reads `support/catalog-pack-update.toml`, and
+`release.sync-catalog-pack-support-policy` is a manifest error.
 
 ### Preparation authorization — 2026-10-06
 
@@ -143,12 +136,8 @@ files, install examples, release notes, and repairs needed to preserve the
 existing preparation gates. Tagging, publication, binary-workflow dispatch,
 workflow edits, installation and live operations remain outside this ruling.
 
-The version and catalog-pack support policy must be consistent before gates
-run against the prepared tree. The opt-in policy mutation is planned with the
-version file, changelog, and Cargo lock synchronization, then all gates inspect
-the prepared tree. Invalid or stale policy data blocks planning; gate failure
-restores every planned file and writes no prepared state. The catalog parser's
-version-consistency check remains unchanged.
+Gates run against the prepared tree. Gate failure restores every planned file
+and writes no prepared state.
 
 ### Publication authorization — 2026-10-06
 

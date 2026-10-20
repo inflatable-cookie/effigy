@@ -1,4 +1,4 @@
-//! Prove `effigy service list` text and JSON advertise only callable bundled
+//! Prove `effigy service list` text and JSON advertise only callable baseline
 //! fragments — first-level directories that carry `service.toml`.
 
 use std::path::{Path, PathBuf};
@@ -74,7 +74,7 @@ fn service_list_text_exposes_only_bundled_service_manifests() {
     );
     for name in EXPECTED_BUNDLED {
         assert!(
-            run.stdout.contains(&format!("{name} [bundled]")),
+            run.stdout.contains(&format!("{name} [baseline]")),
             "missing {name}:\n{}",
             run.stdout
         );
@@ -99,7 +99,7 @@ fn service_list_json_exposes_only_bundled_service_manifests() {
     let envelope: serde_json::Value =
         serde_json::from_str(run.stdout.trim()).expect("stdout is one envelope");
     assert_eq!(envelope["schema"], "effigy.command.v1");
-    assert_eq!(envelope["result"]["schema"], "effigy.service.list.v1");
+    assert_eq!(envelope["result"]["schema"], "effigy.service.list.v2");
     let fragments = envelope["result"]["fragments"]
         .as_array()
         .expect("fragments array");
@@ -110,7 +110,7 @@ fn service_list_json_exposes_only_bundled_service_manifests() {
     assert_eq!(names, EXPECTED_BUNDLED);
     assert!(fragments
         .iter()
-        .all(|fragment| fragment["source"] == "bundled"));
+        .all(|fragment| fragment["source"] == "baseline"));
     assert!(
         !names.contains(&"README.md") && !names.contains(&"compose.override.example.yml"),
         "root catalog assets leaked into JSON output: {names:?}"

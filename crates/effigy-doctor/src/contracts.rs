@@ -89,6 +89,8 @@ pub mod remediation {
         "Remove/rename unsupported keys to match `effigy config --schema`.";
     pub const DECLARE_CATALOG_MEMBERS: &str =
         "Remove `[catalog.discovery]`; declare intended catalogs under root `[catalog.members]` or typed catalog mounts.";
+    pub const REMOVE_CATALOG_PACK_SUPPORT_POLICY: &str =
+        "Remove `release.sync-catalog-pack-support-policy`; the catalog-pack runtime and its support policy are retired in v0.15.";
     pub const SCHEMA_TABLE_ROOT_REQUIRED: &str =
         "Use table-based TOML with sections like `[tasks]`.";
     pub const MANIFEST_READ_FAILURE: &str =

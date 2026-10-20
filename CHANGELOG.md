@@ -58,6 +58,17 @@ During v0.x, MINOR bumps may include breaking changes.
   migrated.
 - `effigy container eject` and `container::eject` are retired: generated
   Compose stays internal. Use `effigy container render <name>`.
+- The catalog-pack runtime is retired (Q-005). `effigy service pack`
+  (`status`, `install`, `update`, `rollback`, `reset`) refuses with the
+  replacement, the workspace pack handoff is gone, and
+  `release.sync-catalog-pack-support-policy` is a manifest error. Installed
+  pack state in `~/.effigy/catalog-packs/` is ignored with a notice and left
+  untouched. Pack v1.2.0 was byte-identical to the compiled baseline, so
+  existing projects resolve the same services.
+- `effigy service list --json` is `effigy.service.list.v2`: fragments carry
+  `source`, `layer`, `path`, `qualified` and `shadows`, and the pack
+  `selection` object is gone. Text output labels the compiled catalog
+  `baseline` instead of `bundled`.
 - Each environment's backend is recorded in the kernel store when its
   generation is prepared, and every Compose, volume and data action uses it.
   Volume actions no longer infer Docker or Colima from the profile name, and
@@ -172,6 +183,16 @@ During v0.x, MINOR bumps may include breaking changes.
   lists the families still present.
 
 ### Added
+- Catalog sources (Q-005). Services resolve from the project catalog
+  (`infra/dev/catalog/`), the bundle's shipped `catalog/`, declared
+  `[catalog.sources.<name>]` git, OCI or path sources, then the compiled
+  baseline. Declared sources share the bundle's checkout pins and move only on
+  `effigy bundle sync`; reads never fetch. Qualify a name as
+  `<source>/<service>` to pick one source. `service list` and
+  `container render` name each service's source.
+- Fragments can declare `[requires]` (`effigy` range, `schema`,
+  `capabilities`) in `service.toml`; a release that cannot meet them refuses
+  the fragment and names what it needs.
 - `effigy container status` and `effigy doctor` show each environment's
   backend, why it was chosen, and its record: active or stopped, persistent or
   held, the applied generation, a partial generation and its holders. Status

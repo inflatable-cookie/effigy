@@ -47,7 +47,7 @@ Use these docs intentionally:
   owns explicit installed-skill source versus consumer-target execution
 - [026-feature-placement-and-command-surface.md](026-feature-placement-and-command-surface.md)
   defines semantic core ownership, group-first command organization, provider
-  placement, catalog-pack constraints, and release/distribution separation
+  placement, catalog sources, and release/distribution separation
 - [027-catalog-scoped-code-graph.md](027-catalog-scoped-code-graph.md) defines
   one checkout corpus, per-file transactions and cooperative refresh
 - [028-published-and-draft-task-surfaces.md](028-published-and-draft-task-surfaces.md)

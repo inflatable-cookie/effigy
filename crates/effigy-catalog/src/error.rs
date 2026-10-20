@@ -9,6 +9,32 @@ pub enum CatalogError {
     #[error("catalog fragment not found: {name}")]
     FragmentNotFound { name: String },
 
+    /// A qualified name (`source/service`) names a source that is not declared.
+    #[error("unknown catalog source `{source_handle}` in `{name}`; known sources: {known}")]
+    UnknownSource {
+        name: String,
+        source_handle: String,
+        known: String,
+    },
+
+    /// A declared catalog source handle is unusable.
+    #[error("invalid catalog source name `{name}`: {reason}")]
+    InvalidSourceName { name: String, reason: String },
+
+    /// A fragment declares requirements this Effigy release does not meet.
+    #[error(
+        "catalog fragment `{name}` from source `{source_handle}` needs {needs} ({unmet}); \
+         this is Effigy {running}. Update Effigy, or pin a catalog source version this \
+         release supports and run `effigy bundle sync`"
+    )]
+    UnsupportedFragment {
+        name: String,
+        source_handle: String,
+        needs: String,
+        unmet: String,
+        running: String,
+    },
+
     /// The service.toml file in a fragment is missing or unreadable.
     #[error("missing service.toml in fragment '{name}'")]
     MissingServiceToml { name: String },

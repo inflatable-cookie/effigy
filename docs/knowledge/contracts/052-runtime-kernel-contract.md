@@ -377,7 +377,7 @@ and only through `ObserveContext::probe_process` and `ObserveContext::connect`
   engine lane assigns them; the kernel enforces them.
 - I-EC2: write capabilities are types that Static and Observe contexts cannot
   construct.
-- I-EC3: executable sources (bundles, provider packages, catalog packs) are
+- I-EC3: executable sources (bundles, provider packages, catalog sources) are
   acquired only in Prepare. Discovery never acquires executable source.
 
 #### Failure model
@@ -1704,7 +1704,7 @@ coverage matrix (`synthesis/GUEST-EFFIGY.md` §2).
 | Managed TUI and headless (`dev`, profiles) | channel | Admission of a `Detached` managed run, child of the session run. The guest renders events; the host supervisor owns workloads and attachments. |
 | Managed `status`, `logs`, `stop`; `tasks status` | channel | Observe requests for status and logs; `stop` is a generation-fenced request (K7). Host and guest pids are never mixed. |
 | `tasks cache`, task-lock `unlock` | channel; `unlock` refused | Cache reads are host Observe requests; clears are RefreshDerived requests to the owning store engine. `unlock` refuses in both placements: there is no unlock command (I-G7). QA groups are in the admission row. |
-| `doctor` | local and channel | Manifest and tool checks local; runtime checks (backend, gateway, routes, catalog pack, ownership, volumes) are host Observe requests. |
+| `doctor` | local and channel | Manifest and tool checks local; runtime checks (backend, gateway, routes, ownership, volumes) are host Observe requests. |
 | `container shell`, bounded shell, `exec`, aliases | channel | Admission request; the host launches the command in the named service, including the current container, through remote custody. |
 | `container up`, `down`, `reset`, `retire` | channel | Mutate requests to the environment engine under R4. A guest `down` of its own environment follows §8.7. |
 | `container status`, `stats`, `logs` | channel | Host Observe requests on the backend inventory. |
@@ -1712,7 +1712,7 @@ coverage matrix (`synthesis/GUEST-EFFIGY.md` §2).
 | `secrets` list, doctor, get, export | channel | Observe requests to the secrets engine; plaintext follows the host CLI's policy. |
 | `secrets` init, set, unset, import, unlock, lock, passphrase change; required task secrets | channel | Mutate requests to the secrets engine; task secrets arrive as per-run grants (§8.2). |
 | `deps` status, link, unlink, pin, unpin | channel | Status is Observe; changes are requests to the deps engine. |
-| `graph` index; `bundle` sync; `service` pack install, rollback and remove; `config` user settings | channel | RefreshDerived, Prepare or Mutate requests to the owning store engine. The guest has no separate preference file. |
+| `graph` index; `bundle` sync (bundle and catalog source pins); `config` user settings | channel | RefreshDerived, Prepare or Mutate requests to the owning store engine. The guest has no separate preference file. |
 | `state` apply, capture; `artifact` stage, capture, push; `init`; `docs` index writes; `release`, `deploy`, `bootstrap`, `demo`, `uninstall` | channel | Requests under the same authorisation as the host CLI. |
 | `gateway` subcommands | channel | Requests to the gateway engine; never a guest gateway. |
 | Hidden internal entry points | refused | Never exposed on the channel; a guest invocation refuses. |
@@ -1968,7 +1968,7 @@ Environment reconciler adoption, tranche 3 (effigy#230, 2026-10-20):
 | Vault written in place, unlocked | `src/runner/secret_vault.rs:177-194`; `crates/effigy-rhai/src/rhai_secrets.rs:665` | `Gate(Store vault)` + pointer commit (§5.5) |
 | Deps state: try-only lock, local atomic helper | `crates/effigy-deps/src/state.rs:497`, `:573` | gate with deadline; `atomic_replace` |
 | Graph reads and explicit refresh | `crates/effigy-codegraph/src/refresh.rs`; `storage.rs`; graph contract 045 | RefreshDerived owns a kernel store gate; Observe probes only. Queries never refresh; rollback-journal readers create no files. Existing WAL is migrated by explicit index. |
-| Catalog pack store lock | `crates/effigy-catalog/src/pack/store.rs:343` | `Gate`, or removal under Q-005 |
+| Catalog pack store lock | the retired catalog-pack runtime (removed under Q-005, effigy#234) | none: catalog sources reuse the bundle source pins |
 | Pending-facts journal with file and directory `fsync` | the retired host-run client (removed, effigy#227) | the pattern `atomic_replace` absorbs |
 | Doctor publication marker | `crates/effigy-scan/src/execution/doctor_inventory.rs:586` | `Gate` |
 | Rhai, runtime and doctor signal flags | `crates/effigy-rhai/src/lib.rs:219-221`; `crates/effigy-runtime/src/signals.rs:184-186`; `crates/effigy-scan/src/execution/doctor_inventory.rs:2064` | `SignalRouter` and `CancelToken` (K9) |

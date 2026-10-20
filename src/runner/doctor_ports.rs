@@ -183,10 +183,6 @@ fn collect_runtime_diagnostics(
     // so it also precedes the container-policy early returns.
     append_gateway_tcp_alias_diagnostics(&mut diagnostics);
 
-    // Catalog-pack health is machine-global too, and matters on repos with no
-    // container policy at all, so it also precedes the early returns below.
-    append_catalog_pack_diagnostics(&mut diagnostics);
-
     // v0.14 task state is ignored, never imported or deleted (contract 052
     // §11); listing it tells the operator what is safe to remove.
     append_legacy_task_state_diagnostics(resolved_root, &mut diagnostics);
@@ -448,25 +444,6 @@ fn append_legacy_task_state_diagnostics(
             ),
             fixable: false,
         });
-    }
-}
-
-/// Surface installed catalog-pack health. A pack that has become unreadable or
-/// incompatible resolves to the compiled baseline silently as far as compose
-/// output is concerned, so doctor is where an operator finds out — with one
-/// direct repair command.
-fn append_catalog_pack_diagnostics(diagnostics: &mut DoctorRuntimeDiagnostics) {
-    let selection =
-        effigy_catalog::pack::select_pack(crate::runner::service_command::effigy_version());
-    if let Some(finding) = crate::runner::service_command::pack_health_finding(&selection) {
-        diagnostics.findings.push(finding);
-        return;
-    }
-    if let Some(record) = selection.active.as_ref() {
-        diagnostics.evidence.push(format!(
-            "catalog-pack: active {} {} ({})",
-            record.pack_id, record.pack_version, record.install_id
-        ));
     }
 }
 

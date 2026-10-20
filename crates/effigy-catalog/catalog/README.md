@@ -22,9 +22,10 @@ Each service lives in its own directory and can own:
 - `variants/*.toml`
   - optional named parameter presets
 
-The catalog is still compiled into a single binary. `effigy-catalog` embeds
-this directory with `rust-embed` and loads the same files from disk when a
-project-local or user-global override exists.
+This directory is the compiled baseline. `effigy-catalog` embeds it with
+`rust-embed` and resolves it after the project catalog, the bundle's
+`catalog/` and declared `[catalog.sources]`, which use the same layout on
+disk.
 
 ## What Still Lives In Rust
 

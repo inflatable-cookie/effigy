@@ -1,26 +1,33 @@
 //! Catalog fragment loading and resolution.
 //!
-//! Fragments are loaded from three layers (highest priority first):
+//! Fragments resolve from catalog sources, highest priority first:
 //!
-//! 1. Project-local: `infra/dev/catalog/` in the repo
-//! 2. Active installed catalog pack (see [`crate::pack`])
-//! 3. Bundled: embedded in the binary via `rust-embed`
+//! 1. `project`: the repository's `infra/dev/catalog/`, plus in-memory
+//!    fragments translated from retired inputs (see [`CatalogResolver::with_overlay`]).
+//! 2. `bundle`: the `catalog/` directory shipped inside the pinned bundle.
+//! 3. Declared sources: `[catalog.sources.<name>]`, pinned per checkout.
+//! 4. `baseline`: the compiled catalog embedded in the binary.
 //!
-//! The bundled layer is the permanent compiled baseline. It is always present,
-//! needs no store, no `oras`, and no network, so a machine that has never
-//! installed a pack resolves exactly the bytes it resolved before packs
-//! existed.
+//! A name may be qualified as `source/service` to select one source. Every
+//! layer is a local directory or embedded asset: resolution never fetches,
+//! and pins move only through explicit `effigy bundle sync` on the host.
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
+
+use semver::Version;
 
 use crate::error::CatalogError;
+use crate::requirements::{current_effigy_version, FragmentRequirements};
 use crate::schema::ServiceSchema;
+
+/// Source handles with a fixed meaning; declared sources may not use them.
+pub const RESERVED_SOURCE_HANDLES: &[&str] = &["project", "bundle", "baseline"];
 
 /// A loaded catalog fragment — everything needed to render a service.
 #[derive(Debug, Clone)]
 pub struct CatalogFragment {
-    /// Fragment name (directory name).
+    /// Fragment name (directory name, never source-qualified).
     pub name: String,
 
     /// Parsed service schema from `service.toml`.
@@ -38,51 +45,62 @@ pub struct CatalogFragment {
     /// Available parameter preset variants (filename stem -> param table).
     pub param_variants: HashMap<String, HashMap<String, toml::Value>>,
 
-    /// Which layer this fragment was loaded from.
+    /// Which source this fragment was loaded from.
     pub source: FragmentSource,
 }
 
 /// Where a fragment was loaded from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FragmentSource {
-    /// Embedded in the binary — the permanent compiled baseline.
-    Bundled,
-    /// Active installed catalog pack.
-    InstalledPack {
-        /// Pack identity from the installed manifest.
-        pack_id: String,
-        /// Pack version from the installed manifest.
-        pack_version: String,
-        /// Fragment directory inside the installed pack.
+    /// The repository's project catalog.
+    Project(PathBuf),
+    /// The pinned bundle's shipped `catalog/` directory.
+    Bundle(PathBuf),
+    /// A declared `[catalog.sources.<name>]` source.
+    Declared {
+        /// Source handle from the manifest.
+        name: String,
+        /// Fragment directory inside the pinned source.
         path: PathBuf,
     },
-    /// Project-local override directory.
-    ProjectLocal(PathBuf),
+    /// Embedded in the binary — the compiled baseline.
+    Baseline,
 }
 
-impl std::fmt::Display for FragmentSource {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl FragmentSource {
+    /// Handle used in qualified names (`<handle>/<service>`).
+    pub fn handle(&self) -> &str {
         match self {
-            Self::Bundled => write!(f, "bundled"),
-            Self::InstalledPack {
-                pack_id,
-                pack_version,
-                ..
-            } => write!(f, "installed-pack ({pack_id} {pack_version})"),
-            Self::ProjectLocal(p) => write!(f, "project-local ({})", p.display()),
+            Self::Project(_) => "project",
+            Self::Bundle(_) => "bundle",
+            Self::Declared { name, .. } => name,
+            Self::Baseline => "baseline",
+        }
+    }
+
+    /// Layer kind: `project`, `bundle`, `declared` or `baseline`.
+    pub fn layer(&self) -> &'static str {
+        match self {
+            Self::Project(_) => "project",
+            Self::Bundle(_) => "bundle",
+            Self::Declared { .. } => "declared",
+            Self::Baseline => "baseline",
+        }
+    }
+
+    /// Fragment directory on disk, when the source is not embedded.
+    pub fn path(&self) -> Option<&Path> {
+        match self {
+            Self::Project(path) | Self::Bundle(path) | Self::Declared { path, .. } => Some(path),
+            Self::Baseline => None,
         }
     }
 }
 
-/// The active installed pack, as a resolvable catalog layer.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct InstalledPackLayer {
-    /// Directory holding the pack's fragment directories.
-    pub root: PathBuf,
-    /// Pack identity from the installed manifest.
-    pub pack_id: String,
-    /// Pack version from the installed manifest.
-    pub pack_version: String,
+impl std::fmt::Display for FragmentSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.handle())
+    }
 }
 
 /// Embedded catalog assets — bundled into the binary at compile time.
@@ -90,29 +108,56 @@ pub struct InstalledPackLayer {
 #[folder = "catalog/"]
 struct BundledCatalog;
 
-/// Resolves catalog fragments from the layered catalog.
+/// A fragment directory source below the project layer.
+#[derive(Debug, Clone)]
+struct SourceDir {
+    /// `None` for the bundle's catalog, the handle for a declared source.
+    declared: Option<String>,
+    root: PathBuf,
+}
+
+impl SourceDir {
+    fn handle(&self) -> &str {
+        self.declared.as_deref().unwrap_or("bundle")
+    }
+
+    fn source(&self, path: PathBuf) -> FragmentSource {
+        match &self.declared {
+            Some(name) => FragmentSource::Declared {
+                name: name.clone(),
+                path,
+            },
+            None => FragmentSource::Bundle(path),
+        }
+    }
+}
+
+/// Resolves catalog fragments from the ordered catalog sources.
 pub struct CatalogResolver {
-    /// Project-local catalog path (e.g., `<repo>/infra/dev/catalog/`).
+    /// Project catalog path (e.g., `<repo>/infra/dev/catalog/`).
     project_local: Option<PathBuf>,
 
-    /// Active installed catalog pack, below the project override layer.
-    installed_pack: Option<InstalledPackLayer>,
-
     /// In-memory project fragments that are not on disk yet, below the
-    /// project directory and above the pack. Translation of retired inputs
-    /// uses this so a later on-disk copy resolves to identical content.
+    /// project directory. Translation of retired inputs uses this so a later
+    /// on-disk copy resolves to identical content.
     overlay: HashMap<String, CatalogFragment>,
+
+    /// Bundle catalog, then declared sources, in precedence order.
+    sources: Vec<SourceDir>,
+
+    /// Release checked against each fragment's `[requires]`.
+    effigy: Version,
 }
 
 impl CatalogResolver {
-    /// Create a new resolver with the given override directories.
-    ///
-    /// The path can be `None` if the directory does not exist.
+    /// Create a resolver with the project catalog directory, if any, above
+    /// the compiled baseline.
     pub fn new(project_local: Option<PathBuf>) -> Self {
         Self {
             project_local,
-            installed_pack: None,
             overlay: HashMap::new(),
+            sources: Vec::new(),
+            effigy: current_effigy_version(),
         }
     }
 
@@ -123,71 +168,176 @@ impl CatalogResolver {
         self
     }
 
-    /// Attach the active installed pack layer.
-    ///
-    /// Callers normally get this from
-    /// [`crate::pack::resolve_catalog_layers`] rather than building it by
-    /// hand, so layer order is decided in exactly one place.
+    /// Attach the pinned bundle's `catalog/` directory, below the project
+    /// layer and above declared sources.
     #[must_use]
-    pub fn with_installed_pack(mut self, installed_pack: Option<InstalledPackLayer>) -> Self {
-        self.installed_pack = installed_pack;
+    pub fn with_bundle_catalog(mut self, root: Option<PathBuf>) -> Self {
+        self.sources.retain(|source| source.declared.is_some());
+        if let Some(root) = root {
+            self.sources.insert(
+                0,
+                SourceDir {
+                    declared: None,
+                    root,
+                },
+            );
+        }
         self
     }
 
-    /// Resolve a fragment by name, checking layers in priority order.
-    pub fn resolve(&self, name: &str) -> Result<CatalogFragment, CatalogError> {
-        // 1. Project-local
-        if let Some(ref dir) = self.project_local {
-            let fragment_dir = dir.join(name);
-            if fragment_dir.is_dir() {
-                return Self::load_from_dir(
-                    name,
-                    &fragment_dir,
-                    FragmentSource::ProjectLocal(fragment_dir.clone()),
-                );
-            }
+    /// Append a declared source below the bundle and earlier declared
+    /// sources. The handle must be a plain name that is not reserved.
+    pub fn with_declared_source(mut self, name: &str, root: PathBuf) -> Result<Self, CatalogError> {
+        validate_source_handle(name).map_err(|reason| CatalogError::InvalidSourceName {
+            name: name.to_owned(),
+            reason,
+        })?;
+        if self.sources.iter().any(|source| source.handle() == name) {
+            return Err(CatalogError::InvalidSourceName {
+                name: name.to_owned(),
+                reason: "declared twice".to_owned(),
+            });
         }
-
-        if let Some(fragment) = self.overlay.get(name) {
-            return Ok(fragment.clone());
-        }
-
-        // 2. Active installed pack
-        if let Some(ref pack) = self.installed_pack {
-            let fragment_dir = pack.root.join(name);
-            if fragment_dir.is_dir() {
-                return Self::load_from_dir(
-                    name,
-                    &fragment_dir,
-                    FragmentSource::InstalledPack {
-                        pack_id: pack.pack_id.clone(),
-                        pack_version: pack.pack_version.clone(),
-                        path: fragment_dir.clone(),
-                    },
-                );
-            }
-        }
-
-        // 3. Compiled baseline
-        Self::load_from_embedded(name)
+        self.sources.push(SourceDir {
+            declared: Some(name.to_owned()),
+            root,
+        });
+        Ok(self)
     }
 
-    /// List all available fragment names across all layers.
-    pub fn list(&self) -> Vec<FragmentInfo> {
-        let mut seen = HashMap::new();
+    /// Check fragment requirements against `effigy` instead of the running
+    /// release.
+    #[must_use]
+    pub fn with_effigy_version(mut self, effigy: Version) -> Self {
+        self.effigy = effigy;
+        self
+    }
 
-        // Project-local (highest priority)
+    /// Handles of every source, in precedence order.
+    pub fn source_handles(&self) -> Vec<&str> {
+        let mut handles = vec!["project"];
+        handles.extend(self.sources.iter().map(SourceDir::handle));
+        handles.push("baseline");
+        handles
+    }
+
+    /// Resolve a fragment by name, or by `source/service` from one source.
+    pub fn resolve(&self, name: &str) -> Result<CatalogFragment, CatalogError> {
+        let (qualifier, service) = split_qualified(name);
+        if !is_fragment_segment(service) {
+            return Err(CatalogError::FragmentNotFound {
+                name: name.to_owned(),
+            });
+        }
+        let found = match qualifier {
+            None => self.resolve_any(service)?,
+            Some("project") => self.resolve_project(service)?,
+            Some("baseline") => self.load_from_embedded(service).map(Some)?,
+            Some(handle) => {
+                let source = self
+                    .sources
+                    .iter()
+                    .find(|source| source.handle() == handle)
+                    .ok_or_else(|| CatalogError::UnknownSource {
+                        name: name.to_owned(),
+                        source_handle: handle.to_owned(),
+                        known: self.source_handles().join(", "),
+                    })?;
+                self.resolve_in(source, service)?
+            }
+        };
+        found.ok_or_else(|| CatalogError::FragmentNotFound {
+            name: name.to_owned(),
+        })
+    }
+
+    fn resolve_any(&self, service: &str) -> Result<Option<CatalogFragment>, CatalogError> {
+        if let Some(fragment) = self.resolve_project(service)? {
+            return Ok(Some(fragment));
+        }
+        for source in &self.sources {
+            if let Some(fragment) = self.resolve_in(source, service)? {
+                return Ok(Some(fragment));
+            }
+        }
+        self.load_from_embedded(service).map(Some)
+    }
+
+    fn resolve_project(&self, service: &str) -> Result<Option<CatalogFragment>, CatalogError> {
         if let Some(ref dir) = self.project_local {
-            Self::list_dir_fragments(dir, FragmentSource::ProjectLocal(dir.clone()), &mut seen);
+            let fragment_dir = dir.join(service);
+            if fragment_dir.is_dir() {
+                return self
+                    .load_from_dir(
+                        service,
+                        &fragment_dir,
+                        FragmentSource::Project(fragment_dir.clone()),
+                    )
+                    .map(Some);
+            }
         }
+        Ok(self.overlay.get(service).cloned())
+    }
 
-        // Active installed pack
-        if let Some(ref pack) = self.installed_pack {
-            Self::list_pack_fragments(pack, &mut seen);
+    fn resolve_in(
+        &self,
+        source: &SourceDir,
+        service: &str,
+    ) -> Result<Option<CatalogFragment>, CatalogError> {
+        let fragment_dir = source.root.join(service);
+        if !fragment_dir.is_dir() {
+            return Ok(None);
         }
+        self.load_from_dir(service, &fragment_dir, source.source(fragment_dir.clone()))
+            .map(Some)
+    }
 
-        // Compiled baseline (lowest priority)
-        Self::list_bundled_fragments(&mut seen);
+    /// List every resolvable fragment with the source that wins and the
+    /// lower sources it shadows.
+    pub fn list(&self) -> Vec<FragmentInfo> {
+        fn record(seen: &mut HashMap<String, FragmentInfo>, name: &str, source: FragmentSource) {
+            match seen.get_mut(name) {
+                Some(info) => info.shadows.push(source),
+                None => {
+                    seen.insert(
+                        name.to_owned(),
+                        FragmentInfo {
+                            name: name.to_owned(),
+                            source,
+                            shadows: Vec::new(),
+                        },
+                    );
+                }
+            }
+        }
+        let mut seen: HashMap<String, FragmentInfo> = HashMap::new();
+
+        if let Some(ref dir) = self.project_local {
+            for (name, path) in fragment_dirs(dir) {
+                record(&mut seen, &name, FragmentSource::Project(path));
+            }
+        }
+        // The overlay sits in the project layer, behind the project directory.
+        let mut overlay = self.overlay.iter().collect::<Vec<_>>();
+        overlay.sort_by(|a, b| a.0.cmp(b.0));
+        for (name, fragment) in overlay {
+            if !seen.contains_key(name) {
+                record(&mut seen, name, fragment.source.clone());
+            }
+        }
+        for source in &self.sources {
+            for (name, path) in fragment_dirs(&source.root) {
+                record(&mut seen, &name, source.source(path));
+            }
+        }
+        let mut bundled = BundledCatalog::iter()
+            .filter_map(|path| bundled_fragment_name_from_asset_path(&path).map(str::to_owned))
+            .collect::<Vec<_>>();
+        bundled.sort();
+        bundled.dedup();
+        for name in bundled {
+            record(&mut seen, &name, FragmentSource::Baseline);
+        }
 
         let mut infos: Vec<_> = seen.into_values().collect();
         infos.sort_by(|a, b| a.name.cmp(&b.name));
@@ -215,6 +365,7 @@ impl CatalogResolver {
 
     /// Load a fragment from a filesystem directory.
     fn load_from_dir(
+        &self,
         name: &str,
         dir: &Path,
         source: FragmentSource,
@@ -226,6 +377,11 @@ impl CatalogResolver {
                 name: name.to_string(),
             }
         })?;
+        FragmentRequirements::parse(&service_toml, name)?.check(
+            name,
+            source.handle(),
+            &self.effigy,
+        )?;
         let schema = ServiceSchema::parse(&service_toml, name)?;
 
         // compose.fragment.yml (required)
@@ -255,8 +411,8 @@ impl CatalogResolver {
         })
     }
 
-    /// Load a fragment from the embedded (bundled) catalog.
-    fn load_from_embedded(name: &str) -> Result<CatalogFragment, CatalogError> {
+    /// Load a fragment from the embedded compiled baseline.
+    fn load_from_embedded(&self, name: &str) -> Result<CatalogFragment, CatalogError> {
         let service_toml_key = format!("{name}/service.toml");
         let compose_key = format!("{name}/compose.fragment.yml");
         let dockerfile_key = format!("{name}/Dockerfile");
@@ -273,6 +429,7 @@ impl CatalogResolver {
                 reason: "invalid UTF-8".to_string(),
             }
         })?;
+        FragmentRequirements::parse(service_toml, name)?.check(name, "baseline", &self.effigy)?;
         let schema = ServiceSchema::parse(service_toml, name)?;
 
         // compose.fragment.yml (required)
@@ -331,7 +488,7 @@ impl CatalogResolver {
             dockerfile,
             config_variants,
             param_variants,
-            source: FragmentSource::Bundled,
+            source: FragmentSource::Baseline,
         })
     }
 
@@ -402,81 +559,24 @@ impl CatalogResolver {
             .collect())
     }
 
-    /// List fragments from a filesystem directory.
-    fn list_dir_fragments(
-        dir: &Path,
-        source: FragmentSource,
-        seen: &mut HashMap<String, FragmentInfo>,
-    ) {
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                        // Only add if not already seen (higher priority layer wins)
-                        seen.entry(name.to_string())
-                            .or_insert_with(|| FragmentInfo {
-                                name: name.to_string(),
-                                source: source.clone(),
-                            });
-                    }
-                }
-            }
-        }
-    }
-
-    /// List fragments from the active installed pack.
-    fn list_pack_fragments(pack: &InstalledPackLayer, seen: &mut HashMap<String, FragmentInfo>) {
-        if let Ok(entries) = std::fs::read_dir(&pack.root) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if !path.is_dir() {
-                    continue;
-                }
-                let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
-                    continue;
-                };
-                seen.entry(name.to_string())
-                    .or_insert_with(|| FragmentInfo {
-                        name: name.to_string(),
-                        source: FragmentSource::InstalledPack {
-                            pack_id: pack.pack_id.clone(),
-                            pack_version: pack.pack_version.clone(),
-                            path: path.clone(),
-                        },
-                    });
-            }
-        }
-    }
-
-    /// List fragments from the bundled catalog.
-    ///
-    /// Bundled membership is first-level directories that carry `service.toml`.
-    /// Root docs/examples and directories without a service manifest are ignored.
-    /// Filesystem override and installed-pack listing remain directory-based
-    /// and are unchanged by this filter.
-    fn list_bundled_fragments(seen: &mut HashMap<String, FragmentInfo>) {
-        for path in BundledCatalog::iter() {
-            let Some(name) = bundled_fragment_name_from_asset_path(&path) else {
-                continue;
-            };
-            seen.entry(name.to_string())
-                .or_insert_with(|| FragmentInfo {
-                    name: name.to_string(),
-                    source: FragmentSource::Bundled,
-                });
-        }
-    }
-
-    /// Extract a bundled fragment to a target directory for customization.
+    /// Extract a baseline fragment to a target directory for customization.
     ///
     /// Writes `service.toml`, `compose.fragment.yml`, optional `Dockerfile`,
-    /// and any config variants to `<target_dir>/<fragment_name>/`.
+    /// and any config variants to `<target_dir>/<fragment_name>/`. A
+    /// `baseline/` qualifier is accepted; other sources are not extracted.
     ///
     /// Returns the path to the extracted fragment directory.
     pub fn extract(&self, name: &str, target_dir: &Path) -> Result<PathBuf, CatalogError> {
-        // Always extract from the bundled catalog, regardless of overrides.
-        let fragment = Self::load_from_embedded(name)?;
+        let name = match split_qualified(name) {
+            (None | Some("baseline"), service) if is_fragment_segment(service) => service,
+            _ => {
+                return Err(CatalogError::FragmentNotFound {
+                    name: name.to_owned(),
+                })
+            }
+        };
+        // Always extract from the compiled baseline, regardless of overrides.
+        let fragment = self.load_from_embedded(name)?;
         let fragment_dir = target_dir.join(name);
 
         std::fs::create_dir_all(&fragment_dir)?;
@@ -531,8 +631,76 @@ impl CatalogResolver {
 pub struct FragmentInfo {
     /// Fragment name.
     pub name: String,
-    /// Which layer it was resolved from.
+    /// The source that wins resolution.
     pub source: FragmentSource,
+    /// Lower sources that also provide this name, in precedence order.
+    pub shadows: Vec<FragmentSource>,
+}
+
+impl FragmentInfo {
+    /// Qualified name selecting the winning source.
+    pub fn qualified_name(&self) -> String {
+        format!("{}/{}", self.source.handle(), self.name)
+    }
+}
+
+/// Split `source/service` into its qualifier and service name.
+pub fn split_qualified(name: &str) -> (Option<&str>, &str) {
+    match name.split_once('/') {
+        Some((source, service)) => (Some(source), service),
+        None => (None, name),
+    }
+}
+
+/// The unqualified service name, used wherever behaviour keys on a catalog
+/// entry rather than on where it came from.
+pub fn service_name(catalog: &str) -> &str {
+    split_qualified(catalog).1
+}
+
+/// Whether a declared source handle is usable in qualified names.
+pub fn validate_source_handle(name: &str) -> Result<(), String> {
+    if name.trim().is_empty() || name != name.trim() {
+        return Err("source names must be non-empty and untrimmed".to_owned());
+    }
+    if name.contains('/') || name.contains(':') {
+        return Err("source names must not contain '/' or ':'".to_owned());
+    }
+    if RESERVED_SOURCE_HANDLES.contains(&name) {
+        return Err(format!(
+            "`{name}` is reserved; reserved handles are {}",
+            RESERVED_SOURCE_HANDLES.join(", ")
+        ));
+    }
+    Ok(())
+}
+
+fn is_fragment_segment(name: &str) -> bool {
+    let mut components = Path::new(name).components();
+    !name.contains('/')
+        && matches!(
+            (components.next(), components.next()),
+            (Some(Component::Normal(_)), None)
+        )
+}
+
+/// First-level directories of a source, sorted by name.
+fn fragment_dirs(dir: &Path) -> Vec<(String, PathBuf)> {
+    let mut dirs = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            if !path.is_dir() {
+                return None;
+            }
+            let name = path.file_name()?.to_str()?.to_owned();
+            Some((name, path))
+        })
+        .collect::<Vec<_>>();
+    dirs.sort();
+    dirs
 }
 
 /// Return the fragment name when `path` is a first-level bundled service
