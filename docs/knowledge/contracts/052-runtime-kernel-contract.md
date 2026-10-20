@@ -1941,12 +1941,13 @@ and `--detach` are front ends over the same run. Row by row:
 - INT/TERM handler: replaced. Clients route INT, TERM and HUP through
   `SignalRouter`, and the supervisor's owning pipe makes client death
   (terminal close, SIGHUP, SIGKILL) a stop.
-- Owner discovery through lock files and run tokens: narrowed. Holders are
-  live runs whose journal binds the environment. Remote task locks still
-  carry `EFFIGY_MANAGED_RUN_TOKEN` for attribution.
-- Directory scan before handover: replaced by live run holders and their
-  journal-bound environment. `Attachments::holders` waits for the
-  environment hold API (SEAM `v015-environment`).
+- Owner discovery through lock files and run tokens: replaced. The run
+  holds its environment through the reconciler's hold API (contract 053
+  §4): its bring-up names the run in `EFFIGY_INTERNAL_ENVIRONMENT_HOLDER`, so
+  the activation attaches it, and its settle's stop exempts only itself.
+  Remote task locks still carry `EFFIGY_MANAGED_RUN_TOKEN` for attribution.
+- Directory scan before handover: replaced. Handover ends the live managed
+  runs the environment record names as holders.
 - Lifecycle shell, state file, EXIT trap, curl readiness, `starting`
   bypass: replaced. The environment phase is an `up` custody child and
   exec readiness polled with backoff to a deadline; `health_wait` route

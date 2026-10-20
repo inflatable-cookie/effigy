@@ -315,9 +315,10 @@ every workload has started, since the workloads serve them; the ready
 message prints when they answer, and a route that never answers within the
 budget fails the run.
 
-A run that brought its environment up stops it when the run settles. A run
-that found an environment already running from an explicit `container up`
-borrows it and leaves it running. A run that holds an environment stays up
+A run holds its environment while it lives, so `container down`, handover
+and recovery refuse until it settles. A run that brought its environment up
+stops it when the run settles. A run that found an environment already
+running from an explicit `container up` borrows it and leaves it running. A run that holds an environment stays up
 when its workloads exit, until a stop; `shutdown_on_exit` still ends it.
 
 A stop reports settled only after the run's settle finished:

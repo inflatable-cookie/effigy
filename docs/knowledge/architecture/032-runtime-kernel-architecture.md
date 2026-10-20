@@ -116,11 +116,12 @@ supervisor: Stopping → settle: remote workloads, local workloads, attachment
 As built (effigy#235): the client starts the engine supervisor with
 `start_engine`; the supervisor re-resolves the invocation, admits a
 `Detached` run and captures its own output as the run's output log
-(sequence 0). Until the environment hold API lands, the attachment is a
-`managed:environment` effect: `Release` (an in-process `container down`)
-when the run brought the environment up, `Retain` when it borrowed one an
-explicit `container up` recorded as persistent. The environment phase is an
-`up` custody child, then exec readiness polled to a deadline; `health_wait`
+(sequence 0). The environment phase is an `up` custody child that names
+the run as holder, so the reconciler's activation attaches it (contract 053
+§4). The run also journals a `managed:environment` effect: `Release` (a
+reconciler stop exempting only this run) when its ensure holds the
+environment, `Retain` when it borrowed one an explicit `container up` keeps
+persistent. Exec readiness is then polled to a deadline; `health_wait`
 route probes run from the owner loop once the workloads that serve them have
 started. Remote groups are `managed:exec-group` effects; their nonce-checked
 markers stand in for §5.10 registration. A run that holds an environment
