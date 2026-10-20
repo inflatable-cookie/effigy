@@ -3961,6 +3961,7 @@ fn doctor_git_cli_readiness_proof(arrangement: &str) {
     write_doctor_git_process_shim(&bin, &real_git, arrangement);
     let path_value = shim_path_value(&bin);
     let fixture_exe = std::env::current_exe().expect("current test executable");
+    let git_script = bin.join("git");
     let cli_fixture = DoctorGitCliFixture {
         root,
         path_value: &path_value,
@@ -3968,6 +3969,7 @@ fn doctor_git_cli_readiness_proof(arrangement: &str) {
         source_events: &source_events,
         fixture_events: &fixture_events,
         index_response: &index_response,
+        git_script: &git_script,
     };
 
     // This sentinel has its own group and does no fixture initialization for
@@ -4115,6 +4117,7 @@ struct DoctorGitCliFixture<'a> {
     source_events: &'a std::path::Path,
     fixture_events: &'a std::path::Path,
     index_response: &'a std::path::Path,
+    git_script: &'a std::path::Path,
 }
 
 #[cfg(unix)]
@@ -4147,6 +4150,7 @@ fn run_doctor_git_cli(
         .env("EFFIGY_TEST_DOCTOR_FIXTURE_DELAY_MS", "12000")
         .env("EFFIGY_TEST_DOCTOR_FIXTURE_HOLD_MS", "12000")
         .env("PATH", fixture.path_value)
+        .env("EFFIGY_TEST_DOCTOR_GIT_SCRIPT", fixture.git_script)
         .env("EFFIGY_TEST_DOCTOR_GIT_INDEX", fixture.index_response)
         .env("EFFIGY_TEST_DOCTOR_GIT_EVIDENCE", fixture.source_events)
         .env("EFFIGY_TEST_DOCTOR_GIT_INVOCATION", invocation)

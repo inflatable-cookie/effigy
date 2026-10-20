@@ -142,3 +142,8 @@ It observes the live lifecycle PID before injecting the stale record; the proof
 still requires refusal, no foreign down, one owner-authorized down and closed
 owned processes. `test:fixtures:hygiene:startup-authority` runs this case in both
 ordinary and shared-process modes without a four-second observation race.
+
+The scan Git command factory's debug-only `EFFIGY_TEST_DOCTOR_GIT_SCRIPT` seam
+runs that private shim through `/bin/sh`; production release builds keep normal
+Git resolution. Whole-CLI fixtures therefore share the actual bounded probe and
+cleanup path without depending on macOS execution of a newly written script.

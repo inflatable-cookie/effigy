@@ -815,26 +815,24 @@ fn interrupted_successful_backend_cannot_publish_task_success() {
         .join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
     write_linux_artifact(&artifact, "stale bytes", Some(STALE_IDENTITY));
     use effigy_test_support::process::FixtureCommandExt;
-    let stderr_path = fixture.root.join("interrupted-child.stderr");
+    let output_path = fixture.root.join("state/signal-client-output");
+    let output = std::fs::File::create(&output_path).unwrap();
     let mut child = std::process::Command::new(host)
         .arg("workspace:linux:artifact")
         .current_dir(&fixture.root)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::fs::File::create(&stderr_path).unwrap())
+        .stdout(output.try_clone().unwrap())
+        .stderr(output)
         .spawn_owned()
         .unwrap();
     // Startup includes kernel admission and several real backend captures.
     let ready_deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
     while !fixture.root.join("state/await-signal").exists() {
-        if let Some(exit) = child.try_wait().unwrap() {
-            panic!(
-                "private build exited before signal boundary: {exit}; {}",
-                std::fs::read_to_string(&stderr_path).unwrap()
-            );
-        }
+        let status = child.try_wait().unwrap();
         assert!(
-            std::time::Instant::now() < ready_deadline,
-            "private build did not reach signal boundary"
+            status.is_none() && std::time::Instant::now() < ready_deadline,
+            "private build did not reach signal boundary: status={status:?}\n{}\nbackend timing:\n{}",
+            std::fs::read_to_string(&output_path).unwrap_or_default(),
+            std::fs::read_to_string(fixture.root.join("state/timing")).unwrap_or_default(),
         );
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
