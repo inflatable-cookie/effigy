@@ -3915,7 +3915,8 @@ fn doctor_git_cli_deliberately_late_descendant() {
 
 #[cfg(unix)]
 fn doctor_git_cli_readiness_proof(arrangement: &str) {
-    let temp = tempfile::tempdir().expect("private CLI doctor fixture directory");
+    let temp = effigy_test_support::Fixture::new("effigy-cli-private-")
+        .expect("private CLI doctor fixture directory");
     let root = temp.path();
     fs::write(root.join("package.json"), "{}\n").expect("write package marker");
     fs::create_dir_all(root.join("src")).expect("mkdir src");
@@ -8711,7 +8712,14 @@ case "$*" in
                   ;;
                   *)
                   done_marker="$EFFIGY_TEST_REMOTE_DONE_DIR/exec-$$.done"
-                  sh -c '( sh -c "$1" >/dev/null 2>&1; : > "$2" ) &' sh "$last_arg" "$done_marker"
+                  if [ -n "${EFFIGY_TEST_PROCESS_HELPER:-}" ]; then
+                    "$EFFIGY_TEST_PROCESS_HELPER" run "$EFFIGY_TEST_REMOTE_OWNER" "$done_marker" "$last_arg" >/dev/null 2>&1 &
+                  else
+                    EFFIGY_FIXTURE_PROCESS_OWNER="$EFFIGY_TEST_REMOTE_OWNER" \
+                    EFFIGY_FIXTURE_PROCESS_DONE="$done_marker" \
+                    EFFIGY_FIXTURE_PROCESS_SCRIPT="$last_arg" \
+                    "$EFFIGY_TEST_FIXTURE_PROCESS_BINARY" --ignored --exact support::fixture_remote_process_child --nocapture >/dev/null 2>&1 &
+                  fi
                   i=0
                   while [ ! -f "$done_marker" ] && [ "$i" -lt 1500 ]; do
                     sleep 0.2
@@ -9094,7 +9102,8 @@ fn cli_container_status_succeeds_with_unrelated_required_container_secrets() {
 
 #[test]
 fn cli_container_retire_named_environment_refuses_before_effects() {
-    let fixture = tempfile::tempdir().expect("private CLI fixture");
+    let fixture =
+        effigy_test_support::Fixture::new("effigy-cli-private-").expect("private CLI fixture");
     let root = fixture.path();
     let refusal = "`effigy container <NAME> retire` is unsupported; use `effigy container retire` for the checkout or `effigy container retire --scope <TOKEN>` for one recorded scope";
 
@@ -10283,7 +10292,15 @@ detach_timeout_secs = 1
             "EFFIGY_TEST_LOG_FOLLOW_FILE".to_owned(),
             log_follow.display().to_string(),
         ),
-        // The fake exec runs each payload in its own detached session,
+        (
+            "EFFIGY_TEST_REMOTE_OWNER".to_owned(),
+            root.display().to_string(),
+        ),
+        (
+            "EFFIGY_TEST_FIXTURE_PROCESS_BINARY".to_owned(),
+            std::env::current_exe().unwrap().display().to_string(),
+        ),
+        // The fake exec runs each payload in its own dedicated group,
         // outside the exec CLI's process tree, like a real container exec.
         ("EFFIGY_TEST_EXEC_REMOTE_MODE".to_owned(), "1".to_owned()),
         (
@@ -10359,8 +10376,6 @@ detach_timeout_secs = 1
         .trim()
         .parse()
         .expect("session leader pgid");
-    effigy_test_support::process::register_detached(pgid, &root)
-        .expect("retain the fake remote generation for unwind cleanup");
     wait_for(
         &|| hold_state().as_deref() == Some("running"),
         "the remote holder's run to hold its gate",

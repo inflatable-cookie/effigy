@@ -2,7 +2,8 @@ use super::support::{parse_stdout_json, run_cli_command, run_json_cli_command};
 
 #[test]
 fn retired_graph_spellings_return_replacement_errors_without_indexing() {
-    let fixture = tempfile::tempdir().expect("private fixture");
+    let fixture =
+        effigy_test_support::Fixture::new("effigy-cli-private-").expect("private fixture");
     for (command, replacement) in [
         ("watch", "graph index"),
         ("files", "graph search"),
@@ -23,7 +24,8 @@ fn retired_graph_spellings_return_replacement_errors_without_indexing() {
 
 #[test]
 fn graph_warns_once_for_orphaned_catalog_stores_without_touching_them() {
-    let fixture = tempfile::tempdir().expect("private fixture");
+    let fixture =
+        effigy_test_support::Fixture::new("effigy-cli-private-").expect("private fixture");
     for alias in ["a", "b"] {
         let dir = fixture
             .path()
@@ -55,7 +57,8 @@ fn graph_warns_once_for_orphaned_catalog_stores_without_touching_them() {
 
 #[test]
 fn graph_help_has_six_commands_and_no_catalog_selectors() {
-    let fixture = tempfile::tempdir().expect("private fixture");
+    let fixture =
+        effigy_test_support::Fixture::new("effigy-cli-private-").expect("private fixture");
     let output = run_cli_command(fixture.path(), &["graph", "--help"]);
     assert!(output.status.success());
     let text = String::from_utf8_lossy(&output.stdout);

@@ -1507,3 +1507,54 @@ qa = { visibility = "public", group = "Validation", run = [{ task = "test" }, { 
   { task = "lint:fixtures:hygiene" },
   { task = "fmt:check" },
 ] }
+
+# Three independent ordinary fixture runs are the hygiene acceptance proof.
+"test:fixtures:hygiene:acceptance" = { visibility = "internal", run = [
+  { task = "test:fixtures:hygiene:acceptance:once" },
+  { task = "test:fixtures:hygiene:acceptance:once" },
+  { task = "test:fixtures:hygiene:acceptance:once" },
+] }
+"test:fixtures:hygiene:acceptance:once" = { visibility = "internal", admission = "heavy", run = [
+  { task = "test:fixtures:hygiene:prepare" },
+  { run = "EFFIGY_TEST_PROCESS_HELPER=target/debug/effigy-fixture-process python3 tests/scripts/fixture_hygiene.py --timeout 3000 -- cargo nextest run --cargo-profile discovery-proof --config-file .config/nextest.toml --user-config-file none -p effigy --lib --test gateway_private --test gateway_operator --test cli_output_tests -E 'binary(gateway_private) | binary(gateway_operator) | binary(cli_output_tests) | test(builder_recovery::)' --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail -j 2", timeout_ms = 3100000 },
+] }
+"test:fixtures:hygiene:cwd" = { visibility = "internal", run = [
+  { task = "test:fixtures:hygiene:prepare" },
+  { run = "EFFIGY_TEST_PROCESS_HELPER=target/debug/effigy-fixture-process RUSTFLAGS='--cfg effigy_shared_process' python3 tests/scripts/fixture_hygiene.py -- cargo test -p effigy --lib fixture_cwd_restores_after_unwind_before_root_removal -- --test-threads=8", timeout_ms = 900000 },
+] }
+
+"test:fixtures:hygiene:migrated:crates" = { visibility = "internal", admission = "heavy", run = [
+  { task = "test:fixtures:hygiene:prepare" },
+  { run = "EFFIGY_EXECUTABLE=$PWD/target/discovery-proof/effigy EFFIGY_TEST_PROCESS_HELPER=target/debug/effigy-fixture-process python3 tests/scripts/fixture_hygiene.py --timeout 1800 -- cargo nextest run --cargo-profile discovery-proof --config-file .config/nextest.toml --user-config-file none -p effigy-bootstrap -p effigy-containers -p effigy-kernel --features effigy-kernel/fault-injection -E 'package(effigy-bootstrap) | test(policy::render::tests::) | test(fault_tests::) | test(run::tests::) | binary(foundation) | binary(gate) | binary(store)' --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail -j 2", timeout_ms = 1900000 },
+] }
+"test:fixtures:hygiene:migrated:runner" = { visibility = "internal", admission = "heavy", run = [
+  { task = "test:fixtures:hygiene:prepare" },
+  { run = "EFFIGY_EXECUTABLE=$PWD/target/discovery-proof/effigy EFFIGY_TEST_PROCESS_HELPER=target/debug/effigy-fixture-process python3 tests/scripts/fixture_hygiene.py --timeout 1800 -- cargo nextest run --cargo-profile discovery-proof --config-file .config/nextest.toml --user-config-file none -p effigy --lib --test task_engine_kill_matrix -E 'binary(task_engine_kill_matrix) | test(container_command::bounded_exec::) | test(container_command::gateway_registration::) | test(doctor_ports::) | test(exec_command::transport::colima::) | test(state_command::) | test(system_command::workspace::tests::) | test(system_command::workspace_permissions::) | test(direct_builder_activation_tests::)' --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail -j 2", timeout_ms = 1900000 },
+] }
+"test:fixtures:hygiene:shared" = { visibility = "internal", admission = "heavy", run = [
+  { task = "test:fixtures:hygiene:prepare" },
+  { run = "EFFIGY_TEST_PROCESS_HELPER=target/debug/effigy-fixture-process RUSTFLAGS='--cfg effigy_shared_process' python3 tests/scripts/fixture_hygiene.py --timeout 3000 -- cargo test --profile discovery-proof -p effigy --test gateway_private --test gateway_operator --test cli_output_tests --no-fail-fast -- --test-threads=8", timeout_ms = 3100000 },
+  { run = "EFFIGY_TEST_PROCESS_HELPER=target/debug/effigy-fixture-process RUSTFLAGS='--cfg effigy_shared_process' python3 tests/scripts/fixture_hygiene.py -- cargo test --profile discovery-proof -p effigy --lib builder_recovery:: -- --test-threads=8", timeout_ms = 900000 },
+] }
+
+"test:fixtures:hygiene:regressions" = { visibility = "internal", admission = "heavy", run = [
+  { task = "test:fixtures:hygiene:prepare" },
+  { run = "EFFIGY_TEST_PROCESS_HELPER=target/debug/effigy-fixture-process python3 tests/scripts/fixture_hygiene.py --timeout 1200 -- cargo nextest run --cargo-profile discovery-proof --config-file .config/nextest.toml --user-config-file none -p effigy --lib --test cli_output_tests --test gateway_private -E 'test(docs_context_text_and_json_expose_the_same_evidence) | test(cli_managed_headless_stop_settles_remote_exec_children_and_locks) | test(unchanged_partial_completed_and_absent_builders_use_supported_task) | test(managed_matrix_exit_trap_on_parent_death)' --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail -j 1", timeout_ms = 1300000 },
+  { run = "EFFIGY_TEST_PROCESS_HELPER=target/debug/effigy-fixture-process python3 tests/scripts/fixture_hygiene.py --timeout 600 -- env -u EFFIGY_TEST_PROCESS_HELPER cargo nextest run --cargo-profile discovery-proof --config-file .config/nextest.toml --user-config-file none -p effigy --test cli_output_tests -E 'test(cli_managed_headless_stop_settles_remote_exec_children_and_locks)' --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail -j 1", timeout_ms = 700000 },
+] }
+
+"test:fixtures:hygiene:gate-fork" = { visibility = "internal", run = [
+  { task = "test:fixtures:hygiene:prepare" },
+  { run = "EFFIGY_TEST_PROCESS_HELPER=target/debug/effigy-fixture-process python3 tests/scripts/fixture_hygiene.py -- cargo nextest run --cargo-profile discovery-proof --config-file .config/nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --test gate -E 'test(gate_forked_workload_never_holds_a_gate_after_the_owner_dies)' --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail", timeout_ms = 900000 },
+] }
+"test:fixtures:hygiene:guards:both" = { visibility = "internal", run = [
+  { task = "test:fixtures:hygiene:guards" },
+  { task = "test:fixtures:hygiene:guards:shared" },
+] }
+
+"test:fixtures:hygiene:operator" = { visibility = "internal", run = [
+  { task = "test:fixtures:hygiene:prepare" },
+  { run = "EFFIGY_TEST_PROCESS_HELPER=target/debug/effigy-fixture-process python3 tests/scripts/fixture_hygiene.py -- cargo nextest run --cargo-profile discovery-proof --config-file .config/nextest.toml --user-config-file none -p effigy --test gateway_operator --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail", timeout_ms = 900000 },
+] }
+
+"test:fixtures:hygiene:wrapper" = { visibility = "internal", run = [{ run = "PYTHONDONTWRITEBYTECODE=1 python3 tests/scripts/fixture_hygiene_test.py", timeout_ms = 60000 }] }

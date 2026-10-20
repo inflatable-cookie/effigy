@@ -7,6 +7,14 @@ use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
+static PROCESS_FIXTURES: OnceLock<Mutex<Vec<Fixture>>> = OnceLock::new();
+
+pub(crate) fn drain_process_fixtures() {
+    if let Some(owners) = PROCESS_FIXTURES.get() {
+        owners.lock().unwrap_or_else(|p| p.into_inner()).clear();
+    }
+}
+
 /// An owned directory. Cleanup restores owner permissions without following links.
 #[derive(Debug)]
 pub struct Fixture {
@@ -36,9 +44,16 @@ impl Fixture {
 
     /// Explicit in-repository exception: nested task executions must remain
     /// inside the authenticated scheduler token's root (contract 049).
-    /// Without a parent token this uses the ordinary external fixture root.
+    /// Without a parent token this stays external, using a Colima-shared parent
+    /// on macOS for public container execution paths.
     pub fn authenticated(prefix: &str, checkout: &Path) -> io::Result<Self> {
         if std::env::var_os("HOST_RUN_TOKEN").is_none() {
+            // Public container paths enforce Colima's macOS share boundary even
+            // with a fake transport. Keep these explicit workspace fixtures on
+            // a shared, external parent when there is no authenticated root.
+            #[cfg(target_os = "macos")]
+            return Self::in_parent(prefix, Path::new("/Users/Shared"));
+            #[cfg(not(target_os = "macos"))]
             return Self::new(prefix);
         }
         let checkout = fs::canonicalize(checkout)?;
@@ -59,17 +74,15 @@ impl Fixture {
     }
 
     fn adopt(directory: tempfile::TempDir) -> io::Result<Self> {
-        let mut fixture = Self {
-            directory: Some(directory),
-            registration: None,
-        };
-        if let Some(ledger) = std::env::var_os("EFFIGY_TEST_FIXTURE_LEDGER") {
+        // Registration finishes before the caller can start writing or spawning
+        // inside this root. A constructor error drops only the empty TempDir.
+        let registration = if let Some(ledger) = std::env::var_os("EFFIGY_TEST_FIXTURE_LEDGER") {
             let record = tempfile::NamedTempFile::new_in(&ledger)?;
-            let metadata = fs::symlink_metadata(fixture.path())?;
+            let metadata = fs::symlink_metadata(directory.path())?;
             serde_json::to_writer(
                 record.as_file(),
                 &serde_json::json!({
-                    "path": fs::canonicalize(fixture.path())?,
+                    "path": fs::canonicalize(directory.path())?,
                     "device": metadata.dev(), "inode": metadata.ino(),
                 }),
             )?;
@@ -79,10 +92,17 @@ impl Fixture {
                     .file_name()
                     .expect("directory registration name"),
             );
-            record.persist(&destination).map_err(io::Error::other)?;
-            fixture.registration = Some(tempfile::TempPath::try_from_path(destination)?);
-        }
-        Ok(fixture)
+            record
+                .persist_noclobber(&destination)
+                .map_err(io::Error::other)?;
+            Some(tempfile::TempPath::try_from_path(destination)?)
+        } else {
+            None
+        };
+        Ok(Self {
+            directory: Some(directory),
+            registration,
+        })
     }
 
     pub fn path(&self) -> &Path {
@@ -95,7 +115,11 @@ impl Fixture {
         };
         process::close_root(directory.path())?;
         unseal(directory.path())?;
-        self.directory.take().expect("live fixture").close()?;
+        if let Err(error) = self.directory.take().expect("live fixture").close() {
+            if error.kind() != io::ErrorKind::NotFound {
+                return Err(error);
+            }
+        }
         self.registration.take();
         Ok(())
     }
@@ -113,13 +137,10 @@ impl Fixture {
     /// never dropped. Drain these guards at normal process exit, including
     /// a libtest failure; the suite ledger handles forced termination.
     pub fn process_lifetime(prefix: &str) -> io::Result<PathBuf> {
-        static OWNERS: OnceLock<Mutex<Vec<Fixture>>> = OnceLock::new();
         extern "C" fn cleanup() {
-            if let Some(owners) = OWNERS.get() {
-                owners.lock().unwrap_or_else(|p| p.into_inner()).clear();
-            }
+            drain_process_fixtures();
         }
-        let owners = OWNERS.get_or_init(|| {
+        let owners = PROCESS_FIXTURES.get_or_init(|| {
             // SAFETY: cleanup has the required C ABI, owns only this registry,
             // and remains valid until process exit.
             assert_eq!(
@@ -142,6 +163,11 @@ impl Fixture {
 impl Drop for Fixture {
     fn drop(&mut self) {
         if let Err(error) = self.remove() {
+            // TempDir's own destructor must not erase files while process
+            // custody is unresolved. Preserve both the tree and its ledger.
+            if let Some(directory) = self.directory.take() {
+                let _ = directory.keep();
+            }
             // Preserve the ledger entry on failure so suite closeout fails too.
             if let Some(record) = self.registration.take() {
                 let _ = record.keep();
@@ -183,6 +209,13 @@ fn unseal(path: &Path) -> io::Result<()> {
 mod tests {
     use super::*;
     use std::os::unix::fs::symlink;
+
+    #[test]
+    fn cleanup_accepts_an_already_removed_fixture() {
+        let fixture = Fixture::new("effigy-already-removed-").unwrap();
+        fs::remove_dir_all(fixture.path()).unwrap();
+        drop(fixture);
+    }
 
     #[test]
     fn cleanup_on_unwind_unseals_only_owned_tree() {

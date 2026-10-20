@@ -17,6 +17,6 @@ workspace = true
 
 [[bin]]
 name = "effigy-fixture-process"
-path = "src/bin/process.rs"
+path = "tests/fixtures/process.rs"
 test = false
 bench = false

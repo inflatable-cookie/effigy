@@ -189,7 +189,17 @@ nerdctl) while [ "$1" != -- ]; do shift; done; shift; exec "$(dirname "$0")/dock
 esac
 "#,
         );
+        let scheduler_state = std::env::var_os("EFFIGY_HOST_RUN_ROOT")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| {
+                std::path::PathBuf::from(std::env::var_os("HOME").expect("original HOME"))
+                    .join(".local/state/host-run")
+            });
         let env = EnvGuard::set_many(&[
+            (
+                "EFFIGY_HOST_RUN_ROOT",
+                Some(scheduler_state.display().to_string()),
+            ),
             (
                 "PATH",
                 Some(format!(
@@ -341,7 +351,7 @@ esac
             .count()
     }
 
-    fn host(&self) -> PathBuf {
+    fn compiled_cli() -> PathBuf {
         let executable = std::env::current_exe().unwrap();
         let binary = executable
             .parent()
@@ -353,6 +363,11 @@ esac
             binary.is_file(),
             "build the artifact-recovery selector prerequisite"
         );
+        binary
+    }
+
+    fn host(&self) -> PathBuf {
+        let binary = Self::compiled_cli();
         let host = self.root.join("fixture-host");
         write_executable(
             &host,
@@ -398,6 +413,9 @@ esac
         std::fs::write(self.root.join("state/mode"), mode).unwrap();
     }
     fn task(&self) -> Result<(), String> {
+        let _executable = effigy_core::executable_override::set_scoped(Some(
+            Self::compiled_cli().display().to_string(),
+        ));
         run_manifest_task_with_cwd(
             &TaskInvocation {
                 name: "workspace:linux:artifact".to_owned(),

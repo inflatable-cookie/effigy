@@ -457,7 +457,8 @@ fn cli_help_command_and_direct_command_help_render_the_same_facts() {
 
 #[test]
 fn cli_help_parity_is_stable_across_owned_checkout_identity_changes() {
-    let owner = tempfile::tempdir().expect("owned version fixture");
+    let owner =
+        effigy_test_support::Fixture::new("effigy-cli-private-").expect("owned version fixture");
     let root = owner.path();
     write_effigy_release_root_marker(root);
     fs::write(root.join(".gitignore"), "/target/\n").expect("ignore copied binary");
@@ -590,7 +591,8 @@ fn cli_manifest_selector_named_after_a_help_group_keeps_task_routing() {
 fn cli_version_json_uses_one_identity_snapshot_during_checkout_change() {
     use std::os::unix::fs::PermissionsExt;
 
-    let owner = tempfile::tempdir().expect("owned identity race fixture");
+    let owner = effigy_test_support::Fixture::new("effigy-cli-private-")
+        .expect("owned identity race fixture");
     let root = owner.path();
     write_effigy_release_root_marker(root);
     fs::write(root.join(".gitignore"), "/target/\n").expect("ignore private binary and shim");
@@ -888,7 +890,8 @@ fn cli_help_for_builtin_owned_help_refuses_to_run_a_shadowing_selector() {
 
 #[test]
 fn cli_general_and_work_help_show_grouped_public_tasks_only() {
-    let fixture = tempfile::tempdir().expect("help visibility fixture");
+    let fixture =
+        effigy_test_support::Fixture::new("effigy-cli-private-").expect("help visibility fixture");
     let root = fixture.path();
     fs::write(
         root.join("effigy.toml"),
@@ -928,7 +931,8 @@ visibility = "internal"
 
 #[test]
 fn cli_help_remains_available_when_repository_task_discovery_fails() {
-    let fixture = tempfile::tempdir().expect("invalid help fixture");
+    let fixture =
+        effigy_test_support::Fixture::new("effigy-cli-private-").expect("invalid help fixture");
     fs::write(fixture.path().join("effigy.toml"), "[tasks.invalid\n")
         .expect("write invalid manifest");
     let output = run_help_cli(fixture.path(), &["--help"]);
@@ -940,7 +944,8 @@ fn cli_help_remains_available_when_repository_task_discovery_fails() {
 
 #[test]
 fn cli_public_task_help_json_disables_forced_color() {
-    let fixture = tempfile::tempdir().expect("JSON color fixture");
+    let fixture =
+        effigy_test_support::Fixture::new("effigy-cli-private-").expect("JSON color fixture");
     fs::write(
         fixture.path().join("effigy.toml"),
         "[tasks.launch]\nrun = 'printf launch'\ngroup = 'Development'\n",

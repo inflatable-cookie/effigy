@@ -25,10 +25,14 @@ pub fn ledger() -> io::Result<PathBuf> {
     }
     extern "C" fn cleanup() {
         if let Some(owner) = OWNER.get() {
-            if let Some(directory) = owner.lock().unwrap_or_else(|p| p.into_inner()).take() {
+            let directory = owner.lock().unwrap_or_else(|p| p.into_inner()).take();
+            if let Some(directory) = directory {
                 match sweep(directory.path(), None) {
                     Ok(false) => drop(directory),
                     Ok(true) => {
+                        // This callback may precede the fixture atexit callback.
+                        // Finish owned file cleanup before changing the exit code.
+                        super::drain_process_fixtures();
                         drop(directory);
                         fail_exit();
                     }
@@ -76,7 +80,9 @@ fn record(receipt: &ProcessReceipt, owner: &Path) -> io::Result<tempfile::TempPa
     let destination = root
         .join("processes")
         .join(record.path().file_name().expect("record name"));
-    record.persist(&destination).map_err(io::Error::other)?;
+    record
+        .persist_noclobber(&destination)
+        .map_err(io::Error::other)?;
     tempfile::TempPath::try_from_path(destination)
 }
 
@@ -120,37 +126,51 @@ pub fn close_root(owner: &Path) -> io::Result<()> {
 /// the recovery sweep succeeds; cleanup is never manufactured into a pass.
 pub fn sweep(root: &Path, owner: Option<&Path>) -> io::Result<bool> {
     let mut leaked = false;
+    let mut errors = Vec::new();
     for entry in fs::read_dir(root.join("processes"))? {
-        let path = entry?.path();
-        let bytes = match fs::read(&path) {
-            Ok(bytes) => bytes,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-            Err(error) => return Err(error),
-        };
-        let registration: Value = serde_json::from_slice(&bytes)?;
-        let recorded_owner: PathBuf = serde_json::from_value(registration["owner"].clone())?;
-        if owner.is_some_and(|owner| !recorded_owner.starts_with(owner)) {
-            continue;
+        let result = entry.and_then(|entry| settle_registration(&entry.path(), owner));
+        match result {
+            Ok(survived) => leaked |= survived,
+            Err(error) => errors.push(error.to_string()),
         }
-        let receipt: ProcessReceipt = serde_json::from_value(registration["receipt"].clone())?;
-        if !matches!(
-            custody::closed(&receipt),
-            Observed::Verified(..) | Observed::Absent(_)
-        ) {
-            leaked = true;
-            if owner.is_none() {
-                eprintln!(
-                    "leaked test process: {} ({recorded_owner:?})",
-                    receipt.identity.pid
-                );
-            }
-            custody::stop(&receipt)?;
+    }
+    if errors.is_empty() {
+        Ok(leaked)
+    } else {
+        Err(io::Error::other(errors.join("; ")))
+    }
+}
+
+fn settle_registration(path: &Path, owner: Option<&Path>) -> io::Result<bool> {
+    let mut leaked = false;
+    let bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error),
+    };
+    let registration: Value = serde_json::from_slice(&bytes)?;
+    let recorded_owner: PathBuf = serde_json::from_value(registration["owner"].clone())?;
+    if owner.is_some_and(|owner| !recorded_owner.starts_with(owner)) {
+        return Ok(false);
+    }
+    let receipt: ProcessReceipt = serde_json::from_value(registration["receipt"].clone())?;
+    if !matches!(
+        custody::closed(&receipt),
+        Observed::Verified(..) | Observed::Absent(_)
+    ) {
+        leaked = true;
+        if owner.is_none() {
+            eprintln!(
+                "leaked test process: {} ({recorded_owner:?})",
+                receipt.identity.pid
+            );
         }
-        match fs::remove_file(path) {
-            Ok(()) => (),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => (),
-            Err(error) => return Err(error),
-        }
+        custody::stop(&receipt)?;
+    }
+    match fs::remove_file(path) {
+        Ok(()) => (),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => (),
+        Err(error) => return Err(error),
     }
     Ok(leaked)
 }
@@ -161,12 +181,21 @@ pub struct OwnedChild {
     receipt: ProcessReceipt,
     registration: Option<tempfile::TempPath>,
     deadline: Instant,
+    reaped: bool,
 }
 
 pub trait FixtureCommandExt {
     fn spawn_owned(&mut self) -> io::Result<OwnedChild>;
+    fn output_owned(&mut self) -> io::Result<Output>;
 }
 impl FixtureCommandExt for Command {
+    fn output_owned(&mut self) -> io::Result<Output> {
+        self.stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn_owned()?
+            .wait_with_output()
+    }
     fn spawn_owned(&mut self) -> io::Result<OwnedChild> {
         let root = ledger()?;
         self.env("EFFIGY_TEST_FIXTURE_LEDGER", &root);
@@ -182,11 +211,12 @@ impl FixtureCommandExt for Command {
             receipt,
             registration: None,
             deadline: Instant::now() + Duration::from_secs(180),
+            reaped: false,
         };
-        let owner = self
-            .get_current_dir()
-            .map(Path::to_path_buf)
-            .unwrap_or(std::env::current_dir()?);
+        let owner = match self.get_current_dir() {
+            Some(directory) => directory.to_path_buf(),
+            None => std::env::current_dir()?,
+        };
         owned.registration = Some(record(&owned.receipt, &owner)?);
         Ok(owned)
     }
@@ -204,16 +234,29 @@ impl std::ops::DerefMut for OwnedChild {
 }
 impl OwnedChild {
     pub fn group_closed(&self) -> bool {
-        matches!(
-            custody::closed(&self.receipt),
-            Observed::Verified(..) | Observed::Absent(_)
-        )
+        self.reaped
+            || matches!(
+                custody::closed(&self.receipt),
+                Observed::Verified(..) | Observed::Absent(_)
+            )
     }
     pub fn deadline(&self) -> Instant {
         self.deadline
     }
     pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
-        custody::poll(&self.child)
+        if self.reaped {
+            return self.child.try_wait();
+        }
+        let status = custody::poll(&self.child)?;
+        if status.is_some() && self.group_closed() {
+            // Revoke the ledger authority before releasing the PID. An empty
+            // group needs no retained anchor, and wait keeps native reaping
+            // semantics for parent-death observers such as kill(pid, 0).
+            self.registration.take();
+            self.child.wait()?;
+            self.reaped = true;
+        }
+        Ok(status)
     }
     pub fn wait(&mut self) -> io::Result<ExitStatus> {
         loop {
@@ -230,7 +273,9 @@ impl OwnedChild {
         }
     }
     pub fn terminate_and_wait(&mut self) -> io::Result<ExitStatus> {
-        custody::stop_child(&mut self.child, &self.receipt)?;
+        if !self.reaped {
+            custody::stop_child(&mut self.child, &self.receipt)?;
+        }
         self.wait()
     }
     pub fn wait_with_output(mut self) -> io::Result<Output> {
@@ -281,6 +326,9 @@ impl OwnedChild {
 }
 impl Drop for OwnedChild {
     fn drop(&mut self) {
+        if self.reaped {
+            return;
+        }
         let result = custody::stop_child(&mut self.child, &self.receipt)
             .and_then(|_| self.child.wait().map(|_| ()));
         if let Err(error) = result {
@@ -294,4 +342,17 @@ impl Drop for OwnedChild {
             }
         }
     }
+}
+
+/// Fake remote exec: retain a live, dedicated launch generation even if the
+/// transport helper dies. The owner fixture and suite can then settle it.
+pub fn run_recorded(command: &mut Command, done: &Path) -> io::Result<()> {
+    let mut child = command.spawn_owned()?;
+    child.wait()?;
+    if !child.group_closed() {
+        return Err(io::Error::other(
+            "fake remote exited with surviving group members",
+        ));
+    }
+    fs::write(done, b"")
 }

@@ -2,11 +2,12 @@
 //! processes (this test binary re-executed with one ignored helper test).
 #![allow(dead_code)]
 use effigy_kernel::ctx::*;
+use effigy_test_support::process::{FixtureCommandExt, OwnedChild as Child};
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{ChildStdin, Command, Stdio};
 use std::sync::mpsc::{channel, Receiver};
 use std::time::{Duration, Instant};
 
@@ -111,7 +112,7 @@ impl Helper {
         for (key, value) in envs {
             command.env(key, value);
         }
-        let mut child = command.spawn().unwrap();
+        let mut child = command.spawn_owned().unwrap();
         let stdout = child.stdout.take().unwrap();
         let (send, lines) = channel();
         std::thread::spawn(move || {
@@ -155,15 +156,12 @@ impl Helper {
         // SAFETY: signals only the child this fixture spawned and still owns.
         assert_eq!(unsafe { libc::kill(self.child.id() as i32, signal) }, 0);
     }
-    pub fn wait(mut self) -> std::process::ExitStatus {
+    pub fn wait_for_exit(&mut self) -> std::process::ExitStatus {
         self.stdin.take();
         self.child.wait().unwrap()
     }
-}
-impl Drop for Helper {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+    pub fn wait(mut self) -> std::process::ExitStatus {
+        self.wait_for_exit()
     }
 }
 /// Reads one stdin line in a helper; `None` at EOF.

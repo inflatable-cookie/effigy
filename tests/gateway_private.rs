@@ -50,7 +50,8 @@ fn copy_dir_all(src: &Path, dst: &Path) {
 #[cfg(unix)]
 #[test]
 fn private_gateway_shutdown_handles_owned_term_int_and_inherited_ignore() {
-    let fixture = tempfile::tempdir().expect("fresh private shutdown fixture");
+    let fixture = effigy_test_support::Fixture::new("effigy-private-")
+        .expect("fresh private shutdown fixture");
     let effects = HostEffectSentinels::new(fixture.path());
     let upstream = Upstream::start("private-gateway-ready");
     let foreign_listener = ForeignListener::bind("127.0.0.1:0".parse().unwrap());
@@ -274,7 +275,8 @@ fn private_gateway_http_response(address: SocketAddr) -> Option<String> {
 
 #[test]
 fn private_gateway_cli_serves_verified_https_and_isolates_concurrent_instances() {
-    let fixture = tempfile::tempdir().expect("fresh private fixture");
+    let fixture =
+        effigy_test_support::Fixture::new("effigy-private-").expect("fresh private fixture");
     let effects = HostEffectSentinels::new(fixture.path());
     let foreign_ca_root = fixture.path().join("default-ca-sentinel");
     fs::create_dir(&foreign_ca_root).expect("foreign default CA fixture");
@@ -1537,7 +1539,8 @@ fn managed_host_dependent_replacement_route_edits_exclude_lifecycle_writers() {
     use effigy_gateway::registration::{register_route, RouteRegistration};
     use std::sync::mpsc;
 
-    let fixture = tempfile::tempdir().expect("private route transaction fixture");
+    let fixture = effigy_test_support::Fixture::new("effigy-private-")
+        .expect("private route transaction fixture");
     let route_path = fixture.path().join("routes.json");
     let registration = |domain: &str| RouteRegistration {
         domain: domain.to_owned(),
@@ -1603,7 +1606,8 @@ fn container_hybrid_container_switch_hands_over_routes_and_refuses_a_live_listen
     };
     use effigy_gateway::routes::ManagedListenerRouteOwner;
 
-    let fixture = tempfile::tempdir().expect("private route switch fixture");
+    let fixture =
+        effigy_test_support::Fixture::new("effigy-private-").expect("private route switch fixture");
     let route_path = fixture.path().join("routes.json");
     let project = fixture.path().display().to_string();
     let dead_start = GatewayStartIdentity::Linux { start_ticks: 1 };
@@ -2810,7 +2814,7 @@ fn spawn_container_cli(
 fn run_container_cli(checkout: &Path, cleanup: &ManagedContainerCleanup, args: &[&str]) -> Output {
     container_command(checkout, cleanup)
         .args(args)
-        .output()
+        .output_owned()
         .expect("run public container CLI")
 }
 

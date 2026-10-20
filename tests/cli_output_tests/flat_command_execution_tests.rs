@@ -198,7 +198,8 @@ fn direct_usage_and_runtime_errors_have_no_migration_metadata() {
 
 #[test]
 fn retired_graph_watch_returns_a_json_usage_error() {
-    let fixture = tempfile::tempdir().expect("private fixture");
+    let fixture =
+        effigy_test_support::Fixture::new("effigy-cli-private-").expect("private fixture");
     let output = run_json_cli_command(fixture.path(), &["graph", "watch"]);
     assert_eq!(output.status.code(), Some(2));
     let payload = parse_stdout_json(&output);

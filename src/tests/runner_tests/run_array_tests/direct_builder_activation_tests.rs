@@ -338,7 +338,17 @@ esac
         std::env::var("PATH").expect("PATH")
     );
     fs::create_dir_all(root.join("home")).expect("private subprocess HOME");
+    let scheduler_state = std::env::var_os("EFFIGY_HOST_RUN_ROOT")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            std::path::PathBuf::from(std::env::var_os("HOME").expect("original HOME"))
+                .join(".local/state/host-run")
+        });
     let _env = crate::contract_test_support::EnvGuard::set_many(&[
+        (
+            "EFFIGY_HOST_RUN_ROOT",
+            Some(scheduler_state.display().to_string()),
+        ),
         ("HOME", Some(root.join("home").display().to_string())),
         (
             "EFFIGY_EXECUTABLE",

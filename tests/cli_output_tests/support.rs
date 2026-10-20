@@ -131,7 +131,10 @@ pub(super) fn run_json_cli_command(root: &Path, args: &[&str]) -> Output {
     for arg in args {
         command.arg(arg);
     }
-    command.env("NO_COLOR", "1").output().expect("run effigy")
+    command
+        .env("NO_COLOR", "1")
+        .output_owned()
+        .expect("run effigy")
 }
 
 pub(super) fn run_cli_command(root: &Path, args: &[&str]) -> Output {
@@ -140,7 +143,10 @@ pub(super) fn run_cli_command(root: &Path, args: &[&str]) -> Output {
     for arg in args {
         command.arg(arg);
     }
-    command.env("NO_COLOR", "1").output().expect("run effigy")
+    command
+        .env("NO_COLOR", "1")
+        .output_owned()
+        .expect("run effigy")
 }
 
 pub(super) fn parse_stdout_json(output: &Output) -> Value {
@@ -316,4 +322,17 @@ pub(super) fn run_json_cli_command_with_manifest(
     let output = run_json_cli_command(&root, args);
     let parsed = parse_stdout_json(&output);
     (root, output, parsed)
+}
+
+#[test]
+#[ignore = "private fake remote transport entrypoint"]
+fn fixture_remote_process_child() {
+    let owner = std::env::var_os("EFFIGY_FIXTURE_PROCESS_OWNER").expect("fixture owner");
+    let done = std::env::var_os("EFFIGY_FIXTURE_PROCESS_DONE").expect("fixture completion");
+    let script = std::env::var("EFFIGY_FIXTURE_PROCESS_SCRIPT").expect("fixture script");
+    effigy_test_support::process::run_recorded(
+        Command::new("sh").args(["-c", &script]).current_dir(&owner),
+        Path::new(&done),
+    )
+    .expect("settled fake remote command");
 }

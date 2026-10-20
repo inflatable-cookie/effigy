@@ -65,7 +65,8 @@ impl MatrixProxy {
 
 #[test]
 fn managed_matrix_proxy_keeps_its_published_port_during_a_concurrent_claim() {
-    let fixture = tempfile::tempdir().expect("private proxy fixture");
+    let fixture =
+        effigy_test_support::Fixture::new("effigy-private-").expect("private proxy fixture");
     let proxy = MatrixProxy::bind(fixture.path());
     let address = proxy.address;
     // Force the old gap: another listener tries to claim the published port
@@ -268,7 +269,9 @@ impl<'a> Case<'a> {
         command
     }
     fn run(&self, args: &[&str]) -> Output {
-        self.command(args).output().expect("bounded fixture CLI")
+        self.command(args)
+            .output_owned()
+            .expect("bounded fixture CLI")
     }
     fn success(&self, args: &[&str]) {
         let output = self.run(args);
@@ -583,7 +586,8 @@ fn managed_matrix_process_liveness_distinguishes_live_and_unreaped_children() {
 /// shells/setsid). Fake down must model container death for that PID too.
 #[test]
 fn managed_matrix_down_ends_recorded_non_group_leader_workload() {
-    let private = tempfile::tempdir().expect("private fake-down fixture");
+    let private =
+        effigy_test_support::Fixture::new("effigy-private-").expect("private fake-down fixture");
     let root = private.path();
     fs::create_dir(root.join("engine")).expect("engine");
     fs::write(root.join("matrix-adapter.py"), ADAPTER).expect("adapter");
@@ -1032,9 +1036,16 @@ fn authority_matrix(authority: Authority) {
             );
             let output =
                 fs::File::create(case.root.join("prior-lifecycle.out")).expect("prior log");
-            // The background exec makes the rendered shell a direct child
-            // of the parent we kill. Its normal parent-death loop runs EXIT.
-            let script = format!("exec {rendered} & wait");
+            // The controller and lifecycle shell have separate owned groups.
+            // Reaping the killed controller makes real parent death observable
+            // while the registered shell performs its normal EXIT trap.
+            let script = format!(
+                "exec python3 {} prior-parent {}",
+                effigy_core::shell::shell_quote(
+                    &case.root.join("matrix-adapter.py").display().to_string()
+                ),
+                effigy_core::shell::shell_quote(&rendered)
+            );
             let mut parent = ManagedSupervisor(
                 case.shell(&script)
                     .stdout(output.try_clone().expect("log"))
@@ -1123,9 +1134,9 @@ fn managed_matrix_missing_record_handover_preserves_live_holder() {
 
 const ADAPTER: &str = r#"import sys,os,json,pathlib,subprocess,time,signal
 root=pathlib.Path(os.environ['MATRIX_ROOT']);state=root/'engine';args=sys.argv[2:];op=sys.argv[1]
-def fixture_process(action,pid=None):
+def fixture_process(action,pid=None,owner=None):
  helper=os.environ.get('EFFIGY_TEST_PROCESS_HELPER')
- owner=str(root/'engine')
+ owner=str(owner if owner is not None else root/'engine')
  if helper:
   command=[helper,action]+([str(pid),owner] if action=='register' else [owner])
   subprocess.run(command,check=True,stdout=subprocess.DEVNULL)
@@ -1133,6 +1144,14 @@ def fixture_process(action,pid=None):
   env=dict(os.environ,EFFIGY_REGISTER_OWNER=owner,EFFIGY_REGISTER_ACTION=action)
   if pid is not None: env['EFFIGY_REGISTER_PID']=str(pid)
   subprocess.run([env['MATRIX_TEST_BINARY'],'--ignored','--exact','register_fixture_process_child'],env=env,check=True,stdout=subprocess.DEVNULL)
+if op=='prior-parent':
+ child=subprocess.Popen(['sh','-c',args[0]],start_new_session=True)
+ try: fixture_process('register',child.pid,root)
+ except BaseException:
+  os.killpg(child.pid,signal.SIGKILL)
+  child.wait()
+  raise
+ sys.exit(child.wait())
 def kill_recorded():
  fixture_process('stop-root')
  for p in root.glob('*.pid'): p.unlink(missing_ok=True)

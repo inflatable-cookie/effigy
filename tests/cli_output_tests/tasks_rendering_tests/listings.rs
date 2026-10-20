@@ -76,7 +76,7 @@ fn cli_tasks_hides_explicitly_deferred_builtins() {
 
 #[test]
 fn cli_tasks_coalesces_default_and_declared_general_groups() {
-    let fixture = tempfile::tempdir().expect("group fixture");
+    let fixture = effigy_test_support::Fixture::new("effigy-cli-private-").expect("group fixture");
     fs::write(
         fixture.path().join("effigy.toml"),
         r#"
@@ -96,7 +96,8 @@ group = "General"
 
 #[test]
 fn cli_tasks_explains_internal_only_inventory() {
-    let fixture = tempfile::tempdir().expect("internal inventory fixture");
+    let fixture = effigy_test_support::Fixture::new("effigy-cli-private-")
+        .expect("internal inventory fixture");
     fs::write(
         fixture.path().join("effigy.toml"),
         "[tasks.hidden]\nrun = 'printf hidden'\nvisibility = 'internal'\n",

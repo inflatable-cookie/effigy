@@ -36,10 +36,12 @@ def owned_fixture(prefix, authenticated_checkout=None):
         ledger = os.environ.get('EFFIGY_TEST_FIXTURE_LEDGER')
         if ledger:
             info = root.lstat()
-            with tempfile.NamedTemporaryFile(mode='w', dir=Path(ledger) / 'directories',
+            with tempfile.NamedTemporaryFile(mode='w', dir=ledger,
                                              delete=False) as registration:
                 json.dump(dict(path=str(root), device=info.st_dev, inode=info.st_ino), registration)
-                record = Path(registration.name)
+                pending = Path(registration.name)
+            record = Path(ledger) / 'directories' / pending.name
+            pending.rename(record)
         try:
             yield root
         finally:
@@ -61,14 +63,18 @@ def main():
         parser.error('a test runner command is required')
     checkout = Path(__file__).resolve().parents[2]
     before = set((checkout / 'crates').iterdir())
-    with tempfile.TemporaryDirectory(prefix='effigy-fixture-suite-') as temporary:
-        root = Path(temporary).resolve()
+    root = Path(tempfile.mkdtemp(prefix='effigy-fixture-suite-')).resolve()
+    try:
         (root / 'directories').mkdir()
         (root / 'fixtures').mkdir()
         (root / 'processes').mkdir()
         env = dict(os.environ, PYTHONDONTWRITEBYTECODE='1',
                    EFFIGY_TEST_FIXTURE_ROOT=str(root / 'fixtures'),
                    EFFIGY_TEST_FIXTURE_LEDGER=str(root))
+        # These belong to the outer command's launch, not fixture ProcessSpecs.
+        # Fixture children receive fresh nonces from their own custody owner.
+        env.pop('EFFIGY_CUSTODY_NONCE', None)
+        env.pop('EFFIGY_PROBE_NONCE', None)
         if env.get('EFFIGY_TEST_PROCESS_HELPER'):
             env['EFFIGY_TEST_PROCESS_HELPER'] = str(Path(env['EFFIGY_TEST_PROCESS_HELPER']).resolve(strict=True))
         child = subprocess.Popen(command, env=env, start_new_session=True)
@@ -86,10 +92,15 @@ def main():
                 raise RuntimeError('process registrations require EFFIGY_TEST_PROCESS_HELPER')
             sweep = subprocess.run([helper, 'sweep', str(root)])
             leaked = sweep.returncode != 0
+            if any((root / 'processes').iterdir()):
+                # Unknown identity never permits deleting a live owner's files.
+                # Preserve the exact ledger and fixture paths for diagnosis.
+                return result or 2
         for record in (root / 'directories').iterdir():
             registration = json.loads(record.read_text())
             fixture = Path(registration['path'])
             if not fixture.exists():
+                record.unlink()
                 continue
             info = fixture.lstat()
             if (info.st_dev, info.st_ino, info.st_uid) != (
@@ -101,6 +112,9 @@ def main():
             leaked = True
             unseal(fixture)
             shutil.rmtree(fixture)
+            record.unlink()
+        if any((root / 'directories').iterdir()):
+            return result or 2
         new_entries = set((checkout / 'crates').iterdir()) - before
         if new_entries:
             print(f'new entries under crates/: {sorted(map(str, new_entries))}', file=sys.stderr)
@@ -110,6 +124,15 @@ def main():
             leaked = True
             unseal(root / 'fixtures')
         return result if result else int(leaked)
+    finally:
+        processes = root / 'processes'
+        directories = root / 'directories'
+        if ((processes.exists() and any(processes.iterdir())) or
+                (directories.exists() and any(directories.iterdir()))):
+            print(f'unresolved fixture ownership; retained ledger: {root}', file=sys.stderr)
+        else:
+            unseal(root)
+            shutil.rmtree(root)
 
 
 if __name__ == '__main__':
