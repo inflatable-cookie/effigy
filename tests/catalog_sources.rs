@@ -121,8 +121,10 @@ impl Fixture {
             Duration::from_secs(20),
         );
         assert!(ok, "{stdout}{stderr}");
-        let payload: serde_json::Value = serde_json::from_str(stdout.trim())
+        let envelope: serde_json::Value = serde_json::from_str(stdout.trim())
             .unwrap_or_else(|error| panic!("{error}: {stdout}{stderr}"));
+        assert_eq!(envelope["schema"], "effigy.command.v1", "{stdout}");
+        let payload = &envelope["result"];
         assert_eq!(payload["schema"], "effigy.service.list.v2", "{stdout}");
         payload["fragments"]
             .as_array()
