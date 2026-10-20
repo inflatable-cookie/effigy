@@ -505,7 +505,7 @@ owner = "docs/knowledge/contracts/005-container-runtime-contract.md"
 terms = ["eject_generated_compose", "effigy.container.eject.v1", "ContainerEjectResult", "effigy container <NAME> eject"]
 paths = ["crates/effigy-containers/src/runtime/eject.rs"]
 config_keys = []
-allow = ["CHANGELOG.md"]
+allow = ["CHANGELOG.md", "src/tests/lib_tests_help_render_tests.rs"]
 
 [[retired]]
 id = "runtime-backend-metadata-file"
