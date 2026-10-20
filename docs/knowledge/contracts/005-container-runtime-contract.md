@@ -1850,16 +1850,13 @@ and failure. A sibling's live runtime and persistent data are left alone.
 This contract should be covered by targeted compatibility tests rather than
 large generic runtime smoke tests.
 
-Artifact-recovery and reverse-handover fixtures use a private authenticated
-host-run parent scoped to their temporary checkout. They retain its explicit
-state root and signed token when isolating `HOME`; compiled children also use
-the fixture cwd. The test-only parent acknowledges facts and status, refuses
-new submissions, and uses the production authority and token validators.
-Ordinary hosted tests need no installed scheduler or admission override.
+Artifact-recovery and reverse-handover fixtures isolate `HOME`; compiled
+children also use the fixture cwd. Run identity and admission follow
+[contract 049](049-heavy-validation-admission-contract.md).
 Bounded-exec public children snapshot inherited handoff markers under the
 same test environment lock used by their mutators.
-`test:environment:ci` covers these fixtures, DNS, mkcert mounts, removal state,
-and health-check recovery in isolated and shared test processes.
+`test:environment:ci` covers these fixtures, DNS and Compose generation,
+mkcert mounts, and health-check recovery in isolated and shared test processes.
 
 The minimum proof set should cover:
 
