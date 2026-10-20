@@ -6,6 +6,9 @@ use crate::objects::{self, Closure, Objects};
 use crate::root::Family;
 use rusqlite::OptionalExtension;
 
+/// Bound for one engine record: a small policy document, never a payload.
+const ENGINE_RECORD_MAX: usize = 16 << 10;
+
 impl Objects {
     /// Journal, stage and seal a closure, then atomically publish its row and
     /// desired reference. A crash selects the previous or the complete new
@@ -222,6 +225,40 @@ impl Run<'_> {
             )?;
             Ok(())
         })
+    }
+
+    /// Replace the authority engine's own record under the owning
+    /// generation's gate. The kernel stores it opaquely and bounds its size;
+    /// it never grants authority by itself.
+    pub fn set_engine_record(&mut self, record: &Value) -> Result<(), RunError> {
+        self.can_effect()?;
+        self.cx
+            .require(Capability::SourceStore)
+            .map_err(|_| RunError::Invalid("engine record needs Prepare or Mutate".into()))?;
+        let encoded = serde_json::to_string(record)?;
+        if encoded.len() > ENGINE_RECORD_MAX {
+            return Err(StoreError::TooLarge {
+                limit: ENGINE_RECORD_MAX as u64,
+            }
+            .into());
+        }
+        let result = (|| {
+            crate::fault_point!(EngineRecordBefore)?;
+            self.store.transaction(&self.cx, |txn| {
+                journal::check_fence(txn.conn(), &self.owner)?;
+                txn.conn().execute(
+                    "UPDATE resources SET engine=?2,updated_at=?3 WHERE name=?1",
+                    params![self.owner.resource.name().to_string(), encoded, txn.now()],
+                )?;
+                Ok::<_, RunError>(())
+            })?;
+            crate::fault_point!(EngineRecordAfter)?;
+            Ok(())
+        })();
+        if result.is_err() {
+            self.poisoned = true;
+        }
+        result
     }
 
     pub(super) fn settle_staging(

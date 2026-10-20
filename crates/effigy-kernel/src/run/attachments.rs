@@ -75,6 +75,33 @@ impl TransitionPermit<'_, '_> {
     pub fn fence(&self) -> &Fence {
         &self.run.owner
     }
+    /// Publishes that the environment's workloads were stopped. The state
+    /// change re-checks holders in its own transaction, so no attachment can
+    /// observe `active` for an environment a transition just stopped.
+    pub fn publish_stopped(&mut self) -> Result<(), RunError> {
+        self.run.can_effect()?;
+        let result = (|| {
+            crate::fault_point!(EnvStateBefore)?;
+            self.run.store.transaction(
+                &self.run.cx.child(std::time::Duration::from_secs(30)),
+                |txn| {
+                    journal::check_fence(txn.conn(), &self.run.owner)?;
+                    ensure_no_holders(txn.conn(), &self.run.owner.resource)?;
+                    txn.conn().execute(
+                        "UPDATE resources SET state='stopped',updated_at=?2 WHERE name=?1",
+                        params![self.run.owner.resource.name().to_string(), txn.now()],
+                    )?;
+                    Ok::<_, RunError>(())
+                },
+            )?;
+            crate::fault_point!(EnvStateAfter)?;
+            Ok(())
+        })();
+        if result.is_err() {
+            self.run.poisoned = true;
+        }
+        result
+    }
 }
 impl Attachments {
     /// Publishes an environment's applied generation under its owner gate.

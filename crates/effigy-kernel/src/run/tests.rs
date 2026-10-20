@@ -1168,3 +1168,75 @@ fn gateway_store_latest_run_tracks_generation_and_absence() {
     assert_eq!(reader.latest_run(&resource).verified().unwrap().0, id(64));
     run.settle(&cleanup(&cx), &mut fake).unwrap();
 }
+#[test]
+fn environment_record_is_fenced_bounded_and_read_without_migration() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut fake = Fake::new(home.path());
+    let mut run = begin(&cx, &root, env(), 90, &mut fake);
+    let record = serde_json::json!({"retention": "persistent"});
+    run.set_engine_record(&record).unwrap();
+    let oversized = Value::String("x".repeat(20 << 10));
+    assert!(matches!(
+        run.set_engine_record(&oversized),
+        Err(RunError::Store(StoreError::TooLarge { .. }))
+    ));
+    // A size refusal writes nothing and leaves the run usable.
+    run.set_engine_record(&record).unwrap();
+    run.settle(&cleanup(&cx), &mut fake).unwrap();
+    let view = reader(&cx, &root);
+    match view.resource(&env()) {
+        Observed::Verified(resource, _) => assert_eq!(resource.engine, Some(record)),
+        other => panic!("{other:?}"),
+    }
+    assert!(matches!(view.object_refs(&env()), Observed::Verified(refs, _) if refs.is_empty()));
+    // A run writes only its own owner's record: a task run never reaches
+    // the environment row.
+    let mut stale = begin(&cx, &root, owner(), 1, &mut fake);
+    stale
+        .set_engine_record(&serde_json::json!({"foreign": true}))
+        .unwrap();
+    stale.settle(&cleanup(&cx), &mut fake).unwrap();
+    match reader(&cx, &root).resource(&env()) {
+        Observed::Verified(resource, _) => {
+            assert_eq!(resource.engine, Some(serde_json::json!({"retention": "persistent"})))
+        }
+        other => panic!("{other:?}"),
+    }
+}
+#[test]
+fn environment_stopped_publication_needs_a_permit_and_blocks_attach() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut fake = Fake::new(home.path());
+    let active = active_environment(&cx, &root, &mut fake);
+    let mut holder = begin(&cx, &root, owner(), 1, &mut fake);
+    Attachments::attach(&mut holder, &active, AttachMode::Borrow, Wait::FailFast).unwrap();
+    let mut down = begin(&cx, &root, env(), 91, &mut fake);
+    assert!(matches!(
+        Attachments::permit(&mut down),
+        Err(RunError::HeldBy(_))
+    ));
+    down.settle(&cleanup(&cx), &mut fake).unwrap();
+    holder.settle(&cleanup(&cx), &mut fake).unwrap();
+    let mut down = begin(&cx, &root, env(), 92, &mut fake);
+    let stopped = down.fence().clone();
+    Attachments::permit(&mut down)
+        .unwrap()
+        .publish_stopped()
+        .unwrap();
+    down.finish(WorkloadOutcome::Succeeded).unwrap();
+    down.settle(&cleanup(&cx), &mut fake).unwrap();
+    match reader(&cx, &root).resource(&env()) {
+        Observed::Verified(resource, _) => assert_eq!(resource.state.as_deref(), Some("stopped")),
+        other => panic!("{other:?}"),
+    }
+    let mut late = begin(&cx, &root, owner(), 2, &mut fake);
+    assert!(matches!(
+        Attachments::attach(&mut late, &stopped, AttachMode::Borrow, Wait::FailFast),
+        Err(RunError::EnvNotActive)
+    ));
+    late.settle(&cleanup(&cx), &mut fake).unwrap();
+}

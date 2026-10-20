@@ -360,6 +360,10 @@ impl Store {
                 txn.conn
                     .execute_batch("ALTER TABLE resources ADD COLUMN backend TEXT")?;
             }
+            if !has_column(txn.conn, "engine")? {
+                txn.conn
+                    .execute_batch("ALTER TABLE resources ADD COLUMN engine TEXT")?;
+            }
             txn.conn.execute(
                 "UPDATE meta SET value=?1 WHERE key='last_written_by' AND value<>?1",
                 params![BUILD],
@@ -388,6 +392,16 @@ pub struct ResourceRecord {
     pub generation: Generation,
     pub state: Option<String>,
     pub backend: Option<BackendMetadata>,
+    /// The authority engine's own record, opaque to the kernel and written
+    /// only by that engine's runs under the resource gate.
+    pub engine: Option<serde_json::Value>,
+}
+/// One immutable-object reference of a resource (§7.4): its role and order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ObjectRef {
+    pub role: String,
+    pub digest: String,
+    pub seq: i64,
 }
 /// Exact engine/context identity and the policy source that selected it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -578,6 +592,29 @@ impl StoreReader {
             },
         )
     }
+    /// Every object reference of one resource, oldest first. Pure read: no
+    /// closure is opened, so a missing object still reads as its row.
+    pub fn object_refs(&self, id: &ResourceId) -> Observed<Vec<ObjectRef>> {
+        let result = (|| -> rusqlite::Result<Vec<ObjectRef>> {
+            let mut stmt = self.conn.prepare(
+                "SELECT role,digest,seq FROM object_refs WHERE resource=?1 ORDER BY seq,role",
+            )?;
+            let rows = stmt
+                .query_map([id.name().to_string()], |row| {
+                    Ok(ObjectRef {
+                        role: row.get(0)?,
+                        digest: row.get(1)?,
+                        seq: row.get(2)?,
+                    })
+                })?
+                .collect();
+            rows
+        })();
+        match result {
+            Ok(rows) => Observed::Verified(rows, evidence("kernel object references")),
+            Err(error) => Observed::Unknown(read_unknown(&error.into())),
+        }
+    }
     /// The latest operation for one canonical owner. A missing row is not
     /// proof of process absence; callers also observe its gate and custody.
     pub fn latest_run(&self, owner: &ResourceId) -> Observed<(RunId, Generation)> {
@@ -758,9 +795,12 @@ fn read_unknown(error: &StoreError) -> UnknownReason {
     }
 }
 fn has_backend(conn: &Connection) -> rusqlite::Result<bool> {
+    has_column(conn, "backend")
+}
+fn has_column(conn: &Connection, column: &str) -> rusqlite::Result<bool> {
     conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('resources') WHERE name='backend')",
-        [],
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('resources') WHERE name=?1)",
+        [column],
         |r| r.get(0),
     )
 }
@@ -770,8 +810,13 @@ fn resource_sql(conn: &Connection) -> rusqlite::Result<String> {
     } else {
         "NULL"
     };
+    let engine = if has_column(conn, "engine")? {
+        "engine"
+    } else {
+        "NULL"
+    };
     Ok(format!(
-        "SELECT name,label,authority,generation,state,{backend} FROM resources WHERE name=?1"
+        "SELECT name,label,authority,generation,state,{backend},{engine} FROM resources WHERE name=?1"
     ))
 }
 fn resource_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ResourceRecord> {
@@ -787,6 +832,18 @@ fn resource_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ResourceRecord> {
                 serde_json::from_str(&value).map_err(|error| {
                     rusqlite::Error::FromSqlConversionFailure(
                         5,
+                        rusqlite::types::Type::Text,
+                        Box::new(error),
+                    )
+                })
+            })
+            .transpose()?,
+        engine: row
+            .get::<_, Option<String>>(6)?
+            .map(|value| {
+                serde_json::from_str(&value).map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        6,
                         rusqlite::types::Type::Text,
                         Box::new(error),
                     )
@@ -824,6 +881,7 @@ CREATE TABLE resources (
   last_applied TEXT,
   backend TEXT,
   state TEXT,
+  engine TEXT,
   updated_at INTEGER NOT NULL
 ) STRICT;
 CREATE INDEX resources_checkout ON resources(checkout);
