@@ -182,6 +182,9 @@ pub enum HelperExit {
     /// Still running when its handshake failed: the kernel stopped its own
     /// unacknowledged child.
     Stopped,
+    /// Never started: its image was refused before spawn (a replaced
+    /// startup path) or the spawn itself failed.
+    NotStarted,
 }
 impl std::fmt::Display for HelperExit {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -189,6 +192,7 @@ impl std::fmt::Display for HelperExit {
             Self::Code(code) => write!(f, "exited with code {code}"),
             Self::Signal(signal) => write!(f, "was killed by signal {signal}"),
             Self::Stopped => f.write_str("stopped answering"),
+            Self::NotStarted => f.write_str("could not start"),
         }
     }
 }
@@ -198,9 +202,10 @@ const HELPER_TAIL: u64 = 4096;
 const HELPER_EXIT_WAIT: Duration = Duration::from_secs(2);
 /// A helper's stderr until it acknowledges: an unlinked private file under
 /// the state root, so an early exit keeps its reason and leaves no residue.
-fn helper_log(root: &StateRoot) -> io::Result<std::fs::File> {
+fn helper_log(root: &StateRoot) -> Result<std::fs::File, RunError> {
     let name = FileName::new(&format!("helper-{}-{}.log", std::process::id(), nonce()))
-        .map_err(io::Error::other)?;
+        .map_err(|e| RunError::Invalid(e.to_string()))?;
+    let fs = crate::store::StoreError::from;
     let (file, _) = root
         .dir()
         .open_file(
@@ -209,10 +214,43 @@ fn helper_log(root: &StateRoot) -> io::Result<std::fs::File> {
             Some(0o600),
             Trust::Private,
         )
-        .map_err(io::Error::other)?
-        .ok_or_else(|| io::Error::other("helper log missing"))?;
-    root.dir().remove(&name, false).map_err(io::Error::other)?;
+        .map_err(fs)?
+        .ok_or_else(|| RunError::Invalid("helper log missing".into()))?;
+    root.dir().remove(&name, false).map_err(fs)?;
     Ok(file)
+}
+/// A helper that never started: nothing ran on its behalf.
+fn helper_not_started(entry: &str, cause: io::Error) -> RunError {
+    RunError::HelperExited {
+        helper: entry.into(),
+        exit: HelperExit::NotStarted,
+        cause: cause.to_string(),
+        stderr_tail: String::new(),
+    }
+}
+/// Verifies the image and spawns `entry` with stderr to `log`. Refusal and
+/// spawn failure are typed, never store I/O.
+fn spawn_helper(
+    executable: &Executable,
+    entry: &str,
+    log: &std::fs::File,
+) -> Result<Child, RunError> {
+    let mut busy = 0;
+    loop {
+        let mut command = helper(executable, entry).map_err(|e| helper_not_started(entry, e))?;
+        command
+            .stdout(Stdio::piped())
+            .stderr(log.try_clone().map_err(|e| helper_not_started(entry, e))?);
+        match command.spawn() {
+            // A just-written image can be briefly busy while another thread's
+            // fork still holds its write descriptor.
+            Err(error) if error.raw_os_error() == Some(libc::ETXTBSY) && busy < 200 => {
+                busy += 1;
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            spawned => return spawned.map_err(|e| helper_not_started(entry, e)),
+        }
+    }
 }
 fn helper_tail(log: &std::fs::File) -> String {
     let Ok(len) = log.metadata().map(|m| m.len()) else {
@@ -316,7 +354,11 @@ fn private_image<'a>(
         return Ok(None);
     };
     let name = FileName::new(&format!("exe-{}-{}", std::process::id(), nonce()))
-        .map_err(io::Error::other)?;
+        .map_err(|e| RunError::Invalid(e.to_string()))?;
+    let path = root.dir().join(name.as_str());
+    let io = |op, error: io::Error| {
+        crate::store::StoreError::Io(crate::fs::IoError::new(op, &path, &error))
+    };
     let (mut copy, _) = root
         .dir()
         .open_file(
@@ -325,8 +367,8 @@ fn private_image<'a>(
             Some(0o700),
             Trust::Private,
         )
-        .map_err(io::Error::other)?
-        .ok_or_else(|| io::Error::other("private image missing"))?;
+        .map_err(crate::store::StoreError::from)?
+        .ok_or_else(|| RunError::Invalid("private image missing".into()))?;
     let mut pin = PrivateImage {
         dir: root.dir(),
         name,
@@ -335,18 +377,22 @@ fn private_image<'a>(
     let mut buffer = vec![0u8; 1 << 20];
     let mut offset = 0;
     loop {
-        let count = std::os::unix::fs::FileExt::read_at(image, &mut buffer, offset)?;
+        let count = std::os::unix::fs::FileExt::read_at(image, &mut buffer, offset)
+            .map_err(|e| io("private image read", e))?;
         if count == 0 {
             break;
         }
-        copy.write_all(&buffer[..count])?;
+        copy.write_all(&buffer[..count])
+            .map_err(|e| io("private image write", e))?;
         offset += count as u64;
     }
     if offset != executable.size {
-        return Err(io::Error::other("startup image changed while copied").into());
+        return Err(RunError::Invalid(
+            "startup image changed while copied".into(),
+        ));
     }
     drop(copy);
-    pin.executable = Executable::capture(&root.dir().join(pin.name.as_str()))?;
+    pin.executable = Executable::capture(&path).map_err(|e| helper_not_started(SENTINEL, e))?;
     Ok(Some(pin))
 }
 pub(crate) fn spawn_sentinel(
@@ -368,11 +414,11 @@ pub(crate) fn spawn_sentinel(
         // A rebuilt path re-execs the startup image, never the replacement.
         let pin = private_image(root, &plan.executable)?;
         match sentinel_attempt(run, root, home, pin.as_ref(), plan, next) {
-            // A rebuild can replace the path between this process's verify and
-            // the sentinel's own (`cargo run` of Effigy beside a live run): the
-            // sentinel refuses and exits unacknowledged. It did nothing and
-            // nothing recorded it, so one retry from the unchanged startup
-            // image is safe (I-SV4).
+            // A rebuild can replace the path after `private_image` looked at it
+            // (`cargo run` of Effigy beside a live run): this process's verify
+            // refuses before spawn, or the sentinel's own refuses and it exits
+            // unacknowledged. Either way nothing ran and nothing recorded it,
+            // so one retry from the unchanged startup image is safe (I-SV4).
             Err(RunError::HelperExited { .. })
                 if !retried && pin.is_none() && plan.executable.replaced_image().is_some() =>
             {
@@ -393,20 +439,7 @@ fn sentinel_attempt(
 ) -> Result<SentinelLease, RunError> {
     let executable = pin.map_or(&plan.executable, |pin| &pin.executable);
     let log = helper_log(root)?;
-    let mut busy = 0;
-    let mut child = loop {
-        let mut command = helper(executable, SENTINEL)?;
-        command.stdout(Stdio::piped()).stderr(log.try_clone()?);
-        match command.spawn() {
-            // A just-written image can be briefly busy while another thread's
-            // fork still holds its write descriptor.
-            Err(error) if error.raw_os_error() == Some(libc::ETXTBSY) && busy < 200 => {
-                busy += 1;
-                std::thread::sleep(Duration::from_millis(5));
-            }
-            spawned => break spawned?,
-        }
-    };
+    let mut child = spawn_helper(executable, SENTINEL, &log)?;
     // The fault driver waits for every helper, registered or not (§12.1).
     #[cfg(all(test, feature = "fault-injection"))]
     crate::fault::note_helper(child.id());
@@ -904,9 +937,7 @@ pub fn start_detached(
     };
     let root = StateRoot::effects(cx, home).map_err(crate::store::StoreError::from)?;
     let log = helper_log(&root)?;
-    let mut command = helper(executable, SUPERVISOR)?;
-    command.stdout(Stdio::piped()).stderr(log.try_clone()?);
-    let mut child = command.spawn()?;
+    let mut child = spawn_helper(executable, SUPERVISOR, &log)?;
     let mut writer = child
         .stdin
         .take()

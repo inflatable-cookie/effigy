@@ -428,3 +428,34 @@ exit 1"#,
     world.assert_no_residue();
     world.assert_owner_free(&root, "refusing", 2);
 }
+
+/// A replacement that lands before spawn is refused by this process's own
+/// verify: typed `NotStarted` naming the refusal, never store I/O. The
+/// admission retry treats it like a refusing sentinel (nothing ran).
+#[test]
+fn a_path_replaced_before_spawn_is_typed_not_started() {
+    let world = World::new();
+    let cx = cx();
+    let root = StateRoot::effects(&cx, &world.home()).unwrap();
+    let plan = world.helper("exit 0");
+    let path = world.dir.path().join("bin/helper");
+    let rebuilt = world.dir.path().join("bin/helper.rebuilt");
+    std::fs::copy(&path, &rebuilt).unwrap();
+    std::fs::rename(&rebuilt, &path).unwrap();
+    let log = helper_log(&root).unwrap();
+    let error = spawn_helper(&plan.executable, SENTINEL, &log).expect_err("refused");
+    match error {
+        RunError::HelperExited {
+            helper,
+            exit,
+            cause,
+            ..
+        } => {
+            assert_eq!((helper.as_str(), exit), (SENTINEL, HelperExit::NotStarted));
+            assert!(cause.contains("startup binary replaced"), "{cause}");
+        }
+        other => panic!("expected a typed refusal, got {other:?}"),
+    }
+    assert!(plan.executable.replaced_image().is_some());
+    world.assert_no_residue();
+}
