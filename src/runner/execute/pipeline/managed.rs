@@ -924,7 +924,7 @@ fn environment_plan(
         binding,
         up,
         up_env,
-        borrowed: inline.is_none() && environment_borrowed(policy),
+        borrowed: inline.is_none() && environment_borrowed(&repo, policy),
         exec_probe: exec_workloads.then(|| (policy.primary_service.clone(), working_dir)),
         route_urls: if plan.readiness.health_wait {
             managed_readiness_probe_urls(Some(policy))
@@ -938,16 +938,23 @@ fn environment_plan(
 }
 
 /// A stack an explicit `effigy container up` keeps running (its record is
-/// active and persistent) is borrowed: the run leaves it running (Tom's
-/// ruling 5; contract 053 §5). Anything else this run's ensure holds.
-fn environment_borrowed(policy: &EffectiveContainerPolicy) -> bool {
+/// active and persistent, and its exact inventory runs) is borrowed: the run
+/// leaves it running (Tom's ruling 5; contract 053 §5). A persistent stack
+/// that stopped behind the record is started by this run, which stops it.
+fn environment_borrowed(repo: &std::path::Path, policy: &EffectiveContainerPolicy) -> bool {
     use effigy_containers::environment::{EnvState, Retention};
-    crate::runner::environment::record(policy).is_some_and(|record| {
+    use effigy_kernel::observe::Observed;
+    let persistent = crate::runner::environment::record(policy).is_some_and(|record| {
         record.state == EnvState::Active
             && record
                 .engine()
                 .is_some_and(|engine| engine.retention == Retention::Persistent)
-    })
+    });
+    persistent
+        && matches!(
+            crate::runner::environment::running(repo, policy),
+            Ok(Observed::Verified(true, _))
+        )
 }
 
 fn managed_environment_up_command(
