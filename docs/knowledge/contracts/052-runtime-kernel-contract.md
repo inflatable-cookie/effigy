@@ -1991,6 +1991,14 @@ A v0.14.1 user updates and everything keeps working with no manual steps
 | M7 | Running stacks survive. Containers keep running, labels prove ownership, nothing is recreated because of an import. |
 | M8 | Downgrade after a scope's cut-over is unsupported. The store records the writing build, and a binary that predates the schema refuses Mutate. |
 
+Gateway-only operator exception (Tom, 2026-10-19, effigy#237; reaffirmed in the
+2026-10-20 continuation): M3/M8 permit explicit export-on-remove to v0.14.1.
+The new writer freezes before journaled export and refuses ordinary mutation
+until setup quiesces the old writer and re-imports. No kernel primitive or
+other scope gains downgrade support. The owning protocol and proofs are in
+[architecture 035](../architecture/035-gateway-endpoint-store.md#explicit-downgrade-and-re-upgrade).
+
+
 | Legacy family | Location | Import | Quiesce condition | `Unknown` handling |
 | --- | --- | --- | --- | --- |
 | Task lease locks | `<root>/.effigy/locks/` | not imported | a live legacy holder (same host, PID alive, Effigy command) refuses Mutate on that task with the next command | foreign hostname or unreadable record: refuse, never delete |

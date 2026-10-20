@@ -1,6 +1,6 @@
 //! Typed route snapshots; the gateway endpoint Store owns persistence.
-//! Legacy JSON is read only by the one-time importer. `RouteTableLock`
-//! quiesces that importer and remains available for unrelated legacy records.
+//! Legacy JSON is used only at explicit import/export cutovers. `RouteTableLock`
+//! quiesces legacy writers and remains available for unrelated legacy records.
 
 use std::collections::HashMap;
 use std::fs::OpenOptions;

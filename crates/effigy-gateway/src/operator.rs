@@ -121,6 +121,9 @@ pub fn daemon_entry(addresses: Option<[std::net::SocketAddr; 3]>) -> io::Result<
         config.proxy.tls_bind_addr = Some(https);
     }
     crate::setup::read_receipt(&home)?;
+    crate::endpoint_store::EndpointStore::new(&home)
+        .require_active()
+        .map_err(error)?;
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?
@@ -203,7 +206,10 @@ pub fn status(config: &GatewayConfig) -> io::Result<Status> {
     let op = context(Duration::from_secs(3), EffectClass::Observe);
     loop {
         match status_once(config, &op) {
-            Ok(result) => return Ok(result),
+            Ok(Some(result)) => return Ok(result),
+            // Legacy identity failures are refusals, not a settling kernel
+            // owner. Preserve them rather than translating them to unknown.
+            Ok(None) => return legacy_status(config),
             Err(err) if op.remaining().unwrap_or_default() <= Duration::from_millis(10) => {
                 return Ok(Status::simple("unknown", Some(err.to_string())));
             }
@@ -211,16 +217,16 @@ pub fn status(config: &GatewayConfig) -> io::Result<Status> {
         }
     }
 }
-fn status_once(config: &GatewayConfig, op: &OperationContext) -> io::Result<Status> {
+fn status_once(config: &GatewayConfig, op: &OperationContext) -> io::Result<Option<Status>> {
     let cx = op.observe().map_err(error)?;
     let Some(root) = observed(StateRoot::observe(&cx, home(config)?))? else {
-        return legacy_status(config);
+        return Ok(None);
     };
     let Some(reader) = observed(Store::read(&cx, &root))? else {
-        return legacy_status(config);
+        return Ok(None);
     };
     let Some((id, _)) = observed(reader.latest_run(&owner()))? else {
-        return legacy_status(config);
+        return Ok(None);
     };
     let Some(state) = observed(run::status(&cx, &root, &reader, id, next()))? else {
         return Err(error("missing gateway run"));
@@ -307,7 +313,7 @@ fn status_once(config: &GatewayConfig, op: &OperationContext) -> io::Result<Stat
             }
         }
     }
-    Ok(result)
+    Ok(Some(result))
 }
 /// Probe HTTP, HTTPS acceptance, and a DNS answer; every wait shares one budget.
 pub fn self_test(config: &GatewayConfig, budget: Duration) -> io::Result<()> {
@@ -352,6 +358,9 @@ pub fn up_with_executable(config: &GatewayConfig, executable_path: &Path) -> io:
     }
     let home = home(config)?;
     crate::setup::read_receipt(home)?;
+    crate::endpoint_store::EndpointStore::new(home)
+        .require_active()
+        .map_err(error)?;
     let op = context(Duration::from_secs(15), EffectClass::Mutate);
     let cx = op.effects().map_err(error)?;
     let executable = Executable::capture(executable_path)?;

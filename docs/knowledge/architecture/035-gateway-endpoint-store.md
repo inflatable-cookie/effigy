@@ -163,3 +163,36 @@ the runtime to poll the same servers under test before identity publication.
   Store watcher against before/after publication and persistent-transfer faults,
   comparing recovered state with HTTP behavior. This replaces the kernel
   placeholder.
+
+## Explicit downgrade and re-upgrade
+
+Tom authorized a reversible gateway downgrade on 2026-10-19 (effigy#237).
+Export-on-remove is the narrow gateway exception to the general migration
+policy's unsupported downgrade; it is not a dual-write compatibility period.
+`gateway setup --remove` stops the user daemon under setup ownership, then the
+endpoint Store run verifies it is stopped and records `exporting` before
+journaled replacements of the three legacy documents. The same Store gate
+excludes edits and daemon startup's mandatory import. A daemon admitted after
+the stopped observation cannot import/bind until the export finishes, and then
+refuses the exported authority state.
+
+Every destination must still contain its import digest or the frozen export's
+exact JSON value. All destinations are verified before publication begins.
+`Run::replace_file` provides intent, atomic replacement and positive settlement;
+partial exports keep the frozen payload for retry. Only after all three files
+are published does authority become `legacy`. Ordinary mutations and user
+daemon startup refuse both non-Store authority states. Pure compatible reads
+use current legacy files after completed handoff. Repeated removal preserves
+later old-version edits. Unchanged mappings retain their raw JSON fields and
+unchanged documents retain their original bytes.
+
+Setup's privileged child reads only the explicit legacy files and setup
+receipt through its authenticated operator descriptor; it never opens the
+operator's kernel database. Re-upgrade authenticates/quiesces the v0.14.1 root
+daemon, then re-imports current files under the endpoint gate and legacy locks.
+Existing retained claims fence reconciliation; removed claims enter quarantine.
+A partial export must complete before re-import. Active managed-listener routes
+are refused with their exact domains because v0.14.1 lacks that ownership fence.
+Withdrawn reservations stay inactive during export; re-import reconciles the
+legacy inventory. Interface aliases are retained: setup's boot-job marker does
+not prove that setup created any existing address.

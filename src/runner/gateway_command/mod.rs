@@ -1926,12 +1926,12 @@ fn run_gateway_setup(
         if nix::unistd::Uid::effective().is_root() {
             let (uid, home) = setup::authenticated_operator()?;
             let config = GatewayConfig::standard(home.join(".effigy/gateway"));
-            let suffixes = setup::approved_suffixes(&config, extra)?;
             let root_home = nix::unistd::User::from_uid(nix::unistd::Uid::effective())
                 .map_err(std::io::Error::other)?
                 .ok_or_else(|| std::io::Error::other("root account missing"))?
                 .dir;
             setup::session(&root_home, true, |run, cx| {
+                let suffixes = setup::platform_suffixes(cx, uid, &home, extra)?;
                 if remove {
                     return setup::remove_platform(run, cx, uid, &suffixes);
                 }
@@ -1957,10 +1957,13 @@ fn run_gateway_setup(
         suffixes.extend(extra.iter().cloned());
         suffixes.sort();
         suffixes.dedup();
-        if remove {
-            operator::down(&config)?;
-        }
         setup::session(&home, false, |run, cx| {
+            if remove {
+                operator::down(&config)?;
+                effigy_gateway::endpoint_store::EndpointStore::new(&home)
+                    .export_legacy()
+                    .map_err(std::io::Error::other)?;
+            }
             // mkcert uses this operator's preserved CA. It is never run by the daemon.
             if !remove && !TlsConfig::mkcert_available() {
                 return Err(std::io::Error::other(
@@ -1988,6 +1991,9 @@ fn run_gateway_setup(
             if remove {
                 return setup::remove_receipt(run, cx, &home);
             }
+            effigy_gateway::endpoint_store::EndpointStore::new(&home)
+                .reimport_legacy()
+                .map_err(std::io::Error::other)?;
             // Re-read the now operator-owned legacy state, preserving every manual route.
             suffixes.extend(setup::approved_suffixes(&config, extra)?);
             suffixes.sort();
@@ -1995,7 +2001,7 @@ fn run_gateway_setup(
             setup::save_receipt(run, cx, &home, suffixes)
         })?;
         if remove {
-            return Ok("Gateway platform setup removed; routes and certificates preserved".into());
+            return Ok("Gateway setup removed; routes, loopback IPs and port pins exported for v0.14.1; certificates preserved. Start the v0.14.1 gateway with `effigy gateway up`".into());
         }
         let result = operator::up(&config)?;
         Ok(if output_json {

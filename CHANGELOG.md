@@ -563,6 +563,11 @@ During v0.x, MINOR bumps may include breaking changes.
   image. A kernel helper that still dies before acknowledging is reported as
   `kernel helper ... exited ... before acknowledging`, with its exit status
   and the tail of its own error output.
+- `gateway setup --remove` exports current routes, loopback IPs and port pins
+  for a v0.14.1 downgrade. Setup re-imports subsequent legacy edits on return.
+  Interrupted exports are resumable; changed foreign files and active managed
+  listener routes refuse with exact paths or domains. Teardown preserves
+  existing aliases and reads resolver inventory without root opening user state.
 - Gateway detach no longer races owning-client closure, and status reports
   startup and retirement coherently within its observation deadline.
 - Gateway parser and descriptorless-process controls now run on Linux and

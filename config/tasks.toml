@@ -3,6 +3,10 @@
 # Aggregator tasks below call the built-in through task refs.
 
 [tasks]
+"test:gateway:downgrade:covering" = { visibility = "internal", group = "Maintenance", run = [{ task = "test:gateway:downgrade" }, { task = "test:gateway:operator" }, { task = "test:gateway:operator:process" }] }
+"test:gateway:closeout:operator" = { visibility = "internal", group = "Maintenance", run = [{ task = "test:gateway:closeout:ci" }, { task = "test:gateway:operator" }, { task = "test:gateway:operator:process" }] }
+"proof:gateway:downgrade" = { visibility = "internal", group = "Maintenance", admission = "heavy", run = [{ run = "cargo build -p effigy-gateway --example gateway-downgrade-proof", timeout_ms = 900000 }, { run = "sh tests/scripts/gateway-downgrade.sh", timeout_ms = 1800000 }] }
+"test:gateway:downgrade" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-gateway --features endpoint-store-faults --lib -E 'test(endpoint_store::) | test(setup::) | test(ports::tests::) | test(routes::tests::) | test(loopback::tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 }] }
 "qa:gateway:closeout" = { visibility = "internal", group = "Maintenance", run = [{ task = "fmt:check" }, { task = "lint:gateway:closeout" }, { task = "qa:kernel-ratchet" }] }
 "test:gateway:closeout:runtime" = { visibility = "internal", group = "Maintenance", run = [{ task = "test:gateway:closeout:ci" }, { task = "test:gateway:closeout:kernel" }, { task = "test:gateway:operator:process" }, { task = "test:kernel:custody" }] }
 "lint:gateway:closeout" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo clippy -p effigy -p effigy-gateway -p effigy-kernel --all-targets --features effigy-gateway/endpoint-store-faults -- -D warnings", timeout_ms = 900000 }] }

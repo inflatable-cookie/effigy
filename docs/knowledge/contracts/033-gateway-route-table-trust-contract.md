@@ -13,6 +13,12 @@ steer route reload. Unknown Store observations preserve the applied table and
 refuse fallback. The following sections record the v0.14 trust boundary that
 migration preserves for its legacy input.
 
+The explicit downgrade handoff in architecture 035 exports a frozen Store
+snapshot and marks the JSON files authoritative again. Exported routes carry
+the v0.14 trust marker checked below. Re-upgrade stops the verified legacy
+writer before importing its current files; ordinary v0.15 edits never write
+both authorities.
+
 ## Purpose
 
 Define the trust boundary for the local gateway's route table. The gateway

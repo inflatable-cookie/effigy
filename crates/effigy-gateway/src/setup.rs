@@ -1,5 +1,5 @@
 //! The sole standard gateway administrator action. Native platform jobs never
-//! serve application traffic as root. JSON routes remain the operator's source of truth.
+//! serve application traffic as root. Explicit removal exports the endpoint Store.
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::io::{self, Read};
@@ -77,6 +77,9 @@ pub fn approved_suffixes(config: &GatewayConfig, extra: &[String]) -> io::Result
         crate::resolver_setup::route_driven_resolver_suffixes(table.routes.keys(), &config.dns.tld);
     suffixes.push(config.dns.tld.clone());
     suffixes.extend(extra.iter().cloned());
+    validate_suffixes(suffixes)
+}
+fn validate_suffixes(mut suffixes: Vec<String>) -> io::Result<Vec<String>> {
     for suffix in &mut suffixes {
         *suffix = suffix.trim_end_matches('.').to_ascii_lowercase();
         if suffix.is_empty()
@@ -97,6 +100,65 @@ pub fn approved_suffixes(config: &GatewayConfig, extra: &[String]) -> io::Result
     suffixes.sort();
     suffixes.dedup();
     Ok(suffixes)
+}
+/// Privileged setup reads only explicit legacy files through its authenticated
+/// operator descriptor. It never opens the user's kernel Store as root.
+pub fn platform_suffixes(
+    cx: &EffectContext,
+    uid: u32,
+    home: &Path,
+    extra: &[String],
+) -> io::Result<Vec<String>> {
+    let root = DirFd::open_setup(cx, home, uid).map_err(error)?;
+    let mut suffixes = vec!["test".to_owned()];
+    suffixes.extend(extra.iter().cloned());
+    if let Some(effigy) = root
+        .setup_child(&FileName::new(".effigy").map_err(error)?)
+        .map_err(error)?
+    {
+        if let Some(gateway) = effigy
+            .setup_child(&FileName::new("gateway").map_err(error)?)
+            .map_err(error)?
+        {
+            let observe = cx.operation().observe().map_err(error)?;
+            match read_record::<Bytes>(
+                &observe,
+                &gateway,
+                &FileName::new("routes.json").map_err(error)?,
+            ) {
+                Observed::Verified(bytes, _) => {
+                    let table: crate::routes::RouteTable =
+                        serde_json::from_slice(&bytes.0).map_err(error)?;
+                    suffixes.extend(crate::resolver_setup::route_driven_resolver_suffixes(
+                        table.routes.keys(),
+                        "test",
+                    ));
+                }
+                Observed::Absent(_) => {}
+                other => {
+                    return Err(error(format!(
+                        "legacy resolver inputs are unknown: {other:?}"
+                    )))
+                }
+            }
+            match read_record::<Receipt>(
+                &observe,
+                &gateway,
+                &FileName::new("setup.json").map_err(error)?,
+            ) {
+                Observed::Verified(receipt, _) if receipt.version == 1 && receipt.uid == uid => {
+                    suffixes.extend(receipt.suffixes)
+                }
+                Observed::Absent(_) => {}
+                other => {
+                    return Err(error(format!(
+                        "setup resolver receipt is unknown: {other:?}"
+                    )))
+                }
+            }
+        }
+    }
+    validate_suffixes(suffixes)
 }
 pub fn authenticated_operator() -> io::Result<(u32, PathBuf)> {
     if !nix::unistd::Uid::effective().is_root() {
@@ -476,6 +538,17 @@ fn remove_managed(
     dir: &DirFd,
     name: &str,
 ) -> io::Result<()> {
+    remove_managed_with(cx, dir, name, |path| {
+        command(run, cx, vec!["/bin/rm".into(), path.into()], false)?;
+        Ok(())
+    })
+}
+fn remove_managed_with(
+    cx: &EffectContext,
+    dir: &DirFd,
+    name: &str,
+    remove: impl FnOnce(&Path) -> io::Result<()>,
+) -> io::Result<()> {
     match read_record::<Bytes>(
         &cx.operation().observe().map_err(error)?,
         dir,
@@ -485,18 +558,25 @@ fn remove_managed(
         Observed::Verified(bytes, _) if String::from_utf8_lossy(&bytes.0).contains(MARKER) => {}
         other => return Err(error(format!("preserving foreign setup output: {other:?}"))),
     }
-    // Verified directory ownership and the setup gate exclude concurrent
-    // writers. Custody journals this exact, non-recursive removal command.
-    command(
-        run,
-        cx,
-        vec!["/bin/rm".into(), dir.path().join(name).into()],
-        false,
-    )?;
-    Ok(())
+    // Verified directory ownership and the setup gate exclude other setup writers.
+    remove(&dir.path().join(name))
 }
 pub fn remove_receipt(run: &mut Run<'_>, cx: &EffectContext, home: &Path) -> io::Result<()> {
-    read_receipt(home)?;
+    let dir = DirFd::open(&home.join(".effigy/gateway")).map_err(error)?;
+    match read_record::<Receipt>(
+        &cx.operation().observe().map_err(error)?,
+        &dir,
+        &FileName::new("setup.json").map_err(error)?,
+    ) {
+        Observed::Absent(_) => return Ok(()),
+        Observed::Verified(receipt, _)
+            if receipt.version == 1 && receipt.uid == nix::unistd::Uid::effective().as_raw() => {}
+        other => {
+            return Err(error(format!(
+                "preserving unknown setup receipt: {other:?}"
+            )))
+        }
+    }
     command(
         run,
         cx,
@@ -537,27 +617,9 @@ pub fn remove_platform(
                 &mut |run, cx, argv| command_outcome(run, cx, argv, false),
             )?;
             remove_managed(run, cx, &jobs, alias_job)?;
-            let interfaces = command(run, cx, vec!["/sbin/ifconfig".into(), "lo0".into()], false)?;
-            let interfaces = String::from_utf8(interfaces).map_err(error)?;
-            for n in 1..=50 {
-                let address = format!("127.1.0.{n}");
-                if interfaces.lines().any(|line| {
-                    line.split_whitespace().collect::<Vec<_>>().get(..2)
-                        == Some(&["inet", address.as_str()])
-                }) {
-                    command(
-                        run,
-                        cx,
-                        vec![
-                            "/sbin/ifconfig".into(),
-                            "lo0".into(),
-                            "-alias".into(),
-                            address.into(),
-                        ],
-                        false,
-                    )?;
-                }
-            }
+            // Existing aliases may predate setup. Removing the owned boot job
+            // does not prove ownership of live interface addresses. Preserve
+            // them for other consumers and for the restored v0.14.1 gateway.
         }
     }
     #[cfg(target_os = "linux")]
@@ -868,6 +930,66 @@ mod tests {
             let count = run.effects().unwrap().len();
             managed_file(run, cx, &dir, "resolver", owned.as_bytes(), true).unwrap();
             assert_eq!(run.effects().unwrap().len(), count);
+        });
+    }
+    #[test]
+    fn teardown_removes_only_verified_outputs_and_never_follows_a_link() {
+        with_run(|_run, cx, home| {
+            let dir = DirFd::open(home).unwrap();
+            let owned = home.join("test");
+            let foreign = home.join("foreign");
+            std::fs::write(&owned, format!("# {MARKER}\nnameserver 127.0.0.1\n")).unwrap();
+            std::fs::write(&foreign, b"foreign resolver").unwrap();
+            std::os::unix::fs::symlink(&foreign, home.join("linked")).unwrap();
+            let removals = std::cell::RefCell::new(Vec::new());
+            let remove = |path: &Path| {
+                removals.borrow_mut().push(path.to_owned());
+                std::fs::remove_file(path)
+            };
+            remove_managed_with(cx, &dir, "test", remove).unwrap();
+            remove_managed_with(cx, &dir, "test", remove).unwrap();
+            assert!(remove_managed_with(cx, &dir, "foreign", remove).is_err());
+            assert!(remove_managed_with(cx, &dir, "linked", remove).is_err());
+            assert_eq!(*removals.borrow(), vec![dir.path().join("test")]);
+            assert_eq!(std::fs::read(foreign).unwrap(), b"foreign resolver");
+        });
+    }
+    #[test]
+    fn privileged_suffix_inventory_uses_legacy_files_and_receipt_not_kernel_store() {
+        with_run(|_run, cx, home| {
+            let operator_home = home.join("operator");
+            let gateway = operator_home.join(".effigy/gateway");
+            std::fs::create_dir_all(&gateway).unwrap();
+            let state = operator_home.join(".effigy/state");
+            std::fs::create_dir_all(&state).unwrap();
+            std::fs::write(
+                state.join("kernel.db"),
+                b"must never be opened by privileged setup",
+            )
+            .unwrap();
+            std::fs::write(gateway.join("routes.json"), br#"{"routes":{"dev.cumberland.co.uk":{"domain":"dev.cumberland.co.uk","target":"127.0.0.1:8100","project":"/fixture/site","source":"manual","registered":"2026-01-01T00:00:00Z"}}}"#).unwrap();
+            let uid = nix::unistd::Uid::effective().as_raw();
+            std::fs::write(
+                gateway.join("setup.json"),
+                serde_json::to_vec(&Receipt {
+                    version: 1,
+                    uid,
+                    suffixes: vec!["previous.example".into()],
+                })
+                .unwrap(),
+            )
+            .unwrap();
+            let suffixes =
+                platform_suffixes(cx, uid, &operator_home, &["added.example".into()]).unwrap();
+            for expected in [
+                "test",
+                "dev.cumberland.co.uk",
+                "previous.example",
+                "added.example",
+            ] {
+                assert!(suffixes.contains(&expected.to_owned()));
+            }
+            assert!(platform_suffixes(cx, uid, &operator_home, &["../invalid".into()]).is_err());
         });
     }
     #[test]
