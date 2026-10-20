@@ -1,4 +1,5 @@
 //! Test-only fixture ownership. All ordinary fixtures live outside the checkout.
+mod kernel_helpers;
 pub mod process;
 use std::cell::RefCell;
 use std::fs;

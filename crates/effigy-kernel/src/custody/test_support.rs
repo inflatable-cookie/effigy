@@ -171,6 +171,40 @@ pub fn stop(receipt: &ProcessReceipt) -> io::Result<()> {
     }
 }
 
+/// Recorded kernel helpers can finish settlement after a fixture client exits.
+/// Return their launch generations; callers observe quiescence, never kill them.
+pub fn run_helpers(
+    cx: &crate::ctx::ObserveContext,
+    root: &crate::root::StateRoot,
+) -> io::Result<Vec<ident::ProcessIdentity>> {
+    let reader = match crate::store::Store::read(cx, root) {
+        Observed::Verified(reader, _) => reader,
+        Observed::Absent(_) => return Ok(Vec::new()),
+        Observed::Unknown(reason) => {
+            return Err(io::Error::other(format!("fixture runs: {reason:?}")))
+        }
+    };
+    let mut statement = reader
+        .conn()
+        .prepare("SELECT supervisor_identity,sentinel_identity FROM runs")
+        .map_err(io::Error::other)?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok([
+                row.get::<_, Option<String>>(0)?,
+                row.get::<_, Option<String>>(1)?,
+            ])
+        })
+        .map_err(io::Error::other)?;
+    let mut helpers = Vec::new();
+    for row in rows {
+        for encoded in row.map_err(io::Error::other)?.into_iter().flatten() {
+            helpers.push(serde_json::from_str(&encoded).map_err(io::Error::other)?);
+        }
+    }
+    Ok(helpers)
+}
+
 fn cleanup_context() -> io::Result<CleanupContext> {
     let operation = OperationContext::new(
         Deadline::At(Instant::now() + Duration::from_secs(15)),

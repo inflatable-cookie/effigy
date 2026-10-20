@@ -1,4 +1,5 @@
 //! Native fixture children and detached registrations, using kernel custody.
+pub use crate::kernel_helpers::wait_kernel_helpers;
 use effigy_kernel::custody::{test_support as custody, ProcessReceipt};
 use effigy_kernel::observe::Observed;
 use serde_json::Value;
@@ -95,6 +96,11 @@ pub fn register_detached(pid: u32, owner: &Path) -> io::Result<()> {
 /// Stop registrations belonging to this exact fixture tree before its files
 /// disappear. Foreign fixtures and reused PIDs never gain signal authority.
 pub fn close_root(owner: &Path) -> io::Result<()> {
+    close_registered(owner)?;
+    wait_kernel_helpers(owner)
+}
+
+fn close_registered(owner: &Path) -> io::Result<()> {
     let root = std::env::var_os("EFFIGY_TEST_FIXTURE_LEDGER")
         .map(PathBuf::from)
         .or_else(|| {

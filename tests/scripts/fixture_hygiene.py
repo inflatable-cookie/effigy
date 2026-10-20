@@ -110,6 +110,19 @@ def main():
                 continue
             print(f'leaked test fixture: {fixture}', file=sys.stderr)
             leaked = True
+            try:
+                (fixture / '.effigy/state/kernel.db').lstat()
+                has_kernel_state = True
+            except FileNotFoundError:
+                has_kernel_state = False
+            except OSError as error:
+                print(f'kernel fixture state unavailable: {fixture}: {error}', file=sys.stderr)
+                continue
+            if has_kernel_state:
+                helper = env.get('EFFIGY_TEST_PROCESS_HELPER')
+                if not helper or subprocess.run([helper, 'wait-root', str(fixture)]).returncode:
+                    print(f'unresolved kernel fixture writers: {fixture}', file=sys.stderr)
+                    continue
             unseal(fixture)
             shutil.rmtree(fixture)
             record.unlink()

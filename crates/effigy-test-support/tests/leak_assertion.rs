@@ -220,3 +220,23 @@ fn unknown_custody_keeps_fixture_files_and_never_signals_a_foreign_generation() 
     std::fs::remove_file(destination).unwrap();
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn unknown_kernel_state_preserves_fixture_files() {
+    use std::os::unix::fs::PermissionsExt;
+    let fixture = Fixture::new("effigy-unknown-kernel-state-").unwrap();
+    let root = fixture.path().to_path_buf();
+    let state = root.join(".effigy/state");
+    std::fs::create_dir_all(&state).unwrap();
+    std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let database = state.join("kernel.db");
+    std::fs::write(&database, b"deliberately corrupt private fixture database").unwrap();
+    std::fs::set_permissions(&database, std::fs::Permissions::from_mode(0o600)).unwrap();
+    assert!(std::panic::catch_unwind(|| drop(fixture)).is_err());
+    assert_eq!(
+        std::fs::read(database).unwrap(),
+        b"deliberately corrupt private fixture database"
+    );
+    // Only this proof's exact retained tree; its ledger observes absence later.
+    std::fs::remove_dir_all(root).unwrap();
+}

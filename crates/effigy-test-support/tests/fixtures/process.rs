@@ -12,13 +12,16 @@ fn main() {
         Some("stop-root") if args.len() == 3 => {
             process::close_root(Path::new(&args[2])).map(|_| false)
         }
+        Some("wait-root") if args.len() == 3 => {
+            process::wait_kernel_helpers(Path::new(&args[2])).map(|_| false)
+        }
         Some("run") if args.len() == 5 => process::run_recorded(
             std::process::Command::new("sh").args(["-c", &args[4]]).current_dir(&args[2]),
             Path::new(&args[3]),
         ).map(|_| false),
         Some("sweep") if args.len() == 3 => process::sweep(Path::new(&args[2]), None),
         _ => Err(std::io::Error::other(
-            "usage: effigy-fixture-process register PID OWNER | stop-root OWNER | run OWNER DONE SCRIPT | sweep LEDGER",
+            "usage: effigy-fixture-process register PID OWNER | stop-root OWNER | wait-root HOME | run OWNER DONE SCRIPT | sweep LEDGER",
         )),
     };
     match result {

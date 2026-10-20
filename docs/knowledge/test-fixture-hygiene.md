@@ -131,3 +131,14 @@ kill matrix retains that locator too, including its executable-replacement proof
 The forked-workload gate proof retains its helper guard after observing leader
 exit, until it has checked gate release while the workload is still alive.
 Cleanup therefore cannot turn a leaked-descriptor failure into a passing proof.
+
+The read-only observer in `effigy-test-support/src/kernel_helpers.rs` is separate
+from the native process ledger in `src/process.rs`. A fixture HOME can still have
+a kernel sentinel finishing settlement after its client has been killed and reaped. Before directory removal, the guard reads
+helper generations through `custody::test_support::run_helpers` and waits for
+those other processes to cease writing. This observer never signals a sentinel
+or infers authority from a PID file. Unknown evidence or an expired wait retains
+the tree; the suite sweep uses the same check before deleting leaked homes.
+`fixture_home_waits_for_kernel_sentinel_after_client_kill` proves the boundary.
+The doctor hang negative control uses the shared native child guard as well;
+its PID marker remains an oracle rather than cleanup authority.

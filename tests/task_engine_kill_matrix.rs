@@ -352,6 +352,24 @@ fn task_engine_reclaim_race_after_holder_kill_never_overlaps_runs() {
     );
 }
 
+/// Fixture deletion waits for the kernel's recorded writer after abrupt death.
+#[test]
+fn fixture_home_waits_for_kernel_sentinel_after_client_kill() {
+    let fixture = Fixture::new();
+    let mut owner = fixture.effigy(&["hold"]).spawn_owned().expect("holder");
+    let grandchild = fixture.read_sequence_pid("grandchild.pid", &mut owner, "home cleanup");
+    let home = fixture.home.clone();
+    owner.kill().expect("kill owned client");
+    owner.wait().expect("observe owned client exit");
+    drop(owner);
+    drop(fixture);
+    assert!(!home.exists(), "fixture HOME survived cleanup");
+    assert!(
+        !alive(grandchild),
+        "kernel-owned workload survived HOME cleanup"
+    );
+}
+
 /// Equivalent spellings from two processes share one gate.
 #[test]
 fn task_engine_equivalent_spellings_from_two_processes_serialize() {
