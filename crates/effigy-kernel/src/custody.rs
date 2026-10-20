@@ -520,6 +520,11 @@ impl OwnedProcess {
     pub fn forward(&mut self, signal: i32) -> Observed<SignalDelivered> {
         lock(&self.core).signal(signal)
     }
+    /// Writes operator input to a `Pty` workload's terminal. Other terminals
+    /// have no input channel of their own.
+    pub fn write_input(&self, bytes: &[u8]) -> io::Result<()> {
+        lock(&self.core).write_input(bytes)
+    }
     pub fn stop(&mut self, cx: &CleanupContext) -> StopReport {
         lock(&self.core).stop(cx)
     }
@@ -649,6 +654,37 @@ impl ProcessCore {
             Ok(None) => Observed::Unknown(UnknownReason::Inconsistent("leader running".into())),
             Err(e) => Observed::Unknown(unknown(e)),
         }
+    }
+    fn write_input(&self, mut bytes: &[u8]) -> io::Result<()> {
+        let master = match (&self.stdout, self.pty) {
+            (Some(master), true) => master,
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "workload has no terminal input",
+                ))
+            }
+        };
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while !bytes.is_empty() {
+            // SAFETY: live nonblocking PTY master and an initialized slice.
+            let count =
+                unsafe { libc::write(master.as_raw_fd(), bytes.as_ptr().cast(), bytes.len()) };
+            if count < 0 {
+                let error = io::Error::last_os_error();
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+                ) && Instant::now() < deadline
+                {
+                    std::thread::sleep(Duration::from_millis(2));
+                    continue;
+                }
+                return Err(error);
+            }
+            bytes = &bytes[count as usize..];
+        }
+        Ok(())
     }
     fn signal(&mut self, signal: i32) -> Observed<SignalDelivered> {
         if self.reaped {

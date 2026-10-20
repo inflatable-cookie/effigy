@@ -6,7 +6,7 @@ use std::os::fd::{FromRawFd, RawFd};
 use std::sync::Mutex;
 static FORK: Mutex<()> = Mutex::new(());
 
-pub(super) fn pipe() -> io::Result<(OwnedFd, OwnedFd)> {
+pub(crate) fn pipe() -> io::Result<(OwnedFd, OwnedFd)> {
     let mut fds = [-1; 2];
     // SAFETY: writable storage for exactly two fds. Ownership transfers below.
     if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {

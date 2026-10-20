@@ -961,3 +961,198 @@ fn custody_merged_streams_cannot_reconstruct_a_secret_before_any_sink() {
         .collect::<Vec<_>>();
     assert_eq!(logs, b"[REDACTED]");
 }
+
+/// An engine client process, killed or exiting by itself; the test reaps it.
+fn engine_client(home: &Path, mode: &str) -> ChildGuard {
+    let client = ChildGuard(
+        Command::new(fixture())
+            .arg("engine-client")
+            .arg(home)
+            .arg(mode)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    eventually(|| home.join("client-ready").exists());
+    client
+}
+fn engine_status(home: &Path) -> Observed<RunStatus> {
+    let cx = context();
+    let root = StateRoot::effects(&cx, home).unwrap();
+    let observe = cx.operation().observe().unwrap();
+    let reader = effigy_kernel::store::Store::read(&observe, &root);
+    status(
+        &observe,
+        &root,
+        reader.verified().unwrap(),
+        RunId::new(1, [9; 10]).unwrap(),
+        next(),
+    )
+}
+fn workload_gone(home: &Path) -> bool {
+    let pid: i32 = std::fs::read_to_string(home.join("engine-workload.pid"))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    // SAFETY: probe-only signal 0 to the fixture workload this test recorded.
+    unsafe { libc::kill(pid, 0) != 0 }
+}
+fn engine_output(home: &Path) -> String {
+    let cx = context();
+    let root = StateRoot::effects(&cx, home).unwrap();
+    let observe = cx.operation().observe().unwrap();
+    let read = read_log(
+        &observe,
+        &root,
+        RunId::new(1, [9; 10]).unwrap(),
+        OUTPUT_SEQUENCE,
+        Stream::Stdout,
+        0,
+        4096,
+    );
+    String::from_utf8(read.verified().unwrap().bytes.clone()).unwrap()
+}
+
+/// Ruling 5: an owning client's death, here an agent's SIGKILL, stops and
+/// settles the engine's run; its workload does not survive (O1a).
+#[test]
+fn custody_engine_owning_client_kill_stops_and_settles() {
+    let home = home();
+    let mut client = engine_client(home.path(), "owning");
+    assert!(matches!(
+        engine_status(home.path()),
+        Observed::Verified(RunStatus::Live(_), _)
+    ));
+    // SAFETY: SIGKILL to the fixture client process this test spawned.
+    assert_eq!(
+        unsafe { libc::kill(client.0.id() as i32, libc::SIGKILL) },
+        0
+    );
+    client.0.wait().unwrap();
+    eventually(|| {
+        matches!(
+            engine_status(home.path()),
+            Observed::Verified(RunStatus::Closed { complete: true, .. }, _)
+        )
+    });
+    let Observed::Verified(RunStatus::Closed { workload, .. }, _) = engine_status(home.path())
+    else {
+        panic!("closed");
+    };
+    assert!(
+        matches!(
+            workload,
+            WorkloadOutcome::Cancelled {
+                cause: StopCause::OwnerLost,
+                ..
+            }
+        ),
+        "{workload:?}"
+    );
+    eventually(|| workload_gone(home.path()));
+    // The engine got its client's cwd and explicit environment, and its own
+    // output reached the run log redacted.
+    let output = engine_output(home.path());
+    assert!(output.contains("engine output [REDACTED]"), "{output:?}");
+    assert!(output.contains("env=present"), "{output:?}");
+    assert!(
+        output.contains(&format!("cwd={}", home.path().display())),
+        "{output:?}"
+    );
+}
+
+/// A detached client exits without stopping the run; a stop request then
+/// settles it through the same owner loop.
+#[test]
+fn custody_engine_detached_client_exit_keeps_the_run_until_stop() {
+    let home = home();
+    let mut client = engine_client(home.path(), "detach");
+    eventually(|| client.0.try_wait().unwrap().is_some());
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(matches!(
+        engine_status(home.path()),
+        Observed::Verified(RunStatus::Live(_), _)
+    ));
+    assert!(!workload_gone(home.path()));
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let observe = cx.operation().observe().unwrap();
+    let reader = effigy_kernel::store::Store::read(&observe, &root);
+    let summary = summary(reader.verified().unwrap(), RunId::new(1, [9; 10]).unwrap());
+    let summary = summary.verified().unwrap();
+    request(
+        &cx,
+        &root,
+        &Request {
+            id: id(7),
+            run: summary.id,
+            expected: Fence {
+                resource: invocation().spec().owner.clone(),
+                generation: summary.generation,
+            },
+            action: RequestAction::Stop,
+        },
+    )
+    .unwrap();
+    eventually(|| {
+        matches!(
+            engine_status(home.path()),
+            Observed::Verified(RunStatus::Closed { complete: true, .. }, _)
+        )
+    });
+    assert_eq!(
+        std::fs::read_to_string(home.path().join("engine-stop-cause")).unwrap(),
+        "Requested"
+    );
+    assert!(workload_gone(home.path()));
+}
+
+/// Owning-client frames reach the engine, its events reach the client, and
+/// a second start on the same owner is refused while the first is live.
+#[test]
+fn custody_engine_frames_round_trip_and_a_second_start_is_refused() {
+    let home = home();
+    let cx = context();
+    let mut client = start_engine(
+        &cx,
+        home.path(),
+        EngineLaunch {
+            payload: home.path().as_os_str().as_encoded_bytes().to_vec(),
+            cwd: home.path().into(),
+            env: vec![],
+        },
+        &Executable::capture(&fixture()).unwrap(),
+        ClientMode::Owning,
+    )
+    .unwrap();
+    assert_eq!(client.run, RunId::new(1, [9; 10]).unwrap());
+    while !matches!(client.event(cx.operation()).unwrap(), Event::Active) {}
+    client.send_frame(b"hello engine").unwrap();
+    loop {
+        if let Event::Engine(bytes) = client.event(cx.operation()).unwrap() {
+            assert_eq!(bytes, b"hello engine");
+            break;
+        }
+    }
+    let second = start_engine(
+        &cx,
+        home.path(),
+        EngineLaunch {
+            payload: home.path().as_os_str().as_encoded_bytes().to_vec(),
+            cwd: home.path().into(),
+            env: vec![],
+        },
+        &Executable::capture(&fixture()).unwrap(),
+        ClientMode::Owning,
+    );
+    assert!(second.is_err(), "a second engine run was admitted");
+    client.stop(&cx, id(8)).unwrap();
+    client.wait(cx.operation()).unwrap();
+    assert!(matches!(
+        engine_status(home.path()),
+        Observed::Verified(RunStatus::Closed { complete: true, .. }, _)
+    ));
+}

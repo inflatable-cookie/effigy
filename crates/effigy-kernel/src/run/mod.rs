@@ -376,6 +376,10 @@ impl<'a> Run<'a> {
     ) -> std::io::Result<crate::custody::capture::Log> {
         crate::custody::capture::Log::open(self.root, self.id, sequence, stream, limits)
     }
+    /// Capture bounds of the run's own effect context.
+    pub(crate) fn limits(&self) -> crate::ctx::Limits {
+        self.cx.operation().limits().clone()
+    }
     pub(crate) fn has_sentinel(&self) -> bool {
         self.sentinel.is_some()
     }
