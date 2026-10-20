@@ -159,8 +159,8 @@
 # concurrent threads and a bounded task lifetime, matching hosted CI's cfg.
 # Light composition calls heavy runner leaves through a new CLI boundary so
 # scheduler submission never tries to reacquire the composing task's gate.
-# Two isolated processes keep this family within the existing global timeout;
-# each test still runs in its own process with the same timeout/leak controls.
+# One nextest invocation uses -j 2 for up to two concurrent per-test processes;
+# all tests retain the existing per-test/global timeout and leak controls.
 "test:environment:ci:isolated" = { visibility = "internal", group = "Maintenance", run = [
   { run = "cargo run --bin effigy -- test:environment:ci:isolated:runner", timeout_ms = 7200000 },
 ] }
@@ -175,26 +175,12 @@
   { run = "RUSTFLAGS='--cfg effigy_shared_process' cargo build --bin effigy", timeout_ms = 600000 },
   { run = "RUSTFLAGS='--cfg effigy_shared_process' cargo test -p effigy -p effigy-containers -p effigy-host-run --lib --features effigy-host-run/test-support --no-fail-fast -- --test-threads=8 runtime::dns::tests:: tests::compose:: policy::admission:: policy::render::tests:: workspace::tests::host_git_mount_tests:: exec::healthcheck_timer:: exec::restart_recovery:: bounded_exec::tests:: builder_recovery:: host_container_lease::tests:: container_removal_state_is_false_or_unknown_and_never_assumed handover_end_owner_releases_lock_for_reverse_handover test_support::tests::", timeout_ms = 1200000 },
 ] }
-"test:environment:ci:fixtures" = { visibility = "internal", group = "Maintenance", admission = "heavy", run = [
-  { run = "cargo build --bin effigy", timeout_ms = 600000 },
-  { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-host-run --lib --features effigy-host-run/test-support -E 'test(builder_recovery::) | test(handover_end_owner_releases_lock_for_reverse_handover) | test(test_support::tests::)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
-] }
 "test:environment:ci" = { visibility = "internal", group = "Maintenance", run = [
   { task = "test:environment:ci:isolated" },
   { task = "test:environment:ci:shared" },
 ] }
 
-# Corrective runner proof: normal public children plus shared runner callers.
-"test:environment:ci:runner" = { visibility = "internal", group = "Maintenance", admission = "heavy", run = [
-  { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(public_child_environment_snapshot_waits_for_handoff_mutator)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
-  { run = "RUSTFLAGS='--cfg effigy_shared_process' cargo build --bin effigy", timeout_ms = 600000 },
-  { run = "RUSTFLAGS='--cfg effigy_shared_process' cargo test -p effigy --lib --features effigy-host-run/test-support --no-fail-fast -- --test-threads=8 runtime::dns::tests:: tests::compose:: policy::admission:: policy::render::tests:: workspace::tests::host_git_mount_tests:: exec::healthcheck_timer:: exec::restart_recovery:: bounded_exec::tests:: builder_recovery:: host_container_lease::tests:: container_removal_state_is_false_or_unknown_and_never_assumed handover_end_owner_releases_lock_for_reverse_handover test_support::tests::", timeout_ms = 1200000 },
-] }
 "check:environment:ci" = { visibility = "internal", group = "Maintenance", admission = "heavy", run = [{ run = "cargo check -p effigy -p effigy-containers -p effigy-host-run --all-targets --features effigy-host-run/test-support --profile test", timeout_ms = 900000 }] }
-"test:environment:ci:recovery" = { visibility = "internal", group = "Maintenance", admission = "heavy", run = [
-  { run = "RUSTFLAGS='--cfg effigy_shared_process' cargo build --bin effigy", timeout_ms = 600000 },
-  { run = "RUSTFLAGS='--cfg effigy_shared_process' cargo test -p effigy --lib --features effigy-host-run/test-support -- --test-threads=8 builder_recovery::", timeout_ms = 1200000 },
-] }
 "lint:environment:ci" = { visibility = "internal", group = "Maintenance", admission = "heavy", run = [
   { run = "cargo clippy -p effigy -p effigy-containers -p effigy-host-run --all-targets --features effigy-host-run/test-support -- -D warnings", timeout_ms = 900000 },
   { task = "fmt:check" },
