@@ -213,7 +213,7 @@ fn genuine_subcommands_keep_nested_help() {
     for args in [
         &["docs", "context", "--help"][..],
         &["release", "gates", "--help"][..],
-        &["service", "pack", "--help"][..],
+        &["service", "list", "--help"][..],
     ] {
         let output = run_cli_command(&root, args);
         assert!(output.status.success(), "{args:?}: {output:?}");
