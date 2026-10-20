@@ -50,8 +50,8 @@ host refresh and supports the former explicit-zero setting. It is not a
 published release asset or a general consumer rollback guarantee. No new
 history reader or migration product is introduced.
 
-Host-container lease reapers and other independent leases are not heavy-run
-admission and remain unchanged. Container execution continues to strip
+Environment holds and holder-based idle stop (contract 053) are not heavy-run
+admission. Container execution continues to strip
 `HOST_RUN_TOKEN` and `HOST_RUN_ID` at container and `sudo` boundaries.
 
 ## Verified local-channel retirement rollout

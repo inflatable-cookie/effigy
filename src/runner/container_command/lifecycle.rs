@@ -278,7 +278,8 @@ fn run_container_up_inner(
     let integrations = complete_container_up_runtime_integrations(repo_root, &plan)?;
 
     // Activation promotes the generation and attaches any requesting runs.
-    operation.stage = Some("activation");
+    // The stage keeps its documented name (closed JSON vocabulary).
+    operation.stage = Some("persistent_owner");
     environment::activate(&bring_up, holders)?;
 
     render_container_up_result(
@@ -2144,8 +2145,7 @@ primary_service = "app"
             let policy = prepared_marker_policy(temp.path());
             let env = crate::runner::environment::env_ref(&policy).unwrap();
             let ctx = crate::runner::environment::context().unwrap();
-            let evidence =
-                effigy_kernel::observe::Evidence::new("fixture".into(), None).unwrap();
+            let evidence = effigy_kernel::observe::Evidence::new("fixture".into(), None).unwrap();
             // The apply ran; activation never did: a partial generation.
             effigy_containers::environment::reconcile(
                 &ctx,
@@ -2171,7 +2171,10 @@ primary_service = "app"
             let changed = effigy_containers::prepare_container_policy(temp.path(), None).unwrap();
             let error = super::refuse_changed_partial_activation(temp.path(), &changed)
                 .expect_err("changed inputs refuse");
-            assert!(error.to_string().contains("effigy container down"), "{error}");
+            assert!(
+                error.to_string().contains("effigy container down"),
+                "{error}"
+            );
         });
     }
 

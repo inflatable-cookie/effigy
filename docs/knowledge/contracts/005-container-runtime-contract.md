@@ -146,7 +146,7 @@ Task routing, suite targeting, and workspace-shell handoff already stay
 local under the same marker; this closes the remaining exec surfaces.
 The opt-in bounded shell takes the same local path with its absolute
 deadline and stream caps intact, rendering the same bounded-exec schema
-without discovery, lease, or workspace-user fallback phases.
+without discovery, hold, or workspace-user fallback phases.
 
 Ordinary workload entry gives the selected service's owned-binding observation
 (runtime inventory followed by strict inspect) a bounded 15-second window.
@@ -286,17 +286,17 @@ queries also leave an unprepared checkout's identity absent. Logs discover the
 selected backend's service container directly, including stopped containers,
 without opening an unpublished render. Activation stages share one prepared
 policy snapshot and return it to exec, deferred tasks and workspace handoff,
-so later commands, probes and leases use its final identity and paths.
+so later commands, probes and holds use its final identity and paths.
 
-Detached admission records a v3 generation reference. Verification reads the
-kernel's desired object reference and verifies its complete immutable closure;
-it no longer fingerprints mutable declarations and renderer outputs. Canonical
-checkout identity and scope remain fenced, including a checkout moved behind a
-symlink. Source edits leave an admitted snapshot intact; a later Prepare publishes a new desired
-generation and supersedes that admission. One-release v2 receipt import checks
-its original identity and fingerprints once, then writes a v3 reference in
-Prepare. Retained admission is validated before moving the desired reference;
-a refusal leaves the prior reference intact. Attached workflows use the same
+Detached admission pins the kernel's desired object reference and verifies its
+complete immutable closure; it never fingerprints mutable declarations and
+renderer outputs, and it writes no receipt file. The environment record
+([053](053-environment-reconciler-contract.md)) keeps the admitted generation
+across invocations. Canonical checkout identity and scope remain fenced,
+including a checkout moved behind a symlink. Source edits leave an admitted
+snapshot intact; a later Prepare publishes a new desired generation and
+supersedes that admission. A v0.14.1 v2 or v3 receipt is read only by the
+marker importer's adoption check and is never rewritten. Attached workflows use the same
 immutable render path. Execution-only workspace builder recovery compares fresh
 source render references while retaining its original stack admission.
 
@@ -322,17 +322,17 @@ CLI's render of the same pins. It never updates a real consumer or its cache.
 Engine tests cover concurrent render/publication with admitted readers, refused
 admission preserving the desired reference, and reset preserving its sibling.
 
-A recorded *partial* activation reconciles only against its original admission;
-changed inputs refuse until `effigy container down`. With unchanged admitted
-inputs, a missing or stopped primary does not require operator intervention:
-verify every existing project container's checkout and scope ownership, including
-stopped siblings, then recover through ordinary Compose up. Unavailable inventory
-or foreign ownership still refuses and names the owning checkout's
-`effigy container down` command. A *completed* activation
-writes a completion marker beside its record. When its inputs later change, or
-when a running stack has no record at all (a stack started by an earlier
-release, by a container task, or whose record write failed), detached `up`
-first proves that every project container - running or stopped, because a
+A *partial* activation (the record's `applying` generation: the apply ran,
+activation did not) reconciles only against its original admission; changed
+inputs refuse until `effigy container down`. With unchanged admitted inputs, a
+missing or stopped primary does not require operator intervention: verify every
+existing project container's checkout and scope ownership, including stopped
+siblings, then recover through ordinary Compose up. Unavailable inventory or
+foreign ownership still refuses and names the owning checkout's
+`effigy container down` command. A *completed* activation is the record's
+promoted generation. When its inputs later change, or when a running stack has
+no record at all (a stack started by an earlier release whose markers did not
+prove ownership), detached `up` first proves that every project container - running or stopped, because a
 project-wide Compose up can start or recreate a stopped declared sibling -
 belongs to this checkout and scope, then retires the stale record and admits
 the current inputs with an ordinary Compose up. A container with no checkout,
@@ -363,15 +363,14 @@ state and do not tear down or restart running services. Reconciliation with
 fresh owned full-ID bindings before registering exposure. Unchanged admitted
 inputs and verified checkout/scope ownership allow Compose up when any declared
 service is missing or stopped, including the primary. A complete running stack
-reconciles exposure without Compose up. If its recorded managed owner died
-with failed or incomplete settling, the next managed run or detached `up`
-first verifies admission and checkout/scope labels, brings the environment
-down with volumes kept, and releases that generation's attributed locks.
-It then starts normally, even when the primary had remained running. Changed partial-admission inputs and
-unavailable ownership observations still refuse before Compose effects.
-The context persists as the detached owner after success, marked complete; only
-the selected temporary task lease is cleared. Explicit `container down` clears that context
-and keeps volumes. Attached bring-up keeps its existing cleanup policy.
+reconciles exposure without Compose up. A managed owner that died with failed
+or incomplete settling is settled by its successor's admission (contract 052
+K5); its environment is not torn down, and the successor's bring-up reconciles
+it. Changed partial-admission inputs and unavailable ownership observations
+still refuse before Compose effects. Activation promotes the generation and
+makes an explicit `up` the persistent owner. Explicit `container down` ends
+that ownership and keeps volumes. Attached bring-up keeps its existing cleanup
+policy, run as a stop transition after the bring-up's own runs close.
 
 `container up` runs workspace permission preparation as an integration stage
 once exec readiness is verified, before secrets, gateway exposure, and
@@ -805,13 +804,11 @@ environment and record its digest; a dead holder's gate is already free,
 and a genuinely live holder carrying the token, or a live foreign holder,
 still refuses.
 The handover refuses only when ending a bound managed owner or
-stopping that environment itself fails; it
-then names the failure and leaves the environment recoverable by its own
-`up` or `down`. The stop is recorded beside the environment's lease before
-the first effect, so its next `up` restarts it instead of refusing an
-unknown partial state; a recorded handover resolved by a healthy reconcile
-or a down is cleared. An unchanged, ownership-verified partial or stopped stack
-also restarts without a handover record; unattributable state still refuses. A
+stopping that environment itself fails, or when another run still holds it;
+it then names the failure and leaves the environment recoverable by its own
+`up` or `down`. The stop is a journalled transition of the losing environment,
+so its next `up` reconciles it. An unchanged, ownership-verified partial or
+stopped stack restarts; unattributable state still refuses. A
 managed listener claiming a domain held by a `source = container` route from
 the same checkout and scope replaces it with the listener route in the same
 locked transaction, and the container environment may keep running.
@@ -1093,10 +1090,10 @@ The runtime-prep phase owns:
 - reconciling runtime guarantees that the compose backend failed to materialize
   directly
 - reconciling gateway/runtime exposure needed by the selected execution target
-- refreshing non-shell task leases when Effigy owns warm-runtime reuse
+- holding the environment for the command through a session run (contract 053)
 - for scoped worktrees, proving a fresh host checkout marker is readable at
   the container working directory and a container write reaches the selected
-  checkout before dispatch or lease refresh
+  checkout before dispatch
 - refreshing changed Cargo input mtimes inside that mounted checkout before a
   container-routed check, so host edits invalidate stale container artifacts
 
@@ -1261,8 +1258,8 @@ consumer proof waivers and global installation remain separate boundaries.
 
 Runtime activation planning belongs to `effigy-runtime-plan`. The runner
 runtime-prep modules are side-effect adapters for that plan: they may start
-the runtime, perform readiness checks, reconcile aliases/routes, and refresh
-leases, but they must not invent a separate activation model.
+the runtime, perform readiness checks, reconcile aliases/routes, and hold the
+environment, but they must not invent a separate activation model.
 
 ## Port registry recovery
 
@@ -1699,7 +1696,7 @@ repair.
 
 The same rule applies to task activation:
 
-- one non-shell caller path must not refresh leases while another caller path
+- one non-shell caller path must not hold its environment while another caller path
   tears the runtime down immediately
 - one caller path must not reconcile gateway/public routes while another
   caller path silently skips them for the same container policy
@@ -1740,7 +1737,7 @@ The minimum proof set should cover:
 - container-targeted execution plans consuming captured runtime context instead
   of caller-local cwd/env probes
 - runtime activation plans preserving repo root, repo override, policy name,
-  container identity, and lease policy across `effigy exec`, workspace, and
+  container identity, and hold policy across `effigy exec`, workspace, and
   managed surfaces
 
 ## Drift triggers

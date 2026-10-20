@@ -9618,25 +9618,17 @@ fn cli_container_data_seed_json_reports_seed_contract() {
 }
 
 #[test]
-fn cli_container_data_seed_reaper_detector_catches_enabled_control_and_cleans_owned_child() {
+fn cli_container_data_seed_never_spawns_a_lease_reaper() {
+    // The retired v0.14.1 reaper is never spawned, even with its old opt-out
+    // unset: the seed's hold ends with the command and idle stop runs then.
     let root = temp_execution_workspace("container-data-seed-reaper-control");
     let output = run_container_data_seed_fixture(&root, false);
-    let mut reapers = HostContainerLeaseReaperGuard::capture(&root);
+    let reapers = HostContainerLeaseReaperGuard::capture(&root);
 
     assert_container_data_seed_contract(&root, &output);
-    assert_eq!(
-        reapers.processes.len(),
-        1,
-        "canonical-root detector must find the enabled fixture's exact reaper: {reapers:?}"
-    );
-    reapers
-        .terminate_and_wait()
-        .expect("terminate only the recorded negative-control reaper");
     assert!(
-        HostContainerLeaseReaperGuard::capture(&root)
-            .processes
-            .is_empty(),
-        "negative-control reaper remained after PID/start-identity cleanup"
+        reapers.processes.is_empty(),
+        "no lease reaper may run: {reapers:?}"
     );
 }
 
@@ -9713,8 +9705,8 @@ fn container_data_seed_command(fixture_root: &std::path::Path, disable_reaper: b
         .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
         .env("EFFIGY_TEST_OWNED_INSPECT_FILE", &inspect)
         .env("EFFIGY_TEST_OWNED_CHECKOUT", &root)
-        // Cold service activation must create the temporary lease. An already
-        // running unleased service deliberately does not acquire such a lease.
+        // Cold service activation starts a held stack, which idle-stops when
+        // the seed ends.
         .env(
             "EFFIGY_TEST_SERVICE_STATE_FILE",
             root.join("service-running"),
@@ -9824,15 +9816,17 @@ fn assert_container_data_seed_contract(root: &std::path::Path, output: &std::pro
         "seeded"
     );
 
-    let lease_path =
-        root.join(".effigy/runtime/host-container-leases/dev/fixture-web-dev/web.json");
-    let lease: Value = serde_json::from_slice(&fs::read(&lease_path).expect("read host lease"))
-        .expect("parse host lease");
-    assert_eq!(lease["schema"], "effigy.host-container-lease.v1");
-    assert_eq!(lease["container_name"], "web");
-    assert_eq!(lease["profile"], "dev");
-    assert_eq!(lease["project_name"], "fixture-web-dev");
-    assert!(!lease["token"].as_str().unwrap_or_default().is_empty());
+    // No lease file: the seed held the stack it started, and holder-based
+    // idle stop brought it down (volumes kept) once the seed ended.
+    assert!(!root
+        .join(".effigy/runtime/host-container-leases/dev/fixture-web-dev/web.json")
+        .exists());
+    let colima = fs::read_to_string(root.join("colima-args.log")).unwrap_or_default();
+    let docker = fs::read_to_string(root.join("docker-args.log")).unwrap_or_default();
+    assert!(
+        colima.contains("down --remove-orphans") || docker.contains("down --remove-orphans"),
+        "expected the idle stop after the seed:\ncolima: {colima}\ndocker: {docker}"
+    );
 }
 
 #[derive(Debug)]

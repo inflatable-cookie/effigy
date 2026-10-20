@@ -1278,7 +1278,7 @@ mod tests {
     }
 
     #[test]
-    fn inline_workspace_activation_skips_host_container_lease_refresh() {
+    fn inline_workspace_activation_keeps_the_stack_it_starts() {
         let repo_root = Path::new("/tmp/demo-repo");
         let policy = EffectiveContainerPolicy {
             render: None,

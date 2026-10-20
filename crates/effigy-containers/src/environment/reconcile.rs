@@ -218,7 +218,7 @@ impl std::fmt::Display for EnvError {
                     .join(", ");
                 write!(
                     f,
-                    "refused to stop, restart or recreate environment `{env}` while runs hold it: {runs}. End those runs through their own stop first (`effigy tasks status --all` lists them); an interrupted run settles when its task runs again"
+                    "refused to stop, restart or recreate environment `{env}` while runs hold it: {runs}. End those runs through their own stop first (`effigy tasks status --all` lists them)"
                 )
             }
             Self::HostAuthorityRequired => f.write_str(

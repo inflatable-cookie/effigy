@@ -278,6 +278,13 @@ version = "16"
     }
 }
 
+/// Stack `i`'s environment record, as `container status --json` reports it.
+fn environment_record(fixture: &Fixture, i: usize) -> Value {
+    let status = fixture.run(i, &["container", "status", "--json"]);
+    let parsed: Value = serde_json::from_slice(&status.stdout).unwrap_or(Value::Null);
+    parsed["result"]["environment"]["record"].clone()
+}
+
 #[test]
 fn private_generated_preparation_must_not_adopt_probe_time_drift() {
     let mut failures = Vec::new();
@@ -345,14 +352,8 @@ fn private_generated_preparation_must_not_adopt_probe_time_drift() {
         )
         .unwrap();
         let before_table = table;
-        let sibling_project = fixture.state(1)["project"].as_str().unwrap().to_owned();
-        let sibling_marker = fixture
-            .root
-            .path()
-            .join("home/.effigy/runtime/host-container-leases/private-1")
-            .join(sibling_project)
-            .join("web.partial.json");
-        let sibling_admission = fs::read(&sibling_marker).unwrap();
+        // The sibling's admitted generation lives in its environment record.
+        let sibling_admission = environment_record(&fixture, 1);
         fixture.set(0, "mode", json!(mode));
         let before = fs::read(fixture.stacks[0].root.join("effigy.toml")).unwrap();
         let output = fixture.run(0, &["container", "up", "--detach", "--json"]);
@@ -391,7 +392,7 @@ fn private_generated_preparation_must_not_adopt_probe_time_drift() {
                 "sibling route must remain unchanged"
             );
         }
-        assert_eq!(fs::read(&sibling_marker).unwrap(), sibling_admission);
+        assert_eq!(environment_record(&fixture, 1), sibling_admission);
         let published = after_table != before_table;
         println!("{mode}: actual probe witness={witness}; success={}; activation_effect={activated}; publication_effect={published}; backend receipt={commands}", output.status.success());
         if output.status.success() || activated || published {
@@ -624,18 +625,12 @@ fn private_unrecorded_owned_running_stack_reactivates_with_current_inputs() {
     // container task) is this checkout's, so a detached `up` applies the
     // current inputs instead of refusing.
     let mut fixture = Fixture::new();
-    fixture.set(0, "mode", json!("marker-write-fail"));
-    let failed = fixture.run(0, &["container", "up", "--detach", "--json"]);
-    assert!(!failed.status.success(), "{failed:?}");
-    let result: Value = serde_json::from_slice(&failed.stdout).expect("partial JSON");
-    assert_eq!(result["error"]["details"]["state"], "partial");
+    let first = fixture.run(0, &["container", "up", "--detach", "--json"]);
+    assert!(first.status.success(), "{first:?}");
     assert!(fixture.state(0)["active"].as_bool().unwrap());
-    let blocked = fixture
-        .root
-        .path()
-        .join("home/.effigy/runtime/host-container-leases");
-    fs::remove_file(&blocked).expect("remove exclusively owned write fault");
-    fixture.set(0, "mode", json!("ready"));
+    // Lose every environment record, as a stack an earlier release started.
+    let store = fixture.root.path().join("home/.effigy/state/kernel.db");
+    fs::remove_file(&store).expect("remove the fixture's private store");
     let manifest = fixture.stacks[0].root.join("effigy.toml");
     let mut changed = fs::read(&manifest).unwrap();
     changed.extend_from_slice(b"\n# changed after unrecorded launch\n");
@@ -644,8 +639,8 @@ fn private_unrecorded_owned_running_stack_reactivates_with_current_inputs() {
     let reactivated = fixture.run(0, &["container", "up", "--detach", "--json"]);
     assert!(reactivated.status.success(), "{reactivated:?}");
     assert!(
-        blocked.is_dir(),
-        "the fresh activation records its admission"
+        !environment_record(&fixture, 0).is_null(),
+        "the fresh activation records its environment"
     );
     assert_eq!(
         fs::read_to_string(fixture.stacks[0].root.join("data")).unwrap(),
@@ -664,15 +659,11 @@ fn private_foreign_stopped_sibling_refuses_project_wide_reactivation() {
     // reactivation gate must inventory stopped containers, not only running
     // ones, and refuse the unproven sibling.
     let mut fixture = Fixture::new();
-    fixture.set(0, "mode", json!("marker-write-fail"));
-    let failed = fixture.run(0, &["container", "up", "--detach", "--json"]);
-    assert!(!failed.status.success(), "{failed:?}");
+    let first = fixture.run(0, &["container", "up", "--detach", "--json"]);
+    assert!(first.status.success(), "{first:?}");
     assert!(fixture.state(0)["active"].as_bool().unwrap());
-    let blocked = fixture
-        .root
-        .path()
-        .join("home/.effigy/runtime/host-container-leases");
-    fs::remove_file(&blocked).expect("remove exclusively owned write fault");
+    fs::remove_file(fixture.root.path().join("home/.effigy/state/kernel.db"))
+        .expect("remove the fixture's private store");
     fixture.set(0, "mode", json!("foreign-stopped-sibling"));
     let manifest = fixture.stacks[0].root.join("effigy.toml");
     let mut changed = fs::read(&manifest).unwrap();
@@ -858,13 +849,15 @@ fn private_three_scopes_partial_resume_replacement_and_cli_refusals() {
     let resumed = fixture.run(0, &["container", "up", "--detach", "--json"]);
     assert!(resumed.status.success(), "{resumed:?}");
     fixture.probe(0);
-    assert!(
-        !lease_receipts[0].0.exists(),
-        "selected temporary lease transfers to detached owner"
-    );
-    for (lease, receipt) in &lease_receipts[1..] {
+    // v0.14.1 receipts are inert history: never changed or removed (M3); the
+    // record makes the explicit `up` the persistent owner.
+    for (lease, receipt) in &lease_receipts {
         assert_eq!(fs::read_to_string(lease).unwrap(), *receipt);
     }
+    assert_eq!(
+        environment_record(&fixture, 0)["retention"],
+        json!("persistent")
+    );
     let routes = fixture.routes();
     for route in siblings["routes"]
         .as_object()
