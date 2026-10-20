@@ -21,13 +21,13 @@ use super::{super::process_run, command};
 use crate::runner::container_runtime_prep::{
     activate_container_runtime_for_task, build_runtime_activation_plan, ActivationRequest,
 };
+use crate::runner::environment::emit_held_notice;
 use crate::runner::error::RunnerError;
 use crate::runner::execute::nested;
 use crate::runner::execute::render;
 use crate::runner::execute::workspace_seeded::{
     inside_container_handoff, run_workspace_seeded_task_session,
 };
-use crate::runner::host_container_lease::emit_host_container_lease_notice;
 use crate::runner::manifest::config_sections::ManifestEnvSchemaConfig;
 use crate::runner::manifest::{load_task_manifest, TASK_MANIFEST_FILE};
 use crate::runner::runtime_session_context::{
@@ -360,9 +360,9 @@ fn run_standard_task_inner(
             if output.status.success() {
                 if task_activation
                     .as_ref()
-                    .is_some_and(|activation| activation.refreshed_host_container_lease)
+                    .is_some_and(|activation| activation.started_held)
                 {
-                    emit_host_container_lease_notice(container);
+                    emit_held_notice(container);
                 }
                 return Ok(rendered);
             }
@@ -386,9 +386,9 @@ fn run_standard_task_inner(
         )?;
         if task_activation
             .as_ref()
-            .is_some_and(|activation| activation.refreshed_host_container_lease)
+            .is_some_and(|activation| activation.started_held)
         {
-            emit_host_container_lease_notice(container);
+            emit_held_notice(container);
         }
         if preflight.runtime_args_raw.verbose_root {
             return Ok(context.render_resolution_trace());
@@ -1273,7 +1273,7 @@ mod tests {
                 RuntimeLeasePolicy::RefreshOnActivation,
             ))
         );
-        assert!(activation.refreshed_host_container_lease);
+        assert!(activation.started_held);
     }
 
     #[test]
@@ -1357,7 +1357,7 @@ mod tests {
                 RuntimeLeasePolicy::Skip,
             ))
         );
-        assert!(!activation.refreshed_host_container_lease);
+        assert!(!activation.started_held);
     }
 
     #[test]

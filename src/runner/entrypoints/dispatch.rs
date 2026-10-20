@@ -18,7 +18,6 @@ use super::super::run_docs;
 use super::super::run_exec;
 use super::super::run_gateway;
 use super::super::run_graph;
-use super::super::run_internal_container_lease_reaper;
 use super::super::run_internal_gateway;
 use super::super::run_internal_gateway_identity;
 use super::super::run_internal_host_process_stop;
@@ -146,7 +145,11 @@ pub(super) fn run_command_with_cwd(cmd: Command, cwd: &Path) -> Result<String, R
         Command::InternalGateway(args) => run_internal_gateway(args),
         Command::InternalGatewayIdentity(args) => run_internal_gateway_identity(args),
         Command::InternalScriptRun(args) => run_internal_script_run(args),
-        Command::InternalContainerLeaseReaper(args) => run_internal_container_lease_reaper(args),
+        // Retired with the lease: environments stop when their last holder
+        // ends (contract 053). A v0.14.1 reaper never reaches this binary.
+        Command::InternalContainerLeaseReaper(_) => Err(RunnerError::task_invocation(
+            "`__container-lease-reaper` is retired: held environments stop when the last run using them ends",
+        )),
         Command::InternalHostProcessSupervise(args) => run_internal_host_process_supervise(args),
         Command::InternalHostProcessStop(args) => run_internal_host_process_stop(args),
         Command::Task(task) => {

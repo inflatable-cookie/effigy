@@ -13,7 +13,6 @@ const EXEC_READY_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(10);
 const EXEC_READY_RETRY_WINDOW: Duration = Duration::from_secs(2);
 
 mod gateway;
-mod lease;
 mod prep;
 mod running;
 mod validation;
@@ -33,7 +32,6 @@ pub(in crate::runner) use gateway::container_policy_uses_gateway_surface;
 use gateway::ensure_runtime_gateway_readiness_stage;
 #[cfg(test)]
 use gateway::ensure_runtime_gateway_readiness_stage_using;
-use lease::refresh_runtime_lease_stage;
 use prep::{
     ensure_runtime_exec_readiness_stage, prepare_runtime_mounts_stage,
     reconcile_runtime_aliases_stage, run_runtime_compose_up_stage,
@@ -45,10 +43,11 @@ use validation::validate_policy_runtime;
 #[cfg(test)]
 use validation::validate_runtime_activation_stage;
 
-use crate::runner::container_command::run_container;
+use crate::runner::environment::Held;
 use crate::runner::error::RunnerError;
-use crate::runner::host_container_lease::refresh_host_container_lease_for_task_activation;
 use crate::runner::runtime_session_context::{LeaseRefreshPolicy, RuntimeSessionContext};
+use effigy_containers::environment::Retention;
+use effigy_kernel::id::RunId;
 
 // Inventory and strict inspection require separate runtime transport hops. They
 // must not consume the short workload probe's execution window. Explicit caller
@@ -60,7 +59,12 @@ pub(in crate::runner) struct ContainerTaskActivation {
     /// The immutable snapshot used by every activation stage and its exec caller.
     pub(in crate::runner) policy: EffectiveContainerPolicy,
     pub(in crate::runner) system_was_running: bool,
-    pub(in crate::runner) refreshed_host_container_lease: bool,
+    /// This activation started a held environment: it stops when the last
+    /// run using it ends.
+    pub(in crate::runner) started_held: bool,
+    /// The command's hold on its environment, released when the activation
+    /// drops at the end of the command.
+    pub(in crate::runner) _hold: Option<Held>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,6 +81,7 @@ pub(in crate::runner) fn ensure_container_runtime_prepared(
     route: RuntimeActivationRoute,
     container_name: Option<&str>,
     repo_override: Option<PathBuf>,
+    start: StartPolicy<'_>,
 ) -> Result<bool, RunnerError> {
     validate_policy_runtime(repo_root, policy)?;
     if route == RuntimeActivationRoute::Exec {
@@ -89,15 +94,31 @@ pub(in crate::runner) fn ensure_container_runtime_prepared(
         system_was_running,
         container_name.map(str::to_owned),
         repo_override,
-        run_container,
+        |name, repo_override| {
+            crate::runner::container_command::run_container_up_held(
+                repo_override,
+                name,
+                start.retention,
+                start.holders,
+            )
+        },
     )?;
 
     prepare_container_exec_runtime(
         repo_root,
         policy,
         container_name.or(Some(policy.name.as_str())),
+        start,
     )?;
     Ok(system_was_running)
+}
+
+/// How an activation starts or reconciles a stack: the retention a stack it
+/// starts gets, and the runs the activation attaches.
+#[derive(Debug, Clone, Copy)]
+pub(in crate::runner) struct StartPolicy<'a> {
+    pub(in crate::runner) retention: Retention,
+    pub(in crate::runner) holders: &'a [RunId],
 }
 
 fn ensure_exec_container_running_with(
@@ -127,7 +148,6 @@ pub(in crate::runner) fn activate_container_runtime_for_task(
         ensure_container_runtime_prepared,
         crate::runner::system_command::ensure_workspace_permissions_ready,
         ensure_runtime_gateway_readiness_stage,
-        refresh_host_container_lease_for_task_activation,
     )
 }
 
@@ -239,6 +259,7 @@ fn activate_container_runtime_plan_for_task_using(
         RuntimeActivationRoute,
         Option<&str>,
         Option<PathBuf>,
+        StartPolicy<'_>,
     ) -> Result<bool, RunnerError>,
     ensure_workspace_permissions: impl FnOnce(
         &Path,
@@ -247,21 +268,34 @@ fn activate_container_runtime_plan_for_task_using(
         Option<PathBuf>,
     ) -> Result<(), RunnerError>,
     ensure_gateway_ready: impl FnOnce(&Path, &EffectiveContainerPolicy) -> Result<(), RunnerError>,
-    refresh_host_container_lease: impl FnOnce(
-        &Path,
-        &EffectiveContainerPolicy,
-        bool,
-    ) -> Result<bool, RunnerError>,
 ) -> Result<ContainerTaskActivation, RunnerError> {
     let repo_root = plan.request.repo_root.as_path();
     effigy_containers::register_container_runtime_scope(policy)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    // The command's session exists before any bring-up, so the bring-up's
+    // activation attaches it and no idle stop can intervene (§5.9).
+    let mut hold = Held::begin(repo_root, policy, activation_label(plan.route));
+    let holders = hold
+        .as_ref()
+        .and_then(Held::id)
+        .into_iter()
+        .collect::<Vec<_>>();
+    // An activation inside a managed workspace keeps the stack it starts.
+    let retention = if plan.lease.policy == RuntimeLeasePolicy::RefreshOnActivation {
+        crate::runner::environment::task_retention()
+    } else {
+        Retention::Persistent
+    };
     let system_was_running = ensure_runtime_prepared(
         repo_root,
         policy,
         plan.route,
         plan.request.container_name.as_deref(),
         plan.request.repo_override.clone(),
+        StartPolicy {
+            retention,
+            holders: &holders,
+        },
     )?;
     ensure_workspace_permissions(
         repo_root,
@@ -272,17 +306,30 @@ fn activate_container_runtime_plan_for_task_using(
     if plan.aliases.register_gateway_routes {
         ensure_gateway_ready(repo_root, policy)?;
     }
-    let refreshed_host_container_lease = refresh_runtime_lease_stage(
-        plan,
-        policy,
-        system_was_running,
-        refresh_host_container_lease,
-    )?;
+    // A stack that was already running needed no bring-up: attach to it.
+    if let Some(held) = hold.as_mut() {
+        if !held.holds() && !held.attach_active()? {
+            return Err(RunnerError::task_invocation(format!(
+                "container `{}` is not active after activation; nothing holds it. Run `effigy container up --detach`",
+                policy.name
+            )));
+        }
+    }
     Ok(ContainerTaskActivation {
         policy: policy.clone(),
         system_was_running,
-        refreshed_host_container_lease,
+        started_held: !system_was_running
+            && retention == Retention::Held
+            && plan.route != RuntimeActivationRoute::Exec,
+        _hold: hold,
     })
+}
+
+fn activation_label(route: RuntimeActivationRoute) -> &'static str {
+    match route {
+        RuntimeActivationRoute::Exec => "exec",
+        _ => "task",
+    }
 }
 
 #[cfg(test)]
@@ -300,20 +347,42 @@ pub(in crate::runner) fn prepare_container_exec_runtime(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     container_name: Option<&str>,
+    start: StartPolicy<'_>,
 ) -> Result<(), RunnerError> {
     validate_policy_runtime(repo_root, policy)?;
     let _colima_started = ensure_colima_running(policy, repo_root)?;
     let working_dir = load_container_exec_working_dir(repo_root, container_name)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let mut bring_up = None;
     run_runtime_prep_steps(
         || prepare_runtime_mounts_stage(repo_root, policy),
         || {
-            run_runtime_compose_up_stage(repo_root, policy, |repo_root, policy, args, label| {
-                Ok(run_compose_capture(repo_root, policy, args, label).map(|_| ())?)
-            })
+            // The idempotent re-apply is one reconcile run: it reaches the
+            // backend only when the running stack is not this generation.
+            bring_up = Some(crate::runner::environment::reconcile(
+                repo_root,
+                policy,
+                start.retention,
+                || {
+                    run_runtime_compose_up_stage(
+                        repo_root,
+                        policy,
+                        |repo_root, policy, args, label| {
+                            Ok(run_compose_capture(repo_root, policy, args, label).map(|_| ())?)
+                        },
+                    );
+                    recover_exited_owned_compose_services(repo_root, policy)
+                        .map(|_| ())
+                        .map_err(|error| {
+                            effigy_containers::environment::BackendError::Uncertain(
+                                error.to_string(),
+                            )
+                        })
+                },
+            )?);
+            Ok(())
         },
         || {
-            recover_exited_owned_compose_services(repo_root, policy).map(|_| ())?;
             let binding = ensure_runtime_exec_readiness_stage(repo_root, policy, &working_dir)?;
             if effigy_core::worktree_scope::load_or_create(repo_root)
                 .map_err(|error| {
@@ -327,7 +396,11 @@ pub(in crate::runner) fn prepare_container_exec_runtime(
             Ok(binding)
         },
         |binding| reconcile_runtime_aliases_stage(repo_root, policy, &binding),
-    )
+    )?;
+    match bring_up {
+        Some(bring_up) => crate::runner::environment::activate(&bring_up, start.holders),
+        None => Ok(()),
+    }
 }
 
 fn run_verified_prep_capture(
@@ -562,7 +635,6 @@ pub(in crate::runner) fn ensure_primary_service_exec_ready_for_runtime(
         &policy.primary_service,
         Instant::now() + OWNED_EXEC_VERIFICATION_TIMEOUT,
     )?;
-    let live_exec_note = live_managed_exec_note(repo_root, policy);
     ensure_primary_service_exec_ready_with_recovery_using(
         policy,
         working_dir,
@@ -576,46 +648,15 @@ pub(in crate::runner) fn ensure_primary_service_exec_ready_for_runtime(
                 None,
             )
         },
-        || restart_primary_service(repo_root, policy, &binding),
-        live_exec_note,
+        // A restart is the environment's own repair transition: it refuses
+        // while any run holds the environment (R4).
+        || {
+            crate::runner::environment::repair(repo_root, policy, || {
+                restart_primary_service(repo_root, policy, &binding)
+            })
+        },
+        None,
     )
-}
-
-/// Why the exec-readiness recovery restart must not fire: a live managed run
-/// of this checkout is bound to this environment and exec'ing into its
-/// services. A recovery restart would SIGKILL those remote processes (the
-/// mass exit-137 signature). The note names the run for the refusal.
-///
-/// Task gates establish liveness even when session.json is missing. A
-/// matching record only narrows the environment; unknown binding protects
-/// every environment in the checkout.
-fn live_managed_exec_note(repo_root: &Path, policy: &EffectiveContainerPolicy) -> Option<String> {
-    let holders = crate::runner::managed_settle::environment_lock_holders(repo_root, &policy.name);
-    if holders.is_empty() {
-        return None;
-    }
-    let named = holders
-        .iter()
-        .map(|holder| {
-            format!(
-                "`{}` ({}, run {}; session record missing or gate-bound owner)",
-                holder.scope_label(),
-                holder
-                    .pid
-                    .map(|pid| format!("pid {pid}"))
-                    .unwrap_or_else(|| "pid unreadable".to_owned()),
-                holder
-                    .run
-                    .map(|run| run.to_string())
-                    .unwrap_or_else(|| "unknown".to_owned())
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
-    Some(format!(
-        "live task runs hold their gates and protect environment `{}`: {named}",
-        policy.name
-    ))
 }
 
 /// Partial detached activation cannot grant restart authority to an unavailable
@@ -670,14 +711,14 @@ fn ensure_primary_service_exec_ready_with_recovery_using<T>(
 
 fn run_runtime_prep_steps<T>(
     prepare_mounts: impl FnOnce() -> Result<(), RunnerError>,
-    compose_up: impl FnOnce(),
+    compose_up: impl FnOnce() -> Result<(), RunnerError>,
     ensure_exec_ready: impl FnOnce() -> Result<T, RunnerError>,
     reconcile_aliases: impl FnOnce(T) -> Result<(), RunnerError>,
 ) -> Result<(), RunnerError> {
     // The routing decision only checks whether the primary service is running.
     // Sibling services may still be missing after a failed compose bring-up.
     prepare_mounts()?;
-    compose_up();
+    compose_up()?;
     let binding = ensure_exec_ready()?;
     reconcile_aliases(binding)?;
     Ok(())

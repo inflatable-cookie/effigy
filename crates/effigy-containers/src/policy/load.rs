@@ -181,10 +181,9 @@ pub fn prepare_container_policy(
 pub fn load_admitted_container_policy(
     repo_root: &Path,
     requested_name: Option<&str>,
-    marker_root: &Path,
 ) -> Result<(EffectiveContainerPolicy, super::admission::PolicyAdmission), ContainerPolicyError> {
     let policy = super::render::prepare_inputs(&load_container_policy(repo_root, requested_name)?)?;
-    let admission = super::admission::PolicyAdmission::capture(&policy, marker_root)?;
+    let admission = super::admission::PolicyAdmission::capture(&policy)?;
     Ok((policy, admission))
 }
 

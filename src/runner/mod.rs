@@ -22,13 +22,13 @@ mod doctor_ports;
 mod drafts_command;
 mod embedded_runner;
 mod entrypoints;
+mod environment;
 mod error;
 mod exec_command;
 mod execute;
 mod gateway_command;
 mod graph_command;
 mod graph_time_budget;
-mod host_container_lease;
 mod host_process;
 mod host_scheduler;
 mod interactive_session;
@@ -83,7 +83,6 @@ pub(in crate::runner) use gateway_command::{
     run_gateway, run_internal_gateway, run_internal_gateway_identity,
 };
 pub(in crate::runner) use graph_command::run_graph;
-pub(in crate::runner) use host_container_lease::run_internal_container_lease_reaper;
 pub(in crate::runner) use host_process::{
     run_internal_host_process_stop, run_internal_host_process_supervise,
 };

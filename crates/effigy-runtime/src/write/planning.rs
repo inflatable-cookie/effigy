@@ -28,12 +28,14 @@ pub(super) fn can_prepare_shutdown(
     Ok(true)
 }
 
-pub(super) fn shutdown_container_with_manager_plan(
+/// Publishes the render a shutdown runs against. Called before the
+/// environment's transition begins: publication takes its own gated run.
+pub(super) fn prepare_shutdown(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
-) -> Result<(), EffigyRuntimeError> {
+) -> Result<bool, EffigyRuntimeError> {
     if !can_prepare_shutdown(repo_root, policy)? {
-        return Ok(());
+        return Ok(false);
     }
     if policy.render.is_some() {
         effigy_core::worktree_scope::prepare_checkout_token(repo_root)
@@ -41,6 +43,14 @@ pub(super) fn shutdown_container_with_manager_plan(
         effigy_containers::policy::render::prepare(policy)
             .map_err(|e| EffigyRuntimeError::task_invocation(e.to_string()))?;
     }
+    Ok(true)
+}
+
+/// The backend effect of a shutdown: the policy's Compose stop commands.
+pub(super) fn run_shutdown_compose(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<(), EffigyRuntimeError> {
     for (args, label) in shutdown_compose_commands(policy) {
         let plan = compose_invocation_plan_from_args(
             repo_root,
@@ -52,15 +62,6 @@ pub(super) fn shutdown_container_with_manager_plan(
         run_compose_plan_capture(policy, &plan)?;
     }
     Ok(())
-}
-
-pub(super) fn remove_generated_runtime_artifacts(
-    repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
-) -> Result<(), EffigyRuntimeError> {
-    let _ = repo_root;
-    effigy_containers::policy::render::reset(policy)
-        .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))
 }
 
 pub(super) fn remove_generated_service_images(

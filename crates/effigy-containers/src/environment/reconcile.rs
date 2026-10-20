@@ -532,6 +532,24 @@ impl<'r> EnvRun<'r> {
         self.transition(APPLY_EFFECT, payload, Settlement::Retain, exempt, effect)
     }
 
+    /// A repair of running workloads (restarting a service that stopped
+    /// answering): journalled under a permit like any apply, so it refuses
+    /// while a run holds the environment (R4). The record is unchanged.
+    pub fn repair_with(
+        &mut self,
+        selection: &BackendSelection,
+        project: &str,
+        effect: impl FnOnce() -> Result<(), BackendError>,
+    ) -> Result<(), EnvError> {
+        let payload = json!({
+            "engine": selection.engine.as_str(),
+            "context": selection.context,
+            "project": project,
+            "repair": true,
+        });
+        self.transition(APPLY_EFFECT, payload, Settlement::Retain, None, effect)
+    }
+
     /// Stops the render's workloads through the seam, keeping data.
     pub fn stop(
         &mut self,

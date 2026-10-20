@@ -365,6 +365,22 @@ pub(in crate::runner) fn run_managed_task(
         )?;
     }
 
+    // The lifecycle's bring-up attaches this run in its activation, so the
+    // run holds its environment from the moment the environment is active.
+    if let Some(run) = task_run.as_ref() {
+        let holder = run.id().to_string();
+        for process in plan
+            .processes
+            .iter_mut()
+            .filter(|process| process.role == ManagedProcessRole::Lifecycle)
+        {
+            process.secret_env.insert(
+                crate::runner::environment::HOLDER_ENV.to_owned(),
+                holder.clone(),
+            );
+        }
+    }
+
     let lifecycle_cleanup = if !container_handoff
         && execution_mode != ManagedExecutionMode::RenderPlan
         && plan
@@ -375,13 +391,16 @@ pub(in crate::runner) fn run_managed_task(
         Some(build_managed_lifecycle_cleanup_command(
             &repo_for_task,
             container_binding,
-            managed_run_token.as_deref(),
+            task_run.as_ref().map(TaskRun::id),
         )?)
     } else {
         None
     };
 
-    if let Some(command) = lifecycle_cleanup.as_deref() {
+    // A judged-failed predecessor's environment is not torn down here: the
+    // kernel settled its run, and so its hold, when this run was admitted
+    // (K5). The bring-up below reconciles whatever stack it left.
+    if lifecycle_cleanup.is_some() {
         if let Some(policy) = container_binding.load_effective_policy(&repo_for_task)? {
             if let Some(token) = effigy_managed::runtime::failed_managed_run_token(
                 &repo_for_task,
@@ -389,33 +408,6 @@ pub(in crate::runner) fn run_managed_task(
                 &plan.profile,
                 &policy.name,
             )? {
-                // Never tear an environment down while a process of the
-                // judged-failed generation still holds a run-token lock: the
-                // dead-owner judgment can be wrong through a stale or missing
-                // record, and the down would SIGKILL a live run's execs.
-                crate::runner::managed_settle::refuse_recovery_while_token_live(
-                    &repo_for_task,
-                    &token,
-                )?;
-                crate::runner::managed_settle::refuse_environment_mutation(
-                    &repo_for_task,
-                    &policy.name,
-                    Some(std::process::id()),
-                    None,
-                )?;
-                // Preserve partial-admission drift protection before any down.
-                // A completed admission may adopt changed inputs by its existing
-                // rule; a recorded partial must still match its original inputs.
-                crate::runner::host_container_lease::retire_stale_detached_admission(
-                    &repo_for_task,
-                    &policy,
-                )?;
-                crate::runner::host_container_lease::partial_activation_recorded(
-                    &repo_for_task,
-                    &policy,
-                )?;
-                effigy_containers::exec::verify_owned_stack_for_shutdown(&repo_for_task, &policy)?;
-                run_managed_lifecycle_cleanup(command)?;
                 effigy_managed::runtime::clear_managed_run_failure(&repo_for_task, &token)?;
             }
         }
@@ -442,17 +434,19 @@ pub(in crate::runner) fn run_managed_task(
         settle.as_ref(),
     );
 
+    let result = result.map(Some).map_err(Into::into);
+    // The run enters settle before its own environment teardown: only then
+    // is its hold exempt from that `container down` (R4).
+    if let Some(run) = task_run.as_mut() {
+        for warning in run.begin_stop(managed_workload(&result)) {
+            eprintln!("warning: {}: {warning}", task_target.label);
+        }
+    }
     let finished = finish_managed_task(
-        result.map(Some).map_err(Into::into),
+        result,
         lifecycle_cleanup.as_deref(),
         || {
             if let Some(policy) = container_binding.load_effective_policy(&repo_for_task)? {
-                crate::runner::managed_settle::refuse_environment_mutation(
-                    &repo_for_task,
-                    &policy.name,
-                    Some(std::process::id()),
-                    managed_run_token.as_deref(),
-                )?;
                 effigy_containers::exec::verify_owned_stack_for_shutdown(&repo_for_task, &policy)?;
             }
             Ok(())
@@ -479,15 +473,19 @@ pub(in crate::runner) fn run_managed_task(
     finished
 }
 
-/// Records the managed run's outcome and releases its gate. Journal
-/// failures are warnings; they never change the run's result (K10).
-fn close_task_run<T>(run: TaskRun, target: &TaskTarget, result: &Result<T, RunnerError>) {
-    let workload = match result {
+fn managed_workload<T>(result: &Result<T, RunnerError>) -> effigy_kernel::outcome::WorkloadOutcome {
+    match result {
         Ok(_) => effigy_kernel::outcome::WorkloadOutcome::Succeeded,
         Err(RunnerError::TaskManagedNonZeroExit { .. }) | Err(_) => {
             effigy_kernel::outcome::WorkloadOutcome::Failed { code: 1 }
         }
-    };
+    }
+}
+
+/// Records the managed run's outcome and releases its gate. Journal
+/// failures are warnings; they never change the run's result (K10).
+fn close_task_run<T>(run: TaskRun, target: &TaskTarget, result: &Result<T, RunnerError>) {
+    let workload = managed_workload(result);
     for warning in run.close(workload) {
         eprintln!("warning: {}: {warning}", target.label);
     }
@@ -746,7 +744,7 @@ fn managed_runtime_activation_plan(
 fn build_managed_lifecycle_cleanup_command(
     repo_root: &std::path::Path,
     container_binding: &ContainerExecutionBinding,
-    managed_run_token: Option<&str>,
+    holder: Option<effigy_kernel::id::RunId>,
 ) -> Result<String, RunnerError> {
     match container_binding {
         ContainerExecutionBinding::Inline { .. } => {
@@ -770,10 +768,12 @@ fn build_managed_lifecycle_cleanup_command(
                     .and_then(normalize_managed_lifecycle_container_ref),
                 &executable,
             );
-            Ok(match managed_run_token {
-                Some(token) => format!(
-                    "env EFFIGY_INTERNAL_MANAGED_STOP_TOKEN={} {command}",
-                    effigy_core::shell::shell_quote(token)
+            // The run's own stop: exempt from its hold once it is settling.
+            Ok(match holder {
+                Some(run) => format!(
+                    "env {}={} {command}",
+                    crate::runner::environment::EXEMPT_ENV,
+                    effigy_core::shell::shell_quote(&run.to_string())
                 ),
                 None => command,
             })

@@ -216,12 +216,9 @@ pub fn down(
     exempt: Option<RunId>,
     stop: impl FnOnce() -> Result<(), BackendError>,
 ) -> Result<(), EnvError> {
-    let wait = match op {
-        // A handover already holds its own environment's gate (I-G3).
-        Operation::Handover => Wait::FailFast,
-        _ => Wait::Until(Instant::now() + GATE_WAIT),
-    };
-    let mut run = EnvRun::begin(ctx, env, op, wait)?;
+    // A handover runs before the incoming environment's own runs begin, so
+    // no environment gate is held while it waits (I-G3).
+    let mut run = EnvRun::begin(ctx, env, op, Wait::Until(Instant::now() + GATE_WAIT))?;
     let result = (|| {
         run.stop_with(backend, project, exempt, stop)?;
         // Every stop ends persistent ownership; a later task-started stack is
@@ -274,4 +271,24 @@ impl EnvRun<'_> {
         let result = Objects::reset(&mut self.run);
         self.kernel(result)
     }
+}
+
+/// One repair of running workloads as its own transition.
+pub fn repair(
+    ctx: &EnvContext<'_>,
+    env: &EnvRef,
+    backend: &BackendSelection,
+    project: &str,
+    effect: impl FnOnce() -> Result<(), BackendError>,
+) -> Result<(), EnvError> {
+    let mut run = EnvRun::begin(
+        ctx,
+        env,
+        Operation::Up,
+        Wait::Until(Instant::now() + GATE_WAIT),
+    )?;
+    let result = run.repair_with(backend, project, effect);
+    let ok = result.is_ok();
+    run.finish(ok)?;
+    result
 }

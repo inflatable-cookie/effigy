@@ -25,9 +25,9 @@ pub(in crate::runner) use status::{
     run_liveness, task_status, RunLiveness, RunView, TaskStatusView, HISTORY_LIMIT,
 };
 
-pub(in crate::runner) use kernel::interrupted_by;
 #[cfg(test)]
 pub(in crate::runner) use kernel::test_state_home;
+pub(in crate::runner) use kernel::{effects_root, interrupted_by};
 
 /// The recorded outcome of a task command that exited with `code`.
 pub(in crate::runner) fn workload_for_exit(code: i32) -> effigy_kernel::outcome::WorkloadOutcome {

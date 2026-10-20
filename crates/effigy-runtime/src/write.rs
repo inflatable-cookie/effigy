@@ -17,22 +17,28 @@ use crate::signals::run_compose_plan_capture;
 use crate::EffigyRuntimeError;
 pub use planning::select_generated_service_image_refs;
 use planning::{
-    can_prepare_shutdown, remove_generated_runtime_artifacts, remove_generated_service_images,
-    shutdown_container_with_manager_plan,
+    can_prepare_shutdown, prepare_shutdown, remove_generated_service_images, run_shutdown_compose,
 };
+
+/// The caller's environment transition around one shutdown: it receives the
+/// backend effect and must run it at most once, under the environment's gate
+/// (contract 053 §3). The runner journals it; tests may call it directly.
+pub type ShutdownEffect<'a> = &'a dyn Fn() -> Result<(), EffigyRuntimeError>;
 use report::{
     annotate_left_running_shared_services, annotate_removed_gateway_routes,
     render_container_down_global_report, render_container_report, StoppedContainerEnvironment,
 };
 
-pub fn run_container_down<F>(
+pub fn run_container_down<F, T>(
     repo_root: &Path,
     name: Option<&str>,
     output_json: bool,
     deregister_gateway_routes: F,
+    transition: T,
 ) -> Result<String, EffigyRuntimeError>
 where
     F: Fn(&EffectiveContainerPolicy) -> Result<Vec<String>, EffigyRuntimeError>,
+    T: Fn(&Path, &EffectiveContainerPolicy, ShutdownEffect<'_>) -> Result<(), EffigyRuntimeError>,
 {
     let policy = load_container_policy(repo_root, name)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
@@ -42,9 +48,13 @@ where
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     let runtime_running = runtime_backend_is_running(&policy, repo_root)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
-    if runtime_running {
-        shutdown_container_with_manager_plan(repo_root, &policy)?;
-    }
+    let prepared = runtime_running && prepare_shutdown(repo_root, &policy)?;
+    transition(repo_root, &policy, &|| {
+        if prepared {
+            run_shutdown_compose(repo_root, &policy)?;
+        }
+        Ok(())
+    })?;
     let _manager_report = lifecycle_operation_report(
         repo_root,
         &policy,
@@ -77,44 +87,38 @@ where
     run_container_down_all_with_hook(
         output_json,
         deregister_gateway_routes,
-        |_repo_root, _policy| {},
-        |_repo_root, _policy| {},
+        |_repo_root, _policy, effect| effect(),
     )
 }
 
-pub fn run_container_down_all_with_hook<F, H, P>(
+pub fn run_container_down_all_with_hook<F, T>(
     output_json: bool,
     deregister_gateway_routes: F,
-    pre_shutdown: H,
-    post_shutdown: P,
+    transition: T,
 ) -> Result<String, EffigyRuntimeError>
 where
     F: Fn(&EffectiveContainerPolicy) -> Result<Vec<String>, EffigyRuntimeError>,
-    H: Fn(&Path, &EffectiveContainerPolicy),
-    P: Fn(&Path, &EffectiveContainerPolicy),
+    T: Fn(&Path, &EffectiveContainerPolicy, ShutdownEffect<'_>) -> Result<(), EffigyRuntimeError>,
 {
     let environments = discover_running_environments()?;
     run_container_down_environments(
         environments,
         output_json,
         deregister_gateway_routes,
-        pre_shutdown,
-        post_shutdown,
+        transition,
     )
 }
 
-pub fn run_container_down_under_path_with_hook<F, H, P>(
+pub fn run_container_down_under_path_with_hook<F, T>(
     scope_root: &Path,
     name: Option<&str>,
     output_json: bool,
     deregister_gateway_routes: F,
-    pre_shutdown: H,
-    post_shutdown: P,
+    transition: T,
 ) -> Result<String, EffigyRuntimeError>
 where
     F: Fn(&EffectiveContainerPolicy) -> Result<Vec<String>, EffigyRuntimeError>,
-    H: Fn(&Path, &EffectiveContainerPolicy),
-    P: Fn(&Path, &EffectiveContainerPolicy),
+    T: Fn(&Path, &EffectiveContainerPolicy, ShutdownEffect<'_>) -> Result<(), EffigyRuntimeError>,
 {
     let environments =
         filter_running_environments_for_scope(discover_running_environments()?, scope_root, name);
@@ -122,26 +126,22 @@ where
         environments,
         output_json,
         deregister_gateway_routes,
-        pre_shutdown,
-        post_shutdown,
+        transition,
     )
 }
 
-/// Stops every discovered environment in turn. `pre_shutdown` runs before
-/// compose is touched (host supervisors must stop first) and `post_shutdown`
-/// runs once the environment is down, so a caller that owns per-stack runtime
-/// state (for example the persistent-owner marker) can clear it.
-fn run_container_down_environments<F, H, P>(
+/// Stops every discovered environment in turn, each through the caller's
+/// transition, which owns the environment's gate, holder check and any
+/// host-side teardown before the backend effect.
+fn run_container_down_environments<F, T>(
     environments: Vec<crate::read::DiscoveredRunningEnvironment>,
     output_json: bool,
     deregister_gateway_routes: F,
-    pre_shutdown: H,
-    post_shutdown: P,
+    transition: T,
 ) -> Result<String, EffigyRuntimeError>
 where
     F: Fn(&EffectiveContainerPolicy) -> Result<Vec<String>, EffigyRuntimeError>,
-    H: Fn(&Path, &EffectiveContainerPolicy),
-    P: Fn(&Path, &EffectiveContainerPolicy),
+    T: Fn(&Path, &EffectiveContainerPolicy, ShutdownEffect<'_>) -> Result<(), EffigyRuntimeError>,
 {
     let mut stopped = Vec::new();
 
@@ -150,12 +150,13 @@ where
         let policy = environment.policy;
         let runtime_running = runtime_backend_is_running(&policy, repo_root)
             .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
-        // Run the pre-shutdown hook before we touch compose so any
-        // host-side supervisors stop racing with the compose-down.
-        pre_shutdown(repo_root, &policy);
-        if runtime_running {
-            shutdown_container_with_manager_plan(repo_root, &policy)?;
-        }
+        let prepared = runtime_running && prepare_shutdown(repo_root, &policy)?;
+        transition(repo_root, &policy, &|| {
+            if prepared {
+                run_shutdown_compose(repo_root, &policy)?;
+            }
+            Ok(())
+        })?;
         let _manager_report = lifecycle_operation_report(
             repo_root,
             &policy,
@@ -172,7 +173,6 @@ where
             }),
         )?;
         let removed_gateway_domains = deregister_gateway_routes(&policy)?;
-        post_shutdown(repo_root, &policy);
         stopped.push(StoppedContainerEnvironment {
             repo_root: environment.repo_root,
             container: policy.name.clone(),
@@ -191,7 +191,11 @@ where
     render_container_down_global_report(&stopped, output_json)
 }
 
-pub fn run_container_reset<FDeregister, FRemoveVolumes>(
+/// `transition` is the environment's reset transition: it stops the
+/// environment through the backend effect and drops only this
+/// environment's render references (never a sibling's, D3-07).
+#[allow(clippy::too_many_arguments)]
+pub fn run_container_reset<FDeregister, FRemoveVolumes, T>(
     repo_root: &Path,
     name: Option<&str>,
     _keep_data: bool,
@@ -199,6 +203,7 @@ pub fn run_container_reset<FDeregister, FRemoveVolumes>(
     output_json: bool,
     deregister_gateway_routes: FDeregister,
     remove_reset_volumes: FRemoveVolumes,
+    transition: T,
 ) -> Result<String, EffigyRuntimeError>
 where
     FDeregister: Fn(&EffectiveContainerPolicy) -> Result<Vec<String>, EffigyRuntimeError>,
@@ -207,6 +212,7 @@ where
         &EffectiveContainerPolicy,
         &effigy_catalog::volumes::VolumeClassification,
     ) -> Result<(), EffigyRuntimeError>,
+    T: Fn(&Path, &EffectiveContainerPolicy, ShutdownEffect<'_>) -> Result<(), EffigyRuntimeError>,
 {
     let policy = load_container_policy(repo_root, name)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
@@ -237,33 +243,40 @@ where
     } else {
         None
     };
-    if runtime_running && can_reset {
-        if preserve_persistent_data {
-            let plan = compose_invocation_plan(
-                repo_root,
-                &policy,
-                ["down", "--remove-orphans"],
-                ContainerAction::Shutdown,
-                "docker compose down",
-            )?;
-            run_compose_plan_capture(&policy, &plan)?;
-            if let Some(classification) = volume_actions.as_ref() {
-                remove_reset_volumes(repo_root, &policy, classification)?;
+    // Image references come from the render before the reset drops it.
+    let image_policy = policy.clone();
+    if can_reset {
+        transition(repo_root, &policy, &|| {
+            if !runtime_running {
+                return Ok(());
             }
-        } else {
+            let tail: &[&str] = if preserve_persistent_data {
+                &["down", "--remove-orphans"]
+            } else {
+                &["down", "-v", "--remove-orphans"]
+            };
             let plan = compose_invocation_plan(
                 repo_root,
                 &policy,
-                ["down", "-v", "--remove-orphans"],
+                tail.iter().copied(),
                 ContainerAction::Shutdown,
-                "docker compose down -v",
+                if preserve_persistent_data {
+                    "docker compose down"
+                } else {
+                    "docker compose down -v"
+                },
             )?;
             run_compose_plan_capture(&policy, &plan)?;
-        }
+            if preserve_persistent_data {
+                if let Some(classification) = volume_actions.as_ref() {
+                    remove_reset_volumes(repo_root, &policy, classification)?;
+                }
+            }
+            Ok(())
+        })?;
     }
     let removed_gateway_domains = if can_reset {
-        remove_generated_runtime_artifacts(repo_root, &policy)?;
-        remove_generated_service_images(repo_root, &policy)?;
+        remove_generated_service_images(repo_root, &image_policy)?;
         deregister_gateway_routes(&policy)?
     } else {
         Vec::new()

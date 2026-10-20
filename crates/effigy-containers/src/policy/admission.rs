@@ -7,7 +7,6 @@ use std::path::Path;
 pub struct PolicyAdmission {
     policy: EffectiveContainerPolicy,
     context: Value,
-    marker_required: bool,
 }
 fn refusal() -> ContainerPolicyError {
     ContainerPolicyError::TaskInvocation("detached preparation refused: the immutable environment generation or its admission record changed or is unreadable; retry `effigy container up --detach`".into())
@@ -29,8 +28,9 @@ pub fn generation_context(
     )
 }
 
-/// One-release import of a v0.14.1 admission receipt. Hashing is confined to
-/// this importer; all new admission and publication checks use object refs.
+/// Reads a v0.14.1 admission receipt for the environment importer's
+/// adoption check. Hashing is confined to it; every new admission and
+/// publication check uses object references.
 pub fn normalize_context(
     value: Value,
     policy: &EffectiveContainerPolicy,
@@ -71,51 +71,15 @@ pub fn normalize_context(
 }
 
 impl PolicyAdmission {
-    pub(crate) fn capture(
-        policy: &EffectiveContainerPolicy,
-        marker_root: &Path,
-    ) -> Result<Self, ContainerPolicyError> {
+    /// Publishes the policy's render as desired and pins it. The environment
+    /// record keeps the admitted generation; no marker file is read or
+    /// written (contract 052 M3).
+    pub(crate) fn capture(policy: &EffectiveContainerPolicy) -> Result<Self, ContainerPolicyError> {
         let context = generation_context(policy)?;
-        let clean = |value: &str| {
-            value
-                .chars()
-                .map(|c| {
-                    if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') {
-                        c
-                    } else {
-                        '-'
-                    }
-                })
-                .collect::<String>()
-        };
-        let marker = marker_root
-            .join(clean(&policy.profile))
-            .join(clean(&policy.project_name))
-            .join(format!("{}.partial.json", clean(&policy.name)));
-        let mut import = false;
-        let marker_required = match std::fs::read(&marker) {
-            Ok(bytes) => {
-                let value: Value = serde_json::from_slice(&bytes).map_err(|_| refusal())?;
-                let legacy = value.get("generation").is_none();
-                if normalize_context(value, policy)? != context {
-                    return Err(refusal());
-                }
-                import = legacy;
-                true
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
-            Err(_) => return Err(refusal()),
-        };
-        // Validate retained admission before moving the desired reference.
         super::render::prepare(policy)?;
-        if import {
-            let bytes = serde_json::to_vec_pretty(&context).map_err(|_| refusal())?;
-            effigy_catalog::atomic_write::write_atomic(&marker, &bytes).map_err(|_| refusal())?;
-        }
         let admission = Self {
             policy: policy.clone(),
             context,
-            marker_required,
         };
         admission.verify()?;
         Ok(admission)
@@ -132,9 +96,6 @@ impl PolicyAdmission {
             return Err(refusal());
         }
         Ok(self.context.clone())
-    }
-    pub fn marker_required(&self) -> bool {
-        self.marker_required
     }
 }
 

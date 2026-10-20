@@ -24,7 +24,7 @@ pub use import::{
     import, label_evidence, recorded_admission, sanitize as sanitize_marker_component,
     ImportRequest, Imported, LegacyMarkers, Marker, Ownership,
 };
-pub use ops::{activate, down, reconcile, reset, up, Applied, Pending, Up};
+pub use ops::{activate, down, reconcile, repair, reset, up, Applied, Pending, Up};
 pub use reconcile::{
     EnvContext, EnvError, EnvRef, EnvRun, EnvSettlement, Operation, APPLY_EFFECT, GATE_WAIT,
     RUN_BUDGET, STOP_EFFECT,

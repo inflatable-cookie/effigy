@@ -76,6 +76,8 @@ pub(in crate::runner) struct TaskRun {
     run: Option<Run<'static>>,
     shared: Option<Run<'static>>,
     target: TaskTarget,
+    /// The outcome recorded by `begin_stop`, before the run's own teardown.
+    stopping: bool,
 }
 
 impl TaskRun {
@@ -221,6 +223,7 @@ impl TaskRun {
                 run: shared,
                 shared: None,
                 target: request.target.clone(),
+                stopping: false,
             });
         }
         let invocation = invocation(&task_id, owner.clone(), argv, &provenance)?;
@@ -243,7 +246,7 @@ impl TaskRun {
             Ok(run) => run,
             Err(error) => {
                 if let Some(shared) = shared {
-                    let _ = close_run(shared, WorkloadOutcome::NotStarted);
+                    let _ = close_run(shared, WorkloadOutcome::NotStarted, true);
                 }
                 return Err(error);
             }
@@ -252,6 +255,7 @@ impl TaskRun {
             run: Some(run),
             shared,
             target: request.target.clone(),
+            stopping: false,
         })
     }
 
@@ -267,12 +271,30 @@ impl TaskRun {
         &self.target
     }
 
+    /// Records the workload outcome and enters settle (`Stopping`) before
+    /// the run's own environment teardown: R4 exempts a holder's own stop
+    /// only once that run is settling. `close` then settles without
+    /// recording the outcome again.
+    pub(in crate::runner) fn begin_stop(&mut self, workload: WorkloadOutcome) -> Vec<String> {
+        let mut warnings = Vec::new();
+        if let Some(run) = self.run.as_mut() {
+            if let Err(error) = record_outcome(run, workload) {
+                warnings.push(format!(
+                    "run outcome was not recorded: {}",
+                    run_error(&error)
+                ));
+            }
+        }
+        self.stopping = true;
+        warnings
+    }
+
     /// Records the workload outcome, settles every effect and releases the
     /// gates. Returns warnings only: the task's result is already decided.
     pub(in crate::runner) fn close(mut self, workload: WorkloadOutcome) -> Vec<String> {
         let mut warnings = Vec::new();
         if let Some(run) = self.run.take() {
-            warnings.extend(close_run(run, workload.clone()));
+            warnings.extend(close_run(run, workload.clone(), !self.stopping));
         }
         if let Some(shared) = self.shared.take() {
             let mirrored = match workload {
@@ -281,7 +303,7 @@ impl TaskRun {
                 }
                 other => other,
             };
-            warnings.extend(close_run(shared, mirrored));
+            warnings.extend(close_run(shared, mirrored, true));
         }
         retain();
         warnings
@@ -345,23 +367,29 @@ impl Drop for TaskRun {
     }
 }
 
-fn close_run(mut run: Run<'static>, workload: WorkloadOutcome) -> Vec<String> {
+fn record_outcome(run: &mut Run<'static>, workload: WorkloadOutcome) -> Result<(), RunError> {
+    let cleanup = kernel::cleanup().map_err(|error| RunError::Invalid(error.to_string()))?;
+    match workload {
+        WorkloadOutcome::Cancelled { .. }
+        | WorkloadOutcome::TimedOut { .. }
+        | WorkloadOutcome::NotStarted => run.interrupt(&cleanup, workload),
+        other => run.finish(other),
+    }
+}
+
+fn close_run(mut run: Run<'static>, workload: WorkloadOutcome, record: bool) -> Vec<String> {
     let mut warnings = Vec::new();
     let cleanup = match kernel::cleanup() {
         Ok(cleanup) => cleanup,
         Err(error) => return vec![error.to_string()],
     };
-    let recorded = match workload {
-        WorkloadOutcome::Cancelled { .. }
-        | WorkloadOutcome::TimedOut { .. }
-        | WorkloadOutcome::NotStarted => run.interrupt(&cleanup, workload),
-        other => run.finish(other),
-    };
-    if let Err(error) = recorded {
-        warnings.push(format!(
-            "run outcome was not recorded: {}",
-            run_error(&error)
-        ));
+    if record {
+        if let Err(error) = record_outcome(&mut run, workload) {
+            warnings.push(format!(
+                "run outcome was not recorded: {}",
+                run_error(&error)
+            ));
+        }
     }
     match run.settle(&cleanup, &mut TaskSettlement) {
         Ok(outcome) => {

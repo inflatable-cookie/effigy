@@ -29,14 +29,12 @@ use effigy_gateway::managed_listener::verify_managed_listener_owner;
 use effigy_gateway::registration::{owned_by, project_scope};
 use effigy_gateway::routes::{RouteTable, RouteTableLock};
 
-use super::closeout::stop_host_processes_best_effort;
 use super::gateway_registration::{
     declared_route_claims, managed_listener_owner_environment, preflight_route_claims,
 };
+use crate::runner::environment;
 use crate::runner::error::RunnerError;
-use crate::runner::host_container_lease::{
-    clear_partial_activation, clear_persistent_container_owner, record_environment_handover,
-};
+use effigy_containers::environment::Operation;
 
 const ENVIRONMENT_INSPECTION_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -45,8 +43,6 @@ const ENVIRONMENT_INSPECTION_TIMEOUT: Duration = Duration::from_secs(15);
 pub(super) struct PendingHandover {
     /// The peer environment's manifest name.
     environment: String,
-    /// The peer environment's resolved policy in this checkout and scope.
-    policy: EffectiveContainerPolicy,
     /// The requested environment's gateway domains the peer holds live.
     domains: Vec<String>,
     /// Whether the pair shares data volumes through `data_from`.
@@ -108,7 +104,6 @@ pub(super) fn hand_over_conflicting_environments(
                         peer.clone(),
                         PendingHandover {
                             environment: peer.clone(),
-                            policy: peer_policy,
                             domains: Vec::new(),
                             data_from: true,
                         },
@@ -135,20 +130,19 @@ pub(super) fn hand_over_conflicting_environments(
             }
             continue;
         }
-        let peer_policy =
-            load_container_policy(repo_root, Some(&conflict.environment)).map_err(|error| {
-                RunnerError::task_invocation(format!(
-                    "cannot hand over environment `{}`, which holds gateway domain `{}`: {error}",
-                    conflict.environment, conflict.domain
-                ))
-            })?;
+        // The peer must resolve for a clean whole-environment stop.
+        load_container_policy(repo_root, Some(&conflict.environment)).map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "cannot hand over environment `{}`, which holds gateway domain `{}`: {error}",
+                conflict.environment, conflict.domain
+            ))
+        })?;
         targets.insert(
             conflict.environment.clone(),
             PendingHandover {
                 environment: conflict.environment.clone(),
                 domains: vec![conflict.domain],
                 data_from: data_peers.iter().any(|peer| peer == &conflict.environment),
-                policy: peer_policy,
             },
         );
     }
@@ -178,7 +172,6 @@ pub(super) fn hand_over_conflicting_environments(
                 environment: name,
                 domains,
                 data_from,
-                policy: peer_policy,
             },
         );
     }
@@ -389,12 +382,6 @@ pub(super) fn stop_peer_data_services(
         if active.is_empty() {
             continue;
         }
-        crate::runner::managed_settle::refuse_environment_mutation(
-            repo_root,
-            &handover.environment,
-            Some(std::process::id()),
-            None,
-        )?;
         let services = active.into_iter().collect::<Vec<_>>();
         let mut tail = vec![std::ffi::OsString::from("stop")];
         tail.extend(services.iter().map(std::ffi::OsString::from));
@@ -407,15 +394,27 @@ pub(super) fn stop_peer_data_services(
             "docker compose stop",
         )
         .map_err(RunnerError::from)?;
-        effigy_runtime::signals::run_compose_plan_capture(policy, &stop_plan).map_err(|error| {
-            RunnerError::task_invocation(format!(
-                "cannot hand over {} data service{} of `{}` (project `{}`): {error}",
-                services.join(", "),
-                if services.len() == 1 { "" } else { "s" },
-                handover.environment,
-                handover.project_name
-            ))
-        })?;
+        // The narrow stop is still the peer's transition: it refuses while
+        // any run holds the peer (R4).
+        environment::stop_peer(
+            repo_root,
+            policy,
+            &handover.environment,
+            &handover.project_name,
+            || {
+                effigy_runtime::signals::run_compose_plan_capture(policy, &stop_plan)
+                    .map(|_| ())
+                    .map_err(|error| {
+                        RunnerError::task_invocation(format!(
+                            "cannot hand over {} data service{} of `{}` (project `{}`): {error}",
+                            services.join(", "),
+                            if services.len() == 1 { "" } else { "s" },
+                            handover.environment,
+                            handover.project_name
+                        ))
+                    })
+            },
+        )?;
         notes.push(handover.note);
     }
     Ok(notes)
@@ -474,20 +473,17 @@ fn settle_headless_owner(
 
 /// Bring one environment down with the ordinary `container down` semantics:
 /// host processes and managed listeners stopped, gateway routes withdrawn,
-/// Compose containers stopped, all volumes kept, scope records cleared. The
-/// handover record lands before the first effect, so even a crash mid-stop
-/// leaves the peer recoverable by its own `up` or `down`.
+/// Compose containers stopped, all volumes kept. Live managed owners bound
+/// to it end first through their own stop; the stop itself is one handover
+/// transition of the peer, refused while any other run still holds it.
 fn execute_handover(
     repo_root: &Path,
     target: &PendingHandover,
-    stopped_by: &str,
+    _stopped_by: &str,
     deregister_gateway_routes: &impl Fn(
         &EffectiveContainerPolicy,
     ) -> Result<Vec<String>, effigy_runtime::EffigyRuntimeError>,
 ) -> Result<Vec<String>, RunnerError> {
-    // A stale scope record from an earlier state must not survive the
-    // handover; the fresh record below is the only evidence that counts.
-    clear_partial_activation(repo_root, &target.policy)?;
     let detail = target.summary();
     let note = format!(
         "[handover] stopping environment `{}` (host processes, routes and containers; data kept){}",
@@ -498,68 +494,23 @@ fn execute_handover(
             format!(" for {detail}")
         },
     );
-    // The handover record lands before the first effect, so even ending
-    // a bound managed owner — whose lifecycle shutdown runs that
-    // environment's `container down` — leaves the environment recoverable
-    // by its own `up` or `down` if the handover refuses afterwards.
-    record_environment_handover(repo_root, &target.policy, stopped_by, &detail).map_err(
-        |error| {
-            RunnerError::task_invocation(format!(
-                "cannot record the handover of environment `{}`: {error}",
-                target.environment
-            ))
-        },
-    )?;
-    // Every live headless managed owner bound to the losing environment
-    // ends before the environment stops: a failure refuses here, and the
-    // owner's whole stop cascade - including its own `container <env>
-    // down` - finishes before the handover continues.
+    // Holders settle themselves: every live headless managed owner bound to
+    // the losing environment ends through its own stop before the handover's
+    // transition asks for a permit.
     let owner_notes = end_headless_managed_owners(repo_root, target)?;
-    let incoming_token = std::env::var(effigy_managed::RUN_TOKEN_ENV)
-        .ok()
-        .filter(|token| !token.is_empty());
-    crate::runner::managed_settle::refuse_environment_mutation(
+    effigy_runtime::write::run_container_down(
         repo_root,
-        &target.environment,
-        Some(std::process::id()),
-        incoming_token.as_deref(),
-    )?;
-    stop_host_processes_best_effort(repo_root, Some(&target.environment));
-    let ordinary_down = |deregister_gateway_routes: &dyn Fn(
-        &EffectiveContainerPolicy,
-    ) -> Result<
-        Vec<String>,
-        effigy_runtime::EffigyRuntimeError,
-    >| {
-        effigy_runtime::write::run_container_down(
-            repo_root,
-            Some(&target.environment),
-            false,
-            deregister_gateway_routes,
-        )
-        .map(|_| ())
-    };
-    // The owners' cascades already brought the environment down. Withdraw
-    // any routes an inline cascade could not (it stops Compose only), then
-    // verify instead of racing a second down; a live remainder still takes
-    // the ordinary down as the backstop.
-    let down_result = if owner_notes.is_empty() {
-        ordinary_down(deregister_gateway_routes)
-    } else {
-        let _ = deregister_gateway_routes(&target.policy)?;
-        let routes = SameCheckoutRoutes::load(repo_root)?;
-        match environment_is_live(repo_root, &target.policy, routes.as_ref()) {
-            Ok(false) => Ok(()),
-            _ => ordinary_down(deregister_gateway_routes),
-        }
-    };
-    down_result.map_err(|error| {
+        Some(&target.environment),
+        false,
+        deregister_gateway_routes,
+        environment::stop_hook(Operation::Handover),
+    )
+    .map_err(|error| {
         RunnerError::task_invocation(format!(
-            "{note} failed: {error}. Environment `{}` stays in a state its own `effigy container up` or `effigy container down` recovers from",
+            "{note} failed: {error}. Environment `{}` stays in a state its own `effigy container up` or `effigy container down` recovers",
             target.environment
         ))
     })?;
-    clear_persistent_container_owner(repo_root, &target.policy)?;
     let mut notes = vec![note];
     notes.extend(owner_notes);
     Ok(notes)

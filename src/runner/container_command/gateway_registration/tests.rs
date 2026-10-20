@@ -1874,11 +1874,7 @@ fn load_or_allocate_project_loopback_ip_migrates_legacy_identity_for_same_repo()
 /// supplies readiness or admission evidence.
 #[cfg(unix)]
 #[test]
-fn detached_publication_refuses_generation_and_marker_changes_after_owned_probe() {
-    use crate::runner::host_container_lease::{
-        capture_detached_activation_context, record_admitted_partial_activation,
-        retained_detached_activation_context,
-    };
+fn detached_publication_refuses_generation_changes_after_owned_probe() {
     use std::io::{BufRead, BufReader, Write};
     use std::os::unix::fs::PermissionsExt;
     use std::process::{Child, ChildStdout, Stdio};
@@ -2048,11 +2044,8 @@ else:sys.exit('unexpected private backend operation')
     let compose = policy.compose_files[0].clone();
     let manifest_bytes = std::fs::read(&manifest).unwrap();
     let compose_bytes = std::fs::read(&compose).unwrap();
-    let admission = capture_detached_activation_context(&checkout, &policy).unwrap();
-    record_admitted_partial_activation(&checkout, &policy, &admission).unwrap();
-    let admission = retained_detached_activation_context(&checkout, &policy)
-        .unwrap()
-        .unwrap();
+    let admission =
+        crate::runner::container_command::admission::AdmissionContext::capture(&policy).unwrap();
     let scope_file = checkout
         .join(".git")
         .join(effigy_core::worktree_scope::SCOPE_FILE);
@@ -2066,9 +2059,6 @@ else:sys.exit('unexpected private backend operation')
             "com.effigy.scope":scope.trim()}},
         "NetworkSettings":{"Ports":{"80/tcp":[{"HostIp":"127.0.0.1", "HostPort":services[0].port.to_string()}]}}
     }]).to_string()).unwrap();
-    let marker =
-        root.join("lease-home/runtime/host-container-leases/effigy/demo-web-dev/web.partial.json");
-    let marker_bytes = std::fs::read(&marker).unwrap();
     let path = gateway_route_table_path().unwrap();
     let mut baseline = RouteTable::new();
     for (i, domain) in [
@@ -2118,16 +2108,12 @@ else:sys.exit('unexpected private backend operation')
         (PublicationStage::AfterProbe, "scope"),
         (PublicationStage::AfterProbe, "checkout"),
         (PublicationStage::BeforePreparation, "compose"),
-        (PublicationStage::AfterProbe, "marker"),
-        (PublicationStage::AfterProbe, "missing"),
-        (PublicationStage::AfterProbe, "unreadable"),
         (PublicationStage::DuringPreparation, "manifest"),
-        (PublicationStage::BeforeSave, "marker"),
+        (PublicationStage::BeforeSave, "compose"),
     ] {
         let manifest_copy = manifest.clone();
         let compose_copy = compose.clone();
         let scope_copy = scope_file.clone();
-        let marker_copy = marker.clone();
         let checkout_copy = checkout.clone();
         let moved_copy = root.join("moved-checkout");
         let seen = std::rc::Rc::new(std::cell::Cell::new(false));
@@ -2140,8 +2126,7 @@ else:sys.exit('unexpected private backend operation')
                 let file = match mutation {
                     "manifest" => &manifest_copy,
                     "compose" => &compose_copy,
-                    "scope" => &scope_copy,
-                    _ => &marker_copy,
+                    _ => &scope_copy,
                 }
                 .clone();
                 let checkout_copy = checkout_copy.clone();
@@ -2153,12 +2138,6 @@ else:sys.exit('unexpected private backend operation')
                             .unwrap();
                     }
                     match mutation {
-                        "missing" => std::fs::remove_file(file).unwrap(),
-                        "unreadable" => {
-                            std::fs::remove_file(&file).unwrap();
-                            std::fs::create_dir(file).unwrap();
-                        }
-                        "marker" => std::fs::write(file, "{}\n").unwrap(),
                         "scope" => {
                             std::fs::write(file, "dddddddddddddddddddddddddddddddd").unwrap()
                         }
@@ -2211,17 +2190,6 @@ else:sys.exit('unexpected private backend operation')
             persisted,
             "own and foreign persisted table must remain byte-exact"
         );
-        // Refusal cannot overwrite the mutated marker or mint a new baseline.
-        if mutation == "marker" {
-            assert_eq!(std::fs::read_to_string(&marker).unwrap(), "{}\n");
-        }
-        if mutation == "missing" {
-            assert!(!marker.exists());
-        }
-        if mutation == "unreadable" {
-            assert!(marker.is_dir());
-            std::fs::remove_dir(&marker).unwrap();
-        }
         if mutation == "checkout" {
             std::fs::remove_file(&checkout).unwrap();
             std::fs::rename(root.join("moved-checkout"), &checkout).unwrap();
@@ -2232,7 +2200,6 @@ else:sys.exit('unexpected private backend operation')
             std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o400)).unwrap();
         }
         std::fs::write(&scope_file, &scope).unwrap();
-        std::fs::write(&marker, &marker_bytes).unwrap();
         PUBLICATION_CONTROL.with(|control| *control.borrow_mut() = None);
         for (i, service) in services.iter_mut().enumerate() {
             service.exec();
@@ -2263,7 +2230,6 @@ else:sys.exit('unexpected private backend operation')
         for domain in ["sibling.fixture.test", "foreign.fixture.test"] {
             assert_eq!(current.lookup(domain), baseline.lookup(domain));
         }
-        assert_eq!(std::fs::read(&marker).unwrap(), marker_bytes);
         baseline.save(&path).unwrap();
         println!("publication timing refusal {mutation}; original source restored; owned service pids={:?}",services.iter().map(|s|s.child.id()).collect::<Vec<_>>());
     }
