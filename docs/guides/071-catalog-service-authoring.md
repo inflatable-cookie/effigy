@@ -1,7 +1,8 @@
 # 071 - Catalog Service Authoring
 
-Use this guide when you want to add or change a shipped service catalog under
-`crates/effigy-catalog/catalog/`.
+Use this guide when you want to add or change a service fragment: in Effigy's
+compiled baseline under `crates/effigy-catalog/catalog/`, or in a project,
+bundle or declared catalog source.
 
 This is the authoring guide. For the consumer-facing reference, use
 [`067-catalog-services-reference.md`](067-catalog-services-reference.md).
@@ -190,22 +191,38 @@ cargo test -p effigy-catalog --test integration resolve_php_fpm_fragment -- --no
 cargo test -p effigy-catalog --test integration resolve_workspace_rust_bun_fragment -- --nocapture
 ```
 
-## Packaging Fragments For Distribution
+## Publishing Fragments Without An Effigy Release
 
-The same fragment layout is what an independently versioned catalog pack
-carries. Add a `pack.toml` at the root of a directory of fragments, then
-install it with `effigy service pack install --path <DIR>` to test it against a
-real resolver. Layer order, precedence, and recovery are documented in
+The same fragment layout works in every catalog source. To ship services
+without an Effigy release, put fragment directories in one of:
+
+- a project's `infra/dev/catalog/`;
+- a bundle's `catalog/` directory, which every subscriber resolves below its
+  own project catalog;
+- a separate git, OCI or path source that consumers declare as
+  `[catalog.sources.<handle>]` and pin with `effigy bundle sync`.
+
+Source order, qualified names and pinning are documented in
 [`067-catalog-services-reference.md`](067-catalog-services-reference.md).
 
-Nothing about fragment authoring changes inside a pack: `service.toml` schema,
-variant merge order, and template rendering stay owned by
-`crates/effigy-catalog`. A pack that declares an unknown fragment shape fails
-validation before it can be activated.
+### Declaring requirements
 
-Effigy's compatibility authority is `support/catalog-pack-update.toml`, not
-pack content. A pack may declare its own `compatibility.effigy` range; it
-cannot redefine the Effigy-owned required set.
+A fragment that relies on a newer renderer declares it in `service.toml`:
+
+```toml
+[requires]
+effigy = ">=0.16"          # Effigy release range
+schema = 2                 # fragment schema version (this release renders 1)
+capabilities = ["loopback-alias"]
+```
+
+Effigy reads `[requires]` before the rest of `service.toml`. A release that
+does not meet it refuses the fragment and names what it needs, so declare the
+release that introduced any schema field or capability you use. Capabilities
+this release provides: `config-variants`, `dockerfile`, `exec-target`,
+`installs-mkcert-ca`, `loopback-alias`, `optional-dependencies`,
+`param-variants`, `shared-service`, `workspace-host-integration`. Baseline
+fragments need no `[requires]`.
 
 ## Related Guides
 

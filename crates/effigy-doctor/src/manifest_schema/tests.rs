@@ -184,6 +184,30 @@ mystery = true
 }
 
 #[test]
+fn validate_manifest_schema_names_the_retired_catalog_pack_support_policy() {
+    let manifest: Value = toml::from_str(
+        r#"
+[release]
+version-file = "Cargo.toml"
+sync-catalog-pack-support-policy = "support/catalog-pack-update.toml"
+"#,
+    )
+    .expect("parse manifest");
+
+    let mut sink = TestSink::default();
+    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
+
+    assert!(
+        sink.findings.iter().any(|finding| finding
+            .evidence
+            .contains("release.sync-catalog-pack-support-policy")
+            && finding.remediation.contains("catalog-pack runtime")),
+        "expected the retired key to be flagged, got: {:?}",
+        sink.findings
+    );
+}
+
+#[test]
 fn validate_manifest_schema_accepts_current_repo_manifest() {
     let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")

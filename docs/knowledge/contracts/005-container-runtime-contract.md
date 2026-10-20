@@ -1121,10 +1121,10 @@ This repository's own `paseo.json` hooks call `scripts/worktree-lifecycle.sh`
 instead of an installed `effigy`. `setup` discards any staged binary, builds
 `effigy` from the checkout with `CARGO_TARGET_DIR` pinned to
 `target/worktree-hooks`, stages it at `.local-install/worktree-hooks/effigy`,
-then runs the skill `prepare ../effigy-catalog-pack` and `link`. `teardown`
+then runs the skill `link`. `teardown`
 runs `container retire --yes` and then skill `unlink` with the staged binary,
 so Queue milestone cleanup exercises the lifecycle code under test. Setup
-stages the binary even if later QA fails. A missing or failed build, prepare or
+stages the binary even if later QA fails. A missing or failed build, link or
 retire exits non-zero; teardown never falls back to the PATH `effigy` and does
 not unlink after a retire failure. Limits: the helper compiles with raw
 `cargo` as bootstrap, does not install anything globally, and a checkout whose
@@ -1555,65 +1555,17 @@ This is the required shared contract for warm non-shell container reuse.
 Task-shaped requests should reach this contract through
 `TaskExecutionRequestBuilder` and a resolved execution plan.
 
-## Selected service pack at workspace handoff
+## Catalog sources in workspace guests
 
-After actual selected-workspace activation (including recreation), workspace
-binary preparation also prepares the host-selected compatible installed
-**service** catalog pack before opening a shell or handing a task to the guest
-policy loader. A receipt from a previous guest generation is never reused. Both ordinary and bounded paths enforce this after
-an already-current binary probe; executable identity does not establish pack
-parity. Task catalog members (including a member named `silo`) never supply
-service fragments.
-
-The host pins the existing typed selection, installed record and verified
-content before binary preparation. It snapshots only that retained install,
-revalidates the snapshot and rechecks selection/content across transport.
-The original local source checkout and a registry are unnecessary. An unhealthy,
-incompatible, corrupt or changing selected host pack refuses handoff rather
-than claiming baseline fallback is equivalent. A host with no active pack keeps
-its existing baseline behavior without installing guest content.
-
-For a selected pack, preparation pins the selected Compose service container ID
-from a fresh `ps -q` and rechecks it around every guest command/copy. Missing,
-ambiguous or changed target identity refuses before handoff; this preserves the
-existing backend ownership checks and does not grant adoption authority.
-Every preparation command uses the declared workspace user
-and HOME and checks the effective uid/HOME before reading guest state. Missing
-identity or home configuration refuses. Actual guest `service pack status`
-verification must prove pack identity, version, schema, compatibility and exact
-content under that home. A verified match performs no guest copy or install.
-Only an empty guest selection may receive the snapshot through the existing
-validator and atomic installer. `service pack install --path <DIR>
---prepare-content <sha256:DIGEST>` checks the expected content and definite
-absence of prior selection under the activation lock; explicit baseline,
-unknown state, a concurrent install, or any unreferenced retained content is preserved
-and refused. This guarded mode never repairs existing content.
-
-Exit zero alone is insufficient: preparation verifies the resulting status and
-re-reads guest selection before dispatch. Partial copy, failed installation,
-malformed or mismatched status, wrong identity/home and changed source refuse
-before the requested task or shell. Recovery names `service pack status` and an
-explicit supported `service pack install --path <retained-pack>` inside the
-workspace; automatic preparation never resets a selection.
-
-Host snapshots have an owned temporary-directory lifetime spanning the copy and
-verification. Guest staging requires a successful exclusive mkdir as the
-workspace user. Verified installation permits removing only that new staging, followed by a
-final selection probe before handoff. Failed or uncertain effects before that
-cleanup leave staging held. Neither guest store
-lineage nor sibling content is deleted. The bounded path uses the caller's
-original deadline, cumulative stream limits and workspace-preparation phase
-accounting; transport refusals preserve the existing structural observations.
-No captured stdout/stderr, arbitrary argv/env, source paths or raw transport
-errors are inserted into catalog mismatch messages.
-
-This guarantees installed-pack parity, not whole-environment parity. Mounted
-project overrides retain normal precedence. User-global catalog directories
-are ignored in both host and guest contexts. Host configuration, HOME and
-credentials are not transferred. No channel
-refresh, registry acquisition, binary rebuild or network update is implied by
-pack preparation. Private production-path controls live behind
-`test:workspace:catalog-handoff` and `check:workspace:catalog-handoff`.
+Catalog resolution is host authority (Q-005). Workspace preparation installs
+the Effigy binary only; it copies no catalog content into the guest and keeps
+no guest catalog state. A guest Effigy resolves services from the same
+checkout-local sources the host does: the mounted project catalog, and the
+bundle and `[catalog.sources]` snapshots pinned in `.effigy/sources.lock.json`.
+Only a host `effigy bundle sync` moves those pins; inside a workspace it
+refuses. The v0.14 selected-pack handoff (`service pack status` and
+`service pack install --path --prepare-content` inside the guest) is retired
+with the catalog-pack runtime, and existing guest pack stores are ignored.
 
 ## Workspace identity and disposable build paths
 

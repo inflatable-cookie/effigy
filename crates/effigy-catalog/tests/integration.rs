@@ -11,10 +11,10 @@ use effigy_catalog::fragment::CatalogResolver;
 
 #[path = "integration/fragments.rs"]
 mod fragments;
-#[path = "integration/sources.rs"]
-mod sources;
 #[path = "integration/services.rs"]
 mod services;
+#[path = "integration/sources.rs"]
+mod sources;
 #[path = "integration/structure.rs"]
 mod structure;
 #[path = "integration/workspace.rs"]

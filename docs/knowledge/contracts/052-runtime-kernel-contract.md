@@ -1948,7 +1948,7 @@ Environment reconciler adoption, tranche 3 (effigy#230, 2026-10-20):
 | Vault written in place, unlocked | `src/runner/secret_vault.rs:177-194`; `crates/effigy-rhai/src/rhai_secrets.rs:665` | `Gate(Store vault)` + pointer commit (§5.5) |
 | Deps state: try-only lock, local atomic helper | `crates/effigy-deps/src/state.rs:497`, `:573` | gate with deadline; `atomic_replace` |
 | Graph reads and explicit refresh | `crates/effigy-codegraph/src/refresh.rs`; `storage.rs`; graph contract 045 | RefreshDerived owns a kernel store gate; Observe probes only. Queries never refresh; rollback-journal readers create no files. Existing WAL is migrated by explicit index. |
-| Catalog pack store lock | `crates/effigy-catalog/src/pack/store.rs:343` | `Gate`, or removal under Q-005 |
+| Catalog pack store lock | the retired catalog-pack runtime (removed under Q-005, effigy#234) | none: catalog sources reuse the bundle source pins |
 | Pending-facts journal with file and directory `fsync` | the retired host-run client (removed, effigy#227) | the pattern `atomic_replace` absorbs |
 | Doctor publication marker | `crates/effigy-scan/src/execution/doctor_inventory.rs:586` | `Gate` |
 | Rhai, runtime and doctor signal flags | `crates/effigy-rhai/src/lib.rs:219-221`; `crates/effigy-runtime/src/signals.rs:184-186`; `crates/effigy-scan/src/execution/doctor_inventory.rs:2064` | `SignalRouter` and `CancelToken` (K9) |

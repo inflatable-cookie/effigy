@@ -99,7 +99,12 @@ impl FragmentRequirements {
     }
 
     /// Refuse a fragment this Effigy cannot honour, naming what it needs.
-    pub fn check(&self, fragment: &str, source: &str, effigy: &Version) -> Result<(), CatalogError> {
+    pub fn check(
+        &self,
+        fragment: &str,
+        source: &str,
+        effigy: &Version,
+    ) -> Result<(), CatalogError> {
         let mut unmet = Vec::new();
         if let Some(range) = &self.effigy {
             if !range.matches(effigy) {
@@ -145,9 +150,11 @@ mod tests {
     use super::*;
 
     fn check(toml: &str, effigy: &str) -> Result<(), CatalogError> {
-        FragmentRequirements::parse(toml, "svc")
-            .unwrap()
-            .check("svc", "acme", &Version::parse(effigy).unwrap())
+        FragmentRequirements::parse(toml, "svc").unwrap().check(
+            "svc",
+            "acme",
+            &Version::parse(effigy).unwrap(),
+        )
     }
 
     #[test]
@@ -157,7 +164,8 @@ mod tests {
 
     #[test]
     fn met_requirements_accept() {
-        let toml = "[requires]\neffigy = \">=0.15\"\nschema = 1\ncapabilities = [\"loopback-alias\"]\n";
+        let toml =
+            "[requires]\neffigy = \">=0.15\"\nschema = 1\ncapabilities = [\"loopback-alias\"]\n";
         assert!(check(toml, "0.15.0").is_ok());
     }
 

@@ -18,7 +18,10 @@ fn catalog_list_reports_baseline_fragments() {
     let resolver = CatalogResolver::new(None);
     let rendered = run_service_list(root.path(), &resolver, false).expect("list");
     assert!(rendered.contains("[service]"), "{rendered}");
-    assert!(rendered.contains("(sources: project, baseline)"), "{rendered}");
+    assert!(
+        rendered.contains("(sources: project, baseline)"),
+        "{rendered}"
+    );
     assert!(rendered.contains("php-fpm [baseline]"), "{rendered}");
 }
 

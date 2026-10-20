@@ -22,7 +22,10 @@ fn parse_service_pack_is_retired_with_an_actionable_error() {
         let error = parse_command(args.iter().map(|arg| (*arg).to_owned()).collect::<Vec<_>>())
             .expect_err("service pack is retired")
             .to_string();
-        assert!(error.contains("`effigy service pack` is retired"), "{error}");
+        assert!(
+            error.contains("`effigy service pack` is retired"),
+            "{error}"
+        );
         assert!(error.contains("[catalog.sources.<name>]"), "{error}");
         assert!(error.contains("effigy service list"), "{error}");
     }

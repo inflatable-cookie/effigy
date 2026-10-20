@@ -69,7 +69,9 @@ fn expected_source(layer: &str, path: PathBuf) -> FragmentSource {
 fn precedence_matrix_across_all_four_layers() {
     for mask in 0u8..8 {
         let sources = Sources::new();
-        let present = (0..3).filter(|bit| mask & (1 << bit) != 0).collect::<Vec<_>>();
+        let present = (0..3)
+            .filter(|bit| mask & (1 << bit) != 0)
+            .collect::<Vec<_>>();
         let mut dirs = Vec::new();
         for &index in &present {
             for name in ["redis", "custom"] {
@@ -84,7 +86,10 @@ fn precedence_matrix_across_all_four_layers() {
         let custom = resolver.resolve("custom");
         match present.first() {
             Some(&winner) => {
-                assert_eq!(redis.schema.service.description, LAYERS[winner], "mask {mask}");
+                assert_eq!(
+                    redis.schema.service.description, LAYERS[winner],
+                    "mask {mask}"
+                );
                 assert_eq!(
                     redis.source,
                     expected_source(LAYERS[winner], dirs[0].1.clone()),
@@ -131,10 +136,7 @@ fn declared_sources_keep_their_declared_order() {
         .unwrap()
         .with_declared_source("alpha", second)
         .unwrap();
-    assert_eq!(
-        resolver.resolve("queue").unwrap().source.handle(),
-        "zeta"
-    );
+    assert_eq!(resolver.resolve("queue").unwrap().source.handle(), "zeta");
     assert_eq!(
         resolver.source_handles(),
         vec!["project", "zeta", "alpha", "baseline"]
@@ -158,7 +160,10 @@ fn qualified_names_select_exactly_one_source() {
         assert_eq!(fragment.name, "redis", "{qualified}");
         match description {
             Some(description) => {
-                assert_eq!(fragment.schema.service.description, description, "{qualified}")
+                assert_eq!(
+                    fragment.schema.service.description, description,
+                    "{qualified}"
+                )
             }
             None => assert_eq!(fragment.source, FragmentSource::Baseline),
         }

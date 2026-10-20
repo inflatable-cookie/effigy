@@ -20,7 +20,6 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
-
 fn temp_repo(name: &str) -> PathBuf {
     let root = std::env::temp_dir().join(format!(
         "effigy-release-{name}-{}",
@@ -73,8 +72,14 @@ fn retired_catalog_pack_support_policy_key_is_refused() {
     )
     .expect("manifest");
     fs::write(root.join("VERSION"), "0.1.0\n").expect("version");
-    fs::write(root.join("CHANGELOG.md"), "# Changelog\n\n## [Unreleased]\n").expect("changelog");
-    let error = load_release_config(root).expect_err("retired key").to_string();
+    fs::write(
+        root.join("CHANGELOG.md"),
+        "# Changelog\n\n## [Unreleased]\n",
+    )
+    .expect("changelog");
+    let error = load_release_config(root)
+        .expect_err("retired key")
+        .to_string();
     assert!(
         error.contains("sync-catalog-pack-support-policy` was removed in v0.15"),
         "{error}"

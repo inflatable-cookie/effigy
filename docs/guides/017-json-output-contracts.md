@@ -176,14 +176,8 @@ Operator workflow and recovery: [`077-local-dependency-linking.md`](077-local-de
 - `effigy.completion.candidates.v1`
 - `effigy.task.run.v1`
 - `effigy.task.plan.v1`
-- `effigy.service.list.v1`
+- `effigy.service.list.v2` (`sources` in precedence order; each fragment has `name`, `qualified`, `source`, `layer`, `path` and `shadows`)
 - `effigy.service.extract.v1`
-- `effigy.service.pack.status.v1`
-- `effigy.service.pack.install.v1`
-- `effigy.service.pack.update.v1`
-- `effigy.service.pack.rollback.v1`
-- `effigy.service.pack.reset.v1`
-- `effigy.catalog-pack.fallback.v1` (stderr diagnostic, not a `result` payload)
 - `effigy.artifact.inspect.v1`
 - `effigy.artifact.stage.v1`
 - `effigy.artifact.capture.v1`
@@ -231,8 +225,6 @@ effigy --json scan generated-in-src
 effigy --json scan attention-markers
 effigy --json scan stale-suppressions
 effigy --json service list
-effigy --json service pack status
-effigy --json service pack update
 effigy --json config path
 effigy --json config get containers.backend
 effigy --json config --schema --target test
@@ -261,30 +253,13 @@ effigy --json --repo /path/to/workspace build
 effigy --json --plan --repo /path/to/workspace build
 ```
 
-## Catalog-Pack Fallback Notice
+## Service List
 
-When an installed catalog pack is unhealthy, every catalog-backed command falls
-back to the compiled baseline and announces it on **stderr**, so no command can
-silently change catalog source. Under `--json` the notice is one
-`effigy.catalog-pack.fallback.v1` object:
-
-```json
-{
-  "schema": "effigy.catalog-pack.fallback.v1",
-  "schema_version": 1,
-  "ok": false,
-  "layer": "compiled-baseline",
-  "reason": "fallback-content-changed",
-  "fallback": true,
-  "detail": "installed catalog pack `...` content changed on disk (...)",
-  "repair": ["effigy service pack rollback", "effigy service pack reset"]
-}
-```
-
-It is emitted at most once per process and never on stdout, so the
-`effigy.command.v1` envelope is byte-for-byte unaffected. Surfaces that own a
-selection payload — `effigy service list` and `effigy service pack status` —
-additionally carry the same facts in `result.selection`.
+`effigy.service.list.v2` replaces v1 in v0.15. v1's `source` labels
+(`bundled`, `project-local (...)`, `installed-pack (...)`) and its pack
+`selection` object are gone with the catalog-pack runtime. `effigy container
+render --json` adds a `services` array naming each environment service's
+`catalog`, `source`, `layer` and `path`.
 
 ## Graph Workflow Notes
 

@@ -47,215 +47,79 @@ Catalog-driven services land in generated compose under
 [`063-container-system-guide.md`](063-container-system-guide.md) for the
 runtime layout.
 
-## Catalog Layers
+## Catalog Sources
 
-Fragments resolve in one fixed order, highest priority first:
+Fragments resolve from catalog sources in one fixed order, highest priority
+first:
 
-1. project override — `<repo>/infra/dev/catalog/<name>/`
-2. active installed catalog pack — see [Catalog Packs](#catalog-packs)
-3. compiled baseline — the fragments listed below, embedded in the binary
+1. `project` — `<repo>/infra/dev/catalog/<name>/`, committed with the repo
+2. `bundle` — `catalog/<name>/` shipped inside the pinned bundle
+3. declared sources — `[catalog.sources.<handle>]`, in handle order
+4. `baseline` — the fragments listed below, compiled into the binary
 
-The compiled baseline ships with every Effigy install and is permanent. A
-machine with no pack store, no `oras`, and no network resolves exactly the
-fragments documented here. `effigy service list` names the layer each fragment
-came from.
+`effigy service list` names the source each fragment resolves from, its path,
+and any lower sources it shadows. `effigy container render <NAME>` names the
+source of each environment service.
 
-The embedded pack's README is a frozen upstream publication document. Its
-user-global override statement is historical; the layer order above describes
-current Effigy behavior. See the [catalog integration note](../../crates/effigy-catalog/README.md)
-for the snapshot's provenance boundary.
-
-## Catalog Packs
-
-A catalog pack is an independently versioned set of the same fragment
-directories, installed into Effigy user state and selected below your
-overrides. Packs are optional: nothing needs one, and installing one never
-changes override precedence.
-
-```sh
-effigy service pack status
-effigy service pack install oci://<REPO>@sha256:<DIGEST>
-effigy service pack install --path ./catalog-pack
-effigy service pack update
-effigy service pack rollback
-effigy service pack reset
-```
-
-Every shape takes standard leading `--repo` and `--json`.
-
-### Pack shape
-
-A pack root holds `pack.toml` plus fragment directories in the usual layout:
+Pick one source explicitly with a qualified name:
 
 ```toml
-schema_version = 1
+[containers.web.services.cache]
+catalog = "baseline/redis"   # skip project, bundle and declared copies
 
-[pack]
-id = "effigy-default-catalog"
-version = "1.4.0"
-description = "Default Effigy service catalog"
-
-[compatibility]
-effigy = ">=0.12, <0.13"
+[containers.web.services.queue]
+catalog = "acme/queue"       # only the declared `acme` source
 ```
 
-Fragment files (`service.toml`, `compose.fragment.yml`, `Dockerfile`,
-`configs/`, `variants/`) follow
-[`071-catalog-service-authoring.md`](071-catalog-service-authoring.md)
-unchanged. A pack cannot widen the fragment schema.
+`project`, `bundle` and `baseline` are reserved handles. Shared services
+(`shared = true`) are machine-scoped and always resolve from the baseline.
 
-### Acquisition rules
+### Declared sources
 
-- Registry acquisition and updates are explicit. Ordinary catalog lookup never
-  fetches, checks for updates, or touches the network. Workspace handoff may
-  prepare the already selected host pack locally as described below.
-- `effigy service pack update` is the official no-argument path. It inspects
-  the compiled `stable` channel on
-  `ghcr.io/inflatable-cookie/effigy-catalog-pack`, then sends only the resolved
-  digest through the same acquire-validate-store-activate transaction as
-  `install`. Text and JSON report the channel and digest. A verified
-  already-active digest is a deterministic no-op: no pull, and no change to
-  active, previous, or compiled channel identity.
-- An `oci://` source must be digest-addressed (`@sha256:...`). A tag-only
-  reference is rejected before any transport call. Update is the only command
-  that may resolve `stable`, and it does so before entering that transaction.
-- `--path <DIR>` installs from a local directory, for development and recovery.
-- Acquire, validate, store, and activate are one transaction. Activation
-  happens last and only after the manifest, compatibility, and fragments
-  validate. A failed candidate leaves the previous selection and previously
-  installed content untouched.
-- Pack content may contain only regular files and directories with valid UTF-8
-  names. A symlink — file or directory, including the pack root and `pack.toml`
-  themselves — is rejected before anything is read, hashed, or copied, so a pack
-  cannot reach outside its own root. Non-UTF-8 entry names are rejected too:
-  lossy names would let two different trees share one content identity.
-- The store records pack identity, pack version, manifest schema version, the
-  compatibility requirement, the source, the resolved OCI digest, and a
-  deterministic content identity over the whole tree.
-- Landing and activation are serialized across processes by an advisory lock on
-  the store, so concurrent installs cannot lose each other's lineage.
-  Acquisition itself stays outside the lock.
+Declare extra fragment directories from git, OCI or a local path:
 
-### Workspace pack preparation
+```toml
+[catalog.sources.acme]
+type = "git"
+url = "https://github.com/acme/effigy-services.git"
+ref = "main"
 
-After actual selected-workspace activation or recreation, host handoff prepares
-the selected compatible installed service pack for the declared workspace user
-before guest policy resolution or task/shell execution. Previous guest receipts
-are not cached; fresh selected-container ID checks around preparation refuse a
-changed or ambiguous target. It snapshots the verified retained install, not its original source
-path, so a removed source checkout and offline use are supported. An
-already-current Linux binary still requires pack verification. No active host
-pack preserves the existing compiled-baseline behavior.
-
-An actually verified matching guest pack needs no copy or install. Empty guest
-state uses the normal validator and atomic store with this guarded local mode:
-
-```sh
-effigy service pack install --path <DIR> --prepare-content sha256:<DIGEST> --json
+[catalog.sources.local]
+type = "path"
+dir = "../shared-services"
 ```
 
-The digest is the unpacked `content_id` shown by host `service pack status`,
-not the OCI artifact digest. The flag requires `--path`, checks exact content,
-and refuses an existing selection (including explicit baseline) or unreferenced
-retained installs under the store lock before landing or activation. With `--json`, guarded installation returns
-the verified `effigy.service.pack.status.v1` payload. Normal explicit installation without this
-flag retains its existing selection and repair behavior.
+A source is a directory of fragment directories, exactly like
+`infra/dev/catalog/`. Sources are pinned per checkout in
+`.effigy/sources.lock.json` alongside the bundle, and only `effigy bundle sync`
+on the host moves a pin. Reads never fetch: a source that has not been synced
+is an error naming `effigy bundle sync`, and a changed declaration keeps
+resolving the pinned bytes until you sync. A workspace guest reads the same
+pins through the checkout mount; `bundle sync` refuses inside the guest.
 
-Unknown, differing or unhealthy guest selection refuses handoff and is kept.
-Inspect `effigy service pack status` inside the workspace as its declared user,
-then deliberately install the desired retained content with
-`effigy service pack install --path <retained-pack>`. The handoff diagnostic
-names the required host content identity. Rebuilding a matching executable does
-not add an optional pack fragment. `[catalog.members]` contains task catalogs;
-it does not install similarly named service fragments.
+### Fragment requirements
 
-Preparation verifies uid, HOME, compatibility and resulting content, rechecks
-host selection across transfer, and refuses malformed responses or changed
-inputs before dispatch. Host snapshots are temporary owned directories; guest
-staging is created exclusively as the workspace user and cleaned after verified
-installation, before the final selection probe. Failures or uncertain effects
-before that cleanup leave staging held. Existing guest
-content and sibling files are preserved. Bounded handoffs share their original
-cumulative deadline/output limits and keep captured channels private.
+A fragment written for a newer Effigy declares what it needs:
 
-This does not promise all host and guest configuration matches. Mounted project
-overrides still win; host config and
-credentials are not transferred. The selected pack must support the guest
-Effigy version and an explicit workspace user/home must be available. No
-registry freshness check or network update runs on handoff.
+```toml
+[requires]
+effigy = ">=0.16"
+schema = 2
+capabilities = ["loopback-alias"]
+```
 
-### Retention
+A release that cannot meet the requirements refuses the fragment and names
+the Effigy range, schema and capabilities it lacks. See
+[`071-catalog-service-authoring.md`](071-catalog-service-authoring.md).
 
-Every successfully installed pack is retained. `install`, `rollback`, and
-`reset` never delete installed content — the prototype has no deletion
-authority, and garbage collection or a bounded retention policy is a later
-explicit decision. `effigy service pack status` lists everything the store
-holds.
+### Retired catalog packs
 
-Reinstalling content the store already has re-verifies the stored bytes against
-their recorded identity. Matching content is reused; content that fails
-verification is replaced with the freshly validated candidate rather than
-reactivated, and the displaced tree is set aside, not deleted.
-
-### Recovery
-
-`rollback` selects the previous validated install and is a swap, so it returns.
-It re-proves that install against the running Effigy first, using exactly the
-check selection runs; if the previous content has since been deleted, tampered
-with, replaced by a symlink, or become incompatible, `rollback` refuses and
-leaves the current selection untouched. `effigy doctor` recommends `rollback`
-only when that same proof passes, and recommends `reset` otherwise.
-
-`reset` selects the compiled baseline; it retains installed content and never
-touches project overrides, so `rollback` still works afterwards. It is
-also the recovery path for damaged store metadata: an unreadable or unsupported
-`state.json` is copied aside under a `state.json.unreadable-*` name — never
-moved or deleted — and the live document is then replaced atomically with a
-valid baseline-selected one, so the state file is never briefly absent. If any
-step fails, the original file and bytes are left exactly as they were. Selection
-pointers naming no retained record are dropped. Install directories are always
-kept. Records that lived only in an unreadable document cannot be rebuilt, so
-reset reports retained records and retained content separately; the content can
-be reinstalled with `--path`.
-
-Selection re-proves the active pack every time, not just on install: it
-revalidates the manifest and fragments, cross-checks the stored manifest
-against the install record, and re-hashes the tree against the recorded content
-identity. Deleted files, edited compose or config bytes, a swapped identity, or
-a store pointer with no record behind it all count as unhealthy.
-
-When the active pack is unhealthy, Effigy uses the compiled baseline and says
-so on stderr — a `[warn]` line normally, and a single
-`effigy.catalog-pack.fallback.v1` object under `--json`. That notice reaches
-*every* catalog-backed command, including container, system, workspace, and
-task paths that have no selection payload of their own; stdout contracts are
-unchanged. `effigy doctor` additionally raises `catalog.pack-health` with one
-direct repair command.
-
-### Official update
-
-`effigy service pack update` uses the compiled official repository and `stable`
-channel. Installed pack content cannot redirect that coordinate. Resolution
-failure, pull failure, compatibility failure, validation failure, or activation
-failure leaves active, previous, and channel identity unchanged.
-
-The compiled baseline remains the recovery snapshot. Update never runs during
-ordinary service, container, system, workspace, or task use.
-
-### Not in this surface
-
-There is no implicit registry probe and no hidden coordinate override.
-`service pack update` takes no repository, tag, or digest arguments.
-
-Effigy owns `support/catalog-pack-update.toml`, the machine-readable
-compatibility set for the public channel. Only an Effigy
-support-policy or release PR may change it. Catalog-pack publication consumes
-the file from a resolved Effigy default-branch commit and blob digest; the
-pack repository, pack content, and installed state cannot redefine the
-required set. Local Effigy validation is network-free and does not affect pack
-selection, acquisition, or activation. `oldest_update_capable_release` tracks
-whether a released Effigy exposes public update; shipping the command on
-`main` does not, by itself, add that field.
+The installed catalog-pack runtime and `effigy service pack` are retired in
+v0.15. Existing `~/.effigy/catalog-packs/` state is ignored with a notice and
+left untouched; delete it when convenient. Pack v1.2.0 was byte-identical to
+the compiled baseline, so projects that used it resolve the same services. To
+ship services without an Effigy release, publish them as a bundle `catalog/`
+or a declared source.
 
 ## Catalog Services
 

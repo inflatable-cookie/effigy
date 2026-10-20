@@ -19,16 +19,6 @@
       "std.process.Command.new": 1,
       "std.process.Command.spawn": 1
     },
-    "crates/effigy-catalog/src/pack/install.rs": {
-      "std::fs::rename": 4
-    },
-    "crates/effigy-catalog/src/pack/store.rs": {
-      "fs2.FileExt.lock": 4,
-      "std.fs.File.lock": 1,
-      "std::fs::remove_file": 4,
-      "std::fs::rename": 2,
-      "std::fs::write": 2
-    },
     "crates/effigy-codegraph/src/docs_context/sources_tests.rs": {
       "std.process.Command.new": 1,
       "std.process.Command.output": 1,
@@ -483,14 +473,6 @@
     "crates/effigy-catalog/src/output/tests.rs": {
       "std::fs::write": 1
     },
-    "crates/effigy-catalog/src/pack/baseline.rs": {
-      "std::fs::remove_file": 1,
-      "std::fs::write": 1
-    },
-    "crates/effigy-catalog/src/pack/tests.rs": {
-      "std::fs::remove_file": 6,
-      "std::fs::write": 3
-    },
     "crates/effigy-cli/src/header.rs": {
       "std::env::remove_var": 1,
       "std::env::set_var": 2
@@ -572,9 +554,6 @@
     "crates/effigy-containers/src/session.rs": {
       "std.process.Command.new": 1,
       "std::fs::write": 6
-    },
-    "crates/effigy-containers/src/tests/catalog_pack_fallback.rs": {
-      "std::fs::write": 1
     },
     "crates/effigy-containers/src/tests/compose.rs": {
       "std.process.Command.new": 1,
@@ -901,9 +880,6 @@
     "src/runner/secrets_command.rs": {
       "std::fs::write": 1
     },
-    "src/runner/service_command/pack/tests.rs": {
-      "std::fs::write": 1
-    },
     "src/runner/state_command.rs": {
       "std::env::remove_var": 1,
       "std::env::set_var": 2,
@@ -920,9 +896,6 @@
       "std::env::set_var": 1,
       "std::fs::remove_file": 1,
       "std::fs::write": 18
-    },
-    "src/runner/system_command/workspace_catalog/tests.rs": {
-      "std::fs::write": 4
     },
     "src/runner/system_command/workspace_permissions.rs": {
       "nix::sys::signal::kill": 3,

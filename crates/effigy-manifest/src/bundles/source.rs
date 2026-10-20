@@ -377,8 +377,12 @@ pub fn catalog_source_roots(manifest: &Path) -> Result<CatalogSourceRoots, Manif
     let bundle = match bundle.as_ref().filter(|bundle| bundle.base.is_some()) {
         Some(bundle) => {
             let selection = resolve_bundle_selection(manifest, bundle)?;
-            Some(resolve_source(manifest, "bundle", &selection)?.local_path.join("catalog"))
-                .filter(|root| root.is_dir())
+            Some(
+                resolve_source(manifest, "bundle", &selection)?
+                    .local_path
+                    .join("catalog"),
+            )
+            .filter(|root| root.is_dir())
         }
         None => None,
     };
@@ -511,6 +515,53 @@ base = { type = "git", url = "https://invalid.invalid/bundle" }
             reference: None,
         };
         assert!(resolve_materialized_bundle_source(&manifest, &source)
+            .unwrap_err()
+            .to_string()
+            .contains("effigy bundle sync"));
+        assert!(!home.path().join(".effigy").exists());
+    }
+    #[test]
+    fn catalog_source_handles_reject_reserved_and_qualified_names() {
+        let home = tempfile::tempdir().unwrap();
+        let manifest = home.path().join("effigy.toml");
+        for name in ["project", "bundle", "baseline", "\"a/b\"", "\"a:b\""] {
+            std::fs::write(
+                &manifest,
+                format!("[catalog.sources.{name}]\ntype = \"path\"\ndir = \"catalog\"\n"),
+            )
+            .unwrap();
+            let error = crate::load_task_manifest(&manifest)
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("needs a plain handle"), "{name}: {error}");
+        }
+    }
+    #[test]
+    fn catalog_source_roots_read_pins_without_acquiring() {
+        let home = tempfile::tempdir().unwrap();
+        let manifest = home.path().join("effigy.toml");
+        assert_eq!(
+            catalog_source_roots(&manifest).unwrap(),
+            CatalogSourceRoots::default()
+        );
+        std::fs::create_dir_all(home.path().join("extra/queue")).unwrap();
+        std::fs::write(
+            &manifest,
+            "[catalog.sources.extra]\ntype = \"path\"\ndir = \"extra\"\n",
+        )
+        .unwrap();
+        let roots = catalog_source_roots(&manifest).unwrap();
+        assert_eq!(roots.bundle, None);
+        assert_eq!(
+            roots.declared,
+            vec![("extra".to_owned(), home.path().join("extra"))]
+        );
+        std::fs::write(
+            &manifest,
+            "[catalog.sources.remote]\ntype = \"git\"\nurl = \"https://invalid.invalid/catalog\"\n",
+        )
+        .unwrap();
+        assert!(catalog_source_roots(&manifest)
             .unwrap_err()
             .to_string()
             .contains("effigy bundle sync"));

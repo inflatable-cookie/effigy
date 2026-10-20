@@ -22,7 +22,10 @@ const RETIRED_USER_CATALOG_DIR: &str = "catalog";
 /// baseline only: shared services are machine-scoped and never take one
 /// project's sources.
 pub fn catalog_resolver(repo_root: Option<&Path>) -> Result<CatalogResolver, ContainerPolicyError> {
-    warn_retired_catalog_state(crate::policy_support::effigy_home_dir().as_deref());
+    // The real user home, not the container test-home override: this only
+    // names retired state that a user can see and delete.
+    let home = std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".effigy"));
+    warn_retired_catalog_state(home.as_deref());
     let Some(repo_root) = repo_root else {
         return Ok(CatalogResolver::new(None));
     };
@@ -52,9 +55,8 @@ pub fn catalog_service_sources(
     repo_root: &Path,
     environment: &str,
 ) -> Result<Vec<CatalogServiceSource>, ContainerPolicyError> {
-    let loaded = effigy_manifest::load_task_manifest_with_inspection(
-        &repo_root.join(TASK_MANIFEST_FILE),
-    )?;
+    let loaded =
+        effigy_manifest::load_task_manifest_with_inspection(&repo_root.join(TASK_MANIFEST_FILE))?;
     let Some(config) = loaded
         .manifest
         .containers

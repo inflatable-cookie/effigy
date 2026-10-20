@@ -187,11 +187,7 @@ impl CatalogResolver {
 
     /// Append a declared source below the bundle and earlier declared
     /// sources. The handle must be a plain name that is not reserved.
-    pub fn with_declared_source(
-        mut self,
-        name: &str,
-        root: PathBuf,
-    ) -> Result<Self, CatalogError> {
+    pub fn with_declared_source(mut self, name: &str, root: PathBuf) -> Result<Self, CatalogError> {
         validate_source_handle(name).map_err(|reason| CatalogError::InvalidSourceName {
             name: name.to_owned(),
             reason,

@@ -1,7 +1,7 @@
 # Feature Placement And Command Surface Architecture
 
 Contract: [`043`](../contracts/043-feature-placement-and-surface-migration-contract.md)
-Research: `catalog-pack publication source map` (in Git history)
+Research: `catalog-pack publication source map` (in Git history; superseded by Q-005)
 
 ## Purpose
 
@@ -92,116 +92,72 @@ does not transfer provider dependency or release ownership into core.
 
 ## Service Catalogs
 
-Effigy owns catalog schema, deterministic layering, parameter resolution,
-selection, extraction, override ownership, and assembly.
+Effigy owns catalog schema, source layering, parameter resolution, selection,
+extraction, fragment requirements, and assembly. Projects, bundles and third
+parties add or change services, workspace images and configuration without an
+Effigy release by publishing fragment directories as catalog sources. Pinned
+source is enough; there is no central registry (Q-005).
 
-The concrete shipped service and workspace definitions may move to a separately
-versioned default catalog pack. Ordinary commands must remain at least as
-simple as they are now. The default pack must be available automatically,
-support offline/bootstrap use, preserve project overrides, and expose missing
-or unhealthy state through `doctor`. A mandatory manual install ceremony is
-not an acceptable migration.
+### Catalog Sources
 
-Every supported install keeps a compiled baseline pack permanently. It is the
-automatic offline floor, including for `cargo install`, and remains available
-for recovery after independently installed packs are introduced. Resolution is
-project override, active installed default pack, then compiled
-baseline.
+A service resolves from the first source that provides it, in this order:
 
-Independent pack releases use immutable OCI artifacts through Effigy's existing
-artifact transport. Explicit local-path installation remains available for
-development and recovery. Normal service, workspace, container, and task
-commands never probe a registry or update a pack.
+1. `project`: the repository's committed `infra/dev/catalog/` directory, plus
+   any `compose_file` service read as a project fragment for its one-release
+   window;
+2. `bundle`: the `catalog/` directory shipped inside the pinned bundle;
+3. declared sources: `[catalog.sources.<name>]` git, OCI or path sources,
+   resolved in handle order;
+4. `baseline`: the catalog compiled into the binary.
 
-Installation is transactional: fetch or read the candidate, validate pack
-schema and Effigy compatibility, write a versioned store entry, then atomically
-activate it. A failed candidate leaves the previous active pack untouched. If
-an active installed pack later becomes unreadable or incompatible, the resolver
-uses the compiled baseline with a visible text warning and structured JSON
-selection reason; `doctor` provides rollback or reset guidance.
+A name qualified as `<source>/<service>` (for example `baseline/redis` or
+`acme/queue`) resolves from that source only. Behaviour that keys on a catalog
+entry (workspace identity defaults, database engines, PHP host integration)
+uses the unqualified service name. `project`, `bundle` and `baseline` are
+reserved handles. `effigy service list` names each service's winning source,
+its path and the sources it shadows; `effigy container render` names the source
+of each environment service. Shared services are machine-scoped and resolve
+from the compiled baseline only.
 
-The acquisition prototype does not prune installed pack content automatically.
-It retains every successfully installed content entry while activation metadata
-tracks the active and previous selections needed for deterministic rollback.
-Garbage collection or a bounded retention policy requires a later explicit
-operator decision; install, rollback, and reset never infer deletion authority.
+Declared sources share the bundle source pin and acquisition code: one
+checkout lock (`.effigy/sources.lock.json`) records the bundle and every
+`catalog:<name>` pin, and only an explicit host `effigy bundle sync` moves
+them. Resolution reads the pinned local snapshots and never fetches; an
+unprepared declared source is an error that names `effigy bundle sync`.
 
-The acquisition prototype shipped explicit digest-addressed OCI and local-path
-installation, status, rollback, and reset while keeping today's embedded assets
-as the baseline. Official publication is a separate ownership boundary:
+### Fragment Requirements
 
-- canonical editable assets live in
-  `inflatable-cookie/effigy-catalog-pack`, not in Effigy core;
-- pack releases use independent SemVer and publish to
-  `ghcr.io/inflatable-cookie/effigy-catalog-pack`;
-- Effigy keeps a generated, pinned recovery snapshot with source commit, pack
-  version, and published OCI digest evidence;
-- the compiled snapshot supplies automatic availability to every supported
-  binary, Homebrew, source-build, `init`, and `bootstrap` path without a
-  registry probe or implicit installed-pack activation;
-- registry acquisition remains explicit through immutable digest install or
-  `service pack update`;
-- `stable` moves only through a protected manual dispatch for an existing
-  annotated pack version tag; the OCI manifest digest is the immutable
-  publication identity.
+A fragment may declare what it needs in `service.toml`:
 
-The pack repository owns validation, publication, provenance, and generated
-baseline proposals. Effigy independently accepts or rejects each proposed
-snapshot and retains its own release authority. Public `service pack update`
-stays unavailable until an anonymously readable, digest-bound, attested
-official artifact can succeed from the first exposed release.
+```toml
+[requires]
+effigy = ">=0.16"
+schema = 2
+capabilities = ["loopback-alias"]
+```
 
-### Canonical Pack And Generated Baseline
+Requirements are read before the rest of the schema, so a release that cannot
+render a fragment refuses it and names the Effigy range, fragment schema and
+capabilities it lacks, rather than failing on unknown fields. An unknown
+requirement kind is itself unmet. This release renders fragment schema 1.
 
-The dedicated source repository owns one canonical asset root: `pack/`. Its
-top-level `pack.toml` and the exact catalog/support tree are release input;
-repository documentation, workflows, and tooling remain outside that root.
+### Host-Only Resolution
 
-Effigy's compiled baseline is a generated byte-for-byte copy of `pack/`, not a
-second editable authority. A typed sidecar lock records the source repository,
-source commit, pack version, OCI manifest digest, and unpacked pack content
-identity. Repository markers and QA reject direct edits.
+Acquisition is host authority. Source pins are written only on the host by
+`effigy bundle sync`, which refuses inside a workspace container. A guest
+Effigy reads the same pinned snapshots through the checkout mount and never
+holds its own catalog state: nothing is copied or installed into a guest home.
 
-Drift proof has two layers:
+### Retired Catalog-Pack Runtime
 
-- offline Effigy QA recomputes manifest identity, version, and content identity
-  from the checked-in snapshot and compares them with the lock;
-- publication and baseline-proposal proof pulls the artifact by recorded digest,
-  verifies its digest-bound attestation, and compares the exact paths and bytes.
-
-The OCI manifest digest and unpacked content identity remain separate evidence.
-The former owns registry transport identity; the latter owns the extracted tree.
-
-### Compatibility And Publication Authority
-
-Effigy owns `support/catalog-pack-update.toml`, the machine-readable compatibility
-set for the public update channel. It records a schema version, the release at
-which the policy was checked, every still-supported Effigy version that exposes
-update, and—once a released Effigy exposes public update—the oldest such version.
-Official artifact or channel publication does not, by itself, introduce that
-oldest field. Only an Effigy support-policy or release change may alter the
-file. The pack repository consumes it from a resolved Effigy default-branch
-commit and cannot redefine it. `effigy-catalog` validates the file locally and
-network-free. That parser is not on the pack selection, acquisition, or
-activation path.
-
-Pack publication is deterministic and process-immutable. A protected manual
-dispatch builds a local OCI layout from fixed source bytes and metadata,
-computes the candidate manifest digest, and treats the remote `vX.Y.Z` state as
-absent, an idempotent same-digest retry, or a blocking collision. It proves the
-version pointer, digest, attestation, anonymous pull, exact bytes, and fresh
-Effigy compatibility input before moving `stable` to that digest.
-
-Source and OCI version tags are checked pointers, not immutable identities.
-Source `v*` tags reject update and deletion with no routine maintainer or
-publication-job bypass. Package write authority belongs only to the protected
-publication job, serialized by version. The OCI manifest digest is the retry
-oracle and release identity.
-
-`service pack update` reports the resolved channel and digest. A verified
-already-active digest is a deterministic no-op. Resolution, pull,
-compatibility, validation, or activation failure preserves active and previous
-selection plus channel metadata.
+The installed catalog-pack runtime is retired in v0.15: the pack store,
+`service pack install/update/rollback/reset/status`, the official OCI
+channel, the workspace pack handoff, and the update support policy
+(`support/catalog-pack-update.toml` and `release.sync-catalog-pack-support-policy`).
+Its fragments were already byte-identical to the compiled baseline, which is
+now an ordinary Effigy-owned source tree rather than a vendored pack snapshot.
+Existing `~/.effigy/catalog-packs/` state is ignored with a one-release notice
+and left untouched. Effigy no longer reads the pack repository; archiving it is an operator action.
 
 ## Release And Distribution
 
@@ -238,7 +194,7 @@ stays unplanned until its transport and minimum contract are chosen.
 | Environment, redaction, secret contracts | Core with optional backends |
 | Local runtime lifecycle | Core façade with provider adapters |
 | Catalog schema and assembly | Core |
-| Concrete service/workspace definitions | Default optional asset pack candidate |
+| Concrete service/workspace definitions | Compiled baseline plus project, bundle and declared catalog sources |
 | Artifact, state, deploy, release transactions | Core provider-neutral transaction façades |
 | Provider scripts, templates, and app hooks | Provider or consumer owned |
 | Effigy self-distribution recipes | Repository or installed extension |
@@ -254,9 +210,8 @@ The feature-boundary follow-through is sequenced as separate lanes:
 1. help-first command discovery with no execution aliases or removals
    (shipped by card `1093`);
 2. release versus self-distribution separation;
-3. catalog-pack acquisition prototype satisfying the simplicity invariant,
-   followed separately by dedicated-repository publication, generated-baseline
-   cutover, and public update exposure;
+3. catalog-pack acquisition prototype, since replaced by catalog sources and
+   retired in v0.15 (Q-005);
 4. executable grouped-command preview with retained direct migration aliases
    (shipped by card `1109`, then rolled back by card `1110`);
 5. S3 migration only after the named consumer replacement proof.

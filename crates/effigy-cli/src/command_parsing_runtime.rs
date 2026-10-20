@@ -3,8 +3,7 @@ use std::path::PathBuf;
 use crate::value_parsing::{next_required_value, parse_repo_path};
 use crate::{
     Command, ExecArgs, GatewayArgs, GatewayPrivateArgs, GatewaySubcommand, HelpTopic, ServiceArgs,
-    ServiceSubcommand, SystemArgs,
-    SystemSubcommand, WorkspaceArgs,
+    ServiceSubcommand, SystemArgs, SystemSubcommand, WorkspaceArgs,
 };
 
 use super::{unknown_argument, CliParseError};
