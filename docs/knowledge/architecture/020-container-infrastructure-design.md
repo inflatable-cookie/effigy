@@ -138,7 +138,7 @@ catalog = "memcached"
 ### Assembly flow
 
 1. Read service declarations from manifest.
-2. Load matching catalog fragments (project-local > active pack > bundled baseline).
+2. Load matching catalog fragments (project > bundle `catalog/` > declared `[catalog.sources]` > compiled baseline).
 3. Substitute parameters into fragment templates.
 4. Assemble into a complete compose file.
 5. Collect generated Compose, Dockerfiles/configs, shared-service renders,
@@ -159,15 +159,18 @@ assembler reads the selected layer and contributes Compose and rendered assets
 to the in-memory closure. Prepare publishes the complete immutable generation. A consumer
 does not need a separate catalog checkout or network access for the baseline.
 
-User customization layers on top:
+Catalog sources layer on top, highest priority first (Q-005, architecture
+[026](026-feature-placement-and-command-surface.md#service-catalogs)):
 
-1. **Project-local:** `infra/dev/catalog/` in the repo
-2. **Active catalog pack:** an explicitly installed, versioned pack
-3. **Bundled baseline:** embedded in the binary (lowest priority)
+1. **Project:** `infra/dev/catalog/` in the repo
+2. **Bundle:** the pinned bundle's shipped `catalog/`
+3. **Declared sources:** `[catalog.sources.<name>]`, pinned per checkout and
+   moved only by `effigy bundle sync`
+4. **Baseline:** embedded in the binary (lowest priority)
 
-`effigy service list` shows available services. `effigy service extract
-<service>` extracts a bundled fragment to the override directory for
-customization.
+`effigy service list` shows each service's source and what it shadows.
+`effigy service extract <service>` copies a baseline fragment into the project
+catalog for customization. The installed catalog-pack layer is retired.
 
 ### Repo-owned Compose (retired)
 
@@ -1104,7 +1107,7 @@ repo-owned Compose volumes stay unless labelled mutable.
 
 | Owner | Role |
 | --- | --- |
-| `effigy-catalog` | fragment schema, layered lookup, template rendering, compose assembly, volume classification and identity, catalog packs |
+| `effigy-catalog` | fragment schema, layered lookup, template rendering, compose assembly, volume classification and identity, catalog sources and fragment requirements |
 | `effigy-manifest` | systems, workspaces, containers, DNS routes, services, lifecycle, host, data, and alias grammar |
 | `effigy-containers` | effective policy, generated Compose, manager facade, backend operations, workspace transport |
 | `effigy-exec` | host/container route decision, cwd translation, aliases, capability detection, readiness model |
