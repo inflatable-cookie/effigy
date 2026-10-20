@@ -76,7 +76,7 @@ pub(in crate::runner) fn register_gateway_routes_for_container(
 pub(in crate::runner) fn register_gateway_routes_for_container_with_context(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
-    admitted: Option<&crate::runner::host_container_lease::DetachedActivationContext>,
+    admitted: Option<&super::admission::AdmissionContext>,
 ) -> Result<Vec<RegisteredGatewayRoute>, RunnerError> {
     register_gateway_routes_for_verified_container(repo_root, policy, admitted, None)
 }
@@ -243,17 +243,17 @@ pub(in crate::runner) fn managed_listener_owner_environment(owner: &str) -> Opti
 pub(in crate::runner) fn register_gateway_routes_for_verified_container(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
-    admitted: Option<&crate::runner::host_container_lease::DetachedActivationContext>,
+    admitted: Option<&super::admission::AdmissionContext>,
     binding: Option<&effigy_containers::exec::VerifiedComposeContainer>,
 ) -> Result<Vec<RegisteredGatewayRoute>, RunnerError> {
     if let Some(context) = admitted {
-        context.verify(repo_root, policy, true)?;
+        context.verify(repo_root, policy)?;
     }
     let rows = wait_for_gateway_service_ports_ready(repo_root, policy)?;
     #[cfg(test)]
     publication_test_control(PublicationStage::AfterProbe);
     if let Some(context) = admitted {
-        context.verify(repo_root, policy, true)?;
+        context.verify(repo_root, policy)?;
     }
     if let Some(binding) = binding {
         binding.reverify(
@@ -568,13 +568,13 @@ fn reconcile_gateway_routes_guarded(
     repo_root: &Path,
     desired: &[RegisteredGatewayRoute],
     admitted: Option<(
-        &crate::runner::host_container_lease::DetachedActivationContext,
+        &super::admission::AdmissionContext,
         &EffectiveContainerPolicy,
     )>,
 ) -> Result<(), RunnerError> {
     EndpointStore::for_routes(path).routes(|table| {
         if let Some((context, policy)) = admitted {
-            context.verify(repo_root, policy, true)?;
+            context.verify(repo_root, policy)?;
         }
         let project_path = repo_root.display().to_string();
         let scope = gateway_project_scope(&project_path)?;
@@ -595,7 +595,7 @@ fn reconcile_gateway_routes_guarded(
         #[cfg(test)]
         publication_test_control(PublicationStage::BeforePreparation);
         if let Some((context, policy)) = admitted {
-            context.verify(repo_root, policy, true)?;
+            context.verify(repo_root, policy)?;
         }
         for route in desired.iter().filter(|route| route.tls) {
             ensure_gateway_tls_cert(&route.domain)?;
@@ -643,7 +643,7 @@ fn reconcile_gateway_routes_guarded(
             #[cfg(test)]
             publication_test_control(PublicationStage::BeforeSave);
             if let Some((context, policy)) = admitted {
-                context.verify(repo_root, policy, true)?;
+                context.verify(repo_root, policy)?;
             }
         }
         for route in &stale {

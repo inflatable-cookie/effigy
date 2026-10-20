@@ -2,6 +2,7 @@ pub mod backend;
 mod catalog_sources;
 pub mod colima;
 pub mod compose;
+pub mod environment;
 pub mod exec;
 pub mod health;
 pub mod manager;

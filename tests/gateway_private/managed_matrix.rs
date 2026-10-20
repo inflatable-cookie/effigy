@@ -239,7 +239,6 @@ impl<'a> Case<'a> {
             .env("EFFIGY_EXECUTABLE", self.root.join("effigy-wrapper"))
             .env("COLIMA_HOME", self.home.join("colima"))
             .env("EFFIGY_COMPOSE_BACKEND", "docker")
-            .env("EFFIGY_DISABLE_HOST_CONTAINER_LEASE_REAPER", "1")
             .env("EFFIGY_TEST_SKIP_WORKSPACE_EFFIGY_HANDOFF", "1")
             .env(
                 effigy_gateway::private_state::PRIVATE_STATE_ROOT_ENV,
@@ -960,16 +959,10 @@ fn authority_matrix(authority: Authority) {
             let dir = case.root.join(".effigy/runtime/managed/prior-default");
             fs::create_dir_all(&dir).expect("prior directory");
             fs::write(dir.join("session.json"), prior.to_string()).expect("unsettled prior record");
-            let up = case.run(&["container", "stack", "up", "--detach"]);
-            assert!(
-                !up.status.success(),
-                "stale generation must not authorize down under successor"
-            );
-            assert!(
-                String::from_utf8_lossy(&up.stderr).contains("live task runs hold their gates"),
-                "{}",
-                String::from_utf8_lossy(&up.stderr)
-            );
+            // A stale generation grants no down: `up` never tears an
+            // environment down for a failed predecessor (the kernel settles
+            // it, K5). The no-down oracle below covers whatever `up` returns.
+            let _ = case.run(&["container", "stack", "up", "--detach"]);
             fs::remove_file(dir.join("session.json")).expect("clear injected record");
         }
         Authority::Reaper => {
@@ -993,18 +986,15 @@ fn authority_matrix(authority: Authority) {
                 "--token",
                 "expired-prior",
             ]);
+            assert!(!reaper.status.success(), "the retired reaper entry refuses");
             assert!(
-                !reaper.status.success(),
-                "reaper must refuse under the live run"
-            );
-            assert!(
-                String::from_utf8_lossy(&reaper.stderr).contains("live task runs hold their gates"),
+                String::from_utf8_lossy(&reaper.stderr).contains("is retired"),
                 "{}",
                 String::from_utf8_lossy(&reaper.stderr)
             );
             assert!(
                 dir.join("stack.json").exists(),
-                "refusal must retain the lease"
+                "a v0.14.1 lease file is never changed"
             );
         }
         Authority::ExitTrap => {
@@ -1041,7 +1031,11 @@ fn authority_matrix(authority: Authority) {
                 .join(".effigy/runtime/managed-lifecycle/prior-stack.state");
             let deadline = Instant::now() + Duration::from_secs(25);
             while fs::read_to_string(&marker).unwrap_or_default().trim() != "ready" {
-                assert!(Instant::now() < deadline, "prior lifecycle readiness");
+                assert!(
+                    Instant::now() < deadline,
+                    "prior lifecycle readiness: {}",
+                    fs::read_to_string(case.root.join("prior-lifecycle.out")).unwrap_or_default()
+                );
                 thread::sleep(Duration::from_millis(25));
             }
             parent.0.kill().expect("kill only prior parent");
@@ -1064,8 +1058,7 @@ fn authority_matrix(authority: Authority) {
                 "an unbound live holder must prevent handover down"
             );
             assert!(
-                String::from_utf8_lossy(&handover.stderr)
-                    .contains("live task runs hold their gates"),
+                String::from_utf8_lossy(&handover.stderr).contains("while runs hold it"),
                 "{}",
                 String::from_utf8_lossy(&handover.stderr)
             );

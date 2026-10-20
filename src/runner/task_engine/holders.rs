@@ -48,10 +48,6 @@ impl LiveHolder {
             (HolderKind::Task, None) => format!("task:{}", self.task),
         }
     }
-
-    pub(in crate::runner) fn carries_managed_run(&self, token: &str) -> bool {
-        self.managed_run == Some(Digest::of(token.as_bytes()))
-    }
 }
 
 /// Every live holder recorded for `repo_root`'s checkout, or for the root

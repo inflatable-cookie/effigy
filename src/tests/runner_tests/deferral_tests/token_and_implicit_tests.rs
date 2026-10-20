@@ -200,10 +200,6 @@ exit 0
             Some(bin_dir.join("mkcert").display().to_string()),
         ),
         (
-            "EFFIGY_DISABLE_HOST_CONTAINER_LEASE_REAPER",
-            Some("1".to_owned()),
-        ),
-        (
             "EFFIGY_TEST_HOST_CONTAINER_LEASE_HOME",
             Some(lease_home.display().to_string()),
         ),
@@ -411,14 +407,17 @@ base = { type = "path", dir = "bundles/php-library" }
         ),
         "expected deferred command in container exec, got {log}"
     );
-    let lease_token =
-        crate::runner::host_container_lease::read_host_container_lease_token_for_tests(
-            &root, "web",
-        )
-        .expect("read lease token");
+    // The run held the environment it started; the environment record names
+    // it, and holder-based idle stop ran once the run ended.
+    let policy = effigy_containers::load_container_policy(&root, Some("web")).expect("policy");
+    let record = crate::runner::environment::record(&policy).expect("environment record");
+    assert_eq!(
+        record.engine().map(|engine| engine.retention),
+        Some(effigy_containers::environment::Retention::Held)
+    );
     assert!(
-        lease_token.is_some(),
-        "expected active host-container lease"
+        !record.protected(),
+        "the finished run must have released its hold"
     );
 }
 
@@ -560,9 +559,9 @@ base = { type = "path", dir = "bundles/php-library" }
 }
 
 #[test]
-fn run_manifest_task_php_app_container_lease_reaper_shuts_down_expired_env() {
+fn run_manifest_task_php_app_held_environment_stops_when_its_last_run_ends() {
     let _guard = lock_test();
-    let root = temp_workspace("php_app-container-deferral-reaper");
+    let root = temp_workspace("php_app-container-deferral-idle-stop");
     std::fs::create_dir(root.join(".git")).expect("git dir");
     setup_php_library_path_bundle(&root);
     write_root_manifest(
@@ -573,10 +572,6 @@ project_name = "legacy-dev"
 "#,
     );
     let (docker_log, _env) = setup_fake_docker_deferral_runtime(&root, false);
-    let _timeout = EnvGuard::set_many(&[(
-        "EFFIGY_HOST_CONTAINER_LEASE_TIMEOUT_SECS",
-        Some("0".to_owned()),
-    )]);
 
     run_task_expect_empty_output(
         &root,
@@ -585,34 +580,23 @@ project_name = "legacy-dev"
         "php_app bundle container deferral should succeed",
     );
 
-    let token = crate::runner::host_container_lease::read_host_container_lease_token_for_tests(
-        &root, "web",
-    )
-    .expect("read lease token")
-    .expect("lease token");
-    crate::runner::host_container_lease::run_host_container_lease_reaper_for_tests(
-        &root, "web", &token,
-    )
-    .expect("run reaper");
-
+    // No timer: the stack the run started stopped as its hold was released.
     let log = fs::read_to_string(&docker_log).expect("read fake docker log");
+    let exec = log.find(" exec ").expect("workspace exec");
     assert!(
-        log.contains("down"),
-        "expected docker compose down, got {log}"
+        log[exec..].contains(" stop") || log[exec..].contains(" down"),
+        "expected the idle stop after the run, got {log}"
     );
-    let lease_token =
-        crate::runner::host_container_lease::read_host_container_lease_token_for_tests(
-            &root, "web",
-        )
-        .expect("read lease token after reaper");
-    assert!(
-        lease_token.is_none(),
-        "expected cleared host-container lease"
+    let policy = effigy_containers::load_container_policy(&root, Some("web")).expect("policy");
+    let record = crate::runner::environment::record(&policy).expect("environment record");
+    assert_eq!(
+        record.state,
+        effigy_containers::environment::EnvState::Stopped
     );
 }
 
 #[test]
-fn run_manifest_task_php_app_library_bundle_isolates_leases_across_repos_by_default() {
+fn run_manifest_task_php_app_library_bundle_isolates_environments_across_repos_by_default() {
     let _guard = lock_test();
     let root = temp_workspace("php_library-shared-lease");
     let shared_root = root.join("libraries/php-app");
@@ -655,18 +639,15 @@ shared_root = "{}"
         "php_library bundle container deferral should succeed",
     );
 
-    let token_a = crate::runner::host_container_lease::read_host_container_lease_token_for_tests(
-        &repo_a, "web",
-    )
-    .expect("read lease token for repo a");
-    let token_b = crate::runner::host_container_lease::read_host_container_lease_token_for_tests(
-        &repo_b, "web",
-    )
-    .expect("read lease token for repo b");
-    let token_a = token_a.expect("expected lease token for repo a");
+    let policy_a = effigy_containers::load_container_policy(&repo_a, Some("web")).expect("a");
+    let policy_b = effigy_containers::load_container_policy(&repo_b, Some("web")).expect("b");
     assert!(
-        token_b.is_none(),
-        "expected repo b to have no lease until it starts its own container runtime"
+        crate::runner::environment::record(&policy_a).is_some(),
+        "repo a records its environment"
+    );
+    assert!(
+        crate::runner::environment::record(&policy_b).is_none(),
+        "expected repo b to have no record until it starts its own container runtime"
     );
     run_task_expect_empty_output(
         &repo_b,
@@ -674,14 +655,11 @@ shared_root = "{}"
         &["--watch"],
         "second php_library bundle container deferral should also succeed",
     );
-    let token_b = crate::runner::host_container_lease::read_host_container_lease_token_for_tests(
-        &repo_b, "web",
-    )
-    .expect("read lease token for repo b after startup")
-    .expect("lease token for repo b after startup");
+    let record_a = crate::runner::environment::record(&policy_a).expect("record a");
+    let record_b = crate::runner::environment::record(&policy_b).expect("record b");
     assert_ne!(
-        token_a, token_b,
-        "expected library repos to get separate host-container leases by default"
+        record_a.resource, record_b.resource,
+        "expected library repos to get separate environment records by default"
     );
 }
 

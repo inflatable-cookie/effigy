@@ -108,7 +108,7 @@ fn run_container_shell_bounded_with_deadline(
     // Inside the workspace container the requested command is already
     // local: run it directly through the same bounded budget (deadline and
     // stream caps) instead of probing a host runtime (colima/nerdctl/docker)
-    // that is unreachable from inside. No owned-binding discovery, lease,
+    // that is unreachable from inside. No owned-binding discovery, hold,
     // or workspace effigy refresh runs; the binary's presence proves the
     // install, and the local process already runs as the exec user.
     if let Some(resolved) = resolve_handoff_local_execution(repo_root, name, service) {
@@ -276,7 +276,7 @@ fn run_bounded_command_with_budget(
 /// The same absolute deadline and cumulative stdout/stderr caps apply, the
 /// same `effigy.container.bounded-exec.v1` payload renders, and refusal
 /// accounting keeps its closed vocabulary. There is deliberately no
-/// owned-binding discovery, host lease, workspace effigy refresh, or
+/// owned-binding discovery, host hold, workspace effigy refresh, or
 /// workspace-user fallback: the handoff marker is only set by Effigy's own
 /// compose exec into the target service, and the local process already runs
 /// as the exec user.

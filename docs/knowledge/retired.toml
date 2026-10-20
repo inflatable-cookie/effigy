@@ -523,6 +523,55 @@ config_keys = ["secrets.vault.identity", "secrets.vault.unlock", "secrets.vault.
 allow = ["CHANGELOG.md", "docs/knowledge/contracts/032-secret-and-local-config-management-contract.md", "docs/guides/026-json-payload-examples.md", "crates/effigy-manifest/tests/secrets_config.rs"]
 
 [[retired]]
+id = "effigy-host-container-lease-and-reaper"
+retired = "2026-10-20"
+replacement = "Idle stop is holder-based: a held environment stops when its last holder settles; effigy container up --detach keeps a stack running and EFFIGY_DISABLE_HOST_CONTAINER_LEASE=1 keeps task-started stacks running. The hidden reaper entry refuses as retired."
+owner = "docs/knowledge/contracts/053-environment-reconciler-contract.md"
+terms = ["EFFIGY_HOST_CONTAINER_LEASE_TIMEOUT_SECS", "EFFIGY_DISABLE_HOST_CONTAINER_LEASE_REAPER", "__container-lease-reaper", "HostContainerLeaseEncode", "ReaperBootstrap"]
+paths = ["src/runner/host_container_lease.rs", "src/runner/container_runtime_prep/lease.rs"]
+config_keys = []
+allow = [
+  "CHANGELOG.md",
+  "docs/guides/085-v0.15.0-consumer-migration.md",
+  "docs/knowledge/contracts/052-runtime-kernel-contract.md",
+  "crates/effigy-cli/src/command_parsing.rs",
+  "src/cli/output/labels.rs",
+  "src/runner/entrypoints/dispatch.rs",
+  "tests/cli_output_tests/command_behavior_tests.rs",
+  "tests/gateway_private/managed_matrix.rs",
+]
+
+[[retired]]
+id = "effigy-container-lifecycle-markers"
+retired = "2026-10-20"
+replacement = "The environment record holds retention, the applied and partial generations and the backend. v0.14.1 markers are imported read-only on the first bring-up or stop and never changed."
+owner = "docs/knowledge/contracts/053-environment-reconciler-contract.md"
+terms = [".partial.json", ".handover.json", "record_environment_handover", "clear_partial_activation", "detached_admission_marker_root"]
+paths = []
+config_keys = []
+allow = [
+  "CHANGELOG.md",
+  "docs/knowledge/contracts/052-runtime-kernel-contract.md",
+  "docs/knowledge/contracts/053-environment-reconciler-contract.md",
+  "crates/effigy-containers/src/environment/import.rs",
+  "crates/effigy-containers/src/environment/record.rs",
+  "crates/effigy-containers/src/environment/tests/faults.rs",
+  "crates/effigy-containers/src/environment/tests/importer.rs",
+  "crates/effigy-containers/src/policy/render/tests.rs",
+  "src/runner/system_command/workspace/tests/builder_recovery.rs",
+]
+
+[[retired]]
+id = "effigy-per-site-environment-holder-guards"
+retired = "2026-10-20"
+replacement = "Every environment change is a transition run under Gate(Env) that asks the kernel for a TransitionPermit; holders attach through the hold API (contract 053 §3-§4)."
+owner = "docs/knowledge/contracts/053-environment-reconciler-contract.md"
+terms = ["refuse_environment_mutation", "refuse_recovery_while_token_live", "environment_lock_holders", "live task runs hold their gates", "EFFIGY_INTERNAL_MANAGED_STOP_TOKEN"]
+paths = []
+config_keys = []
+allow = ["CHANGELOG.md"]
+
+[[retired]]
 id = "effigy-sequence-depends_on"
 retired = "2026-10-19"
 replacement = "Remove depends_on from sequence steps. Steps run in declaration order and stop on failure; use the invoked tool's own retry policy when needed."

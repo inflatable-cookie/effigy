@@ -21,13 +21,13 @@ use crate::runner::container_command::support::validate_running_container_runtim
 use crate::runner::container_runtime_prep::{
     activate_container_runtime_for_task, build_runtime_activation_plan, ActivationRequest,
 };
+use crate::runner::environment::emit_held_notice;
 use crate::runner::error::RunnerError;
 use crate::runner::exec_command::append_color_exec_env;
 use crate::runner::exec_command::run_compose_exec;
 use crate::runner::execute::api::{
     resolve_execution_binding_resolution, ContainerExecutionBinding,
 };
-use crate::runner::host_container_lease::emit_host_container_lease_notice;
 use crate::runner::runtime_session_context::{
     current_runtime_session_context, RuntimeSessionContext,
 };
@@ -303,8 +303,8 @@ fn run_deferred_request_with_binding(
                 "docker compose exec",
             )?;
             if output.status.success() {
-                if activation.refreshed_host_container_lease {
-                    emit_host_container_lease_notice(&policy.name);
+                if activation.started_held {
+                    emit_held_notice(&policy.name);
                 }
                 if runtime_args.verbose_root {
                     return Ok(DeferredExecutionPlan::Completed(render_deferral_trace(
